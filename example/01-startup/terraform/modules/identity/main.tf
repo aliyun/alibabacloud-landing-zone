@@ -58,7 +58,7 @@ resource "alicloud_ram_account_password_policy" "password_policy" {
 # 创建云管理员组
 resource "alicloud_ram_group" "cloud_admin_group" {
   name     = "CloudAdminGroup"
-  comments = "云管理员组"
+  comments = local.language_obj.admin_group_comments
   force    = true
 }
 # 为云管理员组授权
@@ -99,7 +99,18 @@ resource "alicloud_ram_group_policy_attachment" "bss_group_policy_attachment_Ali
 }
 # 创建普通用户组
 resource "alicloud_ram_group" "common_user_group" {
-  name     = "CommonUserGroup"
-  comments = "普通用户组"
+  name     =  "CommonUserGroup"
+  comments = local.language_obj.common_user_comments
   force    = true
+}
+
+locals{
+    language = var.language
+}
+
+locals {
+  language_obj = {
+    "admin_group_comments" = local.language =="EN"?"cloud management group":"云管理员组"
+    "common_user_comments" = local.language =="EN"?"common user group":"普通用户组"
+  }
 }
