@@ -1,4 +1,4 @@
 variable "language"{
-    default="EN"
+    default="CN"
     description="identify which language we will apply"
 }
