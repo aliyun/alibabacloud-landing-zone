@@ -2,7 +2,7 @@ provider "alicloud" {
   profile = "default"
 }
 
-# 为系统管理员创建自定义权限策略
+#create custom authority policy for system admin
 resource "alicloud_ram_policy" "system_admin_policy" {
   name        = "SystemAdministratorAccess"
   document    = <<EOF
@@ -43,7 +43,7 @@ resource "alicloud_ram_policy" "system_admin_policy" {
   description = local.language_obj.system_admin_authority
   force       = true
 }
-# 设置RAM用户密码强度
+#set RAM user password strength
 resource "alicloud_ram_account_password_policy" "password_policy" {
   minimum_password_length      = 8
   require_lowercase_characters = true
@@ -55,49 +55,49 @@ resource "alicloud_ram_account_password_policy" "password_policy" {
   password_reuse_prevention    = 8
   max_login_attempts           = 5
 }
-# 创建云管理员组
+# create cloud admin group
 resource "alicloud_ram_group" "cloud_admin_group" {
   name     = "CloudAdminGroup"
   comments = local.language_obj.admin_group_comments
   force    = true
 }
-# 为云管理员组授权
+# authorize policy to cloud admin
 resource "alicloud_ram_group_policy_attachment" "cloud_admin_group_policy_attachment" {
   policy_name = "AdministratorAccess"
   policy_type = "System"
   group_name  = alicloud_ram_group.cloud_admin_group.name
 }
-# 创建系统管理员组
+# create system admin group
 resource "alicloud_ram_group" "system_admin_group" {
   name     = "SystemAdminGroup"
   comments = local.language_obj.system_admin_comments
   force    = true
 }
-# 为系统管理员组授权
+# authorize policy to system admin group
 resource "alicloud_ram_group_policy_attachment" "system_admin_group_policy_attachment" {
   policy_name = alicloud_ram_policy.system_admin_policy.name
   policy_type = alicloud_ram_policy.system_admin_policy.type
   group_name  = alicloud_ram_group.system_admin_group.name
 }
-# 创建财务账单管理员组
+# create billing admin group 
 resource "alicloud_ram_group" "billing_admin_group" {
   name     = "BillingAdminGroup"
   comments =  local.language_obj.billing_admin_comments
   force    = true
 }
-# 为财务账单管理员组授权AliyunBSSFullAccess
+# authorize AliyunBSSFullAccess policy to billing admin group
 resource "alicloud_ram_group_policy_attachment" "bss_group_policy_attachment_AliyunBSSFullAccess" {
   policy_name = "AliyunBSSFullAccess"
   policy_type = "System"
   group_name  = alicloud_ram_group.billing_admin_group.name
 }
-# 为财务账单管理员组授权AliyunFinanceConsoleFullAccess
+# authorize AliyunFinanceConsoleFullAccess policy to billing admin group
 resource "alicloud_ram_group_policy_attachment" "bss_group_policy_attachment_AliyunFinanceConsoleFullAccess" {
   policy_name = "AliyunFinanceConsoleFullAccess"
   policy_type = "System"
   group_name  = alicloud_ram_group.billing_admin_group.name
 }
-# 创建普通用户组
+# create common user group
 resource "alicloud_ram_group" "common_user_group" {
   name     =  "CommonUserGroup"
   comments = local.language_obj.common_user_comments
