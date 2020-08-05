@@ -1,5 +1,7 @@
 # Alibaba Cloud landing zones
 
+[English version](./README.md)
+
 阿里云企业 IT 治理云上样板间，针对不同阶段、不同规模的企业所设计的云治理最佳实践，帮助企业快速在阿里云上搭建一套安全、合规、可治理的云上环境。
 
 ## 样板间案例
