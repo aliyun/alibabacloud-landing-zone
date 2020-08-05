@@ -1,5 +1,7 @@
 # Alibaba Cloud landing zones
 
+[中文版本](./README_zh.md)
+
 Alibaba Cloud landing zones provide you with best practices to initialize a secure and compliant environment.
 
 ## Sample landing zones
@@ -18,7 +20,7 @@ Feel free to open an issue for feature or bug, or to submit a PR.
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
 Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://alibaba-cla-2018.oss-cn-beijing.aliyuncs.com/Alibaba_Documentation_Open_Source_Corporate_CLA.pdf.
+the rights to use your contribution.
 
 When you submit a pull request, a CLA bot will automatically determine whether you need to provide
 a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
