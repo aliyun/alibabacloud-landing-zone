@@ -1,27 +1,22 @@
 # Alibaba Cloud landing zones
 
-[中文版本](./README_zh.md)
+[English version](./README_en.md)
 
-Alibaba Cloud landing zones provide you with best practices to initialize a secure and compliant environment.
+阿里云企业 IT 治理云上样板间，针对不同阶段、不同规模的企业所设计的云治理最佳实践，帮助企业快速在阿里云上搭建一套安全、合规、可治理的云上环境。
 
-## Sample landing zones
+## 样板间案例
 
-Currently we provide you with the following sample landing zones:
+我们目前提供以下样板间案例：
 
 | **Name** | **Description** |
 | ---- | ------------|
-| [01-startup](./example/01-startup) | A landing zone solution for startup companies. | 
+| [01 初创企业](./example/01-startup) | 针对初创企业的样板间 |
+| [03 复杂企业](./example/03-complex-enterprise) | 针对复杂企业、跨国企业的样板间 | 
 
-## Community
+## 反馈
 
-Feel free to open an issue for feature or bug, or to submit a PR.
+如果您遇到任何问题，请提交 Issues；如果您想参与改进项目，请提交 PR。
 
-## Contributing
+## 参与开发
 
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+提交 PR 时，您需要同意阿里巴巴的 CLA 协议，否则 PR 不会被合并。
