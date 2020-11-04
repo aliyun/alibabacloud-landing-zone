@@ -1,0 +1,7 @@
+bucket="landing-zone-setup-xxxx"
+region="cn-shanghai"
+prefix="account-baseline/terraform"
+tablestore_endpoint="https://xxxx.cn-shanghai.ots.aliyuncs.com"
+tablestore_table="statelock"
+access_key="xxxx"
+secret_key="xxxx"
