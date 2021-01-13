@@ -12,6 +12,7 @@ resource "alicloud_resource_manager_account" "rd_account_app" {
 
 ## 资源共享
 resource "alicloud_resource_manager_resource_share" "share_unit" {
+  provider = alicloud.sharedservices
   resource_share_name = format("landingzone-%s", alicloud_resource_manager_account.rd_account_app.id)
 }
 
@@ -52,6 +53,7 @@ module "app_network_non_production" {
 }
 
 resource "alicloud_resource_manager_shared_target" "shared_vswitch_target" {
+  provider          = alicloud.sharedservices
   resource_share_id = alicloud_resource_manager_resource_share.share_unit.id
   target_id         = alicloud_resource_manager_account.rd_account_app.id
 }
