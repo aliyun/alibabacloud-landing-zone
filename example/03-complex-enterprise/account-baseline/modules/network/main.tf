@@ -4,14 +4,18 @@ data "alicloud_vpcs" "vpc_app_ds" {
   ]
 }
 
-resource "alicloud_vswitch" "vswitch_app" {
+module "vpc_vswitch" {
+  source = "./vswitch"
+
   for_each          = {
     for vsw in var.app_network_setting.vswitches : "${vsw.vswitch_name}" => vsw
   }
-  name              = each.value.vswitch_name
+
+  vswitch_name      = each.value.vswitch_name
   vpc_id            = var.vpc_id
   cidr_block        = each.value.cidr_block
-  availability_zone = each.value.zone
+  zone = each.value.zone
+  resource_share_id = var.resource_share_id
 }
 
 # resource "alicloud_cen_instance_attachment" "cen_app_network_attachment" {
@@ -26,9 +30,10 @@ module "vpc_nacl" {
   count = var.network_acl_enabled ? 1 : 0
 
   vpc_id = var.vpc_id
-  # TODO
   network_acl_name = "app_acl"
-  vswitches = alicloud_vswitch.vswitch_app
+  vswitches = {
+    for o in keys(module.vpc_vswitch) : o => module.vpc_vswitch[o].vswitch_app
+  }
   vswitches_shared_services = var.vswitches_shared_services
   vswitches_dmz = var.vswitches_dmz
 }
