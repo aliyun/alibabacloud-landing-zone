@@ -1,5 +1,5 @@
-access_key = "LTAI4GHzqxCmHR8TcWXn6L3w"
-secret_key = "IaivSITHfG6CquxAmglaBiZiv14Lxm"
+access_key = ""
+secret_key = ""
 region     = "cn-shanghai"
 
 # 共享账号 cen配置信息
