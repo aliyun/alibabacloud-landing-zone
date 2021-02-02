@@ -4,22 +4,22 @@ region     = "cn-shanghai"
 
 # 共享账号 cen配置信息
 share_service_account_cen = {
-  share_service_account_id = "1000308607385840"
+  share_service_account_id = ""
   cen = {
     instance_name = "cen"
   }
 }
 
-# 业务账号2 VPC 配置信息
+# 业务账号 VPC 配置信息
 member_account_vpc = {
-  member_account_id = "1537502672942416"
+  member_account_id = ""
   vpc = {
     cidr_block = "10.34.64.0/20"
     vpc_name   = "business1"
     projects = {
       #一个项目有多个vswitch, 比如一个vswitch挂ecs,一个vswitch挂rds.  可以按照项目维度如下定义
       "project1" : {
-        network_acl_enabled = true
+        network_acl_enabled = false
         vswitches = {
           "vsw-app-1-a" : {
             cidr_block = "10.34.64.0/24"
@@ -50,7 +50,7 @@ member_account_vpc = {
       }
 
       "project2" : {
-        network_acl_enabled = true
+        network_acl_enabled = false
         vswitches = {
           "vsw-app-2-a" : {
             cidr_block = "10.34.72.0/24"
