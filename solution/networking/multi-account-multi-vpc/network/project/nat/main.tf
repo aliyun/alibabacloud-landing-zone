@@ -18,6 +18,13 @@ resource "alicloud_eip_association" "eip_association_nat" {
   instance_id   = alicloud_nat_gateway.nat_gateway.id
 }
 
+resource "alicloud_snat_entry" "nat_snat_entry" {
+  depends_on        = [alicloud_eip_association.eip_association_nat]
+  snat_table_id     = alicloud_nat_gateway.nat_gateway.snat_table_ids
+  source_vswitch_id = var.vswitch_id
+  snat_ip           = join(",", alicloud_eip.eip.*.ip_address)
+}
+
 # 发布nat自定义路由到云企业网
 data "alicloud_route_tables" "vpc_route_table_ds" {
   vpc_id = var.vpc_id
