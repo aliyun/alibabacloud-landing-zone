@@ -28,7 +28,7 @@ resource "alicloud_cs_managed_kubernetes" "kubernetes_cluster" {
   pod_cidr              = var.pod_cidr
   cluster_spec          = var.cluster_spec
   new_nat_gateway       = false
-  version               = "1.16.6-aliyun.1"
+  version               = "1.18.8-aliyun.1"
   slb_internet_enabled  = false
   dynamic "addons" {
       for_each = var.cluster_addons
