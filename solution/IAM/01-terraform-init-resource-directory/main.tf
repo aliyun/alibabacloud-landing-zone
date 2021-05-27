@@ -7,7 +7,7 @@
 # 开通资源目录
 resource "alicloud_resource_manager_resource_directory" "resource_manager" {
   # 开启策略管控，目前有bug，无法在RD创建时开启，会被流控；如需开启可以在运行完成后，手动将status修改为Enabled状态
-  status = "Enabled"
+  # status = "Enabled"
 }
 
 # 在文件夹下创建资源账号
