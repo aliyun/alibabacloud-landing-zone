@@ -1,0 +1,52 @@
+locals {
+  access_key = "${access_key}"
+  secret_key = "${secret_key}"
+  region     = "${region}"
+  ram_roles = ${ram_roles}
+}
+
+provider "alicloud" {
+  access_key = local.access_key
+  secret_key = local.secret_key
+  region     = local.region
+}
+
+######################## [企业管理账号身份集成]##################
+
+# 获取当前主账号的信息
+data "alicloud_account" "current_account" {
+}
+
+%{ for account in accounts ~}
+##### 配置成员账号 ${account.display_name}/${account.account_id} #####
+provider "alicloud" {
+  access_key = local.access_key
+  secret_key = local.secret_key
+  region     = local.region
+  alias = "member_account_${account.account_id}"
+  assume_role {
+    role_arn           = "acs:ram::${account.account_id}:role/ResourceDirectoryAccountAccessRole"
+    session_name       = "AccountLandingZoneSetup"
+    session_expiration = 999
+  }
+}
+
+### 创建成员账号 ${account.display_name} 的 RAM 角色
+module "role_${account.account_id}" {
+  for_each = local.ram_roles
+  source = "../modules/role"
+
+  providers = {
+    alicloud = alicloud.member_account_${account.account_id}
+  }
+
+  #account_uid = "${account.account_id}"
+  #master_account_uid 
+  account_uid = data.alicloud_account.current_account.id
+  role_name = each.key
+  role_description = each.value.description
+  policies = each.value.policies
+}
+
+
+%{ endfor ~}
