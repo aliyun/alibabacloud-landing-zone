@@ -4,13 +4,14 @@ secret_key = ""
 region = "cn-hangzhou"
 
 # 创建文件夹和资源账号
-# 创建"prod"和"core"文件夹，下面分别有账号"Bob","Alice"和"Admin","Manager"
+# 创建"prod"和"core"文件夹
+# "prod"下有账号"Prod", "Pre-prod", "Dev", "Test", "core"下有账号"Shared Service", "Security", "Networking", "Audit"
 resource_directories = {
   "prod": {
-    users = ["Bob", "Alice"]
+    accounts = ["Prod", "Pre-prod", "Dev", "Test"]
   },
   "core": {
-    users = ["Admin", "Manager"]
+    accounts = ["Shared Service", "Security", "Networking", "Audit"]
   }
 }
 
