@@ -1,5 +1,3 @@
-<img src="image/landing-zone-journey.png" style="zoom:50%;" />
-
 # 阿里云Landing Zone
 
 阿里云Landing Zone帮助企业客户快速搭建一套安全的,合规的,可扩展的多账号环境。
@@ -16,6 +14,10 @@
 - **灵活多变**：您可以将阿里云账户和公司业务流程一一对应，以应对不同业务对运营，法规和预算等方面的特殊要求。
 
 
+
+## 上云路线图
+
+![](image/landing-zone-journey.png)
 
 ## 功能示例
 
