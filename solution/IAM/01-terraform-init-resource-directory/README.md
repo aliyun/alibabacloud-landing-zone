@@ -22,15 +22,16 @@
 
    - 根据自身需要修改`resource_directories`内容文件夹列表以及文件夹下的用户
 
-     ```json
+     ```
      # 创建文件夹和资源账号
-     # 创建"prod"和"core"文件夹，下面分别有账号"Bob","Alice"和"Admin","Manager"
+     # 创建"prod"和"core"文件夹
+     # "prod"下有账号"Prod", "Pre-prod", "Dev", "Test", "core"下有账号"Shared Service", "Security", "Networking", "Audit"
      resource_directories = {
        "prod": {
-         users = ["Bob", "Alice"]
+         accounts = ["Prod", "Pre-prod", "Dev", "Test"]
        },
        "core": {
-         users = ["Admin", "Manager"]
+         accounts = ["Shared Service", "Security", "Networking", "Audit"]
        }
      }
      
@@ -46,7 +47,9 @@
 
    ![3.apply运行结果](../img/3.01-apply运行结果.png)
 
-   6. 控制台检查资源目录是否成功开通并且创建资源夹和用户
+6. 控制台检查资源目录是否成功开通并且创建资源夹和用户
 
       ![12.01-控制台](../img/12.01-控制台.png)
+      
+7. 创建完成后若要删除资源账号，需先在控制台将其升级为云账号，无法直接用`terraform destroy`直接删除。
 

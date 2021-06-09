@@ -20,7 +20,7 @@ module "account" {
   }
 
   folder_name = each.key
-  account_name = each.value.users
+  account_name = each.value.accounts
   depends_on = [
     alicloud_resource_manager_resource_directory.resource_manager,
   ]
