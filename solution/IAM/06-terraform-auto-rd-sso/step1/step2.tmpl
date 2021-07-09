@@ -1,0 +1,65 @@
+locals {
+  access_key = "${access_key}"
+  secret_key = "${secret_key}"
+  region     = "${region}"
+  metadata   = "${metadata}"
+  saml_provider_name = "${saml_provider_name}"
+  ram_roles = ${ram_roles} 
+}
+
+provider "alicloud" {
+  access_key = local.access_key
+  secret_key = local.secret_key
+  region     = local.region
+}
+
+######################## [企业管理账号身份集成]##################
+%{ for account in accounts ~}
+##### 配置成员账号 ${account.display_name}/${account.account_id} #####
+provider "alicloud" {
+  access_key = local.access_key
+  secret_key = local.secret_key
+  region     = local.region
+  alias = "member_account_${account.account_id}"
+  assume_role {
+    role_arn           = "acs:ram::${account.account_id}:role/ResourceDirectoryAccountAccessRole"
+    session_name       = "AccountLandingZoneSetup"
+    session_expiration = 999
+  }
+}
+
+### 创建成员账号 ${account.display_name} 的 RAM 角色
+module "role_${account.account_id}" {
+  for_each = local.ram_roles
+  source = "../modules/role"
+
+  providers = {
+    alicloud = alicloud.member_account_${account.account_id}
+  }
+
+  account_uid =  ${account.account_id}
+  role_name = each.key
+  role_description = each.value.description
+  policies = each.value.policies
+  idp_name = local.saml_provider_name
+}
+
+### 在成员账号上创建idp
+resource "alicloud_ram_saml_provider" "idp_${account.account_id}" {
+  provider = alicloud.member_account_${account.account_id}
+  saml_provider_name = local.saml_provider_name
+  encodedsaml_metadata_document = local.metadata
+  description = "For Terraform Test"
+}
+
+### 输出创建好的角色arn
+output "role_arn_${account.account_id}" {
+  value = <<EOT
+    %%{ for role_arn in values(module.role_${account.account_id})[*]["role_arn"]}
+      $${role_arn},$${alicloud_ram_saml_provider.idp_${account.account_id}.arn}
+    %%{ endfor }
+    EOT
+}
+
+
+%{ endfor ~}
