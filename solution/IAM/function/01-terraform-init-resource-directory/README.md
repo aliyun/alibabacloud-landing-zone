@@ -6,11 +6,11 @@
 
 ## 前置条件
 
-- 确保在当前环境已经安装Terraform，并且版本 >= 0.13。
+- 确保在当前环境已经安装Terraform。
 
-- 确保已持有用户AK且用户有权限完成操作。进入主账号，创建一个用户并且生成AK，并赋予该账号AliyunResourceDirectoryFullAccess权限
+- 确保已持有用户AK且用户有权限完成操作。进入主账号，创建一个用户并且生成AK，并赋予该账号AliyunResourceDirectoryFullAccess权限。
 
-  ![1. 创建RAM角色并生成AK](../img/1.创建RAM角色并生成AK.png)
+  ![1. 创建RAM角色并生成AK](../../img/1.创建RAM角色并生成AK.png)
 
 ## 操作步骤
 
@@ -41,15 +41,15 @@
 
 4. 运行`terraform plan -var-file=settings.tfvars`，检查是否报错，如果报错，请检查第二步中的配置项是否正确；
 
-   ![2.plan运行结果](../img/2.01-plan运行结果.png)
+   ![2.plan运行结果](../../img/2.01-plan运行结果.png)
 
 5. 运行`terraform apply -var-file=settings.tfvars -parallelism=1`，自检成功后输入 *yes* 开始运行。运行成功后检查资源目录是否开启，以及所有文件夹和成员账号是否成功创建。
 
-   ![3.apply运行结果](../img/3.01-apply运行结果.png)
+   ![3.apply运行结果](../../img/3.01-apply运行结果.png)
 
 6. 控制台检查资源目录是否成功开通并且创建资源夹和用户
 
-      ![12.01-控制台](../img/12.01-控制台.png)
+      ![12.01-控制台](../../img/12.01-控制台.png)
       
 7. 创建完成后若要删除资源账号，需先在控制台将其升级为云账号，无法直接用`terraform destroy`直接删除。
 

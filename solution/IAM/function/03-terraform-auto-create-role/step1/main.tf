@@ -40,8 +40,3 @@ resource "local_file" "step2-main" {
   })
   filename = "${path.module}/../step2/main.tf"
 }
-
-resource "local_file" "step2-versions" {
-  content  = file("${path.module}/versions.tf")
-  filename = "${path.module}/../step2/versions.tf"
-}

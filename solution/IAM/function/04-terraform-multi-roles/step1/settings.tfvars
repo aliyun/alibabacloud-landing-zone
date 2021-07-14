@@ -7,9 +7,10 @@ region = "cn-hangzhou"
 ram_roles = [
   {
     role_name = "cloudadmin"
-    account_id = "1***************"
+    account_id = "1925726250249818"
   },
-  { role_name = "networkadmin"
-    account_id = "1***************"
+  {
+    role_name = "networkadmin"
+    account_id = "1320526250247518"
   }
 ]

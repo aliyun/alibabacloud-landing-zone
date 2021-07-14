@@ -52,8 +52,8 @@
 
 4. 运行`terraform plan -var-file=settings.tfvars`，检查资源信息是否正常创建。
 
-   ![20.单账号sso-plan](../img/20.单账号sso-plan.png)
+   ![20.单账号sso-plan](../../img/20.单账号sso-plan.png)
 
 5. 运行`terraform apply -var-file=settings.tfvars`，自检成功后输入*yes*开始运行。运行成功后控制台打印出角色arn和idp arn。
 
-   ![21.单账号sso-apply](../img/21.单账号sso-apply.png)
+   ![21.单账号sso-apply](../../img/21.单账号sso-apply.png)

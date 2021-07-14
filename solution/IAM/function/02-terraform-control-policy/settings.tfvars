@@ -27,5 +27,5 @@ policy_document = {
   ]
 }
 
-# 绑定的资源夹的正则表达式
-directory_regex = "prod"
+# 绑定的资源夹ID组
+resource_manager_folder_ids = ["fd-Zn1wkx2Dws","fd-5wKgZmg0ng"]

@@ -52,11 +52,11 @@
 
    - 运行 `terraform plan -var-file=settings.tfvars` ，检查是否有报错，如果有报错，请检查第二步中的配置项是否正确；
 
-     ![13.04-plan结果](../img/13.04-plan结果.png)
+     ![13.04-plan结果](../../img/13.04-plan结果.png)
 
    - 运行 `terraform apply -var-file=settings.tfvars` ，自检成功后输入 yes 开始运行。运行成功后，根目录下会生成 `step2` 目录并包含 `main.tf` 等文件
 
-     ![14.04-apply结果](../img/14.04-apply结果.png)
+     ![14.04-apply结果](../../img/14.04-apply结果.png)
 
      
 
@@ -66,11 +66,11 @@
 
    - 运行 `terraform plan`，检查是否有报错；
 
-     ![15.step2-plan结果](../img/15.step2-plan结果.png)
+     ![15.step2-plan结果](../../img/15.step2-plan结果.png)
 
-   - 运行 `terraform apply -parallelism=1` ，自检成功后输入 yes 开始运行；
+   - 运行 `terraform apply` ，自检成功后输入 yes 开始运行；
 
-   - 运行成功后，检查是否成功打印角色uid。如成功显示各角色所在账号的uid，即表明当前用户成功扮演不同账号中的不同角色。
+   - 运行成功后，检查是否成功打印角色arn。如成功显示各角色的arn，即表明当前用户成功扮演不同账号中的不同角色。
 
-     ![16.04-step2-apply结果](../img/16.04-step2-apply结果.png)
+     ![16.04-step2-apply结果](../../img/16.04-step2-apply结果.png)
 

@@ -63,11 +63,11 @@
    - 进入 `step1` 目录，然后运行 `terraform init` ；
    - 运行 `terraform plan -var-file=settings.tfvars` ，检查是否有报错，如果有报错，请检查第二步中的配置项是否正确；
 
-   ![6.03-plan运行结果](../img/6.03-step1-plan运行结果.png)
+   ![6.03-plan运行结果](../../img/6.03-step1-plan运行结果.png)
 
    - 运行 `terraform apply -var-file=settings.tfvars -parallelism=1` ，自检成功后输入 yes 开始运行。运行成功后，根目录下会生成 `step2` 目录并包含 `main.tf` 等文件
 
-     ![7.03-step1-apply运行结果](../img/7.03-step1-apply运行结果.png)
+     ![7.03-step1-apply运行结果](../../img/7.03-step1-apply运行结果.png)
 
 4. 第二阶段操作：
 
@@ -75,12 +75,12 @@
 
    - 运行 `terraform plan`，检查是否有报错；
 
-     ![8.03-step2-plan运行结果](../img/8.03-step2-plan运行结果.png)
+     ![8.03-step2-plan运行结果](../../img/8.03-step2-plan运行结果.png)
 
    - 运行 `terraform apply -parallelism=1` ，自检成功后输入 yes 开始运行；
 
-     ![9.03-step2-apply运行结果](../img/9.03-step2-apply运行结果.png)
+     ![9.03-step2-apply运行结果](../../img/9.03-step2-apply运行结果.png)
 
    - 运行成功后，到控制台检查是否所有成员账号的角色创建完成；如果有报错，一般是因为控制台上已经创建过相同名称的角色，建议在控制台上删除同名角色后重新运行上一步；
 
-     ![10.03-控制台](../img/10.03-控制台.png)
+     ![10.03-控制台](../../img/10.03-控制台.png)

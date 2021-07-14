@@ -83,3 +83,4 @@
    - 运行`terraform apply`，自检成功后输入*yes*开始运行。运行成功后会在控制台打印各个成员账号下创建的角色arn和idp arn（格式是`role arn,idp arn`）
 
      ![23.多账号sso-step2-apply](../img/23.多账号sso-step2-apply.png)  
+
