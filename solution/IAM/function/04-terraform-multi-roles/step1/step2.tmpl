@@ -1,0 +1,37 @@
+locals {
+  access_key = "${access_key}"
+  secret_key = "${secret_key}"
+  region     = "${region}"
+}
+
+provider "alicloud" {
+  access_key = local.access_key
+  secret_key = local.secret_key
+  region     = local.region
+}
+
+%{ for ram_role in ram_roles ~}
+############## 扮演角色${ram_role.role_name} ###############
+provider "alicloud" {
+  access_key = local.access_key
+  secret_key = local.secret_key
+  region     = local.region
+  alias = "member_account_${ram_role.account_id}"
+  assume_role {
+    role_arn = "acs:ram::${ram_role.account_id}:role/${ram_role.role_name}"
+    #role_arn = "acs:ram::${ram_role.account_id}:role/ResourceDirectoryAccountAccessRole"
+  }
+}
+
+module "current_${ram_role.account_id}" {
+  providers = {
+    alicloud = alicloud.member_account_${ram_role.account_id}
+  }
+  source = "../modules/output"
+}
+
+output "current_${ram_role.account_id}" {
+  value = module.current_${ram_role.account_id}.current_role_arn
+}
+##########################################
+%{ endfor ~}

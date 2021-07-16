@@ -1,0 +1,3 @@
+- 3.2-goldenImage：多账号Golden Image解决方案的Terraform脚本
+- 3.3-cmdb: 同步云上配置到企业CMDB解决方案的Terraform脚本
+- img: readme.md中的图片

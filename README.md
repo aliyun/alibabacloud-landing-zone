@@ -65,16 +65,19 @@
 
 | Name                                                         | Description                                                  |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| [01 初始化资源目录](./solution/IAM/01-terraform-init-resource-directory) | 为主账号开通资源目录，创建资源夹并在资源夹中创建资源账号     |
-| [02 为资源目录下发策略](./solution/IAM/02-terraform-control-policy) | 创建新的管控策略，并绑定在指定资源夹下                       |
-| [03 为企业成员账号创建角色](./solution/IAM/03-terraform-auto-create-role) | 在主账号和旗下所有成员账号中，创建用户指定的RAM角色          |
-| [04 用户跨账号扮演角色](./solution/IAM/04-terraform-multi-roles) | 主账号扮演用户指定成员账号中的不同角色，并打印出所扮演角色的账号uid |
+| [01 初始化资源目录](./solution/IAM/function/01-terraform-init-resource-directory) | 为主账号开通资源目录，创建资源夹并在资源夹中创建资源账号     |
+| [02 为资源目录下发策略](./solution/IAM/function/02-terraform-control-policy) | 创建新的管控策略，并绑定在指定资源夹下                       |
+| [03 为企业成员账号创建角色](./solution/IAM/function/03-terraform-auto-create-role) | 在主账号和旗下所有成员账号中，创建用户指定的RAM角色          |
+| [04 用户跨账号扮演角色](./solution/IAM/function/04-terraform-multi-roles) | 主账号扮演用户指定成员账号中的不同角色，并打印出所扮演角色的账号uid |
 
 ## 解决方案自动化
 
 | Name                                                         | Description                                                  |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| [多账号SSO自动化配置](./solution/IAM/06-terraform-auto-rd-sso) | 为主账号下的成员账号创建用户指定的Idp和RAM角色，实现多账号条件下的SSO |
+| [2.1 多账号SSO自动化配置](./solution/IAM/2.1-multi-account-sso) | 为主账号下的成员账号创建用户指定的Idp和RAM角色，实现多账号条件下的SSO |
+| [3.1 企业级中心化审计架构](./solution/compliance/3.1-actiontrail) | 该方案指导企业客户在多账号的云上IT架构下，正确稳妥地归集并留存审计日志 |
+| [3.2 多账号Golden Image方案](./solution/compliance/3.2-goldenImage) | 基于资源目录实现企业基础镜像的统一构建、共享和分发，保障企业基础镜像的使用合规 |
+| [3.3 同步云上配置到企业CMDB](./solution/compliance/3.3-cmdb) | 基于资源目录一站式的采集全量资源配置数据，加快企业自有CMDB的构建 |
 
 ## 反馈
 
