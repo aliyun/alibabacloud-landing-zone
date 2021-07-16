@@ -7,8 +7,8 @@
 ## 前置条件
 
 - 确保当前环境已经安装Terraform
-- 确保账号已经开启资源目录服务
-- 确保已持有用户AK且用户有权限完成操作。用户需要有AliyunResourceDirectoryReadOnlyAccess、AliyunSTSAssumeRoleAccess、AliyunRAMFullAccess权限。
+- 确保企业管理账号已经开启资源目录服务
+- 确保已持有企业管理账号RAM用户AK且用户有权限完成操作。用户需要有AliyunResourceDirectoryReadOnlyAccess、AliyunSTSAssumeRoleAccess、AliyunRAMFullAccess权限。
 - 确保已经获得Idp meta.xml元数据文件
 
 ## 操作步骤

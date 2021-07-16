@@ -74,9 +74,10 @@
 
 | Name                                                         | Description                                                  |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| [多账号SSO自动化配置](./solution/IAM/2.1-multi-account-sso)  | 为主账号下的成员账号创建用户指定的Idp和RAM角色，实现多账号条件下的SSO |
-| [多账号Golden Image方案](./solution/compliance/3.2-goldenImage) | 基于资源目录实现企业基础镜像的统一构建、共享和分发，保障企业基础镜像的使用合规。 |
-| [同步云上配置到企业CMDB](./solution/compliance/3.3-cmdb)     | 基于资源目录一站式的采集全量资源配置数据，加快企业自有CMDB的构建。 |
+| [2.1 多账号SSO自动化配置](./solution/IAM/2.1-multi-account-sso) | 为主账号下的成员账号创建用户指定的Idp和RAM角色，实现多账号条件下的SSO |
+| [3.1 企业级中心化审计架构](./solution/compliance/3.1-actiontrail) | 该方案指导企业客户在多账号的云上IT架构下，正确稳妥地归集并留存审计日志 |
+| [3.2 多账号Golden Image方案](./solution/compliance/3.2-goldenImage) | 基于资源目录实现企业基础镜像的统一构建、共享和分发，保障企业基础镜像的使用合规 |
+| [3.3 同步云上配置到企业CMDB](./solution/compliance/3.3-cmdb) | 基于资源目录一站式的采集全量资源配置数据，加快企业自有CMDB的构建 |
 
 ## 反馈
 

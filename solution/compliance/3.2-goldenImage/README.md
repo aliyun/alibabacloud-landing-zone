@@ -7,8 +7,8 @@
 ## 前置条件
 
 - 确保在当前环境已经安装Terraform。
-- 确保账号已开启资源目录服务，且持有企业管理账号AK。
-- 确保已持有用户AK且用户有权限完成操作，包括：AliyunResourceDirectoryFullAccess、AliyunECSFullAccess、AliyunVPCFullAccess权限。
+- 确保企业管理账号已开启资源目录服务。
+- 确保已持有企业管理账号下的RAM用户AK且用户有权限完成操作，包括：AliyunResourceDirectoryFullAccess、AliyunECSFullAccess、AliyunVPCFullAccess权限。
 
 ## 操作步骤
 

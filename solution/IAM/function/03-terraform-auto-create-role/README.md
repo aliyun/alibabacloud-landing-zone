@@ -7,7 +7,7 @@
 ## 前置条件
 
 - 确保当前环境已经安装 Terraform，并且版本 >= 0.13；
-- 确保已持有用户AK且用户有权限完成操作。进入主账号，创建用户并生成AK，并且赋予该账号AliyunResourceDirectoryReadOnlyAccess、AliyunSTSAssumeRoleAccess、AliyunRAMFullAccess权限。
+- 确保已持有企业管理账号下RAM用户AK且用户有权限完成操作。进入主账号，创建用户并生成AK，并且赋予该账号AliyunResourceDirectoryReadOnlyAccess、AliyunSTSAssumeRoleAccess、AliyunRAMFullAccess权限。
 - 确保用户已经开启**资源目录服务**
 
 ## 操作步骤

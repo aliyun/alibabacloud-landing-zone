@@ -8,7 +8,7 @@
 
 - 确保在当前环境已经安装Terraform。
 
-- 确保已持有用户AK且用户有权限完成操作。进入主账号，创建一个用户并且生成AK，并赋予该账号AliyunResourceDirectoryFullAccess权限。
+- 确保已持有企业管理账号下RAM用户AK且用户有权限完成操作。进入账号，创建一个用户并且生成AK，并赋予该账号AliyunResourceDirectoryFullAccess权限。
 
   ![1. 创建RAM角色并生成AK](../../img/1.创建RAM角色并生成AK.png)
 
