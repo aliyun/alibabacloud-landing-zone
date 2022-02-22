@@ -1,0 +1,77 @@
+default:
+  image: registry.cn-hangzhou.aliyuncs.com/terraform/terraform-docker-hub:v1
+
+variables:
+  ALICLOUD_ACCESS_KEY: $access_key
+  ALICLOUD_SECRET_KEY: $secret_key
+  ALICLOUD_REGION: $region
+  uid: $uid
+  account_name: $account_name
+  account_name_prefix: $account_name_prefix
+  folder_id: $folder_id
+  vpc_cidr_block: $vpc_cidr_block
+  switch_cidr_block: $switch_cidr_block
+  zone_id: $zone_id
+
+stages:
+  - 环境准备
+  - 创建账号
+  - 权限配置
+  - 网络配置
+
+环境准备:
+  stage: 环境准备
+  script:
+    #  直接用代码文件夹执行tf代码时，后续产生的过程文件会被每个job开始时的gitlab更新代码重置掉，把代码copy到terraform-exec作为执行时文件夹
+    - pwd && rm -rf ../terraform-exec
+    - mkdir ../terraform-exec && cp -r * ../terraform-exec && cd ../terraform-exec && ls -al
+
+创建账号:
+  stage: 创建账号
+  needs: [环境准备]
+  script:
+    - pwd && cd ../terraform-exec/step/account-create && ls -al
+    - terraform init -backend-config="key=$uid-$account_name-account-create" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform apply --auto-approve -var "folder_id=$folder_id" -var "account_name=$account_name" -var "account_name_prefix=$account_name_prefix"
+    - ls -al && cat ../var/account.json
+
+创建IDP:
+  stage: 权限配置
+  needs: [创建账号]
+  script:
+    - pwd && cd ../terraform-exec/step/auth-create-idp && ls -al
+    - terraform init -backend-config="key=$uid-$account_name-auth-idp" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform apply --auto-approve -var-file=../../settings.tfvars -compact-warnings
+
+创建角色:
+  stage: 权限配置
+  needs: [创建IDP]
+  script:
+    - pwd && cd ../terraform-exec/step/auth-create-role && ls -al
+    - terraform init -backend-config="key=$uid-$account_name-auth-create-role" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform apply --auto-approve -var-file=../../settings.tfvars -compact-warnings
+创建TF用户:
+  stage: 权限配置
+  needs: [创建角色]
+  script:
+    - pwd && cd ../terraform-exec/step/auth-create-user && ls -al
+    - terraform init -backend-config="key=$uid-$account_name-auth-create-user" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform apply --auto-approve -var-file=../../settings.tfvars -compact-warnings
+
+角色授权:
+  stage: 权限配置
+  needs: [创建TF用户]
+  script:
+    - pwd && cd ../terraform-exec/step/auth-authorize-role && ls -al
+    - terraform init -backend-config="key=$uid-$account_name-auth-authorize-role" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform apply --auto-approve -var-file=../../settings.tfvars -compact-warnings
+
+网络配置:
+  stage: 网络配置
+  needs: [角色授权]
+  script:
+    - pwd && cd ../terraform-exec/step/network-create-vpc-vsw && ls -al
+    - terraform init -backend-config="key=$uid-$account_name-network-create-vpc-vsw" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform apply --auto-approve -compact-warnings -var "vpc_cidr_block=$vpc_cidr_block"
+      -var "switch_cidr_block=$switch_cidr_block" -var "zone_id=$zone_id" -var-file=../../settings.tfvars
+    - cat ../var/vpc.json && cat ../var/vswitch.json

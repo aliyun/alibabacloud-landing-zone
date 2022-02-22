@@ -1,7 +1,6 @@
 # Local .terraform directories
 **/.terraform/*
 **/.terraform.lock.hcl
-.terraform.lock.hcl
 
 # .tfstate files
 *.tfstate
@@ -30,6 +29,11 @@ override.tf.json
 # Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
 # example: *tfplan*
 
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
 # ignore MacOS system file
 **/.DS_Store
-.idea/
