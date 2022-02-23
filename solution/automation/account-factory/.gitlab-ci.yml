@@ -40,7 +40,7 @@ stages:
   needs: [创建账号]
   script:
     - pwd && cd ../terraform-exec/step/auth-create-idp && ls -al
-    - terraform init -backend-config="key=$uid-$account_name-auth-idp" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
+    - terraform init -backend-config="key=$uid-$account_name-auth-create-idp" -backend-config=../../backend.tfvars -reconfigure -plugin-dir=/srv/terraform-plugins
     - terraform apply --auto-approve -var-file=../../settings.tfvars -compact-warnings
 
 创建角色:

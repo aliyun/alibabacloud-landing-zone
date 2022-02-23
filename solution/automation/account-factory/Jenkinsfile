@@ -8,7 +8,7 @@ pipeline {
     stages {
         stage('环境准备'){
             steps{
-                git credentialsId: 'yf01-aliyun-code-repo', url: 'git@codeup.aliyun.com:61028737f71d4ebf89457ab4/account-base.git'
+                git credentialsId: 'yf01-aliyun-code-repo', url: 'git@codeup.aliyun.com:xxxx/account-base.git'
             }
         }
         stage('创建账号') {
