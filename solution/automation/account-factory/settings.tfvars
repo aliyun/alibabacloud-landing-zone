@@ -9,12 +9,12 @@ ram_roles = {
     {
       # The name must be no more than 64 characters，English letters, numbers, or "-" are allowed
       "role_name"   = "admin"
-      "description" = "成员账号的管理员角色"
+      "description" = "Administrator role for member accounts"
     },
     {
       # The name must be no more than 64 characters，English letters, numbers, or "-" are allowed
       "role_name"   = "reader"
-      "description" = "成员账号的只读角色"
+      "description" = "Reader role for member accounts"
     }
   ]
 }
