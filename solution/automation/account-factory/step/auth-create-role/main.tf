@@ -7,10 +7,8 @@ locals {
   sso_provider_name = var.sso_provider_name
 }
 
-##### 配置新创建的成员账号 #####
 provider "alicloud" {
   alias = "rd_role"
-  # 目前TF无法支持动态provider功能
   assume_role {
     role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.account_id)
     session_name       = "AccountLandingZoneSetup"
@@ -18,7 +16,7 @@ provider "alicloud" {
   }
 }
 
-# 定义多个联合身份角色
+# Create ram roles from IDP
 module "ram_role" {
   source    = "../../modules/role"
   providers = {

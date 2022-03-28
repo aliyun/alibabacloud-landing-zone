@@ -1,5 +1,3 @@
-# 创建 Production VPC
-# 问题参考:https://discuss.hashicorp.com/t/terraform-trying-to-install-incorrect-provider/23747/2
 terraform {
   required_providers {
     alicloud = {

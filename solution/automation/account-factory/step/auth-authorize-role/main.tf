@@ -2,13 +2,11 @@ locals {
   account_json = fileexists("../var/account.json") ? jsondecode(file("../var/account.json")) : {}
   account_id   = var.account_id == "" ? local.account_json["account_id"] : var.account_id
 
-  # Contributor 参数
   policy_name     = var.policy_name
   policy_document = var.policy_document
   attach_roles    = var.attach_roles
   attach_users    = var.attach_users
 
-  # Reader 参数
   reader_name        = var.reader_name
   reader_policy_type = var.reader_policy_type
   reader_policy_name = var.reader_policy_name
@@ -16,7 +14,6 @@ locals {
 
 provider "alicloud" {
   alias = "rd_role"
-  # 目前TF无法支持动态provider功能
   assume_role {
     role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.account_id)
     session_name       = "AccountLandingZoneSetup"
@@ -24,7 +21,7 @@ provider "alicloud" {
   }
 }
 
-# 创建Contributor策略，并为Ram role和Ram user添加策略
+# Create policy
 resource "alicloud_ram_policy" "policy" {
   provider        = alicloud.rd_role
   policy_name     = local.policy_name
@@ -33,6 +30,7 @@ resource "alicloud_ram_policy" "policy" {
   force           = true
 }
 
+# Add policy to user
 resource "alicloud_ram_user_policy_attachment" "user_attach" {
   provider    = alicloud.rd_role
   for_each    = toset(local.attach_users)
@@ -41,6 +39,7 @@ resource "alicloud_ram_user_policy_attachment" "user_attach" {
   user_name   = each.value
 }
 
+# Add policy to role
 resource "alicloud_ram_role_policy_attachment" "role_attach" {
   provider    = alicloud.rd_role
   for_each    = toset(local.attach_roles)
@@ -49,7 +48,7 @@ resource "alicloud_ram_role_policy_attachment" "role_attach" {
   role_name   = each.value
 }
 
-# 为reader添加策略
+# Add policy to reader role
 resource "alicloud_ram_role_policy_attachment" "reader_attach" {
   provider    = alicloud.rd_role
   policy_name = local.reader_policy_name

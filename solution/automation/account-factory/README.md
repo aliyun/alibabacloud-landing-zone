@@ -1,6 +1,6 @@
-## Backend注意
-每一步对应backend里面的KEY须不一样。否则的话，会出现覆盖。
+## Notes on Backend
+The 'key' field in backend configuration at each step of the pipeline must be different. Otherwise, overwriting will occur.
 
-比如创建IDP这一步执行完成，生成的State文件里会有IDP信息。
-如果下一步骤X跟创建IDP步骤的KEY一样，执行之后，步骤X里是没有创建IDP TF代码的，
-但State文件是有的，Terraform认为是对资源终态描述做了变更，就会出现IDP被覆盖删除。
+For example, the step of creating an IDP is completed, and the generated state file will have IDP information.
+If the 'key' field of the next step X is configured the same as the IDP step, after execution,  because of the IDP Terraform code is not included in step X,
+Terraform thinks that the final state description of the resource has been changed, and the IDP will be overwritten and deleted.

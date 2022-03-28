@@ -10,7 +10,6 @@ locals {
 
 provider "alicloud" {
   alias = "rd_role"
-  # 目前TF无法支持动态provider功能
   assume_role {
     role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.account_id)
     session_name       = "AccountLandingZoneSetup"
@@ -31,7 +30,7 @@ module "network_config" {
   zone_id = local.zone_id
 }
 
-# 保存vpc vsw信息，后续步骤可使用
+# Save information temporarily, can be used in subsequent steps
 resource "local_file" "vpc_json" {
   content  = templatefile("../var/vpc.json.tmpl", {
     vpc_name = local.vpc_name
