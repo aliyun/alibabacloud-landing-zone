@@ -38,3 +38,4 @@ Also, you can add more variables files in the folder `tfvars`.
 | Name | Version    |
 |------|------------|
 | <a name="provider_alicloud"></a> [alicloud](#provider\_alicloud) | >= 1.127.0 |
+
