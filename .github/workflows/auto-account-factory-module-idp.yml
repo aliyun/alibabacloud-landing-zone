@@ -7,20 +7,12 @@ env:
 
 # Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the xx branch
+  # Triggers the workflow on push or pull request events but only for the xx path
   push:
-    branches:
-      # Modify according to the actual situation
-      - tf-ci-test
-      - main
     paths:
       # Modify according to the actual situation
       - 'solution/automation/account-factory/modules/idp/**'
   pull_request:
-    branches:
-      # Modify according to the actual situation
-      - tf-ci-test
-      - main
     paths:
       # Modify according to the actual situation
       - 'solution/automation/account-factory/modules/idp/**'
