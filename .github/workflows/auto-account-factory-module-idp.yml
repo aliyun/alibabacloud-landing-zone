@@ -1,0 +1,58 @@
+# This is a basic workflow to help you get started with Actions
+name: auto-account-factory-module-idp.yml
+env:
+  ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+  ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+  ALICLOUD_REGION: 'cn-hangzhou'
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the xx branch
+  push:
+    branches:
+      # Modify according to the actual situation
+      - tf-ci-test
+      - main
+    paths:
+      # Modify according to the actual situation
+      - 'solution/automation/account-factory/modules/idp/**'
+  pull_request:
+    branches:
+      # Modify according to the actual situation
+      - tf-ci-test
+      - main
+    paths:
+      # Modify according to the actual situation
+      - 'solution/automation/account-factory/modules/idp/**'
+
+# Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "terraform-module-test"
+  terraform-module-ci:
+    # The type of runner that the job will run on
+#    runs-on: self-hosted
+    runs-on: ubuntu-latest
+
+    # Modify according to the actual situation
+    environment: yunguotest1_MA_1140931609457592
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+      - name: Run Terraform Module
+        shell: bash
+
+        # Modify according to the actual situation
+        run: |
+          pwd && ls -al
+          cd solution/automation/account-factory/modules/idp/examples/complete
+          terraform init -backend-config=tfvars/backend.tfvars
+          terraform plan -var-file=tfvars/step-01-create-idp.tfvars
+          terraform apply --auto-approve -var-file=tfvars/step-01-create-idp.tfvars
