@@ -31,10 +31,10 @@ Also, you can add more variables files in the folder `tfvars`.
 | Name | Version    |
 |------|------------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 0.12    |
-| <a name="requirement_alicloud"></a> [alicloud](#requirement\_alicloud) | >= 1.145.0 |
+| <a name="requirement_alicloud"></a> [alicloud](#requirement\_alicloud) | >= 1.127.0 |
 
 ## Providers
 
-| Name | Version |
-|------|---------|
-| <a name="provider_alicloud"></a> [alicloud](#provider\_alicloud) | >= 1.145.0 |
+| Name | Version    |
+|------|------------|
+| <a name="provider_alicloud"></a> [alicloud](#provider\_alicloud) | >= 1.127.0 |
