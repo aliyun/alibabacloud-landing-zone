@@ -36,8 +36,8 @@ jobs:
   # This workflow contains a single job called "terraform-module-test"
   terraform-module-ci:
     # The type of runner that the job will run on
-#    runs-on: self-hosted
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+#    runs-on: ubuntu-latest
 
     # Modify according to the actual situation
     environment: yunguotest1_MA_1140931609457592
