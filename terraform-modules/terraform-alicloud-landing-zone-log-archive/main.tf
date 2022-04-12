@@ -40,7 +40,7 @@ resource "alicloud_oss_bucket" "actiontrail" {
 }
 
 locals {
-  actiontrail_sls_project_arn = var.sls_project_name_for_actiontrail != "" ? format("acs:log:%s:%s:project/%s", var.sls_project_region_for_actiontrail, data.alicloud_account.logarchive.id, alicloud_log_project.actiontrail.name) : ""
+  actiontrail_sls_project_arn = var.sls_project_name_for_actiontrail != "" ? format("acs:log:%s:%s:project/%s", var.sls_project_region_for_actiontrail, data.alicloud_account.logarchive.id, alicloud_log_project.actiontrail[0].name) : ""
   actiontrail_log_archive_role_document = <<EOF
   {
     "Statement": [
@@ -73,7 +73,7 @@ resource "alicloud_actiontrail_trail" "trail" {
 
   trail_name = var.actiontrail_trail_name
   event_rw = "All"
-  oss_bucket_name = var.oss_bucket_name_for_actiontrail != "" ? alicloud_oss_bucket.actiontrail.id : ""
+  oss_bucket_name = var.oss_bucket_name_for_actiontrail != "" ? alicloud_oss_bucket.actiontrail[0].id : ""
   sls_project_arn = local.actiontrail_sls_project_arn
   oss_write_role_arn = alicloud_ram_role.actiontrail[0].arn
   sls_write_role_arn = alicloud_ram_role.actiontrail[0].arn
