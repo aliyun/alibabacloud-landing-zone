@@ -8,6 +8,7 @@ detective_guardrails = [
         value = "22,3389"
       }
     ]
+    resource_types_scope = ["ACS::ECS::SecurityGroup"]
     tag_scope_key = ""
     tag_scope_value = ""
   }

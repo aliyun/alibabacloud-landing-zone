@@ -1,3 +1,6 @@
+terraform {
+  experiments = [module_variable_optional_attrs]
+}
 variable "detective_guardrails" {
   type = list(object({
     rule_name = string
@@ -6,6 +9,7 @@ variable "detective_guardrails" {
       name = string
       value = string
     })))
+    resource_types_scope = list(string)
     tag_scope_key = optional(string)
     tag_scope_value = optional(string)
   }))

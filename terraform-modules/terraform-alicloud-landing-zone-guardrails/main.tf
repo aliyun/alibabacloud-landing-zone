@@ -63,6 +63,10 @@ resource "alicloud_config_aggregate_config_rule" "detective_guardrails" {
   aggregate_config_rule_name = each.value.rule_name
   aggregator_id = alicloud_config_aggregator.enterprise.id
   source_identifier = each.value.rule_identifier
+  source_owner = "ALIYUN"
+  risk_level = var.config_compliance_pack_risk_level
+  config_rule_trigger_types  = "ConfigurationItemChangeNotification"
+  resource_types_scope       = each.value.resource_types_scope
   input_parameters = {
     for parameter in try(each.value.parameters, []): parameter.name => parameter.value
   }

@@ -1,15 +1,17 @@
+terraform {
+  experiments = [module_variable_optional_attrs]
+}
 variable "detective_guardrails" {
   type = list(object({
-    RuleName = string
-    RuleIdentifier = string
-    Parameters = list(object({
-      Name = string
-      Value = string
-    }))
-    TagScope = list(object({
-      Key = string
-      Value = string
-    }))
+    rule_name = string
+    rule_identifier = string
+    parameters = optional(list(object({
+      name = string
+      value = string
+    })))
+    resource_types_scope = list(string)
+    tag_scope_key = optional(string)
+    tag_scope_value = optional(string)
   }))
   description = "detective guardrails, each item in list should be config rule name"
 }
