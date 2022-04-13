@@ -38,7 +38,7 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
-      - name: Run Terraform Module
+      - name: Run the complete example
         shell: bash
 
         # Modify according to the actual situation
@@ -56,3 +56,24 @@ jobs:
           
           terraform plan
           terraform apply --auto-approve
+          terraform destory
+
+      - name: Run example scenario-other-1
+        shell: bash
+
+        # Modify according to the actual situation
+        run: |
+          pwd && ls -al
+          cd solution/automation/account-factory/modules/idp/examples/scenario-other-1
+          terraform init \
+            -backend-config="key=1140931609457592-yunxiao2-auth-create-idp" \
+            -backend-config="bucket=bucket-with-terraform-state1" \
+            -backend-config="prefix=path/mystate" \
+            -backend-config="region=cn-hangzhou" \
+            -backend-config="endpoint=oss-cn-hangzhou.aliyuncs.com" \
+            -backend-config="tablestore_endpoint=https://terraform-hz-1.cn-hangzhou.ots.aliyuncs.com" \
+            -backend-config="tablestore_table=statelock"
+          
+          terraform plan
+          terraform apply --auto-approve
+          terraform destory
