@@ -45,6 +45,14 @@ jobs:
         run: |
           pwd && ls -al
           cd solution/automation/account-factory/modules/idp/examples/complete
-          terraform init -backend-config=tfvars/backend.tfvars
-          terraform plan -var-file=tfvars/step-01-create-idp.tfvars
-          terraform apply --auto-approve -var-file=tfvars/step-01-create-idp.tfvars
+          terraform init \
+            -backend-config="key=1140931609457592-yunxiao2-auth-create-idp" \
+            -backend-config="bucket=bucket-with-terraform-state1" \
+            -backend-config="prefix=path/mystate" \
+            -backend-config="region=cn-hangzhou" \
+            -backend-config="endpoint=oss-cn-hangzhou.aliyuncs.com" \
+            -backend-config="tablestore_endpoint=https://terraform-hz-1.cn-hangzhou.ots.aliyuncs.com" \
+            -backend-config="tablestore_table=statelock"
+          
+          terraform plan
+          terraform apply --auto-approve
