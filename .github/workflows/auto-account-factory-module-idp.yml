@@ -12,7 +12,7 @@ on:
     paths:
       # Modify according to the actual situation
       - 'solution/automation/account-factory/modules/idp/**'
-      - 'solution/.github/workflows/auto-account-factory-module-idp.yml'
+      - '.github/workflows/auto-account-factory-module-idp.yml'
   pull_request:
     paths:
       # Modify according to the actual situation
@@ -57,7 +57,8 @@ jobs:
           
           terraform plan
           terraform apply --auto-approve
-          terraform destroy
+          terraform plan -destroy
+          terraform apply -destroy --auto-approve
 
       - name: Run example scenario-other-1
         shell: bash
@@ -77,3 +78,5 @@ jobs:
           
           terraform plan
           terraform apply --auto-approve
+          terraform plan -destroy
+          terraform apply -destroy --auto-approve
