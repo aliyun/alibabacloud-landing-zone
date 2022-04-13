@@ -12,6 +12,7 @@ on:
     paths:
       # Modify according to the actual situation
       - 'solution/automation/account-factory/modules/idp/**'
+      - 'solution/.github/workflows/auto-account-factory-module-idp.yml'
   pull_request:
     paths:
       # Modify according to the actual situation
