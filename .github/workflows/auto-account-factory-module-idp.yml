@@ -26,7 +26,7 @@ permissions:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "terraform-module-test"
+  # This workflow contains a single job called "terraform-module-ci"
   terraform-module-ci:
     # The type of runner that the job will run on
 #    runs-on: self-hosted
@@ -39,9 +39,10 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
+
+      # Step 1
       - name: Run the complete example
         shell: bash
-
         # Modify according to the actual situation
         run: |
           pwd && ls -al
@@ -60,9 +61,9 @@ jobs:
           terraform plan -destroy
           terraform apply -destroy --auto-approve
 
+      # Step 2
       - name: Run example scenario-other-1
         shell: bash
-
         # Modify according to the actual situation
         run: |
           pwd && ls -al
