@@ -78,5 +78,3 @@ jobs:
           
           terraform plan
           terraform apply --auto-approve
-          terraform plan -destroy
-          terraform apply -destroy --auto-approve
