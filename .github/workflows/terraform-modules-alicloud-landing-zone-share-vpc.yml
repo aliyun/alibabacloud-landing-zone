@@ -1,0 +1,82 @@
+# This is a basic workflow to help you get started with Actions
+name: terraform-modules-alicloud-landing-zone-share-vpc
+env:
+  ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+  ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the xx path
+  push:
+    paths:
+      # Modify according to the actual situation
+      - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
+      - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
+  pull_request:
+    paths:
+      # Modify according to the actual situation
+      - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "terraform-module-ci"
+  terraform-module-ci:
+    # The type of runner that the job will run on
+    #    runs-on: self-hosted
+    runs-on: ubuntu-latest
+
+    # Modify according to the actual situation
+    environment: yunguotest1_MA_1140931609457592
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+
+      # Step 1
+      - name: Create shared unit
+        shell: bash
+        # Modify according to the actual situation
+        run: |
+          pwd && ls -al
+          cd terraform-modules/terraform-alicloud-landing-zone-share-vpc/examples/complete
+          terraform init \
+            -backend-config="key=1333131609463815-shared-unit-TF-autotest" \
+            -backend-config="bucket=bucket-with-terraform-state1" \
+            -backend-config="prefix=path/mystate" \
+            -backend-config="region=cn-hangzhou" \
+            -backend-config="endpoint=oss-cn-hangzhou.aliyuncs.com" \
+            -backend-config="tablestore_endpoint=https://terraform-hz-1.cn-hangzhou.ots.aliyuncs.com" \
+            -backend-config="tablestore_table=statelock" \
+            -reconfigure
+          
+          terraform plan
+          terraform apply --auto-approve
+
+      # Step 2
+      - name: update the shared unit
+        shell: bash
+        # Modify according to the actual situation
+        run: |
+          pwd && ls -al
+          cd terraform-modules/terraform-alicloud-landing-zone-share-vpc/examples/complete
+          terraform init \
+            -backend-config="key=1333131609463815-shared-unit-TF-autotest" \
+            -backend-config="bucket=bucket-with-terraform-state1" \
+            -backend-config="prefix=path/mystate" \
+            -backend-config="region=cn-hangzhou" \
+            -backend-config="endpoint=oss-cn-hangzhou.aliyuncs.com" \
+            -backend-config="tablestore_endpoint=https://terraform-hz-1.cn-hangzhou.ots.aliyuncs.com" \
+            -backend-config="tablestore_table=statelock" \
+            -reconfigure
+          
+          terraform plan -var-file=tfvars/update-shared-unit.tfvars
+          terraform apply -var-file=tfvars/update-shared-unit.tfvars --auto-approve
+          terraform plan -destroy
+          terraform apply -destroy --auto-approve
