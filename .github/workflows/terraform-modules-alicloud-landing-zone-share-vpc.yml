@@ -12,10 +12,10 @@ on:
       # Modify according to the actual situation
       - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
       - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
-  pull_request:
-    paths:
-      # Modify according to the actual situation
-      - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
+#  pull_request:
+#    paths:
+#      # Modify according to the actual situation
+#      - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
