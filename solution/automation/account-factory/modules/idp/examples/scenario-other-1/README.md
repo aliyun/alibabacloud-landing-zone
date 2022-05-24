@@ -1,4 +1,6 @@
-# Complete
+# Scenario-other-1
+This example is the same as the complete scene, just an sample of distinguishing scenes by directory.
+
 This example will create an IDP in the target member account.
 
 By assuming the role of the resource directory, the RAM user in master account will create an IDP in the target member account.
