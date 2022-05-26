@@ -2,7 +2,6 @@
 
 This module is used to share switches in a VPC among the member accounts of resource directory.
 
-
 ## Usage
 
 ```terraform
