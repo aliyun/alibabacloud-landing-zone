@@ -46,6 +46,7 @@ jobs:
         run: |
           pwd && ls -al
           cd terraform-modules/terraform-alicloud-landing-zone-share-vpc/examples/complete
+          terraform -v
           terraform init \
             -backend-config="key=1333131609463815-shared-unit-TF-autotest" \
             -backend-config="bucket=bucket-with-terraform-state1" \
