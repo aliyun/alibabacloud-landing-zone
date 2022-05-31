@@ -12,6 +12,9 @@ on:
       # Modify according to the actual situation
       - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
       - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
+  schedule:
+    - cron: '47 * * * *'
+
 #  pull_request:
 #    paths:
 #      # Modify according to the actual situation
@@ -39,6 +42,7 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
 
+      # Specify the Terraform version of the running environment, pay attention to match the version required by Terraform Module
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v1
         with:
