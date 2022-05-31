@@ -39,6 +39,12 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: 1.2.1
+
+      - name: Setup Terraform
       # Step 1
       - name: Create shared unit
         shell: bash
