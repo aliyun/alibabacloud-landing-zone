@@ -11,9 +11,10 @@ on:
     paths:
       # Modify according to the actual situation
       - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
-      - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
-  schedule:
-    - cron: '6 18 * * 2'
+#      - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
+
+#  schedule:
+#    - cron: '6 18 * * 2'
 
 #  pull_request:
 #    paths:
