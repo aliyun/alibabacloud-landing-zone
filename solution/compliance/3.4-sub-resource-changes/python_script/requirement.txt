@@ -1,0 +1,7 @@
+aliyun-python-sdk-sts==3.1.0
+aliyun-python-sdk-ram==3.2.0
+aliyun-python-sdk-resourcemanager==1.2.0
+alibabacloud_eventbridge
+alibabacloud_tea_console
+alibabacloud-fc-open20210406
+
