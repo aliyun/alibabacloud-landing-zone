@@ -6,7 +6,7 @@ data "alicloud_config_aggregators" "enterprise" {
 }
 
 module "compliance_pack" {
-  source                             = "../../modules/com-pack"
+  source                             = "../../modules/compliance-pack"
   for_each                           = {for pack in var.config_compliance_packs : pack.config_compliance_pack_name => pack}
   aggregator_id                      = data.alicloud_config_aggregators.enterprise.aggregators.0.id
   config_compliance_rules            = each.value.config_compliance_rules
