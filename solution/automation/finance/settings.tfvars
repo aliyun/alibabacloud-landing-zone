@@ -405,9 +405,6 @@ ops_account_vpc_config = {
 }
 
 # Security
-dev_account_domain_name            = ""
-shared_service_account_domain_name = ""
-
 # @see https://registry.terraform.io/providers/aliyun/alicloud/latest/docs/resources/waf_instance
 waf_instance_spec = {
   big_screen           = "0"
