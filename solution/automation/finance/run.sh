@@ -82,3 +82,28 @@ terraform init
 terraform plan --var-file ../../settings.tfvars -compact-warnings
 terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings
 echo "\033[33m ECS and ALB deployment completed. \033[0m \n"
+
+## The prepaid version of the security product cannot be released in advance, so use it with caution
+## Subscribe WAF
+#echo "\033[33m Start subscribing to WAF.. \033[0m"
+#cd ../sec-subscribe-waf
+#terraform init
+#terraform plan --var-file ../../settings.tfvars -compact-warnings
+#terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings
+#echo "\033[33m WAF deployment completed. \033[0m \n"
+#
+## Subscribe Anti-DDoS
+#echo "\033[33m Start subscribing to Anti-DDoS.. \033[0m"
+#cd ../sec-subscribe-anti-ddos
+#terraform init
+#terraform plan --var-file ../../settings.tfvars -compact-warnings
+#terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings
+#echo "\033[33m Anti-DDoS deployment completed. \033[0m \n"
+#
+## Subscribe cloud firewall
+#echo "\033[33m Start subscribing to Cloud Firewall.. \033[0m"
+#cd ../sec-subscribe-cfw
+#terraform init
+#terraform plan --var-file ../../settings.tfvars -compact-warnings
+#terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings
+#echo "\033[33m Cloud Firewall deployment completed. \033[0m \n"

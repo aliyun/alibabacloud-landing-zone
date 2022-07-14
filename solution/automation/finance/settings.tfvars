@@ -100,7 +100,7 @@ config_compliance_packs = [
         resource_types_scope = ["ACS::OSS::Bucket"]
         tag_key_scope        = null
         tag_value_scope      = null
-      },{
+      }, {
         rule_name            = "OSS存储空间开启同城冗余存储"
         rule_description     = "OSS存储空间开启同城冗余存储，视为“合规”。"
         rule_identifier      = "oss-zrs-enabled"
@@ -108,7 +108,7 @@ config_compliance_packs = [
         resource_types_scope = ["ACS::OSS::Bucket"]
         tag_key_scope        = null
         tag_value_scope      = null
-      },{
+      }, {
         rule_name            = "OSS存储空间开启日志存储"
         rule_description     = "OSS存储空间的日志管理中开启日志存储，视为“合规”。"
         rule_identifier      = "oss-bucket-logging-enabled"
@@ -116,7 +116,7 @@ config_compliance_packs = [
         resource_types_scope = ["ACS::OSS::Bucket"]
         tag_key_scope        = null
         tag_value_scope      = null
-      },{
+      }, {
         rule_name            = "OSS存储空间开启版本控制"
         rule_description     = "OSS存储空间开启版本控制，视为“合规”。"
         rule_identifier      = "oss-bucket-versioning-enabled"
@@ -131,9 +131,9 @@ config_compliance_packs = [
 
 
 # ECS & ALB
-security_group_name   = "sg-lz-tf"
-security_group_desc   = "sg-lz-tf"
-ecs_instance_password = "Ll1234qaz"
+security_group_name                = "sg-lz-tf"
+security_group_desc                = "sg-lz-tf"
+ecs_instance_password              = "Ll1234qaz"
 dmz_vpc_ecs_instance_deploy_config = [
   {
     instance_name = "ecs-dmz-sh-1"
@@ -262,18 +262,18 @@ security_group_rule = [
 
 
 # Network
-cen_instance_name                 = "Terraform-CEN"
-cen_instance_desc                 = "Created by Terraform"
-cen_instance_tags                 = {
+cen_instance_name = "Terraform-CEN"
+cen_instance_desc = "Created by Terraform"
+cen_instance_tags = {
   "Environment" = "shared"
   "Department"  = "ops"
 }
 
 # contains the cidr addresses of all vpcs
-all_vpc_cidr                      = "10.0.0.0/8"
+all_vpc_cidr = "10.0.0.0/8"
 
-dmz_egress_nat_gateway_name       = "nat-gateway-dmz-egress"
-dmz_egress_eip_name               = "eip--dmz-egress"
+dmz_egress_nat_gateway_name = "nat-gateway-dmz-egress"
+dmz_egress_eip_name         = "eip--dmz-egress"
 
 shared_service_account_vpc_config = {
   "region"   = "cn-shanghai"
@@ -403,6 +403,98 @@ ops_account_vpc_config = {
     }
   ]
 }
+
+# Security
+dev_account_domain_name            = ""
+shared_service_account_domain_name = ""
+
+# @see https://registry.terraform.io/providers/aliyun/alicloud/latest/docs/resources/waf_instance
+waf_instance_spec = {
+  big_screen           = "0"
+  exclusive_ip_package = "1"
+  ext_bandwidth        = "50"
+  ext_domain_package   = "1"
+  package_code         = "version_3"
+  prefessional_service = "false"
+  subscription_type    = "Subscription"
+  period               = 1
+  waf_log              = "false"
+  log_storage          = "3"
+  log_time             = "180"
+}
+
+waf_domain_config = {
+  is_access_product = "On"
+  http2_port        = [443]
+  http_port         = [80]
+  https_port        = [443]
+  http_to_user_ip   = "Off"
+  https_redirect    = "Off"
+  load_balancing    = "IpHash"
+}
+
+# @see https://registry.terraform.io/providers/aliyun/alicloud/latest/docs/resources/ddoscoo_instance
+ddos_bgp_instance_spec = {
+  name              = "createByTerraform"
+  bandwidth         = "30"
+  base_bandwidth    = "30"
+  service_bandwidth = "100"
+  port_count        = "50"
+  domain_count      = "50"
+  period            = "1"
+  product_type      = "ddoscoo"
+}
+
+ddos_domain_https_ext   = "{\"Http2\":0,\"Http2https\":0,\"Https2http\":0}"
+ddos_domain_proxy_types = [
+  {
+    proxy_ports = [80]
+    proxy_type  = "http"
+  }
+]
+
+# @see https://registry.terraform.io/providers/aliyun/alicloud/latest/docs/resources/cloud_firewall_instance
+cfw_instance_spec = {
+  payment_type    = "Subscription"
+  spec            = "ultimate_version"
+  ip_number       = 400
+  band_width      = 200
+  cfw_log         = false
+  cfw_log_storage = 5000
+  cfw_service     = false
+  fw_vpc_number   = 5
+  period          = 6
+}
+
+cfw_control_policy = [
+  {
+    application_name = "HTTP"
+    acl_action       = "accept"
+    description      = "createdByTerraform"
+    destination_type = "net"
+    destination      = "0.0.0.0/0"
+    dest_port        = "80/80"
+    dest_port_type   = "port"
+    direction        = "out"
+    proto            = "TCP"
+    source           = "0.0.0.0/0"
+    source_type      = "net"
+    order            = 1
+  }, {
+    application_name = "HTTPS"
+    acl_action       = "accept"
+    description      = "createdByTerraform"
+    destination_type = "net"
+    destination      = "0.0.0.0/0"
+    dest_port        = "443/443"
+    dest_port_type   = "port"
+    direction        = "out"
+    proto            = "TCP"
+    source           = "0.0.0.0/0"
+    source_type      = "net"
+    order            = 2
+  }
+]
 
 
 # Identity and permissions
