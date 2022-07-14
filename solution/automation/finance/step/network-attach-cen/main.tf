@@ -61,12 +61,12 @@ module "shared_service_account_cen_attach" {
   vpc_id                = local.shared_service_account_vpc_id
   all_vpc_cidr          = local.all_vpc_cidr
 
-  master_vswitch = {
+  primary_vswitch = {
     vswitch_id = local.vpc_json.shared_service_account.vsw1_id,
     zone_id    = local.shared_service_account_vpc_config.vswitch.0.zone_id
   }
 
-  slave_vswitch = {
+  secondary_vswitch = {
     vswitch_id = local.vpc_json.shared_service_account.vsw2_id,
     zone_id    = local.shared_service_account_vpc_config.vswitch.1.zone_id
   }
@@ -100,12 +100,12 @@ module "dev_account_cen_attach" {
   vpc_id                = local.dev_account_vpc_id
   all_vpc_cidr          = local.all_vpc_cidr
 
-  master_vswitch = {
+  primary_vswitch = {
     vswitch_id = local.vpc_json.dev_account.vsw1_id,
     zone_id    = local.dev_account_vpc_config.vswitch.0.zone_id
   }
 
-  slave_vswitch = {
+  secondary_vswitch = {
     vswitch_id = local.vpc_json.dev_account.vsw2_id,
     zone_id    = local.dev_account_vpc_config.vswitch.1.zone_id
   }
@@ -140,12 +140,12 @@ module "prod_account_cen_attach" {
   vpc_id                = local.prod_account_vpc_id
   all_vpc_cidr          = local.all_vpc_cidr
 
-  master_vswitch = {
+  primary_vswitch = {
     vswitch_id = local.vpc_json.prod_account.vsw1_id,
     zone_id    = local.prod_account_vpc_config.vswitch.0.zone_id
   }
 
-  slave_vswitch = {
+  secondary_vswitch = {
     vswitch_id = local.vpc_json.prod_account.vsw2_id,
     zone_id    = local.prod_account_vpc_config.vswitch.1.zone_id
   }
@@ -181,12 +181,12 @@ module "ops_account_cen_attach" {
   cen_transit_router_id = local.cen_transit_router_id
   vpc_id                = local.ops_account_vpc_id
 
-  master_vswitch = {
+  primary_vswitch = {
     vswitch_id = local.vpc_json.ops_account.vsw1_id,
     zone_id    = local.ops_account_vpc_config.vswitch.0.zone_id
   }
 
-  slave_vswitch = {
+  secondary_vswitch = {
     vswitch_id = local.vpc_json.ops_account.vsw2_id,
     zone_id    = local.ops_account_vpc_config.vswitch.1.zone_id
   }

@@ -23,12 +23,12 @@ resource "alicloud_cen_transit_router_vpc_attachment" "vpc_attachment" {
   vpc_owner_id      = var.vpc_account_id
 
   zone_mappings {
-    zone_id    = var.master_vswitch.zone_id
-    vswitch_id = var.master_vswitch.vswitch_id
+    zone_id    = var.primary_vswitch.zone_id
+    vswitch_id = var.primary_vswitch.vswitch_id
   }
   zone_mappings {
-    zone_id    = var.slave_vswitch.zone_id
-    vswitch_id = var.slave_vswitch.vswitch_id
+    zone_id    = var.secondary_vswitch.zone_id
+    vswitch_id = var.secondary_vswitch.vswitch_id
   }
 
   route_table_association_enabled       = var.route_table_association_enabled

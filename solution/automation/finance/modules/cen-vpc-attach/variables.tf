@@ -32,14 +32,14 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "master_vswitch" {
+variable "primary_vswitch" {
   type = object({
     vswitch_id = string
     zone_id    = string
   })
 }
 
-variable "slave_vswitch" {
+variable "secondary_vswitch" {
   type = object({
     vswitch_id = string
     zone_id    = string
