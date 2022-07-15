@@ -4,17 +4,16 @@ locals {
 }
 
 provider "alicloud" {
-  #  region = "cn-hangzhou"
-  #  alias = "security_account"
-  #  assume_role {
-  #    role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.security_account_id)
-  #    session_name       = "AccountLandingZoneSetup"
-  #    session_expiration = 999
-  #  }
+    alias = "security_account"
+    assume_role {
+      role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.security_account_id)
+      session_name       = "AccountLandingZoneSetup"
+      session_expiration = 999
+    }
 }
 
 resource "alicloud_cloud_firewall_instance" "cfw_instance" {
-#  provider = alicloud.security_account
+  provider = alicloud.security_account
   payment_type    = var.cfw_instance_spec.payment_type
   spec            = var.cfw_instance_spec.spec
   ip_number       = var.cfw_instance_spec.ip_number
@@ -27,7 +26,7 @@ resource "alicloud_cloud_firewall_instance" "cfw_instance" {
 }
 
 resource "alicloud_cloud_firewall_control_policy" "cfw_cp" {
-#  provider = alicloud.security_account
+  provider = alicloud.security_account
   count            = length(var.cfw_control_policy)
   application_name = var.cfw_control_policy[count.index].application_name
   acl_action       = var.cfw_control_policy[count.index].acl_action
@@ -43,7 +42,7 @@ resource "alicloud_cloud_firewall_control_policy" "cfw_cp" {
 }
 
 resource "alicloud_cloud_firewall_control_policy_order" "cfw_cp_order" {
-#  provider = alicloud.security_account
+  provider = alicloud.security_account
   count     = length(alicloud_cloud_firewall_control_policy.cfw_cp)
   acl_uuid  = alicloud_cloud_firewall_control_policy.cfw_cp[count.index].acl_uuid
   direction = alicloud_cloud_firewall_control_policy.cfw_cp[count.index].direction

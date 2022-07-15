@@ -12,16 +12,16 @@ locals {
 
 provider "alicloud" {
   region = "cn-hangzhou"
-#  alias  = "security_account"
-#  assume_role {
-#    role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.security_account_id)
-#    session_name       = "AccountLandingZoneSetup"
-#    session_expiration = 999
-#  }
+  alias  = "security_account"
+  assume_role {
+    role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.security_account_id)
+    session_name       = "AccountLandingZoneSetup"
+    session_expiration = 999
+  }
 }
 
 resource "alicloud_waf_instance" "waf_instance" {
-#  provider             = alicloud.security_account
+  provider             = alicloud.security_account
   big_screen           = var.waf_instance_spec.big_screen
   exclusive_ip_package = var.waf_instance_spec.exclusive_ip_package
   ext_bandwidth        = var.waf_instance_spec.ext_bandwidth
@@ -58,7 +58,7 @@ locals {
 }
 
 resource "alicloud_waf_domain" "domain_shared_service_account" {
-#  provider    = alicloud.security_account
+  provider    = alicloud.security_account
   domain_name = local.shared_service_account_domain_name
   instance_id = alicloud_waf_instance.waf_instance.id
   source_ips  = [local.shared_service_alb_instance_zone_1_ip, local.shared_service_alb_instance_zone_2_ip]
@@ -96,7 +96,7 @@ locals {
 }
 
 resource "alicloud_waf_domain" "domain_dev_account" {
-#  provider    = alicloud.security_account
+  provider    = alicloud.security_account
   domain_name = local.dev_account_domain_name
   instance_id = alicloud_waf_instance.waf_instance.id
   source_ips  = [local.dev_alb_instance_zone_1_ip, local.dev_alb_instance_zone_2_ip]

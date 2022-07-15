@@ -14,16 +14,16 @@ locals {
 
 provider "alicloud" {
   region = "cn-hangzhou"
-  #  alias = "security_account"
-  #  assume_role {
-  #    role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.security_account_id)
-  #    session_name       = "AccountLandingZoneSetup"
-  #    session_expiration = 999
-  #  }
+  alias  = "security_account"
+  assume_role {
+    role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.security_account_id)
+    session_name       = "AccountLandingZoneSetup"
+    session_expiration = 999
+  }
 }
 
 resource "alicloud_ddoscoo_instance" "newInstance" {
-  #  provider = alicloud.security_account
+  provider          = alicloud.security_account
   name              = var.ddos_bgp_instance_spec.name
   bandwidth         = var.ddos_bgp_instance_spec.bandwidth
   base_bandwidth    = var.ddos_bgp_instance_spec.base_bandwidth
@@ -60,7 +60,7 @@ locals {
 
 
 resource "alicloud_ddoscoo_domain_resource" "shared_service_account_domain_resource" {
-  #  provider = alicloud.security_account
+  provider = alicloud.security_account
   instance_ids = [alicloud_ddoscoo_instance.newInstance.id]
   real_servers = local.shared_service_account_real_servers
   domain       = local.shared_service_account_domain_name
@@ -103,7 +103,7 @@ locals {
 }
 
 resource "alicloud_ddoscoo_domain_resource" "dev_account_domain_resource" {
-  #  provider = alicloud.security_account
+  provider = alicloud.security_account
   instance_ids = [alicloud_ddoscoo_instance.newInstance.id]
   real_servers = local.dev_account_real_servers
   domain       = local.dev_account_domain_name
