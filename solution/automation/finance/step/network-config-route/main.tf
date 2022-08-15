@@ -109,11 +109,11 @@ module "cen_custom_route_management_vpc" {
 
 # Save custom route table information
 resource "local_file" "route_json" {
-  content    = templatefile("../var/route.json.tmpl", {
-    cen_custom_route_id_business_vpc         = module.cen_custom_route_business_vpc.route_table_id
-    cen_custom_route_id_management_vpc = module.cen_custom_route_management_vpc.route_table_id
+  content  = templatefile("../var/route.json.tmpl", {
+    cen_custom_route_table_id_business_vpc   = module.cen_custom_route_business_vpc.route_table_id
+    cen_custom_route_table_id_management_vpc = module.cen_custom_route_management_vpc.route_table_id
   })
-  filename   = "../var/route.json"
+  filename = "../var/route.json"
 }
 
 
