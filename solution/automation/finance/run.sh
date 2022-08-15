@@ -67,13 +67,13 @@ terraform plan --var-file ../../settings.tfvars -compact-warnings
 terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings -parallelism=2
 echo "\033[33m DMZ VPC build completed. \033[0m \n"
 
-# Unify public network egress
-echo "\033[33m Start configuring unified egress route.. \033[0m"
-cd ../network-config-unified-egress
+# Configure routes
+echo "\033[33m Start configuring route.. \033[0m"
+cd ../network-config-route
 terraform init
 terraform plan --var-file ../../settings.tfvars -compact-warnings
 terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings
-echo "\033[33m Unified egress route configuration completed. \033[0m \n"
+echo "\033[33m Route configuration completed. \033[0m \n"
 
 # Deploy ECS and ALB
 echo "\033[33m Start deploying ECS and ALB.. \033[0m"
