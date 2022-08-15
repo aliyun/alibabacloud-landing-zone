@@ -1,67 +1,192 @@
 variable "management_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Management account ID of the resource directory"
 }
 
 variable "shared_service_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Shared service account ID"
 }
 
 variable "log_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Log account ID"
 }
 
 variable "security_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Security account ID"
 }
 
 variable "ops_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Ops account ID"
 }
 
 variable "dev_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Development account ID"
 }
 
 variable "prod_account_id" {
-    type    = string
-    default = ""
+  type        = string
+  default     = ""
+  description = "Production account ID"
 }
 
-variable "ram_user_initial_pwd" {}
+variable "ram_user_initial_pwd" {
+  type        = string
+  description = "Initial password for RAM user"
+}
 
-variable "sso_provider_name" {}
+variable "sso_provider_name" {
+  type        = string
+  description = "Provider name for SSO in RAM"
+}
 
-variable "management_account_ram_users" {}
+variable "management_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in management account"
+}
 
-variable "management_account_ram_roles" {}
+variable "management_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in management account"
+}
 
-variable "log_account_ram_users" {}
+variable "log_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in log account"
+}
 
-variable "log_account_ram_roles" {}
+variable "log_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in log account"
+}
 
-variable "shared_service_account_ram_users" {}
+variable "shared_service_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in shared service account"
+}
 
-variable "shared_service_account_ram_roles" {}
+variable "shared_service_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in shared service account"
+}
 
-variable "security_account_ram_users" {}
+variable "security_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in security account"
+}
 
-variable "security_account_ram_roles" {}
+variable "security_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in security account"
+}
 
-variable "ops_account_ram_users" {}
+variable "ops_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in ops account"
+}
 
-variable "ops_account_ram_roles" {}
+variable "ops_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in ops account"
+}
 
-variable "dev_account_ram_users" {}
+variable "dev_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in development account"
+}
 
-variable "dev_account_ram_roles" {}
+variable "dev_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in development account"
+}
 
-variable "prod_account_ram_users" {}
+variable "prod_account_ram_users" {
+  type        = list(object({
+    name                 = string
+    description          = string
+    enable_console_login = bool
+    enable_api_access    = bool
+    system_policy        = list(string)
+  }))
+  description = "RAM users to be created in production account"
+}
 
-variable "prod_account_ram_roles" {}
+variable "prod_account_ram_roles" {
+  type        = list(object({
+    name          = string
+    description   = string
+    system_policy = list(string)
+  }))
+  description = "RAM roles to be created in production account"
+}
 

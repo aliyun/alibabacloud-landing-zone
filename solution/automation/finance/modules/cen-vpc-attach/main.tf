@@ -13,6 +13,8 @@ resource "alicloud_cen_instance_grant" "cen_instance_grant" {
   cen_id            = var.cen_instance_id
   cen_owner_id      = var.cen_tr_account_id
   child_instance_id = var.vpc_id
+
+  depends_on = [alicloud_resource_manager_service_linked_role.service_linked_role]
 }
 
 resource "alicloud_cen_transit_router_vpc_attachment" "vpc_attachment" {
@@ -47,18 +49,4 @@ resource "alicloud_cen_transit_router_vpc_attachment" "vpc_attachment" {
   ]
 }
 
-data "alicloud_route_tables" "vpc_route_tables" {
-  provider = alicloud.vpc_account
-  vpc_id   = var.vpc_id
-}
-
-# add default route entry for internal connectivity
-resource "alicloud_route_entry" "vpc_route_entry" {
-  provider              = alicloud.vpc_account
-  count                 = var.all_vpc_cidr != "" ? 1 : 0
-  route_table_id        = data.alicloud_route_tables.vpc_route_tables.ids.0
-  destination_cidrblock = var.all_vpc_cidr
-  nexthop_type          = "Attachment"
-  nexthop_id            = alicloud_cen_transit_router_vpc_attachment.vpc_attachment.transit_router_attachment_id
-}
 

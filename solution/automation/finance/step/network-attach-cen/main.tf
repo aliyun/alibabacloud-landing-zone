@@ -110,7 +110,7 @@ module "dev_account_cen_attach" {
     zone_id    = local.dev_account_vpc_config.vswitch.1.zone_id
   }
 
-  route_table_association_enabled = true
+  route_table_association_enabled = false
   route_table_propagation_enabled = true
 
   depends_on = [module.shared_service_account_cen_attach]
@@ -150,7 +150,7 @@ module "prod_account_cen_attach" {
     zone_id    = local.prod_account_vpc_config.vswitch.1.zone_id
   }
 
-  route_table_association_enabled = true
+  route_table_association_enabled = false
   route_table_propagation_enabled = true
 
   depends_on = [module.dev_account_cen_attach]
@@ -191,7 +191,7 @@ module "ops_account_cen_attach" {
     zone_id    = local.ops_account_vpc_config.vswitch.1.zone_id
   }
 
-  route_table_association_enabled = true
+  route_table_association_enabled = false
   route_table_propagation_enabled = true
 
   depends_on = [module.prod_account_cen_attach]
