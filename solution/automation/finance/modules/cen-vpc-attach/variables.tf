@@ -1,6 +1,12 @@
 variable "cen_tr_account_id" {}
 variable "vpc_account_id" {}
 
+variable "create_cen_linked_role" {
+  description = "The ID of the CEN instance"
+  type        = bool
+  default     = false
+}
+
 variable "cen_instance_id" {
   description = "The ID of the CEN instance"
   type        = string

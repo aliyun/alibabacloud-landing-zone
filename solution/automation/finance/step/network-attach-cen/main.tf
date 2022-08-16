@@ -9,7 +9,7 @@ locals {
   dev_account_vpc_config            = var.dev_account_vpc_config
   prod_account_vpc_config           = var.prod_account_vpc_config
   ops_account_vpc_config            = var.ops_account_vpc_config
-  all_vpc_cidr                             = var.all_vpc_cidr
+  all_vpc_cidr                      = var.all_vpc_cidr
 
   vpc_json                      = fileexists("../var/vpc.json") ? jsondecode(file("../var/vpc.json")) : {}
   shared_service_account_vpc_id = var.shared_service_account_vpc_id == "" ? local.vpc_json["shared_service_account"]["vpc_id"] : var.shared_service_account_vpc_id
@@ -62,12 +62,12 @@ module "shared_service_account_cen_attach" {
   all_vpc_cidr          = local.all_vpc_cidr
 
   primary_vswitch = {
-    vswitch_id = local.vpc_json.shared_service_account.vsw1_id,
+    vswitch_id = local.vpc_json.shared_service_account.vsw_tr1_id,
     zone_id    = local.shared_service_account_vpc_config.vswitch.0.zone_id
   }
 
   secondary_vswitch = {
-    vswitch_id = local.vpc_json.shared_service_account.vsw2_id,
+    vswitch_id = local.vpc_json.shared_service_account.vsw_tr2_id,
     zone_id    = local.shared_service_account_vpc_config.vswitch.1.zone_id
   }
 
@@ -101,17 +101,18 @@ module "dev_account_cen_attach" {
   all_vpc_cidr          = local.all_vpc_cidr
 
   primary_vswitch = {
-    vswitch_id = local.vpc_json.dev_account.vsw1_id,
+    vswitch_id = local.vpc_json.dev_account.vsw_tr1_id,
     zone_id    = local.dev_account_vpc_config.vswitch.0.zone_id
   }
 
   secondary_vswitch = {
-    vswitch_id = local.vpc_json.dev_account.vsw2_id,
+    vswitch_id = local.vpc_json.dev_account.vsw_tr2_id,
     zone_id    = local.dev_account_vpc_config.vswitch.1.zone_id
   }
 
   route_table_association_enabled = false
   route_table_propagation_enabled = true
+  create_cen_linked_role          = true
 
   depends_on = [module.shared_service_account_cen_attach]
 }
@@ -141,17 +142,18 @@ module "prod_account_cen_attach" {
   all_vpc_cidr          = local.all_vpc_cidr
 
   primary_vswitch = {
-    vswitch_id = local.vpc_json.prod_account.vsw1_id,
+    vswitch_id = local.vpc_json.prod_account.vsw_tr1_id,
     zone_id    = local.prod_account_vpc_config.vswitch.0.zone_id
   }
 
   secondary_vswitch = {
-    vswitch_id = local.vpc_json.prod_account.vsw2_id,
+    vswitch_id = local.vpc_json.prod_account.vsw_tr2_id,
     zone_id    = local.prod_account_vpc_config.vswitch.1.zone_id
   }
 
   route_table_association_enabled = false
   route_table_propagation_enabled = true
+  create_cen_linked_role          = true
 
   depends_on = [module.dev_account_cen_attach]
 }
@@ -168,12 +170,12 @@ provider "alicloud" {
 }
 
 module "ops_account_cen_attach" {
-  source    = "../../modules/cen-vpc-attach"
-  providers = {
+  source       = "../../modules/cen-vpc-attach"
+  providers    = {
     alicloud.shared_service_account = alicloud.shared_service_account
     alicloud.vpc_account            = alicloud.ops_account
   }
-  all_vpc_cidr          = local.all_vpc_cidr
+  all_vpc_cidr = local.all_vpc_cidr
 
   cen_tr_account_id     = local.shared_service_account_id
   vpc_account_id        = local.ops_account_id
@@ -182,17 +184,18 @@ module "ops_account_cen_attach" {
   vpc_id                = local.ops_account_vpc_id
 
   primary_vswitch = {
-    vswitch_id = local.vpc_json.ops_account.vsw1_id,
+    vswitch_id = local.vpc_json.ops_account.vsw_tr1_id,
     zone_id    = local.ops_account_vpc_config.vswitch.0.zone_id
   }
 
   secondary_vswitch = {
-    vswitch_id = local.vpc_json.ops_account.vsw2_id,
+    vswitch_id = local.vpc_json.ops_account.vsw_tr2_id,
     zone_id    = local.ops_account_vpc_config.vswitch.1.zone_id
   }
 
   route_table_association_enabled = false
   route_table_propagation_enabled = true
+  create_cen_linked_role          = true
 
   depends_on = [module.prod_account_cen_attach]
 }
