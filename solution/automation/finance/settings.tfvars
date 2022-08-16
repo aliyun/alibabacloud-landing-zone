@@ -275,6 +275,7 @@ all_vpc_cidr = "10.0.0.0/8"
 dmz_egress_nat_gateway_name = "nat-gateway-dmz-egress"
 dmz_egress_eip_name         = "eip--dmz-egress"
 
+# contains VSwitch for business and VSwitch for transit router
 shared_service_account_vpc_config = {
   "region"   = "cn-shanghai"
   "vpc_name" = "vpc-sh-dmz"
@@ -285,6 +286,25 @@ shared_service_account_vpc_config = {
     "Department"  = "ops"
   }
   "vswitch"  = [
+    {
+      "vswitch_name" = "vsw-sh-dmz-f-tr"
+      "vswitch_desc" = "vsw-sh-dmz-f-tr"
+      "vswitch_cidr" = "10.0.0.8/29"
+      "zone_id"      = "cn-shanghai-f"
+      "vswitch_tags" = {
+        "Environment" = "shared"
+        "Department"  = "ops"
+      }
+    }, {
+      "vswitch_name" = "vsw-sh-dmz-g-tr"
+      "vswitch_desc" = "vsw-sh-dmz-g-tr"
+      "vswitch_cidr" = "10.0.0.16/29"
+      "zone_id"      = "cn-shanghai-g"
+      "vswitch_tags" = {
+        "Environment" = "shared"
+        "Department"  = "ops"
+      }
+    },
     {
       "vswitch_name" = "vsw-sh-dmz-f-1"
       "vswitch_desc" = "vsw-sh-dmz-f-1"
@@ -307,6 +327,7 @@ shared_service_account_vpc_config = {
   ]
 }
 
+# contains VSwitch for business and VSwitch for transit router
 dev_account_vpc_config = {
   "region"   = "cn-shanghai"
   "vpc_name" = "vpc-sh-development"
@@ -317,6 +338,25 @@ dev_account_vpc_config = {
     "Department"  = "department1"
   }
   "vswitch"  = [
+    {
+      "vswitch_name" = "vsw-sh-dev-f-tr"
+      "vswitch_desc" = "vsw-sh-dev-f-tr"
+      "vswitch_cidr" = "10.1.0.8/29"
+      "zone_id"      = "cn-shanghai-f"
+      "vswitch_tags" = {
+        "Environment" = "dev"
+        "Department"  = "department1"
+      }
+    }, {
+      "vswitch_name" = "vsw-sh-dev-g-tr"
+      "vswitch_desc" = "vsw-sh-dev-g-tr"
+      "vswitch_cidr" = "10.1.0.16/29"
+      "zone_id"      = "cn-shanghai-g"
+      "vswitch_tags" = {
+        "Environment" = "dev"
+        "Department"  = "department1"
+      }
+    },
     {
       "vswitch_name" = "vsw-sh-dev-f-1"
       "vswitch_desc" = "vsw-sh-dev-f-1"
@@ -339,6 +379,7 @@ dev_account_vpc_config = {
   ]
 }
 
+# contains VSwitch for business and VSwitch for transit router
 prod_account_vpc_config = {
   "region"   = "cn-shanghai"
   "vpc_name" = "vpc-sh-production"
@@ -349,6 +390,25 @@ prod_account_vpc_config = {
     "Department"  = "department1"
   }
   "vswitch"  = [
+    {
+      "vswitch_name" = "vsw-sh-prod-f-tr"
+      "vswitch_desc" = "vsw-sh-prod-f-tr"
+      "vswitch_cidr" = "10.2.0.8/29"
+      "zone_id"      = "cn-shanghai-f"
+      "vswitch_tags" = {
+        "Environment" = "prod"
+        "Department"  = "department1"
+      }
+    }, {
+      "vswitch_name" = "vsw-sh-prod-g-tr"
+      "vswitch_desc" = "vsw-sh-prod-g-tr"
+      "vswitch_cidr" = "10.2.0.16/29"
+      "zone_id"      = "cn-shanghai-g"
+      "vswitch_tags" = {
+        "Environment" = "prod"
+        "Department"  = "department1"
+      }
+    },
     {
       "vswitch_name" = "vsw-sh-prod-f-1"
       "vswitch_desc" = "vsw-sh-prod-f-1"
@@ -371,7 +431,7 @@ prod_account_vpc_config = {
   ]
 }
 
-
+# contains VSwitch for business and VSwitch for transit router
 ops_account_vpc_config = {
   "region"   = "cn-shanghai"
   "vpc_name" = "vpc-sh-management"
@@ -383,6 +443,24 @@ ops_account_vpc_config = {
   }
   "vswitch"  = [
     {
+      "vswitch_name" = "vsw-sh-management-f-tr"
+      "vswitch_desc" = "vsw-sh-management-f-tr"
+      "vswitch_cidr" = "10.3.0.8/29"
+      "zone_id"      = "cn-shanghai-f"
+      "vswitch_tags" = {
+        "Environment" = "ops"
+        "Department"  = "ops"
+      }
+    }, {
+      "vswitch_name" = "vsw-sh-management-g-tr"
+      "vswitch_desc" = "vsw-sh-management-g-tr"
+      "vswitch_cidr" = "10.3.0.16/29"
+      "zone_id"      = "cn-shanghai-g"
+      "vswitch_tags" = {
+        "Environment" = "ops"
+        "Department"  = "ops"
+      }
+    }, {
       "vswitch_name" = "vsw-sh-management-f-1"
       "vswitch_desc" = "vsw-sh-management-f-1"
       "vswitch_cidr" = "10.3.4.0/22"

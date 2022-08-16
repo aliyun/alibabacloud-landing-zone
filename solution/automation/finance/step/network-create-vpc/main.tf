@@ -110,20 +110,28 @@ module "ops_account_vpc" {
 resource "local_file" "account_json" {
   content    = templatefile("../var/vpc.json.tmpl", {
     shared_service_account_vpc_id  = module.shared_service_account_vpc.vpc_id
-    shared_service_account_vsw1_id = module.shared_service_account_vpc.vsw1_id
-    shared_service_account_vsw2_id = module.shared_service_account_vpc.vsw2_id
+    shared_service_account_vsw_tr1_id = module.shared_service_account_vpc.vsw1_id
+    shared_service_account_vsw_tr2_id = module.shared_service_account_vpc.vsw2_id
+    shared_service_account_vsw1_id = module.shared_service_account_vpc.vsw3_id
+    shared_service_account_vsw2_id = module.shared_service_account_vpc.vsw4_id
 
     dev_account_vpc_id  = module.dev_account_vpc.vpc_id
-    dev_account_vsw1_id = module.dev_account_vpc.vsw1_id
-    dev_account_vsw2_id = module.dev_account_vpc.vsw2_id
+    dev_account_vsw_tr1_id = module.dev_account_vpc.vsw1_id
+    dev_account_vsw_tr2_id = module.dev_account_vpc.vsw2_id
+    dev_account_vsw1_id = module.dev_account_vpc.vsw3_id
+    dev_account_vsw2_id = module.dev_account_vpc.vsw4_id
 
     prod_account_vpc_id  = module.prod_account_vpc.vpc_id
-    prod_account_vsw1_id = module.prod_account_vpc.vsw1_id
-    prod_account_vsw2_id = module.prod_account_vpc.vsw2_id
+    prod_account_vsw_tr1_id = module.prod_account_vpc.vsw1_id
+    prod_account_vsw_tr2_id = module.prod_account_vpc.vsw2_id
+    prod_account_vsw1_id = module.prod_account_vpc.vsw3_id
+    prod_account_vsw2_id = module.prod_account_vpc.vsw4_id
 
     ops_account_vpc_id  = module.ops_account_vpc.vpc_id
-    ops_account_vsw1_id = module.ops_account_vpc.vsw1_id
-    ops_account_vsw2_id = module.ops_account_vpc.vsw2_id
+    ops_account_vsw_tr1_id = module.ops_account_vpc.vsw1_id
+    ops_account_vsw_tr2_id = module.ops_account_vpc.vsw2_id
+    ops_account_vsw1_id = module.ops_account_vpc.vsw3_id
+    ops_account_vsw2_id = module.ops_account_vpc.vsw4_id
 
   })
   filename   = "../var/vpc.json"

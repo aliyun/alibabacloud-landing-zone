@@ -1,9 +1,10 @@
 locals {
-  auth_required                 = var.cen_tr_account_id != var.vpc_account_id ? true : false
+  auth_required = var.cen_tr_account_id != var.vpc_account_id ? true : false
 }
 
 resource "alicloud_resource_manager_service_linked_role" "service_linked_role" {
   provider     = alicloud.vpc_account
+  count        = var.create_cen_linked_role ? 1 : 0
   service_name = "cen.aliyuncs.com"
 }
 
