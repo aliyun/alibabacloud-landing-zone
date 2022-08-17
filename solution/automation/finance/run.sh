@@ -50,6 +50,14 @@ terraform plan --var-file ../../settings.tfvars -compact-warnings
 terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings
 echo "\033[33m VPC and VSwitch creation completed. \033[0m \n"
 
+# Build dmz VPC
+echo "\033[33m Start building DMZ VPC.. \033[0m"
+cd ../network-build-dmz
+terraform init
+terraform plan --var-file ../../settings.tfvars -compact-warnings
+terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings -parallelism=2
+echo "\033[33m DMZ VPC build completed. \033[0m \n"
+
 # Create CEN & vpc attach
 echo "\033[33m Start creating CEN and attaching VPC.. \033[0m"
 cd ../network-attach-cen
@@ -58,14 +66,6 @@ terraform init
 terraform plan --var-file ../../settings.tfvars -compact-warnings
 terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings -parallelism=2
 echo "\033[33m CEN creation and VPC attachment completed. \033[0m \n"
-
-# Build dmz VPC
-echo "\033[33m Start building DMZ VPC.. \033[0m"
-cd ../network-build-dmz
-terraform init
-terraform plan --var-file ../../settings.tfvars -compact-warnings
-terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings -parallelism=2
-echo "\033[33m DMZ VPC build completed. \033[0m \n"
 
 # Configure routes
 echo "\033[33m Start configuring route.. \033[0m"
