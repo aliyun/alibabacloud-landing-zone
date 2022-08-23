@@ -1,0 +1,17 @@
+{
+  "ALIYUN::ROS::Interface": {
+    "ParameterGroups": [
+      {
+        "Parameters": [
+          "var1"
+        ],
+        "Label": {
+          "default": {
+            "en": "Var1",
+            "zh-cn": "第一个变量"
+          }
+        }
+      }
+    ]
+  }
+}
