@@ -48,7 +48,7 @@ locals {
 }
 
 module "shared_service_account_cen_attach" {
-  source    = "../../modules/cen-vpc-attach"
+  source    = "../../modules/networking/cen-vpc-attach"
   providers = {
     alicloud.shared_service_account = alicloud.shared_service_account
     alicloud.vpc_account            = alicloud.shared_service_account
@@ -87,7 +87,7 @@ provider "alicloud" {
 }
 
 module "dev_account_cen_attach" {
-  source    = "../../modules/cen-vpc-attach"
+  source    = "../../modules/networking/cen-vpc-attach"
   providers = {
     alicloud.shared_service_account = alicloud.shared_service_account
     alicloud.vpc_account            = alicloud.dev_account
@@ -128,7 +128,7 @@ provider "alicloud" {
 }
 
 module "prod_account_cen_attach" {
-  source    = "../../modules/cen-vpc-attach"
+  source    = "../../modules/networking/cen-vpc-attach"
   providers = {
     alicloud.shared_service_account = alicloud.shared_service_account
     alicloud.vpc_account            = alicloud.prod_account
@@ -170,7 +170,7 @@ provider "alicloud" {
 }
 
 module "ops_account_cen_attach" {
-  source       = "../../modules/cen-vpc-attach"
+  source       = "../../modules/networking/cen-vpc-attach"
   providers    = {
     alicloud.shared_service_account = alicloud.shared_service_account
     alicloud.vpc_account            = alicloud.ops_account

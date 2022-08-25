@@ -4,12 +4,7 @@ resource "alicloud_vpc" "vpc" {
   vpc_name    = var.vpc_name
   cidr_block  = var.vpc_cidr
   description = var.vpc_desc
-  tags        = merge(
-  {
-    "Name" = var.vpc_name
-  },
-  var.vpc_tags,
-  )
+  tags        = var.vpc_tags
 }
 
 // According to the vswitch cidr blocks to launch several vswitches
@@ -20,11 +15,6 @@ resource "alicloud_vswitch" "vswitches" {
   zone_id      = each.value.zone_id
   vswitch_name = each.value.vswitch_name
   description  = each.value.vswitch_desc
-  tags         = merge(
-  {
-    Name = each.value.vswitch_name
-  },
-  each.value.vswitch_tags,
-  )
+  tags         = each.value.vswitch_tags
 }
 

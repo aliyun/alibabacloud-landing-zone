@@ -39,7 +39,7 @@ provider "alicloud" {
 
 # Create a custom routing table for business VPC
 module "cen_custom_route_business_vpc" {
-  source                                    = "../../modules/cen-custom-route"
+  source                                    = "../../modules/networking/cen-custom-route"
   providers                                 = {
     alicloud = alicloud.shared_service_account
   }
@@ -80,7 +80,7 @@ module "cen_custom_route_business_vpc" {
 
 # Create a custom routing table for management VPC
 module "cen_custom_route_management_vpc" {
-  source                                    = "../../modules/cen-custom-route"
+  source                                    = "../../modules/networking/cen-custom-route"
   providers                                 = {
     alicloud = alicloud.shared_service_account
   }
@@ -119,7 +119,7 @@ resource "local_file" "route_json" {
 
 # custom route for dmz vpc
 module "shared_service_account_vpc_custom_route" {
-  source             = "../../modules/vpc-custom-route"
+  source             = "../../modules/networking/vpc-custom-route"
   providers          = {
     alicloud = alicloud.shared_service_account
   }
@@ -145,7 +145,7 @@ provider "alicloud" {
 
 # custom route for dev vpc
 module "dev_account_vpc_custom_route" {
-  source             = "../../modules/vpc-custom-route"
+  source             = "../../modules/networking/vpc-custom-route"
   providers          = {
     alicloud = alicloud.dev_account
   }
@@ -172,7 +172,7 @@ provider "alicloud" {
 
 # custom route for prod vpc
 module "prod_account_vpc_custom_route" {
-  source             = "../../modules/vpc-custom-route"
+  source             = "../../modules/networking/vpc-custom-route"
   providers          = {
     alicloud = alicloud.prod_account
   }
@@ -199,7 +199,7 @@ provider "alicloud" {
 
 # custom route for management vpc in ops account
 module "ops_account_vpc_custom_route" {
-  source             = "../../modules/vpc-custom-route"
+  source             = "../../modules/networking/vpc-custom-route"
   providers          = {
     alicloud = alicloud.ops_account
   }
