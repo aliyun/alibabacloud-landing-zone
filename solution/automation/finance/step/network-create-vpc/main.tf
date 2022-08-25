@@ -26,7 +26,7 @@ provider "alicloud" {
 }
 
 module "shared_service_account_vpc" {
-  source                = "../../modules/vpc-create"
+  source                = "../../modules/networking/vpc-create"
   providers             = {
     alicloud = alicloud.shared_service_account
   }
@@ -49,7 +49,7 @@ provider "alicloud" {
 }
 
 module "dev_account_vpc" {
-  source                = "../../modules/vpc-create"
+  source                = "../../modules/networking/vpc-create"
   providers             = {
     alicloud = alicloud.dev_account
   }
@@ -72,7 +72,7 @@ provider "alicloud" {
 }
 
 module "prod_account_vpc" {
-  source                = "../../modules/vpc-create"
+  source                = "../../modules/networking/vpc-create"
   providers             = {
     alicloud = alicloud.prod_account
   }
@@ -94,7 +94,7 @@ provider "alicloud" {
 }
 
 module "ops_account_vpc" {
-  source                = "../../modules/vpc-create"
+  source                = "../../modules/networking/vpc-create"
   providers             = {
     alicloud = alicloud.ops_account
   }

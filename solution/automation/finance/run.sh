@@ -77,7 +77,7 @@ echo "\033[33m Route configuration completed. \033[0m \n"
 
 # Deploy ECS and ALB
 echo "\033[33m Start deploying ECS and ALB.. \033[0m"
-cd ../network-deploy-ecs-alb
+cd ../application-deploy-ecs-alb
 terraform init
 terraform plan --var-file ../../settings.tfvars -compact-warnings
 terraform apply --auto-approve --var-file ../../settings.tfvars -compact-warnings

@@ -4,6 +4,7 @@ variable "transit_router_id" {
 }
 variable "transit_router_route_table_name" {
   description = "Name of the custom route table."
+  type = string
 }
 
 variable "transit_router_association_attachment_ids" {
