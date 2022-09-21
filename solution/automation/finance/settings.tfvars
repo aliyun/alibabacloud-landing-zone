@@ -269,9 +269,6 @@ cen_instance_tags = {
   "Department"  = "ops"
 }
 
-# contains the cidr addresses of all vpcs
-all_vpc_cidr = "10.0.0.0/8"
-
 dmz_egress_nat_gateway_name = "nat-gateway-dmz-egress"
 dmz_egress_eip_name         = "eip--dmz-egress"
 

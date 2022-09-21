@@ -9,7 +9,6 @@ locals {
   dev_account_vpc_config            = var.dev_account_vpc_config
   prod_account_vpc_config           = var.prod_account_vpc_config
   ops_account_vpc_config            = var.ops_account_vpc_config
-  all_vpc_cidr                      = var.all_vpc_cidr
 
   vpc_json                      = fileexists("../var/vpc.json") ? jsondecode(file("../var/vpc.json")) : {}
   shared_service_account_vpc_id = var.shared_service_account_vpc_id == "" ? local.vpc_json["shared_service_account"]["vpc_id"] : var.shared_service_account_vpc_id
@@ -59,7 +58,6 @@ module "shared_service_account_cen_attach" {
   cen_instance_id       = local.cen_instance_id
   cen_transit_router_id = local.cen_transit_router_id
   vpc_id                = local.shared_service_account_vpc_id
-  all_vpc_cidr          = local.all_vpc_cidr
 
   primary_vswitch = {
     vswitch_id = local.vpc_json.shared_service_account.vsw_tr1_id,
@@ -98,7 +96,6 @@ module "dev_account_cen_attach" {
   cen_instance_id       = local.cen_instance_id
   cen_transit_router_id = local.cen_transit_router_id
   vpc_id                = local.dev_account_vpc_id
-  all_vpc_cidr          = local.all_vpc_cidr
 
   primary_vswitch = {
     vswitch_id = local.vpc_json.dev_account.vsw_tr1_id,
@@ -139,7 +136,6 @@ module "prod_account_cen_attach" {
   cen_instance_id       = local.cen_instance_id
   cen_transit_router_id = local.cen_transit_router_id
   vpc_id                = local.prod_account_vpc_id
-  all_vpc_cidr          = local.all_vpc_cidr
 
   primary_vswitch = {
     vswitch_id = local.vpc_json.prod_account.vsw_tr1_id,
@@ -175,7 +171,6 @@ module "ops_account_cen_attach" {
     alicloud.shared_service_account = alicloud.shared_service_account
     alicloud.vpc_account            = alicloud.ops_account
   }
-  all_vpc_cidr = local.all_vpc_cidr
 
   cen_tr_account_id     = local.shared_service_account_id
   vpc_account_id        = local.ops_account_id
