@@ -35,11 +35,6 @@ variable "ops_account_id" {
   default = ""
 }
 
-variable "all_vpc_cidr" {
-  type    = string
-  default = ""
-}
-
 variable "shared_service_account_vpc_config" {}
 
 variable "dev_account_vpc_config" {}

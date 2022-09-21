@@ -2,8 +2,12 @@ locals {
   account_json              = fileexists("../var/account.json") ? jsondecode(file("../var/account.json")) : {}
   shared_service_account_id = var.shared_service_account_id == "" ? local.account_json["shared_service_account_id"] : var.shared_service_account_id
 
-  shared_service_account_vpc_config = var.shared_service_account_vpc_config
-  all_vpc_cidr                      = var.all_vpc_cidr
+  snat_source_cidr_list = [
+    var.shared_service_account_vpc_config["vpc_cidr"],
+    var.dev_account_vpc_config["vpc_cidr"],
+    var.prod_account_vpc_config["vpc_cidr"],
+    var.ops_account_vpc_config["vpc_cidr"]
+  ]
 
   dmz_egress_eip_name         = var.dmz_egress_eip_name
   dmz_egress_nat_gateway_name = var.dmz_egress_nat_gateway_name
@@ -16,7 +20,7 @@ locals {
 
 provider "alicloud" {
   alias  = "shared_service_account"
-  region = local.shared_service_account_vpc_config["region"]
+  region = var.shared_service_account_vpc_config["region"]
   assume_role {
     role_arn           = format("acs:ram::%s:role/ResourceDirectoryAccountAccessRole", local.shared_service_account_id)
     session_name       = "AccountLandingZoneSetup"
@@ -56,7 +60,7 @@ module "shared_service_account_dmz_nat_gateway" {
   vswitch_id              = local.shared_service_account_vswitch_id
   association_eip_id_list = module.shared_service_account_dmz_eip.eip_id_list
 
-  snat_source_cidr_list = [local.all_vpc_cidr]
+  snat_source_cidr_list = local.snat_source_cidr_list
   snat_ip_list          = module.shared_service_account_dmz_eip.eip_address_list
 }
 

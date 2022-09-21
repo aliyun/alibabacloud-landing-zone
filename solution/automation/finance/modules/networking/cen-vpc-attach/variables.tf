@@ -27,12 +27,6 @@ variable "transit_router_attachment_desc" {
   default = ""
 }
 
-variable "all_vpc_cidr" {
-  description = "The network segment that contains all vpcs, used for default route connectivity."
-  type        = string
-  default     = ""
-}
-
 variable "vpc_id" {
   description = "The ID of the vpc to attach."
   type        = string

@@ -3,12 +3,13 @@ variable "shared_service_account_id" {
   default = ""
 }
 
-variable "all_vpc_cidr" {
-  type    = string
-  default = ""
-}
-
 variable "shared_service_account_vpc_config" {}
+
+variable "dev_account_vpc_config" {}
+
+variable "prod_account_vpc_config" {}
+
+variable "ops_account_vpc_config" {}
 
 variable "dmz_egress_nat_gateway_name" {
   type    = string

@@ -126,7 +126,15 @@ module "shared_service_account_vpc_custom_route" {
   vpc_id             = local.shared_service_account_vpc_id
   route_entry_config = [
     {
-      destination_cidrblock = var.all_vpc_cidr
+      destination_cidrblock = local.dev_account_vpc_config.vpc_cidr
+      nexthop_type          = "Attachment"
+      nexthop_id            = local.shared_service_account_vpc_attachment_id
+    },{
+      destination_cidrblock = local.prod_account_vpc_config.vpc_cidr
+      nexthop_type          = "Attachment"
+      nexthop_id            = local.shared_service_account_vpc_attachment_id
+    },{
+      destination_cidrblock = local.ops_account_vpc_config.vpc_cidr
       nexthop_type          = "Attachment"
       nexthop_id            = local.shared_service_account_vpc_attachment_id
     }
