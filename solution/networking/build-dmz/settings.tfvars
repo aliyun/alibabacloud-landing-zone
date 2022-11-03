@@ -14,12 +14,12 @@ nat_gateway_config = {
 transit_router_id     = "tr-uf6vpyd9yp4lyeu70n3yw"
 cen_attach_id_dmz_vpc = "tr-attach-79nkaodj9a1qhblksf"
 
-biz_vpc_1_id            = "vpc-uf6odo08ojyic18omz4h0"
-cen_attach_id_biz_vpc_1 = "tr-attach-izlt1w8ab9t3r7i4jm"
-biz_vpc_1_cidr          = "172.16.0.0/12"
+biz_vpc_1_id            = "vpc-uf6ws6nb77jl1xp0fb4ow"
+cen_attach_id_biz_vpc_1 = "tr-attach-5ava0vopch6uomfype"
+biz_vpc_1_cidr          = "172.16.0.0/24"
 
-biz_vpc_2_id            = "vpc-uf66g5mpm3803m2eo7oqg"
-cen_attach_id_biz_vpc_2 = "tr-attach-9jrij3jn7oo38zhde6"
+biz_vpc_2_id            = "vpc-uf6l1gunod4fltxgjuwkj"
+cen_attach_id_biz_vpc_2 = "tr-attach-0d2r8rdctys8mq7o2m"
 
 
 alb_instance_deploy_config = {
