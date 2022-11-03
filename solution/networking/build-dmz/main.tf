@@ -169,7 +169,7 @@ module "dmz_ingress_dmz_vpc_route" {
   create_route_table = false
   route_entry_config = [
     {
-      name                  = "to-biz-vpc"
+      name                  = "to-biz-vpc1"
       destination_cidrblock = local.biz_vpc_1_cidr
       nexthop_type          = "Attachment"
       nexthop_id            = local.cen_attach_id_dmz_vpc
