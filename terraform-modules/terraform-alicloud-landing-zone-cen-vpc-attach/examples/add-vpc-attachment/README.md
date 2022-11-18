@@ -19,4 +19,4 @@ Also, you can add more scenarios in the folder `examples`.
 | Name | Version     |
 |------|-------------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | \>= 1.1.7   |
-| <a name="requirement_alicloud"></a> [alicloud](#requirement\_alicloud) | \>= 1.160.0 |
+| <a name="requirement_alicloud"></a> [alicloud](#requirement\_alicloud) | \>= 1.192.0 |
