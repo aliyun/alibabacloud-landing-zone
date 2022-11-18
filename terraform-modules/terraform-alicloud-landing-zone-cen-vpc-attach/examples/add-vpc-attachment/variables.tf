@@ -1,0 +1,59 @@
+variable "region" {}
+variable "shared_service_account_id" {}
+variable "vpc_account_id" {}
+
+variable "create_cen_linked_role" {
+  description = "Whether to create CEN linked role."
+  type        = bool
+  default     = false
+}
+
+variable "cen_instance_id" {
+  description = "The ID of the CEN instance."
+  type        = string
+}
+
+variable "cen_transit_router_id" {
+  description = "The ID of the CEN transit router."
+  type        = string
+}
+
+variable "transit_router_attachment_name" {
+  type    = string
+  default = ""
+}
+
+variable "transit_router_attachment_desc" {
+  type    = string
+  default = ""
+}
+
+variable "vpc_id" {
+  description = "The ID of the vpc to attach."
+  type        = string
+}
+
+variable "primary_vswitch" {
+  type = object({
+    vswitch_id = string
+    zone_id    = string
+  })
+}
+
+variable "secondary_vswitch" {
+  type = object({
+    vswitch_id = string
+    zone_id    = string
+  })
+}
+
+variable "route_table_association_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "route_table_propagation_enabled" {
+  type    = bool
+  default = true
+}
+
