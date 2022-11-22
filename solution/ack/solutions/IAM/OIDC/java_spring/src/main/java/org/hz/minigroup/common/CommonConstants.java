@@ -17,8 +17,6 @@ public class CommonConstants {
     public static final String OIDC_TOKEN;
     public static final String ROLE_SESSION_NAME;
     public static final String STS_REGION;
-    public static final String STS_AK;
-    public static final String STS_SK;
     public static final String STS_ENDPOINT;
 
 
@@ -32,8 +30,6 @@ public class CommonConstants {
 
     static {
         Properties properties = loadProperties();
-        STS_AK = properties.getProperty("oidc.sts.ak");
-        STS_SK = properties.getProperty("oidc.sts.sk");
         OIDC_PRODIVER_ARN =  properties.getProperty("oidc.sts.provider_arn");
         ROLE_ARN = properties.getProperty("oidc.sts.role_arn");
         ROLE_SESSION_NAME = properties.getProperty("oidc.sts.role_session_name");
