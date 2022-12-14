@@ -74,8 +74,7 @@ spec:
 ```
 
 ## 应用程序使用RRSA OIDC Token认证
-1. 创建一个具备调用STS接口的AK/SK
-   应用程序第一步就是调用sts服务AssumeRole接口拿到一个临时ak/sk。对应RAM账号自定义授权Policy如下：
+1. 参考代码示例
 
 ## 创建Docker环境
 1. 基于本示例中的Dockerfile / Dockerfile_biz 打出基础运行环境及应用运行环境
