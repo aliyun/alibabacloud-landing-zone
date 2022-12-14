@@ -36,7 +36,7 @@ section.
 | Name                                                                            | Version     |
 |---------------------------------------------------------------------------------|-------------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform)       | \>= 1.1.7   |
-| <a name="requirement_alicloud"></a> [alicloud provider](#requirement\_alicloud) | \>= 1.160.0 |
+| <a name="requirement_alicloud"></a> [alicloud provider](#requirement\_alicloud) | \>= 1.193.1 |
 
 ## Docs
 
