@@ -1,4 +1,4 @@
-# Share VPC
+# Overview
 
 Provides a CEN transit router VPC attachment resource that associate the VPC with the CEN instance. For example, it can
 be used to load VPC instances across accounts in CEN, between shared service account and business account.

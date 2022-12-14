@@ -11,6 +11,7 @@ on:
     paths:
       # Modify according to the actual situation
       - 'terraform-modules/terraform-alicloud-landing-zone-alb/**'
+      - '!terraform-modules/**/*.md'
   #      - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
 
   #  schedule:
