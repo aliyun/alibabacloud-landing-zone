@@ -1,4 +1,4 @@
-# Share VPC
+# ALB
 
 This module can be used to create Application Load Balancer.
 

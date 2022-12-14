@@ -7,6 +7,25 @@ variable "dmz_vpc_id" {
   type        = string
 }
 
+variable "alb_instance_spec" {
+  description = "Specification of the ALB instance."
+
+  type = object({
+    protocol               = string
+    address_type           = string
+    address_allocated_mode = string
+    load_balancer_edition  = string
+    tags                   = map(string)
+  })
+
+  default = {
+    protocol               = "HTTP"
+    address_type           = "Internet"
+    address_allocated_mode = "Fixed"
+    load_balancer_edition  = "Basic"
+    tags                   = { createdBy : "Terraform" }
+  }
+}
 
 variable "alb_instance_deploy_config" {
   type = object({

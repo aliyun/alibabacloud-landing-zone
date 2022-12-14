@@ -52,7 +52,6 @@ jobs:
       # Step 1
       - name: Create and destory resource
         shell: bash
-        # Modify according to the actual situation
         run: |
           pwd && ls -al
           cd terraform-modules/terraform-alicloud-landing-zone-alb/examples/create-public-alb
@@ -62,3 +61,14 @@ jobs:
           terraform apply --var-file=tfvars/settings.tfvars --auto-approve
           terraform apply -destroy --var-file=tfvars/settings.tfvars --auto-approve
 
+      # Step 2
+      - name: Create and destory waf edition
+        shell: bash
+        run: |
+          pwd && ls -al
+          cd terraform-modules/terraform-alicloud-landing-zone-alb/examples/create-public-alb
+          terraform -v
+          terraform init 
+          terraform plan --var-file=tfvars/create-waf-edition.tfvars
+          terraform apply --var-file=tfvars/create-waf-edition.tfvars --auto-approve
+          terraform apply -destroy --var-file=tfvars/create-waf-edition.tfvars --auto-approve
