@@ -1,16 +1,11 @@
 # -*- coding: utf-8 -*-
-import sys
-import json
-
-from typing import List
-
-from alibabacloud_vpc20160428.client import Client as Vpc20160428Client
 from alibabacloud_tea_openapi import models as open_api_models
-from alibabacloud_vpc20160428 import models as vpc_20160428_models
 from alibabacloud_tea_util import models as util_models
 from alibabacloud_tea_util.client import Client as UtilClient
 from alibabacloud_sts20150401.client import Client as Sts20150401Client
 from alibabacloud_sts20150401 import models as sts_20150401_models
+from alibabacloud_vpc20160428.client import Client as Vpc20160428Client
+from alibabacloud_vpc20160428 import models as vpc_20160428_models
 from alibabacloud_alb20200616.client import Client as Alb20200616Client
 from alibabacloud_alb20200616 import models as alb_20200616_models
 from alibabacloud_bssopenapi20171214.client import Client as BssOpenApi20171214Client
