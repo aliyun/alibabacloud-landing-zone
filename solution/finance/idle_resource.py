@@ -105,7 +105,7 @@ class IdleResourceSample:
                                                                  access_key_id,
                                                                  access_key_secret,
                                                                  role_name)
-        config.endpoint = 'ecs.{0}.aliyuncs.com'.format(region_id)
+        config.endpoint = f'ecs.{region_id}.aliyuncs.com'
         return Ecs20140526Client(config)
 
     @staticmethod
@@ -144,8 +144,7 @@ class IdleResourceSample:
             result_list = IdleResourceSample.query_ecs_disk(region_id, 'Available', client)
             for disk in result_list:
                 # 状态为待挂载，闲置
-                output_str = output_str + '<ID:{0} Name:{1} Reason:{2} > '.format(disk['DiskId'], disk['DiskName'],
-                                                                                  '状态为待挂载')
+                output_str += f'<ID:{disk["DiskId"]} Name:{disk["DiskName"]} Reason:状态为待挂载> '
                 idle_resource_list.append(disk)
 
             print(output_str)
@@ -223,10 +222,8 @@ class IdleResourceSample:
             ri_id = ri['ResourceInstanceId']
             if ri_id not in id_set and ri['UsagePercentage'] < usage_percentage_threshold:
                 # 查询时段内预留实例券利用率小于阈值，闲置
-                output_str = output_str + '<AccountId:{0} ID:{1} Reason:{2} - {3} {4}> '.format(
-                    ri['UserId'], ri_id, ri['StartTime'], ri['EndTime'],
-                    '使用率低于' + str(usage_percentage_threshold * 100) + '%')
-
+                output_str += f'<AccountId:{ri["UserId"]} ID:{ri_id} Reason:{ri["StartTime"]} - {ri["EndTime"]}' \
+                              f' {"使用率低于" + str(usage_percentage_threshold * 100) + "%"}> '
                 idle_ri_list.append(ri)
                 id_set.add(ri_id)
 
@@ -246,7 +243,7 @@ class IdleResourceSample:
                                                                  access_key_id,
                                                                  access_key_secret,
                                                                  role_name)
-        config.endpoint = 'alb.{0}.aliyuncs.com'.format(region_id)
+        config.endpoint = f'alb.{region_id}.aliyuncs.com'
         return Alb20200616Client(config)
 
     @staticmethod
@@ -338,8 +335,7 @@ class IdleResourceSample:
                 # print(listeners)
                 if len(listeners) == 0:
                     # 无监听器，闲置
-                    output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(alb_id, alb['LoadBalancerName'],
-                                                                                     '无监听器')
+                    output_str += f'<ID:{alb_id} Name:{alb["LoadBalancerName"]} Reason:无监听器> '
                     idle_resource_list.append(alb)
                     continue
 
@@ -357,8 +353,7 @@ class IdleResourceSample:
 
                 if all_listener_stopped:
                     # 所有监听器停止，闲置
-                    output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(alb_id, alb['LoadBalancerName'],
-                                                                                     ' 所有监听器停止')
+                    output_str += f'<ID:{alb_id} Name:{alb["LoadBalancerName"]} Reason:所有监听器停止> '
                     idle_resource_list.append(alb)
                     continue
 
@@ -380,8 +375,7 @@ class IdleResourceSample:
 
                 if all_server_group_is_empty:
                     # 所有服务器组都无后端服务器，闲置
-                    output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(alb_id, alb['LoadBalancerName'],
-                                                                                     '所有服务器组都无后端服务器')
+                    output_str += f'<ID:{alb_id} Name:{alb["LoadBalancerName"]} Reason:所有服务器组都无后端服务器> '
                     idle_resource_list.append(alb)
 
             print(output_str)
@@ -442,8 +436,7 @@ class IdleResourceSample:
                     continue
 
                 if cbp['PublicIpAddresses'] is None or len(cbp['PublicIpAddresses']['PublicIpAddresse']) == 0:
-                    output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(cbp['BandwidthPackageId'],
-                                                                                     cbp['Name'], '未添加EIP')
+                    output_str += f'<ID:{cbp["BandwidthPackageId"]} Name:{cbp["Name"]} Reason:未添加EIP> '
                     idle_resource_list.append(cbp)
             print(output_str)
         print()
@@ -518,9 +511,8 @@ class IdleResourceSample:
             for nat_gateway in result_list:
                 if nat_gateway['NetworkType'] == 'internet' and len(nat_gateway['IpLists']['IpList']) == 0:
                     # 公网NAT网关未绑定EIP，闲置
-                    output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(nat_gateway['NatGatewayId'],
-                                                                                     nat_gateway['Name'],
-                                                                                     '公网NAT网关未绑定EIP')
+                    output_str += f'<ID:{nat_gateway["NatGatewayId"]} Name:{nat_gateway["Name"]}' \
+                                  f' Reason:公网NAT网关未绑定EIP> '
                     idle_resource_list.append(nat_gateway)
                     continue
 
@@ -533,9 +525,8 @@ class IdleResourceSample:
                                                                                    nat_gateway['NatGatewayId'])
                     if len(dnat_entries) == 0:
                         # 无SNAT及DNAT条目，闲置
-                        output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(nat_gateway['NatGatewayId'],
-                                                                                         nat_gateway['Name'],
-                                                                                         '无SNAT及DNAT条目')
+                        output_str += f'<ID:{nat_gateway["NatGatewayId"]} Name:{nat_gateway["Name"]}' \
+                                      f' Reason:无SNAT及DNAT条目> '
                         idle_resource_list.append(nat_gateway)
             print(output_str)
         print()
@@ -579,8 +570,7 @@ class IdleResourceSample:
             for eip in eip_list:
                 bind_instance_id = str(eip['InstanceId'])
                 if len(bind_instance_id) == 0 or len(bind_instance_id.strip()) == 0:
-                    output_str = output_str + '<ID:{0} Name:{1} Reason:{2}> '.format(eip['AllocationId'], eip['Name'],
-                                                                                     '未绑定资源')
+                    output_str += f'<ID:{eip["AllocationId"]} Name:{eip["Name"]} Reason:未绑定资源> '
                     idle_eip_list.append(eip)
             print(output_str)
         print()
