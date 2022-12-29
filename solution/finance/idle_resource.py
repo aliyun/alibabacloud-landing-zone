@@ -202,9 +202,8 @@ class IdleResourceSample:
 
         # 2022-12-27 22:00:00
         today_fixed_time = datetime.today().replace(hour=22, minute=0, second=0, microsecond=0)
-        # 2022-12-25 22:00:00
-        end_period = today_fixed_time + timedelta(days=-2)
-        # 2022-12-25 20:00:00
+        # 2022-12-24 20:00:00 - 2022-12-24 22:00:00
+        end_period = today_fixed_time + timedelta(days=-3)
         start_period = end_period + timedelta(hours=-2)
 
         ri_list = IdleResourceSample.query_bss_resource_usage_detail(start_period.strftime("%Y-%m-%d %H:%M:%S"),
@@ -582,67 +581,105 @@ class IdleResourceSample:
         rd_member_account_rd_account_access_role = 'ResourceDirectoryAccountAccessRole'
 
         # EIP
-        IdleResourceSample.query_idle_eip(rd_management_account_id,
-                                          rd_management_account_access_key_id,
-                                          rd_management_account_access_key_secret,
-                                          rd_management_account_readonly_role_name)
-
-        for account_id in rd_member_account_id_list:
-            IdleResourceSample.query_idle_eip(account_id,
+        try:
+            IdleResourceSample.query_idle_eip(rd_management_account_id,
                                               rd_management_account_access_key_id,
                                               rd_management_account_access_key_secret,
-                                              rd_member_account_rd_account_access_role)
+                                              rd_management_account_readonly_role_name)
+        except Exception as error:
+            print(f'AccountId {rd_management_account_id} query exception:{repr(error)}')
 
-        # 共享带宽包
-        IdleResourceSample.query_idle_common_bandwidth_package(rd_management_account_id,
-                                                               rd_management_account_access_key_id,
-                                                               rd_management_account_access_key_secret,
-                                                               rd_management_account_readonly_role_name)
         for account_id in rd_member_account_id_list:
-            IdleResourceSample.query_idle_common_bandwidth_package(account_id,
-                                                                   rd_management_account_access_key_id,
-                                                                   rd_management_account_access_key_secret,
-                                                                   rd_member_account_rd_account_access_role)
-
-        # ALB
-        IdleResourceSample.query_idle_alb(rd_management_account_id,
-                                          rd_management_account_access_key_id,
-                                          rd_management_account_access_key_secret,
-                                          rd_management_account_readonly_role_name)
-        for account_id in rd_member_account_id_list:
-            IdleResourceSample.query_idle_alb(account_id,
-                                              rd_management_account_access_key_id,
-                                              rd_management_account_access_key_secret,
-                                              rd_member_account_rd_account_access_role)
-
-        # NAT网关
-        IdleResourceSample.query_idle_nat_gateway(rd_management_account_id,
+            try:
+                IdleResourceSample.query_idle_eip(account_id,
                                                   rd_management_account_access_key_id,
                                                   rd_management_account_access_key_secret,
-                                                  rd_management_account_readonly_role_name)
+                                                  rd_member_account_rd_account_access_role)
+            except Exception as error:
+                # traceback.print_exc()
+                print(f'AccountId {account_id} query exception:{repr(error)}')
+
+        # 共享带宽包
+        try:
+            IdleResourceSample.query_idle_common_bandwidth_package(rd_management_account_id,
+                                                                   rd_management_account_access_key_id,
+                                                                   rd_management_account_access_key_secret,
+                                                                   rd_management_account_readonly_role_name)
+        except Exception as error:
+            print(f'AccountId {rd_management_account_id} query exception:{repr(error)}')
+
         for account_id in rd_member_account_id_list:
-            IdleResourceSample.query_idle_nat_gateway(account_id,
+            try:
+                IdleResourceSample.query_idle_common_bandwidth_package(account_id,
+                                                                       rd_management_account_access_key_id,
+                                                                       rd_management_account_access_key_secret,
+                                                                       rd_member_account_rd_account_access_role)
+            except Exception as error:
+                # traceback.print_exc()
+                print(f'AccountId {account_id} query exception:{repr(error)}')
+
+        # ALB
+        try:
+            IdleResourceSample.query_idle_alb(rd_management_account_id,
+                                              rd_management_account_access_key_id,
+                                              rd_management_account_access_key_secret,
+                                              rd_management_account_readonly_role_name)
+        except Exception as error:
+            print(f'AccountId {rd_management_account_id} query exception:{repr(error)}')
+
+        for account_id in rd_member_account_id_list:
+            try:
+                IdleResourceSample.query_idle_alb(account_id,
+                                                  rd_management_account_access_key_id,
+                                                  rd_management_account_access_key_secret,
+                                                  rd_member_account_rd_account_access_role)
+            except Exception as error:
+                print(f'AccountId {account_id} query exception:{repr(error)}')
+
+        # NAT网关
+        try:
+            IdleResourceSample.query_idle_nat_gateway(rd_management_account_id,
                                                       rd_management_account_access_key_id,
                                                       rd_management_account_access_key_secret,
-                                                      rd_member_account_rd_account_access_role)
-
-        # ECS云盘
-        IdleResourceSample.query_idle_ecs_disk(rd_management_account_id,
-                                               rd_management_account_access_key_id,
-                                               rd_management_account_access_key_secret,
-                                               rd_management_account_readonly_role_name)
+                                                      rd_management_account_readonly_role_name)
+        except Exception as error:
+            print(f'AccountId {rd_management_account_id} query exception:{repr(error)}')
 
         for account_id in rd_member_account_id_list:
-            IdleResourceSample.query_idle_ecs_disk(account_id,
+            try:
+                IdleResourceSample.query_idle_nat_gateway(account_id,
+                                                          rd_management_account_access_key_id,
+                                                          rd_management_account_access_key_secret,
+                                                          rd_member_account_rd_account_access_role)
+            except Exception as error:
+                print(f'AccountId {account_id} query exception:{repr(error)}')
+
+        # ECS云盘
+        try:
+            IdleResourceSample.query_idle_ecs_disk(rd_management_account_id,
                                                    rd_management_account_access_key_id,
                                                    rd_management_account_access_key_secret,
-                                                   rd_member_account_rd_account_access_role)
+                                                   rd_management_account_readonly_role_name)
+        except Exception as error:
+            print(f'AccountId {rd_management_account_id} query exception:{repr(error)}')
+
+        for account_id in rd_member_account_id_list:
+            try:
+                IdleResourceSample.query_idle_ecs_disk(account_id,
+                                                       rd_management_account_access_key_id,
+                                                       rd_management_account_access_key_secret,
+                                                       rd_member_account_rd_account_access_role)
+            except Exception as error:
+                print(f'AccountId {account_id} query exception:{repr(error)}')
 
         # 预留实例券RI
-        IdleResourceSample.query_idle_ri(rd_management_account_id,
-                                         rd_management_account_access_key_id,
-                                         rd_management_account_access_key_secret,
-                                         rd_management_account_readonly_role_name)
+        try:
+            IdleResourceSample.query_idle_ri(rd_management_account_id,
+                                             rd_management_account_access_key_id,
+                                             rd_management_account_access_key_secret,
+                                             rd_management_account_readonly_role_name)
+        except Exception as error:
+            print(f'AccountId {rd_management_account_id} query exception:{repr(error)}')
 
 
 if __name__ == '__main__':
