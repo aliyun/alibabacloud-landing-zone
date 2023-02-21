@@ -1,4 +1,3 @@
-
 variable "use_resource_directory" {
   type = bool
   description = <<EOT
@@ -463,4 +462,3 @@ variable "vsw4_cidr" {
   EOT
   default = "172.16.64.0/24"
 }
-

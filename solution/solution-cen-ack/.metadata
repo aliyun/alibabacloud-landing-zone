@@ -1,0 +1,82 @@
+{
+  "ALIYUN::ROS::Interface": {
+    "ParameterGroups": [
+      {
+        "Parameters": [
+          "user1_id",
+          "user2_id"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号配置（请确保账号具有AliyunServiceRolePolicyForCEN权限）",
+            "en": "Account Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "region",
+          "zone_id"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "地域和可用区配置",
+            "en": "Region and Zone Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "user1_vpc_cidr",
+          "user1_pod_vsw_cidr",
+          "user1_node_vsw_cidr",
+          "user1_service_cidr"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号1网段配置(注意VPC间配置的网段不可重叠)",
+            "en": "CIDR Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "user2_vpc_cidr",
+          "user2_pod_vsw_cidr",
+          "user2_node_vsw_cidr",
+          "user2_service_cidr"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号2网段配置(注意VPC间配置的网段不可重叠)",
+            "en": "CIDR Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "create_ecs"
+        ],
+        "Type": "bool"
+      },
+      {
+        "Parameters": [
+          "region1_instance_type",
+          "region1_system_disk_category",
+          "region2_instance_type",
+          "region2_system_disk_category",
+          "ecs_password"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "Ecs实例类型及密码配置（当选择不创建ECS实例时，无需配置）",
+            "en": "Ecs InstanceType and Password Configuration"
+          }
+        }
+      }
+    ],
+    "TemplateTags": [
+      "acs:integrate:landing_zone:cen_tr"
+    ]
+  }
+}
