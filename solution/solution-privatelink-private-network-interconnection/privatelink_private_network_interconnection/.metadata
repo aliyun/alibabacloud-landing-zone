@@ -1,0 +1,114 @@
+{
+  "ALIYUN::ROS::Interface": {
+    "ParameterGroups": [
+      {
+        "Parameters": [
+          "use_resource_directory"
+        ],
+        "Type": "bool"
+      },
+      {
+        "Parameters": [
+          "user1_id",
+          "user2_id"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "资源目录账号配置（请确保账号具有AliyunServiceRolePolicyForCEN权限）",
+            "en": "Account Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "user2_id_not_from_rd",
+          "role_name"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号1为当前账号，请配置账号2相关信息。",
+            "en": "Account Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "region1",
+          "region2"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "地域和可用区配置",
+            "en": "Region and Zone Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "vpc2_cidr",
+          "zone2_id",
+          "vsw2_cidr",
+          "vpc3_cidr",
+          "zone4_id",
+          "vsw4_cidr"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号1网段与可用区配置(注意VPC间配置的网段不可重叠)",
+            "en": "CIDR Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "vpc1_cidr",
+          "vsw1_cidr",
+          "zone1_id"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号2网段与可用区配置配置(注意VPC间配置的网段不可重叠)",
+            "en": "CIDR Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "create_ecs"
+        ],
+        "Type": "bool"
+      },
+      {
+        "Parameters": [
+          "instance_type2",
+          "system_disk_category2",
+          "instance_type4",
+          "system_disk_category4",
+          "user1_ecs_password"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号1ECS实例类型（当选择不创建ECS实例时，无需配置）",
+            "en": "Ecs InstanceType and Password Configuration"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "instance_type1",
+          "system_disk_category1",
+          "user2_ecs_password"
+        ],
+        "Label": {
+          "default": {
+            "zh-cn": "账号2ECS实例类型（当选择不创建ECS实例时，无需配置）",
+            "en": "Ecs InstanceType and Password Configuration"
+          }
+        }
+      }
+    ],
+    "TemplateTags": [
+      "acs:integrate:landing_zone:privatelink_private_network_interconnection"
+    ]
+  }
+}
