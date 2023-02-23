@@ -2,7 +2,7 @@ terraform {
   required_providers {
     alicloud = {
       source = "aliyun/alicloud"
-      version = "1.192.0"
+      version = ">=1.192.0"
       configuration_aliases = [ alicloud.shared_service_account, alicloud.vpc_account ]
     }
 
