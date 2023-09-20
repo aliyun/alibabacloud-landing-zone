@@ -1,6 +1,4 @@
 #!/bin/bash
-#test-key=LTAI5t6UJV1BTu2HcXz67ZWn
-#test-secret=iLYT7aps05nW5wVn2uPLX31Xb8yuEq
 SystemAdminAccessPolicyName=SystemAdministratorAccess
 SystemAdminGroupName=SystemAdminGroup
 BillingAdminGroupName=BillingAdminGroup
