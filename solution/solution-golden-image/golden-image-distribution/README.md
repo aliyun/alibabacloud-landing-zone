@@ -1,5 +1,7 @@
 # 分发 Golden Image
 
+[中文](README.md) | [English](README_en.md)
+
 ## 准备工作
 
 1. 开通资源目录，并建立相应的资源结构

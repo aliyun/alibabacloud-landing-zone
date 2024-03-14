@@ -14,3 +14,22 @@ cidrVSwitch | 有效的 IPV4 网段，10.0.0.0/16 | 该自动化方案会自动�
 | internetMaxBandwidthOut | 10 | 镜像构建过程中创建的 ECS 实例的公网带宽。为 0 时表示不分配公网地址。您可以在触发镜像构建的流程时修改该参数。 |
 | approverRamUserName | approver | 允许审批镜像构建流程的 RAM 用户。该 RAM 用户至少需要具有下方所示的读写权限，您也可以直接授予其 AliyunOOSFullAccess 权限。该 RAM 用户可以批准/拒绝 Golden Image。您可以在触发镜像构建的流程时修改该参数。 |
 | webHookUrl | 有效的 WebHook 链接 | 在镜像构建流程中开启镜像漏洞扫描或者需要人工审批时，会通过该 WebHook 发送消息通知。您可以在触发镜像构建的流程时修改该参数。 |
+
+审批镜像构建流程的 RAM 用户至少需要以下权限：
+```
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oos:GetExecutionTemplate",
+        "oos:ListTaskExecutions",
+        "oos:ListExecutions",
+        "oos:NotifyExecution"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
