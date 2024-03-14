@@ -1,0 +1,167 @@
+ROSTemplateFormatVersion: '2015-09-01'
+Description: Distribute patch baseline for ecs patching automation.
+Parameters:
+  StackGroupName:
+    Label:
+      zh-cn: 资源栈组名称
+      en: Stack Group Name
+    Type: String
+    Default: distribute-patch-baseline
+  SourcePatchBaseline:
+    Label:
+      zh-cn: 需要下发的补丁基线
+      en: Patch Baseline To Distribute
+    Type: String
+    AssociationProperty: ALIYUN::OOS::PatchBaseline
+  TargetRdFolderIds:
+    AssociationProperty: 'ALIYUN::ResourceManager::Folder'
+    MinLength: 1
+    Type: Json
+    Label:
+      zh-cn: 目标 RD 目录
+      en: Target RD Forder
+  TargetRegionIds:
+    Label:
+      zh-cn: 目标地域
+      en: Target Regions
+    Type: Json
+    MinLength: 1
+    AssociationProperty: List[Parameter]
+    AssociationPropertyMetadata:
+      Parameter:
+        Type: String
+        AssociationProperty: ALIYUN::ECS::RegionId
+  AutoDeployment:
+    Default: true
+    Type: Boolean
+    Description:
+      zh-cn: 当 RD 目录添加或删除成员时，自动创建或删除补丁基线。
+      en: >-
+        Automatically create or delete patch baseline when members
+        are added or removed from the RD directory.
+    Label:
+      zh-cn: 自动部署
+      en: Auto deployment
+Resources:
+  DS-PatchBaseline:
+    Type: DATASOURCE::OOS::PatchBaseline
+    Properties:
+      PatchBaselineName:
+        Ref: SourcePatchBaseline
+  StackGroup:
+    Type: ALIYUN::ROS::StackGroup
+    Properties:
+      Parameters:
+        PatchBaselineName:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - PatchBaselineName
+        OperationSystem:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - OperationSystem
+        ApprovalRules:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - ApprovalRules
+        Description:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - Description
+        RejectedPatches:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - RejectedPatches
+        RejectedPatchesAction:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - RejectedPatchesAction
+        ApprovedPatches:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - ApprovedPatches
+        Sources:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - Sources
+        ApprovedPatchesEnableNonSecurity:
+          Fn::GetAtt:
+            - DS-PatchBaseline
+            - ApprovedPatchesEnableNonSecurity
+      PermissionModel: SERVICE_MANAGED
+      AutoDeployment:
+        RetainStacksOnAccountRemoval: false
+        Enabled:
+          Ref: AutoDeployment
+      StackGroupName:
+        Ref: StackGroupName
+      TemplateBody:
+        ROSTemplateFormatVersion: '2015-09-01'
+        Parameters:
+          PatchBaselineName:
+            Type: String
+          OperationSystem:
+            Type: String
+          ApprovalRules:
+            Type: String
+          Description:
+            Type: String
+            Default: ''
+          RejectedPatches:
+            Type: Json
+            Default: null
+          RejectedPatchesAction:
+            Type: String
+          ApprovedPatches:
+            Type: Json
+            Default: null
+          Sources:
+            Type: Json
+            Default: null
+          ApprovedPatchesEnableNonSecurity:
+            Type: Boolean
+            Default: null
+        Resources:
+          PatchBaseline:
+            Type: ALIYUN::OOS::PatchBaseline
+            Properties:
+              PatchBaselineName:
+                Ref: PatchBaselineName
+              OperationSystem:
+                Ref: OperationSystem
+              ApprovalRules:
+                Ref: ApprovalRules
+              Description:
+                Ref: Description
+              RejectedPatches:
+                Ref: RejectedPatches
+              RejectedPatchesAction:
+                Ref: RejectedPatchesAction
+              ApprovedPatches:
+                Ref: ApprovedPatches
+              Sources:
+                Ref: Sources
+              ApprovedPatchesEnableNonSecurity:
+                Ref: ApprovedPatchesEnableNonSecurity
+          DefaultPatchBaseline:
+            Type: ALIYUN::OOS::DefaultPatchBaseline
+            Properties:
+              PatchBaselineName:
+                Ref: PatchBaselineName
+            DependsOn: PatchBaseline
+  StackInstances:
+    Type: ALIYUN::ROS::StackInstances
+    Properties:
+      DeploymentTargets:
+        RdFolderIds:
+          Ref: TargetRdFolderIds
+      RegionIds:
+        Ref: TargetRegionIds
+      StackGroupName:
+        Ref: StackGroup
+Outputs:
+  StackInstances:
+    Value:
+      Fn::GetAtt:
+        - StackInstances
+        - Stacks
