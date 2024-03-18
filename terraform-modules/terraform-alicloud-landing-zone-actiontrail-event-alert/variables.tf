@@ -13,3 +13,8 @@ variable "project_region" {
 variable "log_store" {
   type = string
 }
+
+variable "lang" {
+  type    = string
+  default = "zh-CN"
+}

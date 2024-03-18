@@ -11,6 +11,7 @@ module "actiontrail_events" {
   project_name                 = "sls_project_name"
   project_region               = "cn-shanghai"
   log_store                    = "sls_log_store"
+  lang                         = "en-US"
   enabled_alerts               = [
     "cis.at.abnormal_login",
     "cis.at.root_login",
