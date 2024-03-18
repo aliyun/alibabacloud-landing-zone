@@ -1,0 +1,195 @@
+{
+  "ROSTemplateFormatVersion": "2015-09-01",
+  "Description": "Create a ram role and policy for ecs inspection by running command using config rule.",
+  "Parameters": {
+    "RoleName": {
+      "Type": "String",
+      "Description": {
+        "zh-cn": "角色的名称，如果已经存在，请更改名称，<br>由英文字母、数字或'-'组成，不超过64个字符。",
+        "en": "The name of role, Change the name if it already exists,<br>Consist of english letters, numbers or '-',not more than 64 characters."
+      },
+      "Default": "EcsCommandInspectionRole",
+      "MinLength": 1,
+      "Label": {
+        "zh-cn": "角色的名称",
+        "en": "Role Name"
+      },
+      "AllowedPattern": "^[a-zA-Z0-9\\-]+$",
+      "MaxLength": 64,
+      "ConstraintDescription": {
+        "zh-cn": "不得超过 64 个字符、英文字母、数字或'-'。",
+        "en": "No more than 64 characters,English letters, Numbers, or '-' are allowed."
+      }
+    },
+    "AssumeRolePrincipalRole": {
+      "Default": "AliyunCustomConfigRuleRole",
+      "Type": "String",
+      "Description": {
+        "zh-cn": "允许扮演该角色的可信账号下的角色。",
+        "en": "Role of trusted account that are allowed to assume this role."
+      },
+      "Label": {
+        "zh-cn": "可信账号下允许扮演的角色",
+        "en": "Principal Role"
+      }
+    },
+    "AssumeRolePrincipalAccount": {
+      "Default": "",
+      "Type": "String",
+      "Description": {
+        "zh-cn": "该角色可信的账号。置空，则默认为当前账号。",
+        "en": "The trusted account for this role. Default is current account while empty."
+      },
+      "Label": {
+        "zh-cn": "角色可信的账号",
+        "en": "Principal Account"
+      }
+    },
+    "PolicyName": {
+      "ConstraintDescription": {
+        "zh-cn": "由英文字母、数字或'-',5-128个字符组成。",
+        "en": "Consist of english letters, numbers or '-',5-128 characters."
+      },
+      "Description": {
+        "zh-cn": "策略名，改变名称如果它已经存在，<br>由英文字母，数字或'-'，5-128个字符组成。",
+        "en": "The policy name, Change the name if it already exists,<br>Consist of english letters, numbers or '-', 5-128 characters."
+      },
+      "Default": "EcsCommandInspectionRolePolicy",
+      "MinLength": 5,
+      "Label": {
+        "zh-cn": "策略名",
+        "en": "Policy Name"
+      },
+      "AllowedPattern": "^[a-zA-Z0-9\\-]+$",
+      "MaxLength": 128,
+      "Type": "String"
+    }
+  },
+  "Outputs": {
+    "RoleName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "RamRole",
+          "RoleName"
+        ]
+      }
+    },
+    "RoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "RamRole",
+          "Arn"
+        ]
+      }
+    },
+    "PolicyName": {
+      "Value": {
+        "Fn::GetAtt": [
+          "RamManagedPolicy",
+          "PolicyName"
+        ]
+      }
+    }
+  },
+  "Conditions": {
+    "EmptyPrincipalAccount": {
+      "Fn::Equals": [
+        "",
+        {
+          "Ref": "AssumeRolePrincipalAccount"
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "RamManagedPolicy": {
+      "Type": "ALIYUN::RAM::ManagedPolicy",
+      "Properties": {
+        "PolicyName": {
+          "Ref": "PolicyName"
+        },
+        "PolicyDocument": {
+          "Version": "1",
+          "Statement": [
+            {
+              "Action": [
+                "ecs:DescribeInvocationResults",
+                "ecs:RunCommand"
+              ],
+              "Resource": [
+                "*"
+              ],
+              "Effect": "Allow"
+            }
+          ]
+        }
+      }
+    },
+    "RamAttachPolicyToRole": {
+      "Type": "ALIYUN::RAM::AttachPolicyToRole",
+      "Properties": {
+        "PolicyName": {
+          "Fn::GetAtt": [
+            "RamManagedPolicy",
+            "PolicyName"
+          ]
+        },
+        "PolicyType": "Custom",
+        "RoleName": {
+          "Fn::GetAtt": [
+            "RamRole",
+            "RoleName"
+          ]
+        }
+      },
+      "DependsOn": [
+        "RamManagedPolicy",
+        "RamRole"
+      ]
+    },
+    "RamRole": {
+      "Type": "ALIYUN::RAM::Role",
+      "Properties": {
+        "RoleName": {
+          "Ref": "RoleName"
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "1",
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "RAM": [
+                  {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "acs:ram::",
+                        {
+                          "Fn::If": [
+                            "EmptyPrincipalAccount",
+                            {
+                              "Ref": "ALIYUN::AccountId"
+                            },
+                            {
+                              "Ref": "AssumeRolePrincipalAccount"
+                            }
+                          ]
+                        },
+                        ":role/",
+                        {
+                          "Ref": "AssumeRolePrincipalRole"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
