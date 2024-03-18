@@ -1,0 +1,14 @@
+{
+  "delivery_region": "cn-hangzhou",
+  "delivery_account_id": "",
+  "logarchive_central_region": "cn-shanghai",
+  "logarchive_account_id": "",
+  "delivery_sls_project": "",
+  "delivery_sls_logstore": "",
+  "central_sls_project": "",
+  "central_sls_logstore_name": "other_log",
+  "is_central_sls_logstore_existed": false,
+  "delivery_ram_name_prefix": "",
+  "logarchive_ram_role_name": "logaudit-post-role",
+  "is_logarchive_ram_role_existed": false
+}

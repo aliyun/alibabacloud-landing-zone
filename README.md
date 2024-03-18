@@ -1,5 +1,7 @@
 # 阿里云Landing Zone
 
+中文｜[English](./README_en.md)
+
 ![](image/landing-zone-module.png)
 
 
@@ -53,7 +55,7 @@
 - 一篇说明文档: 详细介绍解决方案原理,以及部署流程
 - 一个自动化脚本: 如果有的话,以terraform为主
 
-在这个过程中,我们也会不断地将这些解决方案产品化,对应的产品就是阿里云即将发布的的[云治理中心](https://landingzone.console.aliyun.com)
+在这个过程中,我们也会不断地将这些解决方案产品化,对应的产品就是阿里云[云治理中心](https://governance.console.aliyun.com)
 
 
 
