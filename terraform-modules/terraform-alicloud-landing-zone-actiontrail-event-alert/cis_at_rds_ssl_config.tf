@@ -18,7 +18,12 @@ resource "alicloud_log_alert" "cis_at_rds_ssl_config" {
     tokens = {
       "default.project"  = var.project_name
       "default.logstore" = var.log_store
+      "default.action_policy" = var.action_policy_id
     }
   }
+
+  depends_on = [
+    alicloud_log_resource_record.action_policy
+  ]
 }
   

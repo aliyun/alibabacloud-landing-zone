@@ -5,13 +5,33 @@ This module can be used to create alerts from ActionTrail events.
 ## Usage
 
 ```terraform
+provider "alicloud" {
+  region     = "cn-shanghai"
+}
+
+provider "alicloud" {
+  alias      = "log_resource_record"
+  region     = "cn-heyuan"
+}
+
 module "actiontrail_events" {
   # Please download the module directly and specify the source locally.
   source                       = "xxxx"
+  providers = {
+    alicloud                     = alicloud
+    alicloud.log_resource_record = alicloud.log_resource_record
+  }
   project_name                 = "sls_project_name"
-  project_region               = "cn-shanghai"
   log_store                    = "sls_log_store"
   lang                         = "en-US"
+  user_id                      = "user_lsvlwl"
+  user_name                    = "user_name"
+  user_email                   = "email@test.com"
+  user_group_id                = "group_lsmzvo"
+  user_group_name              = "group_name"
+  action_policy_id             = "policy_qlji9g"
+  action_policy_name           = "policy.name"
+  notification_period          = "any"
   enabled_alerts               = [
     "cis.at.abnormal_login",
     "cis.at.root_login",
@@ -85,11 +105,30 @@ section.
 
 ## Docs
 
+### Providers
+
+You need to pass two providers explicitly to module.
+
+* `alicloud`: This provider used to create alert of log service. The region configured for this provider should be the same as the SLS project for ActionTrail trail.
+* `alicloud.log_resource_record`：This provider used to create user and user group of log service. The region configured for this provider must be cn-heyuan.
+
 ### Variables
 
 * `project_name`: the SLS project for ActionTrail trail.
-* `project_region`: the region where the SLS project belongs to.
 * `log_store`: the log store used for store ActionTrail events in the SLS project specified above.
+* `user_id`: the ID of the user whom the alert notifications are sent.
+* `user_name`: the name of the user whom the alert notifications are sent.
+* `user_email`: the email of the user whom the alert notifications are sent.
+* `user_group_id`: the ID of the user group that the user specified above will add to.
+* `user_group_name`: the name of the user group that the user specified above will add to.
+* `action_policy_id`: the ID of the action policy that to manage how alert notifications are sent.
+* `action_policy_name`: the name of the action policy that to manage how alert notifications are sent.
+* `notification_period`: determine the periods during which alert notifications can be sent.
+  * `any`: sends notifications by using a specified method at any time.
+  * `workday`: sends notifications by using a specified method on business days.
+  * `non_workday`: sends notifications by using a specified method on non-business days.
+  * `worktime`: sends notifications by using a specified method during the business hours of business days.
+  * `non_worktime`: sends notifications by using a specified method on non-business days or during the non-business hours of business days.
 * `enabled_alerts`: alerts list you want to enable. Please refer to the alerts list below.
 
 ### Alerts List
