@@ -55,7 +55,17 @@
     "cis.at.cfw_assets_auto_protec_off"
   ],
   "project_name": "",
-  "project_region": "cn-shanghai",
   "log_store": "",
-  "lang": "en-US"
+  "lang": "en-US",
+  "users": [
+    {
+      "id": "user.lsvlwl",
+      "name": "user.name",
+      "email": "email@test.com"
+    }
+  ],
+  "user_group_id": "group.lsmzvo",
+  "user_group_name": "group.name",
+  "action_policy_id": "policy.qlji9g",
+  "action_policy_name": "policy.name"
 }
