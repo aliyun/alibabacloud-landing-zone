@@ -24,9 +24,13 @@ module "actiontrail_events" {
   project_name                 = "sls_project_name"
   log_store                    = "sls_log_store"
   lang                         = "en-US"
-  user_id                      = "user_lsvlwl"
-  user_name                    = "user_name"
-  user_email                   = "email@test.com"
+  users                        = [
+    {
+      id    = "user.lsvlwl"
+      name  = "user.name1"
+      email = "email1@test.com"
+    }
+  ]
   user_group_id                = "group_lsmzvo"
   user_group_name              = "group_name"
   action_policy_id             = "policy_qlji9g"
@@ -116,13 +120,14 @@ You need to pass two providers explicitly to module.
 
 * `project_name`: the SLS project for ActionTrail trail.
 * `log_store`: the log store used for store ActionTrail events in the SLS project specified above.
-* `user_id`: the ID of the user whom the alert notifications are sent.
-* `user_name`: the name of the user whom the alert notifications are sent.
-* `user_email`: the email of the user whom the alert notifications are sent.
-* `user_group_id`: the ID of the user group that the user specified above will add to.
-* `user_group_name`: the name of the user group that the user specified above will add to.
-* `action_policy_id`: the ID of the action policy that to manage how alert notifications are sent.
-* `action_policy_name`: the name of the action policy that to manage how alert notifications are sent.
+* `users`: the users whom the alert notifications are sent.
+  * `id`: the ID of the user. The ID must be unique in an Alibaba Cloud account. The ID must be 5 to 60 characters in length, and can contain digits, letters, underscores (_), hyphens (-), and periods (.). It must start with a letter.
+  * `name`: the name of the user. The name must be 1 to 20 characters in length, and cannot contain any of the following characters: \ $ | ~ ? & < > { } ` ' ".
+  * `email`: the email address of the user.
+* `user_group_id`: the ID of the user group that the user specified above will add to. The ID must be unique. The ID must be 5 to 60 characters in length and can contain digits, letters, underscores (_), hyphens (-), and periods (.). It must start with a letter.
+* `user_group_name`: the name of the user group that the user specified above will add to. The group name must be 1 to 20 characters in length, and cannot contain the following characters: \ $ | ~ ? & < > { } ` ' ".
+* `action_policy_id`: the ID of the action policy that to manage how alert notifications are sent.Make sure that the ID is unique within your Alibaba Cloud account. The ID must be 5 to 60 characters in length and can contain digits, letters, underscores (_), hyphens (-), and periods (.). It must start with a letter.
+* `action_policy_name`: the name of the action policy that to manage how alert notifications are sent.The name must be 1 to 40 characters in length, and cannot contain the following characters: \ $ | ~ ? & < > { } ` ' ".
 * `notification_period`: determine the periods during which alert notifications can be sent.
   * `any`: sends notifications by using a specified method at any time.
   * `workday`: sends notifications by using a specified method on business days.

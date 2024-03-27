@@ -57,9 +57,13 @@
   "project_name": "",
   "log_store": "",
   "lang": "en-US",
-  "user_id": "user.lsvlwl",
-  "user_name": "user.name",
-  "user_email": "email@test.com",
+  "users": [
+    {
+      "id": "user.lsvlwl",
+      "name": "user.name",
+      "email": "email@test.com"
+    }
+  ],
   "user_group_id": "group.lsmzvo",
   "user_group_name": "group.name",
   "action_policy_id": "policy.qlji9g",

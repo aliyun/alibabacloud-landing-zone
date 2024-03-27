@@ -1,18 +1,27 @@
 resource "alicloud_log_resource_record" "user" {
+  for_each = {
+    for user in var.users : user.id => user
+  }
   provider      = alicloud.log_resource_record
   resource_name = "sls.common.user"
-  record_id     = var.user_id
-  tag           = var.user_name
+  record_id     = each.key
+  tag           = each.value.name
   value         = <<EOF
   {
-    "user_id": "${var.user_id}",
-    "user_name": "${var.user_name}",
+    "user_id": "${each.key}",
+    "user_name": "${each.value.name}",
     "email": [
-      "${var.user_email}"
+      "${each.value.email}"
     ],
     "enabled": true
   }
   EOF
+}
+
+locals {
+  user_ids = [
+    for user in var.users : user.id
+  ]
 }
 
 resource "alicloud_log_resource_record" "user_group" {
@@ -25,9 +34,7 @@ resource "alicloud_log_resource_record" "user_group" {
     "user_group_id": "${var.user_group_id}",
     "user_group_name": "${var.user_group_name}",
     "enabled": true,
-    "members": [
-      "${var.user_id}"
-    ]
+    "members": ${jsonencode(local.user_ids)}
   }
   EOF
 
