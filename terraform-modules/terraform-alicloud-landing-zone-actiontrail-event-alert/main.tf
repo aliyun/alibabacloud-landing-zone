@@ -1,3 +1,8 @@
+data "alicloud_log_alert_resource" "init" {
+  type = "user"
+  lang = var.lang == "en-US" ? "en" : "cn"
+}
+
 resource "alicloud_log_resource_record" "user" {
   for_each = {
     for user in var.users : user.id => user
