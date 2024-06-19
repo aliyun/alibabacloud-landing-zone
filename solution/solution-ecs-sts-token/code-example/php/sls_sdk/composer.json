@@ -1,0 +1,14 @@
+{
+  "name": "hello/sls",
+  "type": "project",
+  "require": {
+    "alibabacloud/aliyun-log-php-sdk": "^0.6.4",
+    "alibabacloud/credentials": "^1.1"
+  },
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "crimson"
+    }
+  ]
+}
