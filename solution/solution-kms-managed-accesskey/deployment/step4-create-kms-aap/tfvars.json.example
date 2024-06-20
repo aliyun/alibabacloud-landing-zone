@@ -1,0 +1,14 @@
+{
+  "region": "cn-hangzhou",
+  "kms_instance_id": "kst-hzz662b622********",
+  "kms_key_id": "key-hzz66387dcb********",
+  "kms_managed_ram_secret_name": "acs/ram/user/****",
+  "kms_instance_policy": {
+    "name": "ram-secret-private"
+  },
+  "kms_shared_gateway_policy": {
+    "name": "ram-secret-public"
+  },
+  "aap_name": "ram-secret",
+  "client_key_password": "ePw81zE**********"
+}
