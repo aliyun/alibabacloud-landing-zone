@@ -1,0 +1,33 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rrsa-demo
+  labels:
+    pod-identity.alibabacloud.com/injection: 'on'
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-sa
+  namespace: rrsa-demo
+  annotations:
+    pod-identity.alibabacloud.com/role-name: demo-role-for-rrsa
+    pod-identity.alibabacloud.com/service-account-token-expiration: '3600' # 设置该服务账户的Pod挂载的OIDC Token的有效期
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo
+  namespace: rrsa-demo
+  annotations:
+    pod-identity.alibabacloud.com/service-account-token-expiration: '3600' # 设置该Pod挂载的OIDC Token的有效期
+spec:
+  serviceAccountName: demo-sa
+  containers:
+    - image: <your_image>
+      imagePullPolicy: "Always"
+      name: demo
+  restartPolicy: OnFailure
