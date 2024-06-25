@@ -1,0 +1,74 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.example</groupId>
+    <artifactId>solution-fc-sts-token</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>solution-fc-sts-token</name>
+    <url>http://maven.apache.org</url>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <maven.compiler.compilerVersion>1.8</maven.compiler.compilerVersion>
+        <exec.cleanupDaemonThreads>false</exec.cleanupDaemonThreads>
+    </properties>
+
+    <dependencies>
+        <!--2.0 vpc-sdk-->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>vpc20160428</artifactId>
+            <version>7.8.7</version>
+        </dependency>
+        <!--1.0 vpc-sdk-->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>aliyun-java-sdk-vpc</artifactId>
+            <version>3.2.28</version>
+        </dependency>
+        <!--oss-sdk-->
+        <dependency>
+            <groupId>com.aliyun.oss</groupId>
+            <artifactId>aliyun-sdk-oss</artifactId>
+            <version>3.17.2</version>
+        </dependency>
+        <!--sls-sdk-->
+        <dependency>
+            <groupId>com.aliyun.openservices</groupId>
+            <artifactId>aliyun-log</artifactId>
+            <version>0.6.107</version>
+        </dependency>
+
+        <!--fc-sdk -->
+        <dependency>
+            <groupId>com.aliyun.fc.runtime</groupId>
+            <artifactId>fc-java-core</artifactId>
+            <version>1.4.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.aliyun.fc.runtime</groupId>
+            <artifactId>fc-java-event</artifactId>
+            <version>1.2.0</version>
+        </dependency>
+
+        <!--建议使用最新发布的Credentials版本。-->
+        <!--请查看ChangeLog.txt获取所有已发布的版本列表。-->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>credentials-java</artifactId>
+            <version>0.3.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.51</version>
+        </dependency>
+    </dependencies>
+</project>
