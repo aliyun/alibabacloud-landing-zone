@@ -1,0 +1,17 @@
+FROM dsafd-registry.cn-shenzhen.cr.aliyuncs.com/yaofangapp/basicapp:v0.1
+
+# 这里替换成你自己的应用名
+ARG APP_NAME=calcula
+ARG ENV_TYPE=production
+
+# 容器运行时的环境变量
+ENV APP_NAME=$APP_NAME
+ENV APP_ENVIRONMENT=$ENV_TYPE
+
+COPY bin /root/${APP_NAME}/bin
+
+RUN mkdir -p /root/${APP_NAME}/logs && mkdir -p /root/${APP_NAME}/target
+
+VOLUME /root/${APP_NAME}/logs
+
+COPY ${APP_NAME}.jar /root/${APP_NAME}/target

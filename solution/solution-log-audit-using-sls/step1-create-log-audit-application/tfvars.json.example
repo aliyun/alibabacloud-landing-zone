@@ -1,0 +1,9 @@
+{
+  "logarchive_central_region": "cn-shanghai",
+  "logarchive_account_id": "",
+  "audit_logs": {
+    "cloudconfig_change_enabled": "true",
+    "cloudconfig_change_ttl": "180",
+    "oss_access_enabled": "true"
+  }
+}

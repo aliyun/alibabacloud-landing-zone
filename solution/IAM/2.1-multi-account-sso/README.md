@@ -1,5 +1,7 @@
 # 多账号SSO自动化配置
 
+中文｜[English](./README_en.md)
+
 ## 方案介绍
 
 本方案使用 Terraform 自动化执行，受限于 Terraform 的一些限制（不支持动态 Provider），需要分为两步进行：第一步执行将根据**主账号**资源目录下的成员账号列表，动态生成出第二步所需要的Terraform模板并自动填好参数；第二步将根据Terraform模板，在成员账号下创建Idp和RAM角色。所有配置项均在第一步内完成。

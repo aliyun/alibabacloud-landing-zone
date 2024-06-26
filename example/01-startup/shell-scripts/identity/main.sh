@@ -1,5 +1,4 @@
 #!/bin/bash
-
 SystemAdminAccessPolicyName=SystemAdministratorAccess
 SystemAdminGroupName=SystemAdminGroup
 BillingAdminGroupName=BillingAdminGroup

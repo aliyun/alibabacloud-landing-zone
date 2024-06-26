@@ -1,0 +1,19 @@
+{
+  "region": "cn-hangzhou",
+  "log": false,
+  "access_num": 3,
+  "purchase_period": 1,
+  "auto_renew": false,
+  "vpc_id": "vpc-bp1c********",
+  "zone_ids": [
+    "cn-hangzhou-k", "cn-hangzhou-j"
+  ],
+  "vswitch_id": "vsw-bp1cq3********",
+  "bind_vpcs": [
+    {
+      "vpc_id": "vpc-bp1lqqx*********",
+      "vswitch_id": "vsw-bp18o5x64********",
+      "vpc_owner_id": "18495046********"
+    }
+  ]
+}

@@ -10,11 +10,18 @@
 # Crash log files
 crash.log
 
+# Access key files
+*.accesskey
+
+# temp files
+solution/**/var/*.json
+
 # Ignore any .tfvars files that are generated automatically for each Terraform run. Most
 # .tfvars files are managed as part of configuration and so should be included in
 # version control.
 #
 # example.tfvars
+local.tfvars
 
 # Ignore override files as they are usually used to override resources locally and so
 # are not checked in

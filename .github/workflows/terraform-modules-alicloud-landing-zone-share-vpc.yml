@@ -11,15 +11,16 @@ on:
     paths:
       # Modify according to the actual situation
       - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
-#      - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
+      - '!terraform-modules/**/*.md'
+  #      - '.github/workflows/terraform-modules-alicloud-landing-zone-share-vpc.yml'
 
-#  schedule:
-#    - cron: '6 18 * * 2'
+  #  schedule:
+  #    - cron: '6 18 * * 2'
 
-#  pull_request:
-#    paths:
-#      # Modify according to the actual situation
-#      - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
+  #  pull_request:
+  #    paths:
+  #      # Modify according to the actual situation
+  #      - 'terraform-modules/terraform-alicloud-landing-zone-share-vpc/**'
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:

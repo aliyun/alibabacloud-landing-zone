@@ -1,0 +1,51 @@
+# This is a basic workflow to help you get started with Actions
+name: auto-account-factory-step-auth-create-idp.yml
+env:
+  ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+  ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+  ALICLOUD_REGION: 'cn-hangzhou'
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the xx branch
+  push:
+    branches:
+      - ci-test-1
+      - main
+    paths:
+      - 'solution/automation/account-factory/step/auth-create-idp/**'
+      - '!solution/**/*.md'
+  pull_request:
+    branches:
+      - ci-test-1
+      - main
+    paths:
+      - 'solution/automation/account-factory/step/auth-create-idp/**'
+      - '!solution/**/*.md'
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "terraform-module-test"
+  terraform-module-ci:
+    # The type of runner that the job will run on
+    runs-on: self-hosted
+#    runs-on: ubuntu-latest
+    environment: MA_1140931609457592_yunguotest1
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+      - name: Run Terraform Module
+        shell: bash
+        run: |
+          pwd && ls -al
+          cd solution/automation/account-factory/step/auth-create-idp
+          terraform init -backend-config="key=1140931609457592-yunxiao2-auth-create-idp" -backend-config=../../backend.tfvars -reconfigure
+          terraform apply --auto-approve -var-file=../../settings.tfvars -compact-warnings -var account_id=1584945597797346
+

@@ -1,0 +1,8 @@
+{
+  "region": "cn-hangzhou",
+  "oss_assume_role": "EcsPatchingAutomationTriggerRole",
+  "oos_cross_account_assume_role": "EcsPatchingAutomationRole",
+  "approverRamUserName": "oos-approver",
+  "approverWebHookUrl": "https://oapi.dingtalk.com/robot/send?access_token=xxx",
+  "patchingWebHookUrl": "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+}

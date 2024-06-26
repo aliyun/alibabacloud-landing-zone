@@ -1,0 +1,6 @@
+{
+  "region": "cn-hangzhou",
+  "approverRamUserName": "oos-approver",
+  "approverWebHookUrl": "https://oapi.dingtalk.com/robot/send?access_token=xxx",
+  "commandRunningWebHookUrl": "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+}

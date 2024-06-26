@@ -1,0 +1,8 @@
+{
+  "region": "cn-hangzhou",
+  "vswitch_ids": [
+    "vsw-bp18o5********"
+  ],
+  "resource_share_name": "kms-vpc",
+  "resource_share_target_id": "125400********"
+}

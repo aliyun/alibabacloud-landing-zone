@@ -1,5 +1,7 @@
 # 同步云上配置到企业CMDB
 
+中文｜[English](./README_en.md)
+
 ## 方案介绍
 
 本方案使用Terraform自动化执行，将企业管理账号本身和旗下所有成员账号添加到全局账号组中，并按照用户设置选择其中一个账号为日志审计账号（LoggingAccount）。在日志审计账号中，会创建用于存储CMDB数据的日志服务project和logstore，并在企业管理账号中设置数据投递至该project和logstore中。方案完成后可以通过日志审计账号下的logstore的“消费预览”功能看到配置变更数据。
