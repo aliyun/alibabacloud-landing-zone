@@ -3,7 +3,7 @@ package org.example.aliyun_sdk;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import com.aliyun.credentials.utils.AuthConstant;
 import com.aliyun.fc.runtime.Context;
 import com.aliyun.fc.runtime.Credentials;
