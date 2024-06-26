@@ -1,6 +1,6 @@
 package org.example.sdk2_0;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import com.aliyun.credentials.Client;
 import com.aliyun.vpc20160428.models.DescribeVpcsRequest;
 import com.aliyun.vpc20160428.models.DescribeVpcsResponse;
@@ -21,6 +21,6 @@ public class CredentialsDefaultSample {
 
         DescribeVpcsRequest describeVpcsRequest = new DescribeVpcsRequest().setRegionId("cn-hangzhou");
         DescribeVpcsResponse describeVpcsResponse = vpcClient.describeVpcs(describeVpcsRequest);
-        System.out.println(JSON.toJSONString(describeVpcsResponse, true));
+        System.out.println(JSON.toJSONString(describeVpcsResponse));
     }
 }
