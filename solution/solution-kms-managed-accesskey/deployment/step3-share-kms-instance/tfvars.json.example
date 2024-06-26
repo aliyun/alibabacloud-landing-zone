@@ -1,0 +1,8 @@
+{
+  "region": "cn-hangzhou",
+  "kms_instance_ids": [
+    "kst-hzz662b**********"
+  ],
+  "resource_share_name": "kms-instance",
+  "resource_share_target_id": "184950469********"
+}

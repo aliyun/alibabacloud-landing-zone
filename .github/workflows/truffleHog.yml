@@ -1,0 +1,31 @@
+name: TruffleHog Secrets Scan
+on: [push]
+jobs:
+  TruffleHog:
+    runs-on: ubuntu-latest
+    container:
+      image: trufflesecurity/trufflehog:latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: scan code
+        id: scancode
+        continue-on-error: true
+        run: |
+          echo $GITHUB_WORKSPACE
+          rm -rf $GITHUB_WORKSPACE/.git
+          trufflehog filesystem $GITHUB_WORKSPACE --no-verification --no-update --fail > /tmp/myscan.txt
+      - name: send msg
+        id: sendmsg
+        if: ${{steps.scancode.outcome == 'failure'}}
+        run: |
+          MYRESULT=`cat /tmp/myscan.txt`
+          apk --no-cache add curl
+          curl --location --request POST 'https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.dingding_access_token }}' \
+          --header 'Content-Type: application/json' \
+          --data-raw '{
+              "msgtype": "markdown",
+              "markdown": {
+                  "title": "TruffleHog Bingo",
+                  "text": "### TruffleHog Bingo ☞ AK \n\n-----------------   \n\n **repository:** ${{ github.repository }} \n\n **message:** ${{ github.event.head_commit.message }}  \n\n **author:** ${{ github.actor }} \n\n '"$MYRESULT"'"
+              }
+          }'

@@ -1,0 +1,19 @@
+{
+  "logarchive_central_region": "cn-shanghai",
+  "logarchive_account_id": "",
+  "central_sls_project": "",
+  "oss_bucket_name": "audit-log-archive",
+  "is_oss_bucket_existed": false,
+  "central_sls_logstore_exports": [
+    {
+      "logstore_name": "cloudconfig_log",
+      "oss_bucket_directory": "cloudconfig"
+    },
+    {
+      "logstore_name": "oss_log",
+      "oss_bucket_directory": "oss"
+    }
+  ],
+  "logarchive_ram_role_name": "audit-log-archive-to-oss-role",
+  "is_logarchive_ram_role_existed": false
+}

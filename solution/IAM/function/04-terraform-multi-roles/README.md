@@ -1,5 +1,7 @@
 # 用户跨账号扮演角色模板
 
+中文｜[English](./README_en.md)
+
 ## 方案介绍
 
 本方案使用 Terraform 自动化执行，受限于 Terraform 的一些限制（不支持动态 Provider），需要分为两步进行：第一步执行将根据settings.tfvars中用户指定要扮演的角色，动态生成出第二步所需要的Terraform模板并自动化填好参数；第二步将根据Terraform模板扮演RAM角色，并打印所扮演角色的账号uid。
