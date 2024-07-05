@@ -2,6 +2,11 @@
 阿里云V1.0 SDK是较早使用版本，稳定性良好，不少老用户习惯于原版SDK的开发，本示例为用户提供一个简练的使用指南。对于新用户则建议直接使用新版SDK，老用户也建议尽早迁移到新版SDK。
 
 本示例完成SDK客户端的初始化后，调用API：GetCallerIdentity获取当前调用者身份信息。
+
+如果您需要从长期固定AccessKey的使用方式进行迁移，只需修改少量代码即可完成，如下图所示，左侧一栏是使用固定AccessKey初始化阿里云SDK，右侧一栏是使用Credentials工具初始化阿里云SDK。
+
+![](./code-diff.png)
+
 #### 环境要求
 该示例代码需要在ECS环境中执行，执行前，请确保运行环境中已配置好Java和Maven。
 1. Java Development Kit (JDK)：确保已安装Java 8或更高版本。 

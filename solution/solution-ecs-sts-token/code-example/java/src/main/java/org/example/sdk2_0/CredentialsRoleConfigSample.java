@@ -19,9 +19,9 @@ public class CredentialsRoleConfigSample {
         Client credentialsClient = new Client(credentialConfig);
 
         // 调用API，以GetCallerIdentity获取当前调用者身份信息为例
-        com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config();
-        config.setCredential(credentialsClient);
-        config.setEndpoint("sts.cn-hangzhou.aliyuncs.com");
+        com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config()
+            .setCredential(credentialsClient)
+            .setEndpoint("sts.cn-hangzhou.aliyuncs.com");
         com.aliyun.sts20150401.Client stsClient = new com.aliyun.sts20150401.Client(config);
 
         GetCallerIdentityResponse getCallerIdentityResponse = stsClient.getCallerIdentity();
