@@ -1,9 +1,8 @@
 package org.example.sdk2_0;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import com.aliyun.credentials.Client;
-import com.aliyun.vpc20160428.models.DescribeVpcsRequest;
-import com.aliyun.vpc20160428.models.DescribeVpcsResponse;
+import com.aliyun.sts20150401.models.GetCallerIdentityResponse;
 
 /**
  * 默认凭据链
@@ -22,14 +21,13 @@ public class CredentialsDefaultSample {
         // 要使用默认凭据链，初始化 Client 时，必须使用空的构造函数，不能配置 Config 入参
         Client credentialsClient = new Client();
 
-        // 调用API，以VPC为例
-        com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config();
-        config.setCredential(credentialsClient);
-        config.setEndpoint("vpc.aliyuncs.com");
-        com.aliyun.vpc20160428.Client vpcClient = new com.aliyun.vpc20160428.Client(config);
+        // 调用API，以GetCallerIdentity获取当前调用者身份信息为例
+        com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config()
+            .setCredential(credentialsClient)
+            .setEndpoint("sts.cn-hangzhou.aliyuncs.com");
+        com.aliyun.sts20150401.Client stsClient = new com.aliyun.sts20150401.Client(config);
 
-        DescribeVpcsRequest describeVpcsRequest = new DescribeVpcsRequest().setRegionId("cn-hangzhou");
-        DescribeVpcsResponse describeVpcsResponse = vpcClient.describeVpcs(describeVpcsRequest);
-        System.out.println(JSON.toJSONString(describeVpcsResponse, true));
+        GetCallerIdentityResponse getCallerIdentityResponse = stsClient.getCallerIdentity();
+        System.out.println(JSON.toJSONString(getCallerIdentityResponse));
     }
 }

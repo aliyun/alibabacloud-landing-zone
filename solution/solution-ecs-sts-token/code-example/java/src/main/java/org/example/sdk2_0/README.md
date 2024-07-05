@@ -1,7 +1,12 @@
 ### 说明
 使用V2.0版本的阿里云SDK时，集成阿里云的Credentials工具，使您能够轻松地获取和管理访问凭证。基于实例RAM角色获取临时凭证时，Credentials工具会自动获取ECS实例绑定的RAM角色，并调用ECS的元数据服务（Meta Data Server）获取临时访问凭证，该凭证会周期性更新。
 
-本示例完成SDK客户端的初始化后，调用VPC API查询已创建的vpc，实例角色必须具有vpc:DescribeVpcs权限。具体操作，请参见[为RAM用户授权自定义的权限策略](https://help.aliyun.com/zh/oss/user-guide/common-examples-of-ram-policies#section-ucu-jv0-zip)。
+本示例完成SDK客户端的初始化后，调用API：GetCallerIdentity获取当前调用者身份信息。
+
+如果您需要从长期固定AccessKey的使用方式进行迁移，只需修改少量代码即可完成，如下图所示，左侧一栏是使用固定AccessKey初始化阿里云SDK，右侧一栏是使用Credentials工具初始化阿里云SDK。
+
+![](./code-diff.png)
+
 #### 环境要求
 该示例代码需要在ECS环境中执行，执行前，请确保运行环境中已配置好Java和Maven。
 1. Java Development Kit (JDK)：确保已安装Java 8或更高版本。
