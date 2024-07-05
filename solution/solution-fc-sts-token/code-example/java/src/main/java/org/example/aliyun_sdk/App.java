@@ -8,10 +8,9 @@ import com.aliyun.credentials.utils.AuthConstant;
 import com.aliyun.fc.runtime.Context;
 import com.aliyun.fc.runtime.Credentials;
 import com.aliyun.fc.runtime.StreamRequestHandler;
+import com.aliyun.sts20150401.Client;
+import com.aliyun.sts20150401.models.GetCallerIdentityResponse;
 import com.aliyun.teaopenapi.models.Config;
-import com.aliyun.vpc20160428.Client;
-import com.aliyun.vpc20160428.models.DescribeVpcsRequest;
-import com.aliyun.vpc20160428.models.DescribeVpcsResponse;
 
 public class App implements StreamRequestHandler {
 
@@ -23,11 +22,10 @@ public class App implements StreamRequestHandler {
         try {
             Config config = new Config().setRegionId("cn-hangzhou").setCredential(createCredential(creds));
 
-            // 调用OpenAPI实现业务功能
-            Client vpcClient = new Client(config);
-            DescribeVpcsRequest describeVpcsRequest = new DescribeVpcsRequest().setRegionId("cn-hangzhou");
-            DescribeVpcsResponse describeVpcsResponse = vpcClient.describeVpcs(describeVpcsRequest);
-            outputStream.write(JSON.toJSONString(describeVpcsResponse).getBytes());
+            // 查看当前调用者身份
+            Client stsClient = new Client(config);
+            GetCallerIdentityResponse getCallerIdentityResponse = stsClient.getCallerIdentity();
+            outputStream.write(JSON.toJSONString(getCallerIdentityResponse).getBytes());
         } catch (Exception e) {
             e.printStackTrace();
         }

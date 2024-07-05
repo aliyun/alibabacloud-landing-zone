@@ -29,12 +29,12 @@ async function main(context) {
         accessKeyId: credentials.accessKeyId,
         accessKeySecret: credentials.accessKeySecret,
         securityToken: credentials.securityToken,
-        endpoint: 'https://vpc.cn-hangzhou.aliyuncs.com',
-        apiVersion: '2016-04-28'
+        endpoint: 'https://sts.cn-hangzhou.aliyuncs.com',
+        apiVersion: '2015-04-01'
     });
 
-    const vpcList = await client.request('DescribeVpcs', {
+    const result = await client.request('GetCallerIdentity', {
         pageSize: 1
     }, requestOption);
-    return vpcList;
+    return result;
 }
