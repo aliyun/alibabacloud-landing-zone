@@ -1,4 +1,4 @@
-from aliyunsdkvpc.request.v20160428 import DescribeVpcsRequest
+from aliyunsdksts.request.v20150401.GetCallerIdentityRequest import GetCallerIdentityRequest
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkcore.auth.credentials import StsTokenCredential
 
@@ -13,7 +13,7 @@ def handler(event, context):
     client = AcsClient(region_id='cn-hangzhou', credential=credentials)
 
     # 创建请求对象
-    request = DescribeVpcsRequest.DescribeVpcsRequest()
+    request = GetCallerIdentityRequest()
 
     # 设置参数，例如可以设置过滤条件等，这里只展示最基本的调用
     request.set_accept_format('json')

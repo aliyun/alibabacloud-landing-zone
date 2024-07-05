@@ -19,18 +19,27 @@
     </properties>
 
     <dependencies>
-        <!--2.0 vpc-sdk-->
+        <!--2.0 sts-sdk-->
         <dependency>
             <groupId>com.aliyun</groupId>
-            <artifactId>vpc20160428</artifactId>
-            <version>7.8.7</version>
+            <artifactId>sts20150401</artifactId>
+            <version>1.1.4</version>
         </dependency>
-        <!--1.0 vpc-sdk-->
+
+        <!--1.0 sts-sdk-->
         <dependency>
             <groupId>com.aliyun</groupId>
-            <artifactId>aliyun-java-sdk-vpc</artifactId>
-            <version>3.2.28</version>
+            <artifactId>aliyun-java-sdk-sts</artifactId>
+            <version>3.1.2</version>
         </dependency>
+
+        <!--获取所有已发布的版本列表，请参见https://github.com/aliyun/credentials-java/blob/master/ChangeLog.txt-->
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>credentials-java</artifactId>
+            <version>0.3.2</version>
+        </dependency>
+
         <!--oss-sdk-->
         <dependency>
             <groupId>com.aliyun.oss</groupId>
@@ -55,14 +64,6 @@
             <groupId>com.aliyun.fc.runtime</groupId>
             <artifactId>fc-java-event</artifactId>
             <version>1.2.0</version>
-        </dependency>
-
-        <!--建议使用最新发布的Credentials版本。-->
-        <!--请查看ChangeLog.txt获取所有已发布的版本列表。-->
-        <dependency>
-            <groupId>com.aliyun</groupId>
-            <artifactId>credentials-java</artifactId>
-            <version>0.3.1</version>
         </dependency>
 
         <dependency>
