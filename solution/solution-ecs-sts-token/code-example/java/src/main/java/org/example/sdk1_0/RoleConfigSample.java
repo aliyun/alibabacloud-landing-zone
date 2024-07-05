@@ -1,12 +1,12 @@
 package org.example.sdk1_0;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import com.aliyuncs.DefaultAcsClient;
 import com.aliyuncs.auth.InstanceProfileCredentialsProvider;
 import com.aliyuncs.exceptions.ClientException;
 import com.aliyuncs.profile.DefaultProfile;
-import com.aliyuncs.vpc.model.v20160428.DescribeVpcsRequest;
-import com.aliyuncs.vpc.model.v20160428.DescribeVpcsResponse;
+import com.aliyuncs.sts.model.v20150401.GetCallerIdentityRequest;
+import com.aliyuncs.sts.model.v20150401.GetCallerIdentityResponse;
 
 /**
  * 通过实例角色初始化
@@ -19,10 +19,9 @@ public class RoleConfigSample {
         );
         DefaultAcsClient client = new DefaultAcsClient(profile, provider);
 
-        // 调用API，以VPC为例
-        DescribeVpcsRequest describeVpcsRequest = new DescribeVpcsRequest();
-        describeVpcsRequest.setRegionId("cn-hangzhou");
-        DescribeVpcsResponse describeVpcsResponse = client.getAcsResponse(describeVpcsRequest);
-        System.out.println(JSON.toJSONString(describeVpcsResponse, true));
+        // 调用API，以GetCallerIdentity获取当前调用者身份信息为例
+        GetCallerIdentityRequest getCallerIdentityRequest = new GetCallerIdentityRequest();
+        GetCallerIdentityResponse getCallerIdentityResponse = client.getAcsResponse(getCallerIdentityRequest);
+        System.out.println(JSON.toJSONString(getCallerIdentityResponse));
     }
 }
