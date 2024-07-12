@@ -19,11 +19,11 @@ public class CredentialsDefaultSample {
         // 5. 使用ECS实例RAM角色（需要通过环境变量 ALIBABA_CLOUD_ECS_METADATA 指定 ECS 实例角色名称；通过环境变量 ALIBABA_CLOUD_ECS_IMDSV2_ENABLE=true 开启在加固模式下获取STS Token）
         // https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-access-credentials#3ca299f04bw3c
         // 要使用默认凭据链，初始化 Client 时，必须使用空的构造函数，不能配置 Config 入参
-        Client credentialsClient = new Client();
+        Client credentialClient = new Client();
 
         // 调用API，以GetCallerIdentity获取当前调用者身份信息为例
         com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config()
-            .setCredential(credentialsClient)
+            .setCredential(credentialClient)
             .setEndpoint("sts.cn-hangzhou.aliyuncs.com");
         com.aliyun.sts20150401.Client stsClient = new com.aliyun.sts20150401.Client(config);
 
