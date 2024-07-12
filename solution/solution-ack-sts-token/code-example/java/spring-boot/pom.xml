@@ -1,14 +1,17 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.3.4.RELEASE</version>
+    </parent>
     <groupId>org.example</groupId>
-    <artifactId>solution-ack-sts-token</artifactId>
+    <artifactId>spring-boot</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-
-    <name>solution-ack-sts-token</name>
-    <url>http://maven.apache.org</url>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -19,23 +22,42 @@
     </properties>
 
     <dependencies>
-        <!--2.0 sts-sdk-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.51</version>
+        </dependency>
+
+        <!--2.0 sdk-->
         <dependency>
             <groupId>com.aliyun</groupId>
             <artifactId>sts20150401</artifactId>
             <version>1.1.4</version>
         </dependency>
-        <!--1.0 sts-sdk-->
+        <!--1.0 sdk-->
         <dependency>
             <groupId>com.aliyun</groupId>
             <artifactId>aliyun-java-sdk-sts</artifactId>
             <version>3.1.2</version>
         </dependency>
+        <dependency>
+            <groupId>com.aliyun</groupId>
+            <artifactId>aliyun-java-sdk-core</artifactId>
+            <version>[4.0.0,5.0.0)</version>
+        </dependency>
         <!--oss-sdk-->
         <dependency>
             <groupId>com.aliyun.oss</groupId>
             <artifactId>aliyun-sdk-oss</artifactId>
-            <version>3.17.2</version>
+            <version>3.17.4</version>
         </dependency>
         <!--sls-sdk-->
         <dependency>
@@ -44,18 +66,13 @@
             <version>0.6.107</version>
         </dependency>
 
-        <!-- Requires: version >= 0.3.2 -->
+        <!-- Requires: version >= 0.3.4 -->
+        <!-- 推荐使用最新版本 -->
         <!--获取所有已发布的版本列表，请参见https://github.com/aliyun/credentials-java/blob/master/ChangeLog.txt-->
         <dependency>
             <groupId>com.aliyun</groupId>
             <artifactId>credentials-java</artifactId>
-            <version>0.3.2</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.alibaba.fastjson2</groupId>
-            <artifactId>fastjson2</artifactId>
-            <version>2.0.51</version>
+            <version>0.3.4</version>
         </dependency>
     </dependencies>
 </project>
