@@ -16,11 +16,11 @@ public class CredentialsRoleConfigSample {
         credentialConfig.setRoleName("my-ecs-role");
         // 在加固模式下获取STS Token，强烈建议开启
         credentialConfig.setEnableIMDSv2(true);
-        Client credentialsClient = new Client(credentialConfig);
+        Client credentialClient = new Client(credentialConfig);
 
         // 调用API，以GetCallerIdentity获取当前调用者身份信息为例
         com.aliyun.teaopenapi.models.Config config = new com.aliyun.teaopenapi.models.Config()
-            .setCredential(credentialsClient)
+            .setCredential(credentialClient)
             .setEndpoint("sts.cn-hangzhou.aliyuncs.com");
         com.aliyun.sts20150401.Client stsClient = new com.aliyun.sts20150401.Client(config);
 

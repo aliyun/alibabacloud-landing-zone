@@ -45,7 +45,7 @@
     <dependency>
       <groupId>com.aliyun.oss</groupId>
       <artifactId>aliyun-sdk-oss</artifactId>
-      <version>3.17.2</version>
+      <version>3.17.4</version>
     </dependency>
     <!--sls-sdk-->
     <dependency>
@@ -54,12 +54,13 @@
       <version>0.6.107</version>
     </dependency>
 
-    <!-- Requires: version >= 0.3.2 -->
+    <!-- Requires: version >= 0.3.4 -->
+    <!-- 推荐使用最新版本 -->
     <!--获取所有已发布的版本列表，请参见https://github.com/aliyun/credentials-java/blob/master/ChangeLog.txt-->
     <dependency>
       <groupId>com.aliyun</groupId>
       <artifactId>credentials-java</artifactId>
-      <version>0.3.2</version>
+      <version>0.3.4</version>
     </dependency>
   </dependencies>
 </project>
