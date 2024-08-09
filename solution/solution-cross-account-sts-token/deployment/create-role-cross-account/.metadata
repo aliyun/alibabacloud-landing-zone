@@ -1,0 +1,32 @@
+{
+  "ALIYUN::ROS::Interface": {
+    "ParameterGroups": [
+      {
+        "Parameters": [
+          "role_name",
+          "policy_name",
+          "policy_document"
+        ],
+        "Label": {
+          "default": {
+            "en": "Role And Policy",
+            "zh-cn": "角色与权限"
+          }
+        }
+      },
+      {
+        "Parameters": [
+          "assume_role_principal_account",
+          "assume_role_principal_type",
+          "assume_role_principal_name"
+        ],
+        "Label": {
+          "default": {
+            "en": "Trust Policy",
+            "zh-cn": "信任策略"
+          }
+        }
+      }
+    ]
+  }
+}
