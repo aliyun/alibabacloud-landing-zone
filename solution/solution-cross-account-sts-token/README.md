@@ -21,12 +21,16 @@
 
 ```
 .
-└── common
-    └── src/main/java
-        └── org
-            └── example
-                ├── sdk1_0    // 1.0版本SDK简单示例
-                └── sdk2_0    // 2.0版本SDK简单示例
+├── common
+│   └── src/main/java
+│       └── org
+│           └── example
+│               ├── sdk1_0    // 1.0版本SDK简单示例
+│               └── sdk2_0    // 2.0版本SDK简单示例
+└── spring-boot
+    └── assume-role
+        ├── sdk-v1            // 1.0版本SDK SpringBoot示例
+        └── sdk-v2            // 2.0版本SDK SpringBoot示例
 ```
 
 执行前，请确保运行环境中已配置好Java和Maven。
