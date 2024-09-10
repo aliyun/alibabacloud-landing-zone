@@ -1,0 +1,9 @@
+    {
+      "Effect":"Allow",
+      "Action":[
+        "log:PostLogStoreLogs"
+      ],
+      "Resource":[
+        "acs:log:*:*:project/{{project}}/logstore/{{logstore}}"
+      ]
+    }

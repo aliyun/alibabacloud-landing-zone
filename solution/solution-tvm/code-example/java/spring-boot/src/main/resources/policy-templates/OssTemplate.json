@@ -1,0 +1,23 @@
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:GetObject",
+        "oss:PutObject",
+        "oss:DeleteObject"
+      ],
+      "Resource": "acs:oss:*:*:{{bucket}}/{{dir}}/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "oss:ListObjects",
+      "Resource": "acs:oss:*:*:{{bucket}}",
+      "Condition": {
+        "StringLike": {
+          "oss:Delimiter": "/",
+          "oss:Prefix": [
+            "{{dir}}/",
+            "{{dir}}/*"
+          ]
+        }
+      }
+    }
