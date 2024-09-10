@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>TVM Web</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    </head>
+    <body>
+        <h2>Token Vending Maching Web端示例</h2>
+        <ol>
+            <li>由服务端生成临时凭据STS Token</li>
+            <li>客户端通过临时凭据实现：</li>
+            <ul>
+                <li>OSS上传下载</li>
+                <li>注意一点：bucket必须设置了Cors,不然没有办法上传</li>
+            </ul>
+        </ol>
+        <h3>第一步：获取STS Token</h3>
+        <button id="getStsToken" onclick="getStsToken()">获取临时凭据</button>
+        <br />
+        <br />
+        <div>
+            <textarea id="stsToken" rows="10" cols="50"></textarea>
+        </div>
+        <h3>第二步：OSS上传下载</h3>
+        <input id="file" type="file" />
+        <button id="upload">上传</button>
+        <button id="download" onclick="download()">下载</button>
+
+        <!--OSS SDK-->
+        <script type="text/javascript" src="https://gosspublic.alicdn.com/aliyun-oss-sdk-6.20.0.min.js"></script>
+        <script type="text/javascript">
+            let stsToken = {};
+            let ossClient;
+            let fileName = '';
+            /**
+             * 以下变量请根据实际情况进行修改和填写
+             */
+            // 以杭州地域为例
+            let region = 'oss-cn-hangzhou';
+            // 填写您的 OSS Bucket
+            let bucket = '';
+            // 身份信息，既您的 OSS 文件夹名称
+            // 服务端生成STS Token时，会通过请求中的身份信息，限制允许操作的OSS文件夹，只允许操作同名的文件夹下面的文件
+            let identity = '';
+            // 这里是本地服务端的地址，请修改为真实的服务端地址
+            const tvmServerUrl = 'http://127.0.0.1:7001/vendToken';
+
+            function getStsToken() {
+                fetch(tvmServerUrl, {
+                    headers: {
+                        'Custom-Identity': identity,
+                    },
+                }).then((response) => response.json())
+                .then((data) => {
+                    stsToken = data;
+                    document.getElementById('stsToken').value = JSON.stringify(stsToken, null, 2);
+                    // 初始化 oss client
+                    ossClient = new OSS({
+                        authorizationV4: true,
+                        region: region,
+                        accessKeyId: stsToken.accessKeyId,
+                        accessKeySecret: stsToken.accessKeySecret,
+                        stsToken: stsToken.securityToken,
+                        bucket: bucket,
+                    });
+                });
+            }
+
+            document.getElementById('upload').onclick = async () => {
+                const files = document.getElementById('file').files;
+                if (files.length === 0) {
+                    alert('请选择文件！');
+                    return;
+                }
+                try {
+                    const options = {
+                        meta: { temp: "TVMDemo" },
+                        mime: "json",
+                        headers: { "Content-Type": "text/plain" },
+                    };
+                    fileName = files[0].name;
+                    const result = await ossClient.put(`${identity}/${fileName}`, files[0], options);
+                    console.log(result);
+                    alert('上传成功！');
+                } catch (e) {
+                    console.log(e);
+                    alert(`上传失败：${e}`);
+                }
+            }
+
+            function download() {
+                if (!fileName) {
+                    alert('请先选择并上传文件！');
+                    return;
+                }
+                const response = {
+                    "content-disposition": `attachment; filename=${encodeURIComponent(
+                        fileName
+                    )}`,
+                };
+                const url = ossClient.signatureUrl(`${identity}/${fileName}`, {response});
+                window.open(url, '_blank');
+                console.log(url);
+            }
+        </script>
+    </body>
+</html>

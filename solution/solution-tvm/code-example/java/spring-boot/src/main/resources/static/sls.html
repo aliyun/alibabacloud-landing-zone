@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>TVM Web</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    </head>
+    <body>
+        <h2>Token Vending Maching Web端示例</h2>
+        <ol>
+            <li>由服务端生成临时凭据STS Token</li>
+            <li>客户端通过临时凭据实现：</li>
+            <ul>
+                <li>SLS日志的上传</li>
+            </ul>
+        </ol>
+        <h3>第一步：获取STS Token</h3>
+        <button id="getStsToken" onclick="getStsToken()">获取临时凭据</button>
+        <br />
+        <br />
+        <div>
+            <textarea id="stsToken" rows="10" cols="50"></textarea>
+        </div>
+        <h3>第二步：SLS日志上传</h3>
+        <button id="send" onclick="send()">日志上传</button>
+
+        <!--SLS SDK-->
+        <script type="text/javascript" src="https://g.alicdn.com/sls/sls-js-sdk/0.3.5/web-track-browser.js"></script>
+        <script type="text/javascript" src="https://g.alicdn.com/sls/sls-js-sdk/0.3.5/web-sts-plugin.js"></script>
+        <script type="text/javascript">
+            let slsTracker;
+            /**
+             * 以下变量请根据实际情况进行修改和填写
+             */
+            // 身份信息，既您的SLS Logstore的名称
+            // 服务端生成STS Token时，会通过请求中的身份信息，限制允许操作的SLS Logstore，只允许操作同名的Logsotre
+            let identity = '';
+            const opts = {
+                // 所在地域的服务入口，以杭州地域为例
+                host: 'cn-hangzhou.log.aliyuncs.com',
+                // Project名称
+                project: '',
+                // Logstore名称
+                logstore: identity,
+                // 发送日志的时间间隔，默认是10秒
+                time: 1,
+                // 发送日志的数量大小，默认是10条
+                count: 10,
+                // 自定义日志主题
+                topic: 'TVM'
+            }
+            // 这里是本地服务端的地址，请修改为真实的服务端地址
+            const tvmServerUrl = 'http://127.0.0.1:7001/vendToken';
+
+            function getStsToken() {
+                fetch(tvmServerUrl, {
+                    headers: {
+                        'Custom-Identity': identity,
+                    },
+                }).then((response) => response.json())
+                .then((data) => {
+                    document.getElementById('stsToken').value = JSON.stringify(data, null, 2);
+                    // 初始化 sls client
+                    slsTracker = new window.SLS_Tracker(opts);
+                    // 创建 sts 插件
+                    const stsOpt = {
+                        accessKeyId: data.accessKeyId,
+                        accessKeySecret: data.accessKeySecret,
+                        securityToken: data.securityToken,
+                        // STS Token 刷新函数
+                        refreshSTSToken: () =>
+                            new Promise((resolve, reject) => {
+                                fetch(tvmServerUrl, {
+                                    headers: {
+                                        'Custom-Identity': identity,
+                                    },
+                                }).then((response) => response.json())
+                                .then((data) => {
+                                    stsOpt.accessKeyId = data.accessKeyId;
+                                    stsOpt.accessKeySecret = data.accessKeySecret;
+                                    stsOpt.securityToken = data.securityToken;
+                                    resolve();
+                                })
+                                .catch(err => {
+                                    reject(err);
+                                });
+                            }),
+                        // 刷新令牌的间隔（毫秒），默认为 300000（5分钟）
+                        refreshSTSTokenInterval: 60000,
+                    };
+                    const stsPlugin = window['web-sts-plugin'](stsOpt);
+                    // 使用 sts 插件
+                    slsTracker.useStsPlugin(stsPlugin)
+                });
+            }
+
+            function send() {
+                slsTracker.send({
+                    eventType:'demo',
+                    eventName: 'TVM',
+                });
+            }
+        </script>
+    </body>
+</html>
