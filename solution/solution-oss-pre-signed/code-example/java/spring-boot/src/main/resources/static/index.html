@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>TVM Web</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    </head>
+    <body>
+        <h2>OSS直传下载 Web端示例</h2>
+        <ul>
+            <li>客户端直接往OSS上传文件或者从OSS下载文件，不需要服务端中转</li>
+            <li>无需在客户端透露固定AccessKey</li>
+            <li>需要注意的是：bucket必须设置了Cors，不然没有办法上传</li>
+        </ul>
+        <hr/>
+        <h3>上传文件</h3>
+        <h4>第一步：请求服务端，获取Post Policy和签名</h4>
+        <button onclick="getPostSignature()">获取Post Policy和签名</button>
+        <br />
+        <br />
+        <div>
+            <textarea id="postSignatureResp" rows="10" cols="50"></textarea>
+        </div>
+        <h4>第二步：使用Post Policy和签名上传文件</h4>
+        <input id="file" type="file" />
+        <button onclick="upload()">上传</button>
+        <p id="uploadRes"></p>
+        <hr/>
+        <h3>下载文件</h3>
+        <h4>第一步：请求服务端，获取上一步上传的文件的签名URL，使用签名URL直接下载</h4>
+        <button onclick="getSignedDownloadUrl()">下载</button>
+        <div id="signedUrl"></div>
+
+        <!--OSS SDK-->
+        <script type="text/javascript" src="https://gosspublic.alicdn.com/aliyun-oss-sdk-6.20.0.min.js"></script>
+        <script type="text/javascript">
+            let postSignatureResp = {};
+            let fileName = '';
+            /**
+             * 以下变量请根据实际情况进行修改和填写
+             */
+            // 这里是本地服务端的地址，请修改为真实的服务端地址
+            const serverAddress = 'http://127.0.0.1:7001';
+
+            function getPostSignature() {
+                fetch(`${serverAddress}/upload/getPostSignature`)
+                    .then((response) => response.json())
+                    .then((data) => {
+                        postSignatureResp = data;
+                        document.getElementById('postSignatureResp').value = JSON.stringify(postSignatureResp, null, 2);
+                    });
+            }
+
+            function upload() {
+                document.getElementById('uploadRes').innerHTML = '';
+                const files = document.getElementById('file').files;
+                if (files.length === 0) {
+                    document.getElementById('uploadRes').innerHTML = '请选择文件！';
+                    return;
+                }
+
+                fileName = files[0].name;
+                const { policy, signature, accessKeyId, host, securityToken, dir, callback } = postSignatureResp;
+
+                const formData = new FormData();
+                // 指定成功上传时，服务端返回状态码200，默认返回204。
+                formData.append('success_action_status', '200');
+                formData.append('policy', policy);
+                formData.append('signature', signature);
+                formData.append('OSSAccessKeyId', accessKeyId);
+                // 如果本次访问是使用临时凭证STS Token，则需要指定该项为SecurityToken的值
+                if (securityToken) {
+                    formData.append('x-oss-security-token', securityToken);
+                }
+                formData.append('key', dir + fileName);
+                // 如果不需要回调通知服务端，这里可以不设置 callback 入参
+                if (callback) {
+                    formData.append('callback', callback)
+                }
+                // file必须为最后一个表单参数
+                formData.append('file', files[0]);
+
+                const param = {
+                    method: 'POST',
+                    body: formData,
+                };
+                fetch(host, param)
+                    .then(async (response) => {
+                        const data = await response.text();
+                        return {
+                            data,
+                            status: response.status,
+                        };
+                    })
+                    .then(({data, status}) => {
+                        if (status == 200) {
+                            document.getElementById('uploadRes').innerHTML = `上传成功！${callback ? `回调服务器返回的内容是：${data}` : ''}`;
+                        } else if (status == 203) {
+                            document.getElementById('uploadRes').innerHTML = `上传成功！但是OSS访问设置的上传回调服务器失败，失败原因是：${data}`;
+                        } else {
+                            document.getElementById('uploadRes').innerHTML = `上传失败！失败原因是：${data}`;
+                        }
+                    })
+                    .catch(error => {
+                        console.log(error);
+                        document.getElementById('uploadRes').innerHTML = '上传失败！';
+                    });
+            }
+
+            function getSignedDownloadUrl() {
+                document.getElementById('signedUrl').innerHTML = '';
+                if (!fileName) {
+                    document.getElementById('signedUrl').innerHTML = '请选择并上传文件！';
+                    return;
+                }
+                fetch(`${serverAddress}/download/getSignedUrl?fileName=${fileName}`)
+                    .then((response) => response.text())
+                    .then((data) => {
+                        document.getElementById('signedUrl').innerHTML = `<a href="${data}" target="_blank">${data}</a>`;
+                    });
+            }
+        </script>
+    </body>
+</html>
