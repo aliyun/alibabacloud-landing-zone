@@ -22,6 +22,9 @@ config = Config(
     # 设置session过期时间
     role_session_expiration=3600
 )
+
+# 初始化Credentials客户端
+# 请确保Credentials Python SDK（alibabacloud-credentials）版本>=0.3.5
 cred = CredentialsClient(config)
 
 config = open_api_models.Config()

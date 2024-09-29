@@ -4,6 +4,7 @@ from alibabacloud_tea_util import models as util_models
 from alibabacloud_credentials.client import Client as CredentialsClient
 
 # 使用默认凭据链
+# 请确保Credentials Python SDK（alibabacloud-credentials）版本>=0.3.5
 cred = CredentialsClient()
 
 config = open_api_models.Config()
