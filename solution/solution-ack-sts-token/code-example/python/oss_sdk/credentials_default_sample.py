@@ -9,13 +9,17 @@ class CredentialProviderWarpper(CredentialsProvider):
         self.client = client
 
     def get_credentials(self):
-        access_key_id = self.client.get_access_key_id()
-        access_key_secret = self.client.get_access_key_secret()
-        security_token = self.client.get_security_token()
+        credential = self.client.get_credential()
+        access_key_id = credential.access_key_id
+        access_key_secret = credential.access_key_secret
+        security_token = credential.security_token
         return Credentials(access_key_id, access_key_secret, security_token)
 
-# 使用凭据初始化OSSClient
+# 初始化Credentials客户端
+# 请确保Credentials Python SDK（alibabacloud-credentials）版本>=0.3.5
 cred = CredentialsClient()
+
+# 使用凭据初始化OSSClient
 credentials_provider = CredentialProviderWarpper(cred)
 
 # 填写Bucket所在地域对应的Endpoint。以华东1（杭州）为例，Endpoint填写为https://oss-cn-hangzhou.aliyuncs.com。
