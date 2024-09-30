@@ -8,7 +8,7 @@ class ECSRoleCredentialDemo(CredentialsProvider):
         self.client = client
 
     def get_credentials(self):
-        cred = self.client.cloud_credential
+        cred = self.client.get_credential()
         access_key_id = cred.get_access_key_id()
         access_key_secret = cred.get_access_key_secret()
         security_token = cred.get_security_token()
@@ -16,6 +16,7 @@ class ECSRoleCredentialDemo(CredentialsProvider):
 
 
 # 默认凭据链方式初始化Credentials客户端
+# 请确保Credentials Python SDK（alibabacloud-credentials）版本>=0.3.5
 cred = CredentialsClient()
 
 credentials_provider=ECSRoleCredentialDemo(cred)
