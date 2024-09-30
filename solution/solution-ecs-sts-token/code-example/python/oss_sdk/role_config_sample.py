@@ -12,9 +12,10 @@ class CredentialProviderWrapper(CredentialsProvider):
         self.client = client
 
     def get_credentials(self):
-        access_key_id = self.client.get_access_key_id()
-        access_key_secret = self.client.get_access_key_secret()
-        security_token = self.client.get_security_token()
+        cred = self.client.get_credential()
+        access_key_id = cred.get_access_key_id()
+        access_key_secret = cred.get_access_key_secret()
+        security_token = cred.get_security_token()
         return Credentials(access_key_id, access_key_secret, security_token)
 
 
@@ -23,6 +24,7 @@ config = Config(
     role_name='my-ecs-role'   # 为ECS授予的RAM角色的名称。可选参数。如果不设置，将自动检索。强烈建议设置，以减少请求。
 )
 
+# 请确保Credentials Python SDK（alibabacloud-credentials）版本>=0.3.5
 cred = Client(config)
 credentials_provider = CredentialProviderWrapper(cred)
 
