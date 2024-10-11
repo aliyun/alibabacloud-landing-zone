@@ -2,6 +2,7 @@ package org.example.oss_sdk;
 
 import com.alibaba.fastjson2.JSON;
 import com.aliyun.credentials.Client;
+import com.aliyun.credentials.models.Config;
 import com.aliyun.credentials.models.CredentialModel;
 import com.aliyun.oss.*;
 import com.aliyun.oss.common.auth.Credentials;
@@ -18,7 +19,13 @@ import java.util.List;
 public class CredentialsDefaultSample {
     public static void main(String[] args) {
         // 初始化凭据客户端
-        Client credentialClient = new Client();
+        Config credentialConfig = new Config();
+        credentialConfig.setType("ecs_ram_role");
+        // 选填，该ECS角色的角色名称，不填会自动获取，建议加上以减少请求次数
+        credentialConfig.setRoleName("<your-ecs-instance-role-name>");
+        // 在加固模式下获取STS Token，强烈建议开启
+        credentialConfig.setEnableIMDSv2(true);
+        Client credentialClient = new Client(credentialConfig);
 
         // Bucket所在地域对应的Endpoint。以华东1（杭州）为例。
         String endpoint = "https://oss-cn-hangzhou.aliyuncs.com";

@@ -19,13 +19,10 @@ maven -version
 ### CredentialsDefaultSample
 该示例代码演示了初始化凭据客户端（初始化方式可参考sdk2中的示例，本示例采用默认凭据链方式），再使用凭据客户端的凭据信息初始化SLS客户端。
 
-Credentials工具会在环境变量中获取`ALIBABA_CLOUD_ECS_METADATA`（ECS实例RAM角色名称），若存在，程序将会通过ECS的元数据服务（Meta Data Server）获取ECS实例RAM角色的STS Token作为默认凭据信息。强烈建议配置环境变量`ALIBABA_CLOUD_ECS_IMDSV2_ENABLE=true`开启在加固模式下获取STS Token。
+> 强烈建议使用该方式，使用Credentials工具获取STS Token并初始化SLS客户端。
 
-在ECS中配置环境变量：
-```bash
-export ALIBABA_CLOUD_ECS_METADATA=<role-name>
-export ALIBABA_CLOUD_ECS_IMDSV2_ENABLE=true
-```
+Credentials工具会通过ECS的元数据服务（Meta Data Server）获取ECS实例RAM角色的STS Token作为默认凭据信息，并且支持到期自动刷新。
+
 运行示例代码：
 ```bash
 mvn exec:java -Dexec.mainClass="org.example.sls_sdk.CredentialsDefaultSample" -e -q
@@ -33,6 +30,8 @@ mvn exec:java -Dexec.mainClass="org.example.sls_sdk.CredentialsDefaultSample" -e
 
 ### RoleConfigSample
 该示例代码通过显示配置ECS实例RAM角色，来初始化SLS客户端。
+
+> 不建议使用该方式，请参考`CredentialsDefaultSample.java`使用Credentials工具获取STS Token并初始化SLS客户端。
 
 运行示例代码：
 ```bash
