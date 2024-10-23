@@ -218,7 +218,7 @@ resource "alicloud_oos_template" "share_services" {
                         Fn::Select:
                           - regionId
                           - '{{ACS::TaskLoopItem}}'
-                    - '(..|objects|select(has("RegionId"))).RegionId |= "$regionId"'
+                    - '.Parameters.Status="Running"|(..|objects|select(has("RegionId"))).RegionId |= "$regionId"'
                   - Fn::Select:
                       - targets
                       - '{{ templateParameters }}'
