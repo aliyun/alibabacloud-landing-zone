@@ -123,13 +123,15 @@ resource "null_resource" "deploy" {
       # 3、更换 zabbix.repo 为阿里源，安装zabbix-server-mysql和zabbix-agent
       #"cd /etc/yum.repos.d",
       "sed -i.bak 's#http://repo.zabbix.com#https://mirrors.aliyun.com/zabbix#' /etc/yum.repos.d/zabbix.repo",
-      #Centos7使用yum命令失效，报错：Could not retrieve mirrorlist http://mirrorlist.centos.org/?release=7&arch=x86_64&repo=os&infra=stock error was 14: curl#6 - "Could not resolve host: mirrorlist.centos.org; 未知的错误", 通过如下命令添加参数到CentOS-Base.repo中解决。
+      #Centos7使用yum命令失效，报错：Could not retrieve mirrorlist, 通过如下命令添加参数到CentOS-Base.repo中解决。
       "echo \"${local.mirrorlist_Adjust}\" >> /etc/yum.repos.d/CentOS-Base.repo",
 
       "yum clean all && yum makecache",
       "yum install -y zabbix-server-mysql zabbix-agent",
       # 安装SCL（Software Collections），便于后续安装高版本的 php，默认 yum 安装的 php 版本为 5.4,版本过低，zabbix 5.0 版本对 php 版本最低要 7.2.0 版本。SCL 可以使得在同一台机器上使用多个版本的软件，而又不会影响整个系统的依赖环境。软件包会安装在 /etc/opt/rh 目录下。
       "yum install -y centos-release-scl",
+      "yum list centos-release-scl  # 应显示可用包",
+      "rpm -q centos-release-scl    # 验证安装结果",
       
       # 4、修改 zabbix-front 前端源，安装 zabbix 前端环境到 scl 环境下
       "sed -i.bak 's#enabled=0#enabled=1#' /etc/yum.repos.d/zabbix.repo",
@@ -143,14 +145,11 @@ resource "null_resource" "deploy" {
       # 6、初始化数据库,添加数据库用户，以及 zabbix 所需的数据库信息
       "echo \"${local.mysqlConfig}\" > /tmp/mysqlConfig.sh",
       "source /tmp/mysqlConfig.sh",
-      #"mysqladmin -u root -p password abc123",
 
       #查询已安装的zabbix-server-mysql的文件列表，找到 sql.gz 文件的位置
       "rpm -ql zabbix-server-mysql",
-      #获取zabbix-server-mysql版本号
-      "zabbix_server_mysql_version=$(rpm -q zabbix-server-mysql --queryformat "%{VERSION}")",
       #导入数据库信息，使用zcat将sql.gz文件导入数据库
-      "zcat /usr/share/doc/zabbix-server-mysql-$zabbix_server_mysql_version/create.sql.gz | mysql -uroot -pabc123 zabbix",
+      "zcat /usr/share/doc/zabbix-server-mysql-*/create.sql.gz | mysql -uroot -pabc123 zabbix",
 
       # 7、修改 zabbix-server 配置文件，修改数据库的密码
       #124行，取消注释，指定 zabbix 数据库的密码，DBPassword的值是数据库授权zabbix用户的密码。
@@ -188,13 +187,14 @@ baseurl=http://vault.centos.org/centos/7/sclo/\$basearch/rh/
 gpgcheck=1
 enabled=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-SIG-SCLo
- 
+
 [centos-sclo-sclo]
 name=CentOS-7 - SCLo sclo
 baseurl=http://vault.centos.org/centos/7/sclo/\$basearch/sclo/
 gpgcheck=1
 enabled=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-SIG-SCLo
+
 EOF
 }
 
@@ -217,6 +217,7 @@ mysql -u root -pabc123 -e \"show databases\"
 
 EOF
 }
+
 
 
 
