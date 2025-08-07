@@ -20,11 +20,13 @@ public class App implements StreamRequestHandler {
 
     @Override
     public void handleRequest(InputStream inputStream, OutputStream outputStream, Context context) throws IOException {
-        // 从上下文获取凭证信息
-        com.aliyun.fc.runtime.Credentials creds = context.getExecutionCredentials();
 
-        // 转化为SLS的Credentials
-        Credentials slsCreds = new DefaultCredentials(creds.getAccessKeyId(), creds.getAccessKeySecret(), creds.getSecurityToken());
+        // 从系统预留环境变量获取凭证信息，构造SLS的Credentials
+        Credentials slsCreds = new DefaultCredentials(
+            System.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"),
+            System.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"),
+            System.getenv("ALIBABA_CLOUD_SECURITY_TOKEN")
+        );
 
         CredentialsProvider credentialsProvider = new StaticCredentialsProvider(slsCreds);
 
