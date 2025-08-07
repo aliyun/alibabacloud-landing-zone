@@ -1,13 +1,16 @@
+import os
 from aliyunsdksts.request.v20150401.GetCallerIdentityRequest import GetCallerIdentityRequest
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkcore.auth.credentials import StsTokenCredential
 
 def handler(event, context):
-    # 从上下文获取凭证信息
-    creds = context.credentials
-
-    # 创建凭证对象
-    credentials = StsTokenCredential(creds.access_key_id, creds.access_key_secret, creds.security_token)
+    
+    # 从系统预留环境变量获取凭证信息，创建凭证对象
+    credentials = StsTokenCredential(
+        os.environ.get('ALIBABA_CLOUD_ACCESS_KEY_ID'),
+        os.environ.get('ALIBABA_CLOUD_ACCESS_KEY_SECRET'),
+        os.environ.get('ALIBABA_CLOUD_SECURITY_TOKEN')
+    )
 
     # 初始化客户端，设置地区等信息
     client = AcsClient(region_id='cn-hangzhou', credential=credentials)

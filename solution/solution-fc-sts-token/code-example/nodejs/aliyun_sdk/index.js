@@ -22,13 +22,12 @@ exports.handler = (event, context, callback) => {
 };
 
 async function main(context) {
-    const { credentials, logger } = context;
 
-    // 从上下文中获取 AK/SK/Security Token，初始化请求 OpenAPI 的 Client
+    // 从系统预留环境变量中获取 AK/SK/Security Token，初始化请求 OpenAPI 的 Client
     const client = new RPCClient({
-        accessKeyId: credentials.accessKeyId,
-        accessKeySecret: credentials.accessKeySecret,
-        securityToken: credentials.securityToken,
+        accessKeyId: process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+        accessKeySecret: process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+        securityToken: process.env.ALIBABA_CLOUD_SECURITY_TOKEN,
         endpoint: 'https://sts.cn-hangzhou.aliyuncs.com',
         apiVersion: '2015-04-01'
     });
