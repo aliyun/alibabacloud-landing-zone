@@ -130,7 +130,7 @@ export function ConversationEventView({ events, isProcessing }: ConversationEven
         </div>
       ) : null}
 
-      {isProcessing && (
+      {isProcessing && !accumulated.text && (
         <Spin indicator={<LoadingOutlined />} style={{ marginTop: 8 }} />
       )}
     </div>
