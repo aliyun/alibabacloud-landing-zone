@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input, Typography, Empty, message } from 'antd';
 import { SendOutlined, PlusOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
+import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { AgentSelector } from './AgentSelector';
 import { SquadAgentSelector } from './SquadAgentSelector';
 import type { SquadAgentSelection } from './SquadAgentSelector';
@@ -344,7 +345,7 @@ function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: 
             lineHeight: '1.6',
           }}
         >
-          {turn.content}
+          {isUser ? turn.content : <MarkdownView content={turn.content} />}
           {turn.error ? (
             <Typography.Text type="danger" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
               {turn.error}

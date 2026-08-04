@@ -8,11 +8,55 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `a4e9ec9e2e8a1adebf1154ea89ef6af88b84278f`
-- Community merge commit: `fa2dbe23c69d4649c9d6345afd5325ec4b9cd190`
+- Synchronized `origin/master`: `75bd9303030df7bbf876cdb96513dcfa936868b1`
+- Community merge commit: `9bc094f0af60d9477ca70d823a6cc3e7ad59f37a`
 - Synchronized at: 2026-08-05 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-05: `a4e9ec9e` to `75bd9303`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `a4e9ec9e2e8a1adebf1154ea89ef6af88b84278f` |
+| Community before merge | `c154b3fc8e35ad7038b92bee407ac6a4402dc348` |
+| Merged `origin/master` | `75bd9303030df7bbf876cdb96513dcfa936868b1` |
+| Resulting merge commit | `9bc094f0af60d9477ca70d823a6cc3e7ad59f37a` |
+
+Scope: ten upstream commits, including five feature/fix commits. The merge
+removes the repository scan-status column, repairs SDLC step ordering after
+delete/add operations, advances the recommended runtime to `0.2.115`, adopts
+the official HTTP clarification compatibility history, and renders streamed
+and persisted clarification replies as Markdown.
+
+Three textual conflicts were resolved:
+
+- `ExecutorListPage.test.tsx`: retained the community Qoder CLI-only contract
+  while updating all runtime command expectations to `0.2.115`;
+- `WorkitemClarificationPanel.test.tsx`: retained the community HTTP/error and
+  `IN`/`INBOUND` compatibility coverage and added the master Markdown test;
+- `application.yml`: retained community SecretCrypto and external runtime
+  configuration while accepting the `0.2.115` default.
+
+Automatic overlaps in branding, IM tests, and clarification components were
+reviewed. Master product behavior was retained, public OSS/SLS and SecretCrypto
+boundaries were unchanged, excluded development documents were not restored,
+and no product decision was required. The HTTP compatibility patch had already
+been cherry-picked to community; the merge now records its official master
+ancestry without changing that behavior.
+
+Verification completed after the merge:
+
+- Backend: 1,717 tests passed; production JAR built.
+- Frontend: 83 test files and 507 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,759 modules.
+- Deployment Skill: 45 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; community executor creation remained Qoder
+  CLI-only and the runtime default was verified as `0.2.115`.
+- The first standalone frontend invocation used Maven's x64 optional Rollup
+  package on an arm64 shell and was discarded; the required host-npm reinstall
+  and serial rerun passed.
 
 ### 2026-08-05: `454017b4` to `a4e9ec9e`
 

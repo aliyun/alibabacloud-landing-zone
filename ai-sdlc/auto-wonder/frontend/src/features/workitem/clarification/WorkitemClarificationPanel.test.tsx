@@ -229,12 +229,12 @@ describe('WorkitemClarificationPanel', () => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
     });
 
-    const userMsg = screen.getByText('你好，我想讨论需求').closest('div');
-    const aiMsg = screen.getByText('好的，请说说你的想法').closest('div');
+    const userMsg = screen.getByText('你好，我想讨论需求').closest('div[style*="background-color"]');
+    const aiMsg = screen.getByText('好的，请说说你的想法').closest('div[style*="background-color"]');
     expect(userMsg).not.toBeNull();
     expect(aiMsg).not.toBeNull();
-    expect(userMsg!.style.backgroundColor).toBe('rgb(230, 247, 255)');
-    expect(aiMsg!.style.backgroundColor).toBe('rgb(245, 245, 245)');
+    expect(userMsg).toHaveStyle({ backgroundColor: '#e6f7ff' });
+    expect(aiMsg).toHaveStyle({ backgroundColor: '#f5f5f5' });
   });
 
   it('turns completed streamed text into an AI bubble without waiting for the next user reply', async () => {
@@ -371,6 +371,33 @@ describe('WorkitemClarificationPanel', () => {
     expect(await screen.findByText('我的需求')).toBeInTheDocument();
     expect(screen.getByText('历史需求')).toBeInTheDocument();
     expect(screen.getAllByText('你')).toHaveLength(2);
+  });
+
+  it('renders persisted AI replies as markdown', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const conversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: '2026-01-01T00:00:03', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 3, direction: 'IN', content: '请给方案', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+        { id: 4, direction: 'OUT', content: '**需求目标**：完成澄清', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:03' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation }),
+      ),
+    );
+
+    renderPanel([]);
+
+    expect((await screen.findByText('需求目标')).tagName).toBe('STRONG');
   });
 
   it('does not send on Shift+Enter and preserves input content', async () => {
