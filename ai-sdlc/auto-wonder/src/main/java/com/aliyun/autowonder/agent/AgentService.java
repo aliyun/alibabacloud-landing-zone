@@ -2,8 +2,10 @@ package com.aliyun.autowonder.agent;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.access.OrgAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.agent.dto.AgentVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionSummaryVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionVO;
@@ -240,7 +242,7 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_NOT_PENDING);
         }
         if (pending.getCreatorId() != null && pending.getCreatorId().equals(userId)
-                && !isTenantOwner(tenantId, userId)) {
+                && !canApproveOwnVersion(tenantId, userId)) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
         String identityJson = buildIdentityJson(agent, pending);
@@ -261,6 +263,16 @@ public class AgentService {
     private boolean isTenantOwner(long tenantId, long userId) {
         OrgDO org = orgDao.findById(tenantId);
         return org != null && org.getOwnerId() != null && org.getOwnerId().equals(userId);
+    }
+
+    private boolean canApproveOwnVersion(long tenantId, long userId) {
+        if (isTenantOwner(tenantId, userId)) {
+            return true;
+        }
+        AutoWonderContext context = AutoWonderContext.get();
+        return Long.valueOf(tenantId).equals(context.getCurrentOrgId())
+                && Long.valueOf(userId).equals(context.getUserId())
+                && context.getOrgAccessLevel() == OrgAccessLevel.ADMIN;
     }
 
     @Transactional

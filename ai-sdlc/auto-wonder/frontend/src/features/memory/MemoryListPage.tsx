@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, Tag, Space, Select, Button, Modal, Form, Input, InputNumber, Popconfirm, message, Segmented, List, Typography, Pagination, Tooltip } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { theme } from 'antd';
 import { useMemoryList, useCreateMemory, useUpdateMemory, useDeleteMemory } from './hooks';
 import type { Memory, CreateMemoryParams, UpdateMemoryParams } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { useAgent } from '@/features/agent/hooks';
+import { useMemoryReviewActions } from './useMemoryReviewActions';
+import { MemoryReviewModals } from './MemoryReviewModals';
 
 const scopeOptions = [
   { value: 'AGENT', label: '员工' },
@@ -48,9 +51,12 @@ function AgentMemoryOwnerTag({ ownerRef }: { ownerRef: number }) {
   return <Tag color="blue">{agent?.name || '数字员工'} ({ownerRef})</Tag>;
 }
 
+const CARD_HEIGHT = 296;
+
 export function MemoryListPage() {
   const navigate = useNavigate();
   const runWithAccess = useAccessCommand();
+  const { token } = theme.useToken();
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [scope, setScope] = useState<string | undefined>();
@@ -60,6 +66,7 @@ export function MemoryListPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [reviewModeId, setReviewModeId] = useState<number | null>(null);
   const [form] = Form.useForm();
   const createScope = Form.useWatch('scope', form);
 
@@ -67,6 +74,17 @@ export function MemoryListPage() {
   const createMutation = useCreateMemory();
   const updateMutation = useUpdateMemory();
   const deleteMutation = useDeleteMemory();
+
+  const review = useMemoryReviewActions();
+
+  useEffect(() => {
+    if (reviewModeId !== null) {
+      const target = data.find((m) => m.id === reviewModeId);
+      if (target && target.status !== 'PENDING') {
+        setReviewModeId(null);
+      }
+    }
+  }, [data, reviewModeId]);
 
   const handleCreate = () => {
     runWithAccess('READ_WRITE', '新增记忆', () => {
@@ -146,6 +164,10 @@ export function MemoryListPage() {
 
   const getScopeLabel = (value: string) => scopeOptions.find(o => o.value === value)?.label || value;
   const getTypeLabel = (value: string) => typeOptions.find(o => o.value === value)?.label || value;
+
+  const anyReviewPending = review.pendingReviewId !== null;
+  const anyMutationPending = review.reviewMutation.isPending || review.updateMutation.isPending;
+
   return (
     <Card
       title="记忆管理"
@@ -216,10 +238,23 @@ export function MemoryListPage() {
         locale={{ emptyText: '暂无记忆' }}
         renderItem={(memory) => {
           const provenance = formatMcpProvenance(memory.sourceRef);
+          const isReviewMode = reviewModeId === memory.id && memory.status === 'PENDING';
+          const isThisReviewPending = review.pendingReviewId === memory.id;
+          const cardStyle: React.CSSProperties = {
+            overflow: 'hidden',
+            height: CARD_HEIGHT,
+            display: 'flex',
+            flexDirection: 'column',
+            ...(isReviewMode ? {
+              borderColor: token.colorPrimary,
+              boxShadow: `0 0 0 1px ${token.colorPrimary}, 0 2px 8px rgba(0,0,0,0.09)`,
+            } : {}),
+          };
           return (
             <List.Item>
             <Card
-              style={{ overflow: 'hidden' }}
+              style={cardStyle}
+              styles={{ body: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' } }}
               title={
                 <Tooltip title={memory.title || '无标题'} placement="topLeft">
                   <Typography.Text ellipsis style={{ fontSize: 'inherit', fontWeight: 'inherit', color: memory.title ? undefined : '#999' }}>
@@ -228,7 +263,38 @@ export function MemoryListPage() {
                 </Tooltip>
               }
               extra={renderStatus(memory.status)}
-              actions={[
+              actions={isReviewMode ? [
+                <Button
+                  key="adopt"
+                  type="primary"
+                  size="small"
+                  loading={isThisReviewPending}
+                  disabled={anyReviewPending && !isThisReviewPending}
+                  icon={<CheckOutlined />}
+                  onClick={() => review.approve(memory)}
+                >
+                  采纳
+                </Button>,
+                <Button
+                  key="edit"
+                  size="small"
+                  disabled={anyMutationPending}
+                  icon={<EditOutlined />}
+                  onClick={() => review.openEditApprove(memory)}
+                >
+                  编辑采纳
+                </Button>,
+                <Button
+                  key="reject"
+                  size="small"
+                  danger
+                  disabled={anyMutationPending}
+                  icon={<CloseOutlined />}
+                  onClick={() => review.openReject(memory)}
+                >
+                  驳回
+                </Button>,
+              ] : [
                 <Button key="edit" type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(memory)}>编辑</Button>,
                 <Popconfirm
                   key="delete"
@@ -246,23 +312,31 @@ export function MemoryListPage() {
                   <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
                 </Popconfirm>,
                 ...(memory.status === 'PENDING'
-                  ? [<Button key="review" type="link" size="small" onClick={() => navigate('/memories/reviews')}>审核</Button>]
+                  ? [<Button key="review" type="link" size="small" onClick={() => setReviewModeId(memory.id)}>审核</Button>]
                   : []),
               ]}
             >
-              <Typography.Paragraph ellipsis={{ rows: 4 }} style={{ minHeight: 88, whiteSpace: 'pre-wrap' }}>
-                {memory.contentMd}
-              </Typography.Paragraph>
-              <Space size={[0, 8]} wrap>
-                <Tag>{getScopeLabel(memory.scope)}</Tag>
-                <Tag>{getTypeLabel(memory.type)}</Tag>
-                {memory.scope === 'AGENT' && memory.ownerRef && <AgentMemoryOwnerTag ownerRef={memory.ownerRef} />}
-                <Typography.Text type="secondary">创建于 {formatTime(memory.gmtCreate)}</Typography.Text>
-              </Space>
-              {provenance && (
-                <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-                  {provenance}
-                </Typography.Text>
+              {isReviewMode ? (
+                <div style={{ flex: 1, overflowY: 'auto', whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: '22px' }}>
+                  {memory.contentMd}
+                </div>
+              ) : (
+                <>
+                  <Typography.Paragraph ellipsis={{ rows: 4 }} style={{ minHeight: 88, whiteSpace: 'pre-wrap' }}>
+                    {memory.contentMd}
+                  </Typography.Paragraph>
+                  <Space size={[0, 8]} wrap>
+                    <Tag>{getScopeLabel(memory.scope)}</Tag>
+                    <Tag>{getTypeLabel(memory.type)}</Tag>
+                    {memory.scope === 'AGENT' && memory.ownerRef && <AgentMemoryOwnerTag ownerRef={memory.ownerRef} />}
+                    <Typography.Text type="secondary">创建于 {formatTime(memory.gmtCreate)}</Typography.Text>
+                  </Space>
+                  {provenance && (
+                    <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+                      {provenance}
+                    </Typography.Text>
+                  )}
+                </>
               )}
             </Card>
           </List.Item>
@@ -314,6 +388,27 @@ export function MemoryListPage() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <MemoryReviewModals
+        editModalOpen={review.editModalOpen}
+        rejectModalOpen={review.rejectModalOpen}
+        editedContent={review.editedContent}
+        editedType={review.editedType}
+        reviewScope={review.reviewScope}
+        reviewOwnerRef={review.reviewOwnerRef}
+        rejectComment={review.rejectComment}
+        reviewPending={review.reviewMutation.isPending}
+        updatePending={review.updateMutation.isPending}
+        onEditModalClose={() => review.setEditModalOpen(false)}
+        onRejectModalClose={() => review.setRejectModalOpen(false)}
+        onEditedContentChange={review.setEditedContent}
+        onEditedTypeChange={review.setEditedType}
+        onReviewScopeChange={review.setReviewScope}
+        onReviewOwnerRefChange={review.setReviewOwnerRef}
+        onRejectCommentChange={review.setRejectComment}
+        onSubmitEditApprove={review.submitEditApprove}
+        onSubmitReject={review.submitReject}
+      />
     </Card>
   );
 }

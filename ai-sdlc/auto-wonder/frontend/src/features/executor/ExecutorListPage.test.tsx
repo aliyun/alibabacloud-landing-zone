@@ -210,8 +210,9 @@ describe('ExecutorListPage', () => {
       'QODER_CLI',
       'provider-local',
       'https://daily.auto-wonder.example.com/api/mcp',
+      '0.2.114',
     )).toBe(
-      'npx -y autowonder@latest connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode provider-local',
+      'npx -y autowonder@0.2.114 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode provider-local',
     );
   });
 
@@ -222,6 +223,7 @@ describe('ExecutorListPage', () => {
       'CLAUDE_CODE',
       'provider-local',
       'https://daily.auto-wonder.example.com/api/mcp',
+      '0.2.114',
     )).toThrow('社区版仅支持 Qoder CLI');
   });
 
@@ -249,13 +251,14 @@ describe('ExecutorListPage', () => {
       'QODER_CLI',
       'platform',
       'http://daily.auto-wonder.example.com/api/mcp',
+      '0.2.114',
       {
         model: 'ultimate',
         reasoningEffort: 'high',
         contextWindow: '1000000',
       },
     )).toBe(
-      'npx -y autowonder@latest connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
+      'npx -y autowonder@0.2.114 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
     );
   });
 
@@ -266,6 +269,7 @@ describe('ExecutorListPage', () => {
       'QODER_CLI',
       'platform',
       'not a url',
+      '0.2.114',
     )).toThrow('MCP 地址格式不合法');
   });
 });

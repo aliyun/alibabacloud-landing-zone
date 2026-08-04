@@ -286,4 +286,40 @@ describe('MemoryReviewPage', () => {
     expect(screen.queryByRole('dialog', { name: /编辑后采纳/ })).not.toBeInTheDocument();
     errorSpy.mockRestore();
   });
+
+  it('isolates card loading to the reviewed card only', async () => {
+    let reviewCount = 0;
+    server.use(
+      http.get('/api/memories/reviews', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [
+          { id: 1, scope: 'ORG', ownerRef: null, type: 'FACT', title: '记忆A', contentMd: '内容A', status: 'PENDING', source: null, sourceRef: null, version: 0, gmtCreate: '2026-07-01T10:00:00Z' },
+          { id: 2, scope: 'ORG', ownerRef: null, type: 'FACT', title: '记忆B', contentMd: '内容B', status: 'PENDING', source: null, sourceRef: null, version: 0, gmtCreate: '2026-07-01T10:00:00Z' },
+        ],
+      })),
+      http.post('/api/memories/1/review', async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        reviewCount++;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+      http.post('/api/memories/2/review', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null })),
+    );
+
+    renderPage();
+    await screen.findByText('记忆A');
+    await screen.findByText('记忆B');
+
+    const adoptButtons = screen.getAllByRole('button', { name: /采纳/ })
+      .filter(btn => btn.textContent?.trim() === '采纳');
+    expect(adoptButtons).toHaveLength(2);
+
+    await userEvent.click(adoptButtons[0]);
+
+    expect(adoptButtons[0]).toHaveClass('ant-btn-loading');
+    expect(screen.getByText('内容A')).toBeVisible();
+    expect(screen.getByText('内容B')).toBeVisible();
+    expect(document.querySelectorAll('.ant-card-loading')).toHaveLength(0);
+
+    await vi.waitFor(() => expect(reviewCount).toBe(1), { timeout: 3000 });
+  });
 });

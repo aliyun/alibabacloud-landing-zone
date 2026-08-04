@@ -1237,6 +1237,111 @@ class McpToolServiceTest {
     }
 
     @Test
+    void agentIdentityInputSchemasExposeSoulAndAgentMarkdownOnly() {
+        for (String toolName : List.of("autowonder.create_agent", "autowonder.update_agent")) {
+            Map<String, Object> inputProperties = properties(schemaFor(toolName));
+
+            assertTrue(inputProperties.containsKey("soulMd"), toolName);
+            assertTrue(inputProperties.containsKey("agentMd"), toolName);
+            assertFalse(inputProperties.containsKey("businessBackground"), toolName);
+            assertFalse(inputProperties.containsKey("responsibilities"), toolName);
+            assertSchemaProperty(inputProperties, "soulMd", "string",
+                    "SOUL.md Markdown content for the digital worker.");
+            assertSchemaProperty(inputProperties, "agentMd", "string",
+                    "AGENT.md Markdown content for the digital worker.");
+        }
+    }
+
+    @Test
+    void createAgentMapsSoulAndAgentMarkdownToStableRequestFields() {
+        call(principal, "autowonder.create_agent", Map.of(
+                "name", "Writer", "soulMd", "new soul", "agentMd", "new agent"));
+
+        verify(agentService).create(argThat(request ->
+                        "new soul".equals(request.getBusinessBackground())
+                                && "new agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void updateAgentMapsSoulAndAgentMarkdownToStableRequestFields() {
+        call(principal, "autowonder.update_agent", Map.of(
+                "id", 12L, "soulMd", "new soul", "agentMd", "new agent"));
+
+        verify(agentService).updateAgent(argThat(request ->
+                        request.getId() == 12L
+                                && "new soul".equals(request.getBusinessBackground())
+                                && "new agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void createAndUpdateAgentAcceptHiddenLegacyIdentityArguments() {
+        call(principal, "autowonder.create_agent", Map.of(
+                "name", "Writer", "businessBackground", "legacy soul",
+                "responsibilities", "legacy agent"));
+        call(principal, "autowonder.update_agent", Map.of(
+                "id", 12L, "businessBackground", "legacy soul",
+                "responsibilities", "legacy agent"));
+
+        verify(agentService).create(argThat(request ->
+                        "legacy soul".equals(request.getBusinessBackground())
+                                && "legacy agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+        verify(agentService).updateAgent(argThat(request ->
+                        "legacy soul".equals(request.getBusinessBackground())
+                                && "legacy agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void newAgentIdentityArgumentsOverrideLegacyArguments() {
+        call(principal, "autowonder.create_agent", Map.of(
+                "name", "Writer", "businessBackground", "legacy soul",
+                "responsibilities", "legacy agent", "soulMd", "new soul", "agentMd", "new agent"));
+        call(principal, "autowonder.update_agent", Map.of(
+                "id", 12L, "businessBackground", "legacy soul",
+                "responsibilities", "legacy agent", "soulMd", "new soul", "agentMd", "new agent"));
+
+        verify(agentService).create(argThat(request ->
+                        "new soul".equals(request.getBusinessBackground())
+                                && "new agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+        verify(agentService).updateAgent(argThat(request ->
+                        "new soul".equals(request.getBusinessBackground())
+                                && "new agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void nullNewAgentIdentityArgumentsOverrideLegacyArguments() {
+        Map<String, Object> createArgs = new java.util.LinkedHashMap<>();
+        createArgs.put("name", "Writer");
+        createArgs.put("businessBackground", "legacy soul");
+        createArgs.put("responsibilities", "legacy agent");
+        createArgs.put("soulMd", null);
+        createArgs.put("agentMd", "new agent");
+        call(principal, "autowonder.create_agent", createArgs);
+
+        Map<String, Object> updateArgs = new java.util.LinkedHashMap<>();
+        updateArgs.put("id", 12L);
+        updateArgs.put("businessBackground", "legacy soul");
+        updateArgs.put("responsibilities", "legacy agent");
+        updateArgs.put("soulMd", "new soul");
+        updateArgs.put("agentMd", null);
+        call(principal, "autowonder.update_agent", updateArgs);
+
+        verify(agentService).create(argThat(request ->
+                        request.getBusinessBackground() == null
+                                && "new agent".equals(request.getResponsibilities())),
+                eq(ORG_ID), eq(USER_ID));
+        verify(agentService).updateAgent(argThat(request ->
+                        "new soul".equals(request.getBusinessBackground())
+                                && request.getResponsibilities() == null),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
     void workitemToolDescriptionsExposeEnumsDefaultsSideEffectsAndExamples() {
         // create_workitem: enums, default-to-creator, scheduling side effect, and the
         // "create and assign to a digital worker" example.
@@ -1325,6 +1430,14 @@ class McpToolServiceTest {
     @SuppressWarnings("unchecked")
     private Map<String, Object> property(Map<String, Object> schema, String name) {
         return (Map<String, Object>) properties(schema).get(name);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void assertSchemaProperty(Map<String, Object> properties, String name, String type,
+            String description) {
+        Map<String, Object> schemaProperty = (Map<String, Object>) properties.get(name);
+        assertEquals(type, schemaProperty.get("type"), name);
+        assertEquals(description, schemaProperty.get("description"), name);
     }
 
     private void assertListOutputSchema(Map<String, Object> schema, String... itemPropertyNames) {

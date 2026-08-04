@@ -12,6 +12,7 @@ import { apiClient } from '@/shared/api/client';
 import type { OrgInfo, SwitchOrgResponse, UserInfo } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
 import { BRANDING_QUERY_KEY, DEFAULT_BRANDING, getPublicBranding } from '@/features/platform/brandingApi';
+import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -149,9 +150,7 @@ export function AppLayout() {
       const resp = await apiClient.post<SwitchOrgResponse>(`/api/orgs/${org.id}/switch`);
       setAccessToken(resp.data.accessToken);
       setCurrentOrg(org, resp.data.accessLevel);
-      queryClient.removeQueries({ queryKey: ['workitems'] });
-      queryClient.removeQueries({ queryKey: ['workitem'] });
-      void queryClient.invalidateQueries();
+      await refreshTenantScopedQueries(queryClient);
       message.success(`已切换到 ${org.name}`);
     } catch (e) {
       message.error(e instanceof ApiError ? e.message : '切换组织失败');
@@ -189,9 +188,7 @@ export function AppLayout() {
         }
         setAccessToken(switchResp.data.accessToken);
         setCurrentOrg(targetOrg, switchResp.data.accessLevel);
-        queryClient.removeQueries({ queryKey: ['workitems'] });
-        queryClient.removeQueries({ queryKey: ['workitem'] });
-        void queryClient.invalidateQueries();
+        await refreshTenantScopedQueries(queryClient);
         navigate(cleanPath, { replace: true });
       } catch {
         if (!cancelled) {

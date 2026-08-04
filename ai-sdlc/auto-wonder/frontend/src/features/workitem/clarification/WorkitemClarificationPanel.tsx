@@ -67,11 +67,39 @@ export function WorkitemClarificationPanel({
   const conversation = useClarificationConversation(workitemId, conversationId);
   const createMutation = useCreateClarificationConversation(workitemId);
   const submitMutation = useSubmitClarificationTurn(workitemId, conversationId);
-  const { streamedEvents } = useClarificationEvents(workitemId, conversationId);
+  const { streamedEvents, streamedText, streamedTurnCompleted } = useClarificationEvents(
+    workitemId,
+    conversationId,
+    conversation.data?.processingTurnId,
+  );
 
   const convData = conversation.data;
   const isProcessing = convData?.processingStatus === 'PROCESSING';
   const turns = convData?.turns ?? [];
+
+  const turnCountAtSubmitRef = useRef(turns.length);
+  const prevIsProcessingRef = useRef(false);
+
+  useEffect(() => {
+    if (submitMutation.isPending) {
+      turnCountAtSubmitRef.current = turns.length;
+    }
+  }, [submitMutation.isPending, turns.length]);
+
+  useEffect(() => {
+    if (prevIsProcessingRef.current && !isProcessing) {
+      // processing just ended — turn count will be checked in render
+    }
+    prevIsProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
+  const hasPersistedStreamedReply = turns.some(
+    (turn) => turn.direction !== 'INBOUND' && turn.content === streamedText,
+  );
+  const awaitingAgentReply = !!streamedText
+    && !hasPersistedStreamedReply
+    && (streamedTurnCompleted || (!isProcessing && turns.length === turnCountAtSubmitRef.current));
+  const showProcessingEvents = isProcessing && !streamedTurnCompleted;
 
   const handleSelectAgent = useCallback(
     (agentId: number) => {
@@ -218,8 +246,14 @@ export function WorkitemClarificationPanel({
             {turns.map((turn) => (
               <TurnBubble key={turn.id} turn={turn} agentName={displayName} />
             ))}
-            {isProcessing && (
-              <ConversationEventView events={streamedEvents} isProcessing={isProcessing} />
+            {showProcessingEvents && (
+              <ConversationEventView events={streamedEvents} isProcessing />
+            )}
+            {awaitingAgentReply && (
+              <TurnBubble
+                turn={{ id: -1, direction: 'OUTBOUND' as const, content: streamedText, status: '', error: null, gmtCreate: '' }}
+                agentName={displayName}
+              />
             )}
           </>
         )}
@@ -250,7 +284,7 @@ export function WorkitemClarificationPanel({
 }
 
 function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: string }) {
-  const isUser = turn.direction === 'INBOUND';
+  const isUser = turn.direction === 'IN';
   const label = isUser ? '你' : (agentName || 'AI');
   const icon = isUser
     ? <UserOutlined style={{ fontSize: 12, marginRight: 4 }} />

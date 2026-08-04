@@ -4,7 +4,7 @@ import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CodeOutl
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listExecutors, createExecutor, deleteExecutor, getExecutorToken } from './api';
 import { listAgents } from '@/features/agent/api';
-import { BRANDING_QUERY_KEY, getPublicBranding } from '@/features/platform/brandingApi';
+import { BRANDING_QUERY_KEY, DEFAULT_BRANDING, getPublicBranding } from '@/features/platform/brandingApi';
 import type { ExecutorVO, IssuedExecutorVO } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { QODER_MODELS, qoderOptionsForModel, type QoderLaunchOptions } from './qoderOptions';
@@ -34,6 +34,7 @@ export function buildStartupCommand(
   clientKind: string,
   memoryMode: string,
   mcpBaseUrl: string,
+  runtimeVersion: string,
   qoder?: QoderLaunchOptions,
 ): string {
   if (clientKind !== 'QODER_CLI') {
@@ -42,7 +43,7 @@ export function buildStartupCommand(
   const qoderFlags = qoder
     ? ` --model ${qoder.model} --reasoning-effort ${qoder.reasoningEffort} --context-window ${qoder.contextWindow}`
     : '';
-  return `npx -y autowonder@latest connect --ws-url ${buildWsUrl(mcpBaseUrl)} --token ${token} --executor-id ${executorId} --provider qoder --memory-mode ${memoryMode}${qoderFlags}`;
+  return `npx -y autowonder@${runtimeVersion} connect --ws-url ${buildWsUrl(mcpBaseUrl)} --token ${token} --executor-id ${executorId} --provider qoder --memory-mode ${memoryMode}${qoderFlags}`;
 }
 
 const statusBadge: Record<string, { status: 'success' | 'processing' | 'default'; text: string }> = {
@@ -122,6 +123,8 @@ export function ExecutorListPage() {
     queryFn: getPublicBranding,
   });
   const mcpBaseUrl = brandingQuery.data?.mcpBaseUrl?.trim() || null;
+  const runtimeVersion = brandingQuery.data?.recommendedRuntimeVersion?.trim()
+    || DEFAULT_BRANDING.recommendedRuntimeVersion;
 
   const createMut = useMutation({
     mutationFn: ({ agentId, name, clientKind }: {
@@ -250,7 +253,7 @@ export function ExecutorListPage() {
     }
     let cmd: string;
     try {
-      cmd = buildStartupCommand(token, record.id, record.clientKind, memoryMode, mcpBaseUrl, qoder);
+      cmd = buildStartupCommand(token, record.id, record.clientKind, memoryMode, mcpBaseUrl, runtimeVersion, qoder);
     } catch (error) {
       message.error(error instanceof Error ? error.message : '启动命令生成失败');
       return;
@@ -520,6 +523,7 @@ export function ExecutorListPage() {
                   tokenResult.clientKind,
                   tokenResult.memoryMode,
                   mcpBaseUrl,
+                  runtimeVersion,
                   tokenQoderOptions,
                 )
                 : 'MCP 地址未加载，无法生成启动命令'}
@@ -542,6 +546,7 @@ export function ExecutorListPage() {
                       tokenResult.clientKind,
                       tokenResult.memoryMode,
                       mcpBaseUrl,
+                      runtimeVersion,
                       tokenQoderOptions,
                     );
                   } catch (error) {
