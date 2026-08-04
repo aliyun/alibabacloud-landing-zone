@@ -74,6 +74,7 @@ REQUIRED_SKILL_TERMS = [
     "TLS accepted",
     "autowonder-community-templates.sql",
     "templatesImported",
+    "Application `OSS_ENDPOINT` uses the regional public endpoint",
 ]
 
 

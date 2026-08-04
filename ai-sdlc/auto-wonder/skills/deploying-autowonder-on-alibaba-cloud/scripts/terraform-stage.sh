@@ -98,7 +98,7 @@ case "$command" in
       package_bucket: .oss.value.package_bucket,
       artifact_bucket: .oss.value.artifact_bucket,
       oss: .oss.value,
-      oss_endpoint: .oss.value.runtime_endpoint,
+      oss_endpoint: .oss.value.control_endpoint,
       sls: .sls.value
     }' "$raw" >"$work_dir/inventory.json"
     chmod 600 "$work_dir/inventory.json"

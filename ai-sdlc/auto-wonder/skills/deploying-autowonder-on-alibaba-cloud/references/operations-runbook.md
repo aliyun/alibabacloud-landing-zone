@@ -80,13 +80,17 @@ and application AK/SK only in a protected session. Encode the env file with
 key: it is required to read persisted `enc:v1:` values. `runtime-config` must
 write `AUTOWONDER_PUBLIC_BASE_URL` into this file. It derives a missing value
 from manifest `applicationBaseUrl`, while preserving an explicit domain/TLS URL.
+Set application `OSS_ENDPOINT` to the regional public endpoint, for example
+`https://oss-cn-hangzhou.aliyuncs.com`; `runtime-config` rejects an intranet OSS
+hostname or an endpoint for another region.
 
 Run `initialize-and-verify.sh runtime-config` first. Then use
 `deploy-via-cloud-assistant.sh` to create the non-root `autowonder` user, install
 the MySQL/Redis clients, transfer the release/env through private OSS objects,
 verify hashes, and install the versioned layout, Java runtime, data/log
 directories, and systemd unit. The control host uploads and deletes through the
-public OSS endpoint; presigned ECS downloads use the intranet endpoint. Finally run
+public OSS endpoint; presigned ECS release downloads use the intranet endpoint
+without changing application `OSS_ENDPOINT`. Finally run
 `initialize-and-verify.sh database`: confirm empty state, import schema in its
 own invocation, import the idempotent four-template seed, then run the separate
 read-only postcondition. `.database.imported` checkpoints schema and

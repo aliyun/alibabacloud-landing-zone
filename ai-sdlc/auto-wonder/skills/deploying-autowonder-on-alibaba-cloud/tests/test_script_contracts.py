@@ -24,7 +24,7 @@ class ScriptContracts(unittest.TestCase):
         "SPRING_DATASOURCE_USERNAME": "autowonder",
         "SPRING_DATASOURCE_PASSWORD": "DbPassword1!",
         "REDIS_HOST": "redis.internal",
-        "OSS_ENDPOINT": "oss-cn-hangzhou-internal.aliyuncs.com",
+        "OSS_ENDPOINT": "https://oss-cn-hangzhou.aliyuncs.com",
         "OSS_BUCKET": "artifact-example",
         "OSS_ACCESS_KEY_ID": "test-key-id",
         "OSS_ACCESS_KEY_SECRET": "test-key-secret",
@@ -177,6 +177,7 @@ JSON
             self.assertEqual(resources["ecs_instance_ids"], {"zone_a": "i-a", "zone_b": "i-b"})
             self.assertEqual(resources["rds"]["connection"], "db.internal")
             self.assertEqual(resources["sls"]["stores"]["metrics"], "metrics")
+            self.assertEqual(resources["oss_endpoint"], "oss-cn-hangzhou.aliyuncs.com")
             self.assertEqual(resources["oss"]["runtime_endpoint"], "oss-cn-hangzhou-internal.aliyuncs.com")
             self.assertEqual(resources["sls"]["runtime_endpoint"], "cn-hangzhou-intranet.log.aliyuncs.com")
 
@@ -285,6 +286,23 @@ JSON
                 "AUTOWONDER_PUBLIC_BASE_URL=https://autowonder.example.com\n",
                 explicit_env.read_text(),
             )
+
+    def test_runtime_config_rejects_internal_oss_endpoint(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            env_file = self.write_env(
+                root / "autowonder.env",
+                {"OSS_ENDPOINT": "oss-cn-hangzhou-internal.aliyuncs.com"},
+            )
+
+            result = subprocess.run([
+                str(ROOT / "scripts/initialize-and-verify.sh"), "runtime-config",
+                "--manifest", str(manifest), "--env-file", str(env_file),
+            ], text=True, capture_output=True)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("regional public endpoint", result.stderr)
 
     def test_cloud_assistant_uses_current_cli_contract_without_double_encoding(self):
         for name in ("deploy-via-cloud-assistant.sh", "initialize-and-verify.sh"):
