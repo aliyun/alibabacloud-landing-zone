@@ -72,6 +72,8 @@ REQUIRED_SKILL_TERMS = [
     "Business initialized",
     "Release accepted",
     "TLS accepted",
+    "autowonder-community-templates.sql",
+    "templatesImported",
 ]
 
 

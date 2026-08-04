@@ -103,6 +103,7 @@ case "$subcommand" in
     ;;
   database)
     imported=$(jq -r '.database.imported // false' "$manifest")
+    templates_imported=$(jq -r '.database.templatesImported // false' "$manifest")
     pre=$(run_cloud "${instances[0]}" "$remote_db_prelude
 count=\$(mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" -Nse 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE()' \"\$database\")
 printf 'TABLE_COUNT=%s\\n' \"\$count\"")
@@ -113,12 +114,20 @@ printf 'TABLE_COUNT=%s\\n' \"\$count\"")
       import_result=$(run_cloud "${instances[0]}" "$remote_db_prelude
 mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" < /opt/autowonder/releases/$short_commit/autowonder-schema.sql
 printf 'SCHEMA_IMPORTED\\n'")
-      atomic_jq "$manifest" --arg invocation "$(jq -r '.invocationId' <<<"$import_result")" '.database={imported:true,importInvocationId:$invocation,postcheck:false}'
+      atomic_jq "$manifest" --arg invocation "$(jq -r '.invocationId' <<<"$import_result")" '.database.imported=true | .database.importInvocationId=$invocation | .database.postcheck=false'
+    fi
+    if [[ "$templates_imported" != true ]]; then
+      template_result=$(run_cloud "${instances[0]}" "$remote_db_prelude
+mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" < /opt/autowonder/releases/$short_commit/autowonder-community-templates.sql
+printf 'TEMPLATES_IMPORTED\n'")
+      atomic_jq "$manifest" --arg invocation "$(jq -r '.invocationId' <<<"$template_result")" '.database.templatesImported=true | .database.templatesImportInvocationId=$invocation | .database.postcheck=false'
     fi
     post=$(run_cloud "${instances[0]}" "$remote_db_prelude
 count=\$(mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" -Nse 'SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE()' \"\$database\")
 for table in user org workitem agent executor; do mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" -Nse \"SELECT 1 FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='\$table'\" \"\$database\" | grep -qx 1; done
-printf 'TABLE_COUNT=%s\\nPOSTCHECK=passed\\n' \"\$count\"")
+template_count=\$(mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" -Nse \"SELECT COUNT(*) FROM squad_template WHERE tenant_id IS NULL AND status='ACTIVE' AND is_deleted=0 AND JSON_VALID(content_json)=1 AND ((name='独立开发者' AND JSON_LENGTH(content_json, '\$.agents')=1) OR (name='开发+评审双人组' AND JSON_LENGTH(content_json, '\$.agents')=2) OR (name='标准研发交付小队' AND JSON_LENGTH(content_json, '\$.agents')=3) OR (name='全链路研发协作小队' AND JSON_LENGTH(content_json, '\$.agents')=7))\" \"\$database\")
+test \"\$template_count\" = 4
+printf 'TABLE_COUNT=%s\\nTEMPLATE_COUNT=%s\\nPOSTCHECK=passed\\n' \"\$count\" \"\$template_count\"")
     atomic_jq "$manifest" --arg invocation "$(jq -r '.invocationId' <<<"$post")" '.database.postcheck=true | .database.postcheckInvocationId=$invocation | .phase="database" | .status="initialized"'
     ;;
   rolling-start)

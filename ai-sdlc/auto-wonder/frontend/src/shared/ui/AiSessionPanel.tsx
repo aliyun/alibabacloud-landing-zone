@@ -52,6 +52,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
   const bottomRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const autoStartedRef = useRef(false);
+  const composingRef = useRef(false);
   const sessionId = session?.id;
   const sessionStatus = session?.status;
 
@@ -280,7 +281,16 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
             placeholder="输入消息..."
             autoSize={{ minRows: 1, maxRows: 4 }}
             disabled={!canSend}
-            onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || composingRef.current) return;
+              if (e.shiftKey) return;
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={() => { composingRef.current = false; }}
           />
           <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading} disabled={!canSend}>
             发送

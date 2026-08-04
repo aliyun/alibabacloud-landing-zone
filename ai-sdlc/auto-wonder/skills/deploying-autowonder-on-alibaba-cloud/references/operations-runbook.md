@@ -62,9 +62,10 @@ protection, listener sources, private endpoints, and application RAM scope.
 ## Phase 4: Immutable Build And Transfer
 
 Run `scripts/build-release.sh` against the exact repository commit. It runs the
-complete build verification, records JAR/schema hashes, and refuses a dirty or
-mismatched source. Phase 4 ends with the sealed local release; host transfer
-starts only after runtime configuration exists in Phase 5.
+complete build verification, records JAR/schema/template-seed hashes, and refuses
+a dirty or mismatched source. The seed artifact is
+`autowonder-community-templates.sql`. Phase 4 ends with the sealed local release;
+host transfer starts only after runtime configuration exists in Phase 5.
 
 Do not use Cloud Assistant `SendFile` for a JAR, runtime, or secret file. Do not
 build from source on ECS. If Java 21 is absent, transfer a pinned, verified
@@ -87,7 +88,10 @@ verify hashes, and install the versioned layout, Java runtime, data/log
 directories, and systemd unit. The control host uploads and deletes through the
 public OSS endpoint; presigned ECS downloads use the intranet endpoint. Finally run
 `initialize-and-verify.sh database`: confirm empty state, import schema in its
-own invocation, then run the separate read-only postcondition. Never rerun DDL
+own invocation, import the idempotent four-template seed, then run the separate
+read-only postcondition. `.database.imported` checkpoints schema and
+`.database.templatesImported` checkpoints templates. A legacy manifest missing
+only the latter runs the seed without repeating schema DDL. Never rerun DDL
 because post-validation failed.
 
 The current Alibaba Cloud CLI accepts raw `CommandContent` and performs API

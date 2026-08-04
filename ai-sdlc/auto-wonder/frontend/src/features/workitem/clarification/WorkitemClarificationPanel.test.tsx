@@ -276,4 +276,90 @@ describe('WorkitemClarificationPanel', () => {
     expect(screen.getByText('最终方案')).toBeInTheDocument();
     expect(view.container.querySelector('.ant-spin')).toBeNull();
   });
+
+  it('does not keep spinning after the AI reply is already persisted', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const processingConversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: 'PROCESSING', processingTurnId: 3,
+      lastTurnAt: '2026-01-01T00:00:03', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 3, direction: 'INBOUND', content: '请给方案', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+        { id: 4, direction: 'OUTBOUND', content: '请选择 A、B 或 C', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:03' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [processingConversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: processingConversation }),
+      ),
+    );
+
+    const view = renderPanel([]);
+
+    expect(await screen.findByText('请选择 A、B 或 C')).toBeInTheDocument();
+    expect(view.container.querySelector('.ant-spin')).toBeNull();
+  });
+
+  it('sends message on Enter key press', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    mockConversationWithTurns(42);
+    let submitCalled = false;
+    server.use(
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () => {
+        submitCalled = true;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+    );
+    renderPanel([]);
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '你好' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    await waitFor(() => expect(submitCalled).toBe(true));
+  });
+
+  it('does not send on Shift+Enter and preserves input content', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    mockConversationWithTurns(42);
+    let submitCalled = false;
+    server.use(
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () => {
+        submitCalled = true;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+    );
+    renderPanel([]);
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '第一行' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(submitCalled).toBe(false);
+    expect(textarea).toHaveValue('第一行');
+  });
+
+  it('does not send when Enter is pressed during IME composition', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    mockConversationWithTurns(42);
+    let submitCalled = false;
+    server.use(
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () => {
+        submitCalled = true;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+    );
+    renderPanel([]);
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '候选' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', isComposing: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(submitCalled).toBe(false);
+    expect(textarea).toHaveValue('候选');
+  });
 });

@@ -8,11 +8,40 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `454017b42b961b730fb65964ebb24ff88f36543e`
-- Community merge commit: `fed2ea650c8d27dc938042a6928fcb4306d90222`
-- Synchronized at: 2026-08-04 (Asia/Shanghai)
+- Synchronized `origin/master`: `a4e9ec9e2e8a1adebf1154ea89ef6af88b84278f`
+- Community merge commit: `fa2dbe23c69d4649c9d6345afd5325ec4b9cd190`
+- Synchronized at: 2026-08-05 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-05: `454017b4` to `a4e9ec9e`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `454017b42b961b730fb65964ebb24ff88f36543e` |
+| Community before merge | `0a79deb016c458561d5ee55f56eed904293d823d` |
+| Merged `origin/master` | `a4e9ec9e2e8a1adebf1154ea89ef6af88b84278f` |
+| Resulting merge commit | `fa2dbe23c69d4649c9d6345afd5325ec4b9cd190` |
+
+Scope: five master-side commits. The merge stops the clarification spinner as
+soon as an agent reply is persisted and adds multiline input behavior to both AI
+conversation panels: Enter sends, Shift+Enter inserts a newline, and IME
+composition does not submit prematurely.
+
+The four upstream frontend files had no community-side change after the previous
+baseline, so master was accepted unchanged. There was no textual conflict,
+documentation-policy input, internal dependency change, executor UI change, or
+product decision.
+
+Verification completed after the merge:
+
+- Backend: 1,713 tests passed; production JAR built.
+- Frontend: 82 test files and 502 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,759 modules.
+- Deployment Skill: 44 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  community executor UI remained Qoder CLI-only.
 
 ### 2026-08-04: `9f984a89` to `454017b4`
 
