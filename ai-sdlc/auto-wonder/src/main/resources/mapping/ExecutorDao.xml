@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.executor.ExecutorDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.executor.ExecutorDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO executor (tenant_id, agent_id, name, token_ref, status,
+            client_kind, creator_id, is_deleted)
+        VALUES (#{tenantId}, #{agentId}, #{name}, #{tokenRef}, #{status},
+            #{clientKind}, #{creatorId}, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.executor.ExecutorDO">
+        SELECT * FROM executor WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="listAll" resultType="com.aliyun.autowonder.executor.ExecutorDO">
+        SELECT e.*, a.name AS agent_name
+        FROM executor e
+        LEFT JOIN agent a ON a.id = e.agent_id AND a.tenant_id = e.tenant_id AND a.is_deleted = 0
+        WHERE e.tenant_id = #{tenantId} AND e.is_deleted = 0
+        ORDER BY e.id DESC
+    </select>
+    <select id="listByAgent" resultType="com.aliyun.autowonder.executor.ExecutorDO">
+        SELECT e.*, a.name AS agent_name
+        FROM executor e
+        LEFT JOIN agent a ON a.id = e.agent_id AND a.tenant_id = e.tenant_id AND a.is_deleted = 0
+        WHERE e.tenant_id = #{tenantId} AND e.agent_id = #{agentId} AND e.is_deleted = 0
+        ORDER BY e.id DESC
+    </select>
+    <update id="softDelete">
+        UPDATE executor SET is_deleted = 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="updateTokenRef">
+        UPDATE executor SET token_ref = #{tokenRef}
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+    <update id="updateLastConnectIp">
+        UPDATE executor SET last_connect_ip = #{lastConnectIp}, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="updateLastHeartbeat">
+        UPDATE executor SET last_heartbeat = CURRENT_TIMESTAMP(3)
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <select id="listByIds" resultType="com.aliyun.autowonder.executor.ExecutorDO">
+        SELECT * FROM executor
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
+        <foreach collection="ids" item="eid" open="(" separator="," close=")">#{eid}</foreach>
+    </select>
+</mapper>

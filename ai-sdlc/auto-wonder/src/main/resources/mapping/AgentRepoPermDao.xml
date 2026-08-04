@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.agent.AgentRepoPermDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentRepoPermDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_repo_perm (tenant_id, agent_version_id, repo_id, perm_level)
+        VALUES (#{tenantId}, #{agentVersionId}, #{repoId}, #{permLevel})
+    </insert>
+    <select id="listByVersion" resultType="com.aliyun.autowonder.agent.AgentRepoPermDO">
+        SELECT * FROM agent_repo_perm WHERE agent_version_id = #{agentVersionId}
+    </select>
+    <delete id="deleteByVersionAndRepo">
+        DELETE FROM agent_repo_perm WHERE agent_version_id = #{agentVersionId} AND repo_id = #{repoId} AND tenant_id = #{tenantId}
+    </delete>
+    <delete id="deleteByVersion">
+        DELETE FROM agent_repo_perm WHERE agent_version_id = #{agentVersionId}
+    </delete>
+    <select id="countByRepoId" resultType="int">
+        SELECT COUNT(*) FROM agent_repo_perm WHERE repo_id = #{repoId} AND tenant_id = #{tenantId}
+    </select>
+</mapper>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.agent.AgentSkillDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentSkillDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_skill (tenant_id, agent_version_id, skill_id)
+        VALUES (#{tenantId}, #{agentVersionId}, #{skillId})
+    </insert>
+    <select id="listByVersion" resultType="com.aliyun.autowonder.agent.AgentSkillDO">
+        SELECT * FROM agent_skill WHERE agent_version_id = #{agentVersionId}
+    </select>
+    <delete id="deleteByVersionAndSkill">
+        DELETE FROM agent_skill WHERE agent_version_id = #{agentVersionId} AND skill_id = #{skillId} AND tenant_id = #{tenantId}
+    </delete>
+    <delete id="deleteByVersion">
+        DELETE FROM agent_skill WHERE agent_version_id = #{agentVersionId}
+    </delete>
+    <select id="countBySkillId" resultType="int">
+        SELECT COUNT(*) FROM agent_skill WHERE skill_id = #{skillId} AND tenant_id = #{tenantId}
+    </select>
+</mapper>

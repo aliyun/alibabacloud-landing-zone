@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.audit.AuditLogDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.audit.AuditLogDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO audit_log
+            (tenant_id, actor_id, module, action, target_type, target_id, detail_json)
+        VALUES
+            (#{tenantId}, #{actorId}, #{module}, #{action}, #{targetType}, #{targetId}, #{detailJson})
+    </insert>
+
+    <sql id="searchCondition">
+        <where>
+            tenant_id = #{tenantId}
+            <if test="module != null">AND module = #{module}</if>
+            <if test="action != null">AND action = #{action}</if>
+            <if test="actorId != null">AND actor_id = #{actorId}</if>
+            <if test="targetType != null">AND target_type = #{targetType}</if>
+            <if test="targetId != null">AND target_id = #{targetId}</if>
+            <if test="startTime != null">AND gmt_create &gt;= #{startTime}</if>
+            <if test="endTime != null">AND gmt_create &lt;= #{endTime}</if>
+            <if test="keyword != null">AND detail_json LIKE CONCAT('%', #{keyword}, '%')</if>
+        </where>
+    </sql>
+
+    <select id="search" resultType="com.aliyun.autowonder.audit.AuditLogDO">
+        SELECT * FROM audit_log
+        <include refid="searchCondition"/>
+        ORDER BY gmt_create DESC LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countSearch" resultType="int">
+        SELECT COUNT(*) FROM audit_log
+        <include refid="searchCondition"/>
+    </select>
+</mapper>

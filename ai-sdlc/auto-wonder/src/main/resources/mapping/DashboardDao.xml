@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.dashboard.DashboardDao">
+
+    <select id="countRunningDispatches" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 'RUNNING'
+    </select>
+
+    <!-- 端到端成功工单 = 到达待决策(自动交付成功后指派给人工决策) 或 已完成(DONE)，不是单个数字人的 dispatch 成功次数。 -->
+    <sql id="endToEndSuccessfulWorkitems">
+        SELECT
+            w.id,
+            w.gmt_create,
+            CASE
+                WHEN sn.category = 'DONE' THEN w.gmt_modified
+                ELSE latest_dispatch.gmt_modified
+            END AS success_at
+        FROM workitem w
+        LEFT JOIN status_node sn ON w.status_node_id = sn.id AND sn.tenant_id = w.tenant_id
+        LEFT JOIN dispatch latest_dispatch ON latest_dispatch.id = (
+            SELECT MAX(d.id)
+            FROM dispatch d
+            WHERE d.tenant_id = w.tenant_id
+              AND d.workitem_id = w.id
+              AND d.is_deleted = 0
+        )
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0
+          AND (
+              sn.category = 'DONE'
+              OR (
+                  w.assignee_type = 'HUMAN'
+                  AND COALESCE(sn.category, '') &lt;&gt; 'DONE'
+                  AND latest_dispatch.status = 'SUCCEEDED'
+              )
+          )
+    </sql>
+
+    <select id="countTodayCompletedTasks" resultType="int">
+        SELECT COUNT(*)
+        FROM (
+            <include refid="endToEndSuccessfulWorkitems"/>
+        ) successful_workitem
+        WHERE successful_workitem.success_at >= CURDATE()
+    </select>
+
+    <select id="countWeekCompletedTasks" resultType="int">
+        SELECT COUNT(*)
+        FROM (
+            <include refid="endToEndSuccessfulWorkitems"/>
+        ) successful_workitem
+        WHERE successful_workitem.success_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+    </select>
+
+    <select id="avgTodayCompletedTaskDurationMinutes" resultType="java.lang.Integer">
+        SELECT COALESCE(ROUND(AVG(TIMESTAMPDIFF(MINUTE, successful_workitem.gmt_create,
+                                                successful_workitem.success_at))), 0)
+        FROM (
+            <include refid="endToEndSuccessfulWorkitems"/>
+        ) successful_workitem
+        WHERE successful_workitem.success_at >= CURDATE()
+    </select>
+
+    <select id="countInProgressWorkitems" resultType="int">
+        SELECT COUNT(*) FROM workitem w
+        JOIN status_node sn ON w.status_node_id = sn.id
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0 AND sn.category = 'IN_PROGRESS'
+    </select>
+
+    <select id="countQueuedDispatches" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          AND status IN ('PENDING','PACKAGING','DISPATCHED','ACKED')
+    </select>
+
+    <select id="countOnlineAgents" resultType="int">
+        SELECT COUNT(*) FROM agent
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 'ONLINE'
+    </select>
+
+    <select id="countActiveSquads" resultType="int">
+        SELECT COUNT(DISTINCT sm.squad_id)
+        FROM squad_member sm
+        JOIN squad s ON s.id = sm.squad_id AND s.tenant_id = sm.tenant_id
+        JOIN dispatch d ON d.agent_id = sm.agent_id AND d.tenant_id = sm.tenant_id
+        WHERE sm.tenant_id = #{tenantId}
+          AND s.is_deleted = 0
+          AND s.status = 0
+          AND d.is_deleted = 0
+          AND d.status = 'RUNNING'
+</select>
+
+    <select id="countWorkitemsByLifecycle" resultType="java.util.Map">
+        SELECT sn.category AS category, COUNT(*) AS cnt
+        FROM workitem w
+        JOIN status_node sn ON w.status_node_id = sn.id
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0
+        GROUP BY sn.category
+    </select>
+
+    <select id="countWorkitemsByType" resultType="java.util.Map">
+        SELECT work_type AS workType, COUNT(*) AS cnt
+        FROM workitem
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        GROUP BY work_type
+    </select>
+
+    <select id="squadLineAggregates" resultType="java.util.Map">
+        SELECT
+            s.id AS squadId,
+            s.name AS name,
+            COUNT(DISTINCT sm.agent_id) AS members,
+            COUNT(DISTINCT CASE WHEN a.status = 'ONLINE' THEN a.id END) AS online,
+            COUNT(DISTINCT CASE WHEN d.status = 'RUNNING' THEN d.agent_id END) AS busy,
+            COUNT(DISTINCT CASE WHEN d.status = 'RUNNING' THEN d.id END) AS runningTasks
+        FROM squad s
+        LEFT JOIN squad_member sm ON sm.squad_id = s.id AND sm.tenant_id = s.tenant_id
+        LEFT JOIN agent a ON a.id = sm.agent_id AND a.tenant_id = s.tenant_id AND a.is_deleted = 0
+        LEFT JOIN dispatch d ON d.agent_id = sm.agent_id AND d.tenant_id = s.tenant_id AND d.is_deleted = 0
+        WHERE s.tenant_id = #{tenantId} AND s.is_deleted = 0 AND s.status = 0
+        GROUP BY s.id, s.name
+        ORDER BY runningTasks DESC, members DESC
+    </select>
+
+    <select id="squadInProgressWorkitems" resultType="java.util.Map">
+        SELECT sm.squad_id AS squadId, COUNT(DISTINCT d.workitem_id) AS cnt
+        FROM squad_member sm
+        JOIN dispatch d ON d.agent_id = sm.agent_id AND d.tenant_id = sm.tenant_id AND d.is_deleted = 0
+        JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = sm.tenant_id AND w.is_deleted = 0
+        JOIN status_node sn ON w.status_node_id = sn.id
+        WHERE sm.tenant_id = #{tenantId} AND sn.category = 'IN_PROGRESS'
+        GROUP BY sm.squad_id
+    </select>
+
+    <select id="onlineWorkstations" resultType="java.util.Map">
+        SELECT
+            a.id AS agentId,
+            a.name AS name,
+            a.avatar_url AS avatarUrl,
+            COUNT(DISTINCT CASE WHEN d.status = 'RUNNING' THEN d.id END) AS runningTasks
+        FROM agent a
+        LEFT JOIN dispatch d ON d.agent_id = a.id AND d.tenant_id = a.tenant_id AND d.is_deleted = 0
+        WHERE a.tenant_id = #{tenantId} AND a.is_deleted = 0 AND a.status = 'ONLINE'
+        GROUP BY a.id, a.name, a.avatar_url
+        ORDER BY runningTasks DESC, a.name
+    </select>
+
+    <select id="countTodaySucceeded" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          AND status = 'SUCCEEDED' AND gmt_create >= CURDATE()
+    </select>
+
+    <select id="countTodayFailedOrTimeout" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          AND status IN ('FAILED','TIMEOUT') AND gmt_create >= CURDATE()
+    </select>
+
+    <select id="countTodayRetries" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          AND attempt > 0 AND gmt_create >= CURDATE()
+    </select>
+
+    <select id="avgTodaySuccessDurationMinutes" resultType="java.lang.Integer">
+        SELECT COALESCE(AVG(TIMESTAMPDIFF(MINUTE, gmt_create, gmt_modified)), 0)
+        FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          AND status = 'SUCCEEDED' AND gmt_create >= CURDATE()
+    </select>
+
+    <select id="listRunningFeed" resultType="com.aliyun.autowonder.dashboard.dto.RunningTaskVO">
+        SELECT
+            d.id AS dispatchId,
+            d.agent_id AS agentId,
+            a.name AS agentName,
+            d.workitem_id AS workitemId,
+            w.title AS workitemTitle,
+            st.name AS stepName,
+            TIMESTAMPDIFF(MINUTE, d.gmt_modified, NOW()) AS runningMinutes
+        FROM dispatch d
+        LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
+        LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
+        LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
+        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0 AND d.status = 'RUNNING'
+        ORDER BY d.gmt_modified ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listRecentFeed" resultType="com.aliyun.autowonder.dashboard.dto.RecentTaskVO">
+        SELECT
+            d.id AS dispatchId,
+            a.name AS agentName,
+            w.title AS workitemTitle,
+            d.status AS status,
+            TIMESTAMPDIFF(MINUTE, d.gmt_create, d.gmt_modified) AS durationMinutes,
+            DATE_FORMAT(d.gmt_modified, '%Y-%m-%d %H:%i:%s') AS finishedAt
+        FROM dispatch d
+        LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
+        LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
+        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0
+          AND d.status IN ('SUCCEEDED','FAILED','TIMEOUT','CANCELED')
+        ORDER BY d.gmt_modified DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listTodayCompletedWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.CompletedWorkitemVO">
+        SELECT
+            successful_workitem.id AS workitemId,
+            w.title AS title
+        FROM (
+            <include refid="endToEndSuccessfulWorkitems"/>
+        ) successful_workitem
+        JOIN workitem w ON w.id = successful_workitem.id
+        WHERE successful_workitem.success_at >= CURDATE()
+        ORDER BY successful_workitem.success_at DESC
+    </select>
+
+    <select id="listWeekCompletedWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.CompletedWorkitemVO">
+        SELECT
+            successful_workitem.id AS workitemId,
+            w.title AS title
+        FROM (
+            <include refid="endToEndSuccessfulWorkitems"/>
+        ) successful_workitem
+        JOIN workitem w ON w.id = successful_workitem.id
+        WHERE successful_workitem.success_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+        ORDER BY successful_workitem.success_at DESC
+    </select>
+
+    <select id="listRunningWorkitems" resultType="com.aliyun.autowonder.dashboard.dto.RunningTaskVO">
+        SELECT
+            d.id AS dispatchId,
+            d.agent_id AS agentId,
+            a.name AS agentName,
+            d.workitem_id AS workitemId,
+            w.title AS workitemTitle,
+            st.name AS stepName,
+            TIMESTAMPDIFF(MINUTE, d.gmt_modified, NOW()) AS runningMinutes
+        FROM dispatch d
+        LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
+        LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
+        LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
+        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0 AND d.status = 'RUNNING'
+        ORDER BY d.gmt_modified ASC
+    </select>
+
+    <select id="listAgentRunning" resultType="com.aliyun.autowonder.dashboard.dto.RunningTaskVO">
+        SELECT
+            d.id AS dispatchId,
+            d.agent_id AS agentId,
+            a.name AS agentName,
+            d.workitem_id AS workitemId,
+            w.title AS workitemTitle,
+            st.name AS stepName,
+            TIMESTAMPDIFF(MINUTE, d.gmt_modified, NOW()) AS runningMinutes
+        FROM dispatch d
+        LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
+        LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
+        LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
+        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0
+          AND d.status = 'RUNNING' AND d.agent_id = #{agentId}
+        ORDER BY d.gmt_modified ASC
+    </select>
+
+    <select id="agentExists" resultType="int">
+        SELECT COUNT(*) FROM agent
+        WHERE tenant_id = #{tenantId} AND id = #{agentId} AND is_deleted = 0
+    </select>
+
+</mapper>

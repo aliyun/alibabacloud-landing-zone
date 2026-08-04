@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.im.UserImIdentityDao">
+    <select id="listByUserId" resultType="com.aliyun.autowonder.im.UserImIdentityDO">
+        SELECT *
+        FROM user_im_identity
+        WHERE user_id = #{userId} AND is_deleted = 0
+        ORDER BY provider
+    </select>
+
+    <select id="find" resultType="com.aliyun.autowonder.im.UserImIdentityDO">
+        SELECT *
+        FROM user_im_identity
+        WHERE user_id = #{userId} AND provider = #{provider} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="upsert" parameterType="com.aliyun.autowonder.im.UserImIdentityDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO user_im_identity
+            (user_id, provider, external_user_id, creator_id, modifier_id, is_deleted)
+        VALUES
+            (#{userId}, #{provider}, #{externalUserId}, #{creatorId}, #{modifierId}, 0)
+        ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            external_user_id = VALUES(external_user_id),
+            modifier_id = VALUES(modifier_id),
+            is_deleted = 0,
+            version = version + 1
+    </insert>
+
+    <update id="softDelete">
+        UPDATE user_im_identity
+        SET is_deleted = 1,
+            modifier_id = #{modifierId},
+            version = version + 1
+        WHERE user_id = #{userId}
+          AND provider = #{provider}
+          AND is_deleted = 0
+    </update>
+</mapper>

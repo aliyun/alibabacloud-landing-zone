@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.guidance.GuidanceDao">
+    <resultMap id="guidanceMap" type="com.aliyun.autowonder.guidance.GuidanceDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="workitem_id" property="workitemId"/>
+        <result column="comment_id" property="commentId"/>
+        <result column="target_agent_id" property="targetAgentId"/>
+        <result column="dispatch_id" property="dispatchId"/>
+        <result column="executor_id" property="executorId"/>
+        <result column="reply_comment_id" property="replyCommentId"/>
+        <result column="status" property="status"/>
+        <result column="error" property="error"/>
+        <result column="delivered_at" property="deliveredAt"/>
+        <result column="applied_at" property="appliedAt"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+    </resultMap>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_comment_delivery
+          (tenant_id, workitem_id, comment_id, target_agent_id, dispatch_id, executor_id,
+           status, error)
+        VALUES
+          (#{tenantId}, #{workitemId}, #{commentId}, #{targetAgentId}, #{dispatchId}, #{executorId},
+           #{status}, #{error})
+    </insert>
+    <select id="findById" resultMap="guidanceMap">
+        SELECT * FROM workitem_comment_delivery WHERE id = #{id}
+    </select>
+    <select id="listByWorkitem" resultMap="guidanceMap">
+        SELECT * FROM workitem_comment_delivery
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY id ASC
+    </select>
+    <select id="listQueuedForDispatch" resultMap="guidanceMap">
+        SELECT * FROM workitem_comment_delivery
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+          AND status = 'QUEUED'
+        ORDER BY id ASC
+    </select>
+    <select id="listDeliveredForExecutor" resultMap="guidanceMap">
+        SELECT g.*
+        FROM workitem_comment_delivery g
+        JOIN dispatch d ON d.id = g.dispatch_id AND d.tenant_id = g.tenant_id AND d.is_deleted = 0
+        WHERE g.tenant_id = #{tenantId} AND g.executor_id = #{executorId}
+          AND g.status = 'DELIVERED'
+          AND d.status IN ('PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'PAUSING', 'PAUSE_FAILED')
+        ORDER BY g.id ASC
+    </select>
+    <update id="bindDispatch">
+        UPDATE workitem_comment_delivery
+        SET dispatch_id = #{dispatchId}, executor_id = #{executorId}, gmt_modified = NOW()
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND status = 'QUEUED'
+    </update>
+    <update id="bindPendingDispatch">
+        UPDATE workitem_comment_delivery
+        SET dispatch_id = #{dispatchId}, gmt_modified = NOW()
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND status = 'QUEUED'
+    </update>
+    <update id="updateStatus">
+        UPDATE workitem_comment_delivery
+        SET status = #{status}, error = #{error},
+            delivered_at = CASE WHEN #{status} = 'DELIVERED' THEN NOW() ELSE delivered_at END,
+            applied_at = CASE WHEN #{status} = 'APPLIED' THEN NOW() ELSE applied_at END,
+            gmt_modified = NOW()
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+    </update>
+    <update id="acknowledge">
+        UPDATE workitem_comment_delivery
+        SET status = #{status}, error = #{error},
+            applied_at = CASE WHEN #{status} = 'APPLIED' THEN NOW() ELSE applied_at END,
+            gmt_modified = NOW()
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND executor_id = #{executorId}
+          AND status = 'DELIVERED'
+    </update>
+    <update id="requeueDeliveredForDispatch">
+        UPDATE workitem_comment_delivery
+        SET status = 'QUEUED', dispatch_id = NULL, executor_id = NULL,
+            delivered_at = NULL, error = NULL, gmt_modified = NOW()
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId} AND status = 'DELIVERED'
+    </update>
+    <update id="requeueForExecutorFailover">
+        UPDATE workitem_comment_delivery
+        SET status = 'QUEUED', dispatch_id = #{dispatchId}, executor_id = NULL,
+            delivered_at = NULL, applied_at = NULL, error = NULL, gmt_modified = NOW()
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+          AND status IN ('DELIVERED', 'FAILED')
+    </update>
+    <update id="failForDispatch">
+        UPDATE workitem_comment_delivery
+        SET status = 'FAILED', error = #{error}, gmt_modified = NOW()
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+          AND status IN ('QUEUED', 'DELIVERED')
+    </update>
+    <update id="bindReplyComment">
+        UPDATE workitem_comment_delivery
+        SET reply_comment_id = #{replyCommentId}, gmt_modified = NOW()
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND reply_comment_id IS NULL
+    </update>
+</mapper>

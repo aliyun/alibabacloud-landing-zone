@@ -1,0 +1,9 @@
+.git
+.worktrees
+.idea
+.vscode
+target
+logs
+frontend/node_modules
+frontend/dist
+frontend/tsconfig.tsbuildinfo

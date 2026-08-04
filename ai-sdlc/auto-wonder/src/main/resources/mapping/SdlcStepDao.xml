@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.sdlc.SdlcStepDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.sdlc.SdlcStepDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sdlc_step (tenant_id, sdlc_id, step_order, name,
+            kind, instruction_md, checklist_json, gate_policy_json, required, timeout_seconds, retry_budget, code,
+            handler_type, handler_role_ref, status_on_enter_code, on_success, on_fail,
+            creator_id, is_deleted)
+        VALUES (#{tenantId}, #{sdlcId}, #{stepOrder}, #{name},
+            #{kind}, #{instructionMd}, #{checklistJson}, #{gatePolicyJson}, #{required}, #{timeoutSeconds}, #{retryBudget}, #{code},
+            #{handlerType}, #{handlerRoleRef}, #{statusOnEnterCode}, #{onSuccess}, #{onFail},
+            #{creatorId}, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.sdlc.SdlcStepDO">
+        SELECT * FROM sdlc_step WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="listBySdlc" resultType="com.aliyun.autowonder.sdlc.SdlcStepDO">
+        SELECT * FROM sdlc_step WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
+        ORDER BY step_order ASC
+    </select>
+    <update id="update">
+        UPDATE sdlc_step SET name = #{name},
+            kind = #{kind}, instruction_md = #{instructionMd},
+            checklist_json = #{checklistJson}, gate_policy_json = #{gatePolicyJson},
+            required = #{required}, timeout_seconds = #{timeoutSeconds}, retry_budget = #{retryBudget},
+            code = #{code},
+            handler_type = #{handlerType}, handler_role_ref = #{handlerRoleRef},
+            status_on_enter_code = #{statusOnEnterCode},
+            on_success = #{onSuccess}, on_fail = #{onFail}, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE sdlc_step SET is_deleted = 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="deleteAllBySdlc">
+        UPDATE sdlc_step SET is_deleted = 1
+        WHERE sdlc_id = #{sdlcId} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="updateOrder">
+        UPDATE sdlc_step SET step_order = #{stepOrder}, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+</mapper>

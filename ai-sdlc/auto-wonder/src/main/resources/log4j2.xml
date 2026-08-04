@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration packages="com.aliyun.autowonder.log">
+    <Properties>
+        <property name="system_log_pattern" value="%d{DEFAULT}|%p|%X{requestId}|%X{operation}|%logger{1}|%t|%m %ex%n" />
+    </Properties>
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${system_log_pattern}"/>
+        </Console>
+
+        <RollingFile name="LocalFile" fileName="logs/auto-wonder.log"
+                     filePattern="logs/auto-wonder-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${system_log_pattern}"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="50MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="5"/>
+        </RollingFile>
+
+        <RoagLoghub name="Loghub"
+                   enabled="${env:AUTOWONDER_SLS_ENABLED:-false}"
+                   project="${env:SLS_PROJECT}"
+                   logStore="${env:SLS_SYS_LOGSTORE}"
+                   endpoint="${env:SLS_ENDPOINT}"
+                   ak="${env:SLS_ACCESS_KEY_ID}"
+                   sk="${env:SLS_ACCESS_KEY_SECRET}"
+                   totalSizeInBytes="104857600"
+                   maxBlockMs="0"
+                   ioThreadCount="8"
+                   batchSizeThresholdInBytes="524288"
+                   batchCountThreshold="4096"
+                   lingerMs="2000"
+                   retries="2"
+                   baseRetryBackoffMs="100"
+                   maxRetryBackoffMs="100"
+                   topic="${env:SLS_TOPIC}"
+                   source="${env:SLS_SOURCE}"
+                   timeFormat="yyyy-MM-dd HH:mm:ss,SSS"
+                   timeZone="Asia/Shanghai"
+                   ignoreExceptions="true">
+            <PatternLayout pattern="%m %ex"/>
+        </RoagLoghub>
+    </Appenders>
+
+    <Loggers>
+        <Root level="INFO">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="LocalFile"/>
+            <AppenderRef ref="Loghub"/>
+        </Root>
+
+        <AsyncLogger name="ConnectorManager" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="com.aliyun.autowonder.log.LoghubAppender" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="LocalMsgLogger" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="com.aliyun.openservices.aliyun.log.producer" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="Loghub"/>
+        </AsyncLogger>
+    </Loggers>
+</Configuration>

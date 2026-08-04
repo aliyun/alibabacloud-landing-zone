@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.common.ExternalProjectBindingDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.integration.common.ExternalProjectBindingDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO external_project_binding (tenant_id, provider, external_project_id, external_project_name,
+            base_url, client_key, credential_ref, region_id, writeback_staff_id, poll_interval_seconds,
+            enabled, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{provider}, #{externalProjectId}, #{externalProjectName},
+            #{baseUrl}, #{clientKey}, #{credentialRef}, #{regionId}, #{writebackStaffId}, #{pollIntervalSeconds},
+            #{enabled}, #{creatorId}, 0, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.integration.common.ExternalProjectBindingDO">
+        SELECT * FROM external_project_binding WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findByProject" resultType="com.aliyun.autowonder.integration.common.ExternalProjectBindingDO">
+        SELECT * FROM external_project_binding
+        WHERE tenant_id = #{tenantId} AND provider = #{provider}
+          AND external_project_id = #{externalProjectId} AND is_deleted = 0
+        LIMIT 1
+    </select>
+    <select id="list" resultType="com.aliyun.autowonder.integration.common.ExternalProjectBindingDO">
+        SELECT * FROM external_project_binding
+        WHERE tenant_id = #{tenantId} AND provider = #{provider} AND is_deleted = 0
+        ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <select id="listEnabled" resultType="com.aliyun.autowonder.integration.common.ExternalProjectBindingDO">
+        SELECT * FROM external_project_binding
+        WHERE provider = #{provider} AND enabled = 1 AND is_deleted = 0
+        ORDER BY id ASC
+    </select>
+    <update id="updateHealth">
+        UPDATE external_project_binding
+        SET last_success_at = #{lastSuccessAt}, last_error = #{lastError}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+</mapper>

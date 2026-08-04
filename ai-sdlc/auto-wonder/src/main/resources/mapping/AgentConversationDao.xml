@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.conversation.AgentConversationDao">
+
+    <resultMap id="BaseResultMap" type="com.aliyun.autowonder.conversation.AgentConversationDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="agent_id" property="agentId"/>
+        <result column="agent_version_id" property="agentVersionId"/>
+        <result column="channel" property="channel"/>
+        <result column="biz_ref_type" property="bizRefType"/>
+        <result column="biz_ref_id" property="bizRefId"/>
+        <result column="channel_conversation_id" property="channelConversationId"/>
+        <result column="cli_session_ref" property="cliSessionRef"/>
+        <result column="executor_id" property="executorId"/>
+        <result column="status" property="status"/>
+        <result column="last_turn_at" property="lastTurnAt"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="version" property="version"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, tenant_id, agent_id, agent_version_id, channel, biz_ref_type, biz_ref_id, channel_conversation_id, cli_session_ref,
+        executor_id, status, last_turn_at, gmt_create, gmt_modified, version
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.conversation.AgentConversationDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_conversation
+        (tenant_id, agent_id, agent_version_id, channel, biz_ref_type, biz_ref_id, channel_conversation_id, cli_session_ref,
+         executor_id, status, last_turn_at, version)
+        VALUES
+        (#{tenantId}, #{agentId}, #{agentVersionId}, #{channel}, #{bizRefType}, #{bizRefId}, #{channelConversationId}, #{cliSessionRef},
+         #{executorId}, #{status}, #{lastTurnAt}, 0)
+    </insert>
+
+    <select id="findByKey" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId} AND channel = #{channel}
+          AND channel_conversation_id = #{channelConversationId} AND agent_id = #{agentId}
+    </select>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </select>
+
+    <update id="updateCliSessionRef">
+        UPDATE agent_conversation
+        SET cli_session_ref = #{cliSessionRef}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </update>
+
+    <update id="updateExecutor">
+        UPDATE agent_conversation
+        SET executor_id = #{executorId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </update>
+
+    <update id="updateAgentVersion">
+        UPDATE agent_conversation
+        SET agent_version_id = #{agentVersionId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </update>
+
+    <update id="updateStatusAndLastTurn">
+        UPDATE agent_conversation
+        SET status = #{status}, last_turn_at = #{lastTurnAt}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </update>
+
+    <select id="listByBizRef" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId}
+          AND channel = #{channel}
+          AND biz_ref_type = #{bizRefType}
+          AND biz_ref_id = #{bizRefId}
+          AND agent_id = #{agentId}
+        ORDER BY gmt_create DESC, id DESC
+    </select>
+
+    <select id="findLatestByBizRef" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId}
+          AND channel = #{channel}
+          AND biz_ref_type = #{bizRefType}
+          AND biz_ref_id = #{bizRefId}
+          AND agent_id = #{agentId}
+        ORDER BY gmt_create DESC, id DESC
+        LIMIT 1
+    </select>
+
+</mapper>

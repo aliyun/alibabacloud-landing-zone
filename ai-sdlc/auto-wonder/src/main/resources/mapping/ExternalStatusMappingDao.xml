@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.common.ExternalStatusMappingDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.integration.common.ExternalStatusMappingDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO external_status_mapping (tenant_id, provider, binding_id, external_issue_type_id,
+            external_status_id, external_status_name, work_type, status_node_id, enabled)
+        VALUES (#{tenantId}, #{provider}, #{bindingId}, #{externalIssueTypeId},
+            #{externalStatusId}, #{externalStatusName}, #{workType}, #{statusNodeId}, #{enabled})
+    </insert>
+    <select id="findByExternal" resultType="com.aliyun.autowonder.integration.common.ExternalStatusMappingDO">
+        SELECT * FROM external_status_mapping
+        WHERE tenant_id = #{tenantId} AND provider = #{provider} AND binding_id = #{bindingId}
+          AND work_type = #{workType} AND external_status_name = #{externalStatusName} AND enabled = 1
+        LIMIT 1
+    </select>
+    <select id="findByStatusNode" resultType="com.aliyun.autowonder.integration.common.ExternalStatusMappingDO">
+        SELECT * FROM external_status_mapping
+        WHERE tenant_id = #{tenantId} AND provider = #{provider} AND binding_id = #{bindingId}
+          AND status_node_id = #{statusNodeId} AND enabled = 1
+        LIMIT 1
+    </select>
+    <select id="listByBinding" resultType="com.aliyun.autowonder.integration.common.ExternalStatusMappingDO">
+        SELECT * FROM external_status_mapping
+        WHERE tenant_id = #{tenantId} AND binding_id = #{bindingId}
+        ORDER BY work_type ASC, external_status_name ASC
+    </select>
+    <update id="updateExternalIssueType">
+        UPDATE external_status_mapping
+        SET external_issue_type_id = #{externalIssueTypeId}
+        WHERE id = #{id} AND (external_issue_type_id IS NULL OR external_issue_type_id = '')
+    </update>
+</mapper>

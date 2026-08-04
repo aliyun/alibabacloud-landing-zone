@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.statemachine.StatusTransitionDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.statemachine.StatusTransitionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO status_transition (tenant_id, template_id, from_node_id, to_node_id, name)
+        VALUES (#{tenantId}, #{templateId}, #{fromNodeId}, #{toNodeId}, #{name})
+    </insert>
+    <select id="findByTemplateFromTo" resultType="com.aliyun.autowonder.statemachine.StatusTransitionDO">
+        SELECT * FROM status_transition
+        WHERE template_id = #{templateId} AND from_node_id = #{fromNodeId} AND to_node_id = #{toNodeId}
+        LIMIT 1
+    </select>
+    <select id="findById" resultType="com.aliyun.autowonder.statemachine.StatusTransitionDO">
+        SELECT * FROM status_transition WHERE id = #{id} LIMIT 1
+    </select>
+    <select id="listByTemplateId" resultType="com.aliyun.autowonder.statemachine.StatusTransitionDO">
+        SELECT * FROM status_transition WHERE template_id = #{templateId} ORDER BY gmt_create ASC
+    </select>
+    <update id="update">
+        UPDATE status_transition SET from_node_id = #{fromNodeId}, to_node_id = #{toNodeId}, name = #{name}
+        WHERE id = #{id}
+    </update>
+    <delete id="deleteById">
+        DELETE FROM status_transition WHERE id = #{id}
+    </delete>
+    <delete id="deleteByTemplateId">
+        DELETE FROM status_transition WHERE template_id = #{templateId}
+    </delete>
+</mapper>

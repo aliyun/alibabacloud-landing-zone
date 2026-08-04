@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.template.SquadTemplateDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.template.SquadTemplateDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO squad_template (tenant_id, name, description, squad_size, icon, tags,
+            content_json, status, is_deleted)
+        VALUES (#{tenantId}, #{name}, #{description}, #{squadSize}, #{icon}, #{tags},
+            #{contentJson}, #{status}, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.template.SquadTemplateDO">
+        SELECT * FROM squad_template WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="listActive" resultType="com.aliyun.autowonder.template.SquadTemplateDO">
+        SELECT * FROM squad_template
+        WHERE is_deleted = 0 AND status = 'ACTIVE'
+          AND (tenant_id IS NULL OR tenant_id = #{tenantId})
+        ORDER BY squad_size ASC, id ASC
+    </select>
+</mapper>

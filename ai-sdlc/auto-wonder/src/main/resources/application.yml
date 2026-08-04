@@ -1,0 +1,62 @@
+spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  mvc:
+    async:
+      request-timeout: 180000
+
+mybatis:
+  mapper-locations: classpath:mapping/*Dao.xml
+  type-aliases-package: com.aliyun.autowonder.dao
+  configuration:
+    map-underscore-to-camel-case: true
+
+logging:
+  config: classpath:log4j2.xml
+
+server:
+  tomcat:
+    threads:
+      min-spare: 150
+      max: 2000
+      stuck-detected:
+        threshold: 100
+        interruptThreadThreshold: 110
+    accept-count: 200
+    max-connections: 1000
+
+oss:
+  endpoint: ${OSS_ENDPOINT:}
+  bucket: ${OSS_BUCKET:}
+  access-key-id: ${OSS_ACCESS_KEY_ID:}
+  access-key-secret: ${OSS_ACCESS_KEY_SECRET:}
+  task-pkg-bucket: ${OSS_TASK_PKG_BUCKET:${OSS_BUCKET:}}
+  artifact-bucket: ${OSS_ARTIFACT_BUCKET:${OSS_BUCKET:}}
+  skill-bucket: ${OSS_SKILL_BUCKET:${OSS_BUCKET:}}
+
+autowonder:
+  public-base-url: ${AUTOWONDER_PUBLIC_BASE_URL:http://localhost:7001}
+  security:
+    secret-crypto:
+      master-key: ${AUTOWONDER_SECRET_MASTER_KEY:}
+  jwt:
+    secret: ${AUTOWONDER_JWT_SECRET:}
+    access-ttl-seconds: 7200
+    refresh-ttl-seconds: 604800
+  sls:
+    enabled: ${AUTOWONDER_SLS_ENABLED:false}
+    endpoint: ${SLS_ENDPOINT:}
+    project: ${SLS_PROJECT:}
+    sys-log-store: ${SLS_SYS_LOGSTORE:}
+    biz-log-store: ${SLS_BIZ_LOGSTORE:}
+    metric-log-store: ${SLS_METRIC_LOGSTORE:}
+    access-key-id: ${SLS_ACCESS_KEY_ID:}
+    access-key-secret: ${SLS_ACCESS_KEY_SECRET:}
+    topic: ${SLS_TOPIC:}
+    source: ${SLS_SOURCE:}
+  integration:
+    aone:
+      enabled: ${AUTOWONDER_AONE_ENABLED:false}
+  metrics:
+    sigar:
+      enabled: ${AUTOWONDER_SIGAR_ENABLED:true}

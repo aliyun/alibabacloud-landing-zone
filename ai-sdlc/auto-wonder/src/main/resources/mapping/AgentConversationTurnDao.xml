@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.conversation.AgentConversationTurnDao">
+
+    <resultMap id="BaseResultMap" type="com.aliyun.autowonder.conversation.AgentConversationTurnDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="conversation_id" property="conversationId"/>
+        <result column="direction" property="direction"/>
+        <result column="content" property="content"/>
+        <result column="external_msg_id" property="externalMsgId"/>
+        <result column="request_id" property="requestId"/>
+        <result column="source_context" property="sourceContext"/>
+        <result column="status" property="status"/>
+        <result column="error" property="error"/>
+        <result column="last_dispatch_at" property="lastDispatchAt"/>
+        <result column="dispatch_attempt" property="dispatchAttempt"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, tenant_id, conversation_id, direction, content, external_msg_id, request_id, source_context,
+        status, error, last_dispatch_at, dispatch_attempt, gmt_create
+    </sql>
+
+    <sql id="Turn_Column_List">
+        t.id, t.tenant_id, t.conversation_id, t.direction, t.content, t.external_msg_id,
+        t.request_id, t.source_context, t.status, t.error, t.last_dispatch_at,
+        t.dispatch_attempt, t.gmt_create
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.conversation.AgentConversationTurnDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_conversation_turn
+        (tenant_id, conversation_id, direction, content, external_msg_id, request_id, source_context, status, error)
+        VALUES
+        (#{tenantId}, #{conversationId}, #{direction}, #{content}, #{externalMsgId}, #{requestId}, #{sourceContext}, #{status}, #{error})
+    </insert>
+
+    <select id="findByExternalMsgId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation_turn
+        WHERE tenant_id = #{tenantId} AND external_msg_id = #{externalMsgId}
+        LIMIT 1
+    </select>
+
+    <select id="findByConversationTurn" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation_turn
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId} AND id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="findProcessingInbound" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation_turn
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND direction = 'IN'
+          AND status = 'PROCESSING'
+        ORDER BY id ASC
+        LIMIT 1
+    </select>
+
+    <select id="findNextQueuedInbound" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation_turn
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND direction = 'IN'
+          AND status = 'QUEUED'
+        ORDER BY gmt_create ASC, id ASC
+        LIMIT 1
+    </select>
+
+    <select id="listStaleProcessingInboundByExecutor" resultMap="BaseResultMap">
+        SELECT <include refid="Turn_Column_List"/>
+        FROM agent_conversation_turn t
+        JOIN agent_conversation c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
+        WHERE t.tenant_id = #{tenantId}
+          AND c.tenant_id = #{tenantId}
+          AND c.executor_id = #{executorId}
+          AND t.direction = 'IN'
+          AND t.status = 'PROCESSING'
+          AND (t.last_dispatch_at &lt;= #{cutoff}
+            OR (t.last_dispatch_at IS NULL AND t.gmt_create &lt;= #{cutoff}))
+        ORDER BY COALESCE(t.last_dispatch_at, t.gmt_create) ASC, t.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listStaleProcessingInbound" resultMap="BaseResultMap">
+        SELECT <include refid="Turn_Column_List"/>
+        FROM agent_conversation_turn t
+        JOIN agent_conversation c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
+        WHERE t.direction = 'IN'
+          AND t.status = 'PROCESSING'
+          AND c.executor_id IS NOT NULL
+          AND (t.last_dispatch_at &lt;= #{cutoff}
+            OR (t.last_dispatch_at IS NULL AND t.gmt_create &lt;= #{cutoff}))
+        ORDER BY COALESCE(t.last_dispatch_at, t.gmt_create) ASC, t.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="acquireConversationLock" resultType="java.lang.Integer">
+        SELECT GET_LOCK(#{lockName}, #{timeoutSeconds})
+    </select>
+
+    <select id="releaseConversationLock" resultType="java.lang.Integer">
+        SELECT RELEASE_LOCK(#{lockName})
+    </select>
+
+    <update id="updateStatus">
+        UPDATE agent_conversation_turn
+        SET status = #{status}, error = #{error}
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </update>
+
+    <update id="updateInboundStatusIfProcessing">
+        UPDATE agent_conversation_turn
+        SET status = #{status}, error = #{error}
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND id = #{id}
+          AND direction = 'IN'
+          AND status = 'PROCESSING'
+    </update>
+
+    <update id="updateStatusIfCurrent">
+        UPDATE agent_conversation_turn
+        SET status = #{toStatus}, error = #{error}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND status = #{fromStatus}
+    </update>
+
+    <update id="recordDispatchAttemptIfProcessing">
+        UPDATE agent_conversation_turn
+        SET last_dispatch_at = NOW(),
+            dispatch_attempt = dispatch_attempt + 1
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND id = #{id}
+          AND direction = 'IN'
+          AND status = 'PROCESSING'
+    </update>
+
+    <update id="claimStaleDispatchAttemptIfProcessing">
+        UPDATE agent_conversation_turn
+        SET last_dispatch_at = NOW(),
+            dispatch_attempt = dispatch_attempt + 1
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND id = #{id}
+          AND direction = 'IN'
+          AND status = 'PROCESSING'
+          AND (last_dispatch_at &lt;= #{cutoff}
+            OR (last_dispatch_at IS NULL AND gmt_create &lt;= #{cutoff}))
+    </update>
+
+    <select id="listTurnsByConversation" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation_turn
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+        ORDER BY id ASC
+    </select>
+
+</mapper>

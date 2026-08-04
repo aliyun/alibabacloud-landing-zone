@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.memory.MemoryDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.memory.MemoryDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory (tenant_id, scope, owner_ref, type, title, content_md, status, source, source_ref, source_dedupe_key, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{scope}, #{ownerRef}, #{type}, #{title}, #{contentMd}, #{status}, #{source}, #{sourceRef}, #{sourceDedupeKey}, #{creatorId}, 0, 0)
+        ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            scope = VALUES(scope),
+            owner_ref = VALUES(owner_ref),
+            type = VALUES(type),
+            title = VALUES(title),
+            content_md = VALUES(content_md),
+            gmt_modified = CURRENT_TIMESTAMP,
+            version = version + 1
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT * FROM memory WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findBySourceDedupeKey" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT * FROM memory
+        WHERE tenant_id = #{tenantId} AND source = #{source}
+          AND source_dedupe_key = #{sourceDedupeKey} AND is_deleted = 0
+        LIMIT 1
+    </select>
+    <select id="list" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT * FROM memory
+        <where>
+            tenant_id = #{tenantId} AND is_deleted = 0
+            <if test="scope != null">AND scope = #{scope}</if>
+            <if test="ownerRef != null">AND owner_ref = #{ownerRef}</if>
+            <if test="type != null">AND type = #{type}</if>
+            <if test="status != null">AND status = #{status}</if>
+            <if test="visibleAgentRef != null">
+                AND (scope &lt;&gt; 'AGENT' OR owner_ref = #{visibleAgentRef})
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (title LIKE CONCAT('%', #{keyword}, '%')
+                    OR content_md LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <update id="update">
+        UPDATE memory SET title = #{title}, content_md = #{contentMd}, type = #{type},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateStatus">
+        UPDATE memory SET status = #{status},
+            <if test="contentMd != null">content_md = #{contentMd},</if>
+            <if test="scope != null">scope = #{scope}, owner_ref = #{ownerRef},</if>
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE memory SET is_deleted = 1, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="countPendingByTenant" resultType="int">
+        SELECT COUNT(*) FROM memory
+        WHERE tenant_id = #{tenantId} AND status = 'PENDING' AND is_deleted = 0
+    </select>
+    <select id="listApplicableToAgent" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT m.* FROM memory m
+        WHERE m.tenant_id = #{tenantId}
+          AND m.status = 'ADOPTED'
+          AND m.is_deleted = 0
+          AND (
+            m.scope = 'ORG'
+            OR (m.scope = 'AGENT' AND m.owner_ref = #{agentId})
+            OR (m.scope = 'SQUAD' AND EXISTS (
+                SELECT 1 FROM squad_member sm
+                WHERE sm.tenant_id = #{tenantId}
+                  AND sm.squad_id = m.owner_ref
+                  AND sm.agent_id = #{agentId}
+            ))
+          )
+        ORDER BY m.id ASC
+    </select>
+</mapper>

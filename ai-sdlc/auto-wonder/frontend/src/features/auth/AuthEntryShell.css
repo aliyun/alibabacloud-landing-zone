@@ -1,0 +1,210 @@
+.auth-entry-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
+  gap: 34px;
+  min-height: 100vh;
+  padding: 44px;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(251, 146, 60, 0.32), transparent 26%),
+    radial-gradient(circle at 88% 8%, rgba(34, 197, 94, 0.18), transparent 24%),
+    linear-gradient(135deg, #fff7ed 0%, #f8fafc 48%, #edf7ef 100%);
+}
+
+.auth-entry-story {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 620px;
+  padding: 26px 6px;
+}
+
+.auth-entry-eyebrow {
+  display: inline-flex;
+  width: fit-content;
+  padding: 7px 11px;
+  border: 1px solid rgba(249, 115, 22, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.auth-entry-story h1 {
+  max-width: 620px;
+  margin: 18px 0 12px;
+  color: #17211b;
+  font-size: clamp(38px, 5vw, 64px);
+  font-weight: 900;
+  line-height: 1.02;
+  letter-spacing: -2px;
+}
+
+.auth-entry-story p {
+  max-width: 560px;
+  margin: 0;
+  color: #4b5563;
+  font-size: 16px;
+  line-height: 1.78;
+}
+
+.auth-entry-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 560px;
+  margin-top: 34px;
+}
+
+.auth-entry-stat-card {
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+}
+
+.auth-entry-stat-card b {
+  display: block;
+  color: #111827;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.auth-entry-stat-card:nth-child(2) b {
+  color: #f97316;
+}
+
+.auth-entry-stat-card:nth-child(3) b {
+  color: #16a34a;
+}
+
+.auth-entry-stat-card span {
+  display: block;
+  margin-top: 8px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-entry-workflow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 560px;
+  margin-top: 34px;
+}
+
+.auth-entry-workflow-card {
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #111827;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.auth-entry-workflow-card span {
+  margin-right: 8px;
+  color: rgba(17, 24, 39, 0.28);
+}
+
+.auth-entry-workflow-dark {
+  border-color: #fed7aa;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  color: #9a3412;
+}
+
+.auth-entry-workflow-orange {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.auth-entry-workflow-green {
+  border-color: #bbf7d0;
+  background: #ecfdf5;
+  color: #166534;
+}
+
+.auth-entry-form-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.auth-entry-card {
+  width: min(420px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 30px 70px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(10px);
+}
+
+.auth-entry-card .ant-card-body {
+  padding: 28px;
+}
+
+.auth-entry-title {
+  margin-bottom: 4px !important;
+  color: #111827 !important;
+  text-align: left !important;
+}
+
+.auth-entry-subtitle {
+  margin: 0 0 22px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.auth-entry-card .ant-input-affix-wrapper,
+.auth-entry-card .ant-input {
+  border-radius: 13px;
+}
+
+.auth-entry-card .ant-btn-primary {
+  height: 44px;
+  border-radius: 14px;
+  background: #f97316;
+  box-shadow: 0 16px 30px rgba(249, 115, 22, 0.25);
+}
+
+.auth-entry-link {
+  text-align: center;
+}
+
+.auth-entry-link a {
+  color: #9a3412;
+  font-weight: 700;
+}
+
+@media (max-width: 980px) {
+  .auth-entry-page {
+    grid-template-columns: 1fr;
+    padding: 26px;
+  }
+
+  .auth-entry-story {
+    min-height: auto;
+    padding: 10px 0 0;
+  }
+
+  .auth-entry-form-panel {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .auth-entry-page {
+    padding: 18px;
+  }
+
+  .auth-entry-stats,
+  .auth-entry-workflow {
+    grid-template-columns: 1fr;
+  }
+}

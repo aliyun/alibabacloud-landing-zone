@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.agent.AgentMemoryRefDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentMemoryRefDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_memory_ref (tenant_id, agent_version_id, memory_id, source)
+        VALUES (#{tenantId}, #{agentVersionId}, #{memoryId}, #{source})
+    </insert>
+    <select id="listByVersion" resultType="com.aliyun.autowonder.agent.AgentMemoryRefDO">
+        SELECT * FROM agent_memory_ref WHERE agent_version_id = #{agentVersionId}
+    </select>
+    <select id="existsByVersionAndMemory" resultType="boolean">
+        SELECT COUNT(*) &gt; 0 FROM agent_memory_ref
+        WHERE agent_version_id = #{agentVersionId} AND memory_id = #{memoryId} AND tenant_id = #{tenantId}
+    </select>
+    <delete id="deleteByVersionAndMemory">
+        DELETE FROM agent_memory_ref WHERE agent_version_id = #{agentVersionId} AND memory_id = #{memoryId} AND tenant_id = #{tenantId}
+    </delete>
+    <delete id="deleteByVersion">
+        DELETE FROM agent_memory_ref WHERE agent_version_id = #{agentVersionId}
+    </delete>
+    <select id="countByMemoryId" resultType="int">
+        SELECT COUNT(*) FROM agent_memory_ref WHERE memory_id = #{memoryId} AND tenant_id = #{tenantId}
+    </select>
+</mapper>

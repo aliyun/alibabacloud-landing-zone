@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workitem.WorkitemEventDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemEventDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_event (tenant_id, workitem_id, event_type, from_val, to_val,
+            actor_type, actor_ref, detail_json)
+        VALUES (#{tenantId}, #{workitemId}, #{eventType}, #{fromVal}, #{toVal},
+            #{actorType}, #{actorRef}, #{detailJson})
+    </insert>
+    <select id="listByWorkitem" resultType="com.aliyun.autowonder.workitem.WorkitemEventDO">
+        SELECT * FROM workitem_event WHERE workitem_id = #{workitemId} ORDER BY id ASC
+    </select>
+</mapper>

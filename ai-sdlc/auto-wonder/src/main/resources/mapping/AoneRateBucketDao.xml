@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.aone.AoneRateBucketDao">
+    <!--
+        Atomic token-bucket acquire in a single statement. The WHERE clause sees the OLD row
+        values, so the post-refill availability guard must recompute the same LEAST(...) refill
+        expression used in the SET. DB clock (NOW(3)) is authoritative to avoid app clock skew
+        across instances. Affected rows: 1 = token consumed, 0 = empty bucket or missing row.
+
+        SET column order is load-bearing: MySQL evaluates a multi-column SET left-to-right using
+        the already-updated value of earlier columns. The refill term reads last_refill_ms, so
+        tokens MUST be assigned before last_refill_ms — otherwise the elapsed interval collapses
+        to 0, the refill silently vanishes, and tokens only ever decrement (drifting negative).
+    -->
+    <update id="tryAcquire">
+        UPDATE aone_rate_bucket
+        SET tokens = LEAST(capacity,
+                           tokens + refill_per_sec * (ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000) - last_refill_ms) / 1000.0) - 1,
+            last_refill_ms = ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000)
+        WHERE client_key = #{clientKey}
+          AND LEAST(capacity,
+                    tokens + refill_per_sec * (ROUND(UNIX_TIMESTAMP(NOW(3)) * 1000) - last_refill_ms) / 1000.0) >= 1
+    </update>
+</mapper>

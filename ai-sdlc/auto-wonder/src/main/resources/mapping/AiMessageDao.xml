@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.ai.AiMessageDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.ai.AiMessageDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ai_message (tenant_id, session_id, seq, role, content, meta_json)
+        VALUES (#{tenantId}, #{sessionId}, #{seq}, #{role}, #{content}, #{metaJson})
+    </insert>
+
+    <select id="listBySession" resultType="com.aliyun.autowonder.ai.AiMessageDO">
+        SELECT * FROM ai_message WHERE session_id = #{sessionId} ORDER BY seq
+    </select>
+
+    <select id="maxSeq" resultType="int">
+        SELECT COALESCE(MAX(seq), 0) FROM ai_message WHERE session_id = #{sessionId}
+    </select>
+</mapper>

@@ -1,0 +1,40 @@
+services:
+  mysql:
+    image: mysql:8.0
+    platform: linux/amd64
+    environment:
+      MYSQL_DATABASE: autowonder
+      MYSQL_USER: autowonder
+      MYSQL_PASSWORD: change-me
+      MYSQL_ROOT_PASSWORD: change-root-me
+      TZ: Asia/Shanghai
+    ports:
+      - "33060:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ../autowonder-schema.sql:/docker-entrypoint-initdb.d/001-autowonder-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pchange-root-me"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [community]
+
+  redis:
+    image: redis:7-alpine
+    platform: linux/amd64
+    ports:
+      - "63790:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [community]
+
+volumes:
+  mysql-data:
+
+networks:
+  community:
+    name: autowonder-community
