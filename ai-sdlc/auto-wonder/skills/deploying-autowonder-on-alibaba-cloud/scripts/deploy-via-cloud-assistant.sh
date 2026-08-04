@@ -28,7 +28,8 @@ while (($#)); do
 done
 require_file "$manifest"; require_file "$env_file"
 if [[ "$config_only" == false ]]; then
-  require_file "$release_dir/auto-wonder.jar"; require_file "$release_dir/autowonder-schema.sql"; require_file "$unit_file"
+  require_file "$release_dir/auto-wonder.jar"; require_file "$release_dir/autowonder-schema.sql"
+  require_file "$release_dir/autowonder-community-templates.sql"; require_file "$unit_file"
 fi
 require_mode_600 "$env_file"; require_command jq
 json_validate "$manifest"; reject_secret_keys "$manifest"
@@ -39,11 +40,12 @@ bucket=$(jq -er '.resources.package_bucket // .resources.packageBucket // empty'
 instances=()
 while IFS= read -r instance; do instances+=("$instance"); done < <(jq -er '(.resources.ecs_instance_ids // .resources.ecsInstanceIds)[]' "$manifest")
 ((${#instances[@]} > 0)) || die "ECS inventory is empty"
-jar_hash= unit_hash= schema_hash= java_hash=
+jar_hash= unit_hash= schema_hash= templates_hash= java_hash=
 env_hash=$(sha256_file "$env_file")
 if [[ "$config_only" == false ]]; then
   jar_hash=$(sha256_file "$release_dir/auto-wonder.jar"); unit_hash=$(sha256_file "$unit_file")
   schema_hash=$(sha256_file "$release_dir/autowonder-schema.sql")
+  templates_hash=$(sha256_file "$release_dir/autowonder-community-templates.sql")
   [[ -z "$java_archive" ]] || { require_file "$java_archive"; java_hash=$(sha256_file "$java_archive"); }
 fi
 prefix="deployments/${deployment_id}/${short_commit}-$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -66,8 +68,8 @@ fi
 
 objects=("autowonder.env"); files=("$env_file")
 if [[ "$config_only" == false ]]; then
-  objects=("auto-wonder.jar" "autowonder-schema.sql" "autowonder.service" "autowonder.env")
-  files=("$release_dir/auto-wonder.jar" "$release_dir/autowonder-schema.sql" "$unit_file" "$env_file")
+  objects=("auto-wonder.jar" "autowonder-schema.sql" "autowonder-community-templates.sql" "autowonder.service" "autowonder.env")
+  files=("$release_dir/auto-wonder.jar" "$release_dir/autowonder-schema.sql" "$release_dir/autowonder-community-templates.sql" "$unit_file" "$env_file")
   if [[ -n "$java_archive" ]]; then objects+=("temurin21-linux-amd64.tar.gz"); files+=("$java_archive"); fi
 fi
 for idx in "${!objects[@]}"; do
@@ -114,10 +116,11 @@ run_cloud_command() {
 }
 
 invocations=()
-jar_url= schema_url= unit_url= java_url=
+jar_url= schema_url= templates_url= unit_url= java_url=
 env_url=$(presign_object autowonder.env)
 if [[ "$config_only" == false ]]; then
-  jar_url=$(presign_object auto-wonder.jar); schema_url=$(presign_object autowonder-schema.sql); unit_url=$(presign_object autowonder.service)
+  jar_url=$(presign_object auto-wonder.jar); schema_url=$(presign_object autowonder-schema.sql)
+  templates_url=$(presign_object autowonder-community-templates.sql); unit_url=$(presign_object autowonder.service)
   [[ -z "$java_archive" ]] || java_url=$(presign_object temurin21-linux-amd64.tar.gz)
 fi
 for instance in "${instances[@]}"; do
@@ -156,6 +159,10 @@ curl --fail --silent --show-error '$schema_url' -o /opt/autowonder/releases/$sho
 echo '$schema_hash  /opt/autowonder/releases/$short_commit/autowonder-schema.sql.tmp' | sha256sum -c -
 mv /opt/autowonder/releases/$short_commit/autowonder-schema.sql.tmp /opt/autowonder/releases/$short_commit/autowonder-schema.sql
 chmod 0444 /opt/autowonder/releases/$short_commit/autowonder-schema.sql
+curl --fail --silent --show-error '$templates_url' -o /opt/autowonder/releases/$short_commit/autowonder-community-templates.sql.tmp
+echo '$templates_hash  /opt/autowonder/releases/$short_commit/autowonder-community-templates.sql.tmp' | sha256sum -c -
+mv /opt/autowonder/releases/$short_commit/autowonder-community-templates.sql.tmp /opt/autowonder/releases/$short_commit/autowonder-community-templates.sql
+chmod 0444 /opt/autowonder/releases/$short_commit/autowonder-community-templates.sql
 curl --fail --silent --show-error '$env_url' -o /etc/autowonder/autowonder.env.tmp
 echo '$env_hash  /etc/autowonder/autowonder.env.tmp' | sha256sum -c -
 chown root:autowonder /etc/autowonder/autowonder.env.tmp && chmod 0640 /etc/autowonder/autowonder.env.tmp
@@ -174,7 +181,7 @@ EOF
 done
 
 for object in "${objects[@]}"; do ossutil rm -f "oss://$bucket/$prefix/$object" --endpoint "$control_endpoint" >/dev/null; done
-unset jar_url schema_url unit_url env_url java_url remote
+unset jar_url schema_url templates_url unit_url env_url java_url remote
 mode=full; [[ "$config_only" == false ]] || mode=config-only
 atomic_jq "$manifest" --argjson invocations "$(printf '%s\n' "${invocations[@]}" | jq -R . | jq -s .)" \
   --arg prefix "$prefix" --arg mode "$mode" '.phase="deploy" | .status="installed" | .deployment.lastRun={mode:$mode,invocationIds:$invocations,stagingPrefix:$prefix,stagingCleaned:true,credentialTransport:"time-limited private intranet presign",transportExceptionRecorded:true}'

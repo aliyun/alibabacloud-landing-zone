@@ -9,6 +9,7 @@ history, not in the published community tree.
 ## Retained Documents
 
 - `docs/autowonder-schema.sql`: complete schema for a fresh installation.
+- `docs/autowonder-community-templates.sql`: idempotent system squad-template seed.
 - `docs/THIRD-PARTY-NOTICES.md`: required third-party notices.
 - `docs/openapi-reference.md`: public server API reference.
 - `docs/scheduler-executor-protocol.md`: server/client runtime protocol.
@@ -21,6 +22,7 @@ history, not in the published community tree.
 - `docs/community/upstream-sync-guide.md`: master-to-community sync rules.
 - `docs/community/upstream-sync-log.md`: verified upstream baselines and history.
 - `docs/community/docs-policy.md`: this retention policy.
+- `docs/community/squad-template-seed.md`: template data and deployment contract.
 
 The deployment Skill under `skills/deploying-autowonder-on-alibaba-cloud/` owns
 the detailed Alibaba Cloud deployment, operations, troubleshooting, acceptance,

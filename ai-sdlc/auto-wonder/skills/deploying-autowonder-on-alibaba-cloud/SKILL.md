@@ -81,8 +81,8 @@ Run phases in order and record terminal results in the manifest. Read
 | 1. Preflight | `scripts/preflight.sh` (`--profile` locks a verified CLI profile) | validated tools, identity, inputs/inventory |
 | 2. Plan | `scripts/terraform-stage.sh plan` | reviewed plan fingerprint |
 | 3. Apply | `scripts/terraform-stage.sh apply`, then `inventory` | Infrastructure ready |
-| 4. Build | `scripts/build-release.sh` | sealed local JAR and schema |
-| 5. Host/DB/runtime | `scripts/initialize-and-verify.sh runtime-config`; `scripts/deploy-via-cloud-assistant.sh`; then `scripts/initialize-and-verify.sh database` | Java 21, clients, release, env (including public base URL), systemd, schema installed |
+| 4. Build | `scripts/build-release.sh` | sealed local JAR, schema, and template seed |
+| 5. Host/DB/runtime | `scripts/initialize-and-verify.sh runtime-config`; `scripts/deploy-via-cloud-assistant.sh`; then `scripts/initialize-and-verify.sh database` | Java 21, clients, release, env (including public base URL), systemd, schema and four system templates installed |
 | 6. Rolling activation | `scripts/initialize-and-verify.sh rolling-start` | Application ready |
 | 7. Business init | `scripts/initialize-and-verify.sh business-init` | Business initialized |
 | 8. Acceptance | `scripts/initialize-and-verify.sh acceptance` | Release accepted; TLS independently checked |
@@ -95,6 +95,11 @@ Cloud Assistant invocation IDs are checkpointed immediately. After an env-only
 correction, use `deploy-via-cloud-assistant.sh --config-only`; do not upload the
 JAR, schema, systemd unit, or Java archive again. Acceptance reruns preserve
 already-passed deep checks instead of resetting them to pending.
+
+The immutable release includes `autowonder-community-templates.sql`. Database
+initialization imports it after the schema and records
+`.database.templatesImported`. On an older manifest without this checkpoint,
+resume the database phase to run only the idempotent template seed and postcheck.
 
 For teardown, read `references/acceptance-and-rollback.md`, run
 `scripts/terraform-stage.sh destroy-plan`, review backups/impact/hash, and obtain

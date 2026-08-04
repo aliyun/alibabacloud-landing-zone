@@ -341,6 +341,24 @@ JSON
         self.assertIn('authority=${connection%%/*}', text)
         self.assertIn('database=${connection#*/}', text)
 
+    def test_release_and_database_include_squad_template_seed(self):
+        build = (ROOT / "scripts/build-release.sh").read_text()
+        deploy = (ROOT / "scripts/deploy-via-cloud-assistant.sh").read_text()
+        initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+
+        seed_name = "autowonder-community-templates.sql"
+        self.assertIn(seed_name, build)
+        self.assertIn('templates:{name:"autowonder-community-templates.sql"', build)
+        self.assertIn(seed_name, deploy)
+        self.assertIn("templates_hash", deploy)
+        self.assertIn(".database.templatesImported // false", initialize)
+        self.assertIn(seed_name, initialize)
+        self.assertIn("TEMPLATE_COUNT=", initialize)
+        self.assertLess(
+            initialize.index("autowonder-schema.sql"),
+            initialize.index(seed_name),
+        )
+
     def test_sanitizer_removes_sensitive_fields_and_identifiers(self):
         with tempfile.TemporaryDirectory() as td:
             source = Path(td) / "evidence.json"
