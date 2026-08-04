@@ -1,6 +1,6 @@
 import { act } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -370,5 +370,39 @@ describe('AiSessionPanel', () => {
       expect(onConfirm).toHaveBeenCalledWith(expect.stringContaining('订单'));
     });
     expect(screen.queryByRole('button', { name: /确认落库/ })).not.toBeInTheDocument();
+  });
+
+  it('does not send when Enter is pressed during IME composition', async () => {
+    let createAttempts = 0;
+    server.use(
+      http.post('/api/ai/sessions', () => {
+        createAttempts += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: 100 });
+      }),
+    );
+    renderPanel();
+    const textarea = screen.getByPlaceholderText(/输入/);
+    fireEvent.change(textarea, { target: { value: '候选词' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', isComposing: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(createAttempts).toBe(0);
+    expect(textarea).toHaveValue('候选词');
+  });
+
+  it('does not send on Shift+Enter', async () => {
+    let createAttempts = 0;
+    server.use(
+      http.post('/api/ai/sessions', () => {
+        createAttempts += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: 100 });
+      }),
+    );
+    renderPanel();
+    const textarea = screen.getByPlaceholderText(/输入/);
+    fireEvent.change(textarea, { target: { value: '第一行' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(createAttempts).toBe(0);
+    expect(textarea).toHaveValue('第一行');
   });
 });

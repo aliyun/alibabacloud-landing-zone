@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Input, Space, Typography, Empty } from 'antd';
+import { Button, Input, Typography, Empty } from 'antd';
 import { SendOutlined, PlusOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
 import { AgentSelector } from './AgentSelector';
 import { SquadAgentSelector } from './SquadAgentSelector';
@@ -45,6 +45,7 @@ export function WorkitemClarificationPanel({
 
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [inputValue, setInputValue] = useState('');
+  const composingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const agentOptions = useMemo(
@@ -99,7 +100,11 @@ export function WorkitemClarificationPanel({
   const awaitingAgentReply = !!streamedText
     && !hasPersistedStreamedReply
     && (streamedTurnCompleted || (!isProcessing && turns.length === turnCountAtSubmitRef.current));
-  const showProcessingEvents = isProcessing && !streamedTurnCompleted;
+  const latestTurn = turns[turns.length - 1];
+  const latestTurnIsAgentReply = !!latestTurn
+    && latestTurn.direction !== 'IN'
+    && latestTurn.direction !== 'INBOUND';
+  const showProcessingEvents = isProcessing && !streamedTurnCompleted && !latestTurnIsAgentReply;
 
   const handleSelectAgent = useCallback(
     (agentId: number) => {
@@ -261,13 +266,24 @@ export function WorkitemClarificationPanel({
 
       {conversationId ? (
         <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0' }}>
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <Input.TextArea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              onPressEnter={handleSend}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing || composingRef.current) return;
+                if (e.shiftKey) return;
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              onCompositionStart={() => { composingRef.current = true; }}
+              onCompositionEnd={() => { composingRef.current = false; }}
               placeholder="输入消息..."
+              autoSize={{ minRows: 1, maxRows: 4 }}
               disabled={submitMutation.isPending}
+              style={{ flex: 1 }}
             />
             <Button
               type="primary"
@@ -276,7 +292,7 @@ export function WorkitemClarificationPanel({
               loading={submitMutation.isPending}
               disabled={!inputValue.trim()}
             />
-          </Space.Compact>
+          </div>
         </div>
       ) : null}
     </div>
