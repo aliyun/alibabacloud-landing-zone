@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.im.PlatformImChannelConfigDao">
+    <select id="listActive" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
+        SELECT *
+        FROM platform_im_channel_config
+        WHERE is_deleted = 0
+        ORDER BY provider
+    </select>
+
+    <select id="findByProvider" resultType="com.aliyun.autowonder.im.PlatformImChannelConfigDO">
+        SELECT *
+        FROM platform_im_channel_config
+        WHERE provider = #{provider} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <insert id="upsert" parameterType="com.aliyun.autowonder.im.PlatformImChannelConfigDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO platform_im_channel_config
+            (provider, enabled, app_key, credential_ref, robot_code, base_url,
+             creator_id, modifier_id, is_deleted)
+        VALUES
+            (#{provider}, #{enabled}, #{appKey}, #{credentialRef}, #{robotCode}, #{baseUrl},
+             #{creatorId}, #{modifierId}, 0)
+        ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            enabled = VALUES(enabled),
+            app_key = VALUES(app_key),
+            credential_ref = COALESCE(NULLIF(VALUES(credential_ref), ''), credential_ref),
+            robot_code = VALUES(robot_code),
+            base_url = VALUES(base_url),
+            modifier_id = VALUES(modifier_id),
+            is_deleted = 0,
+            version = version + 1
+    </insert>
+</mapper>

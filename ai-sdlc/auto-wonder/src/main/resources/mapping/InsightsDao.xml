@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.insights.InsightsDao">
+
+    <select id="countTotalTokens" resultType="long">
+        SELECT COALESCE(SUM(total_tokens), 0)
+        FROM dispatch_ai_usage
+        WHERE tenant_id = #{tenantId}
+          AND usage_at >= #{since}
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="countWorkitems" resultType="int">
+        SELECT COUNT(*) FROM workitem WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND gmt_create >= #{since}
+    </select>
+
+    <select id="countCompletedWorkitems" resultType="int">
+        SELECT COUNT(*) FROM workitem w
+        JOIN status_node sn ON w.status_node_id = sn.id
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0 AND w.gmt_create >= #{since}
+          AND sn.category = 'DONE'
+    </select>
+
+    <select id="countUsageWorkitems" resultType="int">
+        SELECT COUNT(DISTINCT workitem_id)
+        FROM dispatch_ai_usage
+        WHERE tenant_id = #{tenantId}
+          AND usage_at >= #{since}
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="avgDispatchDurationMinutes" resultType="java.lang.Integer">
+        SELECT COALESCE(AVG(TIMESTAMPDIFF(MINUTE, gmt_create, gmt_modified)), 0)
+        FROM dispatch
+        WHERE tenant_id = #{tenantId} AND status = 'SUCCEEDED' AND gmt_create >= #{since} AND is_deleted = 0
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="countFirstPassDispatches" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND status = 'SUCCEEDED' AND attempt = 0 AND gmt_create >= #{since} AND is_deleted = 0
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="countTotalDispatches" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND gmt_create >= #{since} AND is_deleted = 0
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="countRetryDispatches" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND attempt > 0 AND gmt_create >= #{since} AND is_deleted = 0
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="countBlockedDispatches" resultType="int">
+        SELECT COUNT(*) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND status IN ('FAILED', 'TIMEOUT') AND gmt_create >= #{since} AND is_deleted = 0
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
+    <select id="countHighRiskAuditLogs" resultType="int">
+        SELECT COUNT(*) FROM audit_log
+        WHERE tenant_id = #{tenantId} AND gmt_create >= #{since}
+          AND action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE', 'PERMISSION_GRANT')
+    </select>
+
+    <select id="countTotalAuditLogs" resultType="int">
+        SELECT COUNT(*) FROM audit_log
+        WHERE tenant_id = #{tenantId} AND gmt_create >= #{since}
+    </select>
+
+    <select id="countAuditBlocks" resultType="int">
+        SELECT COUNT(*) FROM audit_log
+        WHERE tenant_id = #{tenantId} AND gmt_create >= #{since}
+          AND action IN ('BLOCK', 'REJECT', 'DENY')
+    </select>
+
+    <select id="dailyTokenTrend" resultType="java.util.Map">
+        SELECT DATE(usage_at) as day, COALESCE(SUM(total_tokens), 0) as tokens
+        FROM dispatch_ai_usage
+        WHERE tenant_id = #{tenantId} AND usage_at >= #{since}
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+        GROUP BY DATE(usage_at)
+        ORDER BY day DESC
+        LIMIT 7
+    </select>
+
+    <select id="listAuditItems" resultType="com.aliyun.autowonder.insights.dto.InsightAuditItemVO">
+        SELECT
+            DATE_FORMAT(al.gmt_create, '%Y-%m-%d %H:%i:%s') as timestamp,
+            COALESCE(a.name, CONCAT('user-', al.actor_id)) as worker,
+            al.action as eventType,
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.summary')), CONCAT(al.target_type, '#', al.target_id)) as detail,
+            CASE
+                WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
+                WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
+                ELSE 'low'
+            END as riskLevel
+        FROM audit_log al
+        LEFT JOIN agent a ON al.actor_id = a.id AND al.tenant_id = a.tenant_id
+        WHERE al.tenant_id = #{tenantId}
+          AND al.gmt_create >= DATE_SUB(NOW(), INTERVAL
+            <choose>
+              <when test="timeRange == '7d'">7</when>
+              <when test="timeRange == '90d'">90</when>
+              <otherwise>30</otherwise>
+            </choose>
+          DAY)
+          <if test="riskLevel != null and riskLevel != ''">
+            AND CASE
+                WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
+                WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
+                ELSE 'low'
+            END = #{riskLevel}
+          </if>
+          <if test="workerId != null">
+            AND a.id = #{workerId}
+          </if>
+        ORDER BY al.gmt_create DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countAuditItems" resultType="int">
+        SELECT COUNT(*)
+        FROM audit_log al
+        LEFT JOIN agent a ON al.actor_id = a.id AND al.tenant_id = a.tenant_id
+        WHERE al.tenant_id = #{tenantId}
+          AND al.gmt_create >= DATE_SUB(NOW(), INTERVAL
+            <choose>
+              <when test="timeRange == '7d'">7</when>
+              <when test="timeRange == '90d'">90</when>
+              <otherwise>30</otherwise>
+            </choose>
+          DAY)
+          <if test="riskLevel != null and riskLevel != ''">
+            AND CASE
+                WHEN al.action IN ('DELETE', 'FORCE_PUBLISH', 'ROLE_CHANGE') THEN 'high'
+                WHEN al.action IN ('UPDATE', 'REJECT', 'RETRY') THEN 'medium'
+                ELSE 'low'
+            END = #{riskLevel}
+          </if>
+          <if test="workerId != null">
+            AND a.id = #{workerId}
+          </if>
+    </select>
+
+    <select id="listActiveWorkers" resultType="com.aliyun.autowonder.insights.dto.InsightWorkerVO">
+        SELECT DISTINCT a.id, a.name
+        FROM agent a
+        JOIN dispatch d ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
+        WHERE a.tenant_id = #{tenantId} AND a.is_deleted = 0 AND d.is_deleted = 0
+        ORDER BY a.name
+    </select>
+
+</mapper>

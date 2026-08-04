@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.notification.NotificationDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.notification.NotificationDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO notification (tenant_id, recipient_id, type, title, content, link,
+                                  ref_type, ref_id, status, channels_json)
+        VALUES (#{tenantId}, #{recipientId}, #{type}, #{title}, #{content}, #{link},
+                #{refType}, #{refId}, #{status}, #{channelsJson})
+    </insert>
+
+    <select id="listByRecipient" resultType="com.aliyun.autowonder.notification.NotificationDO">
+        SELECT * FROM notification
+        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId}
+        <if test="status != null">AND status = #{status}</if>
+        ORDER BY gmt_create DESC LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="countUnread" resultType="int">
+        SELECT COUNT(*) FROM notification
+        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+    </select>
+
+    <update id="markRead">
+        UPDATE notification SET status = 'READ'
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+    </update>
+
+    <update id="markAllRead">
+        UPDATE notification SET status = 'READ'
+        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
+    </update>
+
+    <update id="updateChannels">
+        UPDATE notification SET channels_json = #{channelsJson}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+    </update>
+</mapper>

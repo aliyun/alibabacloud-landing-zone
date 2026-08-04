@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.repo.RepoConclusionDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.repo.RepoConclusionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO repo_conclusion (tenant_id, repo_id, purpose, key_business, upstreams,
+                                     downstreams, summary_md, ai_session_id, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{repoId}, #{purpose}, #{keyBusiness}, #{upstreams},
+                #{downstreams}, #{summaryMd}, #{aiSessionId}, #{creatorId}, 0, 0)
+    </insert>
+
+    <select id="findByRepoId" resultType="com.aliyun.autowonder.repo.RepoConclusionDO">
+        SELECT * FROM repo_conclusion WHERE repo_id = #{repoId} AND is_deleted = 0 LIMIT 1
+    </select>
+
+    <update id="update">
+        UPDATE repo_conclusion SET purpose = #{purpose}, key_business = #{keyBusiness},
+            upstreams = #{upstreams}, downstreams = #{downstreams},
+            summary_md = #{summaryMd}, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="deleteByRepoId">
+        UPDATE repo_conclusion SET is_deleted = 1
+        WHERE repo_id = #{repoId} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+</mapper>

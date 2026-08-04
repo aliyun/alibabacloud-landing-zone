@@ -1,0 +1,15 @@
+# Supply all passwords with TF_VAR_ecs_password, TF_VAR_rds_password, and
+# TF_VAR_redis_password. Never write secrets into this file.
+region              = "cn-beijing"
+environment         = "production"
+deployment_id       = "aw-example-20260804"
+zone_a_id           = "cn-beijing-a"
+zone_b_id           = "cn-beijing-b"
+public_source_cidrs = ["203.0.113.10/32"]
+lifecycle_mode      = "persistent"
+ecs_image_id        = "replace-with-a-verified-x86-64-image-id"
+
+common_tags = {
+  Owner      = "platform-team"
+  CostCenter = "example"
+}

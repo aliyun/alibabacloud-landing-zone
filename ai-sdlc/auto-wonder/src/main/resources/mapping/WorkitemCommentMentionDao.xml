@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workitem.WorkitemCommentMentionDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_comment_mention
+            (tenant_id, workitem_id, comment_id, target_type, target_ref, display_name_snapshot)
+        VALUES
+            (#{tenantId}, #{workitemId}, #{commentId}, #{targetType}, #{targetRef}, #{displayNameSnapshot})
+    </insert>
+
+    <select id="listByWorkitem" resultType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO">
+        SELECT *
+        FROM workitem_comment_mention
+        WHERE tenant_id = #{tenantId}
+          AND workitem_id = #{workitemId}
+        ORDER BY id ASC
+    </select>
+</mapper>

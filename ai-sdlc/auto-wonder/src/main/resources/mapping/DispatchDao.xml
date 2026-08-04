@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.dispatch.DispatchDao">
+
+    <resultMap id="dispatchMap" type="com.aliyun.autowonder.dispatch.DispatchDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="workitem_id" property="workitemId"/>
+        <result column="sdlc_step_id" property="sdlcStepId"/>
+        <result column="agent_id" property="agentId"/>
+        <result column="agent_version_id" property="agentVersionId"/>
+        <result column="executor_id" property="executorId"/>
+        <result column="package_oss_ref" property="packageOssRef"/>
+        <result column="status" property="status"/>
+        <result column="attempt" property="attempt"/>
+        <result column="idempotency_key" property="idempotencyKey"/>
+        <result column="result_summary" property="resultSummary"/>
+        <result column="error" property="error"/>
+        <result column="resume_from_dispatch_id" property="resumeFromDispatchId"/>
+        <result column="delivery_source_dispatch_id" property="deliverySourceDispatchId"/>
+        <result column="resume_mode" property="resumeMode"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+        <result column="is_deleted" property="isDeleted"/>
+        <result column="version" property="version"/>
+    </resultMap>
+
+    <sql id="cols">
+        id, tenant_id, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
+        package_oss_ref, status, attempt, idempotency_key, result_summary, error,
+        resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode,
+        gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.dispatch.DispatchDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO dispatch
+            (tenant_id, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
+             package_oss_ref, status, attempt, idempotency_key, result_summary, error,
+             resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode,
+             creator_id, modifier_id, version)
+        VALUES
+            (#{tenantId}, #{workitemId}, #{sdlcStepId}, #{agentId}, #{agentVersionId}, #{executorId},
+             #{packageOssRef}, #{status}, #{attempt}, #{idempotencyKey}, #{resultSummary}, #{error},
+             #{resumeFromDispatchId}, #{deliverySourceDispatchId}, #{resumeMode},
+             #{creatorId}, #{modifierId}, #{version})
+    </insert>
+
+    <select id="findById" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByIdempotencyKey" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND idempotency_key = #{idempotencyKey} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findMaxAttempt" resultType="java.lang.Integer">
+        SELECT COALESCE(MAX(attempt), 0) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND sdlc_step_id = #{sdlcStepId} AND is_deleted = 0
+    </select>
+
+    <update id="updateStatus">
+        UPDATE dispatch
+        SET status = #{status},
+            <if test="agentVersionId != null">agent_version_id = #{agentVersionId},</if>
+            <if test="executorId != null">executor_id = #{executorId},</if>
+            <if test="packageOssRef != null">package_oss_ref = #{packageOssRef},</if>
+            <if test="resultSummary != null">result_summary = #{resultSummary},</if>
+            <if test="error != null">error = #{error},</if>
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <select id="listByWorkitem" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND is_deleted = 0
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listLatestByWorkitemIds" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE is_deleted = 0
+          AND id IN (
+              SELECT latest_id FROM (
+                  SELECT MAX(id) AS latest_id FROM dispatch
+                  WHERE is_deleted = 0
+                    AND workitem_id IN
+                    <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+                  GROUP BY workitem_id
+              ) t
+          )
+    </select>
+
+    <select id="listByWorkitemIds" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE is_deleted = 0
+          AND workitem_id IN
+          <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listLatestByWorkitemAndAgent" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND workitem_id = #{workitemId}
+          AND agent_id = #{agentId}
+          AND (resume_mode IS NULL OR resume_mode &lt;&gt; 'SIDE_INTERACTION')
+          AND is_deleted = 0
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listSucceededByWorkitem" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND status = 'SUCCEEDED' AND is_deleted = 0
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listStuck" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE is_deleted = 0
+          AND gmt_modified &lt; FROM_UNIXTIME(#{beforeEpochMillis} / 1000)
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+        ORDER BY gmt_modified ASC
+        LIMIT #{limit}
+    </select>
+
+    <sql id="tenantFilter">
+        tenant_id = #{tenantId} AND is_deleted = 0
+        <if test="status != null and status != ''">AND status = #{status}</if>
+        <if test="agentId != null">AND agent_id = #{agentId}</if>
+        <if test="workitemId != null">AND workitem_id = #{workitemId}</if>
+        <if test="since != null">AND gmt_create &gt;= #{since}</if>
+    </sql>
+
+    <select id="listByTenant" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE <include refid="tenantFilter"/>
+        ORDER BY gmt_create DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countByTenant" resultType="long">
+        SELECT COUNT(*) FROM dispatch
+        WHERE <include refid="tenantFilter"/>
+    </select>
+
+    <select id="countActiveByExecutor" resultType="long">
+        SELECT COUNT(*) FROM dispatch
+        WHERE executor_id = #{executorId}
+          AND status IN ('PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'PAUSING')
+          AND is_deleted = 0
+    </select>
+
+    <select id="listOldestPendingByAgent" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE agent_id = #{agentId}
+          AND status = 'PENDING'
+          AND is_deleted = 0
+        ORDER BY gmt_create ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="returnDispatchedToPending">
+        UPDATE dispatch
+        SET status = 'PENDING',
+            executor_id = NULL,
+            package_oss_ref = NULL,
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id}
+          AND tenant_id = #{tenantId}
+          AND executor_id = #{executorId}
+          AND status = 'DISPATCHED'
+          AND version = #{version}
+          AND is_deleted = 0
+    </update>
+
+    <update id="returnPackagingToPending">
+        UPDATE dispatch
+        SET status = 'PENDING',
+            agent_version_id = NULL,
+            executor_id = NULL,
+            package_oss_ref = NULL,
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id}
+          AND tenant_id = #{tenantId}
+          AND status = 'PACKAGING'
+          AND version = #{version}
+          AND is_deleted = 0
+    </update>
+
+    <update id="returnOwnedActiveToPending">
+        UPDATE dispatch
+        SET status = 'PENDING',
+            agent_version_id = NULL,
+            executor_id = NULL,
+            package_oss_ref = NULL,
+            result_summary = NULL,
+            error = NULL,
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id}
+          AND tenant_id = #{tenantId}
+          AND executor_id = #{executorId}
+          AND status IN ('DISPATCHED', 'ACKED', 'RUNNING')
+          AND version = #{version}
+          AND is_deleted = 0
+    </update>
+
+    <update id="touchOwnedActive">
+        UPDATE dispatch
+        SET gmt_modified = NOW()
+        WHERE tenant_id = #{tenantId}
+          AND executor_id = #{executorId}
+          AND status IN ('PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING')
+          AND is_deleted = 0
+          AND id IN
+          <foreach collection="dispatchIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </update>
+
+    <update id="failStalePausing">
+        UPDATE dispatch
+        SET status = 'PAUSE_FAILED',
+            error = #{error},
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id}
+          AND tenant_id = #{tenantId}
+          AND status = 'PAUSING'
+          AND gmt_modified &lt; FROM_UNIXTIME(#{beforeEpochMillis} / 1000)
+          AND is_deleted = 0
+    </update>
+
+    <update id="claimOwnedActive">
+        UPDATE dispatch
+        SET gmt_modified = NOW()
+        WHERE id = #{id}
+          AND tenant_id = #{tenantId}
+          AND executor_id = #{executorId}
+          AND status IN ('DISPATCHED', 'ACKED', 'RUNNING')
+          AND is_deleted = 0
+    </update>
+
+</mapper>

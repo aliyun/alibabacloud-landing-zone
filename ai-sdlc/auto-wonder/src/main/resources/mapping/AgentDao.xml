@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.agent.AgentDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent (tenant_id, name, avatar_url, status, online_version_id, editing_version_id,
+            latest_version_no, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{name}, #{avatarUrl}, #{status}, #{onlineVersionId}, #{editingVersionId},
+            #{latestVersionNo}, #{creatorId}, 0, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT * FROM agent WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findByExactName" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT * FROM agent
+        WHERE tenant_id = #{tenantId}
+          AND name = #{name}
+          AND is_deleted = 0
+        ORDER BY id ASC
+    </select>
+    <select id="list" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT * FROM agent
+        <where>
+            is_deleted = 0
+            <if test="status != null">AND status = #{status}</if>
+        </where>
+        ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <update id="updateStatus">
+        UPDATE agent SET status = #{status}, online_version_id = #{onlineVersionId},
+            editing_version_id = #{editingVersionId}, latest_version_no = #{latestVersionNo},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateName">
+        UPDATE agent SET name = #{name}, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="findOnlineByRoleCode" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT a.* FROM agent a
+        JOIN agent_version av ON a.online_version_id = av.id AND av.status = 'APPROVED' AND av.is_deleted = 0
+        WHERE a.tenant_id = #{tenantId}
+          AND av.role_code = #{roleCode}
+          AND a.is_deleted = 0
+        ORDER BY a.id ASC
+    </select>
+    <select id="listByIds" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT * FROM agent
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
+        <foreach collection="ids" item="aid" open="(" separator="," close=")">#{aid}</foreach>
+    </select>
+    <select id="listByTenant" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT * FROM agent
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+        ORDER BY id ASC
+    </select>
+    <update id="softDelete">
+        UPDATE agent SET is_deleted = 1, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="countByStatus" resultType="int">
+        SELECT COUNT(*) FROM agent
+        WHERE tenant_id = #{tenantId} AND status = #{status} AND is_deleted = 0
+    </select>
+</mapper>

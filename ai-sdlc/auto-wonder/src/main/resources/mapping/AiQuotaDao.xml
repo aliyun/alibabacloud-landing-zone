@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.aiusage.AiQuotaDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.aiusage.AiQuotaDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ai_quota (tenant_id, period_type, max_calls, max_tokens, concurrency_limit)
+        VALUES (#{tenantId}, #{periodType}, #{maxCalls}, #{maxTokens}, #{concurrencyLimit})
+    </insert>
+
+    <select id="findByTenant" resultType="com.aliyun.autowonder.aiusage.AiQuotaDO">
+        SELECT * FROM ai_quota WHERE tenant_id = #{tenantId} LIMIT 1
+    </select>
+
+    <update id="update">
+        UPDATE ai_quota SET max_calls = #{maxCalls}, max_tokens = #{maxTokens},
+            concurrency_limit = #{concurrencyLimit}
+        WHERE tenant_id = #{tenantId}
+    </update>
+</mapper>

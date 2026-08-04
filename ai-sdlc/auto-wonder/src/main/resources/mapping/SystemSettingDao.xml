@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.setting.SystemSettingDao">
+    <resultMap id="SystemSettingResultMap" type="com.aliyun.autowonder.setting.SystemSettingDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="setting_group" property="settingGroup"/>
+        <result column="setting_key" property="settingKey"/>
+        <result column="value_json" property="valueJson"/>
+        <result column="is_secret" property="isSecret"/>
+        <result column="credential_ref" property="credentialRef"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+        <result column="is_deleted" property="isDeleted"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.setting.SystemSettingDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO system_setting (tenant_id, setting_group, setting_key, value_json, is_secret,
+                                    credential_ref, creator_id, modifier_id, is_deleted)
+        VALUES (#{tenantId}, #{settingGroup}, #{settingKey}, #{valueJson}, #{isSecret},
+                #{credentialRef}, #{creatorId}, #{modifierId}, 0)
+    </insert>
+
+    <select id="findByUk" resultMap="SystemSettingResultMap">
+        SELECT * FROM system_setting
+        WHERE tenant_id = #{tenantId} AND setting_group = #{settingGroup} AND setting_key = #{settingKey} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByGroup" resultMap="SystemSettingResultMap">
+        SELECT * FROM system_setting
+        WHERE tenant_id = #{tenantId} AND setting_group = #{settingGroup} AND is_deleted = 0
+        ORDER BY setting_key
+    </select>
+
+    <update id="update">
+        UPDATE system_setting SET value_json = #{valueJson}, is_secret = #{isSecret},
+            credential_ref = #{credentialRef}, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+
+    <update id="softDelete">
+        UPDATE system_setting SET is_deleted = 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+</mapper>

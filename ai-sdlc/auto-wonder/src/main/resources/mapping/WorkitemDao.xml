@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workitem.WorkitemDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            tenant_id, work_type, title, content_md, template_id, status_node_id,
+            sdlc_id, current_step_id, assignee_type, assignee_ref, assign_operator_id, priority,
+            <if test="gmtCreate != null">gmt_create,</if>
+            creator_id, is_deleted, version
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            #{tenantId}, #{workType}, #{title}, #{contentMd}, #{templateId}, #{statusNodeId},
+            #{sdlcId}, #{currentStepId}, #{assigneeType}, #{assigneeRef}, #{assignOperatorId}, #{priority},
+            <if test="gmtCreate != null">#{gmtCreate},</if>
+            #{creatorId}, 0, 0
+        </trim>
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT * FROM workitem WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findByIdForUpdate" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT * FROM workitem
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+        LIMIT 1 FOR UPDATE
+    </select>
+    <sql id="listFilter">
+        w.tenant_id = #{tenantId}
+        AND w.is_deleted = 0
+        <if test="workType != null">AND w.work_type = #{workType}</if>
+        <if test="statusNodeId != null">AND w.status_node_id = #{statusNodeId}</if>
+        <if test="assigneeType != null">AND w.assignee_type = #{assigneeType}</if>
+        <if test="assigneeRef != null">AND w.assignee_ref = #{assigneeRef}</if>
+        <if test="pendingDecisionOnly">
+            AND w.assignee_type = 'HUMAN'
+            AND w.assignee_ref = #{currentUserId}
+            AND EXISTS (
+                SELECT 1 FROM dispatch d
+                WHERE d.id = (
+                    SELECT MAX(d2.id) FROM dispatch d2
+                    WHERE d2.tenant_id = w.tenant_id
+                      AND d2.workitem_id = w.id
+                      AND d2.is_deleted = 0
+                )
+                  AND d.status = 'SUCCEEDED'
+                  AND d.is_deleted = 0
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM status_node sn
+                WHERE sn.id = w.status_node_id
+                  AND (
+                      UPPER(COALESCE(sn.category, '')) = 'DONE'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
+                      OR COALESCE(sn.name, '') LIKE '%完成%'
+                      OR COALESCE(sn.name, '') LIKE '%关闭%'
+                      OR COALESCE(sn.name, '') LIKE '%发布%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
+                  )
+            )
+        </if>
+        <if test="mineScope == 'CREATED'">AND w.creator_id = #{currentUserId}</if>
+        <if test="mineScope == 'ASSIGNED'">AND w.assignee_type = 'HUMAN' AND w.assignee_ref = #{currentUserId}</if>
+        <if test="keyword != null and keyword != ''">
+            AND (w.title LIKE CONCAT('%', #{keyword}, '%')
+            <if test="keywordId != null">OR w.id = #{keywordId}</if>)
+        </if>
+    </sql>
+    <select id="list" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT w.* FROM workitem w
+        <where>
+            <include refid="listFilter"/>
+        </where>
+        ORDER BY w.gmt_create DESC, w.id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <select id="count" resultType="long">
+        SELECT COUNT(*) FROM workitem w
+        <where>
+            <include refid="listFilter"/>
+        </where>
+    </select>
+    <update id="updateContent">
+        UPDATE workitem SET title = #{title}, content_md = #{contentMd},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE workitem SET is_deleted = 1,
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateStatus">
+        UPDATE workitem SET status_node_id = #{statusNodeId},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateTemplateAndStatus">
+        UPDATE workitem SET template_id = #{templateId}, status_node_id = #{statusNodeId},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateAssignee">
+        UPDATE workitem SET assignee_type = #{assigneeType}, assignee_ref = #{assigneeRef},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateAssignOperator">
+        UPDATE workitem SET assign_operator_id = #{assignOperatorId},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="countBySdlcId" resultType="int">
+        SELECT COUNT(*) FROM workitem WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
+    </select>
+    <update id="updateCurrentStep">
+        UPDATE workitem
+        SET current_step_id = #{currentStepId},
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateSdlcAndStep">
+        UPDATE workitem
+        SET sdlc_id = #{sdlcId},
+            current_step_id = #{currentStepId},
+            version = version + 1,
+            modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="listByIds" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT * FROM workitem
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
+        <foreach collection="ids" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+    </select>
+</mapper>

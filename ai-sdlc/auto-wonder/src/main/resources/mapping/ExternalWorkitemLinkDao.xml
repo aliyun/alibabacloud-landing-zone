@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO external_workitem_link (tenant_id, provider, binding_id, external_project_id,
+            external_workitem_id, external_work_type, workitem_id, remote_updated_at,
+            remote_version_hash, last_sync_direction)
+        VALUES (#{tenantId}, #{provider}, #{bindingId}, #{externalProjectId},
+            #{externalWorkitemId}, #{externalWorkType}, #{workitemId}, #{remoteUpdatedAt},
+            #{remoteVersionHash}, #{lastSyncDirection})
+    </insert>
+    <select id="findByExternal" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        WHERE tenant_id = #{tenantId} AND provider = #{provider} AND external_workitem_id = #{externalWorkitemId}
+        LIMIT 1
+    </select>
+    <select id="findByWorkitem" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        WHERE tenant_id = #{tenantId} AND provider = #{provider} AND workitem_id = #{workitemId}
+        LIMIT 1
+    </select>
+    <select id="listByWorkitem" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY gmt_create ASC, id ASC
+    </select>
+    <select id="listByWorkitemIds" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        WHERE tenant_id = #{tenantId} AND workitem_id IN
+        <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+        ORDER BY gmt_create ASC, id ASC
+    </select>
+    <select id="listByExternal" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        <where>
+            tenant_id = #{tenantId}
+            <if test="provider != null">AND provider = #{provider}</if>
+            <if test="externalWorkitemId != null">AND external_workitem_id = #{externalWorkitemId}</if>
+        </where>
+        ORDER BY gmt_create DESC, id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+    <update id="updateRemoteState">
+        UPDATE external_workitem_link
+        SET remote_version_hash = #{remoteVersionHash}, last_sync_direction = #{lastSyncDirection}
+        WHERE id = #{id}
+    </update>
+</mapper>

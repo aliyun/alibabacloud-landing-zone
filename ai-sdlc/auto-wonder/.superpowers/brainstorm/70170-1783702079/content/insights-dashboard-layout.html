@@ -1,0 +1,214 @@
+<h2>数据洞察 Dashboard 布局设计</h2>
+<p class="subtitle">完整复刻 Demo 的四维指标 + 洞察分析 + 审计表</p>
+
+<div class="mockup">
+  <div class="mockup-header">数据洞察 — 指标概览 Tab</div>
+  <div class="mockup-body" style="padding: 20px; background: #f8f9fb; font-family: -apple-system, sans-serif;">
+
+    <!-- Page Header -->
+    <div style="margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 18px; font-weight: 700; color: #1f2937;">数据洞察</span>
+        <span style="font-size: 9px; padding: 2px 6px; background: linear-gradient(135deg, #fb923c, #f97316); color: white; border-radius: 4px; font-weight: 500;">NEW</span>
+      </div>
+      <p style="font-size: 12px; color: #9ca3af; margin-top: 4px;">成本、效率、稳定性、安全 — 全方位洞察数字员工执行情况</p>
+    </div>
+
+    <!-- Filter Toolbar -->
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
+      <div style="display: flex; gap: 2px; background: #f3f4f6; border-radius: 6px; padding: 2px;">
+        <span style="padding: 4px 12px; background: white; border-radius: 5px; font-size: 12px; font-weight: 500; color: #374151; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">指标概览</span>
+        <span style="padding: 4px 12px; font-size: 12px; color: #6b7280;">执行审计</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span style="font-size: 11px; color: #6b7280;">Worker</span>
+        <span style="padding: 3px 10px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 11px; color: #9ca3af;">全部 Worker</span>
+        <span style="font-size: 11px; color: #6b7280;">日期</span>
+        <div style="display: flex; gap: 2px; background: #f3f4f6; border-radius: 5px; padding: 2px;">
+          <span style="padding: 3px 8px; font-size: 11px; color: #6b7280;">近7天</span>
+          <span style="padding: 3px 8px; background: white; border-radius: 4px; font-size: 11px; font-weight: 500; color: #374151; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">近30天</span>
+          <span style="padding: 3px 8px; font-size: 11px; color: #6b7280;">近90天</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4 Metric Cards (2x2 grid) -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+      <!-- Cost -->
+      <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+          <div style="width: 28px; height: 28px; border-radius: 6px; background: #fffbeb; display: flex; align-items: center; justify-content: center; color: #d97706; font-size: 12px;">$</div>
+          <span style="font-size: 12px; font-weight: 600; color: #374151;">成本</span>
+          <svg style="margin-left: auto;" width="80" height="24"><polyline points="5,18 17,14 29,16 41,12 53,8 65,10 75,6" fill="none" stroke="#d97706" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
+        <div style="display: flex; gap: 16px;">
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">318K</span><br/><span style="font-size: 10px; color: #9ca3af;">总 Token</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">13.6K</span><br/><span style="font-size: 10px; color: #9ca3af;">均/任务</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">45K</span><br/><span style="font-size: 10px; color: #9ca3af;">日均</span></div>
+        </div>
+      </div>
+      <!-- Efficiency -->
+      <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+          <div style="width: 28px; height: 28px; border-radius: 6px; background: #eff6ff; display: flex; align-items: center; justify-content: center; color: #2563eb; font-size: 12px;">⚡</div>
+          <span style="font-size: 12px; font-weight: 600; color: #374151;">效率</span>
+          <svg style="margin-left: auto;" width="80" height="24"><polyline points="5,20 17,17 29,14 41,13 53,10 65,9 75,6" fill="none" stroke="#2563eb" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
+        <div style="display: flex; gap: 16px;">
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">76%</span><br/><span style="font-size: 10px; color: #9ca3af;">完成率</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">18</span><br/><span style="font-size: 10px; color: #9ca3af;">已完成</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">42min</span><br/><span style="font-size: 10px; color: #9ca3af;">均时长</span></div>
+        </div>
+      </div>
+      <!-- Stability -->
+      <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+          <div style="width: 28px; height: 28px; border-radius: 6px; background: #f0fdf4; display: flex; align-items: center; justify-content: center; color: #16a34a; font-size: 12px;">🎯</div>
+          <span style="font-size: 12px; font-weight: 600; color: #374151;">稳定</span>
+          <svg style="margin-left: auto;" width="80" height="24"><polyline points="5,6 17,10 29,8 41,14 53,11 65,13 75,14" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
+        <div style="display: flex; gap: 16px;">
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">86%</span><br/><span style="font-size: 10px; color: #9ca3af;">一次通过</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">4</span><br/><span style="font-size: 10px; color: #9ca3af;">返工</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">5</span><br/><span style="font-size: 10px; color: #9ca3af;">阻塞</span></div>
+        </div>
+      </div>
+      <!-- Security -->
+      <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+          <div style="width: 28px; height: 28px; border-radius: 6px; background: #fef2f2; display: flex; align-items: center; justify-content: center; color: #dc2626; font-size: 12px;">🛡</div>
+          <span style="font-size: 12px; font-weight: 600; color: #374151;">安全</span>
+          <svg style="margin-left: auto;" width="80" height="24"><polyline points="5,14 17,10 29,10 41,6 53,10 65,8 75,10" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </div>
+        <div style="display: flex; gap: 16px;">
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">2</span><br/><span style="font-size: 10px; color: #9ca3af;">高危操作</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">96.2%</span><br/><span style="font-size: 10px; color: #9ca3af;">合规率</span></div>
+          <div><span style="font-size: 16px; font-weight: 700; color: #1f2937;">3</span><br/><span style="font-size: 10px; color: #9ca3af;">拦截</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary Cards (3 columns) -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px;">
+      <div style="background: white; border: 1px solid #fde68a; border-radius: 10px; padding: 12px 14px;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+          <span style="width: 22px; height: 22px; border-radius: 5px; background: #fffbeb; color: #d97706; display: inline-flex; align-items: center; justify-content: center; font-size: 10px;">🔗</span>
+          <span style="font-size: 11px; color: #6b7280; font-weight: 600;">链路阻塞</span>
+          <span style="margin-left: auto; font-size: 10px; color: #9ca3af;">近30天</span>
+        </div>
+        <div style="font-size: 20px; font-weight: 700; color: #111827; margin-bottom: 4px;">5</div>
+        <div style="font-size: 11px; color: #6b7280; line-height: 16px;">SDLC 卡点信号集中在交接同步和评审证据</div>
+      </div>
+      <div style="background: white; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px 14px;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+          <span style="width: 22px; height: 22px; border-radius: 5px; background: #f0fdf4; color: #16a34a; display: inline-flex; align-items: center; justify-content: center; font-size: 10px;">⚠️</span>
+          <span style="font-size: 11px; color: #6b7280; font-weight: 600;">异动强度</span>
+        </div>
+        <div style="font-size: 20px; font-weight: 700; color: #111827; margin-bottom: 4px;">低</div>
+        <div style="font-size: 11px; color: #6b7280; line-height: 16px;">重试、驳回和高风险操作合计 3 个异常信号</div>
+      </div>
+      <div style="background: white; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 14px;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+          <span style="width: 22px; height: 22px; border-radius: 5px; background: #eff6ff; color: #2563eb; display: inline-flex; align-items: center; justify-content: center; font-size: 10px;">📊</span>
+          <span style="font-size: 11px; color: #6b7280; font-weight: 600;">可优化链路</span>
+        </div>
+        <div style="font-size: 20px; font-weight: 700; color: #111827; margin-bottom: 4px;">交接同步</div>
+        <div style="font-size: 11px; color: #6b7280; line-height: 16px;">建议优先看 coding Worker 的交接同步环节</div>
+      </div>
+    </div>
+
+    <!-- Two Column: Key Insights + SDLC Link Issues -->
+    <div style="display: grid; grid-template-columns: 1.1fr 1fr; gap: 12px; margin-bottom: 16px;">
+      <!-- Left: Key Insights -->
+      <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+          <span style="color: #2563eb; font-size: 12px;">📈</span>
+          <span style="font-size: 13px; font-weight: 700; color: #374151;">关键洞察</span>
+          <span style="margin-left: auto; font-size: 10px; padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 4px; color: #6b7280;">全部 Worker</span>
+        </div>
+        <div style="display: grid; gap: 8px;">
+          <div style="border: 1px solid #fde68a; background: #fffbeb; border-radius: 7px; padding: 10px 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-size: 12px; font-weight: 700; color: #1f2937;">SDLC 链路瓶颈</span>
+              <span style="font-size: 12px; font-weight: 700; color: #d97706;">交接同步</span>
+            </div>
+            <div style="font-size: 11px; color: #4b5563; line-height: 16px;">等待信号偏多，卡点集中在"交接后状态同步"和"评审证据不完整"</div>
+          </div>
+          <div style="border: 1px solid #bbf7d0; background: #f0fdf4; border-radius: 7px; padding: 10px 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-size: 12px; font-weight: 700; color: #1f2937;">数据洞察异动</span>
+              <span style="font-size: 12px; font-weight: 700; color: #16a34a;">-1%</span>
+            </div>
+            <div style="font-size: 11px; color: #4b5563; line-height: 16px;">异常强度相对基线下降，主要由重试和驳回占比变化驱动</div>
+          </div>
+          <div style="border: 1px solid #bbf7d0; background: #f0fdf4; border-radius: 7px; padding: 10px 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-size: 12px; font-weight: 700; color: #1f2937;">Worker 协作质量</span>
+              <span style="font-size: 12px; font-weight: 700; color: #16a34a;">平稳</span>
+            </div>
+            <div style="font-size: 11px; color: #4b5563; line-height: 16px;">交接事件密度处于正常范围</div>
+          </div>
+        </div>
+      </div>
+      <!-- Right: SDLC Link Issues -->
+      <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;">
+        <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+          <span style="color: #d97706; font-size: 12px;">🔗</span>
+          <span style="font-size: 13px; font-weight: 700; color: #374151;">SDLC 链路问题</span>
+        </div>
+        <div style="display: grid; gap: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: start; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
+            <div>
+              <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 3px;">
+                <span style="font-size: 11px; font-weight: 700; color: #111827;">honeybaby-coding</span>
+                <span style="font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;">交接同步</span>
+              </div>
+              <div style="font-size: 11px; color: #4b5563;">连续阻塞信号偏多，可能导致同一工单多轮空转</div>
+            </div>
+            <span style="font-size: 10px; color: #dc2626; font-weight: 700; white-space: nowrap;">9 个信号</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: start; border-bottom: 1px solid #f3f4f6; padding-bottom: 8px;">
+            <div>
+              <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 3px;">
+                <span style="font-size: 11px; font-weight: 700; color: #111827;">honeybaby-reviewer</span>
+                <span style="font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #fffbeb; color: #d97706; border: 1px solid #fde68a;">评审证据</span>
+              </div>
+              <div style="font-size: 11px; color: #4b5563;">交接证据不稳定，会拉长待决策前的周转时间</div>
+            </div>
+            <span style="font-size: 10px; color: #d97706; font-weight: 700; white-space: nowrap;">6 个信号</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recommendations -->
+    <div style="background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px;">
+      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 10px;">
+        <span style="color: #16a34a; font-size: 12px;">💡</span>
+        <span style="font-size: 13px; font-weight: 700; color: #374151;">建议动作</span>
+        <span style="margin-left: auto; font-size: 11px; color: #9ca3af;">随筛选更新</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+        <div style="font-size: 11px; color: #4b5563; line-height: 16px; padding: 9px 11px; background: #f9fafb; border: 1px solid #eef2f7; border-radius: 7px;">
+          优先检查"交接同步"和"评审证据"两类 SDLC 记录，避免状态已流转但进度未同步。
+        </div>
+        <div style="font-size: 11px; color: #4b5563; line-height: 16px; padding: 9px 11px; background: #f9fafb; border: 1px solid #eef2f7; border-radius: 7px;">
+          把 reviewer 驳回后的等待条件收紧为"收到新评审请求后再继续"，减少重复轮询。
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div style="margin-top: 24px;">
+  <h3>设计要点</h3>
+  <ul style="font-size: 13px; color: #4b5563; line-height: 1.8;">
+    <li><strong>路由</strong>: /insights → InsightsPage</li>
+    <li><strong>两个 Tab</strong>: 指标概览 (上图) + 执行审计 (Table)</li>
+    <li><strong>筛选器</strong>: Worker 下拉 + 时间范围 Segmented (7d/30d/90d)</li>
+    <li><strong>四维指标卡</strong>: 成本(黄) / 效率(蓝) / 稳定(绿) / 安全(红) + SVG Sparkline</li>
+    <li><strong>AI 洞察区</strong>: 总结卡 + 关键洞察 + SDLC链路问题 + 建议动作</li>
+    <li><strong>颜色方案</strong>: 延续项目整体 #ff6a00 橙色 + 白色背景</li>
+  </ul>
+</div>

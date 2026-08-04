@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.squad.SquadMemberDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.squad.SquadMemberDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO squad_member (tenant_id, squad_id, agent_id)
+        VALUES (#{tenantId}, #{squadId}, #{agentId})
+    </insert>
+    <select id="listBySquad" resultType="com.aliyun.autowonder.squad.SquadMemberDO">
+        SELECT * FROM squad_member WHERE squad_id = #{squadId}
+    </select>
+    <select id="countBySquad" resultType="int">
+        SELECT COUNT(*) FROM squad_member WHERE squad_id = #{squadId}
+    </select>
+    <select id="listByAgent" resultType="com.aliyun.autowonder.squad.SquadMemberDO">
+        SELECT * FROM squad_member WHERE agent_id = #{agentId}
+    </select>
+    <select id="findBySquadAndAgent" resultType="com.aliyun.autowonder.squad.SquadMemberDO">
+        SELECT * FROM squad_member WHERE squad_id = #{squadId} AND agent_id = #{agentId} LIMIT 1
+    </select>
+    <delete id="deleteBySquadAndAgent">
+        DELETE FROM squad_member WHERE squad_id = #{squadId} AND agent_id = #{agentId} AND tenant_id = #{tenantId}
+    </delete>
+    <delete id="deleteBySquad">
+        DELETE FROM squad_member WHERE squad_id = #{squadId} AND tenant_id = #{tenantId}
+    </delete>
+</mapper>

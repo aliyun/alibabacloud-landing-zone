@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.repo.RepoRelationDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.repo.RepoRelationDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO repo_relation (tenant_id, from_repo_id, to_repo_id, relation_type,
+                                   description, ai_session_id, creator_id, is_deleted)
+        VALUES (#{tenantId}, #{fromRepoId}, #{toRepoId}, #{relationType},
+                #{description}, #{aiSessionId}, #{creatorId}, 0)
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.repo.RepoRelationDO">
+        SELECT * FROM repo_relation WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+
+    <select id="listByTenantId" resultType="com.aliyun.autowonder.repo.RepoRelationDO">
+        SELECT * FROM repo_relation WHERE tenant_id = #{tenantId} AND is_deleted = 0
+    </select>
+
+    <select id="findByUk" resultType="com.aliyun.autowonder.repo.RepoRelationDO">
+        SELECT * FROM repo_relation
+        WHERE tenant_id = #{tenantId}
+          AND from_repo_id = #{fromRepoId}
+          AND to_repo_id = #{toRepoId}
+          AND relation_type = #{relationType}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByRepoId" resultType="com.aliyun.autowonder.repo.RepoRelationDO">
+        SELECT * FROM repo_relation
+        WHERE tenant_id = #{tenantId}
+          AND (from_repo_id = #{repoId} OR to_repo_id = #{repoId})
+          AND is_deleted = 0
+    </select>
+
+    <select id="findByUkIncludeDeleted" resultType="com.aliyun.autowonder.repo.RepoRelationDO">
+        SELECT * FROM repo_relation
+        WHERE tenant_id = #{tenantId}
+          AND from_repo_id = #{fromRepoId}
+          AND to_repo_id = #{toRepoId}
+          AND relation_type = #{relationType}
+        LIMIT 1
+    </select>
+
+    <update id="undelete">
+        UPDATE repo_relation
+        SET is_deleted = 0, description = #{description}, ai_session_id = #{aiSessionId}, modifier_id = #{creatorId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 1
+    </update>
+
+    <update id="softDelete">
+        UPDATE repo_relation SET is_deleted = 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+
+    <update id="deleteByRepoId">
+        UPDATE repo_relation SET is_deleted = 1
+        WHERE (from_repo_id = #{repoId} OR to_repo_id = #{repoId})
+          AND tenant_id = #{tenantId}
+          AND is_deleted = 0
+    </update>
+</mapper>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.mcp.McpAccessTokenDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.mcp.McpAccessTokenDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO mcp_access_token
+            (user_id, name, token_hash, token_prefix, creator_id, is_deleted, version)
+        VALUES
+            (#{userId}, #{name}, #{tokenHash}, #{tokenPrefix}, #{creatorId}, 0, 0)
+    </insert>
+
+    <select id="findByHash" resultType="com.aliyun.autowonder.mcp.McpAccessTokenDO">
+        SELECT * FROM mcp_access_token
+        WHERE token_hash = #{tokenHash} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.mcp.McpAccessTokenDO">
+        SELECT * FROM mcp_access_token
+        WHERE id = #{id} AND user_id = #{userId}
+          AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByUser" resultType="com.aliyun.autowonder.mcp.McpAccessTokenDO">
+        SELECT * FROM mcp_access_token
+        WHERE user_id = #{userId} AND is_deleted = 0
+        ORDER BY gmt_create DESC, id DESC
+    </select>
+
+    <update id="revoke">
+        UPDATE mcp_access_token
+        SET revoked_at = #{revokedAt}, modifier_id = #{modifierId}, version = version + 1
+        WHERE id = #{id} AND user_id = #{userId}
+          AND revoked_at IS NULL AND is_deleted = 0
+    </update>
+
+    <update id="touchLastUsed">
+        UPDATE mcp_access_token
+        SET last_used_at = #{lastUsedAt}
+        WHERE id = #{id} AND revoked_at IS NULL AND is_deleted = 0
+    </update>
+</mapper>

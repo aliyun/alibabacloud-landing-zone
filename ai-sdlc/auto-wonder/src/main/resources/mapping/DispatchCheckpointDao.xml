@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.dispatch.DispatchCheckpointDao">
+
+    <resultMap id="checkpointMap" type="com.aliyun.autowonder.dispatch.DispatchCheckpointDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="workitem_id" property="workitemId"/>
+        <result column="dispatch_id" property="dispatchId"/>
+        <result column="agent_id" property="agentId"/>
+        <result column="checkpoint_seq" property="checkpointSeq"/>
+        <result column="provider" property="provider"/>
+        <result column="provider_session_id" property="providerSessionId"/>
+        <result column="runtime_id" property="runtimeId"/>
+        <result column="executor_id" property="executorId"/>
+        <result column="active_step_id" property="activeStepId"/>
+        <result column="oss_ref" property="ossRef"/>
+        <result column="sha256" property="sha256"/>
+        <result column="size_bytes" property="sizeBytes"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <sql id="cols">
+        id, tenant_id, workitem_id, dispatch_id, agent_id, checkpoint_seq,
+        provider, provider_session_id, runtime_id, executor_id, active_step_id,
+        oss_ref, sha256, size_bytes, gmt_create
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.dispatch.DispatchCheckpointDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO dispatch_recovery_checkpoint
+            (tenant_id, workitem_id, dispatch_id, agent_id, checkpoint_seq,
+             provider, provider_session_id, runtime_id, executor_id, active_step_id,
+             oss_ref, sha256, size_bytes)
+        VALUES
+            (#{tenantId}, #{workitemId}, #{dispatchId}, #{agentId}, #{checkpointSeq},
+             #{provider}, #{providerSessionId}, #{runtimeId}, #{executorId}, #{activeStepId},
+             #{ossRef}, #{sha256}, #{sizeBytes})
+    </insert>
+
+    <select id="findByDispatchAndSeq" resultMap="checkpointMap">
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+          AND checkpoint_seq = #{checkpointSeq}
+        LIMIT 1
+    </select>
+
+    <select id="findLatestByDispatch" resultMap="checkpointMap">
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        ORDER BY checkpoint_seq DESC, id DESC
+        LIMIT 1
+    </select>
+
+    <select id="listLatestByDispatch" resultMap="checkpointMap">
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        ORDER BY checkpoint_seq DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listObsolete" resultMap="checkpointMap">
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        ORDER BY checkpoint_seq DESC, id DESC
+        LIMIT #{retain}, 18446744073709551615
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM dispatch_recovery_checkpoint
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId} AND id = #{id}
+    </delete>
+</mapper>

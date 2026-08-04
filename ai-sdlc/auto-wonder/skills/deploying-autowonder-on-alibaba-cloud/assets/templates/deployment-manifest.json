@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "mode": "new",
+  "phase": "questionnaire",
+  "status": "planned",
+  "region": "",
+  "regionPreset": [
+    "cn-zhangjiakou",
+    "cn-hangzhou",
+    "cn-shanghai",
+    "cn-beijing"
+  ],
+  "environment": "",
+  "deploymentId": "",
+  "topology": "multi-az-ha",
+  "architecture": "x86_64",
+  "availabilityZones": [],
+  "sizePreset": "small",
+  "stateMode": "remote",
+  "lifecycle": "persistent",
+  "ingressScenario": "no-domain-no-certificate",
+  "domain": "",
+  "publicSourceCidrs": [],
+  "network": {
+    "vpcCidr": "10.0.0.0/16",
+    "zoneACidr": "10.0.1.0/24",
+    "zoneBCidr": "10.0.2.0/24"
+  },
+  "resolvedInfrastructure": {
+    "ecsImageId": "",
+    "ecsInstanceType": "",
+    "rdsInstanceType": "",
+    "rdsCategory": "",
+    "rdsStorageType": "",
+    "rdsStorageGb": 0,
+    "redisInstanceClass": ""
+  },
+  "slsEnabled": true,
+  "aoneEnabled": false,
+  "publicEgress": false,
+  "adminUsername": "admin",
+  "organizationName": "",
+  "repositoryUrl": "",
+  "repositoryRef": "community",
+  "repositoryCommit": "",
+  "executionMode": "staged",
+  "tags": {
+    "Project": "AutoWonder",
+    "Environment": "",
+    "DeploymentId": "",
+    "ManagedBy": "Terraform",
+    "Topology": "multi-az-ha"
+  },
+  "terraform": {
+    "stateReference": "",
+    "planFingerprint": ""
+  },
+  "resources": {},
+  "artifacts": {},
+  "phases": [],
+  "evidence": []
+}

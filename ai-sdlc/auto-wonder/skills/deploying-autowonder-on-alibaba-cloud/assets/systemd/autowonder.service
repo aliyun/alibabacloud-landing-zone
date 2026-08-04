@@ -1,0 +1,23 @@
+[Unit]
+Description=AutoWonder Community
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=autowonder
+Group=autowonder
+WorkingDirectory=/var/lib/autowonder
+EnvironmentFile=/etc/autowonder/autowonder.env
+ExecStart=/opt/autowonder/runtime/bin/java -jar /opt/autowonder/current/auto-wonder.jar
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/autowonder
+
+[Install]
+WantedBy=multi-user.target

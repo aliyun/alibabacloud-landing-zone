@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.common.IntegrationOutboxDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.integration.common.IntegrationOutboxDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO integration_outbox (tenant_id, provider, binding_id, workitem_id, event_type,
+            payload_json, status, retry_count, next_retry_at, last_error)
+        VALUES (#{tenantId}, #{provider}, #{bindingId}, #{workitemId}, #{eventType},
+            #{payloadJson}, #{status}, #{retryCount}, #{nextRetryAt}, #{lastError})
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.integration.common.IntegrationOutboxDO">
+        SELECT * FROM integration_outbox WHERE id = #{id} LIMIT 1
+    </select>
+    <select id="listPending" resultType="com.aliyun.autowonder.integration.common.IntegrationOutboxDO">
+        SELECT * FROM integration_outbox
+        WHERE provider = #{provider}
+          AND status IN ('PENDING', 'FAILED_RETRYABLE')
+          AND (next_retry_at IS NULL OR next_retry_at &lt;= NOW(3))
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
+    <select id="listPendingAny" resultType="com.aliyun.autowonder.integration.common.IntegrationOutboxDO">
+        SELECT * FROM integration_outbox
+        WHERE status IN ('PENDING', 'FAILED_RETRYABLE')
+          AND (next_retry_at IS NULL OR next_retry_at &lt;= NOW(3))
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
+    <select id="listPendingExcludingProvider" resultType="com.aliyun.autowonder.integration.common.IntegrationOutboxDO">
+        SELECT * FROM integration_outbox
+        WHERE provider != #{provider}
+          AND status IN ('PENDING', 'FAILED_RETRYABLE')
+          AND (next_retry_at IS NULL OR next_retry_at &lt;= NOW(3))
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
+    <update id="markSucceeded">
+        UPDATE integration_outbox SET status = 'SUCCEEDED', last_error = NULL WHERE id = #{id}
+    </update>
+    <update id="markFailed">
+        UPDATE integration_outbox
+        SET status = #{status}, retry_count = retry_count + 1, last_error = #{lastError},
+            next_retry_at = DATE_ADD(NOW(3),
+                INTERVAL LEAST(300, POW(2, LEAST(retry_count + 1, 9))) SECOND)
+        WHERE id = #{id}
+    </update>
+</mapper>

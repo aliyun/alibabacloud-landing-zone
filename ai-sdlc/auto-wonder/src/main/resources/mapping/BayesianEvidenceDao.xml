@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.evolution.BayesianEvidenceDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.evolution.BayesianEvidenceDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO evolution_evidence (tenant_id, asset_type, asset_id, posterior_type, context_key,
+            source_type, source_ref, outcome, weight, evidence_json,
+            dependency_group, idempotency_key,
+            alpha, beta, posterior_mean, effective_sample_size, creator_id)
+        VALUES (#{tenantId}, #{assetType}, #{assetId}, #{posteriorType}, #{contextKey},
+            #{sourceType}, #{sourceRef}, #{outcome}, #{weight}, #{evidenceJson},
+            #{dependencyGroup}, #{idempotencyKey},
+            #{alpha}, #{beta}, #{posteriorMean}, #{effectiveSampleSize}, #{creatorId})
+    </insert>
+
+    <select id="findLatest" resultType="com.aliyun.autowonder.evolution.BayesianEvidenceDO">
+        SELECT * FROM evolution_evidence
+        WHERE tenant_id = #{tenantId}
+          AND asset_type = #{assetType}
+          AND asset_id = #{assetId}
+          AND posterior_type = #{posteriorType}
+          AND context_key = #{contextKey}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="findByIdempotencyKey" resultType="com.aliyun.autowonder.evolution.BayesianEvidenceDO">
+        SELECT * FROM evolution_evidence
+        WHERE tenant_id = #{tenantId}
+          AND idempotency_key = #{idempotencyKey}
+        LIMIT 1
+    </select>
+
+    <select id="listRecentByAsset" resultType="com.aliyun.autowonder.evolution.BayesianEvidenceDO">
+        SELECT * FROM evolution_evidence
+        WHERE tenant_id = #{tenantId}
+          AND asset_type = #{assetType}
+          AND asset_id = #{assetId}
+          AND posterior_type = #{posteriorType}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listRecent" resultType="com.aliyun.autowonder.evolution.BayesianEvidenceDO">
+        SELECT * FROM evolution_evidence
+        WHERE tenant_id = #{tenantId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+	<select id="listRecentCohortSamples" resultType="com.aliyun.autowonder.evolution.BayesianEvidenceDO">
+		SELECT * FROM evolution_evidence
+		WHERE tenant_id = #{tenantId}
+		  AND asset_type = 'SKILL_COHORT'
+		  AND posterior_type = #{posteriorType}
+		<if test="contextKey != null">
+		  AND context_key = #{contextKey}
+		</if>
+		ORDER BY id DESC
+		LIMIT #{limit}
+	</select>
+</mapper>

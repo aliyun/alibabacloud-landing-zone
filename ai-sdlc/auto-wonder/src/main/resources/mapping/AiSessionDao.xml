@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.ai.AiSessionDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.ai.AiSessionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ai_session (tenant_id, scene, biz_ref_type, biz_ref_id, status,
+                cli_session_ref, node_id, result_json, error, creator_id, version)
+        VALUES (#{tenantId}, #{scene}, #{bizRefType}, #{bizRefId}, #{status},
+                #{cliSessionRef}, #{nodeId}, #{resultJson}, #{error}, #{creatorId}, 0)
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.ai.AiSessionDO">
+        SELECT * FROM ai_session WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="listByTenantAndScene" resultType="com.aliyun.autowonder.ai.AiSessionDO">
+        SELECT * FROM ai_session
+        WHERE tenant_id = #{tenantId} AND scene = #{scene} AND is_deleted = 0
+        <if test="bizRefId != null"> AND biz_ref_id = #{bizRefId}</if>
+        ORDER BY gmt_create DESC
+    </select>
+
+    <update id="updateStatus">
+        UPDATE ai_session SET status = #{newStatus}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND status = #{oldStatus} AND version = #{version}
+    </update>
+
+    <update id="updateRunning">
+        UPDATE ai_session SET status = 'RUNNING', node_id = #{nodeId},
+            cli_session_ref = #{cliSessionRef}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND status = 'QUEUED' AND version = #{version}
+    </update>
+
+    <update id="updateResult">
+        UPDATE ai_session SET result_json = #{resultJson}, status = #{newStatus},
+            version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version}
+    </update>
+
+    <update id="updateCliSessionRef">
+        UPDATE ai_session SET cli_session_ref = #{cliSessionRef}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version}
+    </update>
+
+    <update id="updateFailed">
+        UPDATE ai_session SET status = 'FAILED', error = #{error}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version}
+    </update>
+
+    <select id="listStuck" resultType="com.aliyun.autowonder.ai.AiSessionDO">
+        SELECT * FROM ai_session
+        WHERE status IN
+        <foreach item="s" collection="statuses" open="(" separator="," close=")">#{s}</foreach>
+          AND gmt_modified &lt; DATE_SUB(NOW(3), INTERVAL #{beforeMs} / 1000 SECOND)
+          AND is_deleted = 0
+        LIMIT #{limit}
+    </select>
+</mapper>

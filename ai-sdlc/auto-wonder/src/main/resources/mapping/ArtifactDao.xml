@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.artifact.ArtifactDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.artifact.ArtifactDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO artifact (tenant_id, workitem_id, dispatch_id, name, type,
+            oss_ref, size, meta_json)
+        VALUES (#{tenantId}, #{workitemId}, #{dispatchId}, #{name}, #{type},
+            #{ossRef}, #{size}, #{metaJson})
+        ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            workitem_id = VALUES(workitem_id),
+            type = VALUES(type),
+            oss_ref = VALUES(oss_ref),
+            size = VALUES(size),
+            meta_json = VALUES(meta_json)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
+        SELECT * FROM artifact WHERE id = #{id} LIMIT 1
+    </select>
+    <select id="listByWorkitem" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
+        SELECT * FROM artifact
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY id DESC
+    </select>
+    <select id="listByWorkitemAndType" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
+        SELECT * FROM artifact
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND type = #{type}
+        ORDER BY id ASC
+    </select>
+    <select id="listByDispatch" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
+        SELECT * FROM artifact
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        ORDER BY id DESC
+    </select>
+    <delete id="deleteById">
+        DELETE FROM artifact WHERE tenant_id = #{tenantId} AND id = #{id}
+    </delete>
+
+    <select id="listUsageArtifacts" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
+        SELECT * FROM artifact
+        WHERE tenant_id = #{tenantId}
+          AND (name = #{usageName} OR name LIKE CONCAT('%/', #{usageName}))
+          AND dispatch_id IS NOT NULL
+        ORDER BY id ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+</mapper>

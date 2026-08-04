@@ -1,0 +1,116 @@
+<h2>角色权限管理页 /settings/roles 布局</h2>
+<p class="subtitle">选择角色权限管理页面的交互方式</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 12px; color: #e0e0e0;">
+        <div style="background: #16213e; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; font-weight: bold;">角色权限管理</span>
+            <span style="background: #4361ee; color: white; padding: 4px 12px; border-radius: 4px; font-size: 11px;">+ 新建角色</span>
+          </div>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+          <tr style="border-bottom: 1px solid #333; opacity: 0.7;">
+            <td style="padding: 6px;">角色名称</td>
+            <td style="padding: 6px;">类型</td>
+            <td style="padding: 6px;">权限数</td>
+            <td style="padding: 6px;">成员数</td>
+            <td style="padding: 6px;">操作</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #222;">
+            <td style="padding: 6px;">管理员</td>
+            <td style="padding: 6px;"><span style="background:#faad1433; color:#faad14; padding:1px 6px; border-radius:3px;">内置</span></td>
+            <td style="padding: 6px;">28</td>
+            <td style="padding: 6px;">2</td>
+            <td style="padding: 6px;"><span style="color:#4361ee">查看权限</span></td>
+          </tr>
+          <tr style="border-bottom: 1px solid #222;">
+            <td style="padding: 6px;">澄清员</td>
+            <td style="padding: 6px;"><span style="background:#faad1433; color:#faad14; padding:1px 6px; border-radius:3px;">内置</span></td>
+            <td style="padding: 6px;">5</td>
+            <td style="padding: 6px;">2</td>
+            <td style="padding: 6px;"><span style="color:#4361ee">查看权限</span></td>
+          </tr>
+          <tr style="border-bottom: 1px solid #222;">
+            <td style="padding: 6px;">开发者</td>
+            <td style="padding: 6px;"><span style="background:#52c41a33; color:#52c41a; padding:1px 6px; border-radius:3px;">自定义</span></td>
+            <td style="padding: 6px;">12</td>
+            <td style="padding: 6px;">3</td>
+            <td style="padding: 6px;"><span style="color:#4361ee">编辑</span> | <span style="color:#ff4d4f">删除</span></td>
+          </tr>
+        </table>
+        <div style="margin-top: 12px; background: #0f3460; padding: 12px; border-radius: 6px;">
+          <div style="font-size: 10px; opacity: 0.6; margin-bottom: 6px;">🔽 点击"编辑"打开 Drawer</div>
+          <div style="border-left: 3px solid #4361ee; padding-left: 10px;">
+            <div style="margin-bottom: 6px;">角色名: <span style="background:#222; padding: 2px 6px;">开发者</span></div>
+            <div style="font-size: 10px; margin-bottom: 4px;">权限配置 (按模块分组):</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 4px; font-size: 10px;">
+              <span style="opacity:0.6">☐ org:read</span>
+              <span style="color:#52c41a">☑ workitem:read</span>
+              <span style="color:#52c41a">☑ workitem:write</span>
+              <span style="color:#52c41a">☑ agent:read</span>
+              <span style="opacity:0.6">☐ agent:edit</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A: 角色表格 + Drawer 编辑</h3>
+      <p>角色列表用表格展示，点击"编辑"打开右侧 Drawer 配置权限点（按模块分组的 Checkbox）</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding: 16px; background: #1a1a2e; border-radius: 8px; font-family: monospace; font-size: 12px; color: #e0e0e0;">
+        <div style="background: #16213e; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; font-weight: bold;">角色权限管理</span>
+            <span style="background: #4361ee; color: white; padding: 4px 12px; border-radius: 4px; font-size: 11px;">+ 新建角色</span>
+          </div>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <div style="flex: 0 0 160px; background: #0f3460; padding: 12px; border-radius: 6px;">
+            <div style="font-size: 10px; opacity: 0.6; margin-bottom: 8px;">角色列表</div>
+            <div style="padding: 6px 8px; background: #4361ee33; border-radius: 4px; margin-bottom: 4px;">管理员 <span style="opacity:0.5">(内置)</span></div>
+            <div style="padding: 6px 8px; margin-bottom: 4px; opacity: 0.7;">澄清员 <span style="opacity:0.5">(内置)</span></div>
+            <div style="padding: 6px 8px; margin-bottom: 4px; opacity: 0.7;">验收员 <span style="opacity:0.5">(内置)</span></div>
+            <div style="padding: 6px 8px; border: 1px solid #4361ee; border-radius: 4px;">开发者</div>
+          </div>
+          <div style="flex: 1; background: #16213e; padding: 12px; border-radius: 6px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+              <span style="font-weight: bold;">管理员</span>
+              <span style="font-size: 10px; opacity: 0.6;">内置角色 · 不可编辑权限</span>
+            </div>
+            <div style="font-size: 10px; margin-bottom: 8px; opacity: 0.7;">权限点 (28/28):</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 10px;">
+              <div style="background:#0f3460; padding: 4px 8px; border-radius: 3px;">
+                <div style="color: #4361ee; margin-bottom: 2px;">工单管理</div>
+                <span style="color:#52c41a">☑ read ☑ write</span>
+              </div>
+              <div style="background:#0f3460; padding: 4px 8px; border-radius: 3px;">
+                <div style="color: #4361ee; margin-bottom: 2px;">数字员工</div>
+                <span style="color:#52c41a">☑ read ☑ create ☑ edit ☑ submit ☑ approve</span>
+              </div>
+              <div style="background:#0f3460; padding: 4px 8px; border-radius: 3px;">
+                <div style="color: #4361ee; margin-bottom: 2px;">小队</div>
+                <span style="color:#52c41a">☑ read ☑ manage</span>
+              </div>
+              <div style="background:#0f3460; padding: 4px 8px; border-radius: 3px;">
+                <div style="color: #4361ee; margin-bottom: 2px;">记忆</div>
+                <span style="color:#52c41a">☑ read ☑ manage ☑ review ☑ import</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B: 左右分栏 (角色导航 + 权限面板)</h3>
+      <p>左侧角色列表，右侧显示选中角色的权限配置（按模块分组的 Checkbox Grid），直接在页面内编辑</p>
+    </div>
+  </div>
+</div>

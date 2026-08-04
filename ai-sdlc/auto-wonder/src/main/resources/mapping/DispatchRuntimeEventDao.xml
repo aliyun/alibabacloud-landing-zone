@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao">
+
+    <resultMap id="runtimeEventMap" type="com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="workitem_id" property="workitemId"/>
+        <result column="dispatch_id" property="dispatchId"/>
+        <result column="agent_id" property="agentId"/>
+		<result column="event_id" property="eventId"/>
+		<result column="seq" property="seq"/>
+        <result column="event_type" property="eventType"/>
+        <result column="step_id" property="stepId"/>
+        <result column="step_key" property="stepKey"/>
+        <result column="step_order" property="stepOrder"/>
+        <result column="step_name" property="stepName"/>
+        <result column="message" property="message"/>
+        <result column="error" property="error"/>
+        <result column="detail_json" property="detailJson"/>
+        <result column="event_time" property="eventTime"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <sql id="cols">
+		id, tenant_id, workitem_id, dispatch_id, agent_id, event_id, seq, event_type, step_id, step_key,
+        step_order, step_name, message, error, detail_json, event_time, gmt_create
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO"
+            useGeneratedKeys="true" keyProperty="id">
+		INSERT INTO dispatch_runtime_event
+			(tenant_id, workitem_id, dispatch_id, agent_id, event_id, seq, event_type, step_id, step_key,
+             step_order, step_name, message, error, detail_json, event_time)
+        VALUES
+			(#{tenantId}, #{workitemId}, #{dispatchId}, #{agentId}, #{eventId}, #{seq}, #{eventType}, #{stepId}, #{stepKey},
+             #{stepOrder}, #{stepName}, #{message}, #{error}, #{detailJson}, #{eventTime})
+		ON DUPLICATE KEY UPDATE
+			seq = VALUES(seq),
+			event_type = VALUES(event_type),
+			step_id = VALUES(step_id),
+			step_key = VALUES(step_key),
+			step_order = VALUES(step_order),
+			step_name = VALUES(step_name),
+			message = VALUES(message),
+			error = VALUES(error),
+			detail_json = CASE
+				WHEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(VALUES(detail_json), '$.truncated')), 'false') = 'true'
+					AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(detail_json, '$.truncated')), 'false') != 'true'
+				THEN detail_json
+				ELSE VALUES(detail_json)
+			END,
+			event_time = VALUES(event_time)
+    </insert>
+
+    <select id="listByWorkitem" resultMap="runtimeEventMap">
+        SELECT <include refid="cols"/> FROM dispatch_runtime_event
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY id ASC
+    </select>
+
+    <select id="listByDispatch" resultMap="runtimeEventMap">
+        SELECT <include refid="cols"/> FROM dispatch_runtime_event
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+		ORDER BY COALESCE(seq, id) ASC, id ASC
+    </select>
+
+    <select id="findLatestByDispatchAndType" resultMap="runtimeEventMap">
+        SELECT <include refid="cols"/> FROM dispatch_runtime_event
+        WHERE tenant_id = #{tenantId}
+          AND dispatch_id = #{dispatchId}
+          AND event_type = #{eventType}
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+</mapper>

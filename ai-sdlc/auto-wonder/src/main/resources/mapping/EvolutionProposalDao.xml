@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.evolution.EvolutionProposalDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.evolution.EvolutionProposalDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO evolution_proposal (tenant_id, asset_type, asset_id, trigger_type,
+            root_evidence_json, policy_json, candidate_patch_json, status, lifecycle_json,
+            creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{assetType}, #{assetId}, #{triggerType},
+            #{rootEvidenceJson}, #{policyJson}, #{candidatePatchJson}, #{status}, #{lifecycleJson},
+            #{creatorId}, 0, 0)
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.evolution.EvolutionProposalDO">
+        SELECT * FROM evolution_proposal WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+
+	<select id="findActiveSkillTrial" resultType="com.aliyun.autowonder.evolution.EvolutionProposalDO">
+		SELECT * FROM evolution_proposal
+		WHERE tenant_id = #{tenantId}
+		  AND asset_type = 'SKILL'
+		  AND status = 'TRIAL'
+		  AND JSON_UNQUOTE(JSON_EXTRACT(lifecycle_json, '$.trial.taskPatternKey')) = #{taskPatternKey}
+		  AND is_deleted = 0
+		ORDER BY id DESC
+		LIMIT 1
+	</select>
+
+    <update id="markValidated">
+        UPDATE evolution_proposal SET status = 'VALIDATED', lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markReplay">
+        UPDATE evolution_proposal SET status = #{status}, lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markTrial">
+        UPDATE evolution_proposal SET status = 'TRIAL', lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markTrialDecision">
+        UPDATE evolution_proposal SET status = #{status}, lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markApproved">
+        UPDATE evolution_proposal SET status = 'APPROVED',
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markRejected">
+        UPDATE evolution_proposal SET status = 'REJECTED', lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markGate">
+        UPDATE evolution_proposal SET lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markReleased">
+        UPDATE evolution_proposal SET status = 'RELEASED', lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="markRolledBack">
+        UPDATE evolution_proposal SET status = 'ROLLED_BACK', lifecycle_json = #{lifecycleJson},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <select id="listRecent" resultType="com.aliyun.autowonder.evolution.EvolutionProposalDO">
+        SELECT * FROM evolution_proposal
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

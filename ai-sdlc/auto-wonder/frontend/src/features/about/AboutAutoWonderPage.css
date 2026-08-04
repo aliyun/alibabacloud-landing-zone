@@ -1,0 +1,487 @@
+.about-aw-page {
+  min-height: 760px;
+  padding: 34px;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(251, 146, 60, 0.28), transparent 28%),
+    radial-gradient(circle at 88% 18%, rgba(34, 197, 94, 0.16), transparent 26%),
+    linear-gradient(135deg, #fffaf3 0%, #f7f7f0 46%, #eef5ee 100%);
+}
+
+.about-aw-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.about-aw-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(440px, 0.95fr);
+  gap: 28px;
+  align-items: center;
+}
+
+.about-aw-hero-copy {
+  padding: 28px 8px 20px 6px;
+}
+
+.about-aw-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid rgba(249, 115, 22, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.about-aw-hero h1 {
+  margin: 18px 0 14px;
+  color: #17211b;
+  font-size: clamp(34px, 4vw, 46px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -1.4px;
+}
+
+.about-aw-hero-copy p {
+  max-width: 620px;
+  margin: 0;
+  color: #4b5563;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.about-aw-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.about-aw-primary-cta,
+.about-aw-secondary-cta {
+  padding: 11px 16px;
+  border-radius: 12px;
+  font-weight: 800;
+}
+
+.about-aw-primary-cta {
+  background: #f97316;
+  color: #fff;
+  box-shadow: 0 16px 30px rgba(249, 115, 22, 0.25);
+}
+
+.about-aw-secondary-cta {
+  border: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.76);
+  color: #374151;
+  font-weight: 700;
+}
+
+.about-aw-preview-wrap {
+  position: relative;
+  height: 360px;
+}
+
+.about-aw-preview-card {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: 0 30px 70px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.about-aw-ticket-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.about-aw-ticket-title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.about-aw-ticket-source {
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.about-aw-live-dot {
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.about-aw-delivery-grid {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.about-aw-role-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.about-aw-role-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 18px;
+  color: #fff;
+  font-weight: 900;
+}
+
+.about-aw-role-pm {
+  background: #111827;
+}
+
+.about-aw-role-dev {
+  background: #f97316;
+}
+
+.about-aw-role-cr {
+  background: #f59e0b;
+}
+
+.about-aw-role-qa {
+  background: #22c55e;
+}
+
+.about-aw-progress-column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.about-aw-agent-card {
+  padding: 12px;
+  border-radius: 16px;
+}
+
+.about-aw-agent-dev {
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+}
+
+.about-aw-agent-cr {
+  border: 1px solid #bbf7d0;
+  background: #fff;
+  box-shadow: 0 10px 22px rgba(34, 197, 94, 0.12);
+}
+
+.about-aw-agent-testing {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.about-aw-agent-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.about-aw-agent-dev .about-aw-agent-meta {
+  color: #9a3412;
+}
+
+.about-aw-agent-cr .about-aw-agent-meta {
+  color: #166534;
+}
+
+.about-aw-agent-testing .about-aw-agent-meta {
+  color: #6b7280;
+}
+
+.about-aw-progress-track {
+  height: 8px;
+  margin-top: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f3f4f6;
+}
+
+.about-aw-agent-dev .about-aw-progress-track {
+  background: #fed7aa;
+}
+
+.about-aw-agent-cr .about-aw-progress-track {
+  background: #dcfce7;
+}
+
+.about-aw-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #f97316;
+}
+
+.about-aw-agent-cr .about-aw-progress-fill {
+  background: #22c55e;
+}
+
+.about-aw-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.about-aw-metric-card {
+  padding: 10px;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  text-align: center;
+}
+
+.about-aw-quick-start {
+  margin-top: 32px;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.08);
+}
+
+.about-aw-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.about-aw-section-kicker {
+  color: #f97316;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.about-aw-section-head h2 {
+  margin: 6px 0 0;
+  color: #111827;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.about-aw-section-head p {
+  max-width: 360px;
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.about-aw-steps {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.about-aw-step-card {
+  position: relative;
+  min-height: 150px;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  background: #fff;
+}
+
+.about-aw-step-number {
+  position: absolute;
+  right: 12px;
+  top: 8px;
+  color: rgba(17, 24, 39, 0.13);
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.about-aw-step-icon {
+  margin-bottom: 10px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.about-aw-step-card h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.about-aw-step-card p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.about-aw-step-dark {
+  border-color: #fed7aa;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  color: #9a3412;
+  overflow: hidden;
+}
+
+.about-aw-step-dark h3 {
+  color: #9a3412;
+}
+
+.about-aw-step-dark p {
+  color: #9a3412;
+}
+
+.about-aw-step-dark .about-aw-step-number {
+  color: rgba(154, 52, 18, 0.16);
+}
+
+.about-aw-step-orange {
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.about-aw-step-orange h3,
+.about-aw-step-orange p {
+  color: #9a3412;
+}
+
+.about-aw-step-green {
+  border-color: #bbf7d0;
+  background: #ecfdf5;
+}
+
+.about-aw-step-green h3,
+.about-aw-step-green p {
+  color: #166534;
+}
+
+.about-aw-principles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.about-aw-principle-card {
+  padding: 22px;
+  border: 1px solid #e5e7eb;
+  border-radius: 24px;
+  background: #fff;
+}
+
+.about-aw-principle-card > div {
+  color: #f97316;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.about-aw-principle-card h3 {
+  margin: 8px 0;
+  color: #111827;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.about-aw-principle-card p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.about-aw-principle-dark {
+  border-color: #fdba74;
+  background: linear-gradient(135deg, #fff7ed 0%, #fef3c7 100%);
+  color: #9a3412;
+}
+
+.about-aw-principle-dark > div {
+  color: #f97316;
+}
+
+.about-aw-principle-dark h3 {
+  color: #9a3412;
+}
+
+.about-aw-principle-dark p {
+  color: #9a3412;
+}
+
+.about-aw-principle-green > div {
+  color: #16a34a;
+}
+
+@media (max-width: 1280px) {
+  .about-aw-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1080px) {
+  .about-aw-hero,
+  .about-aw-principles {
+    grid-template-columns: 1fr;
+  }
+
+  .about-aw-preview-wrap {
+    min-height: 360px;
+  }
+}
+
+@media (max-width: 760px) {
+  .about-aw-page {
+    padding: 20px;
+  }
+
+  .about-aw-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .about-aw-steps,
+  .about-aw-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .about-aw-delivery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .about-aw-role-column {
+    flex-direction: row;
+    justify-content: center;
+  }
+
+  .about-aw-preview-wrap {
+    height: 520px;
+  }
+}

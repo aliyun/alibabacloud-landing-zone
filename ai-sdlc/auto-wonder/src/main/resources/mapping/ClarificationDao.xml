@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.clarification.ClarificationDao">
+    <select id="findByWorkitem" resultType="com.aliyun.autowonder.clarification.ClarificationDO">
+        SELECT * FROM clarification WHERE workitem_id = #{workitemId} LIMIT 1
+    </select>
+    <insert id="insert" parameterType="com.aliyun.autowonder.clarification.ClarificationDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO clarification (tenant_id, workitem_id, content_md, version)
+        VALUES (#{tenantId}, #{workitemId}, #{contentMd}, 0)
+    </insert>
+    <update id="update">
+        UPDATE clarification SET content_md = #{contentMd}, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+    </update>
+</mapper>

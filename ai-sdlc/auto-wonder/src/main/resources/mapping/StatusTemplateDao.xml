@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.statemachine.StatusTemplateDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.statemachine.StatusTemplateDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO status_template (tenant_id, work_type, name, is_default, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{workType}, #{name}, #{isDefault}, #{creatorId}, 0, 0)
+    </insert>
+    <select id="findDefaultByType" resultType="com.aliyun.autowonder.statemachine.StatusTemplateDO">
+        SELECT * FROM status_template WHERE work_type = #{workType} AND is_default = 1 AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findById" resultType="com.aliyun.autowonder.statemachine.StatusTemplateDO">
+        SELECT * FROM status_template WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="listByWorkType" resultType="com.aliyun.autowonder.statemachine.StatusTemplateDO">
+        SELECT * FROM status_template
+        WHERE tenant_id = #{tenantId} AND work_type = #{workType} AND is_deleted = 0
+        ORDER BY is_default DESC, gmt_create ASC
+    </select>
+    <update id="update">
+        UPDATE status_template
+        SET name = #{name}, is_default = #{isDefault}, modifier_id = #{modifierId},
+            version = version + 1, gmt_modified = NOW()
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE status_template SET is_deleted = 1, version = version + 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="clearDefault">
+        UPDATE status_template SET is_default = 0, gmt_modified = NOW()
+        WHERE tenant_id = #{tenantId} AND work_type = #{workType} AND is_default = 1 AND is_deleted = 0
+    </update>
+</mapper>

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.user.UserDao">
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.user.UserDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `user`
+            (username, email, password_hash, nickname, status, is_deleted)
+        VALUES
+            (#{username}, #{email}, #{passwordHash}, #{nickname}, #{status}, 0)
+    </insert>
+
+    <select id="findByUsername" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE username = #{username} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE id = #{id} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByIds" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE is_deleted = 0 AND id IN
+        <foreach collection="ids" item="uid" open="(" separator="," close=")">#{uid}</foreach>
+    </select>
+
+    <select id="findFirstActiveUserId" resultType="java.lang.Long">
+        SELECT id
+        FROM `user`
+        WHERE is_deleted = 0
+          AND status = 0
+        ORDER BY id ASC
+        LIMIT 1
+    </select>
+
+    <select id="searchOrgCandidates" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT u.*
+        FROM `user` u
+        WHERE u.is_deleted = 0
+          AND u.status = 0
+          <if test="keyword != null and keyword != ''">
+              AND (
+                  u.username LIKE CONCAT('%', #{keyword}, '%')
+                  OR u.email LIKE CONCAT('%', #{keyword}, '%')
+                  OR u.nickname LIKE CONCAT('%', #{keyword}, '%')
+              )
+          </if>
+          AND NOT EXISTS (
+              SELECT 1
+              FROM org_member om
+              WHERE om.tenant_id = #{tenantId}
+                AND om.user_id = u.id
+                AND om.is_deleted = 0
+                AND om.status = 0
+          )
+        ORDER BY u.gmt_create DESC, u.id DESC
+        LIMIT #{limit}
+    </select>
+</mapper>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.conversation.AgentConversationTurnEventDao">
+
+    <resultMap id="BaseResultMap" type="com.aliyun.autowonder.conversation.AgentConversationTurnEventDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="conversation_id" property="conversationId"/>
+        <result column="turn_id" property="turnId"/>
+        <result column="dispatch_attempt" property="dispatchAttempt"/>
+        <result column="event_seq" property="eventSeq"/>
+        <result column="chunk_index" property="chunkIndex"/>
+        <result column="chunk_count" property="chunkCount"/>
+        <result column="event_type" property="eventType"/>
+        <result column="payload_fragment" property="payloadFragment"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <insert id="insertChunkIfAbsent" parameterType="com.aliyun.autowonder.conversation.AgentConversationTurnEventDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT IGNORE INTO agent_conversation_turn_event
+        (tenant_id, conversation_id, turn_id, dispatch_attempt, event_seq, chunk_index, chunk_count, event_type, payload_fragment)
+        VALUES
+        (#{tenantId}, #{conversationId}, #{turnId}, #{dispatchAttempt}, #{eventSeq}, #{chunkIndex}, #{chunkCount}, #{eventType}, #{payloadFragment})
+    </insert>
+
+    <select id="listLogicalEventChunks" resultMap="BaseResultMap">
+        SELECT * FROM agent_conversation_turn_event
+        WHERE tenant_id = #{tenantId}
+          AND turn_id = #{turnId}
+          AND dispatch_attempt = #{dispatchAttempt}
+          AND event_seq = #{eventSeq}
+        ORDER BY chunk_index ASC
+    </select>
+
+    <select id="listCompletedAfter" resultMap="BaseResultMap">
+        SELECT * FROM agent_conversation_turn_event
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND id &gt; #{afterId}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <delete id="deleteExpiredBatch">
+        DELETE FROM agent_conversation_turn_event
+        WHERE gmt_create &lt; #{cutoff}
+        LIMIT #{limit}
+    </delete>
+
+</mapper>

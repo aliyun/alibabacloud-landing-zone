@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.statemachine.StatusNodeDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.statemachine.StatusNodeDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO status_node (tenant_id, template_id, code, name, category, sort)
+        VALUES (#{tenantId}, #{templateId}, #{code}, #{name}, #{category}, #{sort})
+    </insert>
+    <select id="findInitNode" resultType="com.aliyun.autowonder.statemachine.StatusNodeDO">
+        SELECT * FROM status_node WHERE template_id = #{templateId} AND category = 'INIT' LIMIT 1
+    </select>
+    <select id="findById" resultType="com.aliyun.autowonder.statemachine.StatusNodeDO">
+        SELECT * FROM status_node WHERE id = #{id} LIMIT 1
+    </select>
+    <select id="listByIds" resultType="com.aliyun.autowonder.statemachine.StatusNodeDO">
+        SELECT * FROM status_node WHERE id IN
+        <foreach collection="ids" item="nid" open="(" separator="," close=")">#{nid}</foreach>
+    </select>
+    <select id="findByTemplateAndCode" resultType="com.aliyun.autowonder.statemachine.StatusNodeDO">
+        SELECT * FROM status_node WHERE template_id = #{templateId} AND code = #{code} LIMIT 1
+    </select>
+    <select id="listByTemplateId" resultType="com.aliyun.autowonder.statemachine.StatusNodeDO">
+        SELECT * FROM status_node WHERE template_id = #{templateId} ORDER BY sort ASC
+    </select>
+    <update id="update">
+        UPDATE status_node SET code = #{code}, name = #{name}, category = #{category}, sort = #{sort}
+        WHERE id = #{id}
+    </update>
+    <delete id="deleteById">
+        DELETE FROM status_node WHERE id = #{id}
+    </delete>
+    <select id="countWorkitemsUsingNode" resultType="int">
+        SELECT COUNT(*) FROM workitem WHERE status_node_id = #{nodeId} AND is_deleted = 0
+    </select>
+</mapper>

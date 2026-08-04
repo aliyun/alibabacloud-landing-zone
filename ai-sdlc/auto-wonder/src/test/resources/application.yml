@@ -1,0 +1,13 @@
+autowonder:
+  jwt:
+    secret: test-only-jwt-secret-that-is-never-used-outside-tests
+  security:
+    secret-crypto:
+      # Test-only key: Base64 for 32 zero bytes. Never use outside tests.
+      master-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+oss:
+  endpoint: https://oss.test.invalid
+  bucket: autowonder-test
+  access-key-id: test-access-key-id
+  access-key-secret: test-access-key-secret

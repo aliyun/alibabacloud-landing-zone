@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.skill.SkillDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.skill.SkillDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO skill (tenant_id, type, name, install_spec, description, source_type,
+                           package_oss_ref, package_file_name, package_size, package_md5,
+                           creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{type}, #{name}, #{installSpec}, #{description}, #{sourceType},
+                #{packageOssRef}, #{packageFileName}, #{packageSize}, #{packageMd5},
+                #{creatorId}, 0, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.skill.SkillDO">
+        SELECT * FROM skill WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="list" resultType="com.aliyun.autowonder.skill.SkillDO">
+        SELECT * FROM skill
+        <where>
+            is_deleted = 0
+            <if test="type != null">AND type = #{type}</if>
+        </where>
+        ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <update id="update">
+        UPDATE skill SET name = #{name}, type = #{type}, install_spec = #{installSpec},
+            description = #{description}, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updatePackage">
+        UPDATE skill SET name = #{name}, type = #{type}, description = #{description}, source_type = #{sourceType},
+            package_oss_ref = #{packageOssRef}, package_file_name = #{packageFileName},
+            package_size = #{packageSize}, package_md5 = #{packageMd5},
+            install_spec = #{installSpec},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE skill SET is_deleted = 1, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="findByTypeAndName" resultType="com.aliyun.autowonder.skill.SkillDO">
+        SELECT * FROM skill WHERE tenant_id = #{tenantId} AND type = #{type} AND name = #{name} AND is_deleted = 0 LIMIT 1
+    </select>
+</mapper>

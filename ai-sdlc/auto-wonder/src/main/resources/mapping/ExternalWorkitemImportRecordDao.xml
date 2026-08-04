@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.common.ExternalWorkitemImportRecordDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.integration.common.ExternalWorkitemImportRecordDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO external_workitem_import_record
+            (tenant_id, source_system, external_workitem_id, workitem_id, request_id,
+             status, failure_reason, source_url, raw_payload_json, extensions_json, field_mappings_json)
+        VALUES
+            (#{tenantId}, #{sourceSystem}, #{externalWorkitemId}, #{workitemId}, #{requestId},
+             #{status}, #{failureReason}, #{sourceUrl}, #{rawPayloadJson}, #{extensionsJson}, #{fieldMappingsJson})
+    </insert>
+
+    <select id="list" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemImportRecordDO">
+        SELECT * FROM external_workitem_import_record
+        <where>
+            tenant_id = #{tenantId}
+            <if test="sourceSystem != null">AND source_system = #{sourceSystem}</if>
+            <if test="externalWorkitemId != null">AND external_workitem_id = #{externalWorkitemId}</if>
+            <if test="status != null">AND status = #{status}</if>
+        </where>
+        ORDER BY gmt_create DESC, id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+</mapper>

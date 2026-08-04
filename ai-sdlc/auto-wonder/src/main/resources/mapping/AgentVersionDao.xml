@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.agent.AgentVersionDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentVersionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_version (tenant_id, agent_id, version_no, status, role_name, role_code,
+            business_background, responsibilities, sdlc_id, identity_json,
+            reviewer_id, review_comment, reviewed_at, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{agentId}, #{versionNo}, #{status}, #{roleName}, #{roleCode},
+            #{businessBackground}, #{responsibilities}, #{sdlcId}, #{identityJson},
+            #{reviewerId}, #{reviewComment}, #{reviewedAt}, #{creatorId}, 0, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
+        SELECT * FROM agent_version WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findByAgentAndNo" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
+        SELECT * FROM agent_version WHERE agent_id = #{agentId} AND version_no = #{versionNo} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="listByAgent" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
+        SELECT * FROM agent_version WHERE agent_id = #{agentId} AND is_deleted = 0 ORDER BY version_no DESC
+    </select>
+    <select id="listApprovedByAgent" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
+        SELECT * FROM agent_version WHERE agent_id = #{agentId} AND status = 'APPROVED' AND is_deleted = 0
+        ORDER BY version_no DESC
+    </select>
+    <update id="updateConfig">
+        UPDATE agent_version SET role_name = #{roleName}, role_code = #{roleCode},
+            business_background = #{businessBackground}, responsibilities = #{responsibilities},
+            sdlc_id = #{sdlcId},
+            <if test="identityJson != null">identity_json = #{identityJson},</if>
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateStatus">
+        UPDATE agent_version
+        <set>
+            status = #{status},
+            reviewer_id = #{reviewerId},
+            review_comment = #{reviewComment},
+            identity_json = #{identityJson},
+            <if test="reviewerId != null">reviewed_at = NOW(3),</if>
+            version = version + 1,
+            modifier_id = #{modifierId}
+        </set>
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="listByIds" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
+        SELECT * FROM agent_version
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
+        <foreach collection="ids" item="vid" open="(" separator="," close=")">#{vid}</foreach>
+    </select>
+    <update id="softDeleteByAgent">
+        UPDATE agent_version SET is_deleted = 1, version = version + 1, modifier_id = #{modifierId}
+        WHERE agent_id = #{agentId} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+</mapper>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.sdlc.SdlcDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.sdlc.SdlcDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sdlc (tenant_id, name, description, work_type, status, is_default,
+            entry_step_id, creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{name}, #{description}, #{workType}, #{status}, #{isDefault},
+            #{entryStepId}, #{creatorId}, 0, 0)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
+        SELECT * FROM sdlc WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="listByIds" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
+        SELECT * FROM sdlc
+        WHERE is_deleted = 0 AND id IN
+        <foreach collection="ids" item="sid" open="(" separator="," close=")">#{sid}</foreach>
+    </select>
+    <select id="list" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
+        SELECT * FROM sdlc
+        <where>
+            is_deleted = 0
+            <if test="workType != null">AND work_type = #{workType}</if>
+            <if test="status != null">AND status = #{status}</if>
+        </where>
+        ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <update id="update">
+        UPDATE sdlc SET name = #{name}, description = #{description}, work_type = #{workType},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateStatus">
+        UPDATE sdlc SET status = #{status}, entry_step_id = #{entryStepId},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE sdlc SET is_deleted = 1, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="findDefault" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
+        SELECT * FROM sdlc WHERE work_type = #{workType} AND is_default = 1
+            AND status = 'ENABLED' AND is_deleted = 0 LIMIT 1
+    </select>
+</mapper>

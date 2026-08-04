@@ -1,0 +1,120 @@
+<h2>Status Template Management — Full Page Layout</h2>
+<p class="subtitle">Complete page mockup with template list + node/transition editor</p>
+
+<div class="mockup">
+  <div class="mockup-header">状态模版管理 /status-templates</div>
+  <div class="mockup-body" style="padding:0;font-family:system-ui;font-size:13px;">
+    <!-- Top: Work Type Tabs -->
+    <div style="padding:16px 24px 0;border-bottom:1px solid #f0f0f0;display:flex;gap:0;">
+      <div style="padding:8px 16px;border-bottom:2px solid #1890ff;color:#1890ff;font-weight:500;cursor:pointer;">需求 (REQ)</div>
+      <div style="padding:8px 16px;color:#666;cursor:pointer;">任务 (TASK)</div>
+      <div style="padding:8px 16px;color:#666;cursor:pointer;">缺陷 (BUG)</div>
+      <div style="margin-left:auto;padding:8px 0;">
+        <button style="padding:4px 12px;background:#1890ff;color:white;border:none;border-radius:4px;font-size:12px;cursor:pointer;">+ 新建模版</button>
+      </div>
+    </div>
+
+    <!-- Template selector (if multiple templates per type) -->
+    <div style="padding:12px 24px;background:#fafafa;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;gap:12px;">
+      <span style="font-size:12px;color:#999;">当前模版:</span>
+      <span style="font-weight:500;">默认需求模版</span>
+      <span style="background:#e6f7ff;padding:2px 8px;border-radius:4px;font-size:11px;color:#1890ff;">默认</span>
+      <span style="margin-left:auto;font-size:12px;color:#1890ff;cursor:pointer;">切换模版 ▼</span>
+    </div>
+
+    <!-- Main content: two sections -->
+    <div style="padding:20px 24px;">
+      <!-- Section 1: Status Nodes -->
+      <div style="margin-bottom:24px;">
+        <div style="display:flex;align-items:center;margin-bottom:12px;">
+          <span style="font-weight:600;font-size:14px;">状态节点</span>
+          <span style="margin-left:8px;font-size:11px;color:#999;">定义工单的所有可能状态</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+          <!-- INIT category -->
+          <div style="display:flex;align-items:center;gap:4px;padding:6px 12px;background:#e6f7ff;border:1px solid #91d5ff;border-radius:6px;cursor:pointer;" title="category: INIT (初始态)">
+            <span style="width:8px;height:8px;border-radius:50%;background:#1890ff;display:inline-block;"></span>
+            <span style="font-size:12px;font-weight:500;">new</span>
+            <span style="font-size:10px;color:#999;margin-left:4px;">新建</span>
+            <span style="font-size:10px;color:#1890ff;margin-left:4px;cursor:pointer;">✎</span>
+          </div>
+          <!-- IN_PROGRESS category -->
+          <div style="display:flex;align-items:center;gap:4px;padding:6px 12px;background:#fff7e6;border:1px solid #ffd591;border-radius:6px;cursor:pointer;" title="category: IN_PROGRESS">
+            <span style="width:8px;height:8px;border-radius:50%;background:#fa8c16;display:inline-block;"></span>
+            <span style="font-size:12px;font-weight:500;">developing</span>
+            <span style="font-size:10px;color:#999;margin-left:4px;">开发中</span>
+            <span style="font-size:10px;color:#1890ff;margin-left:4px;cursor:pointer;">✎</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;padding:6px 12px;background:#fff7e6;border:1px solid #ffd591;border-radius:6px;cursor:pointer;" title="category: IN_PROGRESS">
+            <span style="width:8px;height:8px;border-radius:50%;background:#fa8c16;display:inline-block;"></span>
+            <span style="font-size:12px;font-weight:500;">verifying</span>
+            <span style="font-size:10px;color:#999;margin-left:4px;">验证中</span>
+            <span style="font-size:10px;color:#1890ff;margin-left:4px;cursor:pointer;">✎</span>
+          </div>
+          <!-- DONE category -->
+          <div style="display:flex;align-items:center;gap:4px;padding:6px 12px;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;cursor:pointer;" title="category: DONE (终态)">
+            <span style="width:8px;height:8px;border-radius:50%;background:#52c41a;display:inline-block;"></span>
+            <span style="font-size:12px;font-weight:500;">released</span>
+            <span style="font-size:10px;color:#999;margin-left:4px;">已发布</span>
+            <span style="font-size:10px;color:#1890ff;margin-left:4px;cursor:pointer;">✎</span>
+          </div>
+          <!-- CANCELED category -->
+          <div style="display:flex;align-items:center;gap:4px;padding:6px 12px;background:#fff1f0;border:1px solid #ffa39e;border-radius:6px;cursor:pointer;" title="category: CANCELED (终态)">
+            <span style="width:8px;height:8px;border-radius:50%;background:#f5222d;display:inline-block;"></span>
+            <span style="font-size:12px;font-weight:500;">canceled</span>
+            <span style="font-size:10px;color:#999;margin-left:4px;">已取消</span>
+            <span style="font-size:10px;color:#1890ff;margin-left:4px;cursor:pointer;">✎</span>
+          </div>
+          <!-- Add button -->
+          <div style="display:flex;align-items:center;gap:4px;padding:6px 12px;border:1px dashed #d9d9d9;border-radius:6px;cursor:pointer;color:#999;">
+            <span style="font-size:12px;">+ 添加节点</span>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:#999;">
+          图例: <span style="color:#1890ff;">●</span> 初始态 &nbsp; <span style="color:#fa8c16;">●</span> 进行中 &nbsp; <span style="color:#52c41a;">●</span> 完成态 &nbsp; <span style="color:#f5222d;">●</span> 取消态
+        </div>
+      </div>
+
+      <!-- Section 2: Suggested Transitions (Quick Actions) -->
+      <div>
+        <div style="display:flex;align-items:center;margin-bottom:12px;">
+          <span style="font-weight:600;font-size:14px;">推荐流转 (快捷操作)</span>
+          <span style="margin-left:8px;font-size:11px;color:#999;">定义工单页面的快捷状态变更按钮，不强制约束</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fafafa;border-radius:6px;border:1px solid #f0f0f0;">
+            <span style="padding:3px 8px;background:#e6f7ff;border:1px solid #91d5ff;border-radius:4px;font-size:11px;">new</span>
+            <span style="color:#999;">→</span>
+            <span style="padding:3px 8px;background:#fff7e6;border:1px solid #ffd591;border-radius:4px;font-size:11px;">developing</span>
+            <span style="margin-left:12px;font-size:12px;color:#333;">开始开发</span>
+            <span style="margin-left:auto;font-size:11px;color:#999;cursor:pointer;">编辑</span>
+            <span style="font-size:11px;color:#ff4d4f;cursor:pointer;">删除</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fafafa;border-radius:6px;border:1px solid #f0f0f0;">
+            <span style="padding:3px 8px;background:#fff7e6;border:1px solid #ffd591;border-radius:4px;font-size:11px;">developing</span>
+            <span style="color:#999;">→</span>
+            <span style="padding:3px 8px;background:#fff7e6;border:1px solid #ffd591;border-radius:4px;font-size:11px;">verifying</span>
+            <span style="margin-left:12px;font-size:12px;color:#333;">提交验证</span>
+            <span style="margin-left:auto;font-size:11px;color:#999;cursor:pointer;">编辑</span>
+            <span style="font-size:11px;color:#ff4d4f;cursor:pointer;">删除</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:#fafafa;border-radius:6px;border:1px solid #f0f0f0;">
+            <span style="padding:3px 8px;background:#fff7e6;border:1px solid #ffd591;border-radius:4px;font-size:11px;">verifying</span>
+            <span style="color:#999;">→</span>
+            <span style="padding:3px 8px;background:#f6ffed;border:1px solid #b7eb8f;border-radius:4px;font-size:11px;">released</span>
+            <span style="margin-left:12px;font-size:12px;color:#333;">发布上线</span>
+            <span style="margin-left:auto;font-size:11px;color:#999;cursor:pointer;">编辑</span>
+            <span style="font-size:11px;color:#ff4d4f;cursor:pointer;">删除</span>
+          </div>
+          <!-- Add transition -->
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px dashed #d9d9d9;border-radius:6px;cursor:pointer;color:#999;">
+            <span style="font-size:12px;">+ 添加推荐流转</span>
+          </div>
+        </div>
+        <div style="margin-top:10px;padding:8px 12px;background:#fffbe6;border:1px solid #ffe58f;border-radius:4px;font-size:11px;color:#ad6800;">
+          💡 提示：推荐流转仅定义工单页面的快捷按钮。用户始终可以手动将工单切换到任意状态。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,47 @@
+server:
+  port: 7001
+  tomcat:
+    threads:
+      min-spare: 1
+      max: 10
+      stuck-detected:
+        threshold: 100
+        interruptThreadThreshold: 600
+    accept-count: 100
+    max-connections: 200
+
+application:
+  env: local
+
+spring:
+  mvc:
+    async:
+      request-timeout: 180000
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 200MB
+  datasource:
+    username: ${SPRING_DATASOURCE_USERNAME:autowonder}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://127.0.0.1:3306/autowonder?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      connection-timeout: 3000
+      idle-timeout: 10000
+      maximum-pool-size: 30
+      minimum-idle: 10
+  redis-meta:
+    host: ${REDIS_HOST:127.0.0.1}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: ${REDIS_DATABASE:0}
+    connectTimeoutMs: ${REDIS_CONNECT_TIMEOUT_MS:1000}
+    socketTimeoutMs: ${REDIS_SOCKET_TIMEOUT_MS:1000}
+    poolMaxTotal: ${REDIS_POOL_MAX_TOTAL:100}
+
+autowonder:
+  ai:
+    anthropic-auth-token: ${ANTHROPIC_AUTH_TOKEN:}
+    anthropic-base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+    anthropic-model: ${ANTHROPIC_MODEL:claude-sonnet-4-20250514}

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDao">
+
+    <resultMap id="BaseResultMap" type="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="app_key" property="appKey"/>
+        <result column="credential_ref" property="credentialRef"/>
+        <result column="robot_code" property="robotCode"/>
+        <result column="agent_id" property="agentId"/>
+        <result column="transport_mode" property="transportMode"/>
+        <result column="callback_token" property="callbackToken"/>
+        <result column="base_url" property="baseUrl"/>
+        <result column="region_id" property="regionId"/>
+        <result column="stream_env" property="streamEnv"/>
+        <result column="last_success_at" property="lastSuccessAt"/>
+        <result column="last_error" property="lastError"/>
+        <result column="status" property="status"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+        <result column="is_deleted" property="isDeleted"/>
+        <result column="version" property="version"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, tenant_id, app_key, credential_ref, robot_code, agent_id, transport_mode,
+        callback_token, base_url, region_id, stream_env, last_success_at, last_error, status,
+        gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO dingtalk_robot_binding
+        (tenant_id, app_key, credential_ref, robot_code, agent_id, transport_mode,
+         callback_token, base_url, region_id, stream_env, status, creator_id, modifier_id, is_deleted, version)
+        VALUES
+        (#{tenantId}, #{appKey}, #{credentialRef}, #{robotCode}, #{agentId}, #{transportMode},
+         #{callbackToken}, #{baseUrl}, #{regionId}, #{streamEnv}, #{status}, #{creatorId}, #{modifierId}, 0, 0)
+    </insert>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByRobotCode" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE tenant_id = #{tenantId} AND robot_code = #{robotCode} AND is_deleted = 0
+    </select>
+
+    <select id="findByRobotCodeGlobal" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE robot_code = #{robotCode} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByTenant" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        ORDER BY id DESC
+    </select>
+
+    <select id="listEnabledByTransportMode" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM dingtalk_robot_binding
+        WHERE transport_mode = #{transportMode} AND status = 'ENABLED' AND is_deleted = 0
+        ORDER BY id DESC
+    </select>
+
+    <update id="update" parameterType="com.aliyun.autowonder.integration.dingtalk.DingtalkRobotBindingDO">
+        UPDATE dingtalk_robot_binding
+        SET app_key = #{appKey}, credential_ref = #{credentialRef}, robot_code = #{robotCode},
+            agent_id = #{agentId}, transport_mode = #{transportMode}, callback_token = #{callbackToken},
+            base_url = #{baseUrl}, region_id = #{regionId}, stream_env = #{streamEnv}, status = #{status},
+            modifier_id = #{modifierId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="updateHealth">
+        UPDATE dingtalk_robot_binding
+        SET last_success_at = #{lastSuccessAt}, last_error = #{lastError}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM dingtalk_robot_binding
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </delete>
+
+</mapper>
