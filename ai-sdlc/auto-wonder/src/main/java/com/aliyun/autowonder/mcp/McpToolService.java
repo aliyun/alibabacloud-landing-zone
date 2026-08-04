@@ -24,6 +24,8 @@ import com.aliyun.autowonder.org.OrgService;
 import com.aliyun.autowonder.org.dto.OrgVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.CreateRelationRequest;
+import com.aliyun.autowonder.repo.dto.CreateRepoRequest;
+import com.aliyun.autowonder.repo.dto.UpdateRepoRequest;
 import com.aliyun.autowonder.sdlc.SdlcService;
 import com.aliyun.autowonder.sdlc.dto.CreateSdlcRequest;
 import com.aliyun.autowonder.sdlc.dto.CreateStepRequest;
@@ -120,6 +122,9 @@ public class McpToolService {
     private static final String LIST_REPO_RELATIONS = "autowonder.list_repo_relations";
     private static final String CREATE_REPO_RELATION = "autowonder.create_repo_relation";
     private static final String DELETE_REPO_RELATION = "autowonder.delete_repo_relation";
+    private static final String CREATE_REPO = "autowonder.create_repo";
+    private static final String UPDATE_REPO = "autowonder.update_repo";
+    private static final String DELETE_REPO = "autowonder.delete_repo";
     private static final String LIST_SQUADS = "autowonder.list_squads";
     private static final String GET_SQUAD = "autowonder.get_squad";
     private static final String ADD_AGENT_TO_SQUAD = "autowonder.add_agent_to_squad";
@@ -247,6 +252,12 @@ public class McpToolService {
                     Map.entry(CREATE_REPO_RELATION,
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_REPO_RELATION,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(CREATE_REPO,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(UPDATE_REPO,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(DELETE_REPO,
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SQUADS,
                             orgTool(OrgAccessLevel.READ_ONLY)),
@@ -569,6 +580,21 @@ public class McpToolService {
                                 prop("description", "string", "Optional human-readable explanation."))),
                 tool(DELETE_REPO_RELATION, "Delete one relation from the AutoWonder Repo Map.",
                         schema(required("id"), prop("id", "integer", "Required. Repo relation id."))),
+                tool(CREATE_REPO, "Create a new repository in AutoWonder. The repository will be registered under the specified organization.",
+                        schema(required("name", "url"),
+                                prop("name", "string", "Required. Repository name."),
+                                prop("url", "string", "Required. Git repository URL (e.g. git@github.com:group/project.git)."),
+                                prop("defaultBranch", "string", "Optional. Default branch name."),
+                                prop("description", "string", "Optional. Repository description."))),
+                tool(UPDATE_REPO, "Update an existing repository registered in AutoWonder.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Repository id."),
+                                prop("name", "string", "Optional. New repository name."),
+                                prop("url", "string", "Optional. New Git repository URL."),
+                                prop("defaultBranch", "string", "Optional. New default branch name."),
+                                prop("description", "string", "Optional. New repository description."))),
+                tool(DELETE_REPO, "Delete a repository from AutoWonder. The repository must not have any associated agent permissions.",
+                        schema(required("id"), prop("id", "integer", "Required. Repository id."))),
                 tool(LIST_SQUADS, "List squads in the given organization.",
                         schema(prop("page", "integer", "Optional. Page number, 1-based; defaults to 1."),
                                 prop("size", "integer", "Optional. Page size; defaults to 20."))),
@@ -992,6 +1018,27 @@ public class McpToolService {
                 repoService.deleteRelation(requiredLong(safeArgs, "id"), context.orgId());
                 yield Map.of("deleted", true);
             }
+            case CREATE_REPO -> {
+                CreateRepoRequest req = new CreateRepoRequest();
+                req.setName(requiredString(safeArgs, "name"));
+                req.setUrl(requiredString(safeArgs, "url"));
+                req.setDefaultBranch(str(safeArgs, "defaultBranch"));
+                req.setDescription(str(safeArgs, "description"));
+                yield repoService.create(req, context.orgId(), context.userId());
+            }
+            case UPDATE_REPO -> {
+                long repoId = requiredLong(safeArgs, "id");
+                UpdateRepoRequest req = new UpdateRepoRequest();
+                req.setName(str(safeArgs, "name"));
+                req.setUrl(str(safeArgs, "url"));
+                req.setDefaultBranch(str(safeArgs, "defaultBranch"));
+                req.setDescription(str(safeArgs, "description"));
+                yield repoService.update(repoId, req, context.orgId(), context.userId());
+            }
+            case DELETE_REPO -> {
+                repoService.delete(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                yield Map.of("deleted", true);
+            }
             case LIST_SQUADS -> squadService.list(integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             case GET_SQUAD -> squadService.get(requiredLong(safeArgs, "id"));
             case ADD_AGENT_TO_SQUAD -> {
@@ -1247,6 +1294,8 @@ public class McpToolService {
             case SEARCH_MEMORIES -> listOutputSchema(memorySchema());
             case DELETE_MEMORY -> schema(prop("deleted", "boolean", "Whether the memory was deleted."));
             case GET_REPO -> repoSchema();
+            case CREATE_REPO, UPDATE_REPO -> repoSchema();
+            case DELETE_REPO -> schema(prop("deleted", "boolean", "Whether the repository was deleted."));
             case LIST_REPOS -> listOutputSchema(repoSchema());
             case LIST_REPO_RELATIONS -> listOutputSchema(repoRelationSchema());
             case CREATE_REPO_RELATION -> repoRelationSchema();

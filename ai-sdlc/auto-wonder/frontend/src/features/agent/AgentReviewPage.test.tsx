@@ -75,9 +75,7 @@ describe('AgentReviewPage', () => {
   });
 
   it('surfaces backend error message and refetches list when approve fails', async () => {
-    const errorSpy = vi.spyOn(message as any, 'error').mockImplementation(
-      () => undefined as any,
-    );
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
     let listHits = 0;
     server.use(
       http.get('/api/agents', () => {
@@ -110,7 +108,7 @@ describe('AgentReviewPage', () => {
     await waitFor(() => {
       expect(errorSpy).toHaveBeenCalled();
     });
-    const calls = (errorSpy.mock.calls as any[][]).map((c) => String(c[0]));
+    const calls = errorSpy.mock.calls.map(([content]) => String(content));
     expect(calls.some((text) => text.includes('当前版本未处于待审核状态'))).toBe(true);
 
     await waitFor(() => {

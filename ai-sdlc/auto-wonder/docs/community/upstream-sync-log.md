@@ -8,11 +8,44 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `ce1764e957b287fb64dba867c1e9703d6c914c8e`
-- Community merge commit: `3af87a3ab4f4039bb4f646b49848c624d75bfcee`
+- Synchronized `origin/master`: `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a`
+- Community merge commit: `44544f27d8a05706fbd19631790f97a82e44c0f5`
 - Synchronized at: 2026-08-05 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-05: `ce1764e9` to `41aedc7f`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `ce1764e957b287fb64dba867c1e9703d6c914c8e` |
+| Community before merge | `86bd90d01a94469c03a9df717b26921836f70984` |
+| Merged `origin/master` | `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a` |
+| Resulting merge commit | `44544f27d8a05706fbd19631790f97a82e44c0f5` |
+
+Scope: five upstream commits. Personal DingTalk identity management no longer
+requires an organization context, and MCP repository management now includes
+create, update, and delete tools with coverage.
+
+The merge had no textual conflicts. Automatic overlaps in organization-access
+annotation coverage and auth-filter tests were reviewed; master behavior and
+the existing community exemptions were both retained. A pre-existing unsafe
+test spy in `AgentReviewPage.test.tsx` was corrected in `20d5c220` so the full
+lint gate remains clean. No product decision was required.
+
+Verification completed after the merge:
+
+- Backend: 1,732 tests passed; production JAR built and the frontend production
+  build transformed 4,759 modules.
+- Frontend: 83 test files and 508 tests passed; lint completed with zero errors
+  and two existing hook warnings.
+- Deployment Skill: 48 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  community executor UI remained Qoder CLI-only.
+- The first standalone frontend invocation inherited an arm64 child `node`
+  against Maven's x64 Rollup package and was discarded; rerunning with Maven's
+  Node directory first in `PATH` passed.
 
 ### 2026-08-05: `75bd9303` to `ce1764e9`
 

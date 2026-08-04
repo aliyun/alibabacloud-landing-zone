@@ -22,6 +22,8 @@ import com.aliyun.autowonder.org.OrgService;
 import com.aliyun.autowonder.org.dto.OrgVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.CreateRelationRequest;
+import com.aliyun.autowonder.repo.dto.CreateRepoRequest;
+import com.aliyun.autowonder.repo.dto.UpdateRepoRequest;
 import com.aliyun.autowonder.repo.dto.RepoRelationVO;
 import com.aliyun.autowonder.repo.dto.RepoVO;
 import com.aliyun.autowonder.sdlc.SdlcService;
@@ -141,7 +143,7 @@ class McpToolServiceTest {
                 service.listTools(scopedPrincipal(OrgAccessLevel.ADMIN)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet()));
-        assertEquals(62, fullCatalog.size());
+        assertEquals(65, fullCatalog.size());
     }
 
     @Test
@@ -189,6 +191,89 @@ class McpToolServiceTest {
 
         verify(repoService).get(10L, ORG_ID);
         verify(repoService).deleteRelation(91L, ORG_ID);
+    }
+
+    @Test
+    void createRepoDelegatesToRepoService() {
+        RepoVO created = new RepoVO();
+        created.setId(20L);
+        created.setName("new-repo");
+        when(repoService.create(any(CreateRepoRequest.class), eq(ORG_ID), eq(USER_ID)))
+                .thenReturn(created);
+
+        Object result = call(principal, "autowonder.create_repo",
+                Map.of("name", "new-repo", "url", "git@github.com:group/new-repo.git",
+                        "defaultBranch", "main", "description", "A new repo"));
+
+        assertSame(created, result);
+        verify(repoService).create(argThat(req ->
+                "new-repo".equals(req.getName())
+                        && "git@github.com:group/new-repo.git".equals(req.getUrl())
+                        && "main".equals(req.getDefaultBranch())
+                        && "A new repo".equals(req.getDescription())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void createRepoSchemaRequiresNameAndUrl() {
+        Map<String, Object> schema = schemaFor("autowonder.create_repo");
+        assertEquals(List.of("orgId", "name", "url"), schema.get("required"));
+        assertTrue(properties(schema).keySet().containsAll(
+                List.of("name", "url", "defaultBranch", "description")));
+    }
+
+    @Test
+    void updateRepoDelegatesToRepoService() {
+        RepoVO updated = new RepoVO();
+        updated.setId(20L);
+        updated.setName("renamed-repo");
+        when(repoService.update(eq(20L), any(UpdateRepoRequest.class), eq(ORG_ID), eq(USER_ID)))
+                .thenReturn(updated);
+
+        Object result = call(principal, "autowonder.update_repo",
+                Map.of("id", 20L, "name", "renamed-repo", "description", "Updated description"));
+
+        assertSame(updated, result);
+        verify(repoService).update(eq(20L), argThat(req ->
+                "renamed-repo".equals(req.getName())
+                        && "Updated description".equals(req.getDescription())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void updateRepoSchemaRequiresIdAndMakesOtherFieldsOptional() {
+        Map<String, Object> schema = schemaFor("autowonder.update_repo");
+        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertTrue(properties(schema).keySet().containsAll(
+                List.of("id", "name", "url", "defaultBranch", "description")));
+    }
+
+    @Test
+    void deleteRepoDelegatesToRepoService() {
+        Object result = call(principal, "autowonder.delete_repo",
+                Map.of("id", 20L));
+
+        assertEquals(Map.of("deleted", true), result);
+        verify(repoService).delete(20L, ORG_ID, USER_ID);
+    }
+
+    @Test
+    void deleteRepoSchemaRequiresOnlyId() {
+        Map<String, Object> schema = schemaFor("autowonder.delete_repo");
+        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertTrue(properties(schema).containsKey("id"));
+    }
+
+    @Test
+    void repoCrudOutputSchemasReturnRepoOrDeletedFlag() {
+        Map<String, Object> createOutput = properties(outputSchemaFor("autowonder.create_repo"));
+        assertTrue(createOutput.keySet().containsAll(List.of("id", "name", "url")));
+
+        Map<String, Object> updateOutput = properties(outputSchemaFor("autowonder.update_repo"));
+        assertTrue(updateOutput.keySet().containsAll(List.of("id", "name", "url")));
+
+        Map<String, Object> deleteOutput = properties(outputSchemaFor("autowonder.delete_repo"));
+        assertTrue(deleteOutput.containsKey("deleted"));
     }
 
     @Test
