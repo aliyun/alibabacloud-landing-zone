@@ -26,7 +26,6 @@ invoke mutation scripts.
 | --- | --- |
 | Source package | JDK 21 and Maven 3.9.9; Maven downloads the pinned Node.js and npm versions automatically |
 | Frontend only | Node.js 22.22.2 and npm 10.9.7 |
-| Container build | Docker with BuildKit; the Dockerfile pins Maven 3.9.9, JDK 21, and the Java 21 runtime |
 | Deployment | Bash, Git, jq, Terraform, Alibaba Cloud CLI, ossutil, OpenSSL, and curl on the control host; Linux x86_64 with Java 21 on ECS |
 
 ## Initial Questionnaire

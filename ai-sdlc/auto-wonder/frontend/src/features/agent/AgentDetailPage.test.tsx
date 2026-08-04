@@ -80,6 +80,22 @@ describe('AgentDetailPage', () => {
     expect(screen.getByText('推动工单流转、任务指派和进度汇报，不直接开发代码。')).toBeInTheDocument();
   });
 
+  it('guides draft agents to edit configuration and submit for review', async () => {
+    mockAgent({ status: 'DRAFT' });
+    renderPage();
+
+    expect(await screen.findByText('数字员工尚未提交审核')).toBeInTheDocument();
+    expect(screen.getByText('请先编辑配置，完成 SOUL.md 和 AGENT.md 后提交审核。')).toBeInTheDocument();
+  });
+
+  it('does not show draft guidance for a non-draft agent', async () => {
+    mockAgent({ status: 'ONLINE' });
+    renderPage();
+
+    await screen.findByText('Alpha');
+    expect(screen.queryByText('数字员工尚未提交审核')).not.toBeInTheDocument();
+  });
+
   it('computes stat cards from workitems and memories', async () => {
     mockAgent();
     renderPage();

@@ -164,6 +164,16 @@ export function AgentDetailPage() {
         />
       )}
 
+      {agent.status === 'DRAFT' && (
+        <Alert
+          showIcon
+          type="info"
+          message="数字员工尚未提交审核"
+          description="请先编辑配置，完成 SOUL.md 和 AGENT.md 后提交审核。"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       <Card
         style={{ marginBottom: 16, borderTop: '3px solid #f97316' }}
         extra={

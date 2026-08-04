@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.agent;
 
+import com.aliyun.autowonder.access.OrgAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.context.AutoWonderContext;
 
 import com.aliyun.autowonder.agent.dto.AgentVersionVO;
 import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
@@ -263,7 +265,72 @@ class AgentVersionLifecycleTest {
     }
 
     @Test
-    void approve_rejects_non_owner_creator_self_approval() {
+    void approve_allows_non_owner_admin_to_approve_own_version() {
+        AgentDO agent = new AgentDO();
+        agent.setId(10L);
+        agent.setTenantId(100L);
+        agent.setName("AdminBot");
+        agent.setStatus("PENDING_REVIEW");
+        agent.setEditingVersionId(20L);
+        agent.setLatestVersionNo(1);
+        agent.setVersion(0);
+        AgentVersionDO pending = new AgentVersionDO();
+        pending.setId(20L);
+        pending.setTenantId(100L);
+        pending.setAgentId(10L);
+        pending.setVersionNo(1);
+        pending.setStatus("PENDING_REVIEW");
+        pending.setCreatorId(7L);
+        pending.setRoleName("coder");
+        pending.setVersion(0);
+        OrgDO org = new OrgDO();
+        org.setId(100L);
+        org.setOwnerId(9L);
+        when(agentDao.findById(10L)).thenReturn(agent);
+        when(versionDao.findById(20L)).thenReturn(pending);
+        when(orgDao.findById(100L)).thenReturn(org);
+        when(versionDao.updateStatus(eq(20L), eq(100L), eq("APPROVED"),
+                eq(7L), eq("admin approve"), anyString(), eq(0), eq(7L))).thenReturn(1);
+        when(agentDao.updateStatus(eq(10L), eq(100L), eq("ONLINE"),
+                eq(20L), isNull(), eq(1), eq(0), eq(7L))).thenReturn(1);
+        AgentDO onlineAgent = new AgentDO();
+        onlineAgent.setId(10L);
+        onlineAgent.setName("AdminBot");
+        onlineAgent.setStatus("ONLINE");
+        onlineAgent.setOnlineVersionId(20L);
+        onlineAgent.setLatestVersionNo(1);
+        when(agentDao.findById(10L)).thenReturn(agent, onlineAgent);
+
+        AutoWonderContext context = AutoWonderContext.get();
+        context.setUserId(7L);
+        context.setCurrentOrgId(100L);
+        context.setOrgAccessLevel(OrgAccessLevel.ADMIN);
+        try {
+            AgentVO vo = service.approve(10L, 100L, 7L, "admin approve");
+
+            assertEquals("ONLINE", vo.getStatus());
+        } finally {
+            AutoWonderContext.destroy();
+        }
+    }
+
+    @Test
+    void approve_rejects_read_write_creator_self_approval() {
+        assertOwnVersionApprovalDenied(100L, 7L, OrgAccessLevel.READ_WRITE);
+    }
+
+    @Test
+    void approve_rejects_admin_context_for_different_user() {
+        assertOwnVersionApprovalDenied(100L, 8L, OrgAccessLevel.ADMIN);
+    }
+
+    @Test
+    void approve_rejects_admin_context_for_different_org() {
+        assertOwnVersionApprovalDenied(200L, 7L, OrgAccessLevel.ADMIN);
+    }
+
+    private void assertOwnVersionApprovalDenied(
+            long contextOrgId, long contextUserId, OrgAccessLevel contextAccessLevel) {
         AgentDO agent = new AgentDO();
         agent.setId(10L);
         agent.setTenantId(100L);
@@ -281,9 +348,20 @@ class AgentVersionLifecycleTest {
         when(versionDao.findById(20L)).thenReturn(pending);
         when(orgDao.findById(100L)).thenReturn(org);
 
-        BizException ex = assertThrows(BizException.class, () -> service.approve(10L, 100L, 7L, "self approve"));
+        AutoWonderContext context = AutoWonderContext.get();
+        context.setUserId(contextUserId);
+        context.setCurrentOrgId(contextOrgId);
+        context.setOrgAccessLevel(contextAccessLevel);
+        try {
+            BizException ex = assertThrows(BizException.class,
+                    () -> service.approve(10L, 100L, 7L, "self approve"));
 
-        assertEquals("10403", ex.getCode());
+            assertEquals("10403", ex.getCode());
+            verify(versionDao, never()).updateStatus(anyLong(), anyLong(), eq("APPROVED"),
+                    anyLong(), any(), any(), anyInt(), anyLong());
+        } finally {
+            AutoWonderContext.destroy();
+        }
     }
 
     @Test

@@ -22,6 +22,7 @@ class PlatformBrandingServiceTest {
         assertEquals("AutoWonder", config.getPlatformName());
         assertEquals("#f97316", config.getPrimaryColor());
         assertEquals("https://daily.auto-wonder.example.com/api/mcp", config.getMcpBaseUrl());
+        assertEquals("0.2.114", config.getRecommendedRuntimeVersion());
         assertFalse(config.isCanManage());
     }
 
@@ -31,7 +32,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
 
         assertThrows(IllegalStateException.class,
-                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, ""));
+                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.114"));
     }
 
     @Test
@@ -41,10 +42,10 @@ class PlatformBrandingServiceTest {
 
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.114"));
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.114"));
     }
 
     @Test
@@ -123,7 +124,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
         props.setBucket("community-test");
         return new PlatformBrandingService(
-                dao, storage, props, "https://daily.auto-wonder.example.com");
+                dao, storage, props, "https://daily.auto-wonder.example.com", "0.2.114");
     }
 
     private static PlatformBrandingDO row(String name, String color, String domain) {

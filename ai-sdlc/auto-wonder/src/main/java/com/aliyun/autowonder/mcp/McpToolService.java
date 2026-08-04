@@ -453,8 +453,9 @@ public class McpToolService {
                         schema(required("id"), prop("id", "integer"))),
                 tool(CREATE_AGENT, "Create an AutoWonder digital worker.",
                         schema(required("name"), prop("name", "string"), prop("roleName", "string"),
-                                prop("roleCode", "string"), prop("businessBackground", "string"),
-                                prop("responsibilities", "string"))),
+                                prop("roleCode", "string"),
+                                prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
+                                prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."))),
                 tool(LIST_AGENTS, "List AutoWonder digital workers.",
                         schema(prop("status", "string"), prop("page", "integer"), prop("size", "integer"))),
                 tool(GET_AGENT, "Get one AutoWonder digital worker by id.",
@@ -464,8 +465,8 @@ public class McpToolService {
                 tool(UPDATE_AGENT, "Update an AutoWonder digital worker.",
                         schema(required("id"), prop("id", "integer"), prop("name", "string"),
                                 prop("roleCode", "string"), prop("roleName", "string"),
-                                prop("businessBackground", "string"),
-                                prop("responsibilities", "string"))),
+                                prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
+                                prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."))),
                 tool(SUBMIT_AGENT_FOR_REVIEW, "Submit an AutoWonder digital worker's editing version for review. "
                         + "This transitions the draft version to PENDING_REVIEW status, triggering the review process.",
                         schema(required("id"),
@@ -869,7 +870,7 @@ public class McpToolService {
                 yield Map.of("disabled", true);
             }
             case CREATE_AGENT -> {
-                yield agentService.create(toBean(safeArgs, CreateAgentRequest.class),
+                yield agentService.create(toBean(normalizeAgentIdentityArgs(safeArgs), CreateAgentRequest.class),
                         context.orgId(), context.userId());
             }
             case LIST_AGENTS -> {
@@ -884,7 +885,7 @@ public class McpToolService {
                 yield Map.of("deleted", true);
             }
             case UPDATE_AGENT -> {
-                UpdateAgentRequest updateReq = toBean(safeArgs, UpdateAgentRequest.class);
+                UpdateAgentRequest updateReq = toBean(normalizeAgentIdentityArgs(safeArgs), UpdateAgentRequest.class);
                 updateReq.setId(requiredLong(safeArgs, "id"));
                 yield agentService.updateAgent(updateReq, context.orgId(), context.userId());
             }
@@ -1666,6 +1667,19 @@ public class McpToolService {
 
     private <T> T toBean(Map<String, Object> args, Class<T> type) {
         return JSON.parseObject(JSON.toJSONString(args), type);
+    }
+
+    private Map<String, Object> normalizeAgentIdentityArgs(Map<String, Object> args) {
+        Map<String, Object> normalized = new LinkedHashMap<>(args);
+        if (args.containsKey("soulMd")) {
+            normalized.put("businessBackground", args.get("soulMd"));
+        }
+        if (args.containsKey("agentMd")) {
+            normalized.put("responsibilities", args.get("agentMd"));
+        }
+        normalized.remove("soulMd");
+        normalized.remove("agentMd");
+        return normalized;
     }
 
     private String str(Map<String, Object> args, String key) {

@@ -36,15 +36,18 @@ public class PlatformBrandingService {
     private final ObjectStorage objectStorage;
     private final String bucket;
     private final String trustedMcpBaseUrl;
+    private final String recommendedRuntimeVersion;
 
     public PlatformBrandingService(PlatformBrandingDao brandingDao,
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
-                                   @Value("${autowonder.public-base-url:}") String publicBaseUrl) {
+                                   @Value("${autowonder.public-base-url:}") String publicBaseUrl,
+                                   @Value("${autowonder.runtime.recommended-version:0.2.114}") String recommendedRuntimeVersion) {
         this.brandingDao = brandingDao;
         this.objectStorage = objectStorage;
         this.bucket = ossProperties.resolveArtifactBucket();
         this.trustedMcpBaseUrl = deriveMcpBaseUrl(publicBaseUrl);
+        this.recommendedRuntimeVersion = requireRuntimeVersion(recommendedRuntimeVersion);
     }
 
     public PlatformBrandingVO publicConfig() {
@@ -131,6 +134,7 @@ public class PlatformBrandingService {
                 safe(current.getPrimaryColor(), DEFAULT_PRIMARY_COLOR),
                 current.getDomain(),
                 trustedMcpBaseUrl,
+                recommendedRuntimeVersion,
                 canManage);
     }
 
@@ -173,6 +177,14 @@ public class PlatformBrandingService {
     private static String deriveMcpBaseUrl(String domain) {
         String base = requirePublicBaseUrl(domain);
         return base + "/api/mcp";
+    }
+
+    private static String requireRuntimeVersion(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        if (!trimmed.matches("^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$")) {
+            throw new IllegalStateException("autowonder.runtime.recommended-version must be a semantic version");
+        }
+        return trimmed;
     }
 
     private static String requirePublicBaseUrl(String value) {

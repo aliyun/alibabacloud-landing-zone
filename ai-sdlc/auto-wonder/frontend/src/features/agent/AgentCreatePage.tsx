@@ -176,14 +176,14 @@ export function AgentCreatePage() {
                   onKeyDown={handleRoleCodeKeyDown}
                 />
               </Form.Item>
-              <Form.Item label="业务背景" name="businessBackground">
+              <Form.Item label="SOUL.md" name="businessBackground">
                 <TextArea
                   ref={businessBackgroundRef}
                   rows={4}
                   placeholder="描述该员工所在的业务背景..."
                 />
               </Form.Item>
-              <Form.Item label="工作职责" name="responsibilities">
+              <Form.Item label="AGENT.md" name="responsibilities">
                 <TextArea rows={4} placeholder="描述该员工的核心职责..." />
               </Form.Item>
             </Form>
