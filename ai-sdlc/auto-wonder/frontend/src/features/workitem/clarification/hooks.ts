@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRealtime } from '@/shared/realtime/useRealtime';
 import * as api from './api';
@@ -56,12 +56,15 @@ export interface StreamedEvent {
 export function useClarificationEvents(
   workitemId: number | string,
   conversationId: number | null,
+  processingTurnId: number | null | undefined,
 ) {
   const queryClient = useQueryClient();
   const [streamedEvents, setStreamedEvents] = useState<StreamedEvent[]>([]);
   const lastEventSeqRef = useRef(0);
   const seenEventsRef = useRef(new Set<string>());
   const invalidationTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const retryTimer1Ref = useRef<ReturnType<typeof setTimeout>>();
+  const retryTimer2Ref = useRef<ReturnType<typeof setTimeout>>();
 
   const channel = conversationId ? `conversation:${conversationId}` : null;
 
@@ -89,12 +92,19 @@ export function useClarificationEvents(
       ]);
 
       if (payload.eventType === 'status' || payload.eventType === 'error') {
+        const queryKey = ['workitem', workitemId, 'clarification-conversation', conversationId];
         clearTimeout(invalidationTimerRef.current);
+        clearTimeout(retryTimer1Ref.current);
+        clearTimeout(retryTimer2Ref.current);
         invalidationTimerRef.current = setTimeout(() => {
-          queryClient.invalidateQueries({
-            queryKey: ['workitem', workitemId, 'clarification-conversation', conversationId],
-          });
-        }, 1000);
+          queryClient.invalidateQueries({ queryKey });
+        }, 1500);
+        retryTimer1Ref.current = setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey });
+        }, 4000);
+        retryTimer2Ref.current = setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey });
+        }, 7000);
       }
     }, [conversationId, workitemId, queryClient]),
   });
@@ -103,10 +113,41 @@ export function useClarificationEvents(
     setStreamedEvents([]);
     lastEventSeqRef.current = 0;
     seenEventsRef.current = new Set();
-    return () => clearTimeout(invalidationTimerRef.current);
+    return () => {
+      clearTimeout(invalidationTimerRef.current);
+      clearTimeout(retryTimer1Ref.current);
+      clearTimeout(retryTimer2Ref.current);
+    };
   }, [conversationId]);
 
-  return { streamedEvents, lastEventSeq: lastEventSeqRef.current };
+  const visibleEvents = useMemo(() => {
+    if (processingTurnId == null) return streamedEvents;
+    return streamedEvents.filter((e) => e.turnId === processingTurnId);
+  }, [streamedEvents, processingTurnId]);
+
+  const streamedText = useMemo(() => {
+    let text = '';
+    for (const ev of visibleEvents) {
+      if (ev.eventType === 'text' && ev.payload?.content) {
+        text += ev.payload.content;
+      }
+    }
+    return text;
+  }, [visibleEvents]);
+
+  const streamedTurnCompleted = useMemo(
+    () => visibleEvents.some(
+      (ev) => ev.eventType === 'status' && ev.payload?.status?.toLowerCase() === 'completed',
+    ),
+    [visibleEvents],
+  );
+
+  return {
+    streamedEvents: visibleEvents,
+    lastEventSeq: lastEventSeqRef.current,
+    streamedText,
+    streamedTurnCompleted,
+  };
 }
 
 export function useClarificationEventsReplay(

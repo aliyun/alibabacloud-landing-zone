@@ -18,7 +18,9 @@ public class AgentVO {
     private Date gmtCreate;
     private String roleName;
     private String roleCode;
+    /** REST compatibility field containing the digital worker's SOUL.md Markdown content. */
     private String businessBackground;
+    /** REST compatibility field containing the digital worker's AGENT.md Markdown content. */
     private String responsibilities;
     private int executorOnlineCount;
     private int executorTotalCount;

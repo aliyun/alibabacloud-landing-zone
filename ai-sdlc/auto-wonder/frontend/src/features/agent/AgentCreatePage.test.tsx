@@ -69,6 +69,15 @@ describe('AgentCreatePage', () => {
     expect(await screen.findByText('Agent Detail')).toBeInTheDocument();
   });
 
+  it('labels identity fields as SOUL.md and AGENT.md', () => {
+    renderPage();
+
+    expect(screen.getByText('SOUL.md')).toBeInTheDocument();
+    expect(screen.getByText('AGENT.md')).toBeInTheDocument();
+    expect(screen.queryByText('业务背景')).not.toBeInTheDocument();
+    expect(screen.queryByText('工作职责')).not.toBeInTheDocument();
+  });
+
   it('does not create from the direct route for a read-only member', async () => {
     const user = userEvent.setup();
     let createCalls = 0;

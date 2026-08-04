@@ -157,10 +157,8 @@ describe('OrgSelectPage', () => {
       await userEvent.click(targetOrg);
     });
 
-    await waitFor(() => {
-      expect(queryClient.getQueriesData({ queryKey: ['workitems'] })).toHaveLength(0);
-    });
-    expect(queryClient.getQueriesData({ queryKey: ['workitem'] })).toHaveLength(0);
+    expect(queryClient.getQueryData(['workitems', { page: 1, size: 20 }])).toBeUndefined();
+    expect(queryClient.getQueryData(['workitem', '101'])).toBeUndefined();
     expect(useAuthStore.getState().currentOrg?.id).toBe(2);
     expect(useAuthStore.getState().accessToken).toBe('org-2-token');
   });

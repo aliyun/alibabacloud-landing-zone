@@ -7,7 +7,7 @@ import { apiClient } from '@/shared/api/client';
 import { useAuthStore } from '@/shared/auth/store';
 import type { OrgInfo, SwitchOrgResponse } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
-import { refreshWorkitemTenantScopedQueries } from '@/features/workitem/queryCache';
+import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 import {
   BRANDING_QUERY_KEY,
   DEFAULT_BRANDING,
@@ -49,7 +49,7 @@ export function OrgSelectPage() {
       const { accessToken, accessLevel } = resp.data;
       setAccessToken(accessToken);
       setCurrentOrg(org, accessLevel);
-      refreshWorkitemTenantScopedQueries(queryClient);
+      await refreshTenantScopedQueries(queryClient);
       navigate('/');
     } catch (e) {
       if (e instanceof ApiError) {

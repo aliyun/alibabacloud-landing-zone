@@ -12,5 +12,6 @@ public class PlatformBrandingVO {
     private String primaryColor;
     private String domain;
     private String mcpBaseUrl;
+    private String recommendedRuntimeVersion;
     private boolean canManage;
 }

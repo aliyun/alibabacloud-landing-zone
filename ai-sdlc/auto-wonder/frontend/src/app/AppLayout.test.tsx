@@ -225,8 +225,9 @@ describe('AppLayout', () => {
     expect(useAuthStore.getState().accessToken).toBe('org-8-token');
     expect(await screen.findByTestId('location-probe')).toHaveTextContent('/workitems/42');
     await waitFor(() => expect(screen.getByTestId('location-probe')).not.toHaveTextContent('orgId=8'));
-    expect(queryClient.getQueriesData({ queryKey: ['workitems'] })).toHaveLength(0);
-    expect(queryClient.getQueriesData({ queryKey: ['workitem'] })).toHaveLength(0);
+    expect(queryClient.getQueryData(['workitems', { page: 1 }])).toBeUndefined();
+    expect(queryClient.getQueryData(['workitem', '42'])).toBeUndefined();
+    expect(queryClient.getQueryData(['workitem', '42', 'unified-timeline'])).toBeUndefined();
   });
 
   it('opens org dropdown menu from the sidebar org chip', async () => {
@@ -321,12 +322,8 @@ describe('AppLayout', () => {
     expect(useAuthStore.getState().accessToken).toBe('org-8-token');
     expect(await screen.findByTestId('location-probe')).toHaveTextContent('/workitems');
     expect(screen.queryByText('组织选择页')).not.toBeInTheDocument();
-    expect(queryClient.getQueriesData({ queryKey: ['workitems'] })).toHaveLength(0);
-
-    await waitFor(() => {
-      const agentState = queryClient.getQueryState(['agents', 1, 10]);
-      expect(agentState?.isInvalidated).toBe(true);
-    });
+    expect(queryClient.getQueryData(['workitems', { page: 1 }])).toBeUndefined();
+    expect(queryClient.getQueryData(['agents', 1, 10])).toBeUndefined();
   });
 
   it('removes the legacy "切换组织" menu item from the user dropdown', async () => {

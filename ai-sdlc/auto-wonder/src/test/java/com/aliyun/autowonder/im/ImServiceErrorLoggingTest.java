@@ -189,7 +189,7 @@ class ImServiceErrorLoggingTest {
         when(branding.publicConfig()).thenReturn(
                 new com.aliyun.autowonder.branding.dto.PlatformBrandingVO(
                         "AutoWonder", "/logo.png", "teal", "#008080",
-                        "https://example.com", "https://example.com/api/mcp", false));
+                        "https://example.com", "https://example.com/api/mcp", "0.2.114", false));
         doThrow(new ImDeliveryException("DINGTALK", false, "authFailed", "req-1",
                 new IllegalStateException(secret + " " + externalUserId)))
                 .when(provider).send(any());

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -9,6 +9,15 @@ import {
   readClarificationPrefill,
   writeClarificationPrefill,
 } from './prefill';
+
+type RealtimeCallback = (event: { type: string; payload: unknown }) => void;
+const realtime = vi.hoisted(() => ({ callback: null as RealtimeCallback | null }));
+
+vi.mock('@/shared/realtime/useRealtime', () => ({
+  useRealtime: (_channel: unknown, opts: { onEvent: RealtimeCallback }) => {
+    realtime.callback = opts.onEvent;
+  },
+}));
 
 function renderPanel(agents: Array<{ agentId: number; agentName: string; status: string }> = []) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -70,8 +79,8 @@ function mockConversationWithTurns(agentId: number = 42) {
           cliSessionRef: null, processingStatus: null, processingTurnId: null,
           lastTurnAt: '2026-01-01T00:00:00', gmtCreate: '2026-01-01T00:00:00',
           turns: [
-            { id: 1, direction: 'INBOUND', content: '你好，我想讨论需求', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00' },
-            { id: 2, direction: 'OUTBOUND', content: '好的，请说说你的想法', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:01' },
+            { id: 1, direction: 'IN', content: '你好，我想讨论需求', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00' },
+            { id: 2, direction: 'OUT', content: '好的，请说说你的想法', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:01' },
           ],
         }],
       }),
@@ -85,8 +94,8 @@ function mockConversationWithTurns(agentId: number = 42) {
           cliSessionRef: null, processingStatus: null, processingTurnId: null,
           lastTurnAt: '2026-01-01T00:00:00', gmtCreate: '2026-01-01T00:00:00',
           turns: [
-            { id: 1, direction: 'INBOUND', content: '你好，我想讨论需求', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00' },
-            { id: 2, direction: 'OUTBOUND', content: '好的，请说说你的想法', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:01' },
+            { id: 1, direction: 'IN', content: '你好，我想讨论需求', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00' },
+            { id: 2, direction: 'OUT', content: '好的，请说说你的想法', status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:01' },
           ],
         },
       }),
@@ -100,6 +109,7 @@ function mockConversationWithTurns(agentId: number = 42) {
 describe('WorkitemClarificationPanel', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    realtime.callback = null;
   });
 
   it('uses delivery agents when progress already provides them', () => {
@@ -225,5 +235,45 @@ describe('WorkitemClarificationPanel', () => {
     expect(aiMsg).not.toBeNull();
     expect(userMsg!.style.backgroundColor).toBe('rgb(230, 247, 255)');
     expect(aiMsg!.style.backgroundColor).toBe('rgb(245, 245, 245)');
+  });
+
+  it('turns completed streamed text into an AI bubble without waiting for the next user reply', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const processingConversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: 'PROCESSING', processingTurnId: 3,
+      lastTurnAt: '2026-01-01T00:00:02', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING', error: null, gmtCreate: '2026-01-01T00:00:02' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [processingConversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: processingConversation }),
+      ),
+    );
+
+    const view = renderPanel([]);
+    await screen.findByText('请给方案');
+    await waitFor(() => expect(realtime.callback).not.toBeNull());
+
+    act(() => {
+      realtime.callback!({
+        type: 'CONVERSATION_TURN_EVENT',
+        payload: { conversationId: 1, turnId: 3, eventSeq: 1, eventType: 'text', payload: { type: 'text', content: '最终方案' } },
+      });
+      realtime.callback!({
+        type: 'CONVERSATION_TURN_EVENT',
+        payload: { conversationId: 1, turnId: 3, eventSeq: 2, eventType: 'status', payload: { type: 'status', status: 'completed' } },
+      });
+    });
+
+    expect(screen.getByText('最终方案')).toBeInTheDocument();
+    expect(view.container.querySelector('.ant-spin')).toBeNull();
   });
 });

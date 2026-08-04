@@ -36,6 +36,8 @@ oss:
 
 autowonder:
   public-base-url: ${AUTOWONDER_PUBLIC_BASE_URL:http://localhost:7001}
+  runtime:
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.114}
   security:
     secret-crypto:
       master-key: ${AUTOWONDER_SECRET_MASTER_KEY:}

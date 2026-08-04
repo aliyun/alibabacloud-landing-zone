@@ -173,4 +173,126 @@ describe('MemoryListPage', () => {
     expect(screen.queryByText('确认删除此记忆？')).not.toBeInTheDocument();
     errorSpy.mockRestore();
   });
+
+  it('enters inline review mode on the clicked card without navigating', async () => {
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [
+          {
+            id: 1, scope: 'ORG', type: 'FACT', status: 'PENDING',
+            title: '待审核记忆', contentMd: '完整审核内容展示',
+            sourceRef: null, gmtCreate: '2026-07-01',
+          },
+          {
+            id: 2, scope: 'ORG', type: 'RULE', status: 'ADOPTED',
+            title: '已采纳记忆', contentMd: '普通卡片',
+            sourceRef: null, gmtCreate: '2026-07-02',
+          },
+        ],
+      })),
+    );
+    renderPage();
+    await screen.findByText('待审核记忆');
+
+    expect(screen.getByRole('button', { name: /^审核$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /check 采纳/ })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^审核$/ }));
+
+    expect(await screen.findByRole('button', { name: /check 采纳/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /编辑采纳/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /驳回/ })).toBeInTheDocument();
+    expect(screen.getByText('完整审核内容展示')).toBeInTheDocument();
+  });
+
+  it('switches review mode to a new card when clicking another review button', async () => {
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [
+          {
+            id: 1, scope: 'ORG', type: 'FACT', status: 'PENDING',
+            title: '记忆A', contentMd: '内容A',
+            sourceRef: null, gmtCreate: '2026-07-01',
+          },
+          {
+            id: 2, scope: 'ORG', type: 'RULE', status: 'PENDING',
+            title: '记忆B', contentMd: '内容B',
+            sourceRef: null, gmtCreate: '2026-07-02',
+          },
+        ],
+      })),
+    );
+    renderPage();
+    await screen.findByText('记忆A');
+
+    const reviewButtons = screen.getAllByRole('button', { name: /^审核$/ });
+    expect(reviewButtons).toHaveLength(2);
+    await userEvent.click(reviewButtons[0]);
+
+    expect(await screen.findByRole('button', { name: /check 采纳/ })).toBeInTheDocument();
+
+    const remainingReviewBtn = screen.getByRole('button', { name: /^审核$/ });
+    await userEvent.click(remainingReviewBtn);
+
+    const adoptButtons = screen.getAllByRole('button', { name: /check 采纳/ });
+    expect(adoptButtons).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^审核$/ })).toHaveLength(1);
+  });
+
+  it('updates card status and hides review button after successful approve', async () => {
+    let listRequestCount = 0;
+    server.use(
+      http.get('/api/memories', () => {
+        listRequestCount++;
+        const status = listRequestCount > 1 ? 'ADOPTED' : 'PENDING';
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: [{
+            id: 1, scope: 'ORG', type: 'FACT', status,
+            title: '审核目标', contentMd: '内容',
+            sourceRef: null, gmtCreate: '2026-07-01',
+          }],
+        });
+      }),
+      http.post('/api/memories/1/review', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: null,
+      })),
+    );
+    renderPage();
+    await screen.findByText('审核目标');
+
+    await userEvent.click(screen.getByRole('button', { name: /^审核$/ }));
+    await screen.findByRole('button', { name: /check 采纳/ });
+
+    await userEvent.click(screen.getByRole('button', { name: /check 采纳/ }));
+
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^审核$/ })).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText('已采纳')).toBeInTheDocument();
+  });
+
+  it('renders review mode content in a scrollable container', async () => {
+    const longContent = '这是一段很长的记忆内容用于验证滚动区域。'.repeat(50);
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{
+          id: 1, scope: 'ORG', type: 'FACT', status: 'PENDING',
+          title: '长文记忆', contentMd: longContent,
+          sourceRef: null, gmtCreate: '2026-07-01',
+        }],
+      })),
+    );
+    renderPage();
+    await screen.findByText('长文记忆');
+
+    await userEvent.click(screen.getByRole('button', { name: /^审核$/ }));
+
+    const scrollContainer = await screen.findByText(longContent);
+    expect(scrollContainer).toBeInTheDocument();
+    expect(scrollContainer.style.overflowY).toBe('auto');
+  });
 });

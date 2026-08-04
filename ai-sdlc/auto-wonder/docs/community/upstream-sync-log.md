@@ -8,11 +8,51 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `7f30bcf858ae2eebe698dc45b3c4404316e62d2e`
-- Community merge commit: `5d4fefeb4e257d9e6f1b462d79df4f179650d056`
+- Synchronized `origin/master`: `9f984a8971bdbe73b25e56922d3f716758b5dca3`
+- Community merge commit: `acb5f6a12b18c8efd4e5100471f295997f246a2c`
 - Synchronized at: 2026-08-04 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-04: `7f30bcf8` to `9f984a89`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `7f30bcf858ae2eebe698dc45b3c4404316e62d2e` |
+| Community before merge | `de8accc7f45d25c24190addc3867be6128e03342` |
+| Merged `origin/master` | `9f984a8971bdbe73b25e56922d3f716758b5dca3` |
+| Resulting merge commit | `acb5f6a12b18c8efd4e5100471f295997f246a2c` |
+
+Scope: 34 master-side commits. The merge brought in clarification streaming,
+reply-direction and loading fixes; inline memory-card review and shared review
+actions; tenant-switch query-cache clearing; administrator approval permissions;
+runtime command version pinning; and agent identity/draft-guidance updates.
+
+Four textual conflicts and the related automatic overlaps were reviewed:
+
+- `AppLayout.test.tsx`: retained the community asynchronous route-query removal
+  assertion and the master exact work-item, detail, and timeline cache assertions.
+- `ExecutorListPage.tsx` and its test: retained the community Qoder CLI-only UI
+  while accepting master runtime-version pinning (`0.2.114`).
+- `application.yml`: retained community external configuration for OSS, public
+  base URL, SecretCrypto, SLS, optional Aone, and SIGAR; added the master
+  recommended-runtime-version setting.
+- Branding service and tests: retained community OSS bucket resolution and no
+  default internal domain while exposing and validating master runtime version.
+- Two upstream `docs/superpowers` design records were excluded by documentation
+  policy.
+
+No product decision was required. Verification completed after the merge:
+
+- Backend: 1,713 tests passed; production JAR built.
+- Frontend: 81 test files and 494 tests passed; lint completed with zero errors
+  and two hook warnings; production build transformed 4,759 modules.
+- Deployment Skill: 38 contract tests passed.
+- Maven dependency tree: no KeyCenter, Normandy, Akless, RASS, or legacy Log4j
+  dependency was found.
+- Active build/runtime inputs: no Alibaba-internal domain reference was found;
+  excluded development documents were absent; Qoder CLI remains the only
+  executor exposed by the community frontend.
 
 ### 2026-08-04: `6f7eecfc` to `7f30bcf8`
 
