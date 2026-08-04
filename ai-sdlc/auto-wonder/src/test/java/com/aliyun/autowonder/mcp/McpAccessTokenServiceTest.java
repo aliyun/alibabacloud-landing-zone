@@ -10,6 +10,7 @@ import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.mcp.dto.IssuedMcpTokenVO;
 import com.aliyun.autowonder.mcp.dto.McpAccessTokenVO;
+import com.aliyun.autowonder.org.OrgMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
@@ -274,7 +275,7 @@ class McpAccessTokenServiceTest {
         dispatch.setStatus("RUNNING");
         when(dispatchDao.findById(99L)).thenReturn(dispatch);
         DispatchMcpTokenService dispatchTokens = new DispatchMcpTokenService(
-                testJwtService(), dispatchDao, mock(WorkitemDao.class));
+                testJwtService(), dispatchDao, mock(WorkitemDao.class), mock(OrgMemberDao.class));
         String token = dispatchTokens.issue(dispatch);
 
         McpAccessTokenService authService =
@@ -310,7 +311,7 @@ class McpAccessTokenServiceTest {
         when(workitemDao.findById(300L)).thenReturn(workitem);
         when(dispatchDao.findById(100L)).thenReturn(dispatch);
         DispatchMcpTokenService tokens = new DispatchMcpTokenService(
-                testJwtService(), dispatchDao, workitemDao);
+                testJwtService(), dispatchDao, workitemDao, mock(OrgMemberDao.class));
 
         McpAccessTokenService.Principal principal =
                 tokens.authenticate(tokens.issue(dispatch));

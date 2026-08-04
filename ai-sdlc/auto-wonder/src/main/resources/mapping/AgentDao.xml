@@ -23,6 +23,7 @@
         SELECT * FROM agent
         <where>
             is_deleted = 0
+            <if test="tenantId != null">AND tenant_id = #{tenantId}</if>
             <if test="status != null">AND status = #{status}</if>
         </where>
         ORDER BY id DESC LIMIT #{offset}, #{limit}

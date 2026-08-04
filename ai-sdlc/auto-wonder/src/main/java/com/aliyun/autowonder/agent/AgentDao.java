@@ -12,7 +12,7 @@ public interface AgentDao {
     void insert(AgentDO agent);
     AgentDO findById(@Param("id") Long id);
     List<AgentDO> findByExactName(@Param("tenantId") Long tenantId, @Param("name") String name);
-    List<AgentDO> list(@Param("status") String status, @Param("offset") int offset, @Param("limit") int limit);
+    List<AgentDO> list(@Param("tenantId") Long tenantId, @Param("status") String status, @Param("offset") int offset, @Param("limit") int limit);
     int updateStatus(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("status") String status, @Param("onlineVersionId") Long onlineVersionId,
             @Param("editingVersionId") Long editingVersionId,

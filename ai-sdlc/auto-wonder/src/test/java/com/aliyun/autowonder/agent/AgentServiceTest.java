@@ -118,8 +118,8 @@ class AgentServiceTest {
         a.setName("test");
         a.setStatus("DRAFT");
         a.setLatestVersionNo(1);
-        when(agentDao.list(eq("DRAFT"), eq(0), eq(20))).thenReturn(List.of(a));
-        List<AgentVO> vos = service.list("DRAFT", 1, 20);
+        when(agentDao.list(eq(100L), eq("DRAFT"), eq(0), eq(20))).thenReturn(List.of(a));
+        List<AgentVO> vos = service.list(100L, "DRAFT", 1, 20);
         assertEquals(1, vos.size());
         assertEquals("test", vos.get(0).getName());
     }
@@ -133,7 +133,7 @@ class AgentServiceTest {
         agent.setStatus("ONLINE");
         agent.setOnlineVersionId(10L);
         agent.setLatestVersionNo(3);
-        when(agentDao.list(null, 0, 20)).thenReturn(List.of(agent));
+        when(agentDao.list(eq(100L), isNull(), eq(0), eq(20))).thenReturn(List.of(agent));
 
         AgentVersionDO version = new AgentVersionDO();
         version.setId(10L);
@@ -161,7 +161,7 @@ class AgentServiceTest {
         when(executorRegistry.isOnline(91L)).thenReturn(true);
         when(executorRegistry.isOnline(92L)).thenReturn(false);
 
-        List<AgentVO> vos = service.list(null, 1, 20);
+        List<AgentVO> vos = service.list(100L, null, 1, 20);
 
         assertEquals(1, vos.size());
         AgentVO vo = vos.get(0);

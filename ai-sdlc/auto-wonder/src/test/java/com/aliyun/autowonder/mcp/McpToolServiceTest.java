@@ -382,7 +382,7 @@ class McpToolServiceTest {
 
         AgentVO agent = new AgentVO();
         agent.setId(3L);
-        when(agentService.list(null, 1, 20)).thenReturn(List.of(agent));
+        when(agentService.list(100L, null, 1, 20)).thenReturn(List.of(agent));
 
         SkillVO skill = new SkillVO();
         skill.setId(4L);

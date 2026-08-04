@@ -874,7 +874,7 @@ public class McpToolService {
                         context.orgId(), context.userId());
             }
             case LIST_AGENTS -> {
-                yield agentService.list(str(safeArgs, "status"),
+                yield agentService.list(context.orgId(), str(safeArgs, "status"),
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             }
             case GET_AGENT -> {

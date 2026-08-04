@@ -8,11 +8,30 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `75bd9303030df7bbf876cdb96513dcfa936868b1`
-- Community merge commit: `9bc094f0af60d9477ca70d823a6cc3e7ad59f37a`
+- Synchronized `origin/master`: `ce1764e957b287fb64dba867c1e9703d6c914c8e`
+- Community merge commit: `3af87a3ab4f4039bb4f646b49848c624d75bfcee`
 - Synchronized at: 2026-08-05 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-05: `75bd9303` to `ce1764e9`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `75bd9303030df7bbf876cdb96513dcfa936868b1` |
+| Community before merge | `4cfcdc854dcaed3bf604b05b0533f3a709263d58` |
+| Merged `origin/master` | `ce1764e957b287fb64dba867c1e9703d6c914c8e` |
+| Resulting merge commit | `3af87a3ab4f4039bb4f646b49848c624d75bfcee` |
+
+Scope: four upstream commits. Agent approve/reject failures now expose backend
+errors, agent listing enforces tenant isolation, and dispatch MCP tokens inherit
+the user's actual organization access level instead of hard-coded `READ_WRITE`.
+
+The merge had no textual conflict, community-boundary overlap, configuration or
+documentation-policy input, or product decision. Backend verification passed
+1,721 tests. The changed Agent review frontend suite passed all four tests; the
+immediately preceding full frontend, build, lint, Skill, and dependency-boundary
+gates remained applicable because this batch did not change those inputs.
 
 ### 2026-08-05: `a4e9ec9e` to `75bd9303`
 

@@ -1,10 +1,11 @@
-import { beforeEach, describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
+import { message } from 'antd';
 import { AgentReviewPage } from './AgentReviewPage';
 import { useAuthStore } from '@/shared/auth/store';
 
@@ -71,5 +72,51 @@ describe('AgentReviewPage', () => {
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(/PendingBot 已通过审核/)).toBeInTheDocument();
     expect(within(alert).getByText(/已可进入上线流转/)).toBeInTheDocument();
+  });
+
+  it('surfaces backend error message and refetches list when approve fails', async () => {
+    const errorSpy = vi.spyOn(message as any, 'error').mockImplementation(
+      () => undefined as any,
+    );
+    let listHits = 0;
+    server.use(
+      http.get('/api/agents', () => {
+        listHits += 1;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: [
+            { id: 1, name: 'PendingBot', avatarUrl: null, status: 'PENDING_REVIEW', onlineVersionId: null, editingVersionId: 5, latestVersionNo: 2, version: 1, gmtCreate: '2026-07-01' },
+          ],
+        });
+      }),
+      http.post('/api/agents/1/approve', () => HttpResponse.json(
+        {
+          success: false,
+          code: '14005',
+          message: '当前版本未处于待审核状态',
+          data: null,
+          traceId: 'abc',
+        },
+        { status: 400 },
+      )),
+    );
+
+    renderPage();
+    await screen.findByText('PendingBot');
+    const hitsBefore = listHits;
+
+    await userEvent.click(screen.getByRole('button', { name: /通过/ }));
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalled();
+    });
+    const calls = (errorSpy.mock.calls as any[][]).map((c) => String(c[0]));
+    expect(calls.some((text) => text.includes('当前版本未处于待审核状态'))).toBe(true);
+
+    await waitFor(() => {
+      expect(listHits).toBeGreaterThan(hitsBefore);
+    });
+
+    errorSpy.mockRestore();
   });
 });

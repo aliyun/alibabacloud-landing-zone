@@ -7,6 +7,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
+import com.aliyun.autowonder.org.OrgMemberDO;
+import com.aliyun.autowonder.org.OrgMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -34,6 +36,7 @@ class DispatchMcpTokenServiceTest {
     private static final long USER_ID = 7L;
 
     private DispatchDao dispatchDao;
+    private OrgMemberDao orgMemberDao;
     private DispatchMcpTokenService service;
 
     @BeforeEach
@@ -43,8 +46,9 @@ class DispatchMcpTokenServiceTest {
         JwtProperties properties = new JwtProperties(env);
         properties.setSecret(SECRET);
         dispatchDao = mock(DispatchDao.class);
+        orgMemberDao = mock(OrgMemberDao.class);
         service = new DispatchMcpTokenService(
-                new JwtService(properties), dispatchDao, mock(WorkitemDao.class));
+                new JwtService(properties), dispatchDao, mock(WorkitemDao.class), orgMemberDao);
     }
 
     @Test
@@ -114,6 +118,43 @@ class DispatchMcpTokenServiceTest {
 
             assertThrows(BizException.class, () -> service.authenticate(token), status);
         }
+    }
+
+    @Test
+    void authenticateReflectsActualAdminAccessLevel() {
+        DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
+        when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
+        OrgMemberDO member = new OrgMemberDO();
+        member.setAccessLevel("ADMIN");
+        when(orgMemberDao.findByOrgAndUser(TENANT_ID, USER_ID)).thenReturn(member);
+
+        McpAccessTokenService.Principal principal = service.authenticate(service.issue(dispatch));
+
+        assertEquals(OrgAccessLevel.ADMIN, principal.accessLevel());
+    }
+
+    @Test
+    void authenticateFallsBackToReadWriteWhenMemberNotFound() {
+        DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
+        when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
+        when(orgMemberDao.findByOrgAndUser(TENANT_ID, USER_ID)).thenReturn(null);
+
+        McpAccessTokenService.Principal principal = service.authenticate(service.issue(dispatch));
+
+        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
+    }
+
+    @Test
+    void authenticateFallsBackToReadWriteForInvalidAccessLevel() {
+        DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
+        when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
+        OrgMemberDO member = new OrgMemberDO();
+        member.setAccessLevel("INVALID_LEVEL");
+        when(orgMemberDao.findByOrgAndUser(TENANT_ID, USER_ID)).thenReturn(member);
+
+        McpAccessTokenService.Principal principal = service.authenticate(service.issue(dispatch));
+
+        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
     }
 
     private DispatchDO dispatch(String status) {
