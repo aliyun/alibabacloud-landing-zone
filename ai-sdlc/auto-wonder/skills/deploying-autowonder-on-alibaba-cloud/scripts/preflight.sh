@@ -26,6 +26,7 @@ require_file "$manifest"; [[ -d "$source_dir" ]] || die "source directory missin
 require_command jq; require_command git
 json_validate "$manifest"; reject_secret_keys "$manifest"
 profile=${profile:-$(jq -r '.cloudProfile // empty' "$manifest")}
+ossutil_contract=not-checked; ossutil_version=not-checked
 
 region=$(json_string "$manifest" '.region')
 case "$region" in cn-zhangjiakou|cn-hangzhou|cn-shanghai|cn-beijing) ;; *) die "unsupported region";; esac
@@ -53,6 +54,8 @@ fi
 if [[ "$dry_run" == false ]]; then
   for command in aliyun terraform ossutil openssl curl; do require_command "$command"; done
   export ALIBABA_CLOUD_REGION_ID="$region"
+  ossutil_preflight "$region"
+  ossutil_contract=$OSSUTIL_CONTRACT; ossutil_version=$OSSUTIL_VERSION
   run_aliyun() {
     if [[ -n "$profile" ]]; then aliyun "$@" --profile "$profile"; else aliyun "$@"; fi
   }
@@ -60,4 +63,5 @@ if [[ "$dry_run" == false ]]; then
   run_aliyun ecs DescribeZones --region "$region" --RegionId "$region" >/dev/null || die "zone inventory probe failed"
   if [[ -n "$profile" ]]; then atomic_jq "$manifest" --arg profile "$profile" '.cloudProfile=$profile'; fi
 fi
-jq -n --arg region "$region" --argjson dryRun "$dry_run" '{phase:"preflight",status:"passed",region:$region,dryRun:$dryRun}'
+jq -n --arg region "$region" --argjson dryRun "$dry_run" --arg ossutilContract "$ossutil_contract" --arg ossutilVersion "$ossutil_version" \
+  '{phase:"preflight",status:"passed",region:$region,dryRun:$dryRun,ossutilContract:$ossutilContract,ossutilVersion:$ossutilVersion}'

@@ -61,10 +61,7 @@ if [[ "$dry_run" == true ]]; then
   exit 0
 fi
 require_command aliyun; require_command ossutil; export ALIBABA_CLOUD_REGION_ID="$region"
-if ossutil help presign >/dev/null 2>&1; then oss_sign_mode=presign
-elif ossutil help sign >/dev/null 2>&1; then oss_sign_mode=sign
-else die "installed ossutil supports neither presign nor sign"
-fi
+ossutil_preflight "$region"
 
 objects=("autowonder.env"); files=("$env_file")
 if [[ "$config_only" == false ]]; then
@@ -73,24 +70,14 @@ if [[ "$config_only" == false ]]; then
   if [[ -n "$java_archive" ]]; then objects+=("temurin21-linux-amd64.tar.gz"); files+=("$java_archive"); fi
 fi
 for idx in "${!objects[@]}"; do
-  ossutil cp -f "${files[$idx]}" "oss://$bucket/$prefix/${objects[$idx]}" --endpoint "$control_endpoint" >/dev/null
+  ossutil_upload "${files[$idx]}" "oss://$bucket/$prefix/${objects[$idx]}" "$control_endpoint" "$region" >/dev/null
 done
-
-presign_object() {
-  local object=$1 result
-  if [[ "$oss_sign_mode" == presign ]]; then
-    result=$(ossutil presign "oss://$bucket/$prefix/$object" --expires-duration 15m --endpoint "$runtime_endpoint" 2>/dev/null) || die "failed to presign staging object"
-  else
-    result=$(ossutil sign "oss://$bucket/$prefix/$object" --timeout 900 --endpoint "$runtime_endpoint" 2>/dev/null) || die "failed to sign staging object"
-  fi
-  printf '%s\n' "$result" | sed -nE 's#.*(https?://[^[:space:]]+).*#\1#p' | head -1
-}
 
 run_cloud_command() {
   local instance=$1 script=$2 response invocation result status exit_code attempts=0
   response=$(aliyun_cli ecs RunCommand --region "$region" --RegionId "$region" --InstanceId.1 "$instance" \
     --Type RunShellScript --Timeout 1800 --CommandContent "$script") || die "Cloud Assistant submission failed"
-  invocation=$(jq -er '.InvokeId // .InvocationId // .invokeId // .invocationId' <<<"$response") || die "Cloud Assistant invocation ID missing"
+  invocation=$(cloud_assistant_invocation_id <<<"$response") || die "Cloud Assistant invocation ID missing"
   atomic_jq "$manifest" --arg id "$invocation" --arg instance "$instance" \
     '.remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
   while ((attempts++ < 180)); do
@@ -102,14 +89,14 @@ run_cloud_command() {
         if [[ ${#value} -ge 6 ]] && grep -Fq -- "$value" <<<"$result"; then die "secret detected in Cloud Assistant result"; fi;;
       esac
     done <"$env_file"
-    status=$(jq -r '[..|objects|.InvokeRecordStatus? // .InvocationStatus? // .Status? // empty][0] // "Pending"' <<<"$result")
+    status=$(cloud_assistant_status <<<"$result")
     case "$status" in
       Finished|Success)
-        exit_code=$(jq -r '[..|objects|.ExitCode? // empty][0] // -1' <<<"$result")
+        exit_code=$(cloud_assistant_exit_code <<<"$result")
         [[ "$exit_code" == 0 ]] || die "Cloud Assistant command failed"
         atomic_jq "$manifest" --arg id "$invocation" '(.remoteInvocations[] | select(.invokeId==$id)).status="finished"'
         printf '%s' "$invocation"; return 0;;
-      Failed|Stopped|Stopping|TimedOut|Cancelled) die "Cloud Assistant invocation reached terminal failure";;
+      Failed|PartialFailed|Stopped|Stopping|TimedOut|Cancelled|Invalid|Aborted|Terminated) die "Cloud Assistant invocation reached terminal failure";;
     esac
   done
   die "Cloud Assistant invocation timed out"
@@ -117,11 +104,15 @@ run_cloud_command() {
 
 invocations=()
 jar_url= schema_url= templates_url= unit_url= java_url=
-env_url=$(presign_object autowonder.env)
+ossutil_presign "oss://$bucket/$prefix/autowonder.env" "$runtime_endpoint" "$region"; env_url=$OSSUTIL_PRESIGNED_URL
 if [[ "$config_only" == false ]]; then
-  jar_url=$(presign_object auto-wonder.jar); schema_url=$(presign_object autowonder-schema.sql)
-  templates_url=$(presign_object autowonder-community-templates.sql); unit_url=$(presign_object autowonder.service)
-  [[ -z "$java_archive" ]] || java_url=$(presign_object temurin21-linux-amd64.tar.gz)
+  ossutil_presign "oss://$bucket/$prefix/auto-wonder.jar" "$runtime_endpoint" "$region"; jar_url=$OSSUTIL_PRESIGNED_URL
+  ossutil_presign "oss://$bucket/$prefix/autowonder-schema.sql" "$runtime_endpoint" "$region"; schema_url=$OSSUTIL_PRESIGNED_URL
+  ossutil_presign "oss://$bucket/$prefix/autowonder-community-templates.sql" "$runtime_endpoint" "$region"; templates_url=$OSSUTIL_PRESIGNED_URL
+  ossutil_presign "oss://$bucket/$prefix/autowonder.service" "$runtime_endpoint" "$region"; unit_url=$OSSUTIL_PRESIGNED_URL
+  if [[ -n "$java_archive" ]]; then
+    ossutil_presign "oss://$bucket/$prefix/temurin21-linux-amd64.tar.gz" "$runtime_endpoint" "$region"; java_url=$OSSUTIL_PRESIGNED_URL
+  fi
 fi
 for instance in "${instances[@]}"; do
   if [[ "$config_only" == true ]]; then
@@ -180,7 +171,7 @@ EOF
   invocations+=("$(run_cloud_command "$instance" "$remote")")
 done
 
-for object in "${objects[@]}"; do ossutil rm -f "oss://$bucket/$prefix/$object" --endpoint "$control_endpoint" >/dev/null; done
+for object in "${objects[@]}"; do ossutil_remove "oss://$bucket/$prefix/$object" "$control_endpoint" "$region" >/dev/null; done
 unset jar_url schema_url templates_url unit_url env_url java_url remote
 mode=full; [[ "$config_only" == false ]] || mode=config-only
 atomic_jq "$manifest" --argjson invocations "$(printf '%s\n' "${invocations[@]}" | jq -R . | jq -s .)" \

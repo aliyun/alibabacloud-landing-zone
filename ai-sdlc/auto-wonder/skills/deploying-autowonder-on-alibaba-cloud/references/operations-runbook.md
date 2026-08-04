@@ -99,17 +99,28 @@ only the latter runs the seed without repeating schema DDL. Never rerun DDL
 because post-validation failed.
 
 The current Alibaba Cloud CLI accepts raw `CommandContent` and performs API
-encoding. Persist returned `InvokeId` before polling with `--InvokeId`; read
-`InvokeRecordStatus` and require exit code zero. On a configuration-only retry,
-run `deploy-via-cloud-assistant.sh --config-only` and resume from the affected
+encoding. Persist `InvokeId` (or legacy `InvocationId`) immediately after
+submission, before polling with `--InvokeId`. Read `InvokeRecordStatus` with a
+legacy `InvocationStatus` fallback, wait for a terminal state, and require the
+real `ExitCode` to be zero. On a configuration-only retry, run
+`deploy-via-cloud-assistant.sh --config-only` and resume from the affected
 postcondition without retransferring immutable artifacts.
+
+Preflight records the installed ossutil version and probes the actual `cp`,
+`rm`, and `presign` or legacy `sign` help. Deployment uses the resulting
+endpoint, region, expiry, and non-interactive force flags through one wrapper;
+do not copy flags from examples for another major version. Use the standalone
+`ossutil` binary. A cached STS credential is permitted only when intentional,
+and neither its token nor any generated signed URL may be printed.
 
 ## Phase 6: Rolling Service Activation
 
 Install `assets/systemd/autowonder.service`, point `/opt/autowonder/current`
 atomically at the new release, and start one node. Require systemd active state,
-non-root process ownership, `/checkpreload.htm` HTTP success, capabilities, and
-per-node health before enabling it in NLB. Repeat for the second node. Logs live
+a port 7001 listener, `/checkpreload.htm` body `success`, the public branding
+endpoint, non-root process ownership, and capabilities before enabling it in
+NLB. Never use authenticated `/api/health` as a startup probe. Repeat for the
+second node. Logs live
 under `/var/lib/autowonder/logs` and in the systemd journal.
 
 Execute this phase with `initialize-and-verify.sh rolling-start`.

@@ -83,12 +83,12 @@ Run phases in order and record terminal results in the manifest. Read
 
 | Phase | Deterministic route | Completion candidate |
 | --- | --- | --- |
-| 1. Preflight | `scripts/preflight.sh` (`--profile` locks a verified CLI profile) | validated tools, identity, inputs/inventory |
+| 1. Preflight | `scripts/preflight.sh` (`--profile` locks a verified CLI profile) | validated tools including ossutil v2/legacy contract, identity, inputs/inventory |
 | 2. Plan | `scripts/terraform-stage.sh plan` | reviewed plan fingerprint |
 | 3. Apply | `scripts/terraform-stage.sh apply`, then `inventory` | Infrastructure ready |
 | 4. Build | `scripts/build-release.sh` | sealed local JAR, schema, and template seed |
 | 5. Host/DB/runtime | `scripts/initialize-and-verify.sh runtime-config`; `scripts/deploy-via-cloud-assistant.sh`; then `scripts/initialize-and-verify.sh database` | Java 21, clients, release, env (including public base URL), systemd, schema and four system templates installed |
-| 6. Rolling activation | `scripts/initialize-and-verify.sh rolling-start` | Application ready |
+| 6. Rolling activation | `scripts/initialize-and-verify.sh rolling-start` | systemd, port 7001, public preload and branding probes ready |
 | 7. Business init | `scripts/initialize-and-verify.sh business-init` | Business initialized |
 | 8. Acceptance | `scripts/initialize-and-verify.sh acceptance` | Release accepted; TLS independently checked |
 | 9. Handoff | `scripts/initialize-and-verify.sh handoff`; `scripts/sanitize-evidence.sh` | sanitized report and one-time credentials |

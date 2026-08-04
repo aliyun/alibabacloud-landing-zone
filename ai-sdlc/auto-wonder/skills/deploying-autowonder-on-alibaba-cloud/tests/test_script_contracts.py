@@ -308,17 +308,109 @@ JSON
         for name in ("deploy-via-cloud-assistant.sh", "initialize-and-verify.sh"):
             text = (ROOT / "scripts" / name).read_text()
             self.assertIn("--CommandContent \"$script\"", text, name)
-            self.assertIn(".InvokeId", text, name)
+            self.assertIn("cloud_assistant_invocation_id", text, name)
             self.assertIn("--InvokeId \"$invocation\"", text, name)
-            self.assertIn(".InvokeRecordStatus?", text, name)
+            self.assertIn("cloud_assistant_status", text, name)
+            self.assertIn("cloud_assistant_exit_code", text, name)
             self.assertNotIn("CommandContent \"$encoded\"", text, name)
+            self.assertLess(
+                text.index('status:"submitted"'),
+                text.index("DescribeInvocationResults"),
+                name,
+            )
+
+    def test_cloud_assistant_parsers_accept_current_and_legacy_fields(self):
+        script = r'''
+source "$1"
+current='{"InvokeId":"t-current","Invocation":{"InvocationResults":{"InvocationResult":[{"InvokeRecordStatus":"Finished","ExitCode":0}]}}}'
+legacy='{"InvocationId":"t-legacy","Invocation":{"InvocationResults":{"InvocationResult":[{"InvocationStatus":"Success","ExitCode":"0"}]}}}'
+printf '%s|%s|%s\n' "$(cloud_assistant_invocation_id <<<"$current")" "$(cloud_assistant_status <<<"$current")" "$(cloud_assistant_exit_code <<<"$current")"
+printf '%s|%s|%s\n' "$(cloud_assistant_invocation_id <<<"$legacy")" "$(cloud_assistant_status <<<"$legacy")" "$(cloud_assistant_exit_code <<<"$legacy")"
+'''
+        result = subprocess.run(
+            ["bash", "-c", script, "bash", str(ROOT / "scripts/lib.sh")],
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            ["t-current|Finished|0", "t-legacy|Success|0"],
+            result.stdout.splitlines(),
+        )
+
+    def test_readiness_uses_only_public_probes_and_host_postconditions(self):
+        text = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+        self.assertNotIn("/api/health", text)
+        self.assertIn("/checkpreload.htm", text)
+        self.assertIn("/api/platform/branding/public", text)
+        self.assertIn("systemctl is-active --quiet autowonder.service", text)
+        self.assertRegex(text, r"(?:ss|/proc/net/tcp).*7001")
 
     def test_transfer_separates_control_and_runtime_oss_endpoints(self):
         text = (ROOT / "scripts/deploy-via-cloud-assistant.sh").read_text()
         self.assertIn('control_endpoint=', text)
         self.assertIn('runtime_endpoint=', text)
-        self.assertRegex(text, r'ossutil cp .*--endpoint "\$control_endpoint"')
-        self.assertRegex(text, r'ossutil (?:presign|sign).*--endpoint "\$runtime_endpoint"')
+        self.assertIn('ossutil_upload ', text)
+        self.assertIn('ossutil_presign ', text)
+        self.assertIn('ossutil_remove ', text)
+        self.assertIn('"$control_endpoint" "$region"', text)
+        self.assertIn('"$runtime_endpoint" "$region"', text)
+
+    def test_ossutil_compatibility_detects_v2_and_legacy_without_leaking_url(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake = root / "ossutil"
+            fake.write_text(r'''#!/usr/bin/env bash
+set -eu
+case "${OSSUTIL_FAKE_MODE}:${1:-}:${2:-}" in
+  v2:version:*|v2:--version:*) echo 'ossutil version 2.1.0';;
+  legacy:version:*|legacy:--version:*) echo 'ossutil version 1.7.19';;
+  v2:help:presign) echo 'presign --expires-duration --endpoint --region';;
+  v2:help:cp) echo 'cp --endpoint --region --force';;
+  v2:help:rm) echo 'rm --endpoint --region --force';;
+  legacy:help:presign) exit 1;;
+  legacy:help:sign) echo 'sign --timeout -e';;
+  legacy:help:cp) echo 'cp --endpoint -f';;
+  legacy:help:rm) echo 'rm --endpoint -f';;
+  v2:presign:*) printf '%s\n' "$*" >> "$OSSUTIL_FAKE_LOG"; printf '%s\n' 'https://bucket.example/object?security-token=SECRET';;
+  legacy:sign:*) printf '%s\n' "$*" >> "$OSSUTIL_FAKE_LOG"; printf '%s\n' 'https://bucket.example/object?security-token=SECRET';;
+  *:cp:*|*:rm:*) printf '%s\n' "$*" >> "$OSSUTIL_FAKE_LOG";;
+  *) exit 1;;
+esac
+''')
+            fake.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{root}:{env['PATH']}"
+            for mode, expected in (("v2", "v2"), ("legacy", "legacy")):
+                env["OSSUTIL_FAKE_MODE"] = mode
+                log = root / f"{mode}.log"
+                env["OSSUTIL_FAKE_LOG"] = str(log)
+                script = r'''
+source "$1"
+ossutil_preflight cn-hangzhou
+ossutil_upload /tmp/release.jar oss://bucket/object oss-cn-hangzhou.aliyuncs.com cn-hangzhou
+ossutil_remove oss://bucket/object oss-cn-hangzhou.aliyuncs.com cn-hangzhou
+ossutil_presign oss://bucket/object oss-cn-hangzhou-internal.aliyuncs.com cn-hangzhou
+printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL:+yes}"
+'''
+                result = subprocess.run(
+                    ["bash", "-c", script, "bash", str(ROOT / "scripts/lib.sh")],
+                    text=True,
+                    capture_output=True,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(f"contract={expected} url_ready=yes\n", result.stdout)
+                self.assertNotIn("SECRET", result.stdout + result.stderr)
+                calls = log.read_text().splitlines()
+                if mode == "v2":
+                    self.assertTrue(all("--region cn-hangzhou" in call for call in calls))
+                    self.assertTrue(all("--endpoint" in call for call in calls))
+                else:
+                    self.assertIn("--endpoint", calls[0])
+                    self.assertIn("--endpoint", calls[1])
+                    self.assertIn(" -e oss-cn-hangzhou-internal.aliyuncs.com", calls[2])
+                    self.assertNotIn("--endpoint", calls[2])
 
     def test_config_only_retry_does_not_require_release_artifacts(self):
         with tempfile.TemporaryDirectory() as td:
