@@ -132,6 +132,19 @@ class SkillBundleTest(unittest.TestCase):
         for script in [path for path in REQUIRED if path.startswith("scripts/")]:
             self.assertIn(script, skill)
 
+    def test_skill_documents_portable_build_environment(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        for term in [
+            "## Build And Runtime Environment",
+            "JDK 21",
+            "Maven 3.9.9",
+            "Node.js 22.22.2",
+            "npm 10.9.7",
+            "downloads the pinned Node.js and npm versions",
+            "Linux x86_64",
+        ]:
+            self.assertIn(term, skill, f"SKILL.md must document {term!r}")
+
 
 if __name__ == "__main__":
     unittest.main()
