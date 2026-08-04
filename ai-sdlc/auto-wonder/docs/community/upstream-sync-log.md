@@ -8,11 +8,38 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `9f984a8971bdbe73b25e56922d3f716758b5dca3`
-- Community merge commit: `acb5f6a12b18c8efd4e5100471f295997f246a2c`
+- Synchronized `origin/master`: `454017b42b961b730fb65964ebb24ff88f36543e`
+- Community merge commit: `fed2ea650c8d27dc938042a6928fcb4306d90222`
 - Synchronized at: 2026-08-04 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-04: `9f984a89` to `454017b4`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `9f984a8971bdbe73b25e56922d3f716758b5dca3` |
+| Community before merge | `d20d8d91c03742cc4f222d91ff8ea4cf0b6a9755` |
+| Merged `origin/master` | `454017b42b961b730fb65964ebb24ff88f36543e` |
+| Resulting merge commit | `fed2ea650c8d27dc938042a6928fcb4306d90222` |
+
+Scope: one feature commit plus its master merge commit. The clarification event
+view now stops its loading indicator as soon as reply text starts streaming, with
+two focused frontend tests.
+
+The merge had no textual conflict, community-only file overlap, configuration
+change, internal dependency, or documentation-policy input. Master behavior was
+accepted unchanged and no product decision was required.
+
+Verification completed after the merge:
+
+- Backend: 1,713 tests passed; production JAR built.
+- Frontend: 82 test files and 496 tests passed; lint completed with zero errors
+  and two hook warnings; production build transformed 4,759 modules.
+- Deployment Skill: 38 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  community executor UI remained Qoder CLI-only.
 
 ### 2026-08-04: `7f30bcf8` to `9f984a89`
 

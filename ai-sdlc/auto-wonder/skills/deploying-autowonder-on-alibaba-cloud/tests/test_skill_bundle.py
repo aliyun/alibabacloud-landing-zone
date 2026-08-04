@@ -144,6 +144,8 @@ class SkillBundleTest(unittest.TestCase):
             "Linux x86_64",
         ]:
             self.assertIn(term, skill, f"SKILL.md must document {term!r}")
+        self.assertNotIn("Docker", skill, "ECS JAR deployment must not require Docker")
+        self.assertNotIn("BuildKit", skill, "ECS JAR deployment must not require BuildKit")
 
 
 if __name__ == "__main__":
