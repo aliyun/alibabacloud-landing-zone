@@ -323,6 +323,56 @@ describe('WorkitemClarificationPanel', () => {
     await waitFor(() => expect(submitCalled).toBe(true));
   });
 
+  it('restores the message and reports an error when sending fails', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    mockConversationWithTurns(42);
+    server.use(
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () =>
+        HttpResponse.json(
+          { success: false, code: 'SEND_FAILED', message: '发送失败', traceId: null, data: null },
+          { status: 500 },
+        ),
+      ),
+    );
+    renderPanel([]);
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '请保留这条消息' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+
+    await waitFor(() => expect(textarea).toHaveValue('请保留这条消息'));
+    expect(await screen.findByText('消息发送失败，请重试')).toBeInTheDocument();
+  });
+
+  it('renders backend IN and INBOUND turns as user messages', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const conversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: false,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: '2026-01-01T00:00:01', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 7, direction: 'IN', content: '我的需求', status: 'PROCESSING', error: null, gmtCreate: '2026-01-01T00:00:01' },
+        { id: 8, direction: 'INBOUND', content: '历史需求', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation }),
+      ),
+    );
+
+    renderPanel([]);
+
+    expect(await screen.findByText('我的需求')).toBeInTheDocument();
+    expect(screen.getByText('历史需求')).toBeInTheDocument();
+    expect(screen.getAllByText('你')).toHaveLength(2);
+  });
+
   it('does not send on Shift+Enter and preserves input content', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();

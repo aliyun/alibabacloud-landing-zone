@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Input, Typography, Empty } from 'antd';
+import { Button, Input, Typography, Empty, message } from 'antd';
 import { SendOutlined, PlusOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
 import { AgentSelector } from './AgentSelector';
 import { SquadAgentSelector } from './SquadAgentSelector';
@@ -161,7 +161,12 @@ export function WorkitemClarificationPanel({
     const content = inputValue.trim();
     if (!content || !conversationId || submitMutation.isPending) return;
     setInputValue('');
-    submitMutation.mutate(content);
+    submitMutation.mutate(content, {
+      onError: () => {
+        setInputValue((current) => current || content);
+        message.error('消息发送失败，请重试');
+      },
+    });
   }, [inputValue, conversationId, submitMutation]);
 
   useEffect(() => {
@@ -300,7 +305,7 @@ export function WorkitemClarificationPanel({
 }
 
 function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: string }) {
-  const isUser = turn.direction === 'IN';
+  const isUser = turn.direction === 'IN' || turn.direction === 'INBOUND';
   const label = isUser ? '你' : (agentName || 'AI');
   const icon = isUser
     ? <UserOutlined style={{ fontSize: 12, marginRight: 4 }} />
