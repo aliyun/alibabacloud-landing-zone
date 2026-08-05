@@ -104,7 +104,7 @@ case "$command" in
     chmod 600 "$work_dir/inventory.json"
     atomic_jq "$manifest" --slurpfile inventory "$work_dir/inventory.json" '
       .resources=$inventory[0] |
-      .applicationBaseUrl=("http://" + $inventory[0].nlb_address + ":7001")'
+      .applicationBaseUrl=("http://" + $inventory[0].nlb_address)'
     ;;
   destroy-plan)
     lifecycle=$(json_string "$manifest" '.lifecycle')

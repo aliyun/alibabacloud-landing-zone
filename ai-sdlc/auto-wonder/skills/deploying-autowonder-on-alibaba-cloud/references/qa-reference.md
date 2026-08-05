@@ -17,7 +17,7 @@ or **Recommendation**. Never present a default as the state of a live deployment
 - **Live observation:** obtain resource state from Terraform output/state plus
   read-only Alibaba Cloud APIs. Do not infer health from the manifest alone.
 - **Repository default:** ECS has no NAT, public EIP, or SSH. Public ingress is
-  NLB port 443 and 7001 restricted to approved CIDRs.
+  NLB port 80 restricted to approved CIDRs and forwarded to ECS port 7001.
 
 ## Host Layout And Service
 
@@ -67,13 +67,13 @@ master keys, Terraform state, presigned URLs, or executor tokens into chat/logs.
 
 ## Domain And TLS
 
-- No domain: temporary `ws://<nlb-address>:443/ws/executor`.
-- Domain without certificate: temporary `ws://<domain>:443/ws/executor`.
+- No domain: temporary `ws://<nlb-address>/ws/executor`.
+- Domain without certificate: temporary `ws://<domain>/ws/executor`.
 - Domain with certificate: bind a trusted certificate to the NLB path, then
   verify `wss://<domain>/ws/executor` with the actual packaged executor.
 
 DNS and certificate binding can remain pending while base deployment completes.
-Plaintext on port 443 is a documented exception, not TLS acceptance. Proxy logs
+Plaintext on port 80 is a documented exception, not TLS acceptance. Proxy logs
 must exclude query strings because the protocol can carry a query token.
 
 ## Upgrades, Scaling, Backup, And Recovery

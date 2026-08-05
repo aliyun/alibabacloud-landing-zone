@@ -86,10 +86,11 @@ class TerraformContractTest(unittest.TestCase):
         self.assertIn("redis.shard.small.ce", redis_class)
         self.assertRegex(self.terraform, r'host_name\s*=\s*"autowonder-\$\{replace\(each\.key, "_", "-"\)\}"')
 
-    def test_exposes_dual_nlb_listeners_to_backend_7001(self):
+    def test_exposes_nlb_port_80_to_backend_7001(self):
         self.assertIn('address_type       = "Internet"', self.terraform)
-        self.assertIn("listener_port        = 443", self.terraform)
-        self.assertIn("listener_port        = 7001", self.terraform)
+        self.assertIn("listener_port        = 80", self.terraform)
+        self.assertNotIn("listener_port        = 443", self.terraform)
+        self.assertNotIn("listener_port        = 7001", self.terraform)
         self.assertIn("server_group_port = 7001", self.terraform)
         self.assertIn("zone_mappings", self.terraform)
 

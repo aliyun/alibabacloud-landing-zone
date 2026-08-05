@@ -254,7 +254,7 @@ JSON
             root = Path(td)
             manifest = self.valid_manifest(root / "manifest.json")
             data = json.loads(manifest.read_text())
-            data["applicationBaseUrl"] = "http://public-nlb.example.com:7001"
+            data["applicationBaseUrl"] = "http://public-nlb.example.com"
             manifest.write_text(json.dumps(data))
             env_file = self.write_env(root / "autowonder.env")
 
@@ -269,7 +269,7 @@ JSON
                 key, value = line.split("=", 1)
                 values[key] = shlex.split(value)[0] if value else ""
             self.assertEqual(
-                "http://public-nlb.example.com:7001",
+                "http://public-nlb.example.com",
                 values["AUTOWONDER_PUBLIC_BASE_URL"],
             )
 
@@ -499,7 +499,7 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             root = Path(td)
             manifest = self.valid_manifest(root / "manifest.json")
             data = json.loads(manifest.read_text())
-            data["applicationBaseUrl"] = "http://example.invalid:7001"
+            data["applicationBaseUrl"] = "http://example.invalid"
             data["acceptance"] = {
                 "databasePersistence": "passed",
                 "secretLogScan": "passed",
@@ -559,7 +559,7 @@ esac
                                        "redisInstanceClass": "redis.shard.small.ce"},
             "stateMode": "local", "lifecycle": "persistent", "executionMode": "staged",
             "ingressScenario": "no-domain-no-certificate", "domain": "", "publicSourceCidrs": ["198.51.100.0/24"],
-            "applicationBaseUrl": "http://public-nlb.example.com:7001",
+            "applicationBaseUrl": "http://public-nlb.example.com",
             "slsEnabled": True, "aoneEnabled": False, "publicEgress": False,
             "adminUsername": "admin", "organizationName": "Example", "repositoryUrl": "local",
             "repositoryRef": "community", "repositoryCommit": "HEAD",

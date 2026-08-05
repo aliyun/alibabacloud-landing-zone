@@ -46,8 +46,8 @@ environment file.
 
 | Region presets | Ingress result before trusted TLS |
 | --- | --- |
-| `cn-zhangjiakou`, `cn-hangzhou`, `cn-shanghai`, `cn-beijing` | no domain: `ws://<nlb-address>:443/ws/executor` |
-| preflight must find two distinct zones for HA | domain: `ws://<domain>:443/ws/executor` |
+| `cn-zhangjiakou`, `cn-hangzhou`, `cn-shanghai`, `cn-beijing` | no domain: `ws://<nlb-address>/ws/executor` |
+| preflight must find two distinct zones for HA | domain: `ws://<domain>/ws/executor` |
 | stop rather than downgrade unavailable HA | domain plus certificate: later verify `wss://<domain>/ws/executor` |
 
 Create a **sanitized manifest** from
@@ -127,7 +127,7 @@ Read only what the mode or current failure needs:
 
 Report these statuses separately: **Infrastructure ready**, **Application ready**,
 **Business initialized**, **Release accepted**, and **TLS accepted**. Never count
-plaintext port 443 as TLS. Mark checks completed, pending, degraded, or failed;
+plaintext port 80 as TLS. Mark checks completed, pending, degraded, or failed;
 include exact source/hash, topology, URLs, evidence references, rollback boundary,
 and next actions without live secret or identity data.
 

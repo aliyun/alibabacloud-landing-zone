@@ -11,7 +11,7 @@ The default `multi-zone HA` environment contains:
 
 - one VPC and two VSwitches in different availability zones;
 - two Linux x86_64 ECS nodes, one in each zone, with no public IP;
-- one cross-zone public NLB with TCP listeners on 443 and 7001;
+- one cross-zone public NLB with a TCP listener on port 80;
 - MySQL 8 in a region-supported HA or cluster form;
 - Redis 7 in a region-supported multi-zone primary/replica form;
 - two private OSS buckets and one SLS project;
@@ -26,8 +26,8 @@ as non-HA and never silently downgrade the default.
 
 ## Traffic And Egress
 
-The NLB accepts only configured source CIDRs on public port 443 and port 7001,
-then forwards to application port 7001. RDS and Redis accept only the minimum
+The NLB accepts only configured source CIDRs on public port 80, then forwards
+to ECS application port 7001. RDS and Redis accept only the minimum
 private network scope. ECS uses private endpoints for RDS, Redis, OSS, and SLS.
 There is no NAT, no public EIP, and no SSH rule. Git checkout and application
 build occur locally; Cloud Assistant manages hosts.
