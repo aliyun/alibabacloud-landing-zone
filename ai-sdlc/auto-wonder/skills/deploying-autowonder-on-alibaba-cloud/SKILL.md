@@ -111,6 +111,8 @@ The immutable release includes `autowonder-community-templates.sql`. Database
 initialization imports it after the schema and records
 `.database.templatesImported`. On an older manifest without this checkpoint,
 resume the database phase to run only the idempotent template seed and postcheck.
+The seed must preserve doubled JSON backslashes under MySQL string parsing; do
+not work around malformed SQL by changing the server's global `sql_mode`.
 
 For teardown, read `references/acceptance-and-rollback.md`, run
 `scripts/terraform-stage.sh destroy-plan`, review backups/impact/hash, and obtain
@@ -139,3 +141,8 @@ and next actions without live secret or identity data.
 
 At final handoff display username `admin` and its generated password exactly once
 to the user, outside the manifest/report/logs, and require immediate rotation.
+Only after deployment status and administrator handoff are complete, ask once for
+the user's credential export preference: no export (default), encrypted local bundle,
+or external secret manager. Never export other credentials before an
+explicit destination and method are selected, and never place them in chat,
+manifest, logs, or the sanitized report.

@@ -69,6 +69,11 @@ never deploy a backend-only JAR or reuse stale frontend output. The seed artifac
 `autowonder-community-templates.sql`. Phase 4 ends with the sealed local release;
 host transfer starts only after runtime configuration exists in Phase 5.
 
+The template SQL stores JSON inside MySQL string literals. Every JSON backslash
+must be doubled in the file so default MySQL parsing leaves one backslash for the
+JSON parser. The seed temporarily removes `NO_BACKSLASH_ESCAPES` from its own
+session and restores the prior mode at the end; never mutate the global SQL mode.
+
 Do not use Cloud Assistant `SendFile` for a JAR, runtime, or secret file. Do not
 build from source on ECS. If Java 21 is absent, transfer a pinned, verified
 Temurin Linux amd64 runtime. Delete staging objects after verified delivery.
@@ -179,6 +184,20 @@ Display the `admin` username and generated password once directly to the user,
 outside reports and logs, then require password rotation. Include manifest path,
 resource summary, URLs, hashes, pending actions, rollback boundary, log paths,
 and support commands without secrets.
+
+After all deployment statuses and the administrator handoff are complete, ask
+once for the credential export preference:
+
+- no export (default): leave secrets only in their protected runtime/state stores;
+- encrypted local bundle: require a user-selected path and encryption recipient;
+- external secret manager: require an explicit destination and authenticated tool.
+
+Before exporting values, show a secret-name inventory covering the administrator,
+database application account, application OSS/SLS RAM credential, SecretCrypto
+master key, and JWT secret. Exclude the operator's pre-existing Alibaba Cloud
+credential chain. Never print values to chat or place them in the manifest,
+sanitized report, shell history, or logs. Confirm successful import at the chosen
+destination before deleting any temporary handoff material.
 
 ## Resume And Confirmation
 

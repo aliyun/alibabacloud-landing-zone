@@ -79,6 +79,9 @@ REQUIRED_SKILL_TERMS = [
     "Both OSS endpoint variables are mandatory",
     "must build the frontend into the JAR",
     "`-DskipFrontend=false`",
+    "credential export preference",
+    "encrypted local bundle",
+    "external secret manager",
 ]
 
 
