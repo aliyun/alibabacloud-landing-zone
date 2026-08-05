@@ -80,13 +80,17 @@ and application AK/SK only in a protected session. Encode the env file with
 key: it is required to read persisted `enc:v1:` values. `runtime-config` must
 write `AUTOWONDER_PUBLIC_BASE_URL` into this file. It derives a missing value
 from manifest `applicationBaseUrl`, while preserving an explicit domain/TLS URL.
+Set application `OSS_ENDPOINT` to the regional public endpoint, for example
+`https://oss-cn-hangzhou.aliyuncs.com`; `runtime-config` rejects an intranet OSS
+hostname or an endpoint for another region.
 
 Run `initialize-and-verify.sh runtime-config` first. Then use
 `deploy-via-cloud-assistant.sh` to create the non-root `autowonder` user, install
 the MySQL/Redis clients, transfer the release/env through private OSS objects,
 verify hashes, and install the versioned layout, Java runtime, data/log
 directories, and systemd unit. The control host uploads and deletes through the
-public OSS endpoint; presigned ECS downloads use the intranet endpoint. Finally run
+public OSS endpoint; presigned ECS release downloads use the intranet endpoint
+without changing application `OSS_ENDPOINT`. Finally run
 `initialize-and-verify.sh database`: confirm empty state, import schema in its
 own invocation, import the idempotent four-template seed, then run the separate
 read-only postcondition. `.database.imported` checkpoints schema and
@@ -95,17 +99,28 @@ only the latter runs the seed without repeating schema DDL. Never rerun DDL
 because post-validation failed.
 
 The current Alibaba Cloud CLI accepts raw `CommandContent` and performs API
-encoding. Persist returned `InvokeId` before polling with `--InvokeId`; read
-`InvokeRecordStatus` and require exit code zero. On a configuration-only retry,
-run `deploy-via-cloud-assistant.sh --config-only` and resume from the affected
+encoding. Persist `InvokeId` (or legacy `InvocationId`) immediately after
+submission, before polling with `--InvokeId`. Read `InvokeRecordStatus` with a
+legacy `InvocationStatus` fallback, wait for a terminal state, and require the
+real `ExitCode` to be zero. On a configuration-only retry, run
+`deploy-via-cloud-assistant.sh --config-only` and resume from the affected
 postcondition without retransferring immutable artifacts.
+
+Preflight records the installed ossutil version and probes the actual `cp`,
+`rm`, and `presign` or legacy `sign` help. Deployment uses the resulting
+endpoint, region, expiry, and non-interactive force flags through one wrapper;
+do not copy flags from examples for another major version. Use the standalone
+`ossutil` binary. A cached STS credential is permitted only when intentional,
+and neither its token nor any generated signed URL may be printed.
 
 ## Phase 6: Rolling Service Activation
 
 Install `assets/systemd/autowonder.service`, point `/opt/autowonder/current`
 atomically at the new release, and start one node. Require systemd active state,
-non-root process ownership, `/checkpreload.htm` HTTP success, capabilities, and
-per-node health before enabling it in NLB. Repeat for the second node. Logs live
+a port 7001 listener, `/checkpreload.htm` body `success`, the public branding
+endpoint, non-root process ownership, and capabilities before enabling it in
+NLB. Never use authenticated `/api/health` as a startup probe. Repeat for the
+second node. Logs live
 under `/var/lib/autowonder/logs` and in the systemd journal.
 
 Execute this phase with `initialize-and-verify.sh rolling-start`.

@@ -75,7 +75,7 @@ public class AgentController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(agentService.list(status, page, size));
+        return Result.ok(agentService.list(currentOrgId(), status, page, size));
     }
 
     @GetMapping("/reviews/count")

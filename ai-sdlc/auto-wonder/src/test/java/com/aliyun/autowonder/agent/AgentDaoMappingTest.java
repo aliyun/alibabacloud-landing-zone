@@ -27,6 +27,18 @@ class AgentDaoMappingTest {
         }
     }
 
+    @Test
+    void listQueryFiltersByTenantId() throws Exception {
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("mapping/AgentDao.xml")) {
+            assertNotNull(in);
+            String xml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            String query = selectBody(xml, "list").replaceAll("\\s+", " ").trim();
+
+            assertTrue(query.contains("tenant_id = #{tenantId}"),
+                    "list must filter by tenant_id to prevent cross-tenant data leakage");
+        }
+    }
+
     private String selectBody(String xml, String id) {
         String startTag = "<select id=\"" + id + "\"";
         int start = xml.indexOf(startTag);

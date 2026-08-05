@@ -6,6 +6,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.org.OrgMemberDO;
+import com.aliyun.autowonder.org.OrgMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.springframework.stereotype.Service;
@@ -23,11 +25,14 @@ public class DispatchMcpTokenService {
     private final JwtService jwtService;
     private final DispatchDao dispatchDao;
     private final WorkitemDao workitemDao;
+    private final OrgMemberDao orgMemberDao;
 
-    public DispatchMcpTokenService(JwtService jwtService, DispatchDao dispatchDao, WorkitemDao workitemDao) {
+    public DispatchMcpTokenService(JwtService jwtService, DispatchDao dispatchDao,
+                                   WorkitemDao workitemDao, OrgMemberDao orgMemberDao) {
         this.jwtService = jwtService;
         this.dispatchDao = dispatchDao;
         this.workitemDao = workitemDao;
+        this.orgMemberDao = orgMemberDao;
     }
 
     public String issue(DispatchDO dispatch) {
@@ -64,8 +69,9 @@ public class DispatchMcpTokenService {
                 throw new IllegalArgumentException("dispatch is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();
+            OrgAccessLevel level = resolveAccessLevel(tenantId, userId);
             return new McpAccessTokenService.Principal(
-                    tenantId, userId, -dispatchId, OrgAccessLevel.READ_WRITE,
+                    tenantId, userId, -dispatchId, level,
                     McpAccessTokenService.CredentialType.DISPATCH);
         } catch (Exception e) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
@@ -74,5 +80,20 @@ public class DispatchMcpTokenService {
 
     private boolean tenantIdEquals(DispatchDO dispatch, long tenantId) {
         return dispatch.getTenantId() != null && dispatch.getTenantId() == tenantId;
+    }
+
+    private OrgAccessLevel resolveAccessLevel(long tenantId, long userId) {
+        if (orgMemberDao == null) {
+            return OrgAccessLevel.READ_WRITE;
+        }
+        OrgMemberDO member = orgMemberDao.findByOrgAndUser(tenantId, userId);
+        if (member == null || member.getAccessLevel() == null) {
+            return OrgAccessLevel.READ_WRITE;
+        }
+        try {
+            return OrgAccessLevel.valueOf(member.getAccessLevel());
+        } catch (IllegalArgumentException e) {
+            return OrgAccessLevel.READ_WRITE;
+        }
     }
 }

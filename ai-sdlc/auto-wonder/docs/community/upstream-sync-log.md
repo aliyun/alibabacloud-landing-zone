@@ -8,11 +8,107 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `a4e9ec9e2e8a1adebf1154ea89ef6af88b84278f`
-- Community merge commit: `fa2dbe23c69d4649c9d6345afd5325ec4b9cd190`
+- Synchronized `origin/master`: `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a`
+- Community merge commit: `44544f27d8a05706fbd19631790f97a82e44c0f5`
 - Synchronized at: 2026-08-05 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-05: `ce1764e9` to `41aedc7f`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `ce1764e957b287fb64dba867c1e9703d6c914c8e` |
+| Community before merge | `86bd90d01a94469c03a9df717b26921836f70984` |
+| Merged `origin/master` | `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a` |
+| Resulting merge commit | `44544f27d8a05706fbd19631790f97a82e44c0f5` |
+
+Scope: five upstream commits. Personal DingTalk identity management no longer
+requires an organization context, and MCP repository management now includes
+create, update, and delete tools with coverage.
+
+The merge had no textual conflicts. Automatic overlaps in organization-access
+annotation coverage and auth-filter tests were reviewed; master behavior and
+the existing community exemptions were both retained. A pre-existing unsafe
+test spy in `AgentReviewPage.test.tsx` was corrected in `20d5c220` so the full
+lint gate remains clean. No product decision was required.
+
+Verification completed after the merge:
+
+- Backend: 1,732 tests passed; production JAR built and the frontend production
+  build transformed 4,759 modules.
+- Frontend: 83 test files and 508 tests passed; lint completed with zero errors
+  and two existing hook warnings.
+- Deployment Skill: 48 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  community executor UI remained Qoder CLI-only.
+- The first standalone frontend invocation inherited an arm64 child `node`
+  against Maven's x64 Rollup package and was discarded; rerunning with Maven's
+  Node directory first in `PATH` passed.
+
+### 2026-08-05: `75bd9303` to `ce1764e9`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `75bd9303030df7bbf876cdb96513dcfa936868b1` |
+| Community before merge | `4cfcdc854dcaed3bf604b05b0533f3a709263d58` |
+| Merged `origin/master` | `ce1764e957b287fb64dba867c1e9703d6c914c8e` |
+| Resulting merge commit | `3af87a3ab4f4039bb4f646b49848c624d75bfcee` |
+
+Scope: four upstream commits. Agent approve/reject failures now expose backend
+errors, agent listing enforces tenant isolation, and dispatch MCP tokens inherit
+the user's actual organization access level instead of hard-coded `READ_WRITE`.
+
+The merge had no textual conflict, community-boundary overlap, configuration or
+documentation-policy input, or product decision. Backend verification passed
+1,721 tests. The changed Agent review frontend suite passed all four tests; the
+immediately preceding full frontend, build, lint, Skill, and dependency-boundary
+gates remained applicable because this batch did not change those inputs.
+
+### 2026-08-05: `a4e9ec9e` to `75bd9303`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `a4e9ec9e2e8a1adebf1154ea89ef6af88b84278f` |
+| Community before merge | `c154b3fc8e35ad7038b92bee407ac6a4402dc348` |
+| Merged `origin/master` | `75bd9303030df7bbf876cdb96513dcfa936868b1` |
+| Resulting merge commit | `9bc094f0af60d9477ca70d823a6cc3e7ad59f37a` |
+
+Scope: ten upstream commits, including five feature/fix commits. The merge
+removes the repository scan-status column, repairs SDLC step ordering after
+delete/add operations, advances the recommended runtime to `0.2.115`, adopts
+the official HTTP clarification compatibility history, and renders streamed
+and persisted clarification replies as Markdown.
+
+Three textual conflicts were resolved:
+
+- `ExecutorListPage.test.tsx`: retained the community Qoder CLI-only contract
+  while updating all runtime command expectations to `0.2.115`;
+- `WorkitemClarificationPanel.test.tsx`: retained the community HTTP/error and
+  `IN`/`INBOUND` compatibility coverage and added the master Markdown test;
+- `application.yml`: retained community SecretCrypto and external runtime
+  configuration while accepting the `0.2.115` default.
+
+Automatic overlaps in branding, IM tests, and clarification components were
+reviewed. Master product behavior was retained, public OSS/SLS and SecretCrypto
+boundaries were unchanged, excluded development documents were not restored,
+and no product decision was required. The HTTP compatibility patch had already
+been cherry-picked to community; the merge now records its official master
+ancestry without changing that behavior.
+
+Verification completed after the merge:
+
+- Backend: 1,717 tests passed; production JAR built.
+- Frontend: 83 test files and 507 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,759 modules.
+- Deployment Skill: 45 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; community executor creation remained Qoder
+  CLI-only and the runtime default was verified as `0.2.115`.
+- The first standalone frontend invocation used Maven's x64 optional Rollup
+  package on an arm64 shell and was discarded; the required host-npm reinstall
+  and serial rerun passed.
 
 ### 2026-08-05: `454017b4` to `a4e9ec9e`
 

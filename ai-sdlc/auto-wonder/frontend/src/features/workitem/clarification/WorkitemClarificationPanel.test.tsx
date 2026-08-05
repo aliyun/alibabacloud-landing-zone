@@ -229,12 +229,12 @@ describe('WorkitemClarificationPanel', () => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
     });
 
-    const userMsg = screen.getByText('你好，我想讨论需求').closest('div');
-    const aiMsg = screen.getByText('好的，请说说你的想法').closest('div');
+    const userMsg = screen.getByText('你好，我想讨论需求').closest('div[style*="background-color"]');
+    const aiMsg = screen.getByText('好的，请说说你的想法').closest('div[style*="background-color"]');
     expect(userMsg).not.toBeNull();
     expect(aiMsg).not.toBeNull();
-    expect(userMsg!.style.backgroundColor).toBe('rgb(230, 247, 255)');
-    expect(aiMsg!.style.backgroundColor).toBe('rgb(245, 245, 245)');
+    expect(userMsg).toHaveStyle({ backgroundColor: '#e6f7ff' });
+    expect(aiMsg).toHaveStyle({ backgroundColor: '#f5f5f5' });
   });
 
   it('turns completed streamed text into an AI bubble without waiting for the next user reply', async () => {
@@ -321,6 +321,83 @@ describe('WorkitemClarificationPanel', () => {
     fireEvent.change(textarea, { target: { value: '你好' } });
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
     await waitFor(() => expect(submitCalled).toBe(true));
+  });
+
+  it('restores the message and reports an error when sending fails', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    mockConversationWithTurns(42);
+    server.use(
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () =>
+        HttpResponse.json(
+          { success: false, code: 'SEND_FAILED', message: '发送失败', traceId: null, data: null },
+          { status: 500 },
+        ),
+      ),
+    );
+    renderPanel([]);
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '请保留这条消息' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+
+    await waitFor(() => expect(textarea).toHaveValue('请保留这条消息'));
+    expect(await screen.findByText('消息发送失败，请重试')).toBeInTheDocument();
+  });
+
+  it('renders backend IN and INBOUND turns as user messages', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const conversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: false,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: '2026-01-01T00:00:01', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 7, direction: 'IN', content: '我的需求', status: 'PROCESSING', error: null, gmtCreate: '2026-01-01T00:00:01' },
+        { id: 8, direction: 'INBOUND', content: '历史需求', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation }),
+      ),
+    );
+
+    renderPanel([]);
+
+    expect(await screen.findByText('我的需求')).toBeInTheDocument();
+    expect(screen.getByText('历史需求')).toBeInTheDocument();
+    expect(screen.getAllByText('你')).toHaveLength(2);
+  });
+
+  it('renders persisted AI replies as markdown', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const conversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: '2026-01-01T00:00:03', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 3, direction: 'IN', content: '请给方案', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+        { id: 4, direction: 'OUT', content: '**需求目标**：完成澄清', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:03' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation }),
+      ),
+    );
+
+    renderPanel([]);
+
+    expect((await screen.findByText('需求目标')).tagName).toBe('STRONG');
   });
 
   it('does not send on Shift+Enter and preserves input content', async () => {

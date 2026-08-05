@@ -1,14 +1,23 @@
 import { useState } from 'react';
 import { Alert, Card, Table, Tag, Button, Space, Modal, Input, message, Descriptions, Spin, Empty } from 'antd';
+import { useQueryClient } from '@tanstack/react-query';
 import { CheckOutlined, CloseOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { usePendingReviews, useApproveAgent, useRejectAgent, useAgentVersion } from './hooks';
 import type { Agent } from './api';
+import { ApiError } from '@/shared/types/common';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
+function reviewErrorText(err: unknown, fallback: string): string {
+  if (err instanceof ApiError && err.message) return err.message;
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 export function AgentReviewPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: pendingAgents = [], isLoading } = usePendingReviews();
   const approveAgent = useApproveAgent();
   const rejectAgent = useRejectAgent();
@@ -18,6 +27,11 @@ export function AgentReviewPage() {
   const [rejectModalAgent, setRejectModalAgent] = useState<Agent | null>(null);
   const [rejectComment, setRejectComment] = useState('');
   const [feedback, setFeedback] = useState<{ message: string; description: string } | null>(null);
+
+  const invalidatePendingReviews = () => {
+    queryClient.invalidateQueries({ queryKey: ['pendingReviews'] });
+    queryClient.invalidateQueries({ queryKey: ['agents', 'reviews', 'count'] });
+  };
 
   const handleApprove = (agent: Agent) => {
     accessCommand('READ_WRITE', '通过数字员工审核', () => {
@@ -29,22 +43,32 @@ export function AgentReviewPage() {
             description: '该 Agent 已可进入上线流转，待审核列表会自动刷新。',
           });
         },
+        onError: (err) => {
+          message.error(reviewErrorText(err, '审核操作失败，请刷新后重试'));
+          invalidatePendingReviews();
+        },
       });
     });
   };
 
   const handleReject = () => {
     if (!rejectModalAgent || !rejectComment.trim()) return;
+    const target = rejectModalAgent;
+    const comment = rejectComment;
     accessCommand('READ_WRITE', '驳回数字员工审核', () => {
-      rejectAgent.mutate({ agentId: rejectModalAgent.id, comment: rejectComment }, {
+      rejectAgent.mutate({ agentId: target.id, comment }, {
         onSuccess: () => {
-          message.success(`${rejectModalAgent.name} 已驳回`);
+          message.success(`${target.name} 已驳回`);
           setFeedback({
-            message: `${rejectModalAgent.name} 已驳回`,
+            message: `${target.name} 已驳回`,
             description: '已记录驳回意见，可在修订后重新提交审核。',
           });
           setRejectModalAgent(null);
           setRejectComment('');
+        },
+        onError: (err) => {
+          message.error(reviewErrorText(err, '驳回操作失败，请刷新后重试'));
+          invalidatePendingReviews();
         },
       });
     });

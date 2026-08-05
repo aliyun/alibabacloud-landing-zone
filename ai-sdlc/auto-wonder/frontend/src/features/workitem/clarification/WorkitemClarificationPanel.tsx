@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Input, Typography, Empty } from 'antd';
+import { Button, Input, Typography, Empty, message } from 'antd';
 import { SendOutlined, PlusOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
+import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { AgentSelector } from './AgentSelector';
 import { SquadAgentSelector } from './SquadAgentSelector';
 import type { SquadAgentSelection } from './SquadAgentSelector';
@@ -161,7 +162,12 @@ export function WorkitemClarificationPanel({
     const content = inputValue.trim();
     if (!content || !conversationId || submitMutation.isPending) return;
     setInputValue('');
-    submitMutation.mutate(content);
+    submitMutation.mutate(content, {
+      onError: () => {
+        setInputValue((current) => current || content);
+        message.error('消息发送失败，请重试');
+      },
+    });
   }, [inputValue, conversationId, submitMutation]);
 
   useEffect(() => {
@@ -300,7 +306,7 @@ export function WorkitemClarificationPanel({
 }
 
 function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: string }) {
-  const isUser = turn.direction === 'IN';
+  const isUser = turn.direction === 'IN' || turn.direction === 'INBOUND';
   const label = isUser ? '你' : (agentName || 'AI');
   const icon = isUser
     ? <UserOutlined style={{ fontSize: 12, marginRight: 4 }} />
@@ -339,7 +345,7 @@ function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: 
             lineHeight: '1.6',
           }}
         >
-          {turn.content}
+          {isUser ? turn.content : <MarkdownView content={turn.content} />}
           {turn.error ? (
             <Typography.Text type="danger" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
               {turn.error}

@@ -118,12 +118,12 @@ public class AgentService {
         return toSummaryVO(agent);
     }
 
-    public List<AgentVO> list(String status, int page, int size) {
+    public List<AgentVO> list(Long tenantId, String status, int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = Math.min(size < 1 ? 20 : size, 100);
         int offset = (p - 1) * s;
         List<AgentVO> result = new ArrayList<>();
-        for (AgentDO a : agentDao.list(status, offset, s)) {
+        for (AgentDO a : agentDao.list(tenantId, status, offset, s)) {
             result.add(toSummaryVO(a));
         }
         return result;

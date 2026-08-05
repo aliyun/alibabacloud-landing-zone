@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table, Card, Button, Tag, Space, Modal, Form, Input, message } from 'antd';
+import { Table, Card, Button, Space, Modal, Form, Input, message } from 'antd';
 import { PlusOutlined, ShareAltOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -59,10 +59,6 @@ export function RepoListPage() {
     },
     { title: 'URL', dataIndex: 'url', ellipsis: true },
     { title: '描述', dataIndex: 'description', ellipsis: true, render: (v: string | null) => v || '-' },
-    {
-      title: '扫描状态', dataIndex: 'scanStatus', width: 100,
-      render: (s: string | null) => s === 'CONCLUDED' ? <Tag color="success">扫描完成</Tag> : <Tag>未扫描</Tag>,
-    },
     {
       title: '创建时间', dataIndex: 'gmtCreate', width: 160,
       render: (t: string) => new Date(t).toLocaleString('zh-CN'),

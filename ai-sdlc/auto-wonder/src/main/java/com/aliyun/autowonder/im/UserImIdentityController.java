@@ -2,8 +2,6 @@ package com.aliyun.autowonder.im;
 
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
 import com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest;
 import com.aliyun.autowonder.im.dto.UserImIdentityVO;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,7 +29,6 @@ public class UserImIdentityController {
     }
 
     @PutMapping("/dingtalk")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "配置个人钉钉身份")
     public Result<UserImIdentityVO> updateDingTalk(
             @Valid @RequestBody UpdateUserImIdentityRequest request) {
         return Result.ok(identityService.update(
@@ -41,7 +38,6 @@ public class UserImIdentityController {
     }
 
     @PostMapping("/dingtalk/test")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "测试个人钉钉身份")
     public Result<Void> testDingTalk() {
         identityService.sendTest(
                 AutoWonderContext.get().getUserId(),

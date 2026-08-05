@@ -72,7 +72,10 @@ class OrgAccessAnnotationCoverageTest {
                     + "com.aliyun.autowonder.org.dto.CreateOrgRequest)",
             "com.aliyun.autowonder.org.OrgController#mine()",
             "com.aliyun.autowonder.org.OrgController#switchOrg(java.lang.Long)",
-            "com.aliyun.autowonder.im.UserImIdentityController#list()"
+            "com.aliyun.autowonder.im.UserImIdentityController#list()",
+            "com.aliyun.autowonder.im.UserImIdentityController#updateDingTalk("
+                    + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
+            "com.aliyun.autowonder.im.UserImIdentityController#testDingTalk()"
     );
 
     @Test

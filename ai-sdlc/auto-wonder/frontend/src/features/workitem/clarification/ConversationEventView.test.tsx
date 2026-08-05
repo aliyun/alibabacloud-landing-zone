@@ -30,4 +30,20 @@ describe('ConversationEventView', () => {
 
     expect(view.container.querySelector('.ant-spin')).not.toBeNull();
   });
+
+  it('renders streamed thinking and reply text as markdown', () => {
+    render(
+      <ConversationEventView
+        events={[
+          event('thinking', '**正在读取** `workitem`'),
+          { ...event('text', '**需求目标**：完成澄清'), eventSeq: 2 },
+        ]}
+        isProcessing
+      />,
+    );
+
+    expect(screen.getByText('正在读取').tagName).toBe('STRONG');
+    expect(screen.getByText('workitem').tagName).toBe('CODE');
+    expect(screen.getByText('需求目标').tagName).toBe('STRONG');
+  });
 });

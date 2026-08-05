@@ -112,7 +112,7 @@ public class SdlcService {
         SdlcStepDO step = new SdlcStepDO();
         step.setTenantId(tenantId);
         step.setSdlcId(sdlcId);
-        step.setStepOrder(req.getStepOrder());
+        step.setStepOrder(req.getStepOrder() != null ? req.getStepOrder() : nextStepOrder(sdlcId));
         step.setName(req.getName());
         step.setKind(req.getKind());
         step.setInstructionMd(req.getInstructionMd());
@@ -176,6 +176,7 @@ public class SdlcService {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
         }
         stepDao.softDelete(stepId, tenantId, userId);
+        renumberSteps(sdlcId, tenantId, userId);
     }
 
     @Transactional
@@ -255,6 +256,26 @@ public class SdlcService {
                 && !"ENABLED".equals(sdlc.getStatus())) {
             throw new BizException(ErrorCode.SDLC_NOT_DRAFT);
         }
+    }
+
+    private void renumberSteps(long sdlcId, long tenantId, long userId) {
+        List<SdlcStepDO> remaining = stepDao.listBySdlc(sdlcId);
+        for (int i = 0; i < remaining.size(); i++) {
+            if (remaining.get(i).getStepOrder() != i + 1) {
+                stepDao.updateOrder(remaining.get(i).getId(), tenantId, i + 1, userId);
+            }
+        }
+    }
+
+    private int nextStepOrder(long sdlcId) {
+        List<SdlcStepDO> steps = stepDao.listBySdlc(sdlcId);
+        int max = 0;
+        for (SdlcStepDO st : steps) {
+            if (st.getStepOrder() != null && st.getStepOrder() > max) {
+                max = st.getStepOrder();
+            }
+        }
+        return max + 1;
     }
 
     SdlcVO toVO(SdlcDO s, List<SdlcStepDO> steps) {

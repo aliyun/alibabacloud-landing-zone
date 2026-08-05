@@ -37,6 +37,8 @@ different for `multi-az-ha`. Custom tags cannot replace `Project`, `Environment`
 ## Fixed Decisions
 
 - OSS is mandatory: create a private package bucket and a private artifact bucket.
+- Application `OSS_ENDPOINT` is the regional public endpoint. The OSS intranet
+  endpoint is used only by the deployment transport for temporary ECS downloads.
 - SLS is enabled and creates system, business, and metrics stores.
 - Aone is disabled. Linux x86_64 and Java 21 are the supported runtime.
 - ECS has no NAT, public EIP, or SSH access. Cloud Assistant performs host work.

@@ -118,8 +118,15 @@ class SdlcServiceTest {
         second.setSdlcId(9L);
         second.setStepOrder(2);
         second.setName("second");
+        SdlcStepDO third = new SdlcStepDO();
+        third.setId(3L);
+        third.setSdlcId(9L);
+        third.setStepOrder(3);
+        third.setName("new step");
         when(stepDao.findById(1L)).thenReturn(step);
-        when(stepDao.listBySdlc(9L)).thenReturn(List.of(step, second));
+        when(stepDao.listBySdlc(9L))
+                .thenReturn(List.of(second, third))
+                .thenReturn(List.of(second, third));
 
         UpdateSdlcRequest updateFlow = new UpdateSdlcRequest();
         updateFlow.setName("renamed");
@@ -136,7 +143,7 @@ class SdlcServiceTest {
         service.deleteStep(9L, 1L, 100L, 7L);
 
         ReorderRequest reorder = new ReorderRequest();
-        reorder.setStepIds(List.of(2L, 1L));
+        reorder.setStepIds(List.of(2L, 3L));
         service.reorderSteps(9L, reorder, 100L, 7L);
 
         verify(stepDao).insert(any(SdlcStepDO.class));
@@ -144,8 +151,8 @@ class SdlcServiceTest {
                 any(), any(), any(), any(), any(), any(), any(),
                 any(), any(), any(), any(), any(), any(), eq(7L));
         verify(stepDao).softDelete(1L, 100L, 7L);
-        verify(stepDao).updateOrder(2L, 100L, 1, 7L);
-        verify(stepDao).updateOrder(1L, 100L, 2, 7L);
+        verify(stepDao, times(2)).updateOrder(2L, 100L, 1, 7L);
+        verify(stepDao, times(2)).updateOrder(3L, 100L, 2, 7L);
     }
 
     @Test
@@ -259,11 +266,18 @@ class SdlcServiceTest {
         SdlcStepDO step = new SdlcStepDO();
         step.setId(1L);
         step.setSdlcId(9L);
+        step.setStepOrder(1);
         when(stepDao.findById(1L)).thenReturn(step);
+        SdlcStepDO remaining = new SdlcStepDO();
+        remaining.setId(2L);
+        remaining.setSdlcId(9L);
+        remaining.setStepOrder(2);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of(remaining));
 
         service.deleteStep(9L, 1L, 100L, 7L);
 
         verify(stepDao).softDelete(1L, 100L, 7L);
+        verify(stepDao).updateOrder(2L, 100L, 1, 7L);
     }
 
     @Test
@@ -413,5 +427,66 @@ class SdlcServiceTest {
         when(stepDao.listBySdlc(9L)).thenReturn(List.of(s1, s2));
         BizException ex = assertThrows(BizException.class, () -> service.enable(9L, null, 100L, 7L));
         assertEquals("16005", ex.getCode());
+    }
+
+    @Test
+    void deleteStep_renumbers_remaining_steps() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO s1 = new SdlcStepDO(); s1.setId(1L); s1.setSdlcId(9L); s1.setStepOrder(1);
+        SdlcStepDO s2 = new SdlcStepDO(); s2.setId(2L); s2.setSdlcId(9L); s2.setStepOrder(2);
+        SdlcStepDO s3 = new SdlcStepDO(); s3.setId(3L); s3.setSdlcId(9L); s3.setStepOrder(3);
+        when(stepDao.findById(2L)).thenReturn(s2);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of(s1, s3));
+
+        service.deleteStep(9L, 2L, 100L, 7L);
+
+        verify(stepDao).softDelete(2L, 100L, 7L);
+        verify(stepDao, never()).updateOrder(eq(1L), anyLong(), anyInt(), anyLong());
+        verify(stepDao).updateOrder(3L, 100L, 2, 7L);
+    }
+
+    @Test
+    void deleteStep_no_remaining_steps_skips_renumber() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO s1 = new SdlcStepDO(); s1.setId(1L); s1.setSdlcId(9L); s1.setStepOrder(1);
+        when(stepDao.findById(1L)).thenReturn(s1);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of());
+
+        service.deleteStep(9L, 1L, 100L, 7L);
+
+        verify(stepDao).softDelete(1L, 100L, 7L);
+        verify(stepDao, never()).updateOrder(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void addStep_null_stepOrder_auto_calculates() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO existing = new SdlcStepDO();
+        existing.setId(1L); existing.setSdlcId(9L); existing.setStepOrder(2);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of(existing));
+        CreateStepRequest req = new CreateStepRequest();
+        req.setName("new step");
+        req.setHandlerType("AGENT");
+
+        StepVO vo = service.addStep(9L, req, 100L, 7L);
+
+        verify(stepDao).insert(argThat(step -> step.getStepOrder() == 3));
+    }
+
+    @Test
+    void addStep_null_stepOrder_no_existing_steps_defaults_to_1() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of());
+        CreateStepRequest req = new CreateStepRequest();
+        req.setName("first");
+        req.setHandlerType("AGENT");
+
+        service.addStep(9L, req, 100L, 7L);
+
+        verify(stepDao).insert(argThat(step -> step.getStepOrder() == 1));
     }
 }

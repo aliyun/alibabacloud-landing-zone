@@ -28,9 +28,20 @@ disabling checksums or changing system DNS. **Resume:** Terraform init and plan.
 **Symptom:** submission succeeds but no invocation ID is recorded, or the remote
 shell exits `126` with Base64 text. **Cause:** old scripts expected
 `InvocationId`, pre-encoded `CommandContent`, and polled `InvocationStatus`.
-**Safe fix:** pass raw command content, checkpoint `InvokeId`, poll with
-`--InvokeId`, and inspect `InvokeRecordStatus`. Reconcile the stored invocation
-before retry. **Resume:** the first unproven host postcondition.
+**Safe fix:** pass raw command content; checkpoint current `InvokeId` or legacy
+`InvocationId` immediately; poll with `--InvokeId`; inspect current
+`InvokeRecordStatus` or legacy `InvocationStatus`; and require the actual
+`ExitCode` to be zero. Reconcile the stored invocation before retry. **Resume:**
+the first unproven host postcondition.
+
+### Authenticated Endpoint Produces A False Startup Failure
+
+**Symptom:** deployment reports unhealthy while the service and public UI are
+available; `/api/health` returns 401. **Cause:** an authenticated business API
+was used as a startup probe. **Safe fix:** require active systemd state, a port
+7001 listener, `success` from `/checkpreload.htm`, and HTTP success from
+`/api/platform/branding/public`. **Unsafe:** adding credentials to a load
+balancer health check. **Resume:** rolling start or acceptance.
 
 ### Control Host Cannot Reach OSS Intranet Endpoint
 
@@ -38,6 +49,16 @@ before retry. **Resume:** the first unproven host postcondition.
 and delete with the regional public OSS endpoint, but presign downloads against
 the VPC intranet endpoint. Detect whether installed ossutil provides `presign`
 or legacy `sign`. **Unsafe:** giving ECS public egress. **Resume:** staging.
+
+### Application OSS Endpoint Is Internal
+
+**Symptom:** application OSS operations or externally consumed object links fail
+after deployment, and `/etc/autowonder/autowonder.env` contains an endpoint with
+`-internal`. **Cause:** the deployment-only ECS download endpoint was reused as
+application `OSS_ENDPOINT`. **Safe fix:** set it to the matching regional public
+endpoint such as `https://oss-cn-hangzhou.aliyuncs.com`, run `runtime-config`,
+then deploy with `--config-only` and rolling restart. Keep release staging on the
+intranet endpoint. **Resume:** OSS application acceptance.
 
 ### Required Environment Key Is Empty
 
@@ -105,16 +126,20 @@ binary from a public URL. **Resume:** host bootstrap.
 
 **Symptom:** a signed URL unexpectedly contains a security-token parameter.
 **Cause:** the `aliyun ossutil` wrapper injected cached credentials. **Evidence:**
-query parameter names only. **Safe fix:** invoke the standalone binary with an
-empty config, ignored environment, explicit credential mode, and help probe.
-**Unsafe:** printing or reusing the URL. **Resume:** presign and transfer.
+query parameter names only. **Safe fix:** invoke the standalone binary, run the
+version/subcommand preflight, and confirm the STS source is intentional without
+printing its value. **Unsafe:** printing or reusing the URL. **Resume:** presign
+and transfer.
 
 ### Ossutil Flags Differ
 
 **Symptom:** `presign` rejects method or expiry flags. **Cause:** installed CLI
 syntax differs from old examples. **Evidence:** version and sanitized help.
-**Safe fix:** probe help and use its duration form. **Unsafe:** installing an
-unknown binary during deployment. **Resume:** presign only.
+**Safe fix:** probe version plus `cp`, `rm`, `presign`, and legacy `sign` help,
+then use the detected endpoint, region, duration/timeout, and force flags through
+the compatibility wrapper. **Unsafe:** assuming parameters from another major
+version or installing an unknown binary during deployment. Validate only URL
+shape and success; never print the signed query. **Resume:** presign only.
 
 ### Environment Values Retain JSON Quotes
 

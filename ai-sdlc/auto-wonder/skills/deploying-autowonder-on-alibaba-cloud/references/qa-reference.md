@@ -31,8 +31,11 @@ or **Recommendation**. Never present a default as the state of a live deployment
 | Service | `autowonder.service`, user/group `autowonder` |
 
 Use Cloud Assistant for `systemctl status autowonder`, `journalctl -u
-autowonder`, disk/memory checks, and local health probes. Sanitize output. The
-base probe is `/checkpreload.htm`; capabilities should report Aone disabled.
+autowonder`, disk/memory checks, and local health probes. Sanitize output. A
+ready node has active systemd state, a port 7001 listener, `success` from
+`/checkpreload.htm`, and an HTTP-successful `/api/platform/branding/public`.
+The authenticated `/api/health` endpoint is not a startup probe. Capabilities
+should report Aone disabled.
 `AUTOWONDER_PUBLIC_BASE_URL` is stored in the environment file; when not
 explicitly supplied, `runtime-config` derives it from manifest
 `applicationBaseUrl` before deployment.
@@ -44,7 +47,9 @@ explicitly supplied, `runtime-config` derives it from manifest
   selected authentication mode; derive the final URL from live RDS settings.
 - Redis 7 uses the private endpoint and configured account/TLS mode.
 - The private package bucket stores task/skill packages; the private artifact
-  bucket stores artifacts and base objects. OSS is mandatory.
+  bucket stores artifacts and base objects. OSS is mandatory. Application
+  `OSS_ENDPOINT` is the regional public endpoint; the deployment-only intranet
+  endpoint is not an application environment value.
 - SLS maps system and business to indexed Logstores and metrics to MetricStore.
   Endpoints are bare hostnames: the control host uses `<region>.log.aliyuncs.com`
   and no-NAT ECS uses `<region>-intranet.log.aliyuncs.com`. `IndexConfigNotExist`
@@ -90,8 +95,15 @@ the systemd journal. SLS holds system, business, and metrics data. Terraform and
 Cloud Assistant provide control-plane evidence. Search only sanitized fields,
 and report invocation terminal state, exit code, stdout/stderr classification,
 and timeout without exposing full secret-bearing command output.
-The manifest records every `InvokeId` at submission time, so an interrupted run
-can query `InvokeRecordStatus` before deciding whether a command may be retried.
+The manifest records every current `InvokeId` or legacy `InvocationId` at
+submission time, so an interrupted run can query `InvokeRecordStatus` (falling
+back to `InvocationStatus`) before deciding whether a command may be retried.
+Completion still requires the actual `ExitCode` to be zero.
+
+Preflight reports the detected ossutil version and v2/legacy command contract.
+Deployment derives endpoint, region, expiry, and force flags from command help.
+Signed URLs and cached STS token values are secret material and are never valid
+diagnostic output.
 
 ## Fast Resume
 

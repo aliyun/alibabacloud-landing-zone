@@ -495,6 +495,8 @@ class AuthFilterTest {
                 Arguments.of("DELETE", "/api/mcp/tokens/1"),
                 Arguments.of("GET", "/api/mcp/tokens/tools"),
                 Arguments.of("GET", "/api/mcp/tokens/platform-skills"),
-                Arguments.of("GET", "/api/users/me/im-identities"));
+                Arguments.of("GET", "/api/users/me/im-identities"),
+                Arguments.of("PUT", "/api/users/me/im-identities/dingtalk"),
+                Arguments.of("POST", "/api/users/me/im-identities/dingtalk/test"));
     }
 }

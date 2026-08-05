@@ -39,22 +39,22 @@ run_cloud() {
   local instance=$1 script=$2 response invocation result status exit_code output attempts=0
   require_command aliyun
   response=$(aliyun_cli ecs RunCommand --region "$region" --RegionId "$region" --InstanceId.1 "$instance" --Type RunShellScript --Timeout 1800 --CommandContent "$script") || die "Cloud Assistant submission failed"
-  invocation=$(jq -er '.InvokeId // .InvocationId // .invokeId // .invocationId' <<<"$response") || die "Cloud Assistant invocation ID missing"
+  invocation=$(cloud_assistant_invocation_id <<<"$response") || die "Cloud Assistant invocation ID missing"
   atomic_jq "$manifest" --arg id "$invocation" --arg instance "$instance" \
     '.remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
   while ((attempts++ < 180)); do
     sleep 2
     result=$(aliyun_cli ecs DescribeInvocationResults --region "$region" --RegionId "$region" --InvokeId "$invocation") || continue
-    status=$(jq -r '[..|objects|.InvokeRecordStatus? // .InvocationStatus? // .Status? // empty][0] // "Pending"' <<<"$result")
+    status=$(cloud_assistant_status <<<"$result")
     case "$status" in
       Finished|Success)
-        exit_code=$(jq -r '[..|objects|.ExitCode? // empty][0] // -1' <<<"$result")
+        exit_code=$(cloud_assistant_exit_code <<<"$result")
         [[ "$exit_code" == 0 ]] || die "Cloud Assistant command failed"
         atomic_jq "$manifest" --arg id "$invocation" '(.remoteInvocations[] | select(.invokeId==$id)).status="finished"'
         output=$(jq -r '[..|objects|.Output? // empty][0] // ""' <<<"$result" | decode_b64 2>/dev/null || true)
         jq -n --arg invocationId "$invocation" --arg output "$output" '{invocationId:$invocationId,output:$output}'
         return 0;;
-      Failed|Stopped|Stopping|TimedOut|Cancelled) die "Cloud Assistant invocation reached terminal failure";;
+      Failed|PartialFailed|Stopped|Stopping|TimedOut|Cancelled|Invalid|Aborted|Terminated) die "Cloud Assistant invocation reached terminal failure";;
     esac
   done
   die "Cloud Assistant invocation timed out"
@@ -96,6 +96,10 @@ case "$subcommand" in
     public_base_url=$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_PUBLIC_BASE_URL)")
     [[ "$public_base_url" =~ ^https?://[^[:space:]]+$ ]] || die "AUTOWONDER_PUBLIC_BASE_URL must be an absolute HTTP(S) URL"
     unset public_base_url
+    oss_endpoint=$(unquote_simple "$(env_raw_value "$env_file" OSS_ENDPOINT)")
+    oss_host=${oss_endpoint#http://}; oss_host=${oss_host#https://}; oss_host=${oss_host%/}
+    [[ "$oss_host" == "oss-${region}.aliyuncs.com" ]] || die "OSS_ENDPOINT must use the regional public endpoint oss-${region}.aliyuncs.com"
+    unset oss_endpoint oss_host
     grep -q '^AUTOWONDER_AONE_ENABLED=false$' "$env_file" || die "Aone must be disabled"
     grep -q '^AUTOWONDER_SLS_ENABLED=true$' "$env_file" || die "SLS must be enabled"
     grep -q '^AUTOWONDER_SIGAR_ENABLED=true$' "$env_file" || die "SIGAR must be enabled"
@@ -136,8 +140,13 @@ printf 'TABLE_COUNT=%s\\nTEMPLATE_COUNT=%s\\nPOSTCHECK=passed\\n' \"\$count\" \"
       result=$(run_cloud "$instance" 'set -euo pipefail
 systemctl enable --now autowonder.service
 for attempt in $(seq 1 60); do
-  body=$(curl --fail --silent http://127.0.0.1:7001/checkpreload.htm 2>/dev/null || true)
-  if [ "$body" = success ]; then systemctl is-active --quiet autowonder.service; exit 0; fi
+  body=$(curl --fail --silent --connect-timeout 2 --max-time 5 http://127.0.0.1:7001/checkpreload.htm 2>/dev/null || true)
+  if systemctl is-active --quiet autowonder.service \
+    && ss -ltnH "sport = :7001" | grep -q . \
+    && [ "$body" = success ] \
+    && curl --fail --silent --connect-timeout 2 --max-time 5 http://127.0.0.1:7001/api/platform/branding/public >/dev/null; then
+    exit 0
+  fi
   sleep 2
 done
 exit 1')
@@ -180,7 +189,8 @@ exit 1')
     ;;
   acceptance)
     base_url=$(jq -er '.applicationBaseUrl // empty' "$manifest") || die "applicationBaseUrl missing"
-    [[ $(curl --fail --silent "$base_url/checkpreload.htm") == success ]] || die "public health check failed"
+    [[ $(curl --fail --silent --connect-timeout 5 --max-time 10 "$base_url/checkpreload.htm") == success ]] || die "public health check failed"
+    curl --fail --silent --connect-timeout 5 --max-time 10 "$base_url/api/platform/branding/public" >/dev/null || die "public branding probe failed"
     capabilities=$(mktemp); TEMP_FILES+=("$capabilities")
     curl --fail --silent "$base_url/api/integrations/capabilities" >"$capabilities"
     jq -e '[.aoneEnabled, .data.aoneEnabled] | any(. == false)' "$capabilities" >/dev/null || die "Aone capability is unexpectedly enabled"

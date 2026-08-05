@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Typography, Tag, Spin } from 'antd';
 import { LoadingOutlined, ToolOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { MarkdownView } from '@/shared/ui/MarkdownView';
 import type { StreamedEvent } from './hooks';
 
 interface ConversationEventViewProps {
@@ -48,13 +49,13 @@ export function ConversationEventView({ events, isProcessing }: ConversationEven
           <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>
             思考过程
           </summary>
-          <pre style={{
+          <div style={{
             fontSize: 12, color: '#8c8c8c', whiteSpace: 'pre-wrap',
             maxHeight: 200, overflow: 'auto', padding: '4px 8px',
             backgroundColor: '#fafafa', borderRadius: 4, marginTop: 4,
           }}>
-            {accumulated.thinking}
-          </pre>
+            <MarkdownView content={accumulated.thinking} />
+          </div>
         </details>
       ) : null}
 
@@ -100,9 +101,7 @@ export function ConversationEventView({ events, isProcessing }: ConversationEven
       ) : null}
 
       {accumulated.text ? (
-        <Typography.Text style={{ whiteSpace: 'pre-wrap' }}>
-          {accumulated.text}
-        </Typography.Text>
+        <MarkdownView content={accumulated.text} />
       ) : null}
 
       {accumulated.logs.length > 0 ? (
