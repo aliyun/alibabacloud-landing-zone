@@ -41,6 +41,7 @@ different for `multi-az-ha`. Custom tags cannot replace `Project`, `Environment`
   endpoint is used only by the deployment transport for temporary ECS downloads.
 - SLS is enabled and creates system, business, and metrics stores.
 - Aone is disabled. Linux x86_64 and Java 21 are the supported runtime.
+- Executor commands use manifest `recommendedRuntimeVersion` (`0.2.115` for this release).
 - ECS has no NAT, public EIP, or SSH access. Cloud Assistant performs host work.
 - DNS is not modified. The user owns DNS and certificate binding.
 - The initial username is `admin`; generate its password during initialization.

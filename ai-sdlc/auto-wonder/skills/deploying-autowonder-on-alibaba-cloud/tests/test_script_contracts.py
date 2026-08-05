@@ -287,6 +287,30 @@ JSON
                 explicit_env.read_text(),
             )
 
+    def test_runtime_config_replaces_stale_recommended_runtime_version(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            env_file = self.write_env(
+                root / "autowonder.env",
+                {"AUTOWONDER_RUNTIME_RECOMMENDED_VERSION": "0.2.110"},
+            )
+
+            result = subprocess.run([
+                str(ROOT / "scripts/initialize-and-verify.sh"), "runtime-config",
+                "--manifest", str(manifest), "--env-file", str(env_file),
+            ], text=True, capture_output=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            version_lines = [
+                line for line in env_file.read_text().splitlines()
+                if line.startswith("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=")
+            ]
+            self.assertEqual(
+                ["AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.115"],
+                version_lines,
+            )
+
     def test_runtime_config_rejects_internal_oss_endpoint(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -560,6 +584,7 @@ esac
             "stateMode": "local", "lifecycle": "persistent", "executionMode": "staged",
             "ingressScenario": "no-domain-no-certificate", "domain": "", "publicSourceCidrs": ["198.51.100.0/24"],
             "applicationBaseUrl": "http://public-nlb.example.com",
+            "recommendedRuntimeVersion": "0.2.115",
             "slsEnabled": True, "aoneEnabled": False, "publicEgress": False,
             "adminUsername": "admin", "organizationName": "Example", "repositoryUrl": "local",
             "repositoryRef": "community", "repositoryCommit": "HEAD",
