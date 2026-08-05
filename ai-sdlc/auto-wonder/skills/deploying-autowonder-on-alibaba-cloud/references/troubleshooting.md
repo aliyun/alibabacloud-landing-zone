@@ -181,10 +181,10 @@ rename it, for example `JSON_PATH`, run `bash -n`, and rerun the complete check.
 
 ### Real Executor Fails While Simple Probes Pass
 
-**Symptom:** browser/curl connects but the packaged daemon cannot reach 7001.
+**Symptom:** browser/curl connects but the packaged daemon cannot reach the NLB.
 **Cause:** endpoint policy may classify the daemon or destination port. **Evidence:**
 actual daemon result on both direct ports without its token. **Safe fix:** use the
-NLB endpoint on port 443 and require trusted `wss://` for production. **Unsafe:**
+NLB endpoint on port 80 and require trusted `wss://` for production. **Unsafe:**
 claim success from a substitute client. **Resume:** executor acceptance.
 
 ### Copy Buttons Fail On A Plaintext Endpoint

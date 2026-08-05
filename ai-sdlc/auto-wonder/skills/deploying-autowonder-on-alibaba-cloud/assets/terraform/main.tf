@@ -339,21 +339,11 @@ resource "alicloud_nlb_server_group_server_attachment" "app" {
   weight          = 100
 }
 
-resource "alicloud_nlb_listener" "websocket" {
-  load_balancer_id     = alicloud_nlb_load_balancer.app.id
-  listener_protocol    = "TCP"
-  listener_port        = 443
-  listener_description = "${local.name_prefix}-tcp-443"
-  server_group_id      = alicloud_nlb_server_group.app.id
-  idle_timeout         = 900
-  tags                 = local.tags
-}
-
 resource "alicloud_nlb_listener" "application" {
   load_balancer_id     = alicloud_nlb_load_balancer.app.id
   listener_protocol    = "TCP"
-  listener_port        = 7001
-  listener_description = "${local.name_prefix}-tcp-7001"
+  listener_port        = 80
+  listener_description = "${local.name_prefix}-tcp-80"
   server_group_id      = alicloud_nlb_server_group.app.id
   idle_timeout         = 900
   tags                 = local.tags

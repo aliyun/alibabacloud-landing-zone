@@ -20,7 +20,7 @@ user does not override it.
 | Topology | `multi-az-ha` or explicitly selected `experience` | `multi-az-ha` |
 | Size | small, medium, or custom SKU overrides | small |
 | Networks | non-overlapping VPC CIDR and two VSwitch CIDRs | suggested private ranges |
-| Public sources | one or more approved CIDRs for NLB ports 443 and 7001 | none |
+| Public sources | one or more approved CIDRs for NLB port 80 | none |
 | Ingress | no domain/no certificate; domain/no certificate; domain/certificate | no domain/no certificate |
 | Domain | DNS name for either domain scenario | empty otherwise |
 | State | protected remote state or local state | remote |
@@ -49,12 +49,12 @@ different for `multi-az-ha`. Custom tags cannot replace `Project`, `Environment`
 
 | Scenario | Initial executor URL | TLS state |
 | --- | --- | --- |
-| No domain, no certificate | `ws://<nlb-address>:443/ws/executor` | pending; temporary plaintext |
-| Domain, no certificate | `ws://<domain>:443/ws/executor` | pending; temporary plaintext |
+| No domain, no certificate | `ws://<nlb-address>/ws/executor` | pending; temporary plaintext |
+| Domain, no certificate | `ws://<domain>/ws/executor` | pending; temporary plaintext |
 | Domain and certificate | same temporary endpoint until binding, then `wss://<domain>/ws/executor` | accepted only after a trusted handshake |
 
-Both TCP listeners expose public port 443 and port 7001 to the approved CIDRs
-and forward to application port 7001. Plaintext on 443 is never described as TLS.
+The NLB TCP listener exposes public port 80 to the approved CIDRs and forwards
+to ECS application port 7001. Plaintext on port 80 is never described as TLS.
 
 ## Manifest And Terraform Mapping
 

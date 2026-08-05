@@ -45,7 +45,7 @@ REQUIRED_REFERENCE_TERMS = [
     "jq -Rrs @sh",
     "ws://",
     "wss://",
-    "port 443",
+    "port 80",
     "query token",
     "rollback",
     "teardown",

@@ -146,7 +146,7 @@ Run `scripts/initialize-and-verify.sh` acceptance checks:
 - stored credential begins with `enc:v1:`, excludes plaintext, and decrypts after restart;
 - unique records arrive in system, business, and metrics SLS destinations;
 - rolling restart and ECS reboot recovery;
-- real packaged runtime/executor connects through port 443;
+- real packaged runtime/executor connects through NLB port 80;
 - tags comply and proxy, application, journal, and Cloud Assistant evidence has
   no query token or credential material.
 
@@ -162,11 +162,11 @@ real packaged runtime WebSocket probe is pending.
 Run `scripts/sanitize-evidence.sh` before publishing the report. Separate
 Infrastructure ready, Application ready, Business initialized, Release accepted,
 and TLS accepted. Pending DNS or TLS does not erase lower-level success, but
-plaintext `ws://` on 443 can never satisfy TLS acceptance.
+plaintext `ws://` on port 80 can never satisfy TLS acceptance.
 
 For TLS acceptance, the HTTPS health request must succeed with curl's default
 certificate-chain and hostname verification. Merely choosing the certificate
-scenario or opening TCP port 443 is not evidence.
+scenario or opening TCP port 80 is not evidence.
 
 Display the `admin` username and generated password once directly to the user,
 outside reports and logs, then require password rotation. Include manifest path,
