@@ -43,6 +43,7 @@
   "repositoryUrl": "",
   "repositoryRef": "community",
   "repositoryCommit": "",
+  "recommendedRuntimeVersion": "0.2.115",
   "executionMode": "staged",
   "tags": {
     "Project": "AutoWonder",

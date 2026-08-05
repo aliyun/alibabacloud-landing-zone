@@ -85,7 +85,20 @@ case "$subcommand" in
       printf 'AUTOWONDER_PUBLIC_BASE_URL=%s\n' "$value" >>"$env_file"
       unset value
     fi
-    for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD REDIS_HOST OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET AUTOWONDER_SECRET_MASTER_KEY AUTOWONDER_JWT_SECRET AUTOWONDER_PUBLIC_BASE_URL SLS_ENDPOINT SLS_PROJECT SLS_SYS_LOGSTORE SLS_BIZ_LOGSTORE SLS_METRIC_LOGSTORE SLS_ACCESS_KEY_ID SLS_ACCESS_KEY_SECRET; do
+    recommended_runtime_version=$(jq -er '
+      .recommendedRuntimeVersion // empty |
+      select(test("^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"))
+    ' "$manifest") || die "recommendedRuntimeVersion must be a semantic version"
+    normalized_env=$(mktemp "${env_file}.tmp.XXXXXX"); TEMP_FILES+=("$normalized_env")
+    awk -v key="AUTOWONDER_RUNTIME_RECOMMENDED_VERSION" -v value="$recommended_runtime_version" '
+      index($0, key "=") == 1 { if (!written) print key "=" value; written=1; next }
+      { print }
+      END { if (!written) print key "=" value }
+    ' "$env_file" >"$normalized_env"
+    chmod 600 "$normalized_env"
+    mv -f -- "$normalized_env" "$env_file"
+    unset recommended_runtime_version normalized_env
+    for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD REDIS_HOST OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET AUTOWONDER_SECRET_MASTER_KEY AUTOWONDER_JWT_SECRET AUTOWONDER_PUBLIC_BASE_URL AUTOWONDER_RUNTIME_RECOMMENDED_VERSION SLS_ENDPOINT SLS_PROJECT SLS_SYS_LOGSTORE SLS_BIZ_LOGSTORE SLS_METRIC_LOGSTORE SLS_ACCESS_KEY_ID SLS_ACCESS_KEY_SECRET; do
       grep -q "^${key}=" "$env_file" || die "required environment key missing: $key"
       require_nonempty_env "$env_file" "$key"
     done
@@ -103,7 +116,8 @@ case "$subcommand" in
     grep -q '^AUTOWONDER_AONE_ENABLED=false$' "$env_file" || die "Aone must be disabled"
     grep -q '^AUTOWONDER_SLS_ENABLED=true$' "$env_file" || die "SLS must be enabled"
     grep -q '^AUTOWONDER_SIGAR_ENABLED=true$' "$env_file" || die "SIGAR must be enabled"
-    atomic_jq "$manifest" '.runtimeConfig={prepared:true,fileMode:"0600",valuesValidated:true} | .phase="runtime-config" | .status="prepared"'
+    atomic_jq "$manifest" --arg version "$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_RUNTIME_RECOMMENDED_VERSION)")" \
+      '.runtimeConfig={prepared:true,fileMode:"0600",valuesValidated:true,recommendedRuntimeVersion:$version} | .phase="runtime-config" | .status="prepared"'
     ;;
   database)
     imported=$(jq -r '.database.imported // false' "$manifest")

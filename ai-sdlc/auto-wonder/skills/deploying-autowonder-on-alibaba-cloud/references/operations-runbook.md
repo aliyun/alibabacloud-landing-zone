@@ -80,6 +80,8 @@ and application AK/SK only in a protected session. Encode the env file with
 key: it is required to read persisted `enc:v1:` values. `runtime-config` must
 write `AUTOWONDER_PUBLIC_BASE_URL` into this file. It derives a missing value
 from manifest `applicationBaseUrl`, while preserving an explicit domain/TLS URL.
+It also replaces any stale `AUTOWONDER_RUNTIME_RECOMMENDED_VERSION` with the
+manifest `recommendedRuntimeVersion`; the manifest is the deployment source of truth.
 Set application `OSS_ENDPOINT` to the regional public endpoint, for example
 `https://oss-cn-hangzhou.aliyuncs.com`; `runtime-config` rejects an intranet OSS
 hostname or an endpoint for another region.
