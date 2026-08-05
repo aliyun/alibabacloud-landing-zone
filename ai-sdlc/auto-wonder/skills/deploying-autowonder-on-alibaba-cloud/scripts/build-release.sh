@@ -21,17 +21,21 @@ while (($#)); do
   esac
 done
 require_file "$manifest"; [[ -d "$source_dir/.git" || -f "$source_dir/.git" ]] || die "source is not a Git worktree"
-require_command jq; require_command git; require_command mvn
+require_command jq; require_command git; require_command mvn; require_command jar
 json_validate "$manifest"; reject_secret_keys "$manifest"
 [[ -z $(git -C "$source_dir" status --porcelain --untracked-files=no) ]] || die "source has tracked changes"
 actual=$(git -C "$source_dir" rev-parse HEAD)
 expected=$(json_string "$manifest" '.repositoryCommit')
 [[ "$expected" == HEAD || "$actual" == "$expected" ]] || die "source commit does not match manifest"
 git -C "$source_dir" merge-base --is-ancestor "$actual" "$actual" || die "commit is unavailable"
-(cd "$source_dir" && mvn -DskipGitCommitId=true clean verify)
+(cd "$source_dir" && mvn -DskipGitCommitId=true -DskipFrontend=false clean verify)
 jar="$source_dir/target/auto-wonder.jar"; schema="$source_dir/docs/autowonder-schema.sql"
 templates="$source_dir/docs/autowonder-community-templates.sql"
 require_file "$jar"; require_file "$schema"; require_file "$templates"
+jar tf "$jar" | awk '$0 == "BOOT-INF/classes/static/index.html" { found=1 } END { exit !found }' \
+  || die "release JAR is missing frontend static/index.html"
+jar tf "$jar" | awk 'index($0, "BOOT-INF/classes/static/assets/") == 1 && $0 !~ /\/$/ { found=1 } END { exit !found }' \
+  || die "release JAR is missing frontend static assets"
 mkdir -p "$output_dir"; chmod 700 "$output_dir"
 install -m 0444 "$jar" "$output_dir/auto-wonder.jar"
 install -m 0444 "$schema" "$output_dir/autowonder-schema.sql"

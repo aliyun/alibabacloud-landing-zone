@@ -44,7 +44,10 @@ OSS cannot be disabled or downgraded to local storage:
 - artifact bucket: execution artifacts and the application's base bucket.
 
 Both buckets are private and have globally unique generated names. Acceptance
-uses the application itself to upload, read, presign, and delete an object.
+uses the application itself to upload, read, presign, and delete an object. The
+application uses the regional intranet endpoint for server-side reads and writes,
+and a separate regional public HTTPS endpoint to sign URLs returned to browsers
+or executor runtimes. The signed URL hostname is never rewritten.
 
 SLS is enabled by default with three independent destinations:
 

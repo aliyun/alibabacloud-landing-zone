@@ -48,8 +48,9 @@ explicitly supplied, `runtime-config` derives it from manifest
 - Redis 7 uses the private endpoint and configured account/TLS mode.
 - The private package bucket stores task/skill packages; the private artifact
   bucket stores artifacts and base objects. OSS is mandatory. Application
-  `OSS_ENDPOINT` is the regional public endpoint; the deployment-only intranet
-  endpoint is not an application environment value.
+  `OSS_ENDPOINT` is the regional intranet endpoint used by ECS for object I/O.
+  `OSS_PUBLIC_ENDPOINT` is the regional public HTTPS endpoint used only to sign
+  links returned to browsers and executor runtimes.
 - SLS maps system and business to indexed Logstores and metrics to MetricStore.
   Endpoints are bare hostnames: the control host uses `<region>.log.aliyuncs.com`
   and no-NAT ECS uses `<region>-intranet.log.aliyuncs.com`. `IndexConfigNotExist`

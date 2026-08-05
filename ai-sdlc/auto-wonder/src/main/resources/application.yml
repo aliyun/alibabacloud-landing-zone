@@ -27,6 +27,7 @@ server:
 
 oss:
   endpoint: ${OSS_ENDPOINT:}
+  public-endpoint: ${OSS_PUBLIC_ENDPOINT:}
   bucket: ${OSS_BUCKET:}
   access-key-id: ${OSS_ACCESS_KEY_ID:}
   access-key-secret: ${OSS_ACCESS_KEY_SECRET:}

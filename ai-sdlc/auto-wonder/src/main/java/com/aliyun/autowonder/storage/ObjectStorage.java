@@ -12,7 +12,7 @@ public interface ObjectStorage {
     /** Fetch bytes by ossRef, or null if absent. */
     byte[] get(String ossRef);
 
-    /** Short-lived presigned download URL for the ossRef. */
+    /** Short-lived, externally reachable presigned download URL for the ossRef. */
     String presignGet(String ossRef, int ttlSeconds);
 
     /** Return whether the referenced object currently exists. */

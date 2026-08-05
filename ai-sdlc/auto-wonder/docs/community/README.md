@@ -27,8 +27,12 @@ The master key encrypts persisted business credentials with AES-256-GCM. Keep it
 stable across restarts and back it up outside the database. Losing or changing
 it makes existing `enc:v1:` ciphertext unreadable. Never commit either secret.
 
-`OSS_ENDPOINT`, `OSS_BUCKET`, `OSS_ACCESS_KEY_ID`, and
-`OSS_ACCESS_KEY_SECRET` are mandatory. `OSS_TASK_PKG_BUCKET`,
+`OSS_ENDPOINT`, `OSS_PUBLIC_ENDPOINT`, `OSS_BUCKET`, `OSS_ACCESS_KEY_ID`, and
+`OSS_ACCESS_KEY_SECRET` are mandatory. Set `OSS_ENDPOINT` to the regional
+intranet endpoint used by the server for object I/O. Set `OSS_PUBLIC_ENDPOINT`
+to the matching regional public HTTPS endpoint used to create links consumed by
+browsers and executor runtimes. Never replace the host after a URL is signed.
+`OSS_TASK_PKG_BUCKET`,
 `OSS_ARTIFACT_BUCKET`, and `OSS_SKILL_BUCKET` may select separate buckets and
 otherwise inherit `OSS_BUCKET`.
 

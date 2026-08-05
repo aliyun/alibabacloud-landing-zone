@@ -98,7 +98,7 @@ case "$subcommand" in
     chmod 600 "$normalized_env"
     mv -f -- "$normalized_env" "$env_file"
     unset recommended_runtime_version normalized_env
-    for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD REDIS_HOST OSS_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET AUTOWONDER_SECRET_MASTER_KEY AUTOWONDER_JWT_SECRET AUTOWONDER_PUBLIC_BASE_URL AUTOWONDER_RUNTIME_RECOMMENDED_VERSION SLS_ENDPOINT SLS_PROJECT SLS_SYS_LOGSTORE SLS_BIZ_LOGSTORE SLS_METRIC_LOGSTORE SLS_ACCESS_KEY_ID SLS_ACCESS_KEY_SECRET; do
+    for key in SPRING_DATASOURCE_URL SPRING_DATASOURCE_USERNAME SPRING_DATASOURCE_PASSWORD REDIS_HOST OSS_ENDPOINT OSS_PUBLIC_ENDPOINT OSS_BUCKET OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET AUTOWONDER_SECRET_MASTER_KEY AUTOWONDER_JWT_SECRET AUTOWONDER_PUBLIC_BASE_URL AUTOWONDER_RUNTIME_RECOMMENDED_VERSION SLS_ENDPOINT SLS_PROJECT SLS_SYS_LOGSTORE SLS_BIZ_LOGSTORE SLS_METRIC_LOGSTORE SLS_ACCESS_KEY_ID SLS_ACCESS_KEY_SECRET; do
       grep -q "^${key}=" "$env_file" || die "required environment key missing: $key"
       require_nonempty_env "$env_file" "$key"
     done
@@ -111,8 +111,10 @@ case "$subcommand" in
     unset public_base_url
     oss_endpoint=$(unquote_simple "$(env_raw_value "$env_file" OSS_ENDPOINT)")
     oss_host=${oss_endpoint#http://}; oss_host=${oss_host#https://}; oss_host=${oss_host%/}
-    [[ "$oss_host" == "oss-${region}.aliyuncs.com" ]] || die "OSS_ENDPOINT must use the regional public endpoint oss-${region}.aliyuncs.com"
-    unset oss_endpoint oss_host
+    [[ "$oss_host" == "oss-${region}-internal.aliyuncs.com" ]] || die "OSS_ENDPOINT must use the regional intranet endpoint oss-${region}-internal.aliyuncs.com"
+    oss_public_endpoint=$(unquote_simple "$(env_raw_value "$env_file" OSS_PUBLIC_ENDPOINT)")
+    [[ "$oss_public_endpoint" == "https://oss-${region}.aliyuncs.com" ]] || die "OSS_PUBLIC_ENDPOINT must use the regional public HTTPS endpoint https://oss-${region}.aliyuncs.com"
+    unset oss_endpoint oss_host oss_public_endpoint
     grep -q '^AUTOWONDER_AONE_ENABLED=false$' "$env_file" || die "Aone must be disabled"
     grep -q '^AUTOWONDER_SLS_ENABLED=true$' "$env_file" || die "SLS must be enabled"
     grep -q '^AUTOWONDER_SIGAR_ENABLED=true$' "$env_file" || die "SIGAR must be enabled"

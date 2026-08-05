@@ -24,7 +24,8 @@ class ScriptContracts(unittest.TestCase):
         "SPRING_DATASOURCE_USERNAME": "autowonder",
         "SPRING_DATASOURCE_PASSWORD": "DbPassword1!",
         "REDIS_HOST": "redis.internal",
-        "OSS_ENDPOINT": "https://oss-cn-hangzhou.aliyuncs.com",
+        "OSS_ENDPOINT": "https://oss-cn-hangzhou-internal.aliyuncs.com",
+        "OSS_PUBLIC_ENDPOINT": "https://oss-cn-hangzhou.aliyuncs.com",
         "OSS_BUCKET": "artifact-example",
         "OSS_ACCESS_KEY_ID": "test-key-id",
         "OSS_ACCESS_KEY_SECRET": "test-key-secret",
@@ -177,7 +178,8 @@ JSON
             self.assertEqual(resources["ecs_instance_ids"], {"zone_a": "i-a", "zone_b": "i-b"})
             self.assertEqual(resources["rds"]["connection"], "db.internal")
             self.assertEqual(resources["sls"]["stores"]["metrics"], "metrics")
-            self.assertEqual(resources["oss_endpoint"], "oss-cn-hangzhou.aliyuncs.com")
+            self.assertEqual(resources["oss_endpoint"], "oss-cn-hangzhou-internal.aliyuncs.com")
+            self.assertEqual(resources["oss_public_endpoint"], "oss-cn-hangzhou.aliyuncs.com")
             self.assertEqual(resources["oss"]["runtime_endpoint"], "oss-cn-hangzhou-internal.aliyuncs.com")
             self.assertEqual(resources["sls"]["runtime_endpoint"], "cn-hangzhou-intranet.log.aliyuncs.com")
 
@@ -311,13 +313,13 @@ JSON
                 version_lines,
             )
 
-    def test_runtime_config_rejects_internal_oss_endpoint(self):
+    def test_runtime_config_rejects_public_service_oss_endpoint(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             manifest = self.valid_manifest(root / "manifest.json")
             env_file = self.write_env(
                 root / "autowonder.env",
-                {"OSS_ENDPOINT": "oss-cn-hangzhou-internal.aliyuncs.com"},
+                {"OSS_ENDPOINT": "https://oss-cn-hangzhou.aliyuncs.com"},
             )
 
             result = subprocess.run([
@@ -326,7 +328,24 @@ JSON
             ], text=True, capture_output=True)
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("regional public endpoint", result.stderr)
+            self.assertIn("regional intranet endpoint", result.stderr)
+
+    def test_runtime_config_rejects_internal_public_oss_endpoint(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            env_file = self.write_env(
+                root / "autowonder.env",
+                {"OSS_PUBLIC_ENDPOINT": "https://oss-cn-hangzhou-internal.aliyuncs.com"},
+            )
+
+            result = subprocess.run([
+                str(ROOT / "scripts/initialize-and-verify.sh"), "runtime-config",
+                "--manifest", str(manifest), "--env-file", str(env_file),
+            ], text=True, capture_output=True)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("regional public HTTPS endpoint", result.stderr)
 
     def test_cloud_assistant_uses_current_cli_contract_without_double_encoding(self):
         for name in ("deploy-via-cloud-assistant.sh", "initialize-and-verify.sh"):
@@ -492,6 +511,14 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             initialize.index("autowonder-schema.sql"),
             initialize.index(seed_name),
         )
+
+    def test_release_build_requires_frontend_assets_in_jar(self):
+        build = (ROOT / "scripts/build-release.sh").read_text()
+
+        self.assertIn("-DskipFrontend=false", build)
+        self.assertNotIn("-DskipFrontend=true", build)
+        self.assertIn("BOOT-INF/classes/static/index.html", build)
+        self.assertIn("BOOT-INF/classes/static/assets/", build)
 
     def test_sanitizer_removes_sensitive_fields_and_identifiers(self):
         with tempfile.TemporaryDirectory() as td:
