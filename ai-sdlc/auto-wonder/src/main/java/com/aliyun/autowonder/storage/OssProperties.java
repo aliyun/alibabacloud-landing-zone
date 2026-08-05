@@ -12,6 +12,8 @@ import org.springframework.util.StringUtils;
 @Setter
 public class OssProperties {
     private String endpoint;
+    /** Public endpoint used only for URLs consumed outside the server VPC. */
+    private String publicEndpoint;
     private String accessKeyId;
     private String accessKeySecret;
     /** default/fallback bucket */
@@ -33,6 +35,10 @@ public class OssProperties {
 
     public String resolveSkillBucket() {
         return resolve(skillBucket);
+    }
+
+    public String resolvePublicEndpoint() {
+        return StringUtils.hasText(publicEndpoint) ? publicEndpoint : endpoint;
     }
 
     private String resolve(String workloadBucket) {

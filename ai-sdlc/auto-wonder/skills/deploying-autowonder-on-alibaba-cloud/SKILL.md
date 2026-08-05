@@ -39,10 +39,11 @@ organization, exact source commit, execution mode, and tags. Use these defaults:
 - staged execution; `SLS is enabled`; Aone is disabled;
 - `OSS is mandatory`; Linux x86_64; no NAT, no public EIP, and no SSH.
 
-Application `OSS_ENDPOINT` uses the regional public endpoint, such as
-`https://oss-cn-hangzhou.aliyuncs.com`. The intranet OSS endpoint is reserved
-for temporary ECS release downloads and must not be written to the application
-environment file.
+Application `OSS_ENDPOINT` uses the regional intranet endpoint, such as
+`https://oss-cn-hangzhou-internal.aliyuncs.com`, for server-side object I/O.
+`OSS_PUBLIC_ENDPOINT` uses the regional public HTTPS endpoint, such as
+`https://oss-cn-hangzhou.aliyuncs.com`, only to sign links consumed by browsers
+and executor runtimes. Both must be written to the application environment file.
 
 | Region presets | Ingress result before trusted TLS |
 | --- | --- |

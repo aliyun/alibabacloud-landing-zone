@@ -14,7 +14,7 @@ Never collapse these into one optimistic result:
 | **Infrastructure ready** | Terraform resources reconcile; two zones, tags, protection, listener CIDRs, private service paths, and scoped RAM policy pass |
 | **Application ready** | both systemd services, per-node health, `/checkpreload.htm`, capabilities, and public NLB ingress pass |
 | **Business initialized** | `admin` and the requested organization exist; ownership/admin role is verified |
-| **Release accepted** | RDS/Redis persistence, application OSS flow, `enc:v1:` restart use, three SLS destinations, restart/reboot, packaged executor, tags, and secret scan pass |
+| **Release accepted** | RDS/Redis persistence, OSS server I/O through the intranet endpoint and externally reachable public signed URLs, `enc:v1:` restart use, three SLS destinations, restart/reboot, packaged executor, tags, and secret scan pass |
 | **TLS accepted** | trusted certificate, hostname, handshake, and real `wss://` executor pass |
 
 A temporary plaintext endpoint may be Release accepted with TLS pending. It must

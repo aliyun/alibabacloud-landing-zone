@@ -18,16 +18,24 @@ public class AliyunOssObjectStorage implements ObjectStorage {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AliyunOssObjectStorage.class);
 
-    private final OSS client;
+    private final OSS serviceClient;
+    private final OSS publicClient;
 
-    public AliyunOssObjectStorage(String endpoint, String accessKeyId, String accessKeySecret) {
-        this.client = new OSSClientBuilder().build(endpoint, accessKeyId, accessKeySecret);
+    public AliyunOssObjectStorage(String endpoint, String publicEndpoint,
+                                  String accessKeyId, String accessKeySecret) {
+        this(new OSSClientBuilder().build(endpoint, accessKeyId, accessKeySecret),
+                new OSSClientBuilder().build(publicEndpoint, accessKeyId, accessKeySecret));
+    }
+
+    AliyunOssObjectStorage(OSS serviceClient, OSS publicClient) {
+        this.serviceClient = serviceClient;
+        this.publicClient = publicClient;
     }
 
     @Override
     public StoredObject put(String bucket, String key, byte[] data) {
         try {
-            client.putObject(bucket, key, new ByteArrayInputStream(data));
+            serviceClient.putObject(bucket, key, new ByteArrayInputStream(data));
             return new StoredObject(bucket + "/" + key, StorageRefs.md5Hex(data), data.length);
         } catch (OSSException e) {
             LOGGER.error("oss put failed bucket={} key={} errorCode={}", bucket, key, e.getErrorCode(), e);
@@ -41,7 +49,7 @@ public class AliyunOssObjectStorage implements ObjectStorage {
     @Override
     public byte[] get(String ossRef) {
         String[] bk = StorageRefs.split(ossRef);
-        try (OSSObject obj = client.getObject(bk[0], bk[1]);
+        try (OSSObject obj = serviceClient.getObject(bk[0], bk[1]);
              InputStream in = obj.getObjectContent()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[8192];
@@ -62,21 +70,21 @@ public class AliyunOssObjectStorage implements ObjectStorage {
         Date expiry = new Date(System.currentTimeMillis() + ttlSeconds * 1000L);
         GeneratePresignedUrlRequest req = new GeneratePresignedUrlRequest(bk[0], bk[1]);
         req.setExpiration(expiry);
-        URL url = client.generatePresignedUrl(req);
+        URL url = publicClient.generatePresignedUrl(req);
         return url.toString();
     }
 
     @Override
     public boolean exists(String ossRef) {
         String[] bk = StorageRefs.split(ossRef);
-        return client.doesObjectExist(bk[0], bk[1]);
+        return serviceClient.doesObjectExist(bk[0], bk[1]);
     }
 
     @Override
     public void delete(String ossRef) {
         String[] bk = StorageRefs.split(ossRef);
         try {
-            client.deleteObject(bk[0], bk[1]);
+            serviceClient.deleteObject(bk[0], bk[1]);
         } catch (Exception e) {
             LOGGER.warn("oss delete failed ref={}", ossRef, e);
         }

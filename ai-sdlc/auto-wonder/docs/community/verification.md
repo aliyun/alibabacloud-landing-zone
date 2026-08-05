@@ -49,7 +49,8 @@ Use non-production test credentials and sanitize all captured output.
 
 1. Start the image with disposable MySQL/Redis plus real OSS credentials.
 2. Verify `/checkpreload.htm` and `/api/integrations/capabilities` return HTTP 200.
-3. Exercise one OSS upload, read, and presigned-download workflow.
+3. Exercise OSS upload/read through `OSS_ENDPOINT`, then verify a presigned URL
+   uses the `OSS_PUBLIC_ENDPOINT` HTTPS host and is downloadable outside the VPC.
 4. Create and read one secret system setting or IM credential. Query its `credential_ref`;
    assert it starts with `enc:v1:` and does not contain the submitted plaintext.
 5. With SLS enabled, emit a system log, business log, and metric; confirm each

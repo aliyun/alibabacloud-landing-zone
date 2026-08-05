@@ -99,6 +99,50 @@ class ObjectStorageConfigTest {
                 });
     }
 
+    @Test
+    void publicEndpointFallsBackToPublicServiceEndpoint() {
+        OssProperties props = new OssProperties();
+        props.setEndpoint("https://oss-cn-shanghai.aliyuncs.com");
+
+        assertEquals("https://oss-cn-shanghai.aliyuncs.com", props.resolvePublicEndpoint());
+
+        props.setPublicEndpoint("https://oss-accelerate.aliyuncs.com");
+        assertEquals("https://oss-accelerate.aliyuncs.com", props.resolvePublicEndpoint());
+    }
+
+    @Test
+    void rejectsInternalServiceEndpointWithoutPublicEndpoint() {
+        OssProperties props = ossProperties(
+                "https://oss-cn-shanghai-internal.aliyuncs.com", null);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> config.aliyunObjectStorage(props));
+
+        assertEquals("oss.public-endpoint is required when oss.endpoint is internal", error.getMessage());
+    }
+
+    @Test
+    void rejectsInternalPublicEndpoint() {
+        OssProperties props = ossProperties(
+                "https://oss-cn-shanghai-internal.aliyuncs.com",
+                "https://oss-cn-shanghai-internal.aliyuncs.com");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> config.aliyunObjectStorage(props));
+
+        assertEquals("oss.public-endpoint must be externally reachable", error.getMessage());
+    }
+
+    private static OssProperties ossProperties(String endpoint, String publicEndpoint) {
+        OssProperties props = new OssProperties();
+        props.setEndpoint(endpoint);
+        props.setPublicEndpoint(publicEndpoint);
+        props.setBucket("community-bucket");
+        props.setAccessKeyId("test-access-key-id");
+        props.setAccessKeySecret("test-access-key-secret");
+        return props;
+    }
+
     private static OssProperties properties(String taskBucket, String artifactBucket) {
         OssProperties props = new OssProperties();
         props.setTaskPkgBucket(taskBucket);

@@ -37,8 +37,9 @@ different for `multi-az-ha`. Custom tags cannot replace `Project`, `Environment`
 ## Fixed Decisions
 
 - OSS is mandatory: create a private package bucket and a private artifact bucket.
-- Application `OSS_ENDPOINT` is the regional public endpoint. The OSS intranet
-  endpoint is used only by the deployment transport for temporary ECS downloads.
+- Application `OSS_ENDPOINT` is the regional intranet endpoint for server-side
+  object I/O. `OSS_PUBLIC_ENDPOINT` is the matching regional public HTTPS
+  endpoint for links consumed by browsers and executor runtimes.
 - SLS is enabled and creates system, business, and metrics stores.
 - Aone is disabled. Linux x86_64 and Java 21 are the supported runtime.
 - Executor commands use manifest `recommendedRuntimeVersion` (`0.2.115` for this release).

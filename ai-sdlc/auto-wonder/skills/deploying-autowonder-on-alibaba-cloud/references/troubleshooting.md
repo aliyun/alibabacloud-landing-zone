@@ -50,15 +50,18 @@ and delete with the regional public OSS endpoint, but presign downloads against
 the VPC intranet endpoint. Detect whether installed ossutil provides `presign`
 or legacy `sign`. **Unsafe:** giving ECS public egress. **Resume:** staging.
 
-### Application OSS Endpoint Is Internal
+### Application OSS Endpoints Are Not Split
 
-**Symptom:** application OSS operations or externally consumed object links fail
-after deployment, and `/etc/autowonder/autowonder.env` contains an endpoint with
-`-internal`. **Cause:** the deployment-only ECS download endpoint was reused as
-application `OSS_ENDPOINT`. **Safe fix:** set it to the matching regional public
-endpoint such as `https://oss-cn-hangzhou.aliyuncs.com`, run `runtime-config`,
-then deploy with `--config-only` and rolling restart. Keep release staging on the
-intranet endpoint. **Resume:** OSS application acceptance.
+**Symptom:** server-side object I/O fails on a no-egress ECS, or task packages,
+work-item artifacts, and requirement downloads contain an unreachable
+`-internal` hostname. **Cause:** one endpoint was used for both server data-plane
+traffic and externally consumed signed links. **Safe fix:** set `OSS_ENDPOINT`
+to `https://oss-<region>-internal.aliyuncs.com` and `OSS_PUBLIC_ENDPOINT` to
+`https://oss-<region>.aliyuncs.com`, run `runtime-config`, deploy with
+`--config-only`, and rolling restart. Both clients must use the same region,
+bucket, and credential scope. Never replace the hostname after signing because
+the endpoint participates in signature construction. **Resume:** OSS application
+acceptance.
 
 ### Required Environment Key Is Empty
 

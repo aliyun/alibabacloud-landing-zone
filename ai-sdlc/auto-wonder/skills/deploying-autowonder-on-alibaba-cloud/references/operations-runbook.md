@@ -82,17 +82,20 @@ write `AUTOWONDER_PUBLIC_BASE_URL` into this file. It derives a missing value
 from manifest `applicationBaseUrl`, while preserving an explicit domain/TLS URL.
 It also replaces any stale `AUTOWONDER_RUNTIME_RECOMMENDED_VERSION` with the
 manifest `recommendedRuntimeVersion`; the manifest is the deployment source of truth.
-Set application `OSS_ENDPOINT` to the regional public endpoint, for example
-`https://oss-cn-hangzhou.aliyuncs.com`; `runtime-config` rejects an intranet OSS
-hostname or an endpoint for another region.
+Set application `OSS_ENDPOINT` to the regional intranet endpoint, for example
+`https://oss-cn-hangzhou-internal.aliyuncs.com`, and set
+`OSS_PUBLIC_ENDPOINT` to the matching public HTTPS endpoint, for example
+`https://oss-cn-hangzhou.aliyuncs.com`. `runtime-config` rejects missing,
+reversed, cross-region, or non-HTTPS public endpoint configuration.
 
 Run `initialize-and-verify.sh runtime-config` first. Then use
 `deploy-via-cloud-assistant.sh` to create the non-root `autowonder` user, install
 the MySQL/Redis clients, transfer the release/env through private OSS objects,
 verify hashes, and install the versioned layout, Java runtime, data/log
 directories, and systemd unit. The control host uploads and deletes through the
-public OSS endpoint; presigned ECS release downloads use the intranet endpoint
-without changing application `OSS_ENDPOINT`. Finally run
+public OSS endpoint; presigned ECS release downloads use the intranet endpoint.
+This deployment transport is separate from the application's two OSS clients.
+Finally run
 `initialize-and-verify.sh database`: confirm empty state, import schema in its
 own invocation, import the idempotent four-template seed, then run the separate
 read-only postcondition. `.database.imported` checkpoints schema and
