@@ -512,6 +512,14 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             initialize.index(seed_name),
         )
 
+    def test_release_build_requires_frontend_assets_in_jar(self):
+        build = (ROOT / "scripts/build-release.sh").read_text()
+
+        self.assertIn("-DskipFrontend=false", build)
+        self.assertNotIn("-DskipFrontend=true", build)
+        self.assertIn("BOOT-INF/classes/static/index.html", build)
+        self.assertIn("BOOT-INF/classes/static/assets/", build)
+
     def test_sanitizer_removes_sensitive_fields_and_identifiers(self):
         with tempfile.TemporaryDirectory() as td:
             source = Path(td) / "evidence.json"

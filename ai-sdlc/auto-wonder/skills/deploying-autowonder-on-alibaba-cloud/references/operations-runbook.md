@@ -62,8 +62,10 @@ protection, listener sources, private endpoints, and application RAM scope.
 ## Phase 4: Immutable Build And Transfer
 
 Run `scripts/build-release.sh` against the exact repository commit. It runs the
-complete build verification, records JAR/schema/template-seed hashes, and refuses
-a dirty or mismatched source. The seed artifact is
+complete build verification with `-DskipFrontend=false`, records
+JAR/schema/template-seed hashes, and refuses a dirty or mismatched source. It
+must find `static/index.html` and compiled assets inside the JAR before sealing;
+never deploy a backend-only JAR or reuse stale frontend output. The seed artifact is
 `autowonder-community-templates.sql`. Phase 4 ends with the sealed local release;
 host transfer starts only after runtime configuration exists in Phase 5.
 

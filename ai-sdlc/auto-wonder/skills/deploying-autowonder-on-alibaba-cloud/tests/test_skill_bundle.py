@@ -76,6 +76,9 @@ REQUIRED_SKILL_TERMS = [
     "templatesImported",
     "`OSS_ENDPOINT` uses the regional intranet endpoint",
     "`OSS_PUBLIC_ENDPOINT` uses the regional public HTTPS endpoint",
+    "Both OSS endpoint variables are mandatory",
+    "must build the frontend into the JAR",
+    "`-DskipFrontend=false`",
 ]
 
 

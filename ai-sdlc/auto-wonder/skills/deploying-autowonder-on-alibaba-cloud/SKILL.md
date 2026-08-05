@@ -43,7 +43,9 @@ Application `OSS_ENDPOINT` uses the regional intranet endpoint, such as
 `https://oss-cn-hangzhou-internal.aliyuncs.com`, for server-side object I/O.
 `OSS_PUBLIC_ENDPOINT` uses the regional public HTTPS endpoint, such as
 `https://oss-cn-hangzhou.aliyuncs.com`, only to sign links consumed by browsers
-and executor runtimes. Both must be written to the application environment file.
+and executor runtimes. Both OSS endpoint variables are mandatory and must be
+written to the application environment file; stop before deployment if either
+is absent or their regions differ.
 
 | Region presets | Ingress result before trusted TLS |
 | --- | --- |
@@ -87,7 +89,7 @@ Run phases in order and record terminal results in the manifest. Read
 | 1. Preflight | `scripts/preflight.sh` (`--profile` locks a verified CLI profile) | validated tools including ossutil v2/legacy contract, identity, inputs/inventory |
 | 2. Plan | `scripts/terraform-stage.sh plan` | reviewed plan fingerprint |
 | 3. Apply | `scripts/terraform-stage.sh apply`, then `inventory` | Infrastructure ready |
-| 4. Build | `scripts/build-release.sh` | sealed local JAR, schema, and template seed |
+| 4. Build | `scripts/build-release.sh` | sealed local JAR containing the frontend, schema, and template seed |
 | 5. Host/DB/runtime | `scripts/initialize-and-verify.sh runtime-config`; `scripts/deploy-via-cloud-assistant.sh`; then `scripts/initialize-and-verify.sh database` | Java 21, clients, release, env (including public base URL), systemd, schema and four system templates installed |
 | 6. Rolling activation | `scripts/initialize-and-verify.sh rolling-start` | systemd, port 7001, public preload and branding probes ready |
 | 7. Business init | `scripts/initialize-and-verify.sh business-init` | Business initialized |
@@ -97,6 +99,9 @@ Run phases in order and record terminal results in the manifest. Read
 Shared guards live in `scripts/lib.sh`. Apply only a reviewed saved plan whose
 hash matches the manifest. On resume, reconcile real postconditions before
 retrying; never blindly repeat apply, schema import, or administrator creation.
+Every deployment build must build the frontend into the JAR with
+`-DskipFrontend=false`; never deploy a backend-only JAR. The build script verifies
+both `static/index.html` and compiled static assets before sealing the release.
 Cloud Assistant invocation IDs are checkpointed immediately. After an env-only
 correction, use `deploy-via-cloud-assistant.sh --config-only`; do not upload the
 JAR, schema, systemd unit, or Java archive again. Acceptance reruns preserve
