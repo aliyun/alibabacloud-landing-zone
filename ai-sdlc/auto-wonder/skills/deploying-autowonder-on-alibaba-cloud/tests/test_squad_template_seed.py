@@ -46,10 +46,18 @@ class SquadTemplateSeedTest(unittest.TestCase):
         pattern = re.compile(
             r"SET @template_([a-z_]+) = '((?:[^']|'')*)';", re.DOTALL
         )
+        cls.raw_payloads = dict(pattern.findall(cls.sql))
         cls.payloads = {
-            key: json.loads(raw.replace("''", "'"))
-            for key, raw in pattern.findall(cls.sql)
+            key: json.loads(raw.replace("''", "'").replace("\\\\", "\\"))
+            for key, raw in cls.raw_payloads.items()
         }
+
+    def test_json_escapes_survive_mysql_string_literal_parsing(self):
+        for key, raw in self.raw_payloads.items():
+            for run in re.findall(r"\\+", raw):
+                self.assertEqual(0, len(run) % 2, f"single backslash in {key}")
+        self.assertIn("NO_BACKSLASH_ESCAPES", self.sql)
+        self.assertIn("SET SESSION sql_mode", self.sql)
 
     def test_contains_exactly_four_valid_payloads(self):
         self.assertEqual(set(EXPECTED_COUNTS), set(self.payloads))

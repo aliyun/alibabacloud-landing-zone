@@ -77,6 +77,17 @@ accepts it. **Safe fix:** remove CR/LF before shell quoting and require exactly
 44 Base64 characters decoding to 32 bytes. **Resume:** configuration-only sync
 and rolling start; replace a key only before encrypted data exists.
 
+### Template Seed Reports Invalid Encoding In String
+
+**Symptom:** importing `autowonder-community-templates.sql` fails in a JSON
+function with `Invalid encoding in string`. **Cause:** a JSON escape such as
+`\n` or `\"` was stored as a single backslash in a MySQL string literal, so the
+SQL parser consumed it before JSON parsing. **Safe fix:** use the corrected seed
+whose JSON backslashes are doubled and let it scope SQL mode changes to its own
+session. Resume the idempotent template import and postcheck. **Unsafe:** changing
+global `sql_mode`, editing JSON content on the server, or marking the template
+checkpoint complete without four valid templates.
+
 ### Private ECS Cannot Send SLS Data
 
 **Symptom:** health is green but SLS producer requests time out. **Cause:** a
