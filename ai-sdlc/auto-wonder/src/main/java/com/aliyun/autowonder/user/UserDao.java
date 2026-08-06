@@ -21,4 +21,6 @@ public interface UserDao {
     List<UserDO> searchOrgCandidates(@Param("tenantId") Long tenantId,
                                       @Param("keyword") String keyword,
                                       @Param("limit") int limit);
+
+    int updatePasswordHash(@Param("id") Long id, @Param("passwordHash") String passwordHash);
 }

@@ -27,3 +27,12 @@ export async function updateMyDingTalkIdentity(params: UpdateDingTalkIdentityPar
 export async function sendMyDingTalkIdentityTest(): Promise<void> {
   await apiClient.post<void>('/api/users/me/im-identities/dingtalk/test');
 }
+
+export interface ChangePasswordParams {
+  oldPassword: string;
+  newPassword: string;
+}
+
+export async function changePassword(params: ChangePasswordParams): Promise<void> {
+  await apiClient.put<void>('/api/users/me/password', params);
+}

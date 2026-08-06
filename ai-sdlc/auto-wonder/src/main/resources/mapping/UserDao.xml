@@ -61,4 +61,10 @@
         ORDER BY u.gmt_create DESC, u.id DESC
         LIMIT #{limit}
     </select>
+
+    <update id="updatePasswordHash">
+        UPDATE `user`
+        SET password_hash = #{passwordHash}, gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
 </mapper>

@@ -96,9 +96,9 @@ describe('AgentEditPage', () => {
         success: true, code: '0', message: '', traceId: null,
         data: {
           ...versionData,
-          repoPerms: [{ repoId: 11, permLevel: 'WRITE' }],
-          skills: [{ skillId: 22 }],
-          memoryRefs: [{ memoryId: 33, source: 'ORG' }],
+          repoPerms: [{ repoId: 11, permLevel: 'WRITE' }, { repoId: 11, permLevel: 'WRITE' }],
+          skills: [{ skillId: 22 }, { skillId: 22 }],
+          memoryRefs: [{ memoryId: 33, source: 'ORG' }, { memoryId: 33, source: 'ORG' }],
         },
       })),
       http.get('/api/repos', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 11, name: 'web-repo' }], total: 1, pageNum: 1, pageSize: 100 } })),
@@ -109,9 +109,39 @@ describe('AgentEditPage', () => {
 
     renderPage();
     expect(await screen.findByText('web-repo')).toBeInTheDocument();
+    expect(screen.getAllByText('web-repo')).toHaveLength(1);
     expect(screen.getByText('WRITE')).toBeInTheDocument();
     expect(screen.getByText('Code Review')).toBeInTheDocument();
     expect(screen.getByText('React rules')).toBeInTheDocument();
+    expect(screen.getAllByText('Code Review')).toHaveLength(1);
+    expect(screen.getAllByText('React rules')).toHaveLength(1);
+  });
+
+  it('uses multi-select controls for repositories, capabilities, and memories', async () => {
+    server.use(
+      http.get('/api/agents/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: agentData })),
+      http.get('/api/agents/1/versions/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionData })),
+      http.get('/api/repos', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: '11', name: 'web-repo' }], total: 1 } })),
+      http.get('/api/skills', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 22, name: 'Code Review', type: 'SKILL' }], total: 1 } })),
+      http.get('/api/memories', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 33, contentMd: 'React rules' }], total: 1 } })),
+      http.get('/api/sdlcs', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0 } })),
+    );
+
+    renderPage();
+    await screen.findByText(/编辑配置/);
+    await userEvent.click(screen.getByRole('button', { name: /添加仓库/ }));
+    const repoPlaceholder = await screen.findByText('选择仓库（可多选）');
+    expect(repoPlaceholder.closest('.ant-select')).toHaveClass('ant-select-multiple');
+    await userEvent.click(within(repoPlaceholder.closest('.ant-modal') as HTMLElement).getByRole('button', { name: /Cancel/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: /添加能力/ }));
+    const skillPlaceholder = await screen.findByText('选择 Skill、MCP 或 Plugin（可多选）');
+    expect(skillPlaceholder.closest('.ant-select')).toHaveClass('ant-select-multiple');
+    await userEvent.click(within(skillPlaceholder.closest('.ant-modal') as HTMLElement).getByRole('button', { name: /Cancel/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: /导入记忆/ }));
+    const memoryPlaceholder = await screen.findByText('选择记忆（可多选）');
+    expect(memoryPlaceholder.closest('.ant-select')).toHaveClass('ant-select-multiple');
   });
 
   it('shows persistent draft feedback after saving config', async () => {

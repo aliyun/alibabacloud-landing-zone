@@ -143,7 +143,34 @@ class McpToolServiceTest {
                 service.listTools(scopedPrincipal(OrgAccessLevel.ADMIN)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet()));
-        assertEquals(65, fullCatalog.size());
+        assertEquals(68, fullCatalog.size());
+    }
+
+    @Test
+    void agentBindingToolsDeduplicateIdsAndDelegateToAgentService() {
+        assertEquals(Map.of("repoIds", List.of(11L, 12L)),
+                service.call(principal, "autowonder.bind_agent_repos",
+                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                                "repoIds", List.of(11L, 11L, 12L), "permLevel", "WRITE")));
+        assertEquals(Map.of("skillIds", List.of(21L, 22L)),
+                service.call(principal, "autowonder.bind_agent_skills",
+                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                                "skillIds", List.of(21L, 21L, 22L))));
+        assertEquals(Map.of("memoryIds", List.of(31L, 32L)),
+                service.call(principal, "autowonder.bind_agent_memories",
+                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                                "memoryIds", List.of(31L, 31L, 32L), "source", "ORG")));
+
+        verify(agentService, times(2)).addRepoPerm(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+        verify(agentService, times(2)).addSkill(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+        verify(agentService, times(2)).addMemoryRef(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+
+        assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_repos"))
+                .get("repoIds")).get("type"));
+        assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_skills"))
+                .get("skillIds")).get("type"));
+        assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_memories"))
+                .get("memoryIds")).get("type"));
     }
 
     @Test

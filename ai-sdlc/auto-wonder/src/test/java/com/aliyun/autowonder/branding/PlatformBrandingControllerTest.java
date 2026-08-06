@@ -75,7 +75,7 @@ class PlatformBrandingControllerTest {
                 "#f97316",
                 null,
                 "https://daily.auto-wonder.example.com/api/mcp",
-                "0.2.115",
+                "0.2.117",
                 false);
     }
 }

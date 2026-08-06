@@ -34,6 +34,13 @@ Never emit a partially sanitized report.
 
 ## Release Rollback
 
+For an upgrade, first check `.upgrade.databaseMigration` and the recorded
+application rollback compatibility. Restore the previous
+`autowonder.env.previous` only with the matching previous release. A completed
+database migration is never automatically reversed; when the previous
+application cannot run against the new schema, use the approved database restore
+or forward-fix plan instead of repointing the symlink.
+
 1. Stop traffic to the failed node while preserving the healthy node.
 2. Stop `autowonder.service` on the failed node.
 3. Verify the prior version directory and recorded hash.

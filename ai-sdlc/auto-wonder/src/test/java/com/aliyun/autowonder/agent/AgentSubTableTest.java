@@ -76,6 +76,38 @@ class AgentSubTableTest {
     }
 
     @Test
+    void addRelationsAreIdempotentWhenAlreadyBound() {
+        when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+        when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
+        AgentRepoPermDO repo = new AgentRepoPermDO();
+        repo.setRepoId(300L);
+        when(repoPermDao.listByVersion(20L)).thenReturn(List.of(repo));
+        AgentSkillDO skill = new AgentSkillDO();
+        skill.setSkillId(400L);
+        when(skillDao.listByVersion(20L)).thenReturn(List.of(skill));
+        when(memoryRefDao.existsByVersionAndMemory(20L, 500L, 100L)).thenReturn(true);
+        SkillDO capability = new SkillDO();
+        capability.setId(400L);
+        capability.setTenantId(100L);
+        when(capabilityDao.findById(400L)).thenReturn(capability);
+
+        RepoPermRequest repoRequest = new RepoPermRequest();
+        repoRequest.setRepoId(300L);
+        SkillRequest skillRequest = new SkillRequest();
+        skillRequest.setSkillId(400L);
+        MemoryRefRequest memoryRequest = new MemoryRefRequest();
+        memoryRequest.setMemoryId(500L);
+
+        service.addRepoPerm(10L, repoRequest, 100L, 7L);
+        service.addSkill(10L, skillRequest, 100L, 7L);
+        service.addMemoryRef(10L, memoryRequest, 100L, 7L);
+
+        verify(repoPermDao, never()).insert(any());
+        verify(skillDao, never()).insert(any());
+        verify(memoryRefDao, never()).insert(any());
+    }
+
+    @Test
     void addSkill_inserts_to_draft_version() {
         when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
         when(versionDao.findById(20L)).thenReturn(draftVersion(20L));

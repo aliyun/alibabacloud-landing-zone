@@ -9,6 +9,9 @@ import com.aliyun.autowonder.agent.AgentService;
 import com.aliyun.autowonder.agent.dto.AgentVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionSummaryVO;
 import com.aliyun.autowonder.agent.dto.CreateAgentRequest;
+import com.aliyun.autowonder.agent.dto.MemoryRefRequest;
+import com.aliyun.autowonder.agent.dto.RepoPermRequest;
+import com.aliyun.autowonder.agent.dto.SkillRequest;
 import com.aliyun.autowonder.agent.dto.UpdateAgentRequest;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.dispatch.DispatchDO;
@@ -100,6 +103,9 @@ public class McpToolService {
     private static final String SUBMIT_AGENT_FOR_REVIEW = "autowonder.submit_agent_for_review";
     private static final String PUBLISH_AGENT = "autowonder.publish_agent";
     private static final String GET_AGENT_VERSION_STATUS = "autowonder.get_agent_version_status";
+    private static final String BIND_AGENT_REPOS = "autowonder.bind_agent_repos";
+    private static final String BIND_AGENT_SKILLS = "autowonder.bind_agent_skills";
+    private static final String BIND_AGENT_MEMORIES = "autowonder.bind_agent_memories";
     private static final String CREATE_SKILL = "autowonder.create_skill";
     private static final String LIST_SKILLS = "autowonder.list_skills";
     private static final String GET_SKILL = "autowonder.get_skill";
@@ -209,6 +215,12 @@ public class McpToolService {
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(GET_AGENT_VERSION_STATUS,
                             orgTool(OrgAccessLevel.READ_ONLY)),
+                    Map.entry(BIND_AGENT_REPOS,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(BIND_AGENT_SKILLS,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(BIND_AGENT_MEMORIES,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL,
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SKILLS,
@@ -492,6 +504,20 @@ public class McpToolService {
                         + "AutoWonder digital worker. Returns agent info and the full version history.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Agent id to query."))),
+                tool(BIND_AGENT_REPOS, "Bind multiple repositories to an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "repoIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("repoIds", "integer", "Required. Repository ids to bind."),
+                                prop("permLevel", "string", "Optional. READ, WRITE, or ADMIN; defaults to READ."))),
+                tool(BIND_AGENT_SKILLS, "Bind multiple Skills, MCP servers, or Plugins to an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "skillIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("skillIds", "integer", "Required. Capability ids to bind."))),
+                tool(BIND_AGENT_MEMORIES, "Bind multiple memories to an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "memoryIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to bind."),
+                                prop("source", "string", "Optional binding source; defaults to DIRECT."))),
                 tool(CREATE_SKILL, "Create a skill, MCP server, or plugin record.",
                         schema(required("type", "name"), prop("type", "string"), prop("name", "string"),
                                 prop("installSpec", "string"), prop("description", "string"))),
@@ -932,6 +958,40 @@ public class McpToolService {
                 result.put("versions", versions);
                 yield result;
             }
+            case BIND_AGENT_REPOS -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> repoIds = requiredLongList(safeArgs, "repoIds");
+                String permLevel = str(safeArgs, "permLevel");
+                for (Long repoId : repoIds) {
+                    RepoPermRequest request = new RepoPermRequest();
+                    request.setRepoId(repoId);
+                    request.setPermLevel(permLevel);
+                    agentService.addRepoPerm(agentId, request, context.orgId(), context.userId());
+                }
+                yield Map.of("repoIds", repoIds);
+            }
+            case BIND_AGENT_SKILLS -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> skillIds = requiredLongList(safeArgs, "skillIds");
+                for (Long skillId : skillIds) {
+                    SkillRequest request = new SkillRequest();
+                    request.setSkillId(skillId);
+                    agentService.addSkill(agentId, request, context.orgId(), context.userId());
+                }
+                yield Map.of("skillIds", skillIds);
+            }
+            case BIND_AGENT_MEMORIES -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> memoryIds = requiredLongList(safeArgs, "memoryIds");
+                String source = str(safeArgs, "source");
+                for (Long memoryId : memoryIds) {
+                    MemoryRefRequest request = new MemoryRefRequest();
+                    request.setMemoryId(memoryId);
+                    request.setSource(source);
+                    agentService.addMemoryRef(agentId, request, context.orgId(), context.userId());
+                }
+                yield Map.of("memoryIds", memoryIds);
+            }
             case CREATE_SKILL -> {
                 yield skillService.create(toBean(safeArgs, CreateSkillRequest.class),
                         context.orgId(), context.userId());
@@ -1283,6 +1343,9 @@ public class McpToolService {
             case LIST_AGENTS -> listOutputSchema(agentSchema());
             case DELETE_AGENT -> schema(prop("deleted", "boolean", "Whether the digital worker was deleted."));
             case GET_AGENT_VERSION_STATUS -> agentVersionStatusSchema();
+            case BIND_AGENT_REPOS -> schema(primitiveArrayProp("repoIds", "integer", "Bound repository ids."));
+            case BIND_AGENT_SKILLS -> schema(primitiveArrayProp("skillIds", "integer", "Bound capability ids."));
+            case BIND_AGENT_MEMORIES -> schema(primitiveArrayProp("memoryIds", "integer", "Bound memory ids."));
             case CREATE_SKILL, GET_SKILL, UPDATE_SKILL, INSTALL_PLATFORM_SKILL,
                     CREATE_SKILL_FROM_PACKAGE, UPDATE_SKILL_PACKAGE -> skillSchema();
             case LIST_SKILLS -> listOutputSchema(skillSchema());
@@ -1667,6 +1730,12 @@ public class McpToolService {
         return property;
     }
 
+    private Map<String, Object> primitiveArrayProp(String name, String itemType, String description) {
+        Map<String, Object> property = prop(name, "array", description);
+        property.put("items", Map.of("type", itemType));
+        return property;
+    }
+
     private Map<String, Object> objectProp(String name, Map<String, Object> objectSchema, String description) {
         Map<String, Object> property = new LinkedHashMap<>(objectSchema);
         property.put("name", name);
@@ -1772,6 +1841,29 @@ public class McpToolService {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
         }
         return list.stream().map(String::valueOf).toList();
+    }
+
+    private List<Long> requiredLongList(Map<String, Object> args, String key) {
+        Object value = args.get(key);
+        if (!(value instanceof List<?> list) || list.isEmpty()) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+        }
+        return list.stream()
+                .map(item -> {
+                    if (item instanceof Number number) {
+                        return number.longValue();
+                    }
+                    if (item == null) {
+                        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                    }
+                    try {
+                        return Long.parseLong(String.valueOf(item));
+                    } catch (NumberFormatException e) {
+                        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                    }
+                })
+                .distinct()
+                .toList();
     }
 
     private Long lng(Map<String, Object> args, String key) {

@@ -48,6 +48,11 @@ not migrate internal KeyCenter ciphertext or legacy plaintext credential rows.
 The dependency compose file performs the import only when its MySQL volume is
 first created.
 
+For an existing installation, follow the deployment Skill upgrade runbook and
+apply only new immutable scripts from `docs/migration/`. Never re-import the full
+schema during an upgrade. Database changes require a reviewed backup,
+compatibility assessment, and explicit confirmation before execution.
+
 Start disposable local dependencies:
 
 ```bash

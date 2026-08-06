@@ -8,11 +8,54 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a`
-- Community merge commit: `44544f27d8a05706fbd19631790f97a82e44c0f5`
-- Synchronized at: 2026-08-05 (Asia/Shanghai)
+- Synchronized `origin/master`: `58140e68a741d29133d77fc05427c1174b9247a4`
+- Community merge commit: `1e9222ef91e4a2320d391910032fe72a82c8c85d`
+- Synchronized at: 2026-08-06 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-06: `41aedc7f` to `58140e68`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a` |
+| Community before merge | `ddba1e2596941319f1b9b900858b2168620c9cdf` |
+| Merged `origin/master` | `58140e68a741d29133d77fc05427c1174b9247a4` |
+| Resulting merge commit | `1e9222ef91e4a2320d391910032fe72a82c8c85d` |
+
+Scope: twelve upstream commits. The merge adds OSS service/public endpoint
+separation, bulk Agent capability bindings, the current user's password-change
+API and UI, and advances the recommended runtime to `0.2.117`.
+
+Four textual conflicts were resolved:
+
+- `ExecutorListPage.test.tsx`: retained the community Qoder CLI-only contract,
+  updated commands to `0.2.117`, and kept the provider literal aligned with the
+  single supported executor;
+- `OssProperties.java` and `ObjectStorageConfigTest.java`: retained mandatory
+  OSS configuration, bucket fallback, and the no-in-memory-storage boundary
+  while accepting the upstream dual-endpoint behavior;
+- `application.yml`: retained community SecretCrypto, public SLS, optional
+  Aone, and SIGAR settings while accepting the dual OSS endpoint and runtime
+  version changes;
+- the deployment Skill manifest, input catalog, and contract tests were updated
+  to the same `0.2.117` runtime default.
+
+The upstream bulk-binding design record under `docs/superpowers` was excluded by
+the community documentation policy. A new unsafe tab cast in the password UI
+was corrected in follow-up commit `c9979967`; no product decision was required.
+
+Verification completed after the merge:
+
+- Backend: 1,746 tests passed; the production JAR included the frontend static
+  assets.
+- Frontend: 84 test files and 513 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,760 modules.
+- Deployment Skill: 52 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent, the
+  executor UI remained Qoder CLI-only, and all active runtime defaults were
+  `0.2.117`.
 
 ### 2026-08-05: `ce1764e9` to `41aedc7f`
 
