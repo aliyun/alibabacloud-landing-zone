@@ -117,6 +117,15 @@ not work around malformed SQL by changing the server's global `sql_mode`.
 
 ## Upgrade Existing Deployment
 
+Before upgrade work, inspect the current context, manifest, and protected
+environment file for prerequisites. ECS instance IDs are required before remote
+inventory, staging, or activation. Database connection information is required
+only when the change plan contains DDL or DML. When these values already exist,
+present them for user confirmation without asking for them again; show only a
+sanitized database summary and the credential source, never the password. When
+the context is incomplete, request only the missing values in one consolidated
+question and wait for confirmation before any dependent operation.
+
 Read `references/upgrade-runbook.md` before any upgrade mutation. Reconcile the
 manifest commit, local source commit, and `/opt/autowonder/current` on every ECS
 with `initialize-and-verify.sh upgrade-inventory`; stop when active nodes disagree.

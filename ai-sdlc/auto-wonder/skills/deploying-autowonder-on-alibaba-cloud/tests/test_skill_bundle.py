@@ -99,6 +99,20 @@ class SkillBundleTest(unittest.TestCase):
         missing = [path for path in REQUIRED if not (SKILL_ROOT / path).is_file()]
         self.assertEqual([], missing, f"Missing Skill bundle files: {missing}")
 
+    def test_upgrade_prerequisites_reuse_context_and_request_only_missing_values(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references/upgrade-runbook.md").read_text(encoding="utf-8")
+        combined = (skill + runbook).lower()
+        for term in (
+            "ecs instance ids",
+            "ddl or dml",
+            "database connection information",
+            "present them for user confirmation",
+            "request only the missing values",
+            "protected environment file",
+        ):
+            self.assertIn(term, combined)
+
     def test_frontmatter_has_valid_identity(self):
         content = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         match = re.match(r"\A---\n(.*?)\n---(?:\n|\Z)", content, re.DOTALL)

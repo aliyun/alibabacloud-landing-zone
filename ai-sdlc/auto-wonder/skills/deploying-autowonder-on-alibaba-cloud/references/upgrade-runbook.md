@@ -10,6 +10,29 @@ private OSS transfer, sequential activation, probes, acceptance, and rollback.
 Use this only for an existing accepted deployment. New installations follow the
 normal phase state machine and import the complete schema exactly once.
 
+## Prerequisite Context Gate
+
+Resolve prerequisites at the start, using the current conversation context,
+deployment manifest, inventory evidence, and protected environment file before
+asking the user:
+
+- ECS instance IDs are needed for active-release inventory, artifact staging,
+  rolling activation, and rollback.
+- Database connection information is needed only when the target change set
+  contains DDL or DML. Confirm host, port, database, username, connectivity
+  scope, and a protected credential source such as the mode-`0600` environment
+  file. Never display or copy the database password into chat, commands, or the
+  manifest.
+
+If all applicable values are already available, present them for user
+confirmation as a sanitized prerequisite summary and do not request them again.
+If anything applicable is absent, request only the missing values once, present
+the completed summary, and wait for user confirmation. Stop before the first
+dependent action when prerequisites remain missing or unconfirmed. In
+particular, do not run remote ECS operations without confirmed instance IDs, and
+do not build, stage, or execute a release containing DDL or DML until its
+database access context is confirmed.
+
 ## Deterministic Command Route
 
 Use protected local paths for the manifest and environment file. Never place
