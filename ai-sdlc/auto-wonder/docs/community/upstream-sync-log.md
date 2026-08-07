@@ -57,7 +57,8 @@ ancestor of Community, accounted for every shared file and conflict, and found
 no lost master feature, unintended internal configuration, or unresolved
 product decision. Documentation policy, migration immutability, external
 deployment boundaries, Qoder-only executor creation, and the public output base
-were rechecked.
+were rechecked. A follow-up byte-level audit aligned the relocated V036 content
+exactly with master and confirmed that no upstream product source was deleted.
 
 Verification completed after the merge:
 
