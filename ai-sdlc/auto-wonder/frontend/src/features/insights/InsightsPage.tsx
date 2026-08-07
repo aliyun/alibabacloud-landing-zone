@@ -8,6 +8,7 @@ import { KeyInsights } from './components/KeyInsights';
 import { SdlcLinkIssues } from './components/SdlcLinkIssues';
 import { Recommendations } from './components/Recommendations';
 import { AuditTable } from './components/AuditTable';
+import { ParticipationTab } from './components/ParticipationTab';
 import RealtimeDashboard from './realtime/RealtimeDashboard';
 import type { TimeRange } from './types';
 
@@ -18,7 +19,7 @@ const TIME_RANGES = [
 ];
 
 export function InsightsPage() {
-  const [tab, setTab] = useState<'realtime' | 'metrics' | 'audit'>('realtime');
+  const [tab, setTab] = useState<'realtime' | 'metrics' | 'audit' | 'participation'>('realtime');
   const [workerId, setWorkerId] = useState<number | undefined>();
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
 
@@ -52,13 +53,14 @@ export function InsightsPage() {
       <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <Segmented
           value={tab}
-          onChange={(v) => setTab(v as 'realtime' | 'metrics' | 'audit')}
+          onChange={(v) => setTab(v as 'realtime' | 'metrics' | 'audit' | 'participation')}
           options={[
             { label: '实时看板', value: 'realtime' },
             { label: '执行审计', value: 'audit' },
+            { label: '人机协作', value: 'participation' },
           ]}
         />
-        {tab !== 'realtime' && (
+        {tab !== 'realtime' && tab !== 'participation' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: '#6b7280' }}>数字员工</span>
             <Select
@@ -80,7 +82,7 @@ export function InsightsPage() {
         )}
       </div>
 
-      {tab !== 'realtime' && workersQuery.isError && (
+      {tab !== 'realtime' && tab !== 'participation' && workersQuery.isError && (
         <div style={{ marginBottom: 16 }}>
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="数字员工列表加载失败，当前无法按人员筛选。" />
         </div>
@@ -89,8 +91,11 @@ export function InsightsPage() {
       {/* Realtime Tab */}
       {tab === 'realtime' && <RealtimeDashboard />}
 
+      {/* Participation Tab */}
+      {tab === 'participation' && <ParticipationTab />}
+
       {/* Metrics / Audit Tabs */}
-      {tab !== 'realtime' &&
+      {tab !== 'realtime' && tab !== 'participation' &&
         (metricsLoading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
             <Spin />

@@ -2242,11 +2242,19 @@ public class WorkitemService {
     }
 
     private String assignDetailJson(String fromType, String toType) {
+        return assignmentDetailJson(fromType, toType);
+    }
+
+    static boolean isAssignmentType(String type) {
+        return "HUMAN".equals(type) || "AGENT".equals(type);
+    }
+
+    public static String assignmentDetailJson(String fromType, String toType) {
         Map<String, String> detail = new LinkedHashMap<>();
-        if (fromType != null) {
+        if (isAssignmentType(fromType)) {
             detail.put("fromType", fromType);
         }
-        if (toType != null) {
+        if (isAssignmentType(toType)) {
             detail.put("toType", toType);
         }
         return detail.isEmpty() ? null : JSON.toJSONString(detail);

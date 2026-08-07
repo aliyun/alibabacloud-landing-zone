@@ -63,3 +63,12 @@ autowonder:
   metrics:
     sigar:
       enabled: ${AUTOWONDER_SIGAR_ENABLED:true}
+  insights:
+    human-agent:
+      timezone: Asia/Shanghai
+      cron: "0 0 3 * * *"
+      cache-ttl-seconds: 97200
+      lock-ttl-millis: 3600000
+      refresh-core-pool-size: 1
+      refresh-max-pool-size: 2
+      refresh-queue-capacity: 20

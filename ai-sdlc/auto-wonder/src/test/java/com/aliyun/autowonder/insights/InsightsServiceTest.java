@@ -4,6 +4,8 @@ import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.insights.dto.InsightAuditPageVO;
 import com.aliyun.autowonder.insights.dto.InsightMetricsVO;
 import com.aliyun.autowonder.insights.dto.InsightAuditItemVO;
+import com.aliyun.autowonder.insights.participation.HumanAgentParticipationProperties;
+import com.aliyun.autowonder.insights.participation.HumanAgentParticipationRefreshService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +28,9 @@ class InsightsServiceTest {
     void setUp() {
         insightsDao = mock(InsightsDao.class);
         usageService = mock(DispatchAiUsageService.class);
-        service = new InsightsService(insightsDao, usageService);
+        service = new InsightsService(insightsDao, usageService,
+                mock(HumanAgentParticipationRefreshService.class),
+                new HumanAgentParticipationProperties());
     }
 
     @Test

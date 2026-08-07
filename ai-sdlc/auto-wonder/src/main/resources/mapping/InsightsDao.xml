@@ -154,4 +154,31 @@
         ORDER BY a.name
     </select>
 
+    <select id="listParticipationLifecycleEvents"
+            resultType="com.aliyun.autowonder.insights.participation.HumanAgentParticipationRawEventRow">
+        SELECT w.id AS workitemId, w.title, w.gmt_create AS workitemCreatedAt,
+               e.id AS eventId, e.event_type AS eventType, e.to_val AS toVal,
+               CASE
+                   WHEN e.event_type = 'ASSIGN' AND target_agent.id IS NOT NULL THEN 'AGENT'
+                   WHEN e.event_type = 'ASSIGN' AND e.to_val REGEXP '^[0-9]+$' THEN 'HUMAN'
+                   ELSE NULL
+               END AS inferredToType,
+               e.detail_json AS detailJson, e.gmt_create AS eventAt,
+               COALESCE(sn.category = 'DONE', FALSE) AS terminal
+        FROM workitem w
+        JOIN workitem_event e ON e.tenant_id = w.tenant_id AND e.workitem_id = w.id
+        LEFT JOIN status_node sn ON sn.template_id = w.template_id AND sn.code = e.to_val
+        LEFT JOIN agent target_agent
+          ON e.event_type = 'ASSIGN'
+         AND e.to_val REGEXP '^[0-9]+$'
+         AND target_agent.tenant_id = w.tenant_id
+         AND target_agent.id = CAST(e.to_val AS UNSIGNED)
+         AND target_agent.is_deleted = 0
+        WHERE w.tenant_id = #{tenantId} AND w.is_deleted = 0
+          AND e.gmt_create &lt; #{cutoffExclusive}
+          AND e.event_type IN ('CREATE', 'ASSIGN', 'STATUS_CHANGE')
+        ORDER BY w.id, e.gmt_create, e.id
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
 </mapper>

@@ -8,11 +8,60 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `f858771adf3503ce947cb072ba4c7ddc20a609ef`
-- Community merge commit: `8642ed54359eaee602a8fb2057e1ba5f32607f56`
+- Synchronized `origin/master`: `484a30c19f99dd401b1f1b1cf66b11154d0484ca`
+- Community merge commit: `e9184184d79ac565f40e3795d960c06c8d716b6b`
 - Synchronized at: 2026-08-07 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-07: `f858771a` to `484a30c1`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `f858771adf3503ce947cb072ba4c7ddc20a609ef` |
+| Community before merge | `cc8e52f87bdd4dec6bc6c999724a15d679c5a4b2` |
+| Merged `origin/master` | `484a30c19f99dd401b1f1b1cf66b11154d0484ca` |
+| Resulting merge commit | `e9184184d79ac565f40e3795d960c06c8d716b6b` |
+
+Scope: 16 upstream commits and 36 files. The merge adds T-1 human-agent
+participation insights, lifecycle fact reconstruction, assignment ownership
+persistence and historical fallback, nightly snapshots, cache-only APIs, force
+refresh, distributed single-flight coordination, paginated event loading, and
+the corresponding trend, breakdown, and slow-tail UI.
+
+Two conflicts and one follow-up test adaptation were reviewed:
+
+- `application.yml` retains Community external OSS/SLS, SecretCrypto, optional
+  Aone, and SIGAR configuration while accepting every new participation
+  scheduling, cache, lock, and worker default;
+- upstream introduced a participation migration as V036, but Community V036 is
+  already an immutable account-deactivation migration, so the new migration is
+  published as `docs/migration/V037__human_agent_participation_indexes.sql`;
+- `InsightsDaoMappingTest` follows the Community migration path and number. The
+  relocated SQL body is byte-identical to master, historical V036 is unchanged,
+  and both indexes are present in the fresh-install schema.
+
+Deployment review found no new required environment variable or service. The
+new insight settings have application defaults, so the Skill and environment
+templates require no change. Existing upgrade guidance discovers and applies
+the ordered V037 migration from `docs/migration/` before restart.
+
+Independent review proved `484a30c19f99dd401b1f1b1cf66b11154d0484ca` is an
+ancestor of Community, accounted for all 36 changed files, and found no missing
+master product source or behavior. The only feature-range differences are the
+documented Community configuration and migration-test path adaptations.
+Documentation policy, migration immutability, external deployment boundaries,
+Qoder-only executor creation, and public-output requirements were rechecked.
+
+Verification completed after the merge:
+
+- Backend: 1,828 tests passed.
+- Frontend: 84 test files and 524 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,766 modules.
+- Deployment Skill: 74 tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  Community executor UI remained Qoder CLI-only.
 
 ### 2026-08-07: `58140e68` to `f858771a`
 

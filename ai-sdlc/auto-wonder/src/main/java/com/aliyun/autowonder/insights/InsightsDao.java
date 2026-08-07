@@ -2,6 +2,7 @@ package com.aliyun.autowonder.insights;
 
 import com.aliyun.autowonder.insights.dto.InsightAuditItemVO;
 import com.aliyun.autowonder.insights.dto.InsightWorkerVO;
+import com.aliyun.autowonder.insights.participation.HumanAgentParticipationRawEventRow;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -51,4 +52,8 @@ public interface InsightsDao {
                         @Param("timeRange") String timeRange);
 
     List<InsightWorkerVO> listActiveWorkers(@Param("tenantId") long tenantId);
+
+    List<HumanAgentParticipationRawEventRow> listParticipationLifecycleEvents(
+            @Param("tenantId") long tenantId, @Param("cutoffExclusive") Date cutoffExclusive,
+            @Param("offset") int offset, @Param("limit") int limit);
 }

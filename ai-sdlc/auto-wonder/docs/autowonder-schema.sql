@@ -204,7 +204,8 @@ CREATE TABLE IF NOT EXISTS `status_node` (
   `gmt_create`  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_template_code` (`template_id`, `code`),
-  KEY `idx_tenant_template` (`tenant_id`, `template_id`)
+  KEY `idx_tenant_template` (`tenant_id`, `template_id`),
+  KEY `idx_status_node_participation` (`template_id`, `code`, `category`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='状态节点';
 
 -- 状态迁移（允许的有向边）
@@ -288,7 +289,8 @@ CREATE TABLE IF NOT EXISTS `workitem_event` (
   `detail_json` JSON            DEFAULT NULL,
   `gmt_create`  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  KEY `idx_workitem_time` (`tenant_id`, `workitem_id`, `gmt_create`)
+  KEY `idx_workitem_time` (`tenant_id`, `workitem_id`, `gmt_create`),
+  KEY `idx_workitem_event_participation` (`tenant_id`, `workitem_id`, `event_type`, `gmt_create`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单事件时间线';
 
 -- 需求澄清材料（对话历史见 ai_message，详设 04）
