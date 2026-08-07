@@ -20,8 +20,8 @@ while (($#)); do
     *) die "unknown argument";;
   esac
 done
-require_file "$manifest"; [[ -d "$source_dir/.git" || -f "$source_dir/.git" ]] || die "source is not a Git worktree"
-require_command jq; require_command git; require_command mvn; require_command jar; require_command tar
+require_file "$manifest"; require_command jq; require_command git; require_command mvn; require_command jar; require_command tar
+[[ $(git -C "$source_dir" rev-parse --is-inside-work-tree 2>/dev/null) == true ]] || die "source is not a Git worktree"
 json_validate "$manifest"; reject_secret_keys "$manifest"
 [[ -z $(git -C "$source_dir" status --porcelain --untracked-files=no) ]] || die "source has tracked changes"
 actual=$(git -C "$source_dir" rev-parse HEAD)

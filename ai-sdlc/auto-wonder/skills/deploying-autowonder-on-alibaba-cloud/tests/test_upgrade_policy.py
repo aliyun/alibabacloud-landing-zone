@@ -7,6 +7,38 @@ REPO_ROOT = SKILL_ROOT.parents[1]
 
 
 class UpgradePolicyTest(unittest.TestCase):
+    def test_upgrade_plan_is_the_only_mutation_authority(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references" / "upgrade-runbook.md").read_text(
+            encoding="utf-8"
+        )
+        policy = " ".join(f"{skill}\n{runbook}".split()).lower()
+
+        for term in [
+            "only mutation authority",
+            "do not clean up, delete, recreate, resize, reconfigure, replace",
+            "read-only diagnostics",
+            "revised plan",
+            "explicit human confirmation",
+        ]:
+            self.assertIn(term, policy)
+
+    def test_rolling_upgrade_failure_never_rolls_back_automatically(self):
+        initialize = (
+            SKILL_ROOT / "scripts" / "initialize-and-verify.sh"
+        ).read_text(encoding="utf-8")
+        rolling = initialize.split("  rolling-upgrade)", 1)[1].split(
+            "  rolling-start)", 1
+        )[0]
+        normalized = rolling.replace('\\\"', '"')
+
+        self.assertIn("RESOLUTION_REQUIRED=human-confirmation", normalized)
+        self.assertNotIn("automatic application rollback", normalized)
+        self.assertNotIn("rollback_status=passed", normalized)
+        self.assertNotIn(
+            'ln -sfn "$previous" /opt/autowonder/current.new', normalized
+        )
+
     def test_migration_directory_has_immutable_version_contract(self):
         policy_path = REPO_ROOT / "docs" / "migration" / "README.md"
         self.assertTrue(policy_path.is_file())

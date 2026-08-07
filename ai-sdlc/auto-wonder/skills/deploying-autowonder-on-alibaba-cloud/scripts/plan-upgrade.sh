@@ -27,9 +27,9 @@ while (($#)); do
 done
 
 require_file "$manifest"
-[[ -d "$source_dir/.git" || -f "$source_dir/.git" ]] || die "source is not a Git worktree"
-[[ -n "$target_ref" ]] || die "target ref is required"
 require_command git; require_command jq
+[[ $(git -C "$source_dir" rev-parse --is-inside-work-tree 2>/dev/null) == true ]] || die "source is not a Git worktree"
+[[ -n "$target_ref" ]] || die "target ref is required"
 json_validate "$manifest"; reject_secret_keys "$manifest"
 [[ $(jq -r '.upgradeInventory.status // empty' "$manifest") == verified ]] || die "verified active release inventory is required before planning"
 [[ -z $(git -C "$source_dir" status --porcelain --untracked-files=no) ]] || die "source has tracked changes"
@@ -68,12 +68,12 @@ collect_env_contract() {
   while IFS= read -r path; do
     case "$path" in
       src/main/resources/application*.yml|docs/community/application.env.example|skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
-        git -C "$source_dir" show "$commit:$path" 2>/dev/null |
+        git -C "$source_dir" show "$commit:./$path" 2>/dev/null |
           grep -Eo '\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}|^[A-Z][A-Z0-9_]*=.*$' 2>/dev/null |
           sed -E 's/^\$\{//; s/\}$//' |
           awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true;;
     esac
-  done < <(git -C "$source_dir" ls-tree -r --name-only "$commit")
+  done < <(git -C "$source_dir" ls-tree -r --name-only "$commit" -- .)
   cut -f1 "$raw" | LC_ALL=C sort -u | while IFS= read -r key; do
     [[ -n "$key" ]] || continue
     key_file=$(mktemp); TEMP_FILES+=("$key_file")
@@ -109,9 +109,9 @@ else
   printf '%s\n' 'target is not a descendant of the active commit' >>"$blocked"
 fi
 
-git -C "$source_dir" diff --name-status "$current_commit..$target_commit" |
+git -C "$source_dir" diff --relative --name-status "$current_commit..$target_commit" -- . |
   jq -Rsc 'split("\n") | map(select(length > 0) | capture("^(?<status>[^\\t]+)\\t(?<path>.+)$"))' >"$changed_files"
-git -C "$source_dir" log --reverse --format=$'%H\t%s' "$current_commit..$target_commit" |
+git -C "$source_dir" log --reverse --format=$'%H\t%s' "$current_commit..$target_commit" -- . |
   jq -Rsc 'split("\n") | map(select(length > 0) | capture("^(?<commit>[^\\t]+)\\t(?<subject>.*)$"))' >"$commits"
 
 target_migrations="$work_dir/target-migrations"; old_migrations="$work_dir/old-migrations"
@@ -122,8 +122,9 @@ git -C "$source_dir" ls-tree -r --name-only "$current_commit" -- docs/migration 
 versions="$work_dir/versions"; : >"$versions"
 while IFS= read -r path; do
   name=${path##*/}
-  if [[ "$name" =~ ^V([1-9][0-9]*)__([a-z0-9]+(_[a-z0-9]+)*)\.sql$ ]]; then
-    printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$path" >>"$versions"
+  if [[ "$name" =~ ^V(0*[1-9][0-9]*)__([a-z0-9]+(_[a-z0-9]+)*)\.sql$ ]]; then
+    version=$((10#${BASH_REMATCH[1]}))
+    printf '%s\t%s\n' "$version" "$path" >>"$versions"
   else
     printf 'invalid migration filename: %s\n' "$path" >>"$blocked"
   fi
@@ -135,7 +136,10 @@ done
 max_old=0
 while IFS= read -r path; do
   name=${path##*/}
-  [[ "$name" =~ ^V([1-9][0-9]*)__ ]] && ((BASH_REMATCH[1] > max_old)) && max_old=${BASH_REMATCH[1]}
+  if [[ "$name" =~ ^V(0*[1-9][0-9]*)__ ]]; then
+    version=$((10#${BASH_REMATCH[1]}))
+    ((version > max_old)) && max_old=$version
+  fi
 done <"$old_migrations"
 
 : >"$pending"
@@ -144,13 +148,13 @@ while IFS=$'\t' read -r status path extra; do
   case "$status" in
     A)
       [[ "$path" == docs/migration/*.sql ]] || continue
-      name=${path##*/}; [[ "$name" =~ ^V([1-9][0-9]*)__ ]] || continue
-      version=${BASH_REMATCH[1]}
+      name=${path##*/}; [[ "$name" =~ ^V(0*[1-9][0-9]*)__ ]] || continue
+      version=$((10#${BASH_REMATCH[1]}))
       if ((version <= max_old)); then
         printf 'new migration version is not greater than published versions: %s\n' "$version" >>"$blocked"
       fi
       content="$work_dir/migration-$version.sql"
-      git -C "$source_dir" show "$target_commit:$path" >"$content"
+      git -C "$source_dir" show "$target_commit:./$path" >"$content"
       risks=$(grep -Eio '\b(ALTER|DROP|TRUNCATE|RENAME|CREATE|UPDATE|DELETE|INSERT)\b' "$content" |
         tr '[:lower:]' '[:upper:]' | LC_ALL=C sort -u | jq -Rsc 'split("\n") | map(select(length > 0))' || printf '[]')
       jq -cn --argjson version "$version" --arg file "$path" --arg sha256 "$(sha256_file "$content")" \
@@ -161,7 +165,7 @@ while IFS=$'\t' read -r status path extra; do
       [[ "$path" == docs/migration/*.sql || "$migration_path" == docs/migration/*.sql ]] || continue
       printf 'published migration changed: %s\n' "$path" >>"$blocked";;
   esac
-done < <(git -C "$source_dir" diff --name-status "$current_commit..$target_commit" -- docs/migration)
+done < <(git -C "$source_dir" diff --relative --name-status "$current_commit..$target_commit" -- docs/migration)
 pending_json=$(jq -s 'sort_by(.version)' "$pending")
 destructive_migration=$(jq '[.[].riskOperations[]? | select(. == "DROP" or . == "TRUNCATE" or . == "RENAME")] | length > 0' <<<"$pending_json")
 compatibility_status=not-required; rolling_allowed=true

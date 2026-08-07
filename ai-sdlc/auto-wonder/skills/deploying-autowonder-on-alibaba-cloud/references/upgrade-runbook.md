@@ -33,6 +33,23 @@ particular, do not run remote ECS operations without confirmed instance IDs, and
 do not build, stage, or execute a release containing DDL or DML until its
 database access context is confirmed.
 
+## Upgrade Change Boundary
+
+The approved upgrade plan is the **only mutation authority**. Its confirmation
+must cover every planned resource operation, including release activation,
+configuration changes, database migrations, restarts, rollback, and cleanup of
+temporary upgrade artifacts. Do not clean up, delete, recreate, resize,
+reconfigure, replace, restart, or otherwise mutate any user deployment resource
+outside that plan. Never substitute teardown, new-deployment, or ad hoc repair
+commands for an upgrade step.
+
+If execution differs from the plan, a probe fails, state becomes uncertain, or a
+new operation appears necessary, stop at once. Limit investigation to read-only
+diagnostics and sanitized evidence collection. Do not retry or roll back
+automatically and do not attempt to solve the anomaly. Show the current state,
+impact, evidence, and decision options to the user. Resume only after a revised
+plan, renewed risk review, and explicit human confirmation.
+
 ## Deterministic Command Route
 
 Use protected local paths for the manifest and environment file. Never place
@@ -48,11 +65,13 @@ scripts/plan-upgrade.sh \
   --env-file "$CANDIDATE_ENV"
 
 TARGET_COMMIT=$(jq -r '.upgrade.toCommit' "$MANIFEST")
+PROJECT_PREFIX=$(git -C "$SOURCE" rev-parse --show-prefix)
 git -C "$SOURCE" worktree add --detach "$TARGET_WORKTREE" "$TARGET_COMMIT"
+TARGET_SOURCE="$TARGET_WORKTREE/${PROJECT_PREFIX%/}"
 
 scripts/build-release.sh \
   --manifest "$MANIFEST" \
-  --source-dir "$TARGET_WORKTREE" \
+  --source-dir "$TARGET_SOURCE" \
   --output-dir "$RELEASE_DIR"
 
 scripts/initialize-and-verify.sh runtime-config \
@@ -92,7 +111,10 @@ scripts/initialize-and-verify.sh acceptance --manifest "$MANIFEST"
 scripts/sanitize-evidence.sh --input "$MANIFEST" --output "$SANITIZED_REPORT"
 ```
 
-Do not run the new-deployment `database` or `business-init` subcommands during
+`SOURCE` is the AutoWonder project directory. It may be a standalone repository
+root or a monorepo subdirectory; the project-relative path is preserved in the
+detached target worktree. Do not run the new-deployment `database` or
+`business-init` subcommands during
 an upgrade. Remove the temporary target worktree only after its build and hashes
 are recorded; keep the sealed release until acceptance and rollback retention
 requirements are satisfied.
@@ -175,9 +197,10 @@ V2__description.sql
 V3__description.sql
 ```
 
-`V` is uppercase, the numeric version is unique and strictly increasing, and a
-merged migration is never modified, renamed, or deleted. Only migrations added
-between the active and target commits are eligible for the upgrade.
+`V` is uppercase, the positive numeric version is unique and strictly
+increasing, and optional zero padding such as `V036` is accepted. A merged
+migration is never modified, renamed, or deleted. Only migrations added between
+the active and target commits are eligible for the upgrade.
 
 Before confirmation, report for every new migration:
 
@@ -230,9 +253,8 @@ For each node require:
 
 Run the full RDS, Redis, OSS, enabled SLS, executor, and external signed-URL
 checks during acceptance. A failed node or public-ingress check stops the rollout
-and triggers an application rollback decision. A node activation failure restores
-its previous release, environment, and systemd unit automatically and checkpoints
-the rollback result before execution stops.
+and records that human resolution is required. Preserve the failed state and its
+evidence; do not automatically restore, restart, or otherwise change the node.
 
 ## Phase 7: Acceptance And Rollback
 
@@ -241,10 +263,12 @@ connectivity and externally downloadable OSS signed URLs. Keep the previous
 release, environment snapshot, plan, hashes, migration evidence, and rollback
 boundary in the sanitized handoff.
 
-Application rollback repoints the current symlink and restores the previous
-environment snapshot one node at a time. Database migrations are never
-automatically reversed. If the old application is incompatible with the migrated
-schema, stop and follow the reviewed database restore or forward-fix plan.
+After a separate risk review and explicit human confirmation, an approved
+application rollback may repoint the current symlink and restore the previous
+environment snapshot one node at a time. Rollback is never an automatic failure
+handler, and database migrations are never automatically reversed. If the old
+application is incompatible with the migrated schema, stop and follow the
+reviewed database restore or forward-fix plan.
 
 ## Confirmation Gates
 
