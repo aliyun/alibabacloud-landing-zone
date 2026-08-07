@@ -234,6 +234,58 @@ class UpgradePlanTest(unittest.TestCase):
         self.assertFalse(plan["upgrade"]["linearHistory"])
         self.assertIn("target is not a descendant of the active commit", plan["upgrade"]["blockedReasons"])
 
+    def test_plans_upgrade_from_monorepo_project_subdirectory(self):
+        product = self.source / "ai-sdlc" / "auto-wonder"
+        product.mkdir(parents=True)
+        self.git("mv", "src", "docs", str(product))
+        self.git("commit", "-m", "move project into monorepo")
+        self.git("push", "origin", "community")
+        self.old_commit = self.git("rev-parse", "HEAD").stdout.strip()
+
+        application = product / "src/main/resources/application.yml"
+        application.write_text(
+            "service:\n  value: ${OLD_ENV:changed}\n  required: ${NEW_REQUIRED:}\n",
+            encoding="utf-8",
+        )
+        env_example = product / "docs/community/application.env.example"
+        env_example.write_text("OLD_ENV=\nNEW_REQUIRED=\n", encoding="utf-8")
+        migration = product / "docs/migration/V036__add_upgrade_state.sql"
+        migration.write_text(
+            "ALTER TABLE workitem ADD COLUMN upgrade_state VARCHAR(32);\n",
+            encoding="utf-8",
+        )
+        self.git("add", ".")
+        self.git("commit", "-m", "add monorepo upgrade")
+        target = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("push", "origin", "community")
+        self.git("reset", "--hard", self.old_commit)
+
+        manifest = self.manifest()
+        result = subprocess.run(
+            [
+                str(SCRIPT),
+                "--manifest",
+                str(manifest),
+                "--source-dir",
+                str(product),
+                "--target-ref",
+                "community",
+            ],
+            text=True,
+            capture_output=True,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        plan = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(target, plan["upgrade"]["toCommit"])
+        self.assertEqual(["NEW_REQUIRED"], plan["upgrade"]["environment"]["added"])
+        self.assertEqual(
+            "docs/migration/V036__add_upgrade_state.sql",
+            plan["upgrade"]["pendingMigrations"][0]["file"],
+        )
+        self.assertEqual(36, plan["upgrade"]["pendingMigrations"][0]["version"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -117,6 +117,22 @@ not work around malformed SQL by changing the server's global `sql_mode`.
 
 ## Upgrade Existing Deployment
 
+### Upgrade Change Boundary
+
+The approved upgrade plan is the **only mutation authority**. Before any upgrade
+mutation, generate the complete plan, present its risks and exact resource
+operations, and obtain explicit human confirmation. Execute only those approved
+operations in the recorded order. Do not clean up, delete, recreate, resize,
+reconfigure, replace, restart, or otherwise mutate user deployment resources
+unless that exact action is included in the approved plan.
+
+On any unexpected result, failed probe, uncertain state, or newly discovered
+change, stop immediately. Perform read-only diagnostics and collect sanitized
+evidence only. Do not retry, roll back, broaden permissions, change resources, or
+attempt a repair autonomously. Present the evidence, risk, and choices to the
+user; any additional mutation requires a revised plan and explicit human
+confirmation.
+
 Before upgrade work, inspect the current context, manifest, and protected
 environment file for prerequisites. ECS instance IDs are required before remote
 inventory, staging, or activation. Database connection information is required
@@ -147,10 +163,11 @@ workflow; without migrations, `database-migrate` records a safe no-op. Never run
 `database` or `business-init` phases during an upgrade.
 
 Activate with `rolling-upgrade`, then run normal `acceptance`. Stop after any
-migration or node failure. Application rollback may restore the previous release
-and env snapshot, but it never reverses database migrations; use only the
-reviewed restore or forward-fix route when the old application is not compatible
-with the migrated schema.
+migration or node failure without automatic remediation. Rollback may restore
+the previous release and env snapshot only after a separate human-confirmed
+plan; it never reverses database migrations. Use only the reviewed restore or
+forward-fix route when the old application is not compatible with the migrated
+schema.
 
 For teardown, read `references/acceptance-and-rollback.md`, run
 `scripts/terraform-stage.sh destroy-plan`, review backups/impact/hash, and obtain

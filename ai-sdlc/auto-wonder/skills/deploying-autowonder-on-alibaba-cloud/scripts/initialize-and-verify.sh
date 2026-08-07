@@ -227,7 +227,7 @@ trap release_lock EXIT"
 
     while IFS= read -r migration; do
       version=$(jq -er '.version | select(type == "number" and . > 0 and floor == .)' <<<"$migration") || die "invalid migration version"
-      file=$(jq -er '.file | select(test("^docs/migration/V[1-9][0-9]*__[a-z0-9]+(?:_[a-z0-9]+)*\\.sql$"))' <<<"$migration") || die "invalid migration file"
+      file=$(jq -er '.file | select(test("^docs/migration/V0*[1-9][0-9]*__[a-z0-9]+(?:_[a-z0-9]+)*\\.sql$"))' <<<"$migration") || die "invalid migration file"
       expected_sha=$(jq -er '.sha256 | select(test("^[0-9a-f]{64}$"))' <<<"$migration") || die "invalid migration checksum"
       filename=${file##*/}
       migration_remote+="
@@ -300,41 +300,20 @@ if ln -sfn /opt/autowonder/releases/$short_commit /opt/autowonder/current.new \
     sleep 2
   done
 fi
-rollback_status=failed
-if test -n \"\$previous\" && test -d \"\$previous\"; then
-  ln -sfn \"\$previous\" /opt/autowonder/current.new
-  mv -Tf /opt/autowonder/current.new /opt/autowonder/current
-  if test -f \"\$target/autowonder.env.previous\"; then
-    install -m 0640 -o root -g autowonder \"\$target/autowonder.env.previous\" /etc/autowonder/autowonder.env
-  fi
-  if test -f \"\$target/autowonder.service.previous\"; then
-    install -m 0644 -o root -g root \"\$target/autowonder.service.previous\" /etc/systemd/system/autowonder.service
-  fi
-  systemctl daemon-reload || true
-  systemctl restart autowonder.service || true
-  for attempt in \$(seq 1 30); do
-    body=\$(curl --fail --silent --connect-timeout 2 --max-time 5 http://127.0.0.1:7001/checkpreload.htm 2>/dev/null || true)
-    if test \"\$(readlink -f /opt/autowonder/current)\" = \"\$previous\" && systemctl is-active --quiet autowonder.service && test \"\$body\" = success; then
-      rollback_status=passed
-      break
-    fi
-    sleep 2
-  done
-fi
-printf 'ROLLING_STATUS=failed\\nPREVIOUS_RELEASE=%s\\nROLLBACK_STATUS=%s\\n' \"\$previous\" \"\$rollback_status\"
+printf 'ROLLING_STATUS=failed\\nPREVIOUS_RELEASE=%s\\nACTIVE_RELEASE=%s\\nRESOLUTION_REQUIRED=human-confirmation\\n' \"\$previous\" \"\$(readlink -f /opt/autowonder/current 2>/dev/null || true)\"
 exit 0")
       invocation=$(jq -r '.invocationId' <<<"$result")
       output=$(jq -r '.output' <<<"$result")
       rollout_status=$(sed -n 's/^ROLLING_STATUS=//p' <<<"$output" | tail -1)
       previous=$(sed -n 's/^PREVIOUS_RELEASE=//p' <<<"$output" | tail -1)
-      rollback_status=$(sed -n 's/^ROLLBACK_STATUS=//p' <<<"$output" | tail -1)
+      resolution_required=$(sed -n 's/^RESOLUTION_REQUIRED=//p' <<<"$output" | tail -1)
       [[ "$rollout_status" == passed || "$rollout_status" == failed ]] || die "rolling upgrade result is invalid"
       invocation_json=$(jq --arg id "$invocation" '. + [$id]' <<<"$invocation_json")
-      node_json=$(jq --arg id "$invocation" --arg instance "$instance" --arg previous "$previous" --arg status "$rollout_status" --arg rollback "$rollback_status" \
-        '. + [{instanceId:$instance,invocationId:$id,previousRelease:$previous,status:$status,rollbackStatus:(if $rollback == "" then null else $rollback end)}]' <<<"$node_json")
+      node_json=$(jq --arg id "$invocation" --arg instance "$instance" --arg previous "$previous" --arg status "$rollout_status" --arg resolution "$resolution_required" \
+        '. + [{instanceId:$instance,invocationId:$id,previousRelease:$previous,status:$status,resolutionRequired:(if $resolution == "" then null else $resolution end)}]' <<<"$node_json")
       atomic_jq "$manifest" --argjson ids "$invocation_json" --argjson nodes "$node_json" --arg status "$rollout_status" \
         '.rollingUpgrade={status:$status,invocationIds:$ids,nodes:$nodes,nodeOrder:"sequential",targetCommit:.repositoryCommit} | .phase="application" | .status=(if $status == "passed" then "running" else "failed" end)'
-      [[ "$rollout_status" == passed ]] || die "node activation failed; automatic application rollback result: ${rollback_status:-unknown}"
+      [[ "$rollout_status" == passed ]] || die "node activation failed; stopped without remediation; read-only diagnosis and explicit human confirmation are required"
       [[ $(curl --fail --silent --connect-timeout 5 --max-time 10 "$base_url/checkpreload.htm") == success ]] || die "public health check failed after node activation"
       curl --fail --silent --connect-timeout 5 --max-time 10 "$base_url/api/platform/branding/public" >/dev/null || die "public branding probe failed after node activation"
     done

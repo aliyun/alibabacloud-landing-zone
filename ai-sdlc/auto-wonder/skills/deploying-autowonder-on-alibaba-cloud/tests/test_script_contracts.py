@@ -516,6 +516,86 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
         self.assertIn('if [[ "$stage_only" == false ]]', deploy)
         self.assertIn("ln -sfn /opt/autowonder/releases/$short_commit", deploy)
 
+    def test_build_release_accepts_monorepo_project_subdirectory(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repository = root / "repository"
+            product = repository / "ai-sdlc" / "auto-wonder"
+            product.mkdir(parents=True)
+            subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "build-test@example.invalid"],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Build Test"],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+            )
+
+            (product / "target").mkdir()
+            (product / "target/auto-wonder.jar").write_bytes(b"test-jar")
+            (product / "docs/migration").mkdir(parents=True)
+            (product / "docs/autowonder-schema.sql").write_text("SELECT 1;\n")
+            (product / "docs/autowonder-community-templates.sql").write_text("SELECT 1;\n")
+            (product / "docs/migration/README.md").write_text("migration contract\n")
+            subprocess.run(["git", "add", "."], cwd=repository, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "monorepo project"],
+                cwd=repository,
+                check=True,
+                capture_output=True,
+            )
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repository,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"repositoryCommit": commit}), encoding="utf-8")
+            output = root / "release"
+            binary_dir = root / "bin"
+            binary_dir.mkdir()
+            mvn_pwd = root / "mvn-pwd"
+            fake_mvn = binary_dir / "mvn"
+            fake_mvn.write_text('#!/usr/bin/env bash\npwd > "$FAKE_MVN_PWD"\n')
+            fake_mvn.chmod(0o755)
+            fake_jar = binary_dir / "jar"
+            fake_jar.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' BOOT-INF/classes/static/index.html "
+                "BOOT-INF/classes/static/assets/index.js\n"
+            )
+            fake_jar.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{binary_dir}:{env['PATH']}"
+            env["FAKE_MVN_PWD"] = str(mvn_pwd)
+
+            result = subprocess.run(
+                [
+                    str(ROOT / "scripts/build-release.sh"),
+                    "--manifest",
+                    str(manifest),
+                    "--source-dir",
+                    str(product),
+                    "--output-dir",
+                    str(output),
+                ],
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(product.resolve(), Path(mvn_pwd.read_text().strip()).resolve())
+            self.assertTrue((output / "autowonder-migrations.tar.gz").is_file())
+
     def test_preflight_supports_explicit_credential_profile(self):
         text = (ROOT / "scripts/preflight.sh").read_text()
         self.assertIn("--profile PROFILE", text)
@@ -586,6 +666,10 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
         self.assertIn("--confirm-rolling-compatible", initialize)
         self.assertIn("maintenance workflow is required", initialize)
         self.assertIn("databaseCompatibility.rollingAllowed", initialize)
+
+    def test_database_migration_accepts_zero_padded_versions(self):
+        initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+        self.assertIn("V0*[1-9][0-9]*__", initialize)
 
     def test_upgrade_candidate_environment_is_hash_bound_before_staging(self):
         initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
@@ -694,11 +778,11 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             "/api/platform/branding/public",
             "expected target release is not staged",
             "ROLLING_STATUS=failed",
-            "rollback_status=passed",
-            "autowonder.env.previous",
-            "autowonder.service.previous",
+            "RESOLUTION_REQUIRED=human-confirmation",
         ):
             self.assertIn(required, normalized)
+        self.assertNotIn("rollback_status=passed", normalized)
+        self.assertNotIn("automatic application rollback", normalized)
         self.assertIn('.status=(if $status == "passed" then "running" else "failed" end)', rolling)
         self.assertLess(
             rolling.index('for instance in "${instances[@]}"'),
