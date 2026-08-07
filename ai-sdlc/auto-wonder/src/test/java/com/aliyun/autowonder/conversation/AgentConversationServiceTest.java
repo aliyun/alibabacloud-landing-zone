@@ -796,6 +796,115 @@ class AgentConversationServiceTest {
         verify(transport, never()).send(any(), any(), any(), any(), any());
     }
 
+    @Test
+    void dingtalkTurnInjectsSenderContextIntoTransportContentButStoresOriginalContent() {
+        when(turnDao.findByExternalMsgId(1L, "msg-2")).thenReturn(null);
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L)).thenReturn(null);
+        when(executorSelector.select(eq(3L), isNull())).thenReturn(9L);
+        AgentDO agent = new AgentDO();
+        agent.setId(3L);
+        agent.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(agent);
+        AgentVersionDO ver = new AgentVersionDO();
+        ver.setRoleName("测试数字人");
+        when(agentVersionDao.findById(50L)).thenReturn(ver);
+        when(convDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationDO c = inv.getArgument(0);
+            c.setId(77L);
+            return 1;
+        });
+        when(turnDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationTurnDO t = inv.getArgument(0);
+            t.setId(88L);
+            return 1;
+        });
+
+        String sourceContext = """
+                {"senderNick":"王五","senderStaffId":"staff-1","senderId":"dt-user-1",
+                 "conversationTitle":"需求群","conversationType":"2","sessionWebhook":"secret-url"}
+                """;
+
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "你是谁", "msg-2", sourceContext);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).insert(argThat(t -> "IN".equals(t.getDirection())
+                && "你是谁".equals(t.getContent())
+                && sourceContext.equals(t.getSourceContext())));
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(transport).send(any(), eq(88L), content.capture(), anyString(), any());
+        assertTrue(content.getValue().contains("DingTalk message context"));
+        assertTrue(content.getValue().contains("Sender nickname: 王五"));
+        assertTrue(content.getValue().contains("Sender staffId: staff-1"));
+        assertTrue(content.getValue().contains("Sender dingtalk senderId: dt-user-1"));
+        assertTrue(content.getValue().contains("Conversation title: 需求群"));
+        assertTrue(content.getValue().contains("Do not confuse this sender with any AutoWonder MCP token"));
+        assertTrue(content.getValue().contains("User message:\n你是谁"));
+        assertFalse(content.getValue().contains("secret-url"));
+    }
+
+    @Test
+    void invalidDingtalkSourceContextDoesNotBlockDispatch() {
+        when(turnDao.findByExternalMsgId(1L, "msg-2")).thenReturn(null);
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L)).thenReturn(null);
+        when(executorSelector.select(eq(3L), isNull())).thenReturn(9L);
+        AgentDO agent = new AgentDO();
+        agent.setId(3L);
+        agent.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(agent);
+        AgentVersionDO ver = new AgentVersionDO();
+        ver.setRoleName("测试数字人");
+        when(agentVersionDao.findById(50L)).thenReturn(ver);
+        when(convDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationDO c = inv.getArgument(0);
+            c.setId(77L);
+            return 1;
+        });
+        when(turnDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationTurnDO t = inv.getArgument(0);
+            t.setId(88L);
+            return 1;
+        });
+
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "hello", "msg-2", "{bad-json");
+        commitTransactionSynchronizations();
+
+        verify(transport).send(any(), eq(88L), eq("hello"), anyString(), any());
+    }
+
+    @Test
+    void queuedDingtalkTurnUsesItsOwnSenderContextWhenDispatched() {
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO inTurn = processingInboundTurn(77L);
+        inTurn.setExternalMsgId("msg-55");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(inTurn);
+        ConversationChannelSink sink = mock(ConversationChannelSink.class);
+        when(sinkRegistry.resolve("DINGTALK")).thenReturn(sink);
+        AgentConversationTurnDO next = new AgentConversationTurnDO();
+        next.setId(56L);
+        next.setTenantId(1L);
+        next.setConversationId(77L);
+        next.setDirection("IN");
+        next.setContent("我是谁");
+        next.setSourceContext("{\"senderNick\":\"李四\",\"senderStaffId\":\"staff-2\",\"senderId\":\"dt-user-2\"}");
+        next.setStatus("QUEUED");
+        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(next);
+        when(turnDao.updateStatusIfCurrent(1L, 56L, "QUEUED", "PROCESSING", null))
+                .thenReturn(1);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
+        commitTransactionSynchronizations();
+
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(transport).send(eq(conv), eq(56L), content.capture(), anyString(), any());
+        assertTrue(content.getValue().contains("Sender nickname: 李四"));
+        assertTrue(content.getValue().contains("Sender staffId: staff-2"));
+        assertTrue(content.getValue().contains("User message:\n我是谁"));
+    }
+
     private AgentConversationDO existingConversationWithSession() {
         AgentConversationDO conv = new AgentConversationDO();
         conv.setId(77L);

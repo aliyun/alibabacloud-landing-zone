@@ -16,7 +16,7 @@ public class DingTalkChannel implements NotifyChannel {
 
     @Override
     public boolean deliver(NotificationDO notification) {
-        log.info("DingTalk stub: would send to recipientId={} title={}",
+        log.info("[in-app-stub] DingTalk notification would be sent to recipientId={} title={}",
                 notification.getRecipientId(), notification.getTitle());
         return true;
     }

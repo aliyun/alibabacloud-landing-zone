@@ -27,6 +27,16 @@ required for a community build and runtime.
 7. Preserve unrelated local and untracked files.
 8. Apply [docs-policy.md](docs-policy.md) to every upstream documentation change;
    do not restore excluded development history in `community`.
+9. Review every upstream configuration or operational change against the
+   deployment Skill, environment templates, deployment scripts, and operator
+   guidance. Update those assets in the same sync when their contract changes.
+10. Complete an independent post-sync review before pushing. The reviewer must
+    look for missed master behavior, incorrect conflict resolution, unintended
+    community divergence, and incomplete external-repository output.
+11. When upstream changes database DDL, synchronize the corresponding immutable
+    incremental SQL into `docs/migration/`. Updating the full schema alone is not
+    sufficient. Previously published migrations must not be modified, renamed,
+    or deleted.
 
 ## Conflict Decisions
 
@@ -59,13 +69,41 @@ After the merge:
 2. Filter documentation through [docs-policy.md](docs-policy.md).
 3. Verify schema, configuration, encryption, OSS/SLS, optional integrations,
    frontend contracts, and tests.
-4. Run the gates in [verification.md](verification.md), including backend tests,
+   For every DDL change, compare the previous and target schemas and verify a new
+   correctly ordered `docs/migration/V<n>__<description>.sql` exists. Treat a
+   missing migration or any changed historical migration as a blocking issue.
+4. Review deployment impact whenever upstream changes configuration properties,
+   environment variables, startup requirements, external endpoints, ports,
+   storage, databases, credentials, or runtime versions. Compare the change with:
+   - `skills/deploying-autowonder-on-alibaba-cloud/` inputs, manifest, scripts,
+     preflight checks, templates, runbook, troubleshooting, and tests;
+   - `docs/community/application.env.example` and other retained deployment docs.
+
+   Update affected assets in the same sync. Confirm that required variables are
+   both written by deployment scripts and explained or validated during input
+   collection; record an explicit "no deployment update required" conclusion
+   when the review finds no impact.
+5. Run the gates in [verification.md](verification.md), including backend tests,
    frontend tests/build, deployment Skill tests, and internal-reference scans.
    Run Maven verification and standalone frontend gates serially because both
    use the same `frontend/node_modules` directory.
-5. Update [upstream-sync-log.md](upstream-sync-log.md) with exact full commit IDs,
-   scope, conflict decisions, and verification results.
-6. Commit the log update separately, push `community`, and confirm local HEAD
+6. Run an independent sync review after conflict resolution and verification.
+   At minimum, the review must:
+   - prove the fetched `origin/master` baseline is an ancestor of `community`;
+   - compare the upstream changed-file list with the final master/community tree
+     differences and account for every overlap;
+   - inspect conflict resolutions and automatically merged shared files for lost
+     master behavior or unintended community behavior;
+   - recheck community boundaries, deployment-asset impact, and documentation
+     policy;
+   - verify the external-repository copy against `community` when external output
+     is part of the sync.
+
+   Fix all critical or important findings before moving the baseline or pushing.
+7. Update [upstream-sync-log.md](upstream-sync-log.md) with exact full commit IDs,
+   scope, conflict decisions, deployment-impact conclusion, independent-review
+   conclusion, and verification results.
+8. Commit the log update separately, push `community`, and confirm local HEAD
    equals `origin/community`.
 
 ## Required Log Entry
@@ -79,7 +117,12 @@ Record at least:
 - important feature scope;
 - overlapping files and their decisions;
 - decisions still requiring confirmation;
+- deployment Skill, deployment script, environment-template, and operator-doc
+  impact, including an explicit no-change conclusion when applicable;
+- independent sync-review findings and disposition;
 - test, build, and dependency-boundary results.
 
 Never move the recorded baseline until the merge and required verification have
-completed. The last verified baseline is the starting point for the next sync.
+completed and the independent sync review has passed. Always record the full
+`origin/master` commit ID rather than a moving branch name or abbreviated SHA.
+The last verified baseline is the exclusive starting point for the next sync.

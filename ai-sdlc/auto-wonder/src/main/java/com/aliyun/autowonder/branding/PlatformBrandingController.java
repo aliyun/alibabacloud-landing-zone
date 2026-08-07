@@ -6,7 +6,11 @@ import com.aliyun.autowonder.branding.dto.PlatformBrandingVO;
 import com.aliyun.autowonder.branding.dto.UpdatePlatformBrandingRequest;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.storage.ObjectStorageException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +26,8 @@ import java.util.concurrent.TimeUnit;
 @RestController
 @RequestMapping("/api/platform/branding")
 public class PlatformBrandingController {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(PlatformBrandingController.class);
 
     private final PlatformBrandingService brandingService;
     private final SystemAdminService systemAdminService;
@@ -60,7 +66,13 @@ public class PlatformBrandingController {
 
     @GetMapping("/logo")
     public ResponseEntity<byte[]> logo() {
-        byte[] bytes = brandingService.logoBytes();
+        byte[] bytes;
+        try {
+            bytes = brandingService.logoBytes();
+        } catch (ObjectStorageException e) {
+            LOGGER.error("logo OSS read failed: {}", e.describe(), e);
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        }
         if (bytes == null) {
             return ResponseEntity.notFound().build();
         }

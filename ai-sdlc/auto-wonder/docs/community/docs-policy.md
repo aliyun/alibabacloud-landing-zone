@@ -9,6 +9,7 @@ history, not in the published community tree.
 ## Retained Documents
 
 - `docs/autowonder-schema.sql`: complete schema for a fresh installation.
+- `docs/migration/`: immutable, versioned SQL for incremental upgrades.
 - `docs/autowonder-community-templates.sql`: idempotent system squad-template seed.
 - `docs/THIRD-PARTY-NOTICES.md`: required third-party notices.
 - `docs/openapi-reference.md`: public server API reference.
@@ -35,13 +36,12 @@ Do not publish these categories in `community`:
 - Superpowers specs, implementation plans, and other development working notes;
 - completed fix reports, rehearsals, execution journals, and temporary runbooks;
 - stale PRDs, gap analyses, backlogs, and internal deployment instructions;
-- database upgrade scripts or migration summaries;
 - documents containing internal endpoints, credentials, environment identities,
   or obsolete KeyCenter/Akless instructions.
 
-Community currently supports fresh database initialization only. Database
-upgrade documentation may be introduced later with an explicit migration
-strategy.
+Database migrations are retained only under `docs/migration/` and must follow
+its immutable naming and execution contract. Temporary migration notes, database
+dumps, rollback experiments, and environment-specific SQL remain excluded.
 
 ## Upstream Sync Rule
 

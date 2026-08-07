@@ -9,6 +9,7 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
 import com.aliyun.autowonder.org.OrgMemberDO;
 import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.user.UserDao;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -45,7 +46,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/auth/login");
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -62,7 +63,7 @@ class AuthFilterTest {
     void mcp_root_path_passes_without_platform_jwt() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/mcp");
         req.setQueryString("token=awmcp_secret");
@@ -89,7 +90,7 @@ class AuthFilterTest {
     void mcp_token_management_path_still_requires_platform_jwt() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/mcp/tokens");
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -105,7 +106,7 @@ class AuthFilterTest {
     void dingtalk_callback_passes_without_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST",
                 "/api/integrations/dingtalk/callback");
@@ -122,7 +123,7 @@ class AuthFilterTest {
     void dingtalk_non_callback_integration_still_requires_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET",
                 "/api/integrations/dingtalk/bindings");
@@ -138,7 +139,7 @@ class AuthFilterTest {
     @Test
     void integration_capabilities_are_public_read_only_metadata() throws Exception {
         AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
-                mock(OrgMemberDao.class));
+                mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET",
                 "/api/integrations/capabilities");
@@ -155,7 +156,7 @@ class AuthFilterTest {
     void branding_public_reads_are_whitelisted_but_logo_upload_requires_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest publicReq = new MockHttpServletRequest("GET", "/api/platform/branding/public");
         MockHttpServletResponse publicResp = new MockHttpServletResponse();
@@ -189,7 +190,7 @@ class AuthFilterTest {
                 member(0, 0, OrgAccessLevel.READ_WRITE.name());
         when(orgMemberDao.findByOrgAndUser(100L, 42L))
                 .thenReturn(activeMember);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
 
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-a"));
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
@@ -241,7 +242,7 @@ class AuthFilterTest {
         AutoWonderContext.get().setBizLog(log);
         String token = jwt.signAccess(new TokenPayload(42L, 100L, "jti-log"));
 
-        new AuthFilter(jwt, sessions, members).doFilter(authenticatedRequest(token),
+        new AuthFilter(jwt, sessions, members, mock(UserDao.class)).doFilter(authenticatedRequest(token),
                 new MockHttpServletResponse(), new MockFilterChain());
 
         assertEquals(42L, log.getUserId());
@@ -253,7 +254,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
 
         String token = jwtService.signAccess(new TokenPayload(42L, null, "jti-no-org"));
         MockHttpServletRequest req = authenticatedRequest(token);
@@ -284,7 +285,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 999L, "jti-recovery"));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         req.addHeader("Authorization", "Bearer " + token);
@@ -313,7 +314,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -330,7 +331,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 999L, "jti-members"));
         MockHttpServletRequest req = new MockHttpServletRequest(
                 "GET", "/api/orgs/current/members");
@@ -350,7 +351,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-missing-member"));
         MockHttpServletRequest req = authenticatedRequest(token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -394,7 +395,7 @@ class AuthFilterTest {
     void missing_token_returns_401_json() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -415,7 +416,7 @@ class AuthFilterTest {
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
         when(sessionService.isBlacklisted("jti-b")).thenReturn(true);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
 
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-b"));
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
@@ -435,7 +436,7 @@ class AuthFilterTest {
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
         when(orgMemberDao.findByOrgAndUser(100L, 42L)).thenReturn(member);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-rejected"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -454,7 +455,7 @@ class AuthFilterTest {
         SessionService sessionService = mock(SessionService.class);
         OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
         when(orgMemberDao.findByOrgAndUser(100L, 42L)).thenReturn(member);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-invalid-level"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();

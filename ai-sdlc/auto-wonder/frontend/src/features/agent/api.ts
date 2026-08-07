@@ -73,7 +73,7 @@ export interface CreateAgentRequest {
 }
 
 export interface RepoPermItem {
-  repoId: string;
+  repoId: number;
   repoName?: string;
   permLevel: string;
 }
@@ -153,11 +153,11 @@ export async function deleteAgent(agentId: number): Promise<void> {
 }
 
 // --- Repo permissions ---
-export async function addRepoPerm(agentId: number, repoId: string, permLevel: string): Promise<void> {
+export async function addRepoPerm(agentId: number, repoId: number, permLevel: string): Promise<void> {
   await apiClient.post(`/api/agents/${agentId}/repos`, { repoId, permLevel });
 }
 
-export async function removeRepoPerm(agentId: number, repoId: string): Promise<void> {
+export async function removeRepoPerm(agentId: number, repoId: number): Promise<void> {
   await apiClient.delete(`/api/agents/${agentId}/repos/${repoId}`);
 }
 

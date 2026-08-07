@@ -115,6 +115,8 @@ class DingTalkInboundServiceTest {
                 eq("hello"), eq("m-1"), argThat(sourceContext -> {
                     JSONObject json = JSONObject.parseObject(sourceContext);
                     return "Wang Wu".equals(json.getString("senderNick"))
+                            && "staff-1".equals(json.getString("senderStaffId"))
+                            && "user1".equals(json.getString("senderId"))
                             && "https://oapi.dingtalk.com/robot/sendBySession?session=s1"
                                     .equals(json.getString("sessionWebhook"));
                 }));

@@ -38,7 +38,7 @@ oss:
 autowonder:
   public-base-url: ${AUTOWONDER_PUBLIC_BASE_URL:http://localhost:7001}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.115}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.125}
   security:
     secret-crypto:
       master-key: ${AUTOWONDER_SECRET_MASTER_KEY:}
@@ -63,3 +63,12 @@ autowonder:
   metrics:
     sigar:
       enabled: ${AUTOWONDER_SIGAR_ENABLED:true}
+  insights:
+    human-agent:
+      timezone: Asia/Shanghai
+      cron: "0 0 3 * * *"
+      cache-ttl-seconds: 97200
+      lock-ttl-millis: 3600000
+      refresh-core-pool-size: 1
+      refresh-max-pool-size: 2
+      refresh-queue-capacity: 20

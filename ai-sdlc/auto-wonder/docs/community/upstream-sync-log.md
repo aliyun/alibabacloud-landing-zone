@@ -8,11 +8,195 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a`
-- Community merge commit: `44544f27d8a05706fbd19631790f97a82e44c0f5`
-- Synchronized at: 2026-08-05 (Asia/Shanghai)
+- Synchronized `origin/master`: `3262a46f66ac5087261429250091bfea5a61d12b`
+- Community merge commit: `802dbe507af1f3729ddd4c6ff6d6cddd15d38ffd`
+- Synchronized at: 2026-08-07 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-07: `484a30c1` to `3262a46f`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `484a30c19f99dd401b1f1b1cf66b11154d0484ca` |
+| Community before merge | `73b973dab484736790ce3975ff152f36147a15d5` |
+| Merged `origin/master` | `3262a46f66ac5087261429250091bfea5a61d12b` |
+| Resulting merge commit | `802dbe507af1f3729ddd4c6ff6d6cddd15d38ffd` |
+
+Scope: three upstream commits and two frontend files. The work-item comment
+mention menu now has a bounded height and vertical scrolling, with two focused
+component tests proving that long candidate lists remain fully available.
+
+The merge had no textual conflict or shared-file overlap after the previous
+baseline. Both upstream files were accepted byte-for-byte, no Community
+adaptation or product decision was required, and no master behavior was lost.
+
+Deployment review found no configuration, environment variable, DDL,
+dependency, runtime, service, documentation, or operational change. The
+deployment Skill, environment templates, scripts, and operator guidance
+therefore require no update.
+
+Independent review proved `3262a46f66ac5087261429250091bfea5a61d12b` is an
+ancestor of Community, accounted for all two changed files, and found them
+identical to master. Documentation policy, external deployment boundaries,
+Qoder-only executor creation, and public-output requirements were rechecked.
+
+Verification completed after the merge:
+
+- Backend: 1,828 tests passed.
+- Frontend: 85 test files and 526 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,766 modules.
+- Deployment Skill: 74 tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent.
+
+### 2026-08-07: `f858771a` to `484a30c1`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `f858771adf3503ce947cb072ba4c7ddc20a609ef` |
+| Community before merge | `cc8e52f87bdd4dec6bc6c999724a15d679c5a4b2` |
+| Merged `origin/master` | `484a30c19f99dd401b1f1b1cf66b11154d0484ca` |
+| Resulting merge commit | `e9184184d79ac565f40e3795d960c06c8d716b6b` |
+
+Scope: 16 upstream commits and 36 files. The merge adds T-1 human-agent
+participation insights, lifecycle fact reconstruction, assignment ownership
+persistence and historical fallback, nightly snapshots, cache-only APIs, force
+refresh, distributed single-flight coordination, paginated event loading, and
+the corresponding trend, breakdown, and slow-tail UI.
+
+Two conflicts and one follow-up test adaptation were reviewed:
+
+- `application.yml` retains Community external OSS/SLS, SecretCrypto, optional
+  Aone, and SIGAR configuration while accepting every new participation
+  scheduling, cache, lock, and worker default;
+- upstream introduced a participation migration as V036, but Community V036 is
+  already an immutable account-deactivation migration, so the new migration is
+  published as `docs/migration/V037__human_agent_participation_indexes.sql`;
+- `InsightsDaoMappingTest` follows the Community migration path and number. The
+  relocated SQL body is byte-identical to master, historical V036 is unchanged,
+  and both indexes are present in the fresh-install schema.
+
+Deployment review found no new required environment variable or service. The
+new insight settings have application defaults, so the Skill and environment
+templates require no change. Existing upgrade guidance discovers and applies
+the ordered V037 migration from `docs/migration/` before restart.
+
+Independent review proved `484a30c19f99dd401b1f1b1cf66b11154d0484ca` is an
+ancestor of Community, accounted for all 36 changed files, and found no missing
+master product source or behavior. The only feature-range differences are the
+documented Community configuration and migration-test path adaptations.
+Documentation policy, migration immutability, external deployment boundaries,
+Qoder-only executor creation, and public-output requirements were rechecked.
+
+Verification completed after the merge:
+
+- Backend: 1,828 tests passed.
+- Frontend: 84 test files and 524 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,766 modules.
+- Deployment Skill: 74 tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  Community executor UI remained Qoder CLI-only.
+
+### 2026-08-07: `58140e68` to `f858771a`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `58140e68a741d29133d77fc05427c1174b9247a4` |
+| Community before merge | `c3316737d8bf58b26f55d3cdcf1581179923b1c0` |
+| Merged `origin/master` | `f858771adf3503ce947cb072ba4c7ddc20a609ef` |
+| Resulting merge commit | `8642ed54359eaee602a8fb2057e1ba5f32607f56` |
+
+Scope: 54 upstream commits. The merge adds account deactivation with a cooling-off
+period, repository deletion UI, Agent-card navigation, persistent Qoder startup
+preferences, MCP squad/default-SDLC/pause-dispatch tools, improved work-item MCP
+guidance, DingTalk sender context, isolated IM scheduling, stable conversation
+capability fingerprints, more resilient OSS logo delivery, and runtime `0.2.125`.
+
+Six textual conflicts and all 17 automatically overlapping files were reviewed:
+
+- executor UI and tests retain the Community Qoder CLI-only boundary while
+  accepting master Qoder preference persistence and runtime `0.2.125`;
+- profile settings accept the deactivation tab and replace master's unsafe tab
+  cast with equivalent type-safe selection;
+- `application.yml` and `application-local.yml` accept product/runtime changes
+  while retaining external OSS/SLS, SecretCrypto, optional Aone, and SIGAR
+  configuration; internal `application-daily.yml` remains excluded;
+- auth, branding, repository, work-item, IM, and organization-access overlaps
+  retain all master behavior plus existing public metadata and external-storage
+  adaptations;
+- the one community-only `AuthFilterTest` constructor missed by the automatic
+  merge was aligned with master's new `UserDao` dependency in `8221b267`.
+
+Database review found upstream V036. The fresh schema now contains the three
+account-deactivation columns, and the immutable migration is published at
+`docs/migration/V036__user_account_deactivation.sql`; upstream's alternate
+`docs/migrations/` location is excluded. Deployment review found no new required
+environment variable or service. The Skill manifest, input catalog, and tests
+were updated from runtime `0.2.117` to `0.2.125`; no other deployment change is
+required.
+
+Independent review proved `f858771adf3503ce947cb072ba4c7ddc20a609ef` is an
+ancestor of Community, accounted for every shared file and conflict, and found
+no lost master feature, unintended internal configuration, or unresolved
+product decision. Documentation policy, migration immutability, external
+deployment boundaries, Qoder-only executor creation, and the public output base
+were rechecked. A follow-up byte-level audit aligned the relocated V036 content
+exactly with master and confirmed that no upstream product source was deleted.
+
+Verification completed after the merge:
+
+- Backend: 1,788 tests passed.
+- Frontend: 84 test files and 524 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,761 modules.
+- Deployment Skill: 74 tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  Community executor UI remained Qoder CLI-only.
+
+### 2026-08-06: `41aedc7f` to `58140e68`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `41aedc7f9ba2d4a7e8fd50e504fb091ea94e2f1a` |
+| Community before merge | `ddba1e2596941319f1b9b900858b2168620c9cdf` |
+| Merged `origin/master` | `58140e68a741d29133d77fc05427c1174b9247a4` |
+| Resulting merge commit | `1e9222ef91e4a2320d391910032fe72a82c8c85d` |
+
+Scope: twelve upstream commits. The merge adds OSS service/public endpoint
+separation, bulk Agent capability bindings, the current user's password-change
+API and UI, and advances the recommended runtime to `0.2.117`.
+
+Four textual conflicts were resolved:
+
+- `ExecutorListPage.test.tsx`: retained the community Qoder CLI-only contract,
+  updated commands to `0.2.117`, and kept the provider literal aligned with the
+  single supported executor;
+- `OssProperties.java` and `ObjectStorageConfigTest.java`: retained mandatory
+  OSS configuration, bucket fallback, and the no-in-memory-storage boundary
+  while accepting the upstream dual-endpoint behavior;
+- `application.yml`: retained community SecretCrypto, public SLS, optional
+  Aone, and SIGAR settings while accepting the dual OSS endpoint and runtime
+  version changes;
+- the deployment Skill manifest, input catalog, and contract tests were updated
+  to the same `0.2.117` runtime default.
+
+The upstream bulk-binding design record under `docs/superpowers` was excluded by
+the community documentation policy. A new unsafe tab cast in the password UI
+was corrected in follow-up commit `c9979967`; no product decision was required.
+
+Verification completed after the merge:
+
+- Backend: 1,746 tests passed; the production JAR included the frontend static
+  assets.
+- Frontend: 84 test files and 513 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,760 modules.
+- Deployment Skill: 52 contract tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent, the
+  executor UI remained Qoder CLI-only, and all active runtime defaults were
+  `0.2.117`.
 
 ### 2026-08-05: `ce1764e9` to `41aedc7f`
 

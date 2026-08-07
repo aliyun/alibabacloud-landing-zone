@@ -140,7 +140,7 @@ export function useDeleteAgent() {
 export function useAddRepoPerm() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ agentId, repoId, permLevel }: { agentId: number; repoId: string; permLevel: string }) =>
+    mutationFn: ({ agentId, repoId, permLevel }: { agentId: number; repoId: number; permLevel: string }) =>
       api.addRepoPerm(agentId, repoId, permLevel),
     onSuccess: (_d, v) => queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] }),
   });
@@ -149,7 +149,7 @@ export function useAddRepoPerm() {
 export function useRemoveRepoPerm() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ agentId, repoId }: { agentId: number; repoId: string }) =>
+    mutationFn: ({ agentId, repoId }: { agentId: number; repoId: number }) =>
       api.removeRepoPerm(agentId, repoId),
     onSuccess: (_d, v) => queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] }),
   });

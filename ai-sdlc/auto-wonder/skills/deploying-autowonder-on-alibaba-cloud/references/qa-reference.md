@@ -80,9 +80,12 @@ must exclude query strings because the protocol can carry a query token.
 ## Upgrades, Scaling, Backup, And Recovery
 
 For an upgrade, build and hash an exact commit, install a new version directory,
-start one node, pass health, enable it in NLB, then repeat. Preserve the previous
-release and symlink for rolling rollback. Scaling must preserve zone separation
-and database/cache constraints; re-plan through Terraform.
+run `scripts/plan-upgrade.sh`, stage without changing the active symlink, apply
+only confirmed `docs/migration/` versions through `autowonder_schema_history`,
+start one node, pass health, enable it in the load balancer, then repeat. Preserve
+the previous release, env snapshot, and symlink for application rollback. Scaling
+must preserve zone separation and database/cache constraints; re-plan through
+Terraform.
 
 Persistent lifecycle enables supported deletion protection and backups. Confirm
 actual RDS/Redis backup policy, OSS versioning/lifecycle, SLS retention, and

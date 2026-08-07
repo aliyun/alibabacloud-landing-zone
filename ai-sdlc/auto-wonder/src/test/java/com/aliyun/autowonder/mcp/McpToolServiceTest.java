@@ -8,11 +8,15 @@ import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.agent.AgentService;
 import com.aliyun.autowonder.agent.dto.AgentVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionSummaryVO;
+import com.aliyun.autowonder.agent.dto.AgentVersionVO;
+import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
+import com.aliyun.autowonder.squad.dto.CreateSquadRequest;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
 import com.aliyun.autowonder.memory.MemoryService;
 import com.aliyun.autowonder.memory.dto.CreateMemoryRequest;
@@ -75,6 +79,7 @@ class McpToolServiceTest {
     MemoryService memoryService;
     RepoService repoService;
     SquadService squadService;
+    DispatchPauseService dispatchPauseService;
     McpToolService service;
     McpAccessTokenService.Principal principal;
 
@@ -93,10 +98,11 @@ class McpToolServiceTest {
         memoryService = mock(MemoryService.class);
         repoService = mock(RepoService.class);
         squadService = mock(SquadService.class);
+        dispatchPauseService = mock(DispatchPauseService.class);
         service = new McpToolService(orgService, workitemService, guidanceService, skillService,
                 skillPackageService, sdlcService, agentService, statusTemplateService,
                 new PlatformSkillCatalog(), dispatchDao, requirementDocumentService, memoryService, repoService,
-                squadService);
+                squadService, dispatchPauseService);
         principal = principal(OrgAccessLevel.READ_WRITE);
     }
 
@@ -143,7 +149,34 @@ class McpToolServiceTest {
                 service.listTools(scopedPrincipal(OrgAccessLevel.ADMIN)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet()));
-        assertEquals(65, fullCatalog.size());
+        assertEquals(71, fullCatalog.size());
+    }
+
+    @Test
+    void agentBindingToolsDeduplicateIdsAndDelegateToAgentService() {
+        assertEquals(Map.of("repoIds", List.of(11L, 12L)),
+                service.call(principal, "autowonder.bind_agent_repos",
+                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                                "repoIds", List.of(11L, 11L, 12L), "permLevel", "WRITE")));
+        assertEquals(Map.of("skillIds", List.of(21L, 22L)),
+                service.call(principal, "autowonder.bind_agent_skills",
+                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                                "skillIds", List.of(21L, 21L, 22L))));
+        assertEquals(Map.of("memoryIds", List.of(31L, 32L)),
+                service.call(principal, "autowonder.bind_agent_memories",
+                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                                "memoryIds", List.of(31L, 31L, 32L), "source", "ORG")));
+
+        verify(agentService, times(2)).addRepoPerm(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+        verify(agentService, times(2)).addSkill(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+        verify(agentService, times(2)).addMemoryRef(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+
+        assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_repos"))
+                .get("repoIds")).get("type"));
+        assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_skills"))
+                .get("skillIds")).get("type"));
+        assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_memories"))
+                .get("memoryIds")).get("type"));
     }
 
     @Test
@@ -740,6 +773,20 @@ class McpToolServiceTest {
     }
 
     @Test
+    void pauseDispatchDelegatesToPauseServiceAndReturnsStatusMap() {
+        DispatchDO paused = new DispatchDO();
+        paused.setId(555L);
+        paused.setStatus("PAUSING");
+        when(dispatchPauseService.requestPause(ORG_ID, 99L, 555L, USER_ID)).thenReturn(paused);
+
+        Object result = call(principal, "autowonder.pause_dispatch",
+                Map.of("workitemId", 99L, "dispatchId", 555L));
+
+        assertEquals(Map.of("dispatchId", 555L, "status", "PAUSING"), result);
+        verify(dispatchPauseService).requestPause(ORG_ID, 99L, 555L, USER_ID);
+    }
+
+    @Test
     void listCommentsRequiresReadPermission() {
 
         call(principal, "autowonder.list_workitem_comments", Map.of("id", 99L));
@@ -1123,6 +1170,123 @@ class McpToolServiceTest {
         assertTrue(toolFor("autowonder.deprecate_memory").getDescription().contains("REJECTED"));
     }
 
+    @Test
+    void createSquadDelegatesToSquadService() {
+        SquadVO created = new SquadVO();
+        created.setId(50L);
+        created.setName("新小队");
+        when(squadService.create(any(CreateSquadRequest.class), eq(ORG_ID), eq(USER_ID)))
+                .thenReturn(created);
+
+        Object result = call(principal, "autowonder.create_squad",
+                Map.of("name", "新小队", "description", "测试小队"));
+
+        assertSame(created, result);
+        verify(squadService).create(argThat(req ->
+                "新小队".equals(req.getName()) && "测试小队".equals(req.getDescription())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void createSquadSchemaRequiresName() {
+        Map<String, Object> schema = schemaFor("autowonder.create_squad");
+        assertEquals(List.of("orgId", "name"), schema.get("required"));
+        assertTrue(properties(schema).keySet().containsAll(List.of("name", "description")));
+    }
+
+    @Test
+    void createSquadWithoutPermissionFails() {
+        McpAccessTokenService.Principal readOnly = principal(OrgAccessLevel.READ_ONLY);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> call(readOnly, "autowonder.create_squad",
+                        Map.of("name", "新小队")));
+
+        assertEquals("10403", ex.getCode());
+        verifyNoInteractions(squadService);
+    }
+
+    @Test
+    void createSquadOutputSchemaReturnsSquad() {
+        Map<String, Object> output = outputSchemaFor("autowonder.create_squad");
+        assertTrue(properties(output).keySet().containsAll(List.of("id", "name", "version")));
+    }
+
+    @Test
+    void setAgentDefaultSdlcPreservesExistingConfigAndSetsSdlcId() {
+        AgentVO agent = new AgentVO();
+        agent.setId(10L);
+        agent.setRoleName("开发");
+        agent.setRoleCode("DEV");
+        agent.setBusinessBackground("soul content");
+        agent.setResponsibilities("agent content");
+        when(agentService.get(10L)).thenReturn(agent);
+        AgentVersionVO versionVO = new AgentVersionVO();
+        versionVO.setId(200L);
+        versionVO.setAgentId(10L);
+        versionVO.setSdlcId(40103L);
+        when(agentService.editConfig(eq(10L), any(UpdateConfigRequest.class), eq(ORG_ID), eq(USER_ID)))
+                .thenReturn(versionVO);
+
+        Object result = call(principal, "autowonder.set_agent_default_sdlc",
+                Map.of("agentId", 10L, "sdlcId", 40103L));
+
+        assertTrue(result instanceof Map<?, ?>);
+        Map<?, ?> map = (Map<?, ?>) result;
+        assertEquals(10L, map.get("agentId"));
+        assertEquals(200L, map.get("editingVersionId"));
+        assertEquals(40103L, map.get("sdlcId"));
+        verify(agentService).editConfig(eq(10L), argThat(req ->
+                "开发".equals(req.getRoleName())
+                        && "DEV".equals(req.getRoleCode())
+                        && "soul content".equals(req.getBusinessBackground())
+                        && "agent content".equals(req.getResponsibilities())
+                        && Long.valueOf(40103L).equals(req.getSdlcId())),
+                eq(ORG_ID), eq(USER_ID));
+    }
+
+    @Test
+    void setAgentDefaultSdlcSchemaRequiresAgentIdAndSdlcId() {
+        Map<String, Object> schema = schemaFor("autowonder.set_agent_default_sdlc");
+        assertEquals(List.of("orgId", "agentId", "sdlcId"), schema.get("required"));
+        assertTrue(properties(schema).keySet().containsAll(List.of("agentId", "sdlcId")));
+    }
+
+    @Test
+    void setAgentDefaultSdlcWithoutPermissionFails() {
+        McpAccessTokenService.Principal readOnly = principal(OrgAccessLevel.READ_ONLY);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> call(readOnly, "autowonder.set_agent_default_sdlc",
+                        Map.of("agentId", 10L, "sdlcId", 40103L)));
+
+        assertEquals("10403", ex.getCode());
+        verifyNoInteractions(agentService);
+    }
+
+    @Test
+    void setAgentDefaultSdlcOutputSchemaExposesExpectedFields() {
+        Map<String, Object> output = outputSchemaFor("autowonder.set_agent_default_sdlc");
+        assertTrue(properties(output).keySet().containsAll(
+                List.of("agentId", "editingVersionId", "sdlcId")));
+    }
+
+    @Test
+    void setAgentDefaultSdlcDescriptionMentionsReviewAndPublish() {
+        McpToolVO tool = toolFor("autowonder.set_agent_default_sdlc");
+        assertTrue(tool.getDescription().contains("submit_agent_for_review"));
+        assertTrue(tool.getDescription().contains("publish_agent"));
+    }
+
+    @Test
+    void createSquadAndSetAgentDefaultSdlcAreRegisteredInCatalog() {
+        Set<String> names = service.listTools().stream()
+                .map(McpToolVO::getName)
+                .collect(java.util.stream.Collectors.toSet());
+        assertTrue(names.contains("autowonder.create_squad"));
+        assertTrue(names.contains("autowonder.set_agent_default_sdlc"));
+    }
+
     private McpAccessTokenService.Principal dispatchPrincipal() {
         return new McpAccessTokenService.Principal(
                 100L, 7L, -321L, OrgAccessLevel.READ_WRITE,
@@ -1443,6 +1607,13 @@ class McpToolServiceTest {
         assertTrue(create.getDescription().contains("upload_workitem_document"));
         assertTrue(create.getDescription().contains("assign_workitem"));
         assertTrue(create.getDescription().contains("correct order"));
+        // create_workitem quality guidance: discourage vague requests, require context
+        assertTrue(create.getDescription().contains("clarifying questions"));
+        assertTrue(create.getDescription().contains("vague one-line request"));
+        assertTrue(create.getDescription().contains("acceptance criteria"));
+        assertTrue(create.getDescription().contains("non-goals"));
+        assertTrue(create.getDescription().contains("constraints"));
+        assertTrue(create.getDescription().contains("AGENT assignment"));
 
         // assign_workitem: agentId semantics, no status change, and the "reassign an
         // existing workitem to a digital worker" example.
@@ -1479,6 +1650,13 @@ class McpToolServiceTest {
         assertNotNull(createAssigneeRef.get("description"));
         assertTrue(((String) createAssigneeRef.get("description")).contains("agentId"));
         assertTrue(((String) createAssigneeRef.get("description")).contains("userId"));
+        // create_workitem contentMd field: quality guidance for executable workitems
+        Map<String, Object> createContentMd = property(schemaFor("autowonder.create_workitem"), "contentMd");
+        assertNotNull(createContentMd.get("description"));
+        assertTrue(((String) createContentMd.get("description")).contains("background/problem"));
+        assertTrue(((String) createContentMd.get("description")).contains("acceptance criteria"));
+        assertTrue(((String) createContentMd.get("description")).contains("boundaries"));
+        assertTrue(((String) createContentMd.get("description")).contains("ask the user"));
 
         // assign_workitem assigneeRef spells out agentId/userId.
         Map<String, Object> assignAssigneeRef = property(schemaFor("autowonder.assign_workitem"), "assigneeRef");

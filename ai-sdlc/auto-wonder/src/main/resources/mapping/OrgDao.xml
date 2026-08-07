@@ -39,4 +39,7 @@
             modifier_id = #{modifierId}, gmt_modified = NOW(3)
         WHERE id = #{id} AND owner_id = #{oldOwnerId} AND is_deleted = 0
     </update>
+    <select id="listActive" resultType="com.aliyun.autowonder.org.OrgDO">
+        SELECT * FROM `org` WHERE is_deleted = 0 ORDER BY id
+    </select>
 </mapper>

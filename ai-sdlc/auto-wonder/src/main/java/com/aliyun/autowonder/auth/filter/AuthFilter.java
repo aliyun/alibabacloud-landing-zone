@@ -11,6 +11,8 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
 import com.aliyun.autowonder.org.OrgMemberDO;
 import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.user.UserDO;
+import com.aliyun.autowonder.user.UserDao;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import javax.servlet.FilterChain;
@@ -39,12 +41,14 @@ public class AuthFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final SessionService sessionService;
     private final OrgMemberDao orgMemberDao;
+    private final UserDao userDao;
 
     public AuthFilter(JwtService jwtService, SessionService sessionService,
-                      OrgMemberDao orgMemberDao) {
+                      OrgMemberDao orgMemberDao, UserDao userDao) {
         this.jwtService = jwtService;
         this.sessionService = sessionService;
         this.orgMemberDao = orgMemberDao;
+        this.userDao = userDao;
     }
 
     @Override
@@ -71,6 +75,15 @@ public class AuthFilter extends OncePerRequestFilter {
         if (payload.getJti() != null && sessionService.isBlacklisted(payload.getJti())) {
             writeUnauthorized(response);
             return;
+        }
+        if (!isDeactivationRevokeRequest(request)) {
+            UserDO user = userDao.findById(payload.getUserId());
+            if (user != null && Integer.valueOf(1).equals(user.getStatus())
+                    && "DEACTIVATED".equals(user.getPasswordHash())) {
+                writeFailure(response, HttpServletResponse.SC_UNAUTHORIZED,
+                        ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+                return;
+            }
         }
         try {
             AutoWonderContext ctx = AutoWonderContext.get();
@@ -139,6 +152,12 @@ public class AuthFilter extends OncePerRequestFilter {
         return ("POST".equalsIgnoreCase(method) && "/api/orgs".equals(path))
                 || ("GET".equalsIgnoreCase(method) && "/api/orgs/mine".equals(path))
                 || ("POST".equalsIgnoreCase(method) && ORG_SWITCH_PATH.matcher(path).matches());
+    }
+
+    private boolean isDeactivationRevokeRequest(HttpServletRequest request) {
+        String path = normalizeTrailingSlash(request.getRequestURI());
+        return "POST".equalsIgnoreCase(request.getMethod())
+                && path.equals("/api/users/me/deactivation/revoke");
     }
 
     private String normalizeTrailingSlash(String path) {

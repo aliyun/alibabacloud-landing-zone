@@ -113,7 +113,7 @@ class UserImIdentityServiceTest {
         when(registry.require("DINGTALK")).thenReturn(provider);
         when(branding.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "Acme Platform", "/logo.png", "teal", "#008080",
-                "https://example.com", "https://example.com/api/mcp", "0.2.115", false));
+                "https://example.com", "https://example.com/api/mcp", "0.2.125", false));
         UserImIdentityService service =
                 new UserImIdentityService(dao, channelService, registry, branding);
 
@@ -162,7 +162,7 @@ class UserImIdentityServiceTest {
         when(registry.require("DINGTALK")).thenReturn(provider);
         when(branding.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "AutoWonder", "/logo.png", "teal", "#008080",
-                "https://example.com", "https://example.com/api/mcp", "0.2.115", false));
+                "https://example.com", "https://example.com/api/mcp", "0.2.125", false));
         doThrow(new ImDeliveryException("DINGTALK", false, "authFailed", "req-1",
                 new IllegalStateException("secret-value staff-secret-id")))
                 .when(provider).send(any());

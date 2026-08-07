@@ -15,6 +15,7 @@ import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDO;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
+import com.aliyun.autowonder.workitem.WorkitemService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -142,7 +143,7 @@ public class HandoffService {
         WorkitemDO reloaded = workitemDao.findById(workitemId);
         Integer nextVersion = reloaded != null ? reloaded.getVersion() : w.getVersion();
         workitemDao.updateAssignee(workitemId, tenantId, "AGENT", targetAgentId, nextVersion, SYSTEM_USER_ID);
-        writeAssignEvent(tenantId, workitemId, w.getAssigneeRef(), targetAgentId);
+        writeAssignEvent(tenantId, workitemId, w.getAssigneeRef(), targetAgentId, w.getAssigneeType(), "AGENT");
         log.info("handoff to AGENT workitemId={} target={} targetAgentId={} sdlcId={} firstStepId={}",
                 workitemId, to, targetAgentId, targetSdlcId, first.getId());
         DispatchDO d = dispatchService.enqueueHandoff(tenantId, workitemId,
@@ -173,7 +174,7 @@ public class HandoffService {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
         AssignmentActor actor = resolveSourceActor(tenantId, workitemId, dispatchId, fallbackReason);
-        WorkitemEventDO event = writeAssignEvent(tenantId, workitemId, w.getAssigneeRef(), resolved, actor);
+        WorkitemEventDO event = writeAssignEvent(tenantId, workitemId, w.getAssigneeRef(), resolved, actor, w.getAssigneeType(), "HUMAN");
         if (eventPublisher != null && event.getId() != null) {
             eventPublisher.publishEvent(new WorkitemHumanAssignedEvent(
                     tenantId,
@@ -190,12 +191,13 @@ public class HandoffService {
         return HandoffResult.human(resolved, fallbackReason);
     }
 
-    private void writeAssignEvent(long tenantId, long workitemId, Long fromRef, Long toRef) {
-        writeAssignEvent(tenantId, workitemId, fromRef, toRef, AssignmentActor.system("系统"));
+    private void writeAssignEvent(long tenantId, long workitemId, Long fromRef, Long toRef,
+            String fromType, String toType) {
+        writeAssignEvent(tenantId, workitemId, fromRef, toRef, AssignmentActor.system("系统"), fromType, toType);
     }
 
     private WorkitemEventDO writeAssignEvent(long tenantId, long workitemId, Long fromRef, Long toRef,
-            AssignmentActor actor) {
+            AssignmentActor actor, String fromType, String toType) {
         WorkitemEventDO e = new WorkitemEventDO();
         e.setTenantId(tenantId);
         e.setWorkitemId(workitemId);
@@ -204,6 +206,7 @@ public class HandoffService {
         e.setToVal(toRef == null ? null : String.valueOf(toRef));
         e.setActorType(actor.type());
         e.setActorRef(actor.ref());
+        e.setDetailJson(WorkitemService.assignmentDetailJson(fromType, toType));
         eventDao.insert(e);
         return e;
     }

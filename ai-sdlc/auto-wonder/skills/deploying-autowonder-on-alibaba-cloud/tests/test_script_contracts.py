@@ -10,6 +10,7 @@ import shlex
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = [
     "preflight.sh",
+    "plan-upgrade.sh",
     "terraform-stage.sh",
     "build-release.sh",
     "deploy-via-cloud-assistant.sh",
@@ -309,7 +310,7 @@ JSON
                 if line.startswith("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=")
             ]
             self.assertEqual(
-                ["AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.115"],
+                ["AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.125"],
                 version_lines,
             )
 
@@ -471,6 +472,50 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual("config-only", json.loads(result.stdout)["mode"])
 
+    def test_stage_only_upgrade_requires_release_but_does_not_activate(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            data = json.loads(manifest.read_text())
+            data["resources"]["package_bucket"] = "packages-example"
+            data["repositoryCommit"] = "a" * 40
+            manifest.write_text(json.dumps(data))
+            env_file = self.write_env(root / "autowonder.env")
+            release = root / "release"
+            release.mkdir()
+            for name in (
+                "auto-wonder.jar",
+                "autowonder-schema.sql",
+                "autowonder-community-templates.sql",
+                "autowonder-migrations.tar.gz",
+            ):
+                (release / name).write_bytes(b"sealed")
+
+            result = subprocess.run([
+                str(ROOT / "scripts/deploy-via-cloud-assistant.sh"),
+                "--manifest", str(manifest), "--env-file", str(env_file),
+                "--release-dir", str(release), "--stage-only", "--dry-run",
+            ], text=True, capture_output=True)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("stage-only", json.loads(result.stdout)["mode"])
+
+    def test_upgrade_release_seals_migrations_and_preserves_active_symlink(self):
+        build = (ROOT / "scripts/build-release.sh").read_text()
+        deploy = (ROOT / "scripts/deploy-via-cloud-assistant.sh").read_text()
+        normalized_deploy = deploy.replace('\\"', '"').replace('\\$', '$')
+
+        self.assertIn("autowonder-migrations.tar.gz", build)
+        self.assertIn('LC_ALL=C tar -czf "$output_dir/autowonder-migrations.tar.gz"', build)
+        self.assertIn('migrations:{name:"autowonder-migrations.tar.gz"', build)
+        self.assertIn("autowonder-migrations.tar.gz", deploy)
+        self.assertIn("migrations_hash", deploy)
+        self.assertIn("autowonder.env.previous", deploy)
+        self.assertIn("autowonder.service.previous", deploy)
+        self.assertIn('! test -f "$previous_env"', normalized_deploy)
+        self.assertIn('if [[ "$stage_only" == false ]]', deploy)
+        self.assertIn("ln -sfn /opt/autowonder/releases/$short_commit", deploy)
+
     def test_preflight_supports_explicit_credential_profile(self):
         text = (ROOT / "scripts/preflight.sh").read_text()
         self.assertIn("--profile PROFILE", text)
@@ -488,11 +533,177 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             text = (ROOT / "scripts" / name).read_text()
             self.assertIn("aliyun_cli ecs RunCommand", text, name)
 
+    def test_cloud_assistant_polling_covers_remote_timeout(self):
+        for name in ("deploy-via-cloud-assistant.sh", "initialize-and-verify.sh"):
+            text = (ROOT / "scripts" / name).read_text()
+            self.assertIn("--Timeout 1800", text, name)
+            self.assertIn("deadline=$((SECONDS + 1860))", text, name)
+            self.assertIn("while ((SECONDS < deadline))", text, name)
+            self.assertIn('status="poll-timeout"', text, name)
+            self.assertNotIn("attempts++ < 180", text, name)
+
     def test_database_parser_strips_jdbc_prefix_before_database_split(self):
         text = (ROOT / "scripts/initialize-and-verify.sh").read_text()
         self.assertIn('connection=${SPRING_DATASOURCE_URL#jdbc:mysql://}', text)
         self.assertIn('authority=${connection%%/*}', text)
         self.assertIn('database=${connection#*/}', text)
+
+    def test_database_migration_requires_confirmation_and_verified_backup(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            data = json.loads(manifest.read_text())
+            data["mode"] = "upgrade"
+            data["repositoryCommit"] = "a" * 40
+            data["upgrade"] = {
+                "blockedReasons": [],
+                "databaseBackup": {"status": "pending"},
+                "pendingMigrations": [{
+                    "version": 1,
+                    "file": "docs/migration/V1__add_state.sql",
+                    "sha256": "b" * 64,
+                    "riskOperations": ["ALTER"],
+                }],
+            }
+            manifest.write_text(json.dumps(data))
+            command = [
+                str(ROOT / "scripts/initialize-and-verify.sh"),
+                "database-migrate", "--manifest", str(manifest),
+            ]
+
+            missing_confirmation = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(0, missing_confirmation.returncode)
+            self.assertIn("explicit migration confirmation", missing_confirmation.stderr)
+
+            missing_backup = subprocess.run(
+                [*command, "--confirm-migrations"], text=True, capture_output=True
+            )
+            self.assertNotEqual(0, missing_backup.returncode)
+            self.assertIn("verified database backup", missing_backup.stderr)
+
+    def test_database_migration_requires_rolling_compatibility_decision(self):
+        initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+        self.assertIn("--confirm-rolling-compatible", initialize)
+        self.assertIn("maintenance workflow is required", initialize)
+        self.assertIn("databaseCompatibility.rollingAllowed", initialize)
+
+    def test_upgrade_candidate_environment_is_hash_bound_before_staging(self):
+        initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+        deploy = (ROOT / "scripts/deploy-via-cloud-assistant.sh").read_text()
+        self.assertIn(".upgrade.environmentCandidateSha256=$envHash", initialize)
+        self.assertIn(".upgrade.environmentValidated=true", initialize)
+        self.assertIn(".upgrade.environment.added[]", initialize)
+        self.assertIn('require_nonempty_env "$env_file" "$key"', initialize)
+        self.assertIn(".upgrade.environmentContractChecked", deploy)
+        self.assertIn(".upgrade.environmentCandidateSha256", deploy)
+        self.assertIn('== "$env_hash"', deploy)
+
+    def test_database_migration_is_noop_when_plan_has_no_pending_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            data = json.loads(manifest.read_text())
+            data["mode"] = "upgrade"
+            data["repositoryCommit"] = "a" * 40
+            data["upgrade"] = {
+                "blockedReasons": [],
+                "databaseBackup": {"status": "pending"},
+                "pendingMigrations": [],
+            }
+            manifest.write_text(json.dumps(data))
+
+            result = subprocess.run([
+                str(ROOT / "scripts/initialize-and-verify.sh"),
+                "database-migrate", "--manifest", str(manifest),
+            ], text=True, capture_output=True)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            migration = json.loads(manifest.read_text())["upgrade"]["databaseMigration"]
+            self.assertEqual("not-required", migration["status"])
+
+    def test_database_migration_has_lock_ledger_checksum_and_failure_fences(self):
+        initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+        migration = initialize.split("  database-migrate)", 1)[1].split(
+            "  rolling-start)", 1
+        )[0]
+        normalized = migration.replace('\\"', '"').replace('\\$', '$')
+
+        for required in (
+            "--confirm-migrations",
+            "sort_by(.version)",
+            "coproc MIGRATION_LOCK",
+            "lock_in=${MIGRATION_LOCK[1]}",
+            "lock_out=${MIGRATION_LOCK[0]}",
+            "lock_pid=$MIGRATION_LOCK_PID",
+            "GET_LOCK('autowonder-community-migration', 30)",
+            "RELEASE_LOCK('autowonder-community-migration')",
+            "CREATE TABLE IF NOT EXISTS autowonder_schema_history",
+            "checksum",
+            "source_commit",
+            "previous failed migration record",
+            "MIGRATIONS_APPLIED",
+        ):
+            self.assertIn(required, initialize if required == "--confirm-migrations" else normalized)
+        self.assertNotIn(
+            'lock_acquired=$(mysql -h "$host"',
+            normalized,
+        )
+        self.assertNotIn("autowonder-schema.sql", migration)
+
+    def test_rolling_upgrade_requires_staged_release_and_migration_checkpoint(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            data = json.loads(manifest.read_text())
+            data["mode"] = "upgrade"
+            data["repositoryCommit"] = "a" * 40
+            data["upgrade"] = {"blockedReasons": [], "databaseMigration": {}}
+            manifest.write_text(json.dumps(data))
+            command = [
+                str(ROOT / "scripts/initialize-and-verify.sh"),
+                "rolling-upgrade", "--manifest", str(manifest),
+            ]
+
+            not_staged = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(0, not_staged.returncode)
+            self.assertIn("stage-only release", not_staged.stderr)
+
+            data["deployment"] = {"lastRun": {"mode": "stage-only"}}
+            manifest.write_text(json.dumps(data))
+            no_migration_checkpoint = subprocess.run(command, text=True, capture_output=True)
+            self.assertNotEqual(0, no_migration_checkpoint.returncode)
+            self.assertIn("database migration checkpoint", no_migration_checkpoint.stderr)
+
+    def test_rolling_upgrade_switches_restarts_and_probes_nodes_sequentially(self):
+        initialize = (ROOT / "scripts/initialize-and-verify.sh").read_text()
+        rolling = initialize.split("  rolling-upgrade)", 1)[1].split(
+            "  rolling-start)", 1
+        )[0]
+        normalized = rolling.replace('\\"', '"')
+
+        for required in (
+            'for instance in "${instances[@]}"',
+            "ln -sfn /opt/autowonder/releases/$short_commit",
+            "mv -Tf /opt/autowonder/current.new /opt/autowonder/current",
+            "systemctl restart autowonder.service",
+            "readlink -f /opt/autowonder/current",
+            "sha256sum",
+            "systemctl is-active --quiet autowonder.service",
+            'ss -ltnH "sport = :7001"',
+            "/checkpreload.htm",
+            "/api/platform/branding/public",
+            "expected target release is not staged",
+            "ROLLING_STATUS=failed",
+            "rollback_status=passed",
+            "autowonder.env.previous",
+            "autowonder.service.previous",
+        ):
+            self.assertIn(required, normalized)
+        self.assertIn('.status=(if $status == "passed" then "running" else "failed" end)', rolling)
+        self.assertLess(
+            rolling.index('for instance in "${instances[@]}"'),
+            rolling.index(".rollingUpgrade={status:\"passed\""),
+        )
 
     def test_release_and_database_include_squad_template_seed(self):
         build = (ROOT / "scripts/build-release.sh").read_text()
@@ -611,7 +822,7 @@ esac
             "stateMode": "local", "lifecycle": "persistent", "executionMode": "staged",
             "ingressScenario": "no-domain-no-certificate", "domain": "", "publicSourceCidrs": ["198.51.100.0/24"],
             "applicationBaseUrl": "http://public-nlb.example.com",
-            "recommendedRuntimeVersion": "0.2.115",
+            "recommendedRuntimeVersion": "0.2.125",
             "slsEnabled": True, "aoneEnabled": False, "publicEgress": False,
             "adminUsername": "admin", "organizationName": "Example", "repositoryUrl": "local",
             "repositoryRef": "community", "repositoryCommit": "HEAD",

@@ -17,6 +17,36 @@ const CLIENT_KINDS: { value: string; label: string; color: string; Icon: typeof 
 
 const clientKindMap = Object.fromEntries(CLIENT_KINDS.map((k) => [k.value, k]));
 
+const QODER_PREFS_KEY_PREFIX = 'autowonder.executor.qoderStartupOptions';
+
+interface QoderStartupPreference {
+  memoryMode: string;
+  model: string;
+  reasoningEffort: string;
+  contextWindow: string;
+}
+
+export function readQoderStartupPreference(executorId: number): QoderStartupPreference | null {
+  try {
+    const raw = localStorage.getItem(`${QODER_PREFS_KEY_PREFIX}.${executorId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as QoderStartupPreference;
+    const validModel = QODER_MODELS.some((m) => m.value === parsed.model);
+    if (!validModel || !parsed.memoryMode) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function writeQoderStartupPreference(executorId: number, pref: QoderStartupPreference): void {
+  try {
+    localStorage.setItem(`${QODER_PREFS_KEY_PREFIX}.${executorId}`, JSON.stringify(pref));
+  } catch {
+    // localStorage quota or unavailable — silently ignore
+  }
+}
+
 export function buildWsUrl(mcpBaseUrl: string): string {
   let url: URL;
   try {
@@ -268,13 +298,14 @@ export function ExecutorListPage() {
 
   const openQoderStartup = (record: ExecutorVO) => {
     runAccessCommand('ADMIN', '查看执行器启动命令', () => {
-      const model = 'qmodel_latest';
+      const saved = readQoderStartupPreference(record.id);
+      const model = saved?.model ?? 'qmodel_latest';
       const options = qoderOptionsForModel(model);
       startupForm.setFieldsValue({
-        memoryMode: 'platform',
+        memoryMode: saved?.memoryMode ?? 'platform',
         model,
-        reasoningEffort: options.defaultReasoningEffort,
-        contextWindow: options.defaultContextWindow,
+        reasoningEffort: saved?.reasoningEffort ?? options.defaultReasoningEffort,
+        contextWindow: saved?.contextWindow ?? options.defaultContextWindow,
       });
       setStartupTarget(record);
     });
@@ -284,6 +315,12 @@ export function ExecutorListPage() {
     runAccessCommand('ADMIN', '复制执行器启动命令', async () => {
       if (!startupTarget) return;
       const values = await startupForm.validateFields();
+      writeQoderStartupPreference(startupTarget.id, {
+        memoryMode: values.memoryMode,
+        model: values.model,
+        reasoningEffort: values.reasoningEffort,
+        contextWindow: values.contextWindow,
+      });
       await copyStartupCmd(startupTarget, values.memoryMode, {
         model: values.model,
         reasoningEffort: values.reasoningEffort,

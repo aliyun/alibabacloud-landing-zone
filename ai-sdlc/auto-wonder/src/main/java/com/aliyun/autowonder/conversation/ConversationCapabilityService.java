@@ -56,6 +56,6 @@ public class ConversationCapabilityService {
                 repos, contextAssembler.buildRepoMap(conversation.getTenantId(), repos));
         String token = tokenService.issue(conversation, principalId);
         return new ConversationCapabilitySnapshot(conversation.getAgentVersionId(),
-                bundle.getDownloadUrl(), bundle.getSha256(), bundle.getSha256(), token);
+                bundle.getDownloadUrl(), bundle.getSha256(), bundle.getContentHash(), token);
     }
 }

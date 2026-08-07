@@ -37,7 +37,7 @@ class ImNotificationMessageContextResolverTest {
         when(statusNodeDao.findById(88L)).thenReturn(status);
         when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                "https://wonder.example.com", "https://wonder.example.com/api/mcp", "0.2.115", false));
+                "https://wonder.example.com", "https://wonder.example.com/api/mcp", "0.2.125", false));
 
         ImNotificationMessageContext context = resolver.resolve(task());
 
@@ -57,7 +57,7 @@ class ImNotificationMessageContextResolverTest {
                 new ImNotificationMessageContextResolver(orgDao, workitemDao, statusNodeDao, brandingService);
         when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                null, "https://wonder.example.com/api/mcp", "0.2.115", false));
+                null, "https://wonder.example.com/api/mcp", "0.2.125", false));
 
         ImNotificationMessageContext context = resolver.resolve(task());
 

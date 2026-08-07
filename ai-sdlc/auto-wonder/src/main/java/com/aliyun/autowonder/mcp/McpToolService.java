@@ -9,10 +9,16 @@ import com.aliyun.autowonder.agent.AgentService;
 import com.aliyun.autowonder.agent.dto.AgentVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionSummaryVO;
 import com.aliyun.autowonder.agent.dto.CreateAgentRequest;
+import com.aliyun.autowonder.agent.dto.MemoryRefRequest;
+import com.aliyun.autowonder.agent.dto.RepoPermRequest;
+import com.aliyun.autowonder.agent.dto.SkillRequest;
 import com.aliyun.autowonder.agent.dto.UpdateAgentRequest;
+import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
+import com.aliyun.autowonder.agent.dto.AgentVersionVO;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
 import com.aliyun.autowonder.mcp.dto.PlatformSkillVO;
@@ -38,6 +44,7 @@ import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
 import com.aliyun.autowonder.squad.SquadService;
+import com.aliyun.autowonder.squad.dto.CreateSquadRequest;
 import com.aliyun.autowonder.squad.dto.SquadVO;
 import com.aliyun.autowonder.statemachine.StatusTemplateService;
 import com.aliyun.autowonder.workitem.AssignmentActor;
@@ -100,6 +107,9 @@ public class McpToolService {
     private static final String SUBMIT_AGENT_FOR_REVIEW = "autowonder.submit_agent_for_review";
     private static final String PUBLISH_AGENT = "autowonder.publish_agent";
     private static final String GET_AGENT_VERSION_STATUS = "autowonder.get_agent_version_status";
+    private static final String BIND_AGENT_REPOS = "autowonder.bind_agent_repos";
+    private static final String BIND_AGENT_SKILLS = "autowonder.bind_agent_skills";
+    private static final String BIND_AGENT_MEMORIES = "autowonder.bind_agent_memories";
     private static final String CREATE_SKILL = "autowonder.create_skill";
     private static final String LIST_SKILLS = "autowonder.list_skills";
     private static final String GET_SKILL = "autowonder.get_skill";
@@ -125,10 +135,13 @@ public class McpToolService {
     private static final String CREATE_REPO = "autowonder.create_repo";
     private static final String UPDATE_REPO = "autowonder.update_repo";
     private static final String DELETE_REPO = "autowonder.delete_repo";
+    private static final String CREATE_SQUAD = "autowonder.create_squad";
     private static final String LIST_SQUADS = "autowonder.list_squads";
     private static final String GET_SQUAD = "autowonder.get_squad";
     private static final String ADD_AGENT_TO_SQUAD = "autowonder.add_agent_to_squad";
     private static final String REMOVE_AGENT_FROM_SQUAD = "autowonder.remove_agent_from_squad";
+    private static final String PAUSE_DISPATCH = "autowonder.pause_dispatch";
+    private static final String SET_AGENT_DEFAULT_SDLC = "autowonder.set_agent_default_sdlc";
     private static final String MEMORY_SCOPE_AGENT = "AGENT";
     private static final Set<String> MEMORY_SCOPES = Set.of(MEMORY_SCOPE_AGENT, "SQUAD", "ORG");
     /**
@@ -209,6 +222,12 @@ public class McpToolService {
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(GET_AGENT_VERSION_STATUS,
                             orgTool(OrgAccessLevel.READ_ONLY)),
+                    Map.entry(BIND_AGENT_REPOS,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(BIND_AGENT_SKILLS,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(BIND_AGENT_MEMORIES,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL,
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SKILLS,
@@ -266,6 +285,12 @@ public class McpToolService {
                     Map.entry(ADD_AGENT_TO_SQUAD,
                             orgTool(OrgAccessLevel.READ_WRITE)),
                     Map.entry(REMOVE_AGENT_FROM_SQUAD,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(CREATE_SQUAD,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(PAUSE_DISPATCH,
+                            orgTool(OrgAccessLevel.READ_WRITE)),
+                    Map.entry(SET_AGENT_DEFAULT_SDLC,
                             orgTool(OrgAccessLevel.READ_WRITE)));
 
     private static final String ORG_ID_DESCRIPTION =
@@ -287,6 +312,7 @@ public class McpToolService {
     private final MemoryService memoryService;
     private final RepoService repoService;
     private final SquadService squadService;
+    private final DispatchPauseService dispatchPauseService;
 
     public McpToolService(OrgService orgService, WorkitemService workitemService,
                           GuidanceService guidanceService, SkillService skillService,
@@ -296,7 +322,8 @@ public class McpToolService {
                           PlatformSkillCatalog platformSkillCatalog, DispatchDao dispatchDao,
                           RequirementDocumentService requirementDocumentService,
                           MemoryService memoryService, RepoService repoService,
-                          SquadService squadService) {
+                          SquadService squadService,
+                          DispatchPauseService dispatchPauseService) {
         this.orgService = orgService;
         this.workitemService = workitemService;
         this.guidanceService = guidanceService;
@@ -311,6 +338,7 @@ public class McpToolService {
         this.memoryService = memoryService;
         this.repoService = repoService;
         this.squadService = squadService;
+        this.dispatchPauseService = dispatchPauseService;
     }
 
     public List<McpToolVO> listTools() {
@@ -331,11 +359,22 @@ public class McpToolService {
                         + "Example (create and assign to a digital worker): "
                         + "{\"workType\":\"BUG\",\"title\":\"fix(dingtalk): @ mention not triggering\","
                         + "\"priority\":1,\"assigneeType\":\"AGENT\",\"assigneeRef\":40013,"
-                        + "\"sdlcId\":40014,\"contentMd\":\"...\"}",
+                        + "\"sdlcId\":40014,\"contentMd\":\"...\"} "
+                        + "Before creating a workitem, assess whether the user request is sufficiently actionable. "
+                        + "Do not create an executable workitem from a vague one-line request. "
+                        + "If key context is missing, ask clarifying questions first unless the user explicitly "
+                        + "asks for a placeholder. A high-quality contentMd should capture: background/problem, "
+                        + "goal and non-goals, scope, key decisions and boundaries, acceptance criteria, "
+                        + "constraints/dependencies/risks, and expected deliverables. "
+                        + "For AGENT assignment, ensure these details are complete before triggering scheduling.",
                         schema(required("workType", "title"),
                                 prop("workType", "string", "Required. Workitem type: REQ (requirement), BUG (defect), or TASK (task)."),
                                 prop("title", "string", "Required. Workitem title."),
-                                prop("contentMd", "string", "Optional. Markdown body of the workitem."),
+                                prop("contentMd", "string",
+                                        "Optional but strongly recommended. Markdown body of the workitem. "
+                                                + "For executable workitems, include background/problem, goal and non-goals, scope, "
+                                                + "key decisions and boundaries, acceptance criteria, constraints/dependencies/risks, "
+                                                + "and expected deliverables. If these are unclear, ask the user before creating the workitem."),
                                 prop("priority", "integer", "Optional. Priority value; defaults to 2 when omitted."),
                                 prop("assigneeType", "string", "Optional. Assignee type: HUMAN or AGENT. "
                                         + "When omitted the workitem is assigned to the creator and no SDLC is bound and no scheduling is triggered."),
@@ -492,6 +531,20 @@ public class McpToolService {
                         + "AutoWonder digital worker. Returns agent info and the full version history.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Agent id to query."))),
+                tool(BIND_AGENT_REPOS, "Bind multiple repositories to an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "repoIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("repoIds", "integer", "Required. Repository ids to bind."),
+                                prop("permLevel", "string", "Optional. READ, WRITE, or ADMIN; defaults to READ."))),
+                tool(BIND_AGENT_SKILLS, "Bind multiple Skills, MCP servers, or Plugins to an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "skillIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("skillIds", "integer", "Required. Capability ids to bind."))),
+                tool(BIND_AGENT_MEMORIES, "Bind multiple memories to an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "memoryIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to bind."),
+                                prop("source", "string", "Optional binding source; defaults to DIRECT."))),
                 tool(CREATE_SKILL, "Create a skill, MCP server, or plugin record.",
                         schema(required("type", "name"), prop("type", "string"), prop("name", "string"),
                                 prop("installSpec", "string"), prop("description", "string"))),
@@ -607,7 +660,26 @@ public class McpToolService {
                 tool(REMOVE_AGENT_FROM_SQUAD, "Remove a digital worker from a squad.",
                         schema(required("squadId", "agentId"),
                                 prop("squadId", "integer", "Required. Squad id."),
-                                prop("agentId", "integer", "Required. Agent id to remove.")))
+                                prop("agentId", "integer", "Required. Agent id to remove."))),
+                tool(CREATE_SQUAD, "Create a new squad in the given organization. "
+                        + "The squad is created empty; use add_agent_to_squad to add members afterwards.",
+                        schema(required("name"),
+                                prop("name", "string", "Required. Squad name."),
+                                prop("description", "string", "Optional. Squad description."))),
+                tool(PAUSE_DISPATCH, "Pause an active dispatch (delivery execution) for a workitem. "
+                        + "The dispatch must be in DISPATCHED, ACKED, or RUNNING status. "
+                        + "Returns the dispatch id and its new status (PAUSING or PAUSED).",
+                        schema(required("workitemId", "dispatchId"),
+                                prop("workitemId", "integer", "Required. Workitem id that owns the dispatch."),
+                                prop("dispatchId", "integer", "Required. Dispatch id to pause."))),
+                tool(SET_AGENT_DEFAULT_SDLC, "Configure the default SDLC flow for a digital worker. "
+                        + "This creates or updates the agent's editing (draft) version with the given sdlcId, "
+                        + "preserving all other configuration. The change takes effect only after "
+                        + "submit_agent_for_review and publish_agent are called. "
+                        + "Returns the editing version id and the configured sdlcId.",
+                        schema(required("agentId", "sdlcId"),
+                                prop("agentId", "integer", "Required. Agent id to configure."),
+                                prop("sdlcId", "integer", "Required. SDLC flow id to set as default.")))
         );
     }
 
@@ -932,6 +1004,40 @@ public class McpToolService {
                 result.put("versions", versions);
                 yield result;
             }
+            case BIND_AGENT_REPOS -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> repoIds = requiredLongList(safeArgs, "repoIds");
+                String permLevel = str(safeArgs, "permLevel");
+                for (Long repoId : repoIds) {
+                    RepoPermRequest request = new RepoPermRequest();
+                    request.setRepoId(repoId);
+                    request.setPermLevel(permLevel);
+                    agentService.addRepoPerm(agentId, request, context.orgId(), context.userId());
+                }
+                yield Map.of("repoIds", repoIds);
+            }
+            case BIND_AGENT_SKILLS -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> skillIds = requiredLongList(safeArgs, "skillIds");
+                for (Long skillId : skillIds) {
+                    SkillRequest request = new SkillRequest();
+                    request.setSkillId(skillId);
+                    agentService.addSkill(agentId, request, context.orgId(), context.userId());
+                }
+                yield Map.of("skillIds", skillIds);
+            }
+            case BIND_AGENT_MEMORIES -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> memoryIds = requiredLongList(safeArgs, "memoryIds");
+                String source = str(safeArgs, "source");
+                for (Long memoryId : memoryIds) {
+                    MemoryRefRequest request = new MemoryRefRequest();
+                    request.setMemoryId(memoryId);
+                    request.setSource(source);
+                    agentService.addMemoryRef(agentId, request, context.orgId(), context.userId());
+                }
+                yield Map.of("memoryIds", memoryIds);
+            }
             case CREATE_SKILL -> {
                 yield skillService.create(toBean(safeArgs, CreateSkillRequest.class),
                         context.orgId(), context.userId());
@@ -1051,8 +1157,37 @@ public class McpToolService {
                         requiredLong(safeArgs, "agentId"), context.orgId());
                 yield Map.of("removed", true);
             }
+            case CREATE_SQUAD -> {
+                CreateSquadRequest req = new CreateSquadRequest();
+                req.setName(requiredString(safeArgs, "name"));
+                req.setDescription(str(safeArgs, "description"));
+                yield squadService.create(req, context.orgId(), context.userId());
+            }
+            case SET_AGENT_DEFAULT_SDLC -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                long sdlcId = requiredLong(safeArgs, "sdlcId");
+                AgentVO agent = agentService.get(agentId);
+                UpdateConfigRequest cfgReq = new UpdateConfigRequest();
+                cfgReq.setRoleName(agent.getRoleName());
+                cfgReq.setRoleCode(agent.getRoleCode());
+                cfgReq.setBusinessBackground(agent.getBusinessBackground());
+                cfgReq.setResponsibilities(agent.getResponsibilities());
+                cfgReq.setSdlcId(sdlcId);
+                AgentVersionVO versionVO = agentService.editConfig(
+                        agentId, cfgReq, context.orgId(), context.userId());
+                yield Map.of(
+                        "agentId", agentId,
+                        "editingVersionId", versionVO.getId(),
+                        "sdlcId", sdlcId);
+            }
             case INSTALL_PLATFORM_SKILL -> {
                 yield installPlatformSkill(requiredString(safeArgs, "skillId"), context);
+            }
+            case PAUSE_DISPATCH -> {
+                DispatchDO dispatch = dispatchPauseService.requestPause(context.orgId(),
+                        requiredLong(safeArgs, "workitemId"),
+                        requiredLong(safeArgs, "dispatchId"), context.userId());
+                yield Map.of("dispatchId", dispatch.getId(), "status", dispatch.getStatus());
             }
             default -> throw new BizException(ErrorCode.MCP_TOOL_NOT_FOUND);
         };
@@ -1283,6 +1418,9 @@ public class McpToolService {
             case LIST_AGENTS -> listOutputSchema(agentSchema());
             case DELETE_AGENT -> schema(prop("deleted", "boolean", "Whether the digital worker was deleted."));
             case GET_AGENT_VERSION_STATUS -> agentVersionStatusSchema();
+            case BIND_AGENT_REPOS -> schema(primitiveArrayProp("repoIds", "integer", "Bound repository ids."));
+            case BIND_AGENT_SKILLS -> schema(primitiveArrayProp("skillIds", "integer", "Bound capability ids."));
+            case BIND_AGENT_MEMORIES -> schema(primitiveArrayProp("memoryIds", "integer", "Bound memory ids."));
             case CREATE_SKILL, GET_SKILL, UPDATE_SKILL, INSTALL_PLATFORM_SKILL,
                     CREATE_SKILL_FROM_PACKAGE, UPDATE_SKILL_PACKAGE -> skillSchema();
             case LIST_SKILLS -> listOutputSchema(skillSchema());
@@ -1304,6 +1442,14 @@ public class McpToolService {
             case GET_SQUAD -> squadSchema();
             case ADD_AGENT_TO_SQUAD -> schema(prop("added", "boolean", "Whether the agent was added to the squad."));
             case REMOVE_AGENT_FROM_SQUAD -> schema(prop("removed", "boolean", "Whether the agent was removed from the squad."));
+            case CREATE_SQUAD -> squadSchema();
+            case PAUSE_DISPATCH -> schema(
+                    prop("dispatchId", "integer", "Dispatch id."),
+                    prop("status", "string", "Dispatch status after pause request (PAUSING or PAUSED)."));
+            case SET_AGENT_DEFAULT_SDLC -> schema(
+                    prop("agentId", "integer", "Agent id that was configured."),
+                    prop("editingVersionId", "integer", "Editing version id; call submit_agent_for_review then publish_agent to activate."),
+                    prop("sdlcId", "integer", "The configured SDLC flow id."));
             default -> schema();
         };
     }
@@ -1667,6 +1813,12 @@ public class McpToolService {
         return property;
     }
 
+    private Map<String, Object> primitiveArrayProp(String name, String itemType, String description) {
+        Map<String, Object> property = prop(name, "array", description);
+        property.put("items", Map.of("type", itemType));
+        return property;
+    }
+
     private Map<String, Object> objectProp(String name, Map<String, Object> objectSchema, String description) {
         Map<String, Object> property = new LinkedHashMap<>(objectSchema);
         property.put("name", name);
@@ -1772,6 +1924,29 @@ public class McpToolService {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
         }
         return list.stream().map(String::valueOf).toList();
+    }
+
+    private List<Long> requiredLongList(Map<String, Object> args, String key) {
+        Object value = args.get(key);
+        if (!(value instanceof List<?> list) || list.isEmpty()) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+        }
+        return list.stream()
+                .map(item -> {
+                    if (item instanceof Number number) {
+                        return number.longValue();
+                    }
+                    if (item == null) {
+                        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                    }
+                    try {
+                        return Long.parseLong(String.valueOf(item));
+                    } catch (NumberFormatException e) {
+                        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                    }
+                })
+                .distinct()
+                .toList();
     }
 
     private Long lng(Map<String, Object> args, String key) {

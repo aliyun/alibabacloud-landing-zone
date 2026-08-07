@@ -15,6 +15,9 @@ public class UserDO {
     private String avatarUrl;
     private String phone;
     private Integer status;
+    private Date deactivatedAt;
+    private Date coolingOffExpiresAt;
+    private Date deactivationRevokedAt;
     private Date lastLoginAt;
     private Date gmtCreate;
     private Date gmtModified;

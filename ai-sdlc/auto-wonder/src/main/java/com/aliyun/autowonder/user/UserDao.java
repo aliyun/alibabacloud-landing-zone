@@ -21,4 +21,19 @@ public interface UserDao {
     List<UserDO> searchOrgCandidates(@Param("tenantId") Long tenantId,
                                       @Param("keyword") String keyword,
                                       @Param("limit") int limit);
+
+    int updatePasswordHash(@Param("id") Long id, @Param("passwordHash") String passwordHash);
+
+    int updateDeactivation(@Param("id") Long id,
+                           @Param("deactivatedAt") java.util.Date deactivatedAt,
+                           @Param("coolingOffExpiresAt") java.util.Date coolingOffExpiresAt);
+
+    int revokeDeactivation(@Param("id") Long id,
+                           @Param("revokedAt") java.util.Date revokedAt);
+
+    int anonymizeUser(@Param("id") Long id);
+
+    java.util.List<UserDO> listExpiredDeactivations(@Param("limit") int limit);
+
+    boolean hasPendingDeactivation(@Param("id") Long id);
 }

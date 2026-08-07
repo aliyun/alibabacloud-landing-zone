@@ -49,6 +49,9 @@ public interface WorkitemDao {
             @Param("assignOperatorId") Long assignOperatorId,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int countBySdlcId(@Param("sdlcId") Long sdlcId);
+
+    int countActiveByAssignee(@Param("assigneeType") String assigneeType,
+                              @Param("assigneeRef") Long assigneeRef);
     int updateCurrentStep(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("currentStepId") Long currentStepId,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);

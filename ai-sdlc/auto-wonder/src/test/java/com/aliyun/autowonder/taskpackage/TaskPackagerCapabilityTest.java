@@ -191,6 +191,32 @@ class TaskPackagerCapabilityTest {
                 .getJSONArray("relations").getJSONObject(0).getString("relationType"));
     }
 
+    @Test
+    void conversation_capability_hash_ignores_turn_metadata_but_changes_with_content() {
+        InMemoryObjectStorage storage = new InMemoryObjectStorage();
+        TaskPackager packager = new TaskPackager(
+                storage, "task-packages", "https://auto-wonder.alibaba.net");
+        Map<String, Object> skill = capability(46L, "SKILL", "conversation-review", 2,
+                null, null, Map.of("instructions", "Review the conversation request."));
+
+        TaskPackageResult first = packager.buildConversationCapabilities(
+                100L, 7L, 42L, 5L, 55L, List.of(skill));
+        TaskPackageResult second = packager.buildConversationCapabilities(
+                100L, 7L, 43L, 5L, 55L, List.of(skill));
+
+        assertNotEquals(first.getSha256(), second.getSha256(),
+                "per-turn ZIP checksum must still cover volatile manifest metadata");
+        assertEquals(first.getContentHash(), second.getContentHash(),
+                "unchanged capabilities must retain one stable process-reuse hash");
+
+        Map<String, Object> changed = capability(46L, "SKILL", "conversation-review", 3,
+                null, null, Map.of("instructions", "Apply the updated review rules."));
+        TaskPackageResult third = packager.buildConversationCapabilities(
+                100L, 7L, 44L, 5L, 55L, List.of(changed));
+        assertNotEquals(second.getContentHash(), third.getContentHash(),
+                "real capability changes must invalidate the process-reuse hash");
+    }
+
     private static PackageContext baseContext() {
         PackageContext ctx = new PackageContext();
         ctx.setTenantId(100L);

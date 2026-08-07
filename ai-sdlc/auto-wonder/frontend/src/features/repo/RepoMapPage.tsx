@@ -23,11 +23,11 @@ const RELATION_COLORS: Record<string, string> = {
 };
 
 function buildGraphNodes(repos: Repo[], relations: RepoRelation[]) {
-  const repoMap = new Map(repos.map((repo) => [String(repo.id), repo]));
-  const nodeIds = new Set(repoMap.keys());
+  const repoMap = new Map<number, Repo>(repos.map((repo) => [repo.id, repo]));
+  const nodeIds = new Set<number>(repoMap.keys());
   relations.forEach((rel) => {
-    nodeIds.add(String(rel.fromRepoId));
-    nodeIds.add(String(rel.toRepoId));
+    nodeIds.add(rel.fromRepoId);
+    nodeIds.add(rel.toRepoId);
   });
 
   return Array.from(nodeIds).map((id) => {
@@ -35,7 +35,7 @@ function buildGraphNodes(repos: Repo[], relations: RepoRelation[]) {
     const name = repo?.name || `#${id}`;
     const scanStatus = repo?.scanStatus || 'UNKNOWN';
     return {
-      id,
+      id: String(id),
       data: { name, scanStatus },
       style: {
         labelText: name,

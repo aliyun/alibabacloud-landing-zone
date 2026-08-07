@@ -137,7 +137,15 @@ public enum ErrorCode {
     // 28xxx 平台 IM 通知
     IM_CHANNEL_NOT_READY("28001", "平台 IM 机器人配置不完整或未就绪"),
     IM_IDENTITY_NOT_CONFIGURED("28002", "尚未配置 IM 工号"),
-    IM_TEST_SEND_FAILED("28003", "IM 测试消息发送失败");
+    IM_TEST_SEND_FAILED("28003", "IM 测试消息发送失败"),
+    // 29xxx 账号注销
+    DEACTIVATION_ALREADY_PENDING("29001", "账号注销申请已提交，当前处于冷静期"),
+    DEACTIVATION_BLOCKED_BY_WORKITEMS("29002", "存在未完结的工单，请先处理后再申请注销"),
+    DEACTIVATION_BLOCKED_BY_SOLE_ADMIN("29003", "您是某组织的唯一管理员，请先转让管理权后再申请注销"),
+    DEACTIVATION_NOT_PENDING("29004", "当前没有进行中的注销申请"),
+    DEACTIVATION_ALREADY_REVOKED("29005", "注销申请已撤销"),
+    DEACTIVATION_CONFIRM_MISMATCH("29006", "确认输入不匹配，请重新输入用户名确认"),
+    DEACTIVATION_ACCOUNT_DISABLED("29007", "该账号已注销，无法登录");
 
     private final String code;
     private final String message;

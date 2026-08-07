@@ -491,4 +491,70 @@ class HandoffServiceTest {
 
         verify(publisher, never()).publishEvent(isA(WorkitemHumanAssignedEvent.class));
     }
+
+    @Test
+    void agentHandoff_writesDetailJsonWithFromTypeAndToType() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
+        AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
+        OrgDao orgDao = mock(OrgDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+
+        WorkitemDO w = workitem(500L, 10000L, 4);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(77L);
+        when(workitemDao.findByIdForUpdate(500L, 10000L)).thenReturn(w);
+        when(roleResolver.resolveOnlineAgentId(10000L, "QA")).thenReturn(10002L);
+        when(sdlcResolver.resolveSdlcId(10000L, 10002L)).thenReturn(30003L);
+        SdlcStepDO first = new SdlcStepDO();
+        first.setId(300031L);
+        first.setSdlcId(30003L);
+        first.setStepOrder(1);
+        when(sdlcResolver.firstStep(10000L, 30003L)).thenReturn(first);
+        DispatchDO newDispatch = new DispatchDO();
+        newDispatch.setId(9001L);
+        when(dispatchService.enqueueHandoff(10000L, 500L, 300031L, 10002L, 300L, 0L)).thenReturn(newDispatch);
+
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, orgDao, eventDao);
+        svc.handle(10000L, 500L, 300L, "QA", "AGENT");
+
+        ArgumentCaptor<com.aliyun.autowonder.workitem.WorkitemEventDO> captor =
+                ArgumentCaptor.forClass(com.aliyun.autowonder.workitem.WorkitemEventDO.class);
+        verify(eventDao).insert(captor.capture());
+        String detailJson = captor.getValue().getDetailJson();
+        assertNotNull(detailJson);
+        com.alibaba.fastjson.JSONObject detail = com.alibaba.fastjson.JSON.parseObject(detailJson);
+        assertEquals("HUMAN", detail.getString("fromType"));
+        assertEquals("AGENT", detail.getString("toType"));
+    }
+
+    @Test
+    void humanHandoff_writesDetailJsonWithFromTypeAndToType() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
+        AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
+        OrgDao orgDao = mock(OrgDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+
+        WorkitemDO w = workitem(500L, 100L, 3);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40014L);
+        when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(w);
+        when(roleResolver.resolveOnlineAgentId(100L, "77")).thenReturn(null);
+        when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 77L, 3, 0L)).thenReturn(1);
+
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, orgDao, eventDao);
+        svc.handle(100L, 500L, 300L, "77", "HUMAN");
+
+        ArgumentCaptor<com.aliyun.autowonder.workitem.WorkitemEventDO> captor =
+                ArgumentCaptor.forClass(com.aliyun.autowonder.workitem.WorkitemEventDO.class);
+        verify(eventDao).insert(captor.capture());
+        String detailJson = captor.getValue().getDetailJson();
+        assertNotNull(detailJson);
+        com.alibaba.fastjson.JSONObject detail = com.alibaba.fastjson.JSON.parseObject(detailJson);
+        assertEquals("AGENT", detail.getString("fromType"));
+        assertEquals("HUMAN", detail.getString("toType"));
+    }
 }

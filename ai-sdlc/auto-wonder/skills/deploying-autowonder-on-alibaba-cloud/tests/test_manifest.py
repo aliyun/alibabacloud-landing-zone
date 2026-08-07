@@ -67,6 +67,7 @@ class ManifestContractTest(unittest.TestCase):
         self.assertEqual("x86_64", manifest["architecture"])
         self.assertEqual([], manifest["availabilityZones"])
         self.assertEqual("", manifest["resolvedInfrastructure"]["ecsImageId"])
+        self.assertEqual({}, manifest["upgrade"])
 
     def test_manifest_contains_no_secret_fields_or_values(self):
         forbidden_lower = {key.lower() for key in FORBIDDEN_KEYS}

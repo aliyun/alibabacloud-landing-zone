@@ -17,4 +17,6 @@ public interface OrgDao {
                     @Param("oldOwnerId") Long oldOwnerId,
                     @Param("newOwnerId") Long newOwnerId,
                     @Param("modifierId") Long modifierId);
+
+    List<OrgDO> listActive();
 }

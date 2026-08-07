@@ -6,6 +6,7 @@ import com.aliyun.autowonder.agent.AgentVersionDO;
 import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
+import com.aliyun.autowonder.integration.dingtalk.DingTalkSourceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -151,7 +152,7 @@ public class AgentConversationService {
         if (!recordProcessingDispatchAttempt(tenantId, conv.getId(), turn.getId())) {
             return null;
         }
-        return new PendingDispatch(conv, turn.getId(), content, identity.systemPrompt(),
+        return new PendingDispatch(conv, turn.getId(), content, sourceContext, identity.systemPrompt(),
                 currentRequestId(), 1);
     }
 
@@ -172,7 +173,7 @@ public class AgentConversationService {
             return null;
         }
         AgentIdentitySnapshot identity = refreshConversationIdentity(tenantId, conv);
-        return new PendingDispatch(conv, turn.getId(), content, identity.systemPrompt(),
+        return new PendingDispatch(conv, turn.getId(), content, sourceContext, identity.systemPrompt(),
                 currentRequestId(), 1);
     }
 
@@ -396,7 +397,8 @@ public class AgentConversationService {
             int attempt = reloaded != null && reloaded.getDispatchAttempt() != null
                     ? reloaded.getDispatchAttempt() : 1;
             return new PostCommitEffects(null, new PendingDispatch(conv, current.getId(),
-                    current.getContent(), identity.systemPrompt(), current.getRequestId(), attempt));
+                    current.getContent(), current.getSourceContext(), identity.systemPrompt(),
+                    current.getRequestId(), attempt));
         });
     }
 
@@ -417,8 +419,8 @@ public class AgentConversationService {
             return null;
         }
         AgentIdentitySnapshot identity = refreshConversationIdentity(tenantId, conv);
-        return new PendingDispatch(conv, next.getId(), next.getContent(), identity.systemPrompt(),
-                next.getRequestId(), 1);
+        return new PendingDispatch(conv, next.getId(), next.getContent(), next.getSourceContext(),
+                identity.systemPrompt(), next.getRequestId(), 1);
     }
 
     private AgentConversationTurnDO inboundTurn(Long tenantId, Long conversationId, Long turnId) {
@@ -518,8 +520,49 @@ public class AgentConversationService {
                 dispatch.conv().getId(), dispatch.turnId(), dispatch.conv().getExecutorId(),
                 dispatch.dispatchAttempt());
         withRequestId(dispatch.requestId(), () ->
-                transport.send(dispatch.conv(), dispatch.turnId(), dispatch.content(),
+                transport.send(dispatch.conv(), dispatch.turnId(), contentForRuntime(dispatch),
                         dispatch.systemPrompt(), dispatch.dispatchAttempt()));
+    }
+
+    private String contentForRuntime(PendingDispatch dispatch) {
+        if (dispatch == null || dispatch.conv() == null) {
+            return null;
+        }
+        if (!"DINGTALK".equalsIgnoreCase(dispatch.conv().getChannel())) {
+            return dispatch.content();
+        }
+        String prefix = dingtalkSenderContextPrompt(dispatch.sourceContext());
+        if (prefix == null || prefix.isBlank()) {
+            return dispatch.content();
+        }
+        return prefix + "\nUser message:\n" + (dispatch.content() == null ? "" : dispatch.content());
+    }
+
+    private String dingtalkSenderContextPrompt(String sourceContext) {
+        DingTalkSourceContext context;
+        try {
+            context = DingTalkSourceContext.parse(sourceContext);
+        } catch (Exception e) {
+            log.warn("ignore invalid DingTalk sourceContext for conversation prompt: {}", e.getMessage());
+            return "";
+        }
+        if (context == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("DingTalk message context:\n");
+        appendIf(sb, "- Sender nickname", context.getSenderNick());
+        appendIf(sb, "- Sender staffId", context.getSenderStaffId());
+        appendIf(sb, "- Sender dingtalk senderId", context.getSenderId());
+        appendIf(sb, "- Conversation title", context.getConversationTitle());
+        appendIf(sb, "- Conversation type", context.getConversationType());
+        if (sb.toString().equals("DingTalk message context:\n")) {
+            return "";
+        }
+        sb.append("\nInstruction: The sender above is the human who sent the current DingTalk message. ")
+                .append("If the user asks \"who am I\" or refers to \"me\", answer using this DingTalk sender context. ")
+                .append("Do not confuse this sender with any AutoWonder MCP token or tool identity.\n");
+        return sb.toString();
     }
 
     private boolean recordProcessingDispatchAttempt(Long tenantId, Long conversationId, Long turnId) {
@@ -762,7 +805,7 @@ public class AgentConversationService {
     }
 
     private record PendingDispatch(AgentConversationDO conv, Long turnId, String content,
-            String systemPrompt, String requestId, Integer dispatchAttempt) {
+            String sourceContext, String systemPrompt, String requestId, Integer dispatchAttempt) {
     }
 
     private record AgentIdentitySnapshot(Long agentVersionId, String systemPrompt) {

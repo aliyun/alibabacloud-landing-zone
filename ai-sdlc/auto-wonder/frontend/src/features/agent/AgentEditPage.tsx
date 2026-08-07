@@ -25,7 +25,7 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 const { TextArea } = Input;
 
 interface RepoPermRow {
-  repoId: string;
+  repoId: number;
   repoName: string;
   permLevel: string;
 }
@@ -46,6 +46,10 @@ interface MemoryRow {
 function extractList<T>(value: T[] | { list?: T[] } | undefined): T[] {
   if (!value) return [];
   return Array.isArray(value) ? value : (value.list ?? []);
+}
+
+function uniqueBy<T>(items: T[], keyOf: (item: T) => string | number): T[] {
+  return [...new Map(items.map(item => [keyOf(item), item])).values()];
 }
 
 function errorMessage(e: unknown, fallback: string) {
@@ -111,10 +115,10 @@ export function AgentEditPage() {
   const [repoModalOpen, setRepoModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [memoryModalOpen, setMemoryModalOpen] = useState(false);
-  const [selectedRepoId, setSelectedRepoId] = useState<string | undefined>();
+  const [selectedRepoIds, setSelectedRepoIds] = useState<number[]>([]);
   const [selectedPermLevel, setSelectedPermLevel] = useState('READ');
-  const [selectedSkillId, setSelectedSkillId] = useState<number | undefined>();
-  const [selectedMemoryId, setSelectedMemoryId] = useState<number | undefined>();
+  const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([]);
+  const [selectedMemoryIds, setSelectedMemoryIds] = useState<number[]>([]);
 
   // Reference data — backend returns raw arrays; API types say PageResult but runtime is T[]
   const { data: reposRaw } = useQuery({ queryKey: ['repos', 1, 100], queryFn: () => listRepos({ page: 1, size: 100 }) });
@@ -143,16 +147,16 @@ export function AgentEditPage() {
   useEffect(() => {
     if (!versionDetail) return;
 
-    setRepoPerms((versionDetail.repoPerms ?? []).map((perm) => {
+    setRepoPerms(uniqueBy((versionDetail.repoPerms ?? []).map((perm) => {
       const repo = reposList.find((item) => item.id === perm.repoId);
       return {
         repoId: perm.repoId,
         repoName: repo?.name || `#${perm.repoId}`,
         permLevel: perm.permLevel,
       };
-    }));
+    }), item => item.repoId));
 
-    setSkills((versionDetail.skills ?? []).map((skillRef) => {
+    setSkills(uniqueBy((versionDetail.skills ?? []).map((skillRef) => {
       const skill = skillsList.find((item) => item.id === skillRef.skillId);
       return {
         skillId: skillRef.skillId,
@@ -160,16 +164,16 @@ export function AgentEditPage() {
         type: skill?.type || 'SKILL',
         version: skill?.version,
       };
-    }));
+    }), item => item.skillId));
 
-    setMemories((versionDetail.memoryRefs ?? []).map((memoryRef) => {
+    setMemories(uniqueBy((versionDetail.memoryRefs ?? []).map((memoryRef) => {
       const memory = memoriesList.find((item) => item.id === memoryRef.memoryId);
       return {
         memoryId: memoryRef.memoryId,
         contentMd: memory?.contentMd || `#${memoryRef.memoryId}`,
         source: memoryRef.source,
       };
-    }));
+    }), item => item.memoryId));
   }, [versionDetail, reposList, skillsList, memoriesList]);
 
   if (!agentId || isNaN(agentId)) return (
@@ -241,21 +245,25 @@ export function AgentEditPage() {
   };
 
   const handleAddRepo = () => {
-    if (!selectedRepoId) return;
-    const repo = reposList.find(r => r.id === selectedRepoId);
-    accessCommand('READ_WRITE', '添加数字员工仓库', () => {
-      addRepoPerm.mutate({ agentId, repoId: selectedRepoId, permLevel: selectedPermLevel }, {
-        onSuccess: () => {
-          setRepoPerms(prev => [...prev, { repoId: selectedRepoId, repoName: repo?.name || `#${selectedRepoId}`, permLevel: selectedPermLevel }]);
-          setRepoModalOpen(false);
-          setSelectedRepoId(undefined);
-        },
-        onError: (e) => message.error(errorMessage(e, '添加仓库失败')),
-      });
+    if (selectedRepoIds.length === 0) return;
+    accessCommand('READ_WRITE', '添加数字员工仓库', async () => {
+      try {
+        await Promise.all(selectedRepoIds.map(repoId =>
+          addRepoPerm.mutateAsync({ agentId, repoId, permLevel: selectedPermLevel })));
+        const added = selectedRepoIds.map(repoId => {
+          const repo = reposList.find(r => r.id === repoId);
+          return { repoId, repoName: repo?.name || `#${repoId}`, permLevel: selectedPermLevel };
+        });
+        setRepoPerms(prev => uniqueBy([...prev, ...added], item => item.repoId));
+        setRepoModalOpen(false);
+        setSelectedRepoIds([]);
+      } catch (e) {
+        message.error(errorMessage(e, '添加仓库失败'));
+      }
     });
   };
 
-  const handleRemoveRepo = (repoId: string) => {
+  const handleRemoveRepo = (repoId: number) => {
     accessCommand('READ_WRITE', '移除数字员工仓库', () => {
       removeRepoPerm.mutate({ agentId, repoId }, {
         onSuccess: () => setRepoPerms(prev => prev.filter(r => r.repoId !== repoId)),
@@ -265,22 +273,25 @@ export function AgentEditPage() {
   };
 
   const handleAddSkill = () => {
-    if (!selectedSkillId) return;
-    const skill = skillsList.find(s => s.id === selectedSkillId);
-    accessCommand('READ_WRITE', '添加数字员工能力', () => {
-      addSkillMut.mutate({ agentId, skillId: selectedSkillId }, {
-        onSuccess: () => {
-          setSkills(prev => [...prev, {
-            skillId: selectedSkillId,
-            skillName: skill?.name || `#${selectedSkillId}`,
+    if (selectedSkillIds.length === 0) return;
+    accessCommand('READ_WRITE', '添加数字员工能力', async () => {
+      try {
+        await Promise.all(selectedSkillIds.map(skillId => addSkillMut.mutateAsync({ agentId, skillId })));
+        const added = selectedSkillIds.map(skillId => {
+          const skill = skillsList.find(s => s.id === skillId);
+          return {
+            skillId,
+            skillName: skill?.name || `#${skillId}`,
             type: skill?.type || 'SKILL',
             version: skill?.version,
-          }]);
-          setSkillModalOpen(false);
-          setSelectedSkillId(undefined);
-        },
-        onError: (e) => message.error(errorMessage(e, '添加技能失败')),
-      });
+          };
+        });
+        setSkills(prev => uniqueBy([...prev, ...added], item => item.skillId));
+        setSkillModalOpen(false);
+        setSelectedSkillIds([]);
+      } catch (e) {
+        message.error(errorMessage(e, '添加技能失败'));
+      }
     });
   };
 
@@ -294,17 +305,21 @@ export function AgentEditPage() {
   };
 
   const handleAddMemory = () => {
-    if (!selectedMemoryId) return;
-    const mem = memoriesList.find(m => m.id === selectedMemoryId);
-    accessCommand('READ_WRITE', '导入数字员工记忆', () => {
-      addMemoryRef.mutate({ agentId, memoryId: selectedMemoryId, source: 'ORG' }, {
-        onSuccess: () => {
-          setMemories(prev => [...prev, { memoryId: selectedMemoryId, contentMd: mem?.contentMd || '', source: 'ORG' }]);
-          setMemoryModalOpen(false);
-          setSelectedMemoryId(undefined);
-        },
-        onError: (e) => message.error(errorMessage(e, '导入记忆失败')),
-      });
+    if (selectedMemoryIds.length === 0) return;
+    accessCommand('READ_WRITE', '导入数字员工记忆', async () => {
+      try {
+        await Promise.all(selectedMemoryIds.map(memoryId =>
+          addMemoryRef.mutateAsync({ agentId, memoryId, source: 'ORG' })));
+        const added = selectedMemoryIds.map(memoryId => {
+          const mem = memoriesList.find(m => m.id === memoryId);
+          return { memoryId, contentMd: mem?.contentMd || '', source: 'ORG' };
+        });
+        setMemories(prev => uniqueBy([...prev, ...added], item => item.memoryId));
+        setMemoryModalOpen(false);
+        setSelectedMemoryIds([]);
+      } catch (e) {
+        message.error(errorMessage(e, '导入记忆失败'));
+      }
     });
   };
 
@@ -487,10 +502,10 @@ export function AgentEditPage() {
 
       {/* Add Repo Modal */}
       <Modal title="添加仓库权限" open={repoModalOpen} onOk={handleAddRepo} onCancel={() => setRepoModalOpen(false)}
-        okButtonProps={{ disabled: !selectedRepoId }}>
+        okButtonProps={{ disabled: selectedRepoIds.length === 0 }}>
         <Space direction="vertical" style={{ width: '100%' }}>
-          <Select placeholder="选择仓库" style={{ width: '100%' }} value={selectedRepoId}
-            onChange={setSelectedRepoId} showSearch optionFilterProp="label"
+          <Select mode="multiple" placeholder="选择仓库（可多选）" style={{ width: '100%' }} value={selectedRepoIds}
+            onChange={setSelectedRepoIds} showSearch optionFilterProp="label"
             options={reposList.filter(r => !repoPerms.some(p => p.repoId === r.id))
               .map(r => ({ value: r.id, label: r.name })) || []}
           />
@@ -506,9 +521,9 @@ export function AgentEditPage() {
 
       {/* Add Capability Modal */}
       <Modal title="添加能力" open={skillModalOpen} onOk={handleAddSkill} onCancel={() => setSkillModalOpen(false)}
-        okButtonProps={{ disabled: !selectedSkillId }}>
-        <Select placeholder="选择 Skill、MCP 或 Plugin" style={{ width: '100%' }} value={selectedSkillId}
-          onChange={setSelectedSkillId} showSearch optionFilterProp="label"
+        okButtonProps={{ disabled: selectedSkillIds.length === 0 }}>
+        <Select mode="multiple" placeholder="选择 Skill、MCP 或 Plugin（可多选）" style={{ width: '100%' }} value={selectedSkillIds}
+          onChange={setSelectedSkillIds} showSearch optionFilterProp="label"
           options={skillsList.filter(s => !skills.some(sk => sk.skillId === s.id))
             .map(s => ({ value: s.id, label: `${s.name} (${s.type})` })) || []}
         />
@@ -516,9 +531,9 @@ export function AgentEditPage() {
 
       {/* Add Memory Modal */}
       <Modal title="导入记忆" open={memoryModalOpen} onOk={handleAddMemory} onCancel={() => setMemoryModalOpen(false)}
-        okButtonProps={{ disabled: !selectedMemoryId }}>
-        <Select placeholder="选择记忆" style={{ width: '100%' }} value={selectedMemoryId}
-          onChange={setSelectedMemoryId} showSearch optionFilterProp="label"
+        okButtonProps={{ disabled: selectedMemoryIds.length === 0 }}>
+        <Select mode="multiple" placeholder="选择记忆（可多选）" style={{ width: '100%' }} value={selectedMemoryIds}
+          onChange={setSelectedMemoryIds} showSearch optionFilterProp="label"
           options={memoriesList.filter(m => !memories.some(me => me.memoryId === m.id))
             .map(m => ({ value: m.id, label: m.contentMd.slice(0, 60) })) || []}
         />

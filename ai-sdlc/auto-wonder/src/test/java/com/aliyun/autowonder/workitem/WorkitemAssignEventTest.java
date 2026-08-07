@@ -189,6 +189,20 @@ class WorkitemAssignEventTest {
         verify(publisher, never()).publishEvent(any());
     }
 
+    @Test
+    void assignmentDetailJsonIncludesValidTypesOnly() {
+        assertEquals("{\"fromType\":\"HUMAN\",\"toType\":\"AGENT\"}",
+                WorkitemService.assignmentDetailJson("HUMAN", "AGENT"));
+        assertEquals("{\"fromType\":\"AGENT\",\"toType\":\"HUMAN\"}",
+                WorkitemService.assignmentDetailJson("AGENT", "HUMAN"));
+        assertEquals("{\"toType\":\"AGENT\"}",
+                WorkitemService.assignmentDetailJson(null, "AGENT"));
+        assertEquals("{\"fromType\":\"HUMAN\"}",
+                WorkitemService.assignmentDetailJson("HUMAN", null));
+        assertEquals(null, WorkitemService.assignmentDetailJson(null, null));
+        assertEquals(null, WorkitemService.assignmentDetailJson("SYSTEM", "UNKNOWN"));
+    }
+
     private static SdlcDO sdlc(long id, long tenantId) {
         SdlcDO s = new SdlcDO();
         s.setId(id);

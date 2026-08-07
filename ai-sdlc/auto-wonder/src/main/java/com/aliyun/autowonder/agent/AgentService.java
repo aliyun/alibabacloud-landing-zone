@@ -416,6 +416,10 @@ public class AgentService {
     @Transactional
     public void addRepoPerm(long agentId, RepoPermRequest req, long tenantId, long userId) {
         AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
+        if (repoPermDao.listByVersion(draft.getId()).stream()
+                .anyMatch(existing -> existing.getRepoId().equals(req.getRepoId()))) {
+            return;
+        }
         AgentRepoPermDO perm = new AgentRepoPermDO();
         perm.setTenantId(tenantId);
         perm.setAgentVersionId(draft.getId());
@@ -442,6 +446,10 @@ public class AgentService {
             }
         }
         AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
+        if (skillDao.listByVersion(draft.getId()).stream()
+                .anyMatch(existing -> existing.getSkillId().equals(req.getSkillId()))) {
+            return;
+        }
         AgentSkillDO skill = new AgentSkillDO();
         skill.setTenantId(tenantId);
         skill.setAgentVersionId(draft.getId());
@@ -458,6 +466,9 @@ public class AgentService {
     @Transactional
     public void addMemoryRef(long agentId, MemoryRefRequest req, long tenantId, long userId) {
         AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
+        if (memoryRefDao.existsByVersionAndMemory(draft.getId(), req.getMemoryId(), tenantId)) {
+            return;
+        }
         AgentMemoryRefDO ref = new AgentMemoryRefDO();
         ref.setTenantId(tenantId);
         ref.setAgentVersionId(draft.getId());

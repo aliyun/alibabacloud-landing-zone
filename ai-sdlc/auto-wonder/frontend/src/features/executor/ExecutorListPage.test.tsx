@@ -5,12 +5,24 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { buildStartupCommand, ExecutorListPage } from './ExecutorListPage';
+import { buildStartupCommand, ExecutorListPage, readQoderStartupPreference, writeQoderStartupPreference } from './ExecutorListPage';
 import { QODER_MODELS, qoderOptionsForModel } from './qoderOptions';
 import { useAuthStore } from '@/shared/auth/store';
 
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
 const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+
+const PREFS_KEY_PREFIX = 'autowonder.executor.qoderStartupOptions';
+
+function clearQoderPrefs() {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(PREFS_KEY_PREFIX)) {
+      localStorage.removeItem(key);
+      i--;
+    }
+  }
+}
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -25,6 +37,7 @@ describe('ExecutorListPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    clearQoderPrefs();
     vi.restoreAllMocks();
   });
 
@@ -210,9 +223,9 @@ describe('ExecutorListPage', () => {
       'QODER_CLI',
       'provider-local',
       'https://daily.auto-wonder.example.com/api/mcp',
-      '0.2.115',
+      '0.2.125',
     )).toBe(
-      'npx -y autowonder@0.2.115 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode provider-local',
+      'npx -y autowonder@0.2.125 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode provider-local',
     );
   });
 
@@ -223,7 +236,7 @@ describe('ExecutorListPage', () => {
       'CLAUDE_CODE',
       'provider-local',
       'https://daily.auto-wonder.example.com/api/mcp',
-      '0.2.115',
+      '0.2.125',
     )).toThrow('社区版仅支持 Qoder CLI');
   });
 
@@ -251,14 +264,14 @@ describe('ExecutorListPage', () => {
       'QODER_CLI',
       'platform',
       'http://daily.auto-wonder.example.com/api/mcp',
-      '0.2.115',
+      '0.2.125',
       {
         model: 'ultimate',
         reasoningEffort: 'high',
         contextWindow: '1000000',
       },
     )).toBe(
-      'npx -y autowonder@0.2.115 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
+      'npx -y autowonder@0.2.125 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
     );
   });
 
@@ -269,7 +282,60 @@ describe('ExecutorListPage', () => {
       'QODER_CLI',
       'platform',
       'not a url',
-      '0.2.115',
+      '0.2.125',
     )).toThrow('MCP 地址格式不合法');
+  });
+
+  it('returns null from readQoderStartupPreference when no preference is stored', () => {
+    expect(readQoderStartupPreference(99)).toBeNull();
+  });
+
+  it('returns null from readQoderStartupPreference when stored model is invalid', () => {
+    localStorage.setItem(
+      `${PREFS_KEY_PREFIX}.99`,
+      JSON.stringify({ memoryMode: 'platform', model: 'nonexistent_model', reasoningEffort: 'medium', contextWindow: '260000' }),
+    );
+    expect(readQoderStartupPreference(99)).toBeNull();
+  });
+
+  it('round-trips a valid preference through write and read', () => {
+    const pref = { memoryMode: 'platform', model: 'qmodel_38max', reasoningEffort: 'medium', contextWindow: '260000' };
+    writeQoderStartupPreference(42, pref);
+    expect(readQoderStartupPreference(42)).toEqual(pref);
+  });
+
+  it('isolates preferences between different executor IDs', () => {
+    writeQoderStartupPreference(1, { memoryMode: 'platform', model: 'qmodel_38max', reasoningEffort: 'medium', contextWindow: '260000' });
+    expect(readQoderStartupPreference(2)).toBeNull();
+    expect(readQoderStartupPreference(1)?.model).toBe('qmodel_38max');
+  });
+
+  it('restores saved model when reopening the Qoder startup dialog', async () => {
+    const user = userEvent.setup();
+    writeQoderStartupPreference(10, {
+      memoryMode: 'platform',
+      model: 'qmodel_38max',
+      reasoningEffort: 'medium',
+      contextWindow: '260000',
+    });
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 1, name: 'Alpha', avatarUrl: null, status: 'ONLINE', onlineVersionId: null, editingVersionId: null, latestVersionNo: 1, version: 1, gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 10, agentId: 1, agentName: 'Alpha', name: 'qoder-runner', status: 'OFFLINE', clientKind: 'QODER_CLI', lastHeartbeat: null, gmtCreate: '2026-07-01' }],
+      })),
+    );
+    renderPage();
+
+    await screen.findByText('qoder-runner');
+    await user.click(screen.getByRole('button', { name: /启动命令/ }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Qoder 启动配置' });
+    expect(dialog).toBeInTheDocument();
+    const modelItems = await screen.findAllByText('Qwen3.8-Max');
+    expect(modelItems.length).toBeGreaterThanOrEqual(1);
   });
 });

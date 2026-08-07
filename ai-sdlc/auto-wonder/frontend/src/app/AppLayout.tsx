@@ -267,7 +267,7 @@ export function AppLayout() {
           style={{ borderRight: '1px solid rgba(0,0,0,0.05)', overflow: 'auto' }}
         >
           <div style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 18px', borderBottom: '1px solid rgba(0,0,0,0.04)', gap: 10 }}>
-            <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} />
+            <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
             {!collapsed && <Text strong style={{ fontSize: 14, color: '#374151' }}>{branding.platformName}</Text>}
           </div>
 
@@ -331,7 +331,7 @@ export function AppLayout() {
         styles={{ body: { padding: 0 } }}
       >
         <div style={{ height: 56, display: 'flex', alignItems: 'center', padding: '0 18px', borderBottom: '1px solid rgba(0,0,0,0.04)', gap: 10 }}>
-          <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} />
+          <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
           <Text strong style={{ fontSize: 14, color: '#374151' }}>{branding.platformName}</Text>
         </div>
         <Dropdown menu={{ items: orgMenuItems }} trigger={['click']} placement="bottomLeft">

@@ -3,12 +3,16 @@ set -euo pipefail
 
 umask 077
 TEMP_FILES=()
+TEMP_DIRS=()
 
 cleanup() {
   local file
   set +u
   for file in "${TEMP_FILES[@]}"; do
     if [[ -n "$file" ]]; then rm -f -- "$file"; fi
+  done
+  for file in "${TEMP_DIRS[@]}"; do
+    if [[ -n "$file" ]]; then rm -rf -- "$file"; fi
   done
   set -u
   return 0

@@ -1,6 +1,6 @@
 ---
 name: deploying-autowonder-on-alibaba-cloud
-description: Use when deploying, resuming, operating, troubleshooting, or removing an AutoWonder community environment on Alibaba Cloud, including Terraform, ECS, NLB, RDS, Redis, OSS, SLS, domains, TLS, and executor connectivity.
+description: Use when deploying, upgrading, resuming, operating, troubleshooting, or removing an AutoWonder community environment on Alibaba Cloud, including Terraform, ECS, load balancing, RDS, Redis, OSS, SLS, domains, TLS, and executor connectivity.
 ---
 
 # Deploying AutoWonder On Alibaba Cloud
@@ -12,6 +12,7 @@ Select the mode before any read/write workflow:
 | Mode | Action |
 | --- | --- |
 | New deployment | collect inputs, plan, create, initialize, and verify |
+| Upgrade existing deployment | compare exact commits, review env/database risk, seal, stage, migrate with confirmation, and roll nodes sequentially |
 | Resume deployment | reconcile manifest, Git, Terraform, and live state; continue at an idempotent boundary |
 | QA and diagnosis | answer from references and perform only authorized read-only inspection |
 | Teardown | review impact and destroy plan, then require separate destructive confirmation |
@@ -114,6 +115,43 @@ resume the database phase to run only the idempotent template seed and postcheck
 The seed must preserve doubled JSON backslashes under MySQL string parsing; do
 not work around malformed SQL by changing the server's global `sql_mode`.
 
+## Upgrade Existing Deployment
+
+Before upgrade work, inspect the current context, manifest, and protected
+environment file for prerequisites. ECS instance IDs are required before remote
+inventory, staging, or activation. Database connection information is required
+only when the change plan contains DDL or DML. When these values already exist,
+present them for user confirmation without asking for them again; show only a
+sanitized database summary and the credential source, never the password. When
+the context is incomplete, request only the missing values in one consolidated
+question and wait for confirmation before any dependent operation.
+
+Read `references/upgrade-runbook.md` before any upgrade mutation. Reconcile the
+manifest commit, local source commit, and `/opt/autowonder/current` on every ECS
+with `initialize-and-verify.sh upgrade-inventory`; stop when active nodes disagree.
+Then run `scripts/plan-upgrade.sh` with `--env-file <candidate-env>` to fetch and
+compare the exact GitHub target without pulling or merging into the current
+checkout. Present one consolidated plan covering commits, features, environment
+keys, `docs/migration/` files, DDL risk, backup, compatibility, build, rolling
+order, and rollback boundary.
+
+After plan approval, build the target in an isolated worktree with
+`scripts/build-release.sh`, validate the candidate env with `runtime-config`, and
+install it with `scripts/deploy-via-cloud-assistant.sh` using `--stage-only`. This
+writes and validates the environment before activation while preserving the
+active symlink. If migrations exist, require explicit user confirmation and
+verified backup evidence before running `database-migrate` with
+`--confirm-migrations --confirm-rolling-compatible`. Destructive migrations are
+blocked from this rolling route and require a separately reviewed maintenance
+workflow; without migrations, `database-migrate` records a safe no-op. Never run the initial
+`database` or `business-init` phases during an upgrade.
+
+Activate with `rolling-upgrade`, then run normal `acceptance`. Stop after any
+migration or node failure. Application rollback may restore the previous release
+and env snapshot, but it never reverses database migrations; use only the
+reviewed restore or forward-fix route when the old application is not compatible
+with the migrated schema.
+
 For teardown, read `references/acceptance-and-rollback.md`, run
 `scripts/terraform-stage.sh destroy-plan`, review backups/impact/hash, and obtain
 separate confirmation before applying destruction.
@@ -130,6 +168,7 @@ Read only what the mode or current failure needs:
 | known failure symptom and safe recovery | `references/troubleshooting.md` |
 | read-only operational answers | `references/qa-reference.md` |
 | statuses, rollback, credential cleanup, teardown | `references/acceptance-and-rollback.md` |
+| commit/env/DDL analysis and safe rolling upgrade | `references/upgrade-runbook.md` |
 
 ## Output Contract
 

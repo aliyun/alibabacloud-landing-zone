@@ -12,6 +12,7 @@ REQUIRED = [
     "assets/templates/deployment-manifest.json",
     "scripts/lib.sh",
     "scripts/preflight.sh",
+    "scripts/plan-upgrade.sh",
     "scripts/build-release.sh",
     "scripts/terraform-stage.sh",
     "scripts/deploy-via-cloud-assistant.sh",
@@ -23,6 +24,7 @@ REQUIRED = [
     "references/troubleshooting.md",
     "references/qa-reference.md",
     "references/acceptance-and-rollback.md",
+    "references/upgrade-runbook.md",
 ]
 
 REFERENCE_PATHS = [path for path in REQUIRED if path.startswith("references/")]
@@ -48,6 +50,7 @@ REQUIRED_REFERENCE_TERMS = [
     "port 80",
     "query token",
     "rollback",
+    "autowonder_schema_history",
     "teardown",
 ]
 
@@ -56,6 +59,7 @@ REQUIRED_SKILL_TERMS = [
     "Resume deployment",
     "QA and diagnosis",
     "Teardown",
+    "Upgrade existing deployment",
     "one consolidated questionnaire",
     "staged",
     "unattended",
@@ -82,6 +86,11 @@ REQUIRED_SKILL_TERMS = [
     "credential export preference",
     "encrypted local bundle",
     "external secret manager",
+    "`scripts/plan-upgrade.sh`",
+    "`--stage-only`",
+    "`database-migrate`",
+    "`rolling-upgrade`",
+    "`docs/migration/`",
 ]
 
 
@@ -89,6 +98,20 @@ class SkillBundleTest(unittest.TestCase):
     def test_required_files_exist(self):
         missing = [path for path in REQUIRED if not (SKILL_ROOT / path).is_file()]
         self.assertEqual([], missing, f"Missing Skill bundle files: {missing}")
+
+    def test_upgrade_prerequisites_reuse_context_and_request_only_missing_values(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references/upgrade-runbook.md").read_text(encoding="utf-8")
+        combined = (skill + runbook).lower()
+        for term in (
+            "ecs instance ids",
+            "ddl or dml",
+            "database connection information",
+            "present them for user confirmation",
+            "request only the missing values",
+            "protected environment file",
+        ):
+            self.assertIn(term, combined)
 
     def test_frontmatter_has_valid_identity(self):
         content = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")

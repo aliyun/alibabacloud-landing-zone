@@ -1119,6 +1119,18 @@ describe('WorkitemDetailPage', () => {
     expect(scrollArea).toHaveStyle({ overflowY: 'auto' });
   });
 
+  it('uses parent-relative height on root container to prevent viewport clipping', async () => {
+    server.use(...setupHandlers());
+    renderPage();
+
+    const stickyBar = await screen.findByTestId('workitem-sticky-comment');
+    const rootContainer = stickyBar.parentElement!.parentElement!;
+    expect(rootContainer).toHaveStyle({ height: '100%' });
+
+    const scrollArea = screen.getByTestId('workitem-left-scroll');
+    expect(scrollArea).toHaveStyle({ minHeight: '0' });
+  });
+
   it('clears the composer after a successful comment submission', async () => {
     let requestBody: unknown;
     server.use(

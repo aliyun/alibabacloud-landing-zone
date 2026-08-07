@@ -61,4 +61,60 @@
         ORDER BY u.gmt_create DESC, u.id DESC
         LIMIT #{limit}
     </select>
+
+    <update id="updatePasswordHash">
+        UPDATE `user`
+        SET password_hash = #{passwordHash}, gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="updateDeactivation">
+        UPDATE `user`
+        SET deactivated_at = #{deactivatedAt},
+            cooling_off_expires_at = #{coolingOffExpiresAt},
+            deactivation_revoked_at = NULL,
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <update id="revokeDeactivation">
+        UPDATE `user`
+        SET deactivation_revoked_at = #{revokedAt},
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+          AND deactivated_at IS NOT NULL
+          AND deactivation_revoked_at IS NULL
+    </update>
+
+    <update id="anonymizeUser">
+        UPDATE `user`
+        SET nickname = NULL,
+            avatar_url = NULL,
+            phone = NULL,
+            email = NULL,
+            password_hash = 'DEACTIVATED',
+            status = 1,
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <select id="listExpiredDeactivations" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE is_deleted = 0
+          AND status = 0
+          AND deactivated_at IS NOT NULL
+          AND cooling_off_expires_at IS NOT NULL
+          AND cooling_off_expires_at &lt;= NOW()
+          AND deactivation_revoked_at IS NULL
+        LIMIT #{limit}
+    </select>
+
+    <select id="hasPendingDeactivation" resultType="boolean">
+        SELECT COUNT(1) > 0 FROM `user`
+        WHERE id = #{id} AND is_deleted = 0
+          AND deactivated_at IS NOT NULL
+          AND cooling_off_expires_at IS NOT NULL
+          AND deactivation_revoked_at IS NULL
+          AND cooling_off_expires_at > NOW()
+    </select>
 </mapper>

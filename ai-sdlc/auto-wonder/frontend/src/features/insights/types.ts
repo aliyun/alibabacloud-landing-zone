@@ -81,3 +81,46 @@ export interface InsightModel {
 }
 
 export type TimeRange = '7d' | '30d' | '90d';
+
+export type Granularity = 'DAY' | 'WEEK' | 'MONTH';
+
+export interface DurationSummary {
+  totalDurationSeconds: number;
+  humanDurationSeconds: number;
+  agentDurationSeconds: number;
+}
+
+export interface P90Workitem {
+  workitemId: number;
+  title: string;
+  completedAt: string;
+  totalDurationSeconds: number;
+  humanDurationSeconds: number;
+  agentDurationSeconds: number;
+}
+
+export interface TrendEntry {
+  label: string;
+  averageTotalSeconds: number;
+  averageHumanSeconds: number;
+  averageAgentSeconds: number;
+}
+
+export interface HumanAgentParticipation {
+  available: boolean;
+  generatedAt: string | null;
+  dataThrough: string | null;
+  refreshTriggered: boolean;
+  sampleSize: number;
+  average: DurationSummary | null;
+  p90: P90Workitem | null;
+  trend: TrendEntry[];
+}
+
+export interface HumanAgentSlowTailPage {
+  tailSize: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  items: P90Workitem[];
+}

@@ -198,4 +198,41 @@ describe('RepoDetailPage', () => {
     expect(sessionRequests).toBe(0);
     errorSpy.mockRestore();
   });
+
+  it('deletes the repo from detail page with confirmation', async () => {
+    const user = userEvent.setup();
+    let deleteCalled = false;
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    server.use(
+      http.get('/api/repos/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: mockRepo,
+      })),
+      http.get('/api/repos/1/conclusion', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: null,
+      })),
+      http.get('/api/repos/relations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/repos', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockRepo],
+      })),
+      http.delete('/api/repos/1', () => {
+        deleteCalled = true;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+    );
+
+    renderPage('/repos/1');
+    await screen.findByRole('tab', { name: '基础信息' });
+
+    await user.click(screen.getByRole('button', { name: /删除仓库/ }));
+    expect(await screen.findByText(/确认删除仓库/)).toBeInTheDocument();
+    const confirmBtn = document.querySelector('.ant-popconfirm .ant-popconfirm-buttons button:last-child') as HTMLButtonElement;
+    expect(confirmBtn).toBeTruthy();
+    await user.click(confirmBtn);
+
+    await waitFor(() => expect(deleteCalled).toBe(true));
+    expect(successSpy).toHaveBeenCalledWith('仓库已删除');
+    successSpy.mockRestore();
+  });
 });

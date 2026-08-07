@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Empty, Pagination, Spin, Tag } from 'antd';
-import { ApiOutlined, DatabaseOutlined, PlusOutlined, RobotOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { Alert, Button, Empty, Pagination, Spin, Tag } from 'antd';
+import { ApiOutlined, ArrowRightOutlined, DatabaseOutlined, PlusOutlined, RobotOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAgentList } from './hooks';
 import type { Agent } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -37,6 +37,14 @@ export function AgentListPage() {
           onClick={() => accessCommand('READ_WRITE', '新建数字员工', () => navigate('/agents/new'))}>新建</Button>
       </div>
 
+      <Alert
+        className="agent-card-guidance"
+        type="info"
+        showIcon
+        message="点击任一数字人卡片进入详情与配置。"
+        description="可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。"
+      />
+
       <div className="agent-summary-strip">
         <SummaryPill label="全部数字员工" value={agents.length} />
         <SummaryPill label="使用中" value={activeCount} />
@@ -56,38 +64,50 @@ export function AgentListPage() {
           <div className="agent-card-grid">
             {agents.map((agent, index) => (
               <article key={agent.id} className="agent-person-card">
-                <div className="agent-card-topline" />
-                <div className="agent-card-main">
-                  <button className="agent-card-avatar" type="button" onClick={() => navigate(`/agents/${agent.id}`)}>
-                    <RobotOutlined />
-                    <span>{agentInitials(agent, index)}</span>
-                  </button>
-                  <div className="agent-card-title-area">
-                    <button className="agent-card-title" type="button" onClick={() => navigate(`/agents/${agent.id}`)}>
-                      {agent.name}
-                    </button>
-                    <div className="agent-card-role">{agent.roleName || agent.roleCode || versionText(agent)}</div>
+                <Link
+                  className="agent-card-detail-link"
+                  to={`/agents/${agent.id}`}
+                  aria-label={`查看 ${agent.name} 的详情与配置`}
+                >
+                  <span className="agent-card-open-hint" aria-hidden="true">
+                    <span>查看详情与配置</span>
+                    <ArrowRightOutlined />
+                  </span>
+                </Link>
+                <div className="agent-card-content">
+                  <div className="agent-card-topline" />
+                  <div className="agent-card-main">
+                    <div className="agent-card-avatar">
+                      <RobotOutlined />
+                      <span>{agentInitials(agent, index)}</span>
+                    </div>
+                    <div className="agent-card-title-area">
+                      <div className="agent-card-title">
+                        {agent.name}
+                      </div>
+                      <div className="agent-card-role">{agent.roleName || agent.roleCode || versionText(agent)}</div>
+                    </div>
+                    <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
+                      {statusMeta(agent).label}
+                    </Tag>
                   </div>
-                  <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
-                    {statusMeta(agent).label}
-                  </Tag>
-                </div>
 
-                <div className="agent-executor-row">
-                  <span className={`agent-online-dot ${(agent.executorOnlineCount ?? 0) > 0 ? 'is-online' : ''}`} />
-                  <span>{executorText(agent)}</span>
-                </div>
+                  <div className="agent-executor-row">
+                    <span className={`agent-online-dot ${(agent.executorOnlineCount ?? 0) > 0 ? 'is-online' : ''}`} />
+                    <span>{executorText(agent)}</span>
+                  </div>
 
-                <div className="agent-meta-line">
-                  <span>{versionText(agent)}</span>
-                  <span>ID {agent.id}</span>
-                  <span>{formatDate(agent.gmtCreate)}</span>
-                </div>
+                  <div className="agent-meta-line">
+                    <span>{versionText(agent)}</span>
+                    <span>ID {agent.id}</span>
+                    <span>{formatDate(agent.gmtCreate)}</span>
+                  </div>
 
-                <div className="agent-metric-grid">
-                  <Metric icon={<SafetyCertificateOutlined />} label="技能" value={agent.skillCount ?? 0} />
-                  <Metric icon={<DatabaseOutlined />} label="记忆" value={agent.memoryCount ?? 0} />
-                  <Metric icon={<ApiOutlined />} label="仓库" value={agent.repoPermCount ?? 0} />
+                  <div className="agent-metric-grid">
+                    <Metric icon={<SafetyCertificateOutlined />} label="技能" value={agent.skillCount ?? 0} />
+                    <Metric icon={<DatabaseOutlined />} label="记忆" value={agent.memoryCount ?? 0} />
+                    <Metric icon={<ApiOutlined />} label="仓库" value={agent.repoPermCount ?? 0} />
+                  </div>
                 </div>
               </article>
             ))}

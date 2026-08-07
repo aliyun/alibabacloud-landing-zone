@@ -7,6 +7,7 @@ import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.common.crypto.PasswordEncoderUtil;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.user.dto.ChangePasswordRequest;
 import com.aliyun.autowonder.user.dto.LoginRequest;
 import com.aliyun.autowonder.user.dto.LoginResponse;
 import com.aliyun.autowonder.user.dto.LogoutRequest;
@@ -60,6 +61,10 @@ public class UserService {
                 || !PasswordEncoderUtil.matches(req.getPassword(), user.getPasswordHash())) {
             throw new BizException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
+        if (user.getStatus() != null && user.getStatus() == 1
+                && "DEACTIVATED".equals(user.getPasswordHash())) {
+            throw new BizException(ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+        }
         String jti = UUID.randomUUID().toString();
         String accessToken = jwtService.signAccess(new TokenPayload(user.getId(), null, jti));
         String refreshToken = UUID.randomUUID().toString();
@@ -83,6 +88,24 @@ public class UserService {
         }
         String jti = UUID.randomUUID().toString();
         return jwtService.signAccess(new TokenPayload(userId, null, jti));
+    }
+
+    public void changePassword(Long userId, ChangePasswordRequest req) {
+        if (req.getOldPassword() == null || req.getOldPassword().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "旧密码不能为空");
+        }
+        if (req.getNewPassword() == null || req.getNewPassword().isBlank()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "新密码不能为空");
+        }
+        UserDO user = userDao.findById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        if (user.getPasswordHash() == null
+                || !PasswordEncoderUtil.matches(req.getOldPassword(), user.getPasswordHash())) {
+            throw new BizException(ErrorCode.UNAUTHORIZED, "旧密码不正确");
+        }
+        userDao.updatePasswordHash(userId, PasswordEncoderUtil.encode(req.getNewPassword()));
     }
 
     private UserVO toVO(UserDO user) {

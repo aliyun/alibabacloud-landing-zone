@@ -58,9 +58,17 @@ public class AliyunOssObjectStorage implements ObjectStorage {
                 out.write(buf, 0, n);
             }
             return out.toByteArray();
+        } catch (OSSException e) {
+            String code = e.getErrorCode();
+            if ("NoSuchKey".equals(code) || "404".equals(code)) {
+                LOGGER.info("oss object not found ref={}", ossRef);
+                return null;
+            }
+            LOGGER.error("oss get failed ref={} errorCode={}", ossRef, code, e);
+            throw new ObjectStorageException("oss get failed", bk[0], bk[1], code, e);
         } catch (Exception e) {
-            LOGGER.error("oss get failed ref={}", ossRef, e);
-            return null;
+            LOGGER.error("oss get failed ref={} errorType={}", ossRef, e.getClass().getSimpleName(), e);
+            throw new ObjectStorageException("oss get failed", bk[0], bk[1], null, e);
         }
     }
 
