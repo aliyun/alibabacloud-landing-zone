@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Table, Card, Button, Space, Modal, Form, Input, message } from 'antd';
-import { PlusOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { Table, Card, Button, Space, Modal, Form, Input, message, Popconfirm } from 'antd';
+import { PlusOutlined, ShareAltOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createRepo, listRepos } from './api';
+import { createRepo, listRepos, deleteRepo } from './api';
 import type { Repo } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -25,6 +25,7 @@ export function RepoListPage() {
   const runWithAccess = useAccessCommand();
   const [form] = Form.useForm();
   const [createOpen, setCreateOpen] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
 
   const { data: repos = [], isLoading } = useQuery({
     queryKey: ['repos', 1, 100],
@@ -41,6 +42,20 @@ export function RepoListPage() {
     },
     onError: (error: Error) => {
       message.error(error.message || '添加仓库失败');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deleteRepo(id),
+    onSuccess: () => {
+      message.success('仓库已删除');
+      setPendingDeleteId(null);
+      queryClient.invalidateQueries({ queryKey: ['repos'] });
+      queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
+    },
+    onError: (error: Error) => {
+      setPendingDeleteId(null);
+      message.error(error.message || '删除仓库失败');
     },
   });
 
@@ -62,6 +77,39 @@ export function RepoListPage() {
     {
       title: '创建时间', dataIndex: 'gmtCreate', width: 160,
       render: (t: string) => new Date(t).toLocaleString('zh-CN'),
+    },
+    {
+      title: '操作', width: 80,
+      render: (_: unknown, record: Repo) => (
+        <Popconfirm
+          title={`确认删除仓库「${record.name}」？`}
+          description="删除后仓库及其所有关系将一并移除，此操作不可恢复。"
+          open={pendingDeleteId === record.id}
+          onOpenChange={(open) => {
+            if (!open) setPendingDeleteId(null);
+          }}
+          onConfirm={() => runWithAccess(
+            'READ_WRITE',
+            '删除仓库',
+            () => deleteMutation.mutate(record.id),
+          )}
+          okText="删除"
+          okButtonProps={{ danger: true }}
+          cancelText="取消"
+        >
+          <Button
+            type="link"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => runWithAccess(
+              'READ_WRITE',
+              '删除仓库',
+              () => setPendingDeleteId(record.id),
+            )}
+          />
+        </Popconfirm>
+      ),
     },
   ];
 

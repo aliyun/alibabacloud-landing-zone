@@ -16,6 +16,7 @@ public class ImNotificationProperties {
     private int blockMillis = 0;
     private long pollDelayMs = 1000L;
     private long recoveryDelayMs = 1000L;
+    private int sendConcurrency = 4;
     private String consumer = "autowonder-im-notification-worker";
 
     public String getStreamKey() {
@@ -96,6 +97,14 @@ public class ImNotificationProperties {
 
     public void setRecoveryDelayMs(long recoveryDelayMs) {
         this.recoveryDelayMs = recoveryDelayMs > 0 ? recoveryDelayMs : 1000L;
+    }
+
+    public int getSendConcurrency() {
+        return sendConcurrency;
+    }
+
+    public void setSendConcurrency(int sendConcurrency) {
+        this.sendConcurrency = sendConcurrency > 0 ? sendConcurrency : 4;
     }
 
     public String getConsumer() {

@@ -120,4 +120,36 @@ describe('RepoListPage', () => {
     expect(createRequests).toBe(0);
     errorSpy.mockRestore();
   });
+
+  it('deletes repo via operations column with confirmation', async () => {
+    const user = userEvent.setup();
+    let deletedId: number | null = null;
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    server.use(
+      http.get('/api/repos', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 42, name: 'to-delete', url: 'https://example.com/r.git', defaultBranch: 'main', description: null, scanStatus: null, version: 1, gmtCreate: '2026-07-01' }],
+      })),
+      http.delete('/api/repos/42', () => {
+        deletedId = 42;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+    );
+
+    renderPage();
+    const nameLink = await screen.findByText('to-delete');
+    const row = nameLink.closest('tr')!;
+    const deleteBtn = row.querySelector('button[class*="ant-btn-link"]') as HTMLButtonElement;
+    expect(deleteBtn).toBeTruthy();
+    await user.click(deleteBtn);
+
+    expect(await screen.findByText(/确认删除仓库/)).toBeInTheDocument();
+    const confirmBtn = document.querySelector('.ant-popconfirm .ant-popconfirm-buttons button:last-child') as HTMLButtonElement;
+    expect(confirmBtn).toBeTruthy();
+    await user.click(confirmBtn);
+
+    await waitFor(() => expect(deletedId).toBe(42));
+    expect(successSpy).toHaveBeenCalledWith('仓库已删除');
+    successSpy.mockRestore();
+  });
 });

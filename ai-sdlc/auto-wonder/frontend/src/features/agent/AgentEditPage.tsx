@@ -25,7 +25,7 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 const { TextArea } = Input;
 
 interface RepoPermRow {
-  repoId: string;
+  repoId: number;
   repoName: string;
   permLevel: string;
 }
@@ -115,7 +115,7 @@ export function AgentEditPage() {
   const [repoModalOpen, setRepoModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [memoryModalOpen, setMemoryModalOpen] = useState(false);
-  const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([]);
+  const [selectedRepoIds, setSelectedRepoIds] = useState<number[]>([]);
   const [selectedPermLevel, setSelectedPermLevel] = useState('READ');
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([]);
   const [selectedMemoryIds, setSelectedMemoryIds] = useState<number[]>([]);
@@ -148,11 +148,10 @@ export function AgentEditPage() {
     if (!versionDetail) return;
 
     setRepoPerms(uniqueBy((versionDetail.repoPerms ?? []).map((perm) => {
-      const repoId = String(perm.repoId);
-      const repo = reposList.find((item) => String(item.id) === repoId);
+      const repo = reposList.find((item) => item.id === perm.repoId);
       return {
-        repoId,
-        repoName: repo?.name || `#${repoId}`,
+        repoId: perm.repoId,
+        repoName: repo?.name || `#${perm.repoId}`,
         permLevel: perm.permLevel,
       };
     }), item => item.repoId));
@@ -252,7 +251,7 @@ export function AgentEditPage() {
         await Promise.all(selectedRepoIds.map(repoId =>
           addRepoPerm.mutateAsync({ agentId, repoId, permLevel: selectedPermLevel })));
         const added = selectedRepoIds.map(repoId => {
-          const repo = reposList.find(r => String(r.id) === repoId);
+          const repo = reposList.find(r => r.id === repoId);
           return { repoId, repoName: repo?.name || `#${repoId}`, permLevel: selectedPermLevel };
         });
         setRepoPerms(prev => uniqueBy([...prev, ...added], item => item.repoId));
@@ -264,7 +263,7 @@ export function AgentEditPage() {
     });
   };
 
-  const handleRemoveRepo = (repoId: string) => {
+  const handleRemoveRepo = (repoId: number) => {
     accessCommand('READ_WRITE', '移除数字员工仓库', () => {
       removeRepoPerm.mutate({ agentId, repoId }, {
         onSuccess: () => setRepoPerms(prev => prev.filter(r => r.repoId !== repoId)),
@@ -507,7 +506,7 @@ export function AgentEditPage() {
         <Space direction="vertical" style={{ width: '100%' }}>
           <Select mode="multiple" placeholder="选择仓库（可多选）" style={{ width: '100%' }} value={selectedRepoIds}
             onChange={setSelectedRepoIds} showSearch optionFilterProp="label"
-            options={reposList.filter(r => !repoPerms.some(p => p.repoId === String(r.id)))
+            options={reposList.filter(r => !repoPerms.some(p => p.repoId === r.id))
               .map(r => ({ value: r.id, label: r.name })) || []}
           />
           <Select value={selectedPermLevel} onChange={setSelectedPermLevel} style={{ width: '100%' }}

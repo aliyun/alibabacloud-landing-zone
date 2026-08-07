@@ -8,11 +8,66 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `58140e68a741d29133d77fc05427c1174b9247a4`
-- Community merge commit: `1e9222ef91e4a2320d391910032fe72a82c8c85d`
-- Synchronized at: 2026-08-06 (Asia/Shanghai)
+- Synchronized `origin/master`: `f858771adf3503ce947cb072ba4c7ddc20a609ef`
+- Community merge commit: `8642ed54359eaee602a8fb2057e1ba5f32607f56`
+- Synchronized at: 2026-08-07 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-07: `58140e68` to `f858771a`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `58140e68a741d29133d77fc05427c1174b9247a4` |
+| Community before merge | `c3316737d8bf58b26f55d3cdcf1581179923b1c0` |
+| Merged `origin/master` | `f858771adf3503ce947cb072ba4c7ddc20a609ef` |
+| Resulting merge commit | `8642ed54359eaee602a8fb2057e1ba5f32607f56` |
+
+Scope: 54 upstream commits. The merge adds account deactivation with a cooling-off
+period, repository deletion UI, Agent-card navigation, persistent Qoder startup
+preferences, MCP squad/default-SDLC/pause-dispatch tools, improved work-item MCP
+guidance, DingTalk sender context, isolated IM scheduling, stable conversation
+capability fingerprints, more resilient OSS logo delivery, and runtime `0.2.125`.
+
+Six textual conflicts and all 17 automatically overlapping files were reviewed:
+
+- executor UI and tests retain the Community Qoder CLI-only boundary while
+  accepting master Qoder preference persistence and runtime `0.2.125`;
+- profile settings accept the deactivation tab and replace master's unsafe tab
+  cast with equivalent type-safe selection;
+- `application.yml` and `application-local.yml` accept product/runtime changes
+  while retaining external OSS/SLS, SecretCrypto, optional Aone, and SIGAR
+  configuration; internal `application-daily.yml` remains excluded;
+- auth, branding, repository, work-item, IM, and organization-access overlaps
+  retain all master behavior plus existing public metadata and external-storage
+  adaptations;
+- the one community-only `AuthFilterTest` constructor missed by the automatic
+  merge was aligned with master's new `UserDao` dependency in `8221b267`.
+
+Database review found upstream V036. The fresh schema now contains the three
+account-deactivation columns, and the immutable migration is published at
+`docs/migration/V036__user_account_deactivation.sql`; upstream's alternate
+`docs/migrations/` location is excluded. Deployment review found no new required
+environment variable or service. The Skill manifest, input catalog, and tests
+were updated from runtime `0.2.117` to `0.2.125`; no other deployment change is
+required.
+
+Independent review proved `f858771adf3503ce947cb072ba4c7ddc20a609ef` is an
+ancestor of Community, accounted for every shared file and conflict, and found
+no lost master feature, unintended internal configuration, or unresolved
+product decision. Documentation policy, migration immutability, external
+deployment boundaries, Qoder-only executor creation, and the public output base
+were rechecked.
+
+Verification completed after the merge:
+
+- Backend: 1,788 tests passed.
+- Frontend: 84 test files and 524 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,761 modules.
+- Deployment Skill: 74 tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent and the
+  Community executor UI remained Qoder CLI-only.
 
 ### 2026-08-06: `41aedc7f` to `58140e68`
 

@@ -117,6 +117,15 @@
     <select id="countBySdlcId" resultType="int">
         SELECT COUNT(*) FROM workitem WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
     </select>
+
+    <select id="countActiveByAssignee" resultType="int">
+        SELECT COUNT(*) FROM workitem w
+        INNER JOIN status_node sn ON sn.id = w.status_node_id
+        WHERE w.is_deleted = 0
+          AND w.assignee_type = #{assigneeType}
+          AND w.assignee_ref = #{assigneeRef}
+          AND sn.category NOT IN ('DONE', 'CANCELED')
+    </select>
     <update id="updateCurrentStep">
         UPDATE workitem
         SET current_step_id = #{currentStepId},

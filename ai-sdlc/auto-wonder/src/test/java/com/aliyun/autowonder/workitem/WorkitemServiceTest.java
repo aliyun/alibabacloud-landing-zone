@@ -853,6 +853,47 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
     }
 
     @Test
+    void delivery_progress_hides_mojibake_runtime_messages_and_labels_gate_events() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "分析与分支准备")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.RUNNING, 1_000L, 301_000L, null)
+        ));
+        when(runtimeEventDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                runtimeEvent(1L, 301L, 41L, "step.started", 1, "分析与分支准备",
+                        1_000L, "�Ķ�������ǰ��������׼�������ͷ�֧��"),
+                runtimeEvent(2L, 301L, 41L, "step.completion_requested", 1, "分析与分支准备",
+                        2_000L, null),
+                runtimeEvent(3L, 301L, 41L, "step.gate_started", 1, "分析与分支准备",
+                        3_000L, null),
+                runtimeEvent(4L, 301L, 41L, "step.gate_finished", 1, "分析与分支准备",
+                        4_000L, null),
+                runtimeEvent(5L, 301L, 41L, "agent.progress", 1, "分析与分支准备",
+                        5_000L, "正常进度")
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+
+        var subStepNames = progress.getAgents().get(0).getSteps().get(0).getSubSteps().stream()
+                .map(com.aliyun.autowonder.workitem.dto.SubStepVO::getName)
+                .toList();
+        assertEquals(List.of("开始执行", "请求完成", "开始校验", "校验完成", "正常进度"), subStepNames);
+        assertTrue(subStepNames.stream().noneMatch(name -> name.contains("�") || name.startsWith("step.")));
+    }
+
+    @Test
     void delivery_progress_marks_rerun_worker_active_even_when_not_current_assignee() {
         WorkitemDO w = new WorkitemDO();
         w.setId(100L);

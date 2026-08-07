@@ -17,8 +17,8 @@ import java.util.UUID;
 
 @Service
 public class RuntimeMcpConnectionTestService {
-    private static final int RESULT_TTL_SECONDS = 60;
-    private static final long WAIT_MILLIS = 30_000L;
+    private static final int RESULT_TTL_SECONDS = 120;
+    private static final long WAIT_MILLIS = 90_000L;
     private final ExecutorDao executorDao;
     private final SessionRegistry sessionRegistry;
     private final RedisManager redisManager;
@@ -66,7 +66,7 @@ public class RuntimeMcpConnectionTestService {
                 return new SkillConnectionTestResult(false, "连接测试被中断", null);
             }
         }
-        return new SkillConnectionTestResult(false, "Runtime 未在 5 秒内返回；请确认该 Runtime 在线且已更新", null);
+        return new SkillConnectionTestResult(false, "Runtime 未在 90 秒内返回；请确认该 Runtime 在线且已更新", null);
     }
 
     public void complete(long tenantId, long executorId, String testId, boolean success, String message, Long durationMs) {

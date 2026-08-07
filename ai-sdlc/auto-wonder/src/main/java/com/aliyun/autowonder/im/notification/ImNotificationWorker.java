@@ -10,13 +10,17 @@ import com.aliyun.autowonder.im.UserImIdentityService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 @Component
-public class ImNotificationWorker {
+public class ImNotificationWorker implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(ImNotificationWorker.class);
     private static final String PROVIDER = "DINGTALK";
 
@@ -27,6 +31,8 @@ public class ImNotificationWorker {
     private final ImProviderRegistry providerRegistry;
     private final ImNotificationProperties properties;
     private final ImNotificationMessageContextResolver contextResolver;
+    private final ExecutorService sendExecutor;
+    private final Semaphore sendPermits;
 
     public ImNotificationWorker(ImNotificationQueue queue,
                                 ImNotificationFormatter formatter,
@@ -42,9 +48,15 @@ public class ImNotificationWorker {
         this.providerRegistry = providerRegistry;
         this.properties = properties;
         this.contextResolver = contextResolver;
+        int concurrency = properties.getSendConcurrency();
+        this.sendPermits = new Semaphore(concurrency);
+        this.sendExecutor = Executors.newFixedThreadPool(concurrency, r -> {
+            Thread t = new Thread(r, "im-send");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
-    @Scheduled(fixedDelayString = "${autowonder.im.notification.poll-delay-ms:1000}")
     public void pollNew() {
         try {
             pollOnce();
@@ -53,7 +65,6 @@ public class ImNotificationWorker {
         }
     }
 
-    @Scheduled(fixedDelayString = "${autowonder.im.notification.recovery-delay-ms:1000}")
     public void recoverStale() {
         try {
             recoverOnce();
@@ -88,17 +99,49 @@ public class ImNotificationWorker {
         }
     }
 
-    private void processAll(List<ImNotificationEnvelope> envelopes) {
+    void processAll(List<ImNotificationEnvelope> envelopes) {
         if (envelopes == null || envelopes.isEmpty()) {
             return;
         }
+        if (envelopes.size() == 1) {
+            processWithBoundary(envelopes.get(0));
+            return;
+        }
+        java.util.List<java.util.concurrent.Future<?>> futures = new java.util.ArrayList<>(envelopes.size());
         for (ImNotificationEnvelope envelope : envelopes) {
             try {
-                process(envelope);
-            } catch (Exception e) {
-                log.error("IM notification message processing boundary failed messageId={}",
-                        safeMessageId(envelope), e);
+                sendPermits.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("IM notification batch interrupted while waiting for send permit");
+                break;
             }
+            futures.add(sendExecutor.submit(() -> {
+                try {
+                    processWithBoundary(envelope);
+                } finally {
+                    sendPermits.release();
+                }
+            }));
+        }
+        for (java.util.concurrent.Future<?> future : futures) {
+            try {
+                future.get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (java.util.concurrent.ExecutionException e) {
+                log.error("IM notification batch task failed", e.getCause());
+            }
+        }
+    }
+
+    private void processWithBoundary(ImNotificationEnvelope envelope) {
+        try {
+            process(envelope);
+        } catch (Exception e) {
+            log.error("IM notification message processing boundary failed messageId={}",
+                    safeMessageId(envelope), e);
         }
     }
 
@@ -121,6 +164,13 @@ public class ImNotificationWorker {
             return;
         }
 
+        long dequeuedAtMs = System.currentTimeMillis();
+        long enqueueToDequeueMs = computeQueueLatencyMs(envelope.messageId(), dequeuedAtMs);
+        log.info("IM notification dequeued messageId={} notificationKey={} requestId={} "
+                        + "deliveryCount={} queueLatencyMs={}",
+                envelope.messageId(), task.notificationKey(), safeValue(task.requestId()),
+                envelope.deliveryCount(), enqueueToDequeueMs);
+
         try {
             UserImIdentityDO identity = identityService.find(task.recipientUserId(), PROVIDER);
             if (identity == null || !hasText(identity.getExternalUserId())) {
@@ -138,13 +188,21 @@ public class ImNotificationWorker {
 
             ImNotificationMessageContext context = contextResolver.resolve(task);
             String markdown = formatter.format(context, task);
+
+            long providerStartMs = System.currentTimeMillis();
             providerRegistry.require(PROVIDER).send(new ImSendCommand(
                     PROVIDER,
                     identity.getExternalUserId(),
                     messageTitle(task),
                     markdown));
+            long providerLatencyMs = System.currentTimeMillis() - providerStartMs;
+
             queue.markDelivered(task.notificationKey());
             queue.ack(envelope.messageId());
+            log.info("IM notification delivered messageId={} notificationKey={} requestId={} "
+                            + "provider={} providerLatencyMs={} queueLatencyMs={}",
+                    envelope.messageId(), task.notificationKey(), safeValue(task.requestId()),
+                    PROVIDER, providerLatencyMs, enqueueToDequeueMs);
         } catch (ImDeliveryException e) {
             SafeImNotificationDeliveryException safe = SafeImNotificationDeliveryException.from(e);
             if (e.isRetryable()) {
@@ -168,6 +226,22 @@ public class ImNotificationWorker {
         }
     }
 
+    private static long computeQueueLatencyMs(String messageId, long nowMs) {
+        if (messageId == null || messageId.isBlank()) {
+            return -1L;
+        }
+        int dash = messageId.indexOf('-');
+        if (dash <= 0) {
+            return -1L;
+        }
+        try {
+            long streamTimestampMs = Long.parseLong(messageId.substring(0, dash));
+            return nowMs - streamTimestampMs;
+        } catch (NumberFormatException e) {
+            return -1L;
+        }
+    }
+
     private static String safeMessageId(ImNotificationEnvelope envelope) {
         return envelope == null ? "unknown" : envelope.messageId();
     }
@@ -185,5 +259,18 @@ public class ImNotificationWorker {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    @Override
+    public void destroy() {
+        sendExecutor.shutdown();
+        try {
+            if (!sendExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                sendExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            sendExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

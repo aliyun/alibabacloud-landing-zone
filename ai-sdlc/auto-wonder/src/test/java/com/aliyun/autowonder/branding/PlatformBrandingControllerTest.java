@@ -4,8 +4,10 @@ import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.branding.dto.PlatformBrandingVO;
 import com.aliyun.autowonder.branding.dto.UpdatePlatformBrandingRequest;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.storage.ObjectStorageException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -67,6 +69,29 @@ class PlatformBrandingControllerTest {
         verify(systemAdminService).requireFirstActiveUser(10000L, "上传平台品牌标志");
     }
 
+    @Test
+    void logoReturnsNotFoundWhenNoLogoConfigured() {
+        PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
+        SystemAdminService systemAdminService = mock(SystemAdminService.class);
+        when(brandingService.logoBytes()).thenReturn(null);
+        PlatformBrandingController controller =
+                new PlatformBrandingController(brandingService, systemAdminService);
+
+        assertEquals(HttpStatus.NOT_FOUND, controller.logo().getStatusCode());
+    }
+
+    @Test
+    void logoReturnsBadGatewayWhenOssReadFails() {
+        PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
+        SystemAdminService systemAdminService = mock(SystemAdminService.class);
+        when(brandingService.logoBytes()).thenThrow(
+                new ObjectStorageException("oss get failed", "bucket", "key", "InternalError", null));
+        PlatformBrandingController controller =
+                new PlatformBrandingController(brandingService, systemAdminService);
+
+        assertEquals(HttpStatus.BAD_GATEWAY, controller.logo().getStatusCode());
+    }
+
     private static PlatformBrandingVO branding(String platformName) {
         return new PlatformBrandingVO(
                 platformName,
@@ -75,7 +100,7 @@ class PlatformBrandingControllerTest {
                 "#f97316",
                 null,
                 "https://daily.auto-wonder.example.com/api/mcp",
-                "0.2.117",
+                "0.2.125",
                 false);
     }
 }

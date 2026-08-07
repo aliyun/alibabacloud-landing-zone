@@ -36,3 +36,25 @@ export interface ChangePasswordParams {
 export async function changePassword(params: ChangePasswordParams): Promise<void> {
   await apiClient.put<void>('/api/users/me/password', params);
 }
+
+export interface DeactivationStatus {
+  pending: boolean;
+  deactivatedAt: string | null;
+  coolingOffExpiresAt: string | null;
+  revoked: boolean;
+}
+
+export const DEACTIVATION_STATUS_QUERY_KEY = ['user-deactivation-status'] as const;
+
+export async function getDeactivationStatus(): Promise<DeactivationStatus> {
+  const resp = await apiClient.get<DeactivationStatus>('/api/users/me/deactivation');
+  return resp.data;
+}
+
+export async function initiateDeactivation(confirmUsername: string): Promise<void> {
+  await apiClient.post<void>('/api/users/me/deactivation', { confirmUsername });
+}
+
+export async function revokeDeactivation(): Promise<void> {
+  await apiClient.post<void>('/api/users/me/deactivation/revoke');
+}

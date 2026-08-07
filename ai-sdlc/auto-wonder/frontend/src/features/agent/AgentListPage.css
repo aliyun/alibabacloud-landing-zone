@@ -27,6 +27,10 @@
   font-size: 13px;
 }
 
+.agent-card-guidance {
+  margin-bottom: 14px;
+}
+
 .agent-summary-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -73,10 +77,52 @@
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
-.agent-person-card:hover {
+.agent-person-card:hover,
+.agent-person-card:focus-within {
   border-color: #ffb36b;
   box-shadow: 0 10px 24px rgba(255, 106, 0, 0.12);
   transform: translateY(-1px);
+}
+
+.agent-card-content {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.agent-card-detail-link {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: block;
+  cursor: pointer;
+  color: inherit;
+}
+
+.agent-card-detail-link:focus-visible {
+  outline: 2px solid #ff6a00;
+  outline-offset: -3px;
+}
+
+.agent-card-open-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 700;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.agent-card-detail-link:hover .agent-card-open-hint,
+.agent-card-detail-link:focus-visible .agent-card-open-hint {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .agent-card-topline {

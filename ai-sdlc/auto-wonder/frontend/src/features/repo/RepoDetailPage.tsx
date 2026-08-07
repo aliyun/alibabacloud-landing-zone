@@ -8,7 +8,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getRepo, getConclusion, updateConclusion, listRelations, listRepos,
-  createRelation, deleteRelation, RELATION_TYPES,
+  createRelation, deleteRelation, deleteRepo, RELATION_TYPES,
 } from './api';
 import type { RepoRelation, CreateRelationRequest } from './api';
 import type { ColumnsType } from 'antd/es/table';
@@ -32,6 +32,7 @@ export function RepoDetailPage() {
   const [editingConclusion, setEditingConclusion] = useState(false);
   const [addRelationOpen, setAddRelationOpen] = useState(false);
   const [aiScanOpen, setAiScanOpen] = useState(false);
+  const [deleteRepoOpen, setDeleteRepoOpen] = useState(false);
   const [pendingRelationDeleteId, setPendingRelationDeleteId] = useState<string | number | null>(null);
   const [conclusionForm] = Form.useForm();
   const [relationForm] = Form.useForm();
@@ -86,6 +87,21 @@ export function RepoDetailPage() {
       message.success('关系已删除');
       setPendingRelationDeleteId(null);
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
+    },
+  });
+
+  const deleteRepoMut = useMutation({
+    mutationFn: () => deleteRepo(repoId),
+    onSuccess: () => {
+      message.success('仓库已删除');
+      setDeleteRepoOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['repos'] });
+      queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
+      navigate('/repos');
+    },
+    onError: (e: Error) => {
+      setDeleteRepoOpen(false);
+      message.error(e.message || '删除仓库失败');
     },
   });
 
@@ -286,11 +302,41 @@ export function RepoDetailPage() {
 
       <Card
         title={repo.name}
-        extra={REPO_SCAN_ENABLED ? (
-          <Button icon={<ScanOutlined />} onClick={openAiScan}>
-            发起扫描
-          </Button>
-        ) : undefined}
+        extra={
+          <Space>
+            {REPO_SCAN_ENABLED && (
+              <Button icon={<ScanOutlined />} onClick={openAiScan}>
+                发起扫描
+              </Button>
+            )}
+            <Popconfirm
+              title={`确认删除仓库「${repo.name}」？`}
+              description="删除后仓库及其所有关系将一并移除，此操作不可恢复。"
+              open={deleteRepoOpen}
+              onOpenChange={(open) => setDeleteRepoOpen(open)}
+              onConfirm={() => runWithAccess(
+                'READ_WRITE',
+                '删除仓库',
+                () => deleteRepoMut.mutate(),
+              )}
+              okText="删除"
+              okButtonProps={{ danger: true, loading: deleteRepoMut.isPending }}
+              cancelText="取消"
+            >
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => runWithAccess(
+                  'READ_WRITE',
+                  '删除仓库',
+                  () => setDeleteRepoOpen(true),
+                )}
+              >
+                删除仓库
+              </Button>
+            </Popconfirm>
+          </Space>
+        }
       >
         <Tabs items={tabItems} />
       </Card>

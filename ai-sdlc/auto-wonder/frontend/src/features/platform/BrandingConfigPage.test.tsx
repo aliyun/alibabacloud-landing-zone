@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -260,5 +260,29 @@ describe('BrandingConfigPage', () => {
       expect(error).toHaveBeenCalledWith('仅系统第一个用户可以管理品牌配置');
     });
     await waitFor(() => expect(saveButton).toBeEnabled());
+  });
+
+  it('falls back to default logo when custom logo fails to load', async () => {
+    server.use(
+      http.get('/api/platform/branding', () => HttpResponse.json({
+        ...brandingPayload(),
+        data: {
+          ...brandingPayload().data,
+          logoUrl: '/api/platform/branding/logo?v=5',
+        },
+      })),
+    );
+
+    renderPage();
+
+    const nameInput = await screen.findByPlaceholderText('AutoWonder');
+    await waitFor(() => expect(nameInput).not.toBeDisabled());
+
+    const logoImg = screen.getByRole('img', { name: 'AutoWonder' });
+    expect(logoImg.getAttribute('src')).toBe('/api/platform/branding/logo?v=5');
+
+    fireEvent.error(logoImg);
+
+    expect(logoImg.getAttribute('src')).toBe('/logo.png');
   });
 });

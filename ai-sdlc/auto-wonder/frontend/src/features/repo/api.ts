@@ -1,7 +1,7 @@
 import { apiClient } from '@/shared/api/client';
 
 export interface Repo {
-  id: string;
+  id: number;
   name: string;
   url: string;
   defaultBranch: string | null;
@@ -12,8 +12,8 @@ export interface Repo {
 }
 
 export interface RepoConclusion {
-  id: string;
-  repoId: string;
+  id: number;
+  repoId: number;
   purpose: string | null;
   keyBusiness: string | null;
   upstreams: string | null;
@@ -40,9 +40,9 @@ export interface CreateRepoRequest {
 }
 
 export interface RepoRelation {
-  id: string;
-  fromRepoId: string;
-  toRepoId: string;
+  id: number;
+  fromRepoId: number;
+  toRepoId: number;
   relationType: string;
   description: string | null;
   aiSessionId: string | number | null;
@@ -50,8 +50,8 @@ export interface RepoRelation {
 }
 
 export interface CreateRelationRequest {
-  fromRepoId: string;
-  toRepoId: string;
+  fromRepoId: number;
+  toRepoId: number;
   relationType: string;
   description?: string;
 }
@@ -77,31 +77,31 @@ export async function createRepo(data: CreateRepoRequest): Promise<Repo> {
   return resp.data;
 }
 
-export async function getRepo(id: string): Promise<Repo> {
+export async function getRepo(id: string | number): Promise<Repo> {
   const resp = await apiClient.get<Repo>(`/api/repos/${id}`);
   return resp.data;
 }
 
-export async function updateRepo(id: string, data: { description?: string }): Promise<Repo> {
+export async function updateRepo(id: string | number, data: { description?: string }): Promise<Repo> {
   const resp = await apiClient.put<Repo>(`/api/repos/${id}`, data);
   return resp.data;
 }
 
-export async function triggerScan(repoId: string): Promise<void> {
+export async function triggerScan(repoId: string | number): Promise<void> {
   await apiClient.post(`/api/repos/${repoId}/scan`);
 }
 
-export async function getConclusion(repoId: string): Promise<RepoConclusion | null> {
+export async function getConclusion(repoId: string | number): Promise<RepoConclusion | null> {
   const resp = await apiClient.get<RepoConclusion>(`/api/repos/${repoId}/conclusion`);
   return resp.data;
 }
 
-export async function updateConclusion(repoId: string, data: UpdateConclusionRequest): Promise<RepoConclusion> {
+export async function updateConclusion(repoId: string | number, data: UpdateConclusionRequest): Promise<RepoConclusion> {
   const resp = await apiClient.put<RepoConclusion>(`/api/repos/${repoId}/conclusion`, data);
   return resp.data;
 }
 
-export async function listRelations(repoId?: string): Promise<RepoRelation[]> {
+export async function listRelations(repoId?: string | number): Promise<RepoRelation[]> {
   const resp = await apiClient.get<RepoRelation[]>('/api/repos/relations', {
     params: repoId ? { repoId } : undefined,
   });
@@ -113,6 +113,10 @@ export async function createRelation(data: CreateRelationRequest): Promise<RepoR
   return resp.data;
 }
 
-export async function deleteRelation(id: string): Promise<void> {
+export async function deleteRelation(id: number): Promise<void> {
   await apiClient.delete(`/api/repos/relations/${id}`);
+}
+
+export async function deleteRepo(id: string | number): Promise<void> {
+  await apiClient.delete(`/api/repos/${id}`);
 }

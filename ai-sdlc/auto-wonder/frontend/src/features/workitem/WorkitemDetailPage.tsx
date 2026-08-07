@@ -90,10 +90,10 @@ export function WorkitemDetailPage() {
   };
 
   return (
-    <div style={{ display: 'flex', gap: 0, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', gap: 0, height: '100%', overflow: 'hidden' }}>
       {/* Left Panel */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div ref={leftScrollRef} data-testid="workitem-left-scroll" style={{ flex: 1, minWidth: 0, padding: 24, paddingBottom: 12, overflowY: 'auto' }}>
+        <div ref={leftScrollRef} data-testid="workitem-left-scroll" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: 24, paddingBottom: 12, overflowY: 'auto' }}>
           <WorkitemHeader
             title={workitem.title}
             statusName={workitem.statusName ?? null}

@@ -310,7 +310,7 @@ JSON
                 if line.startswith("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=")
             ]
             self.assertEqual(
-                ["AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.117"],
+                ["AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.125"],
                 version_lines,
             )
 
@@ -822,7 +822,7 @@ esac
             "stateMode": "local", "lifecycle": "persistent", "executionMode": "staged",
             "ingressScenario": "no-domain-no-certificate", "domain": "", "publicSourceCidrs": ["198.51.100.0/24"],
             "applicationBaseUrl": "http://public-nlb.example.com",
-            "recommendedRuntimeVersion": "0.2.117",
+            "recommendedRuntimeVersion": "0.2.125",
             "slsEnabled": True, "aoneEnabled": False, "publicEgress": False,
             "adminUsername": "admin", "organizationName": "Example", "repositoryUrl": "local",
             "repositoryRef": "community", "repositoryCommit": "HEAD",

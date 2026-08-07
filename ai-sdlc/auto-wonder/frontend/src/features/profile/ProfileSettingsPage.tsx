@@ -5,6 +5,7 @@ import { SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { McpTokenSettingsPanel } from '@/features/open-platform/McpTokenSettingsPanel';
 import { ChangePasswordPanel } from './ChangePasswordPanel';
+import { DeactivationPanel } from './DeactivationPanel';
 import {
   USER_IM_IDENTITIES_QUERY_KEY,
   listMyImIdentities,
@@ -46,7 +47,9 @@ function getDingTalkTestStatusText(hasIdentityRow: boolean, hasSavedIdentity: bo
 export function ProfileSettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const activeTab = requestedTab === 'mcp' || requestedTab === 'password' ? requestedTab : DEFAULT_TAB;
+  const activeTab = requestedTab === 'mcp' || requestedTab === 'password' || requestedTab === 'deactivate'
+    ? requestedTab
+    : DEFAULT_TAB;
   const [form] = Form.useForm<DingTalkFormValues>();
   const queryClient = useQueryClient();
   const hydratedRef = useRef(false);
@@ -205,6 +208,7 @@ export function ProfileSettingsPage() {
           { key: 'im', label: 'IM 工号', children: imSettings },
           { key: 'mcp', label: 'MCP 令牌', children: <McpTokenSettingsPanel /> },
           { key: 'password', label: '修改密码', children: <ChangePasswordPanel /> },
+          { key: 'deactivate', label: '账号注销', children: <DeactivationPanel /> },
         ]}
       />
     </div>

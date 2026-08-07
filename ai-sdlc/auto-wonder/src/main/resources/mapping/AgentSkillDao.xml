@@ -17,6 +17,10 @@
         DELETE FROM agent_skill WHERE agent_version_id = #{agentVersionId}
     </delete>
     <select id="countBySkillId" resultType="int">
-        SELECT COUNT(*) FROM agent_skill WHERE skill_id = #{skillId} AND tenant_id = #{tenantId}
+        SELECT COUNT(*) FROM agent_skill sk
+        JOIN agent_version av ON sk.agent_version_id = av.id
+        JOIN agent a ON av.agent_id = a.id AND av.tenant_id = a.tenant_id
+        WHERE sk.skill_id = #{skillId} AND sk.tenant_id = #{tenantId}
+          AND (av.id = a.online_version_id OR av.id = a.editing_version_id)
     </select>
 </mapper>

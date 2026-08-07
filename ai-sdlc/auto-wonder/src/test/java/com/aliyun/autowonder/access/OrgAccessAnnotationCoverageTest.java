@@ -77,7 +77,11 @@ class OrgAccessAnnotationCoverageTest {
                     + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
             "com.aliyun.autowonder.im.UserImIdentityController#testDingTalk()",
             "com.aliyun.autowonder.user.UserAccountController#changePassword("
-                    + "com.aliyun.autowonder.user.dto.ChangePasswordRequest)"
+                    + "com.aliyun.autowonder.user.dto.ChangePasswordRequest)",
+            "com.aliyun.autowonder.user.UserAccountController#initiateDeactivation("
+                    + "com.aliyun.autowonder.user.dto.DeactivationRequest)",
+            "com.aliyun.autowonder.user.UserAccountController#revokeDeactivation()",
+            "com.aliyun.autowonder.user.UserAccountController#getDeactivationStatus()"
     );
 
     @Test

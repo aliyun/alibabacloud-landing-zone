@@ -20,4 +20,6 @@ public interface OrgMemberDao {
                            @Param("modifierId") Long modifierId);
     int softDelete(@Param("tenantId") Long tenantId, @Param("userId") Long userId,
                    @Param("modifierId") Long modifierId);
+
+    boolean isSoleAdminOfAnyOrg(@Param("userId") Long userId);
 }

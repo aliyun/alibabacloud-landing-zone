@@ -1566,19 +1566,64 @@ public class WorkitemService {
         }
 
         private static String labelOf(DispatchRuntimeEventDO event) {
-            if (event.getMessage() != null && !event.getMessage().isBlank()) {
+            if (event.getMessage() != null && !event.getMessage().isBlank()
+                    && !looksLikeMojibake(event.getMessage())) {
                 return event.getMessage();
             }
-            if (event.getEventType() != null && event.getEventType().startsWith("step.started")) {
-                return "开始执行";
-            }
-            if (isCompletionEvent(event.getEventType())) {
-                return "请求完成";
+            String eventLabel = runtimeEventLabel(event.getEventType());
+            if (eventLabel != null) {
+                return eventLabel;
             }
             if (event.getEventType() != null) {
                 return event.getEventType();
             }
             return "运行进度";
+        }
+
+        private static String runtimeEventLabel(String eventType) {
+            if (eventType == null) {
+                return null;
+            }
+            if (eventType.startsWith("step.started")) {
+                return "开始执行";
+            }
+            if (isCompletionEvent(eventType)) {
+                return "请求完成";
+            }
+            if ("step.gate_started".equals(eventType)) {
+                return "开始校验";
+            }
+            if ("step.gate_finished".equals(eventType)) {
+                return "校验完成";
+            }
+            if ("step.fix_required".equals(eventType)) {
+                return "需要修复";
+            }
+            if ("step.failed".equals(eventType) || "dispatch.failed".equals(eventType)) {
+                return "执行失败";
+            }
+            return null;
+        }
+
+        private static boolean looksLikeMojibake(String text) {
+            if (text == null || text.isBlank()) {
+                return false;
+            }
+            if (text.indexOf('\uFFFD') >= 0) {
+                return true;
+            }
+            int suspicious = 0;
+            int visible = 0;
+            for (int i = 0; i < text.length(); i++) {
+                char ch = text.charAt(i);
+                if (!Character.isWhitespace(ch)) {
+                    visible++;
+                }
+                if ((ch >= '\u00C0' && ch <= '\u024F') || ch == '\u00A0') {
+                    suspicious++;
+                }
+            }
+            return suspicious >= 3 && suspicious * 2 >= Math.max(1, visible);
         }
     }
 

@@ -83,18 +83,22 @@ public class TaskPackager {
         ctx.setSkills(capabilities);
         ctx.setRepos(repos);
         ctx.setRepoMap(repoMap);
-        byte[] zip = assembleConversationCapabilityZip(ctx, conversationId, turnId);
+        ConversationCapabilityArchive archive = assembleConversationCapabilityZip(ctx, conversationId, turnId);
+        byte[] zip = archive.zip();
         String sha256 = sha256Hex(zip);
         String key = tenantId + "/conversations/" + conversationId + "/turns/" + turnId + "-v"
                 + agentVersionId + ".zip";
         StoredObject stored = storage.put(taskPkgBucket, key, zip);
         String url = storage.presignGet(stored.getOssRef(), DOWNLOAD_TTL_SECONDS);
-        return new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256);
+        return new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256,
+                archive.contentHash());
     }
 
-    private byte[] assembleConversationCapabilityZip(PackageContext ctx, long conversationId, long turnId) {
+    private ConversationCapabilityArchive assembleConversationCapabilityZip(PackageContext ctx,
+            long conversationId, long turnId) {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         Map<String, String> fileDigests = new LinkedHashMap<>();
+        String contentHash;
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
             putEntry(zos, "skills.json", JSON.toJSONString(writeCapabilities(zos, ctx, fileDigests)), fileDigests);
             if (ctx.getRepos() != null && !ctx.getRepos().isEmpty()) {
@@ -103,6 +107,8 @@ public class TaskPackager {
             if (ctx.getRepoMap() != null) {
                 putEntry(zos, "repo-map.json", JSON.toJSONString(ctx.getRepoMap()), fileDigests);
             }
+            contentHash = sha256Hex(JSON.toJSONString(new TreeMap<>(fileDigests))
+                    .getBytes(StandardCharsets.UTF_8));
             Map<String, Object> manifest = new LinkedHashMap<>();
             manifest.put("schemaVersion", "autoWonder.taskPackage.v1");
             manifest.put("packageId", "conversation-capabilities:" + conversationId + ":" + turnId);
@@ -118,7 +124,10 @@ public class TaskPackager {
         } catch (Exception e) {
             throw new BizException(ErrorCode.PACKAGE_BUILD_FAILED, e);
         }
-        return baos.toByteArray();
+        return new ConversationCapabilityArchive(baos.toByteArray(), contentHash);
+    }
+
+    private record ConversationCapabilityArchive(byte[] zip, String contentHash) {
     }
 
     private byte[] assembleZip(PackageContext ctx) {

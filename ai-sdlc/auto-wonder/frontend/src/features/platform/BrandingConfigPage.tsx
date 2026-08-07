@@ -254,7 +254,7 @@ export function BrandingConfigPage() {
           <Card title="Logo" styles={{ body: { padding: 18 } }}>
             <div style={{ display: 'grid', gap: 16 }}>
               <div style={{ border: '1px solid #edf0f4', borderRadius: 8, padding: 18, minHeight: 132, display: 'grid', placeItems: 'center', background: '#fafbfc' }}>
-                <img src={current.logoUrl || '/logo.png'} alt={current.platformName} style={{ maxWidth: 176, maxHeight: 72, objectFit: 'contain' }} />
+                <img src={current.logoUrl || '/logo.png'} alt={current.platformName} style={{ maxWidth: 176, maxHeight: 72, objectFit: 'contain' }} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
               </div>
               <Upload
                 showUploadList={false}

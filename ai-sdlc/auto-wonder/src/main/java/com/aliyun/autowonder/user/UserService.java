@@ -61,6 +61,10 @@ public class UserService {
                 || !PasswordEncoderUtil.matches(req.getPassword(), user.getPasswordHash())) {
             throw new BizException(ErrorCode.UNAUTHORIZED, "用户名或密码错误");
         }
+        if (user.getStatus() != null && user.getStatus() == 1
+                && "DEACTIVATED".equals(user.getPasswordHash())) {
+            throw new BizException(ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
+        }
         String jti = UUID.randomUUID().toString();
         String accessToken = jwtService.signAccess(new TokenPayload(user.getId(), null, jti));
         String refreshToken = UUID.randomUUID().toString();

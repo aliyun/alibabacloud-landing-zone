@@ -31,6 +31,9 @@ public class PlatformBrandingService {
             "image/jpeg", ".jpg",
             "image/webp", ".webp");
     private static final long MAX_LOGO_SIZE = 2L * 1024L * 1024L;
+    private static final long LOGO_CACHE_TTL_MS = 5 * 60 * 1000L;
+
+    private volatile LogoCacheEntry logoCache;
 
     private final PlatformBrandingDao brandingDao;
     private final ObjectStorage objectStorage;
@@ -42,7 +45,7 @@ public class PlatformBrandingService {
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.2.117}") String recommendedRuntimeVersion) {
+                                   @Value("${autowonder.runtime.recommended-version:0.2.125}") String recommendedRuntimeVersion) {
         this.brandingDao = brandingDao;
         this.objectStorage = objectStorage;
         this.bucket = ossProperties.resolveArtifactBucket();
@@ -91,6 +94,7 @@ public class PlatformBrandingService {
             if (updated == 0) {
                 throw new BizException(ErrorCode.NOT_FOUND);
             }
+            logoCache = null;
             PlatformBrandingDO current = currentOrDefault();
             return new LogoUploadVO(logoUrl(current));
         } catch (BizException e) {
@@ -105,12 +109,50 @@ public class PlatformBrandingService {
         if (current.getLogoOssRef() == null || current.getLogoOssRef().isBlank()) {
             return null;
         }
-        return objectStorage.get(current.getLogoOssRef());
+        LogoCacheEntry entry = ensureLogoLoaded(current);
+        return entry.bytes;
     }
 
     public String logoContentType() {
-        String contentType = currentOrDefault().getLogoContentType();
-        return contentType == null || contentType.isBlank() ? "application/octet-stream" : contentType;
+        PlatformBrandingDO current = currentOrDefault();
+        if (current.getLogoOssRef() == null || current.getLogoOssRef().isBlank()) {
+            return "application/octet-stream";
+        }
+        LogoCacheEntry entry = ensureLogoLoaded(current);
+        return entry.contentType;
+    }
+
+    private LogoCacheEntry ensureLogoLoaded(PlatformBrandingDO current) {
+        String ossRef = current.getLogoOssRef();
+        LogoCacheEntry cached = logoCache;
+        if (cached != null && cached.ossRef.equals(ossRef)
+                && cached.expiresAt > System.currentTimeMillis()) {
+            return cached;
+        }
+        byte[] bytes = objectStorage.get(ossRef);
+        String contentType = current.getLogoContentType();
+        if (contentType == null || contentType.isBlank()) {
+            contentType = "application/octet-stream";
+        }
+        LogoCacheEntry entry = new LogoCacheEntry(
+                ossRef, bytes, contentType,
+                System.currentTimeMillis() + LOGO_CACHE_TTL_MS);
+        logoCache = entry;
+        return entry;
+    }
+
+    private static final class LogoCacheEntry {
+        final String ossRef;
+        final byte[] bytes;
+        final String contentType;
+        final long expiresAt;
+
+        LogoCacheEntry(String ossRef, byte[] bytes, String contentType, long expiresAt) {
+            this.ossRef = ossRef;
+            this.bytes = bytes;
+            this.contentType = contentType;
+            this.expiresAt = expiresAt;
+        }
     }
 
     private PlatformBrandingDO currentOrDefault() {
