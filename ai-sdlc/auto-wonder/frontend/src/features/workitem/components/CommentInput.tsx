@@ -42,6 +42,8 @@ const mentionMenuStyle: CSSProperties = {
   borderRadius: 6,
   boxShadow: '0 6px 16px rgba(0, 0, 0, 0.08)',
   zIndex: 20,
+  maxHeight: 350, // ≈10 个候选项高度，超出滚动查看
+  overflowY: 'auto',
 };
 
 const mentionMenuItemStyle: CSSProperties = {

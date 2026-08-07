@@ -8,11 +8,47 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `484a30c19f99dd401b1f1b1cf66b11154d0484ca`
-- Community merge commit: `e9184184d79ac565f40e3795d960c06c8d716b6b`
+- Synchronized `origin/master`: `3262a46f66ac5087261429250091bfea5a61d12b`
+- Community merge commit: `802dbe507af1f3729ddd4c6ff6d6cddd15d38ffd`
 - Synchronized at: 2026-08-07 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-07: `484a30c1` to `3262a46f`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `484a30c19f99dd401b1f1b1cf66b11154d0484ca` |
+| Community before merge | `73b973dab484736790ce3975ff152f36147a15d5` |
+| Merged `origin/master` | `3262a46f66ac5087261429250091bfea5a61d12b` |
+| Resulting merge commit | `802dbe507af1f3729ddd4c6ff6d6cddd15d38ffd` |
+
+Scope: three upstream commits and two frontend files. The work-item comment
+mention menu now has a bounded height and vertical scrolling, with two focused
+component tests proving that long candidate lists remain fully available.
+
+The merge had no textual conflict or shared-file overlap after the previous
+baseline. Both upstream files were accepted byte-for-byte, no Community
+adaptation or product decision was required, and no master behavior was lost.
+
+Deployment review found no configuration, environment variable, DDL,
+dependency, runtime, service, documentation, or operational change. The
+deployment Skill, environment templates, scripts, and operator guidance
+therefore require no update.
+
+Independent review proved `3262a46f66ac5087261429250091bfea5a61d12b` is an
+ancestor of Community, accounted for all two changed files, and found them
+identical to master. Documentation policy, external deployment boundaries,
+Qoder-only executor creation, and public-output requirements were rechecked.
+
+Verification completed after the merge:
+
+- Backend: 1,828 tests passed.
+- Frontend: 85 test files and 526 tests passed; lint completed with zero errors
+  and two existing hook warnings; production build transformed 4,766 modules.
+- Deployment Skill: 74 tests passed.
+- Maven dependency tree and active runtime inputs contained no prohibited
+  internal dependency or domain; excluded documents remained absent.
 
 ### 2026-08-07: `f858771a` to `484a30c1`
 
