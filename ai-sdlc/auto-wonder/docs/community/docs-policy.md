@@ -16,6 +16,7 @@ history, not in the published community tree.
 - `docs/scheduler-executor-protocol.md`: server/client runtime protocol.
 - `docs/mcp-memory-management.md`: MCP memory tools.
 - `docs/mcp-skill-package-upload.md`: MCP Skill package tools.
+- `docs/autowonder-s3-storage.md`: optional standard S3 backend configuration.
 - `docs/community/README.md`: community runtime entry point.
 - `docs/community/application.env.example`: runtime configuration inventory.
 - `docs/community/docker-compose.dependencies.yml`: local dependencies.

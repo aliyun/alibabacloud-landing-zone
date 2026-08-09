@@ -89,6 +89,8 @@ write `AUTOWONDER_PUBLIC_BASE_URL` into this file. It derives a missing value
 from manifest `applicationBaseUrl`, while preserving an explicit domain/TLS URL.
 It also replaces any stale `AUTOWONDER_RUNTIME_RECOMMENDED_VERSION` with the
 manifest `recommendedRuntimeVersion`; the manifest is the deployment source of truth.
+The sealed repository `VERSION` is also recorded in the manifest and written as
+`AUTOWONDER_VERSION`, which is displayed on the About page.
 Set application `OSS_ENDPOINT` to the regional intranet endpoint, for example
 `https://oss-cn-hangzhou-internal.aliyuncs.com`, and set
 `OSS_PUBLIC_ENDPOINT` to the matching public HTTPS endpoint, for example

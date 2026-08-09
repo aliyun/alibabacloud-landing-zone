@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, Input, Space, Typography } from 'antd';
 import { CloseOutlined, EditOutlined, SaveOutlined } from '@ant-design/icons';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
+import { CopyContentMenu } from '@/shared/ui/CopyContentMenu';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { Text } = Typography;
@@ -65,6 +66,7 @@ export function WorkitemContent({ title, contentMd, saving = false, onSave }: Wo
         </Text>
         {editing ? (
           <Space>
+            <CopyContentMenu contentMd={contentMd} />
             <Button icon={<CloseOutlined />} onClick={handleCancel} disabled={saving}>
               取消
             </Button>
@@ -79,10 +81,13 @@ export function WorkitemContent({ title, contentMd, saving = false, onSave }: Wo
             </Button>
           </Space>
         ) : (
-          <Button icon={<EditOutlined />}
-            onClick={() => accessCommand('READ_WRITE', '编辑工单内容', () => setEditing(true))}>
-            编辑
-          </Button>
+          <Space size={4}>
+            <CopyContentMenu contentMd={contentMd} />
+            <Button icon={<EditOutlined />}
+              onClick={() => accessCommand('READ_WRITE', '编辑工单内容', () => setEditing(true))}>
+              编辑
+            </Button>
+          </Space>
         )}
       </div>
       {editing ? (

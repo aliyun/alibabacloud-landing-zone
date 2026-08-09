@@ -95,10 +95,13 @@ procedure and retention owner are known.
 ## Logs And Diagnosis
 
 Application files are under `/var/lib/autowonder/logs`; service lifecycle is in
-the systemd journal. SLS holds system, business, and metrics data. Terraform and
-Cloud Assistant provide control-plane evidence. Search only sanitized fields,
-and report invocation terminal state, exit code, stdout/stderr classification,
-and timeout without exposing full secret-bearing command output.
+the systemd journal. Local application archives roll daily or at 50 MB and are
+deleted when older than 14 days or beyond the newest 5 GB of matching compressed
+archives per node. Configure journal retention separately at host level. SLS
+holds system, business, and metrics data. Terraform and Cloud Assistant provide
+control-plane evidence. Search only sanitized fields, and report invocation
+terminal state, exit code, stdout/stderr classification, and timeout without
+exposing full secret-bearing command output.
 The manifest records every current `InvokeId` or legacy `InvocationId` at
 submission time, so an interrupted run can query `InvokeRecordStatus` (falling
 back to `InvocationStatus`) before deciding whether a command may be retried.

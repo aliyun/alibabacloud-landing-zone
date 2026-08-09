@@ -30,6 +30,8 @@ required for a community build and runtime.
 9. Review every upstream configuration or operational change against the
    deployment Skill, environment templates, deployment scripts, and operator
    guidance. Update those assets in the same sync when their contract changes.
+   Do not infer configuration completeness from a successfully merged properties
+   class: compare every upstream configuration file and key explicitly.
 10. Complete an independent post-sync review before pushing. The reviewer must
     look for missed master behavior, incorrect conflict resolution, unintended
     community divergence, and incomplete external-repository output.
@@ -83,6 +85,18 @@ After the merge:
    both written by deployment scripts and explained or validated during input
    collection; record an explicit "no deployment update required" conclusion
    when the review finds no impact.
+   Build a configuration-key checklist from every changed `application*.yml`,
+   `@ConfigurationProperties` class, XML configuration, environment template,
+   systemd unit, and infrastructure template. For each added, removed, renamed,
+   or default-changed key:
+   - verify the Community runtime preserves the upstream capability, including
+     optional and disabled-by-default integrations;
+   - verify its environment binding, default, validation, and mutual-exclusion
+     behavior agree with the implementing properties/configuration class;
+   - review deployment input collection, protected environment generation,
+     upgrade planning, operator documentation, and tests for impact;
+   - record every intentional Community difference. An unexplained missing key
+     is a blocking sync defect.
 5. Run the gates in [verification.md](verification.md), including backend tests,
    frontend tests/build, deployment Skill tests, and internal-reference scans.
    Run Maven verification and standalone frontend gates serially because both
@@ -119,6 +133,8 @@ Record at least:
 - decisions still requiring confirmation;
 - deployment Skill, deployment script, environment-template, and operator-doc
   impact, including an explicit no-change conclusion when applicable;
+- configuration-key review results, including every intentional omission or
+  Community-specific default;
 - independent sync-review findings and disposition;
 - test, build, and dependency-boundary results.
 

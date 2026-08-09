@@ -25,6 +25,7 @@ class PlatformBrandingServiceTest {
         assertEquals("#f97316", config.getPrimaryColor());
         assertEquals("https://daily.auto-wonder.example.com/api/mcp", config.getMcpBaseUrl());
         assertEquals("0.2.125", config.getRecommendedRuntimeVersion());
+        assertEquals("x.x.x", config.getDeploymentVersion());
         assertFalse(config.isCanManage());
     }
 
@@ -34,7 +35,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
 
         assertThrows(IllegalStateException.class,
-                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.125"));
+                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.125", "x.x.x"));
     }
 
     @Test
@@ -44,10 +45,10 @@ class PlatformBrandingServiceTest {
 
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.125"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.125", "x.x.x"));
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.125"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.125", "x.x.x"));
     }
 
     @Test
@@ -177,16 +178,56 @@ class PlatformBrandingServiceTest {
         verify(storage).get("bucket/new-logo.png");
     }
 
+    @Test
+    void publicConfigReturnsConfiguredDeploymentVersion() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService service = newService(dao, new InMemoryObjectStorage(), "1.2.3");
+
+        assertEquals("1.2.3", service.publicConfig().getDeploymentVersion());
+    }
+
+    @Test
+    void publicConfigAcceptsSemanticDeploymentVersionWithPrerelease() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService service = newService(dao, new InMemoryObjectStorage(), "1.2.3-beta.1");
+
+        assertEquals("1.2.3-beta.1", service.publicConfig().getDeploymentVersion());
+    }
+
+    @Test
+    void deploymentVersionFallsBackToPlaceholderWhenBlank() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService service = newService(dao, new InMemoryObjectStorage(), "  ");
+
+        assertEquals("x.x.x", service.publicConfig().getDeploymentVersion());
+    }
+
+    @Test
+    void rejectsInvalidDeploymentVersionAtStartup() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        OssProperties props = new OssProperties();
+
+        assertThrows(IllegalStateException.class,
+                () -> new PlatformBrandingService(
+                        dao, new InMemoryObjectStorage(), props,
+                        "https://daily.auto-wonder.example.com", "0.2.125", "not-a-version"));
+    }
+
     private static PlatformBrandingService newService(PlatformBrandingDao dao) {
         return newService(dao, new InMemoryObjectStorage());
     }
 
     private static PlatformBrandingService newService(
             PlatformBrandingDao dao, ObjectStorage storage) {
+        return newService(dao, storage, "x.x.x");
+    }
+
+    private static PlatformBrandingService newService(
+            PlatformBrandingDao dao, ObjectStorage storage, String deploymentVersion) {
         OssProperties props = new OssProperties();
         props.setBucket("community-test");
         return new PlatformBrandingService(
-                dao, storage, props, "https://daily.auto-wonder.example.com", "0.2.125");
+                dao, storage, props, "https://daily.auto-wonder.example.com", "0.2.125", deploymentVersion);
     }
 
     private static PlatformBrandingDO row(String name, String color, String domain) {

@@ -28,7 +28,19 @@
         <npm.version>10.9.7</npm.version>
         <skipFrontend>false</skipFrontend>
         <skipGitCommitId>false</skipGitCommitId>
+        <aws-sdk-version>2.50.3</aws-sdk-version>
     </properties>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk-version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <dependencies>
         <!-- MySQL -->
         <dependency>
@@ -47,6 +59,28 @@
             <groupId>com.aliyun.oss</groupId>
             <artifactId>aliyun-sdk-oss</artifactId>
             <version>3.17.4</version>
+        </dependency>
+        <!-- AWS S3 (S3-compatible backends: AWS S3, MinIO, etc.); bundles S3Presigner -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <exclusions>
+                <!-- Use the lightweight JDK URLConnection client instead of the default Apache
+                     HttpClient 5 backend, so no HttpClient 5 stack is dragged onto the classpath
+                     alongside the project's existing HttpClient 4.x. -->
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache5-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
         </dependency>
         <!-- Logging -->
         <dependency>

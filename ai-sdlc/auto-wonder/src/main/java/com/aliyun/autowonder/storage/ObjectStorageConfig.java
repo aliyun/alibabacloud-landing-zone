@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.storage;
 
 import com.aliyun.autowonder.taskpackage.TaskPackager;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,6 +17,7 @@ public class ObjectStorageConfig {
             "autowonder-artifacts-daily-tmp");
 
     @Bean
+    @ConditionalOnProperty(prefix = "oss", name = "enabled", havingValue = "true")
     public ObjectStorage aliyunObjectStorage(OssProperties props) {
         validateRequiredProperties(props);
         validateConfiguredBuckets(props);
@@ -25,9 +27,23 @@ public class ObjectStorageConfig {
     }
 
     @Bean
+    @ConditionalOnProperty(prefix = "s3", name = "enabled", havingValue = "true")
+    public ObjectStorage s3ObjectStorage(S3Properties props, OssProperties ossProps) {
+        if (ossProps.isEnabled()) {
+            throw new IllegalStateException(
+                    "oss.enabled and s3.enabled are mutually exclusive; disable one storage backend");
+        }
+        props.validate();
+        return new S3ObjectStorage(props.getEndpoint(), props.resolvePublicEndpoint(),
+                props.getRegion(), props.getAccessKeyId(), props.getAccessKeySecret(),
+                props.isForcePathStyle());
+    }
+
+    @Bean
     public TaskPackager taskPackager(ObjectStorage objectStorage, OssProperties props,
                                      @Value("${autowonder.public-base-url:}") String publicBaseUrl) {
         validateConfiguredBuckets(props);
+        require("oss.task-pkg-bucket or oss.bucket", props.resolveTaskPkgBucket());
         return new TaskPackager(objectStorage, props.resolveTaskPkgBucket(), publicBaseUrl);
     }
 

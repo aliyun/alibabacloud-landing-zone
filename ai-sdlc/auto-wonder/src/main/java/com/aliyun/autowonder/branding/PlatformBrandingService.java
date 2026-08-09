@@ -22,6 +22,7 @@ public class PlatformBrandingService {
     public static final String DEFAULT_PLATFORM_NAME = "AutoWonder";
     public static final String DEFAULT_THEME_KEY = "aliyun-orange";
     public static final String DEFAULT_PRIMARY_COLOR = "#f97316";
+    public static final String DEFAULT_DEPLOYMENT_VERSION = "x.x.x";
 
     private static final Set<String> THEME_KEYS = Set.of(
             "aliyun-orange", "ocean-blue", "jade-green", "indigo", "rose",
@@ -40,17 +41,20 @@ public class PlatformBrandingService {
     private final String bucket;
     private final String trustedMcpBaseUrl;
     private final String recommendedRuntimeVersion;
+    private final String deploymentVersion;
 
     public PlatformBrandingService(PlatformBrandingDao brandingDao,
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.2.125}") String recommendedRuntimeVersion) {
+                                   @Value("${autowonder.runtime.recommended-version:0.2.125}") String recommendedRuntimeVersion,
+                                   @Value("${autowonder.version:x.x.x}") String deploymentVersion) {
         this.brandingDao = brandingDao;
         this.objectStorage = objectStorage;
         this.bucket = ossProperties.resolveArtifactBucket();
         this.trustedMcpBaseUrl = deriveMcpBaseUrl(publicBaseUrl);
         this.recommendedRuntimeVersion = requireRuntimeVersion(recommendedRuntimeVersion);
+        this.deploymentVersion = normalizeDeploymentVersion(deploymentVersion);
     }
 
     public PlatformBrandingVO publicConfig() {
@@ -177,6 +181,7 @@ public class PlatformBrandingService {
                 current.getDomain(),
                 trustedMcpBaseUrl,
                 recommendedRuntimeVersion,
+                deploymentVersion,
                 canManage);
     }
 
@@ -227,6 +232,18 @@ public class PlatformBrandingService {
             throw new IllegalStateException("autowonder.runtime.recommended-version must be a semantic version");
         }
         return trimmed;
+    }
+
+    private static String normalizeDeploymentVersion(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        if (trimmed.isEmpty()) {
+            return DEFAULT_DEPLOYMENT_VERSION;
+        }
+        if (DEFAULT_DEPLOYMENT_VERSION.equals(trimmed)
+                || trimmed.matches("^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$")) {
+            return trimmed;
+        }
+        throw new IllegalStateException("autowonder.version must be x.x.x or a semantic version");
     }
 
     private static String requirePublicBaseUrl(String value) {

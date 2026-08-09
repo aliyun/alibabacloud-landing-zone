@@ -8,6 +8,7 @@ export interface PlatformBranding {
   domain: string | null;
   mcpBaseUrl: string;
   recommendedRuntimeVersion: string;
+  deploymentVersion: string;
   canManage: boolean;
 }
 
@@ -42,6 +43,7 @@ export const DEFAULT_BRANDING: PlatformBranding = {
   domain: null,
   mcpBaseUrl: '',
   recommendedRuntimeVersion: '0.2.125',
+  deploymentVersion: 'x.x.x',
   canManage: false,
 };
 

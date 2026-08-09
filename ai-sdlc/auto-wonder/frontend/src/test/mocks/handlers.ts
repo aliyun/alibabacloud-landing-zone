@@ -13,6 +13,8 @@ export const handlers = [
         primaryColor: '#f97316',
         domain: 'https://community.example',
         mcpBaseUrl: 'https://community.example/api/mcp',
+        recommendedRuntimeVersion: '0.2.125',
+        deploymentVersion: 'x.x.x',
         canManage: false,
       },
       traceId: 'trace-branding',

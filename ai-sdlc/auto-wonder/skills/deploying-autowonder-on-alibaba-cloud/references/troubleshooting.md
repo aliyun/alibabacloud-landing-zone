@@ -70,6 +70,17 @@ fails. **Safe fix:** regenerate from the exact Terraform variable name and run
 `runtime-config`; it rejects empty values before upload. Use `--config-only`
 after correction. **Resume:** environment synchronization.
 
+### Upgrade Plan Reports Shell Locals As Missing Environment
+
+**Symptom:** `plan-upgrade.sh` blocks on names such as `IFS`, `LC_ALL`,
+`SCRIPT_DIR`, `TEMP_FILES`, or `TEMP_DIRS`. **Cause:** an old planner treated
+uppercase Shell assignments as application environment declarations. **Safe
+fix:** use the source-aware planner that reads `KEY=...` only from
+`application.env.example` and reads only explicit `${KEY...}` references from
+scripts and other configuration sources, then regenerate the plan. **Unsafe:**
+adding these Shell-local names to `/etc/autowonder/autowonder.env` or manually
+deleting the blocked reasons. **Resume:** upgrade planning and risk review.
+
 ### SecretCrypto Key Contains A Line Break
 
 **Symptom:** Java rejects the master key although a permissive local decoder

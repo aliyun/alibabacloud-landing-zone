@@ -63,16 +63,20 @@ pending="$work_dir/pending.json"; blocked="$work_dir/blocked.txt"
 : >"$blocked"
 
 collect_env_contract() {
-  local commit=$1 output=$2 raw="$work_dir/env-raw-$3" path key key_file
+  local commit=$1 output=$2 raw="$work_dir/env-raw-$3" path pattern key key_file
   : >"$raw"; : >"$output"
   while IFS= read -r path; do
     case "$path" in
-      src/main/resources/application*.yml|docs/community/application.env.example|skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
-        git -C "$source_dir" show "$commit:./$path" 2>/dev/null |
-          grep -Eo '\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}|^[A-Z][A-Z0-9_]*=.*$' 2>/dev/null |
-          sed -E 's/^\$\{//; s/\}$//' |
-          awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true;;
+      docs/community/application.env.example)
+        pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}|^[A-Z][A-Z0-9_]*=.*$';;
+      src/main/resources/application*.yml|skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
+        pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}';;
+      *) continue;;
     esac
+    git -C "$source_dir" show "$commit:./$path" 2>/dev/null |
+      grep -Eo "$pattern" 2>/dev/null |
+      sed -E 's/^\$\{//; s/\}$//' |
+      awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true
   done < <(git -C "$source_dir" ls-tree -r --name-only "$commit" -- .)
   cut -f1 "$raw" | LC_ALL=C sort -u | while IFS= read -r key; do
     [[ -n "$key" ]] || continue
@@ -90,9 +94,37 @@ removed_env=$(comm -23 "$old_keys" "$new_keys" | jq -Rsc 'split("\n") | map(sele
 changed_env=$(join -t $'\t' "$old_env" "$new_env" | awk -F '\t' '$2 != $3 {print $1}' |
   jq -Rsc 'split("\n") | map(select(length > 0))')
 
+runtime_manages_env_key() {
+  case "$1" in
+    AUTOWONDER_SECRET_MASTER_KEY|AUTOWONDER_JWT_SECRET|AUTOWONDER_PUBLIC_BASE_URL|AUTOWONDER_RUNTIME_RECOMMENDED_VERSION|AUTOWONDER_VERSION)
+      return 0;;
+    *)
+      return 1;;
+  esac
+}
+
+candidate_s3_enabled=false
+if [[ -n "$env_file" ]]; then
+  candidate_s3_enabled=$(unquote_simple "$(env_raw_value "$env_file" S3_ENABLED)" |
+    tr '[:upper:]' '[:lower:]')
+fi
+
+upgrade_requires_env_key() {
+  runtime_manages_env_key "$1" && return 1
+  case "$1" in
+    S3_ENDPOINT|S3_ACCESS_KEY_ID|S3_ACCESS_KEY_SECRET)
+      [[ "$candidate_s3_enabled" == true ]];;
+    S3_ENABLED|S3_PUBLIC_ENDPOINT|S3_REGION)
+      return 1;;
+    *)
+      return 0;;
+  esac
+}
+
 if [[ -n "$env_file" ]]; then
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
+    upgrade_requires_env_key "$key" || continue
     raw=$(env_raw_value "$env_file" "$key")
     if [[ -z "$raw" || "$raw" == "''" || "$raw" == '""' ]]; then
       printf 'required environment value missing: %s\n' "$key" >>"$blocked"

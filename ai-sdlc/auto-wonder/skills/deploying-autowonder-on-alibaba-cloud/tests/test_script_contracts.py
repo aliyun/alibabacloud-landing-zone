@@ -314,6 +314,30 @@ JSON
                 version_lines,
             )
 
+    def test_runtime_config_replaces_stale_application_version(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            data = json.loads(manifest.read_text())
+            data["releaseVersion"] = "0.4.0"
+            manifest.write_text(json.dumps(data))
+            env_file = self.write_env(
+                root / "autowonder.env",
+                {"AUTOWONDER_VERSION": "0.3.5"},
+            )
+
+            result = subprocess.run([
+                str(ROOT / "scripts/initialize-and-verify.sh"), "runtime-config",
+                "--manifest", str(manifest), "--env-file", str(env_file),
+            ], text=True, capture_output=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            version_lines = [
+                line for line in env_file.read_text().splitlines()
+                if line.startswith("AUTOWONDER_VERSION=")
+            ]
+            self.assertEqual(["AUTOWONDER_VERSION=0.4.0"], version_lines)
+
     def test_runtime_config_rejects_public_service_oss_endpoint(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -538,6 +562,7 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
 
             (product / "target").mkdir()
             (product / "target/auto-wonder.jar").write_bytes(b"test-jar")
+            (product / "VERSION").write_text("0.4.0\n")
             (product / "docs/migration").mkdir(parents=True)
             (product / "docs/autowonder-schema.sql").write_text("SELECT 1;\n")
             (product / "docs/autowonder-community-templates.sql").write_text("SELECT 1;\n")
@@ -595,6 +620,7 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(product.resolve(), Path(mvn_pwd.read_text().strip()).resolve())
             self.assertTrue((output / "autowonder-migrations.tar.gz").is_file())
+            self.assertEqual("0.4.0", json.loads(manifest.read_text())["releaseVersion"])
 
     def test_preflight_supports_explicit_credential_profile(self):
         text = (ROOT / "scripts/preflight.sh").read_text()
@@ -906,6 +932,7 @@ esac
             "stateMode": "local", "lifecycle": "persistent", "executionMode": "staged",
             "ingressScenario": "no-domain-no-certificate", "domain": "", "publicSourceCidrs": ["198.51.100.0/24"],
             "applicationBaseUrl": "http://public-nlb.example.com",
+            "releaseVersion": "0.4.0",
             "recommendedRuntimeVersion": "0.2.125",
             "slsEnabled": True, "aoneEnabled": False, "publicEgress": False,
             "adminUsername": "admin", "organizationName": "Example", "repositoryUrl": "local",

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Typography, Avatar, Spin } from 'antd';
 import { RobotOutlined, UserOutlined } from '@ant-design/icons';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
+import { CopyContentMenu } from '@/shared/ui/CopyContentMenu';
 import type { Artifact, Participant, TimelineItem } from '@/shared/types/workitem';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 
@@ -58,6 +59,9 @@ function CommentCard({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <Text strong style={{ fontSize: 13 }}>{item.authorName || '未知'}</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>{formatTime(item.gmtCreate)}</Text>
+          <span style={{ marginLeft: 'auto' }}>
+            <CopyContentMenu contentMd={item.content} tooltip="复制评论" />
+          </span>
         </div>
         <div style={{ background: '#fafafa', borderRadius: 6, padding: '8px 12px' }}>
           <MarkdownView
@@ -84,6 +88,9 @@ function CommentCard({
               {interaction.repliedAt && (
                 <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(interaction.repliedAt)}</Text>
               )}
+              <span style={{ marginLeft: 'auto' }}>
+                <CopyContentMenu contentMd={interaction.replyContent} tooltip="复制回复" />
+              </span>
             </div>
             <MarkdownView
               content={interaction.replyContent}
