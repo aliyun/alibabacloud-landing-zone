@@ -13,6 +13,8 @@
 
 - Adds an optional standard S3-compatible storage backend for self-managed
   deployments while retaining OSS as the Alibaba Cloud deployment default.
+- Exposes the complete S3 runtime configuration in `application.yml`; S3 remains
+  disabled by default and path-style addressing remains fixed on.
 - Shows the deployed Community version on the About page.
 - Adds Markdown and plain-text copy actions to work-item content and comments.
 - Includes the bounded local-log retention fix in the full master baseline.
@@ -27,6 +29,8 @@
   `AUTOWONDER_VERSION` into the protected runtime environment file.
 - Prevents deployment-managed environment values from becoming false blockers
   during pre-generation upgrade planning.
+- Keeps optional S3 values non-blocking for OSS upgrades while requiring endpoint
+  and credentials whenever the candidate environment explicitly enables S3.
 
 ## Upgrade And Data Impact
 
@@ -39,9 +43,9 @@
 
 ## Verification
 
-- Maven production build and 1,854 backend tests passed.
+- Maven production build and 1,855 backend tests passed.
 - 89 frontend test files and 547 tests passed; lint had zero errors.
-- 82 deployment Skill tests passed.
+- 84 deployment Skill tests passed.
 - Dependency and active-runtime internal-reference scans passed.
 
 ## Handoff

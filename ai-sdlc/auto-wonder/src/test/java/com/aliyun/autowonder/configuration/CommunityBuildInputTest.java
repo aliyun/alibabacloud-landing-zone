@@ -49,6 +49,23 @@ class CommunityBuildInputTest {
         assertTrue(environment.contains("allowPublicKeyRetrieval=true"));
     }
 
+    @Test
+    void applicationConfigurationExposesS3EnvironmentContract() throws Exception {
+        String application = Files.readString(Path.of("src/main/resources/application.yml"));
+
+        for (String setting : List.of(
+                "s3:",
+                "enabled: ${S3_ENABLED:false}",
+                "endpoint: ${S3_ENDPOINT:}",
+                "public-endpoint: ${S3_PUBLIC_ENDPOINT:}",
+                "region: ${S3_REGION:us-east-1}",
+                "access-key-id: ${S3_ACCESS_KEY_ID:}",
+                "access-key-secret: ${S3_ACCESS_KEY_SECRET:}",
+                "force-path-style: true")) {
+            assertTrue(application.contains(setting), () -> "missing S3 configuration: " + setting);
+        }
+    }
+
     private static String activeApplicationConfiguration() throws Exception {
         try (Stream<Path> paths = Files.list(Path.of("src/main/resources"))) {
             return paths.filter(path -> path.getFileName().toString().matches("application.*\\.yml"))

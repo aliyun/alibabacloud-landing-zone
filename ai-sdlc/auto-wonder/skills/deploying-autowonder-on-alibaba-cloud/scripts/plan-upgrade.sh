@@ -103,10 +103,28 @@ runtime_manages_env_key() {
   esac
 }
 
+candidate_s3_enabled=false
+if [[ -n "$env_file" ]]; then
+  candidate_s3_enabled=$(unquote_simple "$(env_raw_value "$env_file" S3_ENABLED)" |
+    tr '[:upper:]' '[:lower:]')
+fi
+
+upgrade_requires_env_key() {
+  runtime_manages_env_key "$1" && return 1
+  case "$1" in
+    S3_ENDPOINT|S3_ACCESS_KEY_ID|S3_ACCESS_KEY_SECRET)
+      [[ "$candidate_s3_enabled" == true ]];;
+    S3_ENABLED|S3_PUBLIC_ENDPOINT|S3_REGION)
+      return 1;;
+    *)
+      return 0;;
+  esac
+}
+
 if [[ -n "$env_file" ]]; then
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
-    runtime_manages_env_key "$key" && continue
+    upgrade_requires_env_key "$key" || continue
     raw=$(env_raw_value "$env_file" "$key")
     if [[ -z "$raw" || "$raw" == "''" || "$raw" == '""' ]]; then
       printf 'required environment value missing: %s\n' "$key" >>"$blocked"

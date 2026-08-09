@@ -189,6 +189,40 @@ class UpgradePlanTest(unittest.TestCase):
         )
         self.assertEqual([], plan["upgrade"]["blockedReasons"])
 
+    def test_disabled_s3_environment_does_not_block_oss_upgrade(self):
+        self.publish_s3_target()
+        env_file = self.root / "candidate.env"
+        env_file.write_text("OLD_ENV=configured\n", encoding="utf-8")
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+
+        result = self.run_plan(manifest, "--env-file", str(env_file))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        plan = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertIn("S3_ENABLED", plan["upgrade"]["environment"]["added"])
+        self.assertEqual([], plan["upgrade"]["blockedReasons"])
+
+    def test_enabled_s3_requires_endpoint_and_credentials(self):
+        self.publish_s3_target()
+        env_file = self.root / "candidate.env"
+        env_file.write_text("OLD_ENV=configured\nS3_ENABLED=true\n", encoding="utf-8")
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+
+        result = self.run_plan(manifest, "--env-file", str(env_file))
+
+        self.assertNotEqual(0, result.returncode)
+        plan = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [
+                "required environment value missing: S3_ACCESS_KEY_ID",
+                "required environment value missing: S3_ACCESS_KEY_SECRET",
+                "required environment value missing: S3_ENDPOINT",
+            ],
+            plan["upgrade"]["blockedReasons"],
+        )
+
     def test_shell_locals_are_not_application_environment_contract(self):
         self.write(
             "skills/deploying-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",
@@ -225,6 +259,26 @@ printf '%s' "${REAL_SCRIPT_ENV:-}"
             plan["upgrade"]["environment"]["added"],
         )
         self.assertEqual([], plan["upgrade"]["blockedReasons"])
+
+    def publish_s3_target(self):
+        self.write(
+            "src/main/resources/application.yml",
+            """service:
+  value: ${OLD_ENV:old}
+s3:
+  enabled: ${S3_ENABLED:false}
+  endpoint: ${S3_ENDPOINT:}
+  public-endpoint: ${S3_PUBLIC_ENDPOINT:}
+  region: ${S3_REGION:us-east-1}
+  access-key-id: ${S3_ACCESS_KEY_ID:}
+  access-key-secret: ${S3_ACCESS_KEY_SECRET:}
+  force-path-style: true
+""",
+        )
+        self.git("add", ".")
+        self.git("commit", "-m", "add optional S3 configuration")
+        self.git("push", "origin", "community")
+        self.git("reset", "--hard", self.old_commit)
 
     def test_rejects_dirty_tracked_source(self):
         self.publish_target()

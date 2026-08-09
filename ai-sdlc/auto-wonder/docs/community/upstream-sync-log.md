@@ -68,13 +68,32 @@ executor regression. S3 implementation files and all work-item copy production
 files match master; documented differences are limited to Community deployment,
 storage-safety, SecretCrypto, external-domain, and test-isolation boundaries.
 
+A follow-up configuration-key audit found that the initial conflict resolution
+had omitted master's `s3:` block from `application.yml`, despite correctly merging
+`S3Properties` and the implementation. Commit
+`aa4dec9e2a2870b6ccde420b76814efb92b15fbf` restores every S3 key, keeps S3 disabled
+by default, exposes only the enable switch and connection values as environment
+bindings, and fixes upgrade planning so disabled S3 does not impose credentials
+on OSS deployments while enabled S3 still requires its endpoint and AK/SK. This
+finding supersedes the initial no-omission conclusion above.
+
+The corrective re-review covered all 20 commits and 35 changed paths: 19 paths
+now match master exactly; the remaining 16 were individually inspected and are
+limited to the documented Community boundaries for excluded `docs/superpowers`
+records, SecretCrypto/schema text, external branding/domain fixtures, public
+build dependencies, mandatory persistent storage, external SLS configuration,
+the adapted S3 guide, and their tests. No second unexplained feature or
+configuration deviation was found. The sync guide now requires a per-key review
+of configuration files, properties classes, environment templates, deployment
+scripts, and upgrade planning.
+
 Verification completed after the merge:
 
-- Maven `clean verify` packaged production frontend assets; the final backend
-  suite passed all 1,854 tests after adding the Community S3 wiring contract.
+- Maven `clean verify` packaged production frontend assets; the corrective
+  backend suite passed all 1,855 tests after adding the S3 configuration contract.
 - Frontend: 89 test files and 547 tests passed; lint completed with zero errors
   and two existing hook warnings; the production build completed in Maven.
-- Deployment Skill: 82 tests passed.
+- Deployment Skill: 84 tests passed.
 - Dependency tree and active runtime inputs contain no prohibited internal
   dependency or domain; excluded documents are absent.
 - The first standalone frontend attempt was discarded because Maven's cached x64
