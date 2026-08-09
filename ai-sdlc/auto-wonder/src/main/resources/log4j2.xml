@@ -12,9 +12,20 @@
                      filePattern="logs/auto-wonder-%d{yyyy-MM-dd}-%i.log.gz">
             <PatternLayout pattern="${system_log_pattern}"/>
             <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
                 <SizeBasedTriggeringPolicy size="50MB"/>
             </Policies>
-            <DefaultRolloverStrategy max="5"/>
+            <DefaultRolloverStrategy max="5">
+                <Delete basePath="logs" maxDepth="1" followLinks="false">
+                    <SortByModificationTime recentFirst="true"/>
+                    <IfFileName glob="auto-wonder-*.log.gz">
+                        <IfAny>
+                            <IfLastModified age="P14D"/>
+                            <IfAccumulatedFileSize exceeds="5 GB"/>
+                        </IfAny>
+                    </IfFileName>
+                </Delete>
+            </DefaultRolloverStrategy>
         </RollingFile>
 
         <RoagLoghub name="Loghub"

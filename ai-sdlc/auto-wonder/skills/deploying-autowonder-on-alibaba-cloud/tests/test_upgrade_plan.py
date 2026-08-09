@@ -161,6 +161,43 @@ class UpgradePlanTest(unittest.TestCase):
             plan["upgrade"]["environmentPlanSha256"],
         )
 
+    def test_shell_locals_are_not_application_environment_contract(self):
+        self.write(
+            "skills/deploying-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",
+            """#!/usr/bin/env bash
+SCRIPT_DIR=$(pwd)
+TEMP_DIRS=()
+LC_ALL=C sort </dev/null
+IFS= read -r value </dev/null || true
+printf '%s' "${REAL_SCRIPT_ENV:-}"
+""",
+        )
+        self.write(
+            "docs/community/application.env.example",
+            "OLD_ENV=\nDECLARED_ENV=\n",
+        )
+        self.git("add", ".")
+        self.git("commit", "-m", "add runtime environment contract")
+        self.git("push", "origin", "community")
+        self.git("reset", "--hard", self.old_commit)
+        env_file = self.root / "candidate.env"
+        env_file.write_text(
+            "DECLARED_ENV=configured\nREAL_SCRIPT_ENV=configured\n",
+            encoding="utf-8",
+        )
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+
+        result = self.run_plan(manifest, "--env-file", str(env_file))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        plan = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ["DECLARED_ENV", "REAL_SCRIPT_ENV"],
+            plan["upgrade"]["environment"]["added"],
+        )
+        self.assertEqual([], plan["upgrade"]["blockedReasons"])
+
     def test_rejects_dirty_tracked_source(self):
         self.publish_target()
         self.write("docs/community/application.env.example", "DIRTY=true\n")

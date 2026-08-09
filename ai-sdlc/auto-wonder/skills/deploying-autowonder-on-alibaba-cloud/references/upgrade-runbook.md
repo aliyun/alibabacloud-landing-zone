@@ -163,6 +163,9 @@ include:
 2. changed files and an ancestry result;
 3. environment variables referenced by `application*.yml`, the community env
    template, deployment manifest, systemd unit, and Skill scripts at both commits;
+   parse `KEY=...` declarations only from the env template and `${KEY...}`
+   references from other sources; never treat Shell assignments as application
+   environment variables;
 4. added, removed, or default-changed variables and the source file for each;
 5. added, modified, or deleted `docs/migration/*.sql` files;
 6. changes to ports, health probes, OSS/SLS endpoints, credentials, Java/Node/

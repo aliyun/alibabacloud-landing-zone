@@ -14,6 +14,41 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## History
 
+### 2026-08-09: selective local-log retention fix
+
+| Field | Commit |
+| --- | --- |
+| Full synchronized master baseline (unchanged) | `3262a46f66ac5087261429250091bfea5a61d12b` |
+| Community before selective fix | `a6c94b9674193c65ba09314bebc06cbfb1bcfe6d` |
+| Reviewed master head / fix parent | `b1916d4b5732854278b34da14bc03e7379ac8ad6` |
+| Internal fix commit | `73dec919b86bbf07a91f8886e6b817d35dafbfae` |
+| Community cherry-pick commit | `d0416ecbc041b476faedf6e2d28718cfcddad2b5` |
+
+Scope: a selective operational safety fix adds daily rolling and a Log4j2
+`Delete` action to the existing 50 MB local file rollover. Only matching
+`auto-wonder-*.log.gz` archives are considered; archives older than 14 days or
+outside the newest cumulative 5 GB are deleted on rollover. The active log,
+unrelated files, nested paths, and link targets are excluded.
+
+The Community SLS appender and all external configuration remain unchanged. The
+deployment QA now documents application-file retention and keeps systemd journal
+retention as a separate host responsibility. No environment variable, database,
+migration, infrastructure, executor, frontend, or internal-dependency boundary
+changed, so no deployment Skill flow or environment template update is needed.
+
+This is not a complete merge of commits after `3262a46f`; the Current Baseline
+therefore remains unchanged. Review compared the selected implementation and
+test with the internal fix byte-for-byte and confirmed that no master-only
+design/plan document entered the Community output.
+
+Verification completed after the selective sync:
+
+- Backend: 1,829 tests passed.
+- Deployment Skill: 80 tests passed.
+- Log4j2 emitted no plugin-resolution error for the new rollover components.
+- Deployment and environment contracts were unchanged; the focused LocalFile
+  implementation and regression test match the internal fix.
+
 ### 2026-08-07: `484a30c1` to `3262a46f`
 
 | Field | Commit |

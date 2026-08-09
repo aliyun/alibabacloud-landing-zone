@@ -63,16 +63,20 @@ pending="$work_dir/pending.json"; blocked="$work_dir/blocked.txt"
 : >"$blocked"
 
 collect_env_contract() {
-  local commit=$1 output=$2 raw="$work_dir/env-raw-$3" path key key_file
+  local commit=$1 output=$2 raw="$work_dir/env-raw-$3" path pattern key key_file
   : >"$raw"; : >"$output"
   while IFS= read -r path; do
     case "$path" in
-      src/main/resources/application*.yml|docs/community/application.env.example|skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
-        git -C "$source_dir" show "$commit:./$path" 2>/dev/null |
-          grep -Eo '\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}|^[A-Z][A-Z0-9_]*=.*$' 2>/dev/null |
-          sed -E 's/^\$\{//; s/\}$//' |
-          awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true;;
+      docs/community/application.env.example)
+        pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}|^[A-Z][A-Z0-9_]*=.*$';;
+      src/main/resources/application*.yml|skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
+        pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}';;
+      *) continue;;
     esac
+    git -C "$source_dir" show "$commit:./$path" 2>/dev/null |
+      grep -Eo "$pattern" 2>/dev/null |
+      sed -E 's/^\$\{//; s/\}$//' |
+      awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true
   done < <(git -C "$source_dir" ls-tree -r --name-only "$commit" -- .)
   cut -f1 "$raw" | LC_ALL=C sort -u | while IFS= read -r key; do
     [[ -n "$key" ]] || continue
