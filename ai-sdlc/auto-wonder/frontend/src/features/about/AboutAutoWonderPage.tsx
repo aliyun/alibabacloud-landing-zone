@@ -1,4 +1,6 @@
 import './AboutAutoWonderPage.css';
+import { useQuery } from '@tanstack/react-query';
+import { BRANDING_QUERY_KEY, DEFAULT_BRANDING, getPublicBranding } from '@/features/platform/brandingApi';
 
 const roleBadges = [
   { label: 'PM', className: 'about-aw-role-pm' },
@@ -82,6 +84,13 @@ const principles = [
 ];
 
 export function AboutAutoWonderPage() {
+  const { data: branding } = useQuery({
+    queryKey: BRANDING_QUERY_KEY,
+    queryFn: getPublicBranding,
+  });
+  const deploymentVersion =
+    branding?.deploymentVersion?.trim() || DEFAULT_BRANDING.deploymentVersion;
+
   return (
     <div className="about-aw-page">
       <span className="about-aw-sr-only">关于 AutoWonder</span>
@@ -102,6 +111,7 @@ export function AboutAutoWonderPage() {
             <div className="about-aw-primary-cta">5 分钟理解工作流</div>
             <div className="about-aw-secondary-cta">从工单到产物的自动交付闭环</div>
           </div>
+          <div className="about-aw-version-pill">当前部署版本：{deploymentVersion}</div>
         </div>
 
         <div className="about-aw-preview-wrap">

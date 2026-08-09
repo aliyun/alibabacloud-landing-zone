@@ -13,5 +13,6 @@ public class PlatformBrandingVO {
     private String domain;
     private String mcpBaseUrl;
     private String recommendedRuntimeVersion;
+    private String deploymentVersion;
     private boolean canManage;
 }

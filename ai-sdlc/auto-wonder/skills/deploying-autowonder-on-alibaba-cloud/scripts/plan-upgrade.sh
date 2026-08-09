@@ -94,9 +94,19 @@ removed_env=$(comm -23 "$old_keys" "$new_keys" | jq -Rsc 'split("\n") | map(sele
 changed_env=$(join -t $'\t' "$old_env" "$new_env" | awk -F '\t' '$2 != $3 {print $1}' |
   jq -Rsc 'split("\n") | map(select(length > 0))')
 
+runtime_manages_env_key() {
+  case "$1" in
+    AUTOWONDER_SECRET_MASTER_KEY|AUTOWONDER_JWT_SECRET|AUTOWONDER_PUBLIC_BASE_URL|AUTOWONDER_RUNTIME_RECOMMENDED_VERSION|AUTOWONDER_VERSION)
+      return 0;;
+    *)
+      return 1;;
+  esac
+}
+
 if [[ -n "$env_file" ]]; then
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
+    runtime_manages_env_key "$key" && continue
     raw=$(env_raw_value "$env_file" "$key")
     if [[ -z "$raw" || "$raw" == "''" || "$raw" == '""' ]]; then
       printf 'required environment value missing: %s\n' "$key" >>"$blocked"

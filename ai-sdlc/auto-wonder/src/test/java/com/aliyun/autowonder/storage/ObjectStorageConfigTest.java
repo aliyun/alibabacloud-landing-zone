@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 
@@ -92,9 +93,34 @@ class ObjectStorageConfigTest {
         new ApplicationContextRunner()
                 .withUserConfiguration(ObjectStorageConfig.class)
                 .withBean(OssProperties.class, ObjectStorageConfigTest::validProperties)
-                .withPropertyValues("autowonder.public-base-url=https://community.example.com")
+                .withBean(S3Properties.class, S3Properties::new)
+                .withPropertyValues(
+                        "oss.enabled=true",
+                        "s3.enabled=false",
+                        "autowonder.public-base-url=https://community.example.com")
                 .run(context -> {
                     assertThat(context).hasSingleBean(ObjectStorage.class);
+                    assertThat(context).doesNotHaveBean("inMemoryObjectStorage");
+                });
+    }
+
+    @Test
+    void contextCreatesExactlyOneS3StorageAndNoInMemoryFallback() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(ObjectStorageConfig.class)
+                .withBean(OssProperties.class, () -> {
+                    OssProperties props = validProperties();
+                    props.setEnabled(false);
+                    return props;
+                })
+                .withBean(S3Properties.class, ObjectStorageConfigTest::s3Properties)
+                .withPropertyValues(
+                        "oss.enabled=false",
+                        "s3.enabled=true",
+                        "autowonder.public-base-url=https://community.example.com")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(ObjectStorage.class);
+                    assertThat(context).getBean(ObjectStorage.class).isInstanceOf(S3ObjectStorage.class);
                     assertThat(context).doesNotHaveBean("inMemoryObjectStorage");
                 });
     }
@@ -131,6 +157,42 @@ class ObjectStorageConfigTest {
                 () -> config.aliyunObjectStorage(props));
 
         assertEquals("oss.public-endpoint must be externally reachable", error.getMessage());
+    }
+
+    @Test
+    void buildsS3ObjectStorageWhenConfigured() {
+        S3Properties props = s3Properties();
+        OssProperties oss = new OssProperties();
+        oss.setEnabled(false);
+
+        ObjectStorage storage = config.s3ObjectStorage(props, oss);
+
+        assertInstanceOf(S3ObjectStorage.class, storage);
+    }
+
+    @Test
+    void rejectsWhenBothOssAndS3Enabled() {
+        S3Properties s3 = s3Properties();
+        OssProperties oss = new OssProperties();
+        oss.setEnabled(true);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> config.s3ObjectStorage(s3, oss));
+
+        assertEquals("oss.enabled and s3.enabled are mutually exclusive; disable one storage backend",
+                error.getMessage());
+    }
+
+    private static S3Properties s3Properties() {
+        S3Properties props = new S3Properties();
+        props.setEnabled(true);
+        props.setEndpoint("http://minio-internal.example.com:9000");
+        props.setPublicEndpoint("http://minio.example.com:9000");
+        props.setRegion("us-east-1");
+        props.setAccessKeyId("test-access-key-id");
+        props.setAccessKeySecret("test-access-key-secret");
+        props.setForcePathStyle(true);
+        return props;
     }
 
     private static OssProperties ossProperties(String endpoint, String publicEndpoint) {

@@ -161,6 +161,34 @@ class UpgradePlanTest(unittest.TestCase):
             plan["upgrade"]["environmentPlanSha256"],
         )
 
+    def test_runtime_managed_environment_does_not_block_upgrade_plan(self):
+        self.write(
+            "src/main/resources/application.yml",
+            "service:\n  value: ${OLD_ENV:old}\n  version: ${AUTOWONDER_VERSION:x.x.x}\n",
+        )
+        self.write(
+            "docs/community/application.env.example",
+            "OLD_ENV=\nAUTOWONDER_VERSION=x.x.x\n",
+        )
+        self.git("add", ".")
+        self.git("commit", "-m", "add managed application version")
+        self.git("push", "origin", "community")
+        self.git("reset", "--hard", self.old_commit)
+        env_file = self.root / "candidate.env"
+        env_file.write_text("OLD_ENV=configured\n", encoding="utf-8")
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+
+        result = self.run_plan(manifest, "--env-file", str(env_file))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        plan = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(
+            ["AUTOWONDER_VERSION"],
+            plan["upgrade"]["environment"]["added"],
+        )
+        self.assertEqual([], plan["upgrade"]["blockedReasons"])
+
     def test_shell_locals_are_not_application_environment_contract(self):
         self.write(
             "skills/deploying-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",

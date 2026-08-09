@@ -84,6 +84,19 @@
   font-weight: 700;
 }
 
+.about-aw-version-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 16px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .about-aw-preview-wrap {
   position: relative;
   height: 360px;

@@ -11,6 +11,7 @@ import org.springframework.util.StringUtils;
 @Getter
 @Setter
 public class OssProperties {
+    private boolean enabled = true;
     private String endpoint;
     /** Public endpoint used only for URLs consumed outside the server VPC. */
     private String publicEndpoint;

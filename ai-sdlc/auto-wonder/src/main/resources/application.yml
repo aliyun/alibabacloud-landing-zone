@@ -26,6 +26,7 @@ server:
     max-connections: 1000
 
 oss:
+  enabled: ${OSS_ENABLED:true}
   endpoint: ${OSS_ENDPOINT:}
   public-endpoint: ${OSS_PUBLIC_ENDPOINT:}
   bucket: ${OSS_BUCKET:}
@@ -36,6 +37,7 @@ oss:
   skill-bucket: ${OSS_SKILL_BUCKET:${OSS_BUCKET:}}
 
 autowonder:
+  version: ${AUTOWONDER_VERSION:x.x.x}
   public-base-url: ${AUTOWONDER_PUBLIC_BASE_URL:http://localhost:7001}
   runtime:
     recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.125}

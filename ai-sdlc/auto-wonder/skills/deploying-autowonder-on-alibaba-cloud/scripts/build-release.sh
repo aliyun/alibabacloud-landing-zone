@@ -28,6 +28,10 @@ actual=$(git -C "$source_dir" rev-parse HEAD)
 expected=$(json_string "$manifest" '.repositoryCommit')
 [[ "$expected" == HEAD || "$actual" == "$expected" ]] || die "source commit does not match manifest"
 git -C "$source_dir" merge-base --is-ancestor "$actual" "$actual" || die "commit is unavailable"
+version_file="$source_dir/VERSION"; require_file "$version_file"
+release_version=$(tr -d '\r\n' <"$version_file")
+[[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+  || die "VERSION must contain a semantic version"
 (cd "$source_dir" && mvn -DskipGitCommitId=true -DskipFrontend=false clean verify)
 jar="$source_dir/target/auto-wonder.jar"; schema="$source_dir/docs/autowonder-schema.sql"
 templates="$source_dir/docs/autowonder-community-templates.sql"
@@ -48,8 +52,8 @@ migrations_hash=$(sha256_file "$output_dir/autowonder-migrations.tar.gz")
 jar_size=$(wc -c <"$output_dir/auto-wonder.jar" | tr -d ' '); schema_size=$(wc -c <"$output_dir/autowonder-schema.sql" | tr -d ' ')
 templates_size=$(wc -c <"$output_dir/autowonder-community-templates.sql" | tr -d ' ')
 migrations_size=$(wc -c <"$output_dir/autowonder-migrations.tar.gz" | tr -d ' ')
-atomic_jq "$manifest" --arg commit "$actual" --arg jarHash "$jar_hash" --arg schemaHash "$schema_hash" --arg templatesHash "$templates_hash" --arg migrationsHash "$migrations_hash" \
+atomic_jq "$manifest" --arg commit "$actual" --arg releaseVersion "$release_version" --arg jarHash "$jar_hash" --arg schemaHash "$schema_hash" --arg templatesHash "$templates_hash" --arg migrationsHash "$migrations_hash" \
   --argjson jarSize "$jar_size" --argjson schemaSize "$schema_size" --argjson templatesSize "$templates_size" --argjson migrationsSize "$migrations_size" --arg dir "$output_dir" \
-  '.repositoryCommit=$commit | .artifacts={releaseDirectory:$dir,jar:{name:"auto-wonder.jar",sha256:$jarHash,size:$jarSize},schema:{name:"autowonder-schema.sql",sha256:$schemaHash,size:$schemaSize},templates:{name:"autowonder-community-templates.sql",sha256:$templatesHash,size:$templatesSize},migrations:{name:"autowonder-migrations.tar.gz",sha256:$migrationsHash,size:$migrationsSize}} | .phase="build" | .status="sealed"'
+  '.repositoryCommit=$commit | .releaseVersion=$releaseVersion | .artifacts={releaseDirectory:$dir,jar:{name:"auto-wonder.jar",sha256:$jarHash,size:$jarSize},schema:{name:"autowonder-schema.sql",sha256:$schemaHash,size:$schemaSize},templates:{name:"autowonder-community-templates.sql",sha256:$templatesHash,size:$templatesSize},migrations:{name:"autowonder-migrations.tar.gz",sha256:$migrationsHash,size:$migrationsSize}} | .phase="build" | .status="sealed"'
 printf 'JAR %s bytes SHA256 %s\nSchema %s bytes SHA256 %s\nTemplates %s bytes SHA256 %s\nMigrations %s bytes SHA256 %s\n' \
   "$jar_size" "$jar_hash" "$schema_size" "$schema_hash" "$templates_size" "$templates_hash" "$migrations_size" "$migrations_hash"

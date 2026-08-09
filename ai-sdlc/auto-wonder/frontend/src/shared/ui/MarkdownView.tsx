@@ -12,16 +12,16 @@ interface MarkdownViewProps {
   onArtifactClick?: (artifact: Artifact) => void;
 }
 
-const allowedElements = [
+export const markdownAllowedElements = [
   'article', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'ul', 'ol', 'li', 'a', 'strong', 'em', 'code', 'pre',
   'blockquote', 'hr', 'br', 'table', 'thead', 'tbody',
   'tr', 'th', 'td', 'del', 'span',
 ];
 
-const sanitizeSchema = {
+export const markdownSanitizeSchema = {
   ...defaultSchema,
-  tagNames: allowedElements,
+  tagNames: markdownAllowedElements,
   attributes: {
     ...defaultSchema.attributes,
     a: ['href', 'target', 'rel', 'title'],
@@ -110,7 +110,7 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
       }}
     >
       <ReactMarkdown
-        allowedElements={allowedElements}
+        allowedElements={markdownAllowedElements}
         components={{
           code: ({ node: _node, className, children, ...props }) => {
             const label = childrenText(children);
@@ -154,7 +154,7 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
             );
           },
         }}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
         unwrapDisallowed
       >
         {renderedContent}
