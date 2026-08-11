@@ -8,11 +8,63 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `d5e36283e513c86a92241c50bb84bd129bf02f20`
-- Community merge commit: `0c03717b14fb955d67a8a01ea066289d777848d0`
-- Synchronized at: 2026-08-09 (Asia/Shanghai)
+- Synchronized `origin/master`: `d47d172129e4edaef4509148e6d5321200bc5e7d`
+- Community merge commit: `6f14874601a30c5c9db12433c4efe852c29912ca`
+- Synchronized at: 2026-08-11 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-11: `d5e36283` to `d47d1721`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `d5e36283e513c86a92241c50bb84bd129bf02f20` |
+| Community before merge | `de5913a1944a8d3bb7255f66f6c7cb303ca7f22b` |
+| Merged `origin/master` | `d47d172129e4edaef4509148e6d5321200bc5e7d` |
+| Resulting merge commit | `6f14874601a30c5c9db12433c4efe852c29912ca` |
+
+Scope: 29 upstream commits and 44 final changed paths. This sync adds visible
+human-intervention markers to work-item views, published-workitem workspace
+cleanup with three-day retention, Unicode artifact paths, detailed SDLC deletion
+reference errors, assignment fallback to the work-item type's default SDLC, and
+clearer memory MCP arguments. The recommended executor runtime advances to
+`0.2.130`.
+
+Two textual conflicts and seven automatically overlapping files were reviewed.
+Executor tests retain Community's Qoder-only creation boundary while accepting
+the runtime update. `application.yml` retains external SecretCrypto, OSS/S3/SLS,
+optional Aone, SIGAR, and public-base configuration while accepting `0.2.130`.
+Branding, artifact, IM, and notification overlaps retain external domain, bucket,
+and encryption adapters without dropping upstream behavior. The clarification
+detail test remains aligned with the enabled Community production flag. Review
+also found and fixed two no-op regex escapes in the new human-intervention badge
+that caused the upstream frontend lint gate to fail.
+
+Deployment review found no topology, credential, port, endpoint, database, or
+environment-template change. The runtime version is a deployment contract, so
+the Skill manifest, input catalog, and tests were updated from `0.2.125` to
+`0.2.130`. No DDL changed and no new file is required under `docs/migration/`.
+The configuration-key audit found no other added, removed, renamed, or
+default-changed application key requiring a Community adaptation.
+
+Independent review proved the exact master baseline is an ancestor of Community
+and accounted for every changed path. Of 44 upstream paths, 34 match master
+exactly; the other ten are the nine documented Community deployment, Qoder-only,
+SecretCrypto, storage, domain, and test-fixture boundaries plus the lint fix.
+No lost feature, unexplained configuration difference, internal dependency,
+excluded documentation, migration omission, or unintended product divergence
+was found.
+
+Verification completed after the merge:
+
+- Maven `clean verify` packaged the production frontend and passed 1,871 backend
+  tests.
+- Frontend passed 90 test files and 586 tests; lint completed with zero errors
+  and two existing hook warnings. The badge regression suite passed all 26 tests
+  after the lint fix.
+- Deployment Skill passed all 85 tests.
+- Dependency-tree, internal-reference, migration, shell-syntax, ancestry, and
+  whitespace checks passed.
 
 ### 2026-08-09: `3262a46f` to `d5e36283`
 

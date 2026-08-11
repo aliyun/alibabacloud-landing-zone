@@ -24,7 +24,7 @@ class PlatformBrandingServiceTest {
         assertEquals("AutoWonder", config.getPlatformName());
         assertEquals("#f97316", config.getPrimaryColor());
         assertEquals("https://daily.auto-wonder.example.com/api/mcp", config.getMcpBaseUrl());
-        assertEquals("0.2.125", config.getRecommendedRuntimeVersion());
+        assertEquals("0.2.130", config.getRecommendedRuntimeVersion());
         assertEquals("x.x.x", config.getDeploymentVersion());
         assertFalse(config.isCanManage());
     }
@@ -35,7 +35,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
 
         assertThrows(IllegalStateException.class,
-                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.125", "x.x.x"));
+                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.130", "x.x.x"));
     }
 
     @Test
@@ -45,10 +45,10 @@ class PlatformBrandingServiceTest {
 
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.125", "x.x.x"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.130", "x.x.x"));
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.125", "x.x.x"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.130", "x.x.x"));
     }
 
     @Test
@@ -210,7 +210,7 @@ class PlatformBrandingServiceTest {
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
                         dao, new InMemoryObjectStorage(), props,
-                        "https://daily.auto-wonder.example.com", "0.2.125", "not-a-version"));
+                        "https://daily.auto-wonder.example.com", "0.2.130", "not-a-version"));
     }
 
     private static PlatformBrandingService newService(PlatformBrandingDao dao) {
@@ -227,7 +227,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
         props.setBucket("community-test");
         return new PlatformBrandingService(
-                dao, storage, props, "https://daily.auto-wonder.example.com", "0.2.125", deploymentVersion);
+                dao, storage, props, "https://daily.auto-wonder.example.com", "0.2.130", deploymentVersion);
     }
 
     private static PlatformBrandingDO row(String name, String color, String domain) {

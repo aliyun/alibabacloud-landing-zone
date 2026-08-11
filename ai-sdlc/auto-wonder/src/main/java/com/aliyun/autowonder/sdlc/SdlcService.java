@@ -1,5 +1,8 @@
 package com.aliyun.autowonder.sdlc;
 
+import com.aliyun.autowonder.agent.AgentDO;
+import com.aliyun.autowonder.agent.AgentDao;
+import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 
@@ -21,13 +24,18 @@ public class SdlcService {
     private final SdlcStepDao stepDao;
     private final StatusNodeDao statusNodeDao;
     private final WorkitemDao workitemDao;
+    private final AgentVersionDao agentVersionDao;
+    private final AgentDao agentDao;
 
     public SdlcService(SdlcDao sdlcDao, SdlcStepDao stepDao,
-                       StatusNodeDao statusNodeDao, WorkitemDao workitemDao) {
+                       StatusNodeDao statusNodeDao, WorkitemDao workitemDao,
+                       AgentVersionDao agentVersionDao, AgentDao agentDao) {
         this.sdlcDao = sdlcDao;
         this.stepDao = stepDao;
         this.statusNodeDao = statusNodeDao;
         this.workitemDao = workitemDao;
+        this.agentVersionDao = agentVersionDao;
+        this.agentDao = agentDao;
     }
 
     @Transactional
@@ -92,14 +100,54 @@ public class SdlcService {
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
-        if (workitemDao.countBySdlcId(id) > 0) {
-            throw new BizException(ErrorCode.SDLC_DELETE_IN_USE);
+        long workitemCount = workitemDao.countBySdlcId(id);
+        List<Long> agentIds = agentVersionDao.listAgentIdsBySdlcId(id);
+        if (workitemCount > 0 || !agentIds.isEmpty()) {
+            List<Long> workitemIds = workitemCount > 0
+                    ? workitemDao.listIdsBySdlcId(id, 5) : List.of();
+            throw new BizException(ErrorCode.SDLC_DELETE_IN_USE,
+                    buildInUseMessage(workitemCount, workitemIds, agentIds));
         }
         int rows = sdlcDao.softDelete(id, tenantId, s.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.SDLC_VERSION_CONFLICT);
         }
         stepDao.deleteAllBySdlc(id, tenantId);
+    }
+
+    private String buildInUseMessage(long workitemCount, List<Long> workitemIds, List<Long> agentIds) {
+        List<String> refs = new ArrayList<>();
+        if (workitemCount > 0) {
+            StringBuilder part = new StringBuilder("工单 ").append(workitemCount).append(" 个");
+            if (!workitemIds.isEmpty()) {
+                part.append("(");
+                for (int i = 0; i < workitemIds.size(); i++) {
+                    if (i > 0) {
+                        part.append(", ");
+                    }
+                    part.append("#").append(workitemIds.get(i));
+                }
+                if (workitemCount > workitemIds.size()) {
+                    part.append(" 等");
+                }
+                part.append(")");
+            }
+            refs.add(part.toString());
+        }
+        if (!agentIds.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (Long agentId : agentIds) {
+                AgentDO agent = agentDao.findById(agentId);
+                if (agent != null && agent.getName() != null && !agent.getName().isBlank()) {
+                    names.add(agent.getName() + "(ID:" + agentId + ")");
+                } else {
+                    names.add("ID:" + agentId);
+                }
+            }
+            refs.add("数字员工 " + agentIds.size() + " 个(" + String.join(", ", names) + ")");
+        }
+        return ErrorCode.SDLC_DELETE_IN_USE.getMessage()
+                + ": 引用源: " + String.join("; ", refs) + "。请先解除上述引用后再删除。";
     }
 
     @Transactional

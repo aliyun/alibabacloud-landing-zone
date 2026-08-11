@@ -69,6 +69,61 @@ describe('WorkitemListPage', () => {
     expect(screen.getByText('异常')).toBeInTheDocument();
   });
 
+  it('shows 需人工（XXX）tag in kanban for a human-assigned workitem', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 6, title: '人工处理工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('人工处理工单')).toBeInTheDocument();
+    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+  });
+
+  it('shows 需人工（XXX）tag in table status column for a human-assigned workitem', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 7, title: '表格人工工单', workType: 'REQ', statusName: '开发中', priority: 2, assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何(10000)', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByLabelText('表格视图'));
+    expect(await screen.findByText('表格人工工单')).toBeInTheDocument();
+    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+    expect(screen.queryByText(/需人工（蔡何\(10000\)）/)).not.toBeInTheDocument();
+  });
+
+  it('does not show 需人工 tag for agent-assigned or unassigned workitems', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 8, title: '机器工单', workType: 'REQ', statusName: '开发中', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+            { id: 9, title: '未指派工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('机器工单')).toBeInTheDocument();
+    expect(screen.getByText('未指派工单')).toBeInTheDocument();
+    expect(screen.queryByText(/需人工/)).not.toBeInTheDocument();
+  });
+
   it('renders create button', async () => {
     server.use(
       http.get('/api/workitems', () => {

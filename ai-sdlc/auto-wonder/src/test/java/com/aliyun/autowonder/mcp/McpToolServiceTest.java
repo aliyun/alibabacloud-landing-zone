@@ -1165,6 +1165,11 @@ class McpToolServiceTest {
         assertTrue(create.getDescription().contains("learning delta"));
         assertTrue(create.getDescription().contains("PENDING"));
         assertTrue(create.getDescription().contains("idempotent"));
+        assertTrue(create.getDescription().contains("contentMd"));
+        assertTrue(create.getDescription().contains("Do not pass content"));
+        assertTrue(create.getDescription().contains("GLOBAL"));
+        assertTrue(create.getDescription().contains("Personal or long-lived MCP tokens must pass scope"));
+        assertTrue(create.getDescription().contains("Dispatch-scoped SDLC workers should omit scope and ownerRef"));
 
         assertTrue(toolFor("autowonder.search_memories").getDescription().contains("ADOPTED"));
         assertTrue(toolFor("autowonder.deprecate_memory").getDescription().contains("REJECTED"));
@@ -1291,6 +1296,36 @@ class McpToolServiceTest {
         return new McpAccessTokenService.Principal(
                 100L, 7L, -321L, OrgAccessLevel.READ_WRITE,
                 McpAccessTokenService.CredentialType.DISPATCH);
+    }
+
+    @Test
+    void dispatchCredentialUsesOriginalGenericTransitionForEveryWorkitemStatusTool() {
+        for (String tool : List.of("autowonder.transition_workitem",
+                "autowonder.pause_workitem", "autowonder.resume_workitem")) {
+            call(dispatchPrincipal(), tool, Map.of("id", 55L, "toNodeId", 99L));
+        }
+
+        verify(workitemService, times(3)).transition(55L, 99L, ORG_ID, USER_ID);
+    }
+
+    @Test
+    void personalCredentialKeepsHumanWorkitemTransition() {
+        call(principal, "autowonder.transition_workitem", Map.of("id", 55L, "toNodeId", 99L));
+
+        verify(workitemService).transition(55L, 99L, ORG_ID, USER_ID);
+        verify(workitemService, never()).agentTransition(anyLong(), anyString(), anyLong(), anyLong());
+    }
+
+    @Test
+    void conversationCredentialUsesOriginalGenericTransition() {
+        McpAccessTokenService.Principal conversationPrincipal = new McpAccessTokenService.Principal(
+                ORG_ID, USER_ID, 88L, OrgAccessLevel.READ_WRITE,
+                McpAccessTokenService.CredentialType.CONVERSATION);
+
+        call(conversationPrincipal, "autowonder.transition_workitem",
+                Map.of("id", 55L, "toNodeId", 99L));
+
+        verify(workitemService).transition(55L, 99L, ORG_ID, USER_ID);
     }
 
     private MemoryVO memory(long id, String scope, Long ownerRef) {
@@ -1602,7 +1637,10 @@ class McpToolServiceTest {
         assertTrue(create.getDescription().contains("scheduling"));
         assertTrue(create.getDescription().contains("\"assigneeType\":\"AGENT\""));
         assertTrue(create.getDescription().contains("\"assigneeRef\":40013"));
-        assertTrue(create.getDescription().contains("\"sdlcId\":40014"));
+        assertFalse(create.getDescription().contains("\"sdlcId\":40014"));
+        // SDLC binding is server-resolved; clients must not be steered to pick one.
+        assertTrue(create.getDescription().contains("resolved automatically by the server"));
+        assertTrue(create.getDescription().contains("do NOT ask the user to choose an SDLC"));
         // create_workitem ordering: create -> upload -> assign
         assertTrue(create.getDescription().contains("upload_workitem_document"));
         assertTrue(create.getDescription().contains("assign_workitem"));
@@ -1624,6 +1662,9 @@ class McpToolServiceTest {
         assertTrue(assign.getDescription().contains("\"assigneeRef\":40013"));
         assertFalse(assign.getDescription().contains("\"sdlcId\""));
         assertFalse(assign.getDescription().contains("optionally sdlcId"));
+        assertTrue(assign.getDescription().contains("resolved automatically by the server"));
+        assertTrue(assign.getDescription().contains("Do NOT ask the user to choose an SDLC"));
+        assertTrue(assign.getDescription().contains("omit sdlcId"));
         // assign_workitem ordering: documents must be uploaded before assign
         assertTrue(assign.getDescription().contains("upload_workitem_document"));
         assertTrue(assign.getDescription().contains("dispatch scheduling"));
@@ -1634,10 +1675,12 @@ class McpToolServiceTest {
         assertTrue(list.getDescription().contains("page=1"));
         assertTrue(list.getDescription().contains("size=20"));
 
-        // list_status_templates: returns templates not SDLC, points to list_sdlcs for sdlcId.
+        // list_status_templates: returns templates not SDLC, and no longer steers clients
+        // to pick an sdlcId via list_sdlcs.
         McpToolVO templates = toolFor("autowonder.list_status_templates");
         assertTrue(templates.getDescription().contains("NOT SDLC"));
-        assertTrue(templates.getDescription().contains("list_sdlcs"));
+        assertFalse(templates.getDescription().contains("list_sdlcs"));
+        assertTrue(templates.getDescription().contains("auto-resolves the correct SDLC"));
     }
 
     @Test
@@ -1662,7 +1705,9 @@ class McpToolServiceTest {
         Map<String, Object> assignAssigneeRef = property(schemaFor("autowonder.assign_workitem"), "assigneeRef");
         assertNotNull(assignAssigneeRef.get("description"));
         assertTrue(((String) assignAssigneeRef.get("description")).contains("agentId"));
-        assertFalse(properties(schemaFor("autowonder.assign_workitem")).containsKey("sdlcId"));
+        Map<String, Object> assignSdlcId = property(schemaFor("autowonder.assign_workitem"), "sdlcId");
+        assertNotNull(assignSdlcId.get("description"));
+        assertTrue(((String) assignSdlcId.get("description")).contains("explicitly specifies"));
         assertTrue(properties(schemaFor("autowonder.create_workitem")).containsKey("sdlcId"));
 
         // list_workitems and list_status_templates expose per-field descriptions.

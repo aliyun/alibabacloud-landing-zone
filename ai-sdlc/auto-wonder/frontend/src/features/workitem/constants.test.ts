@@ -15,6 +15,7 @@ describe('workitem status classification', () => {
   it('keeps released workitems done even if stale data marks pending decision', () => {
     expect(classifyWorkitemStatus({ statusName: '已发布', pendingDecision: true })).toBe('DONE');
     expect(classifyWorkitemStatus({ statusName: 'DONE', pendingDecision: true })).toBe('DONE');
+    expect(classifyWorkitemStatus({ statusName: 'PUBLISHED', pendingDecision: true })).toBe('DONE');
   });
 
   it('does not infer pending decision without the backend marker', () => {

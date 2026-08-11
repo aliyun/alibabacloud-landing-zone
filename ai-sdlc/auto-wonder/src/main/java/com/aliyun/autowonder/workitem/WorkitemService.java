@@ -380,28 +380,23 @@ public class WorkitemService {
 
     private boolean isDoneStatus(Long statusNodeId, String statusName) {
         StatusNodeDO node = statusNodeId == null ? null : nodeDao.findById(statusNodeId);
-        if (node != null) {
-            if ("DONE".equalsIgnoreCase(node.getCategory())) {
-                return true;
-            }
-            if (containsDoneToken(node.getCode()) || containsDoneToken(node.getName())) {
-                return true;
-            }
+        if (isDoneNode(node)) {
+            return true;
         }
         return containsDoneToken(statusName);
     }
 
     private boolean isDoneStatus(Long statusNodeId, String statusName, Map<Long, StatusNodeDO> nodeMap) {
         StatusNodeDO node = statusNodeId == null ? null : nodeMap.get(statusNodeId);
-        if (node != null) {
-            if ("DONE".equalsIgnoreCase(node.getCategory())) {
-                return true;
-            }
-            if (containsDoneToken(node.getCode()) || containsDoneToken(node.getName())) {
-                return true;
-            }
+        if (isDoneNode(node)) {
+            return true;
         }
         return containsDoneToken(statusName);
+    }
+
+    private boolean isDoneNode(StatusNodeDO node) {
+        return node != null && ("DONE".equalsIgnoreCase(node.getCategory())
+                || containsDoneToken(node.getCode()) || containsDoneToken(node.getName()));
     }
 
     private boolean containsDoneToken(String value) {
@@ -410,7 +405,8 @@ public class WorkitemService {
         }
         String s = value.toUpperCase();
         return s.contains("完成") || s.contains("关闭") || s.contains("发布")
-                || s.contains("DONE") || s.contains("CLOSED") || s.contains("RELEASED");
+                || s.contains("DONE") || s.contains("CLOSED") || s.contains("RELEASED")
+                || s.contains("PUBLISHED");
     }
 
     @Transactional
@@ -446,6 +442,12 @@ public class WorkitemService {
         if (toNode == null) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
+        return agentTransition(w, toNode, tenantId, agentId);
+    }
+
+    private WorkitemVO agentTransition(WorkitemDO w, StatusNodeDO toNode,
+                                       long tenantId, long agentId) {
+        long id = w.getId();
         long fromNodeId = w.getStatusNodeId();
         if (transitionDao.findByTemplateFromTo(w.getTemplateId(), fromNodeId, toNode.getId()) == null) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
@@ -504,7 +506,8 @@ public class WorkitemService {
         // Guard on w.getSdlcId()==null so a mid-flight currentStepId is never reset.
         if ("AGENT".equals(assigneeType) && assigneeRef != null
                 && w.getSdlcId() == null && w.getCurrentStepId() == null) {
-            Long effectiveSdlcId = sdlcId != null ? sdlcId : resolveAgentSdlcId(assigneeRef, tenantId);
+            Long effectiveSdlcId = sdlcId != null ? sdlcId
+                    : resolveAgentSdlcId(assigneeRef, tenantId, w.getWorkType());
             bindSdlc(id, tenantId, effectiveSdlcId, w.getVersion() + 1, modifierUserId);
         }
 
@@ -598,16 +601,21 @@ public class WorkitemService {
         }
     }
 
-    private Long resolveAgentSdlcId(long agentId, long tenantId) {
+    private Long resolveAgentSdlcId(long agentId, long tenantId, String workType) {
         AgentDO agent = agentDao.findById(agentId);
         if (agent == null || !Long.valueOf(tenantId).equals(agent.getTenantId())) {
             throw new BizException(ErrorCode.AGENT_NOT_FOUND);
         }
         Long sdlcId = sdlcResolver.resolveSdlcId(tenantId, agentId);
-        if (sdlcId == null) {
-            throw new BizException(ErrorCode.SDLC_NOT_FOUND);
+        if (sdlcId != null) {
+            return sdlcId;
         }
-        return sdlcId;
+        SdlcDO fallback = workType == null || workType.isBlank() ? null : sdlcDao.findDefault(workType);
+        if (fallback != null && fallback.getId() != null
+                && Long.valueOf(tenantId).equals(fallback.getTenantId())) {
+            return fallback.getId();
+        }
+        throw new BizException(ErrorCode.SDLC_NOT_FOUND);
     }
 
     private void validateSquadMember(String assigneeType, Long assigneeRef, Long squadId, long tenantId) {

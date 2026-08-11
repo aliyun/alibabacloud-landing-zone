@@ -12,6 +12,7 @@ public interface AgentVersionDao {
     AgentVersionDO findById(@Param("id") Long id);
     AgentVersionDO findByAgentAndNo(@Param("agentId") Long agentId, @Param("versionNo") Integer versionNo);
     List<AgentVersionDO> listByAgent(@Param("agentId") Long agentId);
+    List<Long> listAgentIdsBySdlcId(@Param("sdlcId") Long sdlcId);
     List<AgentVersionDO> listApprovedByAgent(@Param("agentId") Long agentId);
     int updateConfig(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("roleName") String roleName, @Param("roleCode") String roleCode,

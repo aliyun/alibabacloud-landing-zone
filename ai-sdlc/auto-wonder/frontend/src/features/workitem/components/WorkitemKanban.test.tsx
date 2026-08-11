@@ -88,3 +88,47 @@ describe('WorkitemKanban 待决策按人分类', () => {
     expect(screen.getByText('普通任务')).toBeInTheDocument();
   });
 });
+
+describe('WorkitemKanban 需人工标记', () => {
+  it('shows 需人工（XXX）tag on cards assigned to a human', () => {
+    const items = [
+      mk({ id: 1, statusName: '待处理', assigneeType: 'HUMAN', assigneeRef: 10000, assigneeDisplayName: '蔡何', title: '人工工单' }),
+    ];
+    renderKanban({ items });
+
+    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+  });
+
+  it('does not show 需人工 tag for agent-assigned cards', () => {
+    const items = [
+      mk({ id: 1, statusName: '开发中', assigneeType: 'AGENT', assigneeRef: 40013, assigneeName: 'Coder-01', title: '机器工单' }),
+    ];
+    renderKanban({ items });
+
+    expect(screen.getByText('机器工单')).toBeInTheDocument();
+    expect(screen.queryByText(/需人工/)).not.toBeInTheDocument();
+  });
+
+  it('does not show 需人工 tag when no human is explicitly assigned', () => {
+    const items = [
+      mk({ id: 1, statusName: '待处理', assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, title: '未指派工单' }),
+    ];
+    renderKanban({ items });
+
+    expect(screen.getByText('未指派工单')).toBeInTheDocument();
+    expect(screen.queryByText(/需人工/)).not.toBeInTheDocument();
+  });
+
+  it('shows 需人工 tag together with the 异常 tag when both apply', () => {
+    const items = [
+      mk({
+        id: 1, statusName: '开发中', assigneeType: 'HUMAN', assigneeRef: 10000, assigneeDisplayName: '蔡何',
+        health: 'STUCK', healthReason: '执行超时', title: '又卡又需人工',
+      }),
+    ];
+    renderKanban({ items });
+
+    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+    expect(screen.getByText('异常')).toBeInTheDocument();
+  });
+});

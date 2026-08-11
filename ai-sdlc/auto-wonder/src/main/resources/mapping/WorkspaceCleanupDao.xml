@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workspace.WorkspaceCleanupDao">
+    <select id="listEligible" resultType="com.aliyun.autowonder.workspace.WorkspaceCleanupCandidate">
+        SELECT w.tenant_id,
+               w.id AS workitem_id,
+               d.executor_id,
+               w.version AS workitem_version,
+               MAX(e.gmt_create) AS published_at
+        FROM workitem w
+        INNER JOIN status_node sn
+                ON sn.id = w.status_node_id
+        INNER JOIN workitem_event e
+                ON e.tenant_id = w.tenant_id
+               AND e.workitem_id = w.id
+               AND e.event_type = 'STATUS_CHANGE'
+               AND UPPER(e.to_val) = UPPER(sn.code)
+        INNER JOIN dispatch d
+                ON d.tenant_id = w.tenant_id
+               AND d.workitem_id = w.id
+               AND d.executor_id IS NOT NULL
+               AND d.is_deleted = 0
+        WHERE w.is_deleted = 0
+          AND (
+              UPPER(sn.category) = 'DONE'
+              OR UPPER(sn.code) LIKE '%DONE%'
+              OR UPPER(sn.code) LIKE '%CLOSED%'
+              OR UPPER(sn.code) LIKE '%RELEASED%'
+              OR UPPER(sn.code) LIKE '%PUBLISHED%'
+              OR sn.name LIKE '%完成%'
+              OR sn.name LIKE '%关闭%'
+              OR sn.name LIKE '%发布%'
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM dispatch active_dispatch
+              WHERE active_dispatch.tenant_id = w.tenant_id
+                AND active_dispatch.workitem_id = w.id
+                AND active_dispatch.is_deleted = 0
+                AND active_dispatch.status IN
+                    ('PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING',
+                     'PAUSING', 'PAUSED', 'PAUSE_FAILED', 'WAITING_FOR_PAUSE')
+          )
+        GROUP BY w.tenant_id, w.id, d.executor_id, w.version
+        HAVING MAX(e.gmt_create) &lt;= #{cutoff}
+        ORDER BY MAX(e.gmt_create) ASC, w.id ASC
+        LIMIT #{limit}
+    </select>
+</mapper>

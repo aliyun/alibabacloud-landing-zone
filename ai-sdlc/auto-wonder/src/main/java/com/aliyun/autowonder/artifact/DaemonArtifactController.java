@@ -20,7 +20,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -215,8 +214,9 @@ public class DaemonArtifactController {
         if (raw.contains("\0")) {
             return null;
         }
-        String normalized = Path.of(raw).normalize().toString().replace('\\', '/');
-        if (normalized.startsWith("/") || normalized.startsWith("..")) {
+        String normalized = raw.replace('\\', '/');
+        if (normalized.startsWith("/") || normalized.matches("^[A-Za-z]:/.*")
+                || normalized.startsWith("..")) {
             return null;
         }
         if (normalized.contains("/../") || normalized.endsWith("/..")) {

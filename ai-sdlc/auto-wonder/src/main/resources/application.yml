@@ -52,7 +52,7 @@ autowonder:
   version: ${AUTOWONDER_VERSION:x.x.x}
   public-base-url: ${AUTOWONDER_PUBLIC_BASE_URL:http://localhost:7001}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.125}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.130}
   security:
     secret-crypto:
       master-key: ${AUTOWONDER_SECRET_MASTER_KEY:}

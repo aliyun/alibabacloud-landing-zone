@@ -24,6 +24,11 @@
         SELECT * FROM agent_version WHERE agent_id = #{agentId} AND status = 'APPROVED' AND is_deleted = 0
         ORDER BY version_no DESC
     </select>
+    <select id="listAgentIdsBySdlcId" resultType="java.lang.Long">
+        SELECT DISTINCT agent_id FROM agent_version
+        WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
+        ORDER BY agent_id LIMIT 5
+    </select>
     <update id="updateConfig">
         UPDATE agent_version SET role_name = #{roleName}, role_code = #{roleCode},
             business_background = #{businessBackground}, responsibilities = #{responsibilities},

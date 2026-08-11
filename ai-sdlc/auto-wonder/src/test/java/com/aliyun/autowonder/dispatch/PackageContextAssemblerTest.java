@@ -1223,6 +1223,8 @@ class PackageContextAssemblerTest {
         assertEquals("new", statuses.get(0).get("code"));
         assertEquals("developing", statuses.get(1).get("code"));
         assertEquals("released", statuses.get(2).get("code"));
+        assertFalse(statuses.get(1).containsKey("humanOnly"));
+        assertFalse(statuses.get(2).containsKey("humanOnly"));
     }
 
     @Test
