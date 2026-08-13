@@ -166,6 +166,81 @@ describe('WorkitemDetailPage', () => {
     expect(screen.getByText('开发中')).toBeInTheDocument();
   });
 
+  it('shows the human intervention alert when assigned to a human', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          ...mockWorkitem,
+          assigneeType: 'HUMAN', assigneeRef: '10000', assigneeName: 'caihe', assigneeDisplayName: '蔡何',
+        },
+      })),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
+    );
+    renderPage();
+
+    expect(await screen.findByText('需人工介入：蔡何')).toBeInTheDocument();
+    expect(screen.getByText('当前工单已指派给真人，请人工处理、补充决策，或重新指派给数字员工继续交付。')).toBeInTheDocument();
+  });
+
+  it('does not show the human intervention alert for agent-assigned workitems', async () => {
+    server.use(...setupHandlers());
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.queryByText(/需人工介入/)).not.toBeInTheDocument();
+  });
+
+  it('does not show the human intervention alert when the workitem is finished', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          ...mockWorkitem,
+          assigneeType: 'HUMAN', assigneeRef: '10000', assigneeName: 'caihe', assigneeDisplayName: '蔡何',
+          statusName: '已完成',
+        },
+      })),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
+    );
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.queryByText(/需人工介入/)).not.toBeInTheDocument();
+  });
+
+  it('does not show the human intervention alert when the workitem is canceled', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          ...mockWorkitem,
+          assigneeType: 'HUMAN', assigneeRef: '10000', assigneeName: 'caihe', assigneeDisplayName: '蔡何',
+          statusName: '已取消',
+        },
+      })),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
+    );
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.queryByText(/需人工介入/)).not.toBeInTheDocument();
+  });
+
+  it('does not show the human intervention alert when no human is explicitly assigned', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null },
+      })),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
+    );
+    renderPage();
+
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    expect(screen.queryByText(/需人工介入/)).not.toBeInTheDocument();
+  });
+
   it('renders requirement documents on the workitem detail page', async () => {
     server.use(
       http.get('/api/workitems/1/requirement-documents', () => HttpResponse.json({

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDeleteWorkitem, useWorkitemList } from './hooks';
 import { WorkitemKanban } from './components/WorkitemKanban';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
+import { HumanInterventionBadge } from './components/HumanInterventionBadge';
 import { workTypeMap } from './constants';
 import type { Workitem } from '@/shared/types/workitem';
 import type { ColumnsType } from 'antd/es/table';
@@ -136,6 +137,7 @@ export function WorkitemListPage() {
       render: (s: string | null, record: Workitem) => (
         <Space size={4}>
           {s ? <Tag color="processing">{s}</Tag> : <Tag>-</Tag>}
+          <HumanInterventionBadge item={record} />
           <WorkitemHealthBadge item={record} />
         </Space>
       ),

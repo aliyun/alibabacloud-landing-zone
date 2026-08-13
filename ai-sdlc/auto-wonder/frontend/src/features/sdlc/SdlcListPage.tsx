@@ -46,6 +46,7 @@ export function SdlcListPage() {
   const deleteMut = useMutation({
     mutationFn: deleteSdlcTemplate,
     onSuccess: () => { invalidate(); message.success('已删除'); },
+    onError: (error: Error) => { message.error(error.message || '删除失败'); },
   });
 
   const enableMut = useMutation({

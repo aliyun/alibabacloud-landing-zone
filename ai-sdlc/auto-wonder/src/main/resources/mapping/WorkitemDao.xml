@@ -117,6 +117,10 @@
     <select id="countBySdlcId" resultType="int">
         SELECT COUNT(*) FROM workitem WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
     </select>
+    <select id="listIdsBySdlcId" resultType="java.lang.Long">
+        SELECT id FROM workitem WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
+        ORDER BY id LIMIT #{limit}
+    </select>
 
     <select id="countActiveByAssignee" resultType="int">
         SELECT COUNT(*) FROM workitem w

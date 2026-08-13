@@ -313,6 +313,78 @@ class WorkitemServiceTest {
     }
 
     @Test
+    void assign_agent_without_default_sdlc_falls_back_to_worktype_default() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(500L);
+        w.setTenantId(100L);
+        w.setWorkType("BUG");
+        w.setVersion(2);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        WorkitemDO bound = new WorkitemDO();
+        bound.setId(500L);
+        bound.setTenantId(100L);
+        bound.setWorkType("BUG");
+        bound.setVersion(3);
+        bound.setSdlcId(777L);
+        bound.setCurrentStepId(901L);
+        bound.setAssigneeType("AGENT");
+        bound.setAssigneeRef(41L);
+        when(workitemDao.findById(500L)).thenReturn(w, bound);
+        AgentDO agent = new AgentDO();
+        agent.setId(41L);
+        agent.setTenantId(100L);
+        when(agentDao.findById(41L)).thenReturn(agent);
+        when(sdlcResolver.resolveSdlcId(100L, 41L)).thenReturn(null);
+        SdlcDO bugDefault = new SdlcDO();
+        bugDefault.setId(777L);
+        bugDefault.setTenantId(100L);
+        when(sdlcDao.findDefault("BUG")).thenReturn(bugDefault);
+        when(sdlcDao.findById(777L)).thenReturn(bugDefault);
+        SdlcStepDO firstStep = new SdlcStepDO();
+        firstStep.setId(901L);
+        when(sdlcResolver.firstStep(100L, 777L)).thenReturn(firstStep);
+        when(workitemDao.updateAssignee(eq(500L), eq(100L), eq("AGENT"), eq(41L), anyInt(), eq(7L)))
+                .thenReturn(1);
+        when(workitemDao.updateSdlcAndStep(eq(500L), eq(100L), eq(777L), eq(901L), anyInt(), eq(7L)))
+                .thenReturn(1);
+
+        WorkitemVO vo = service.assign(500L, "AGENT", 41L, null, null, 100L, 7L);
+
+        assertEquals(Long.valueOf(777L), vo.getSdlcId());
+        verify(sdlcDao).findDefault("BUG");
+        verify(workitemDao).updateSdlcAndStep(500L, 100L, 777L, 901L, 3, 7L);
+    }
+
+    @Test
+    void assign_agent_without_default_sdlc_ignores_foreign_tenant_worktype_default() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(500L);
+        w.setTenantId(100L);
+        w.setWorkType("BUG");
+        w.setVersion(2);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        when(workitemDao.findById(500L)).thenReturn(w);
+        AgentDO agent = new AgentDO();
+        agent.setId(41L);
+        agent.setTenantId(100L);
+        when(agentDao.findById(41L)).thenReturn(agent);
+        when(sdlcResolver.resolveSdlcId(100L, 41L)).thenReturn(null);
+        SdlcDO foreignDefault = new SdlcDO();
+        foreignDefault.setId(777L);
+        foreignDefault.setTenantId(999L);
+        when(sdlcDao.findDefault("BUG")).thenReturn(foreignDefault);
+        when(workitemDao.updateAssignee(eq(500L), eq(100L), eq("AGENT"), eq(41L), anyInt(), eq(7L)))
+                .thenReturn(1);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.assign(500L, "AGENT", 41L, null, null, 100L, 7L));
+        assertEquals(ErrorCode.SDLC_NOT_FOUND.getCode(), ex.getCode());
+        verify(workitemDao, never()).updateSdlcAndStep(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
     void get_missing_throws() {
         when(workitemDao.findById(9L)).thenReturn(null);
         BizException ex = assertThrows(BizException.class, () -> service.get(9L));

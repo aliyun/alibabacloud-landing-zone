@@ -10,6 +10,7 @@ import {
 } from './hooks';
 import { WorkitemHeader } from './components/WorkitemHeader';
 import { WorkitemMeta } from './components/WorkitemMeta';
+import { HumanInterventionAlert } from './components/HumanInterventionBadge';
 import { WorkitemActionBar } from './components/WorkitemActionBar';
 import { StartDeliveryModal } from './components/StartDeliveryModal';
 import { WorkitemContent } from './components/WorkitemContent';
@@ -99,6 +100,7 @@ export function WorkitemDetailPage() {
             statusName={workitem.statusName ?? null}
             workType={workitem.workType}
           />
+          <HumanInterventionAlert item={workitem} />
           <WorkitemMeta
             priority={workitem.priority}
             assigneeName={workitem.assigneeName ?? null}

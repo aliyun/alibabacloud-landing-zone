@@ -82,6 +82,9 @@ class ManifestContractTest(unittest.TestCase):
     def test_required_system_tags_are_present(self):
         self.assertTrue(REQUIRED_TAGS.issubset(self.manifest["tags"]))
 
+    def test_recommended_runtime_matches_current_server_contract(self):
+        self.assertEqual("0.2.130", self.manifest["recommendedRuntimeVersion"])
+
 
 if __name__ == "__main__":
     unittest.main()

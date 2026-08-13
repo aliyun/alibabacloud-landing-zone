@@ -1,5 +1,8 @@
 package com.aliyun.autowonder.sdlc;
 
+import com.aliyun.autowonder.agent.AgentDO;
+import com.aliyun.autowonder.agent.AgentDao;
+import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.sdlc.dto.*;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
@@ -18,6 +21,8 @@ class SdlcServiceTest {
     SdlcStepDao stepDao;
     StatusNodeDao statusNodeDao;
     WorkitemDao workitemDao;
+    AgentVersionDao agentVersionDao;
+    AgentDao agentDao;
     SdlcService service;
 
     @BeforeEach
@@ -26,7 +31,10 @@ class SdlcServiceTest {
         stepDao = mock(SdlcStepDao.class);
         statusNodeDao = mock(StatusNodeDao.class);
         workitemDao = mock(WorkitemDao.class);
-        service = new SdlcService(sdlcDao, stepDao, statusNodeDao, workitemDao);
+        agentVersionDao = mock(AgentVersionDao.class);
+        agentDao = mock(AgentDao.class);
+        service = new SdlcService(sdlcDao, stepDao, statusNodeDao, workitemDao,
+                agentVersionDao, agentDao);
     }
 
     private SdlcDO sdlc(long id, String status) {
@@ -159,9 +167,50 @@ class SdlcServiceTest {
     void delete_in_use_throws() {
         SdlcDO s = sdlc(9L, "DRAFT");
         when(sdlcDao.findById(9L)).thenReturn(s);
-        when(workitemDao.countBySdlcId(9L)).thenReturn(1);
+        when(workitemDao.countBySdlcId(9L)).thenReturn(3);
+        when(workitemDao.listIdsBySdlcId(9L, 5)).thenReturn(List.of(77L, 78L, 79L));
         BizException ex = assertThrows(BizException.class, () -> service.delete(9L, 100L, 7L));
         assertEquals("16010", ex.getCode());
+        assertTrue(ex.getMessage().contains("工单 3 个(#77, #78, #79)"));
+        assertTrue(ex.getMessage().contains("请先解除上述引用后再删除"));
+        verify(sdlcDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void delete_in_use_truncates_workitem_sample() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        when(workitemDao.countBySdlcId(9L)).thenReturn(8);
+        when(workitemDao.listIdsBySdlcId(9L, 5)).thenReturn(List.of(1L, 2L, 3L, 4L, 5L));
+        BizException ex = assertThrows(BizException.class, () -> service.delete(9L, 100L, 7L));
+        assertEquals("16010", ex.getCode());
+        assertTrue(ex.getMessage().contains("工单 8 个(#1, #2, #3, #4, #5 等)"));
+    }
+
+    @Test
+    void delete_in_use_by_agent_reports_agent_names() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        when(agentVersionDao.listAgentIdsBySdlcId(9L)).thenReturn(List.of(5L, 6L));
+        AgentDO a1 = new AgentDO();
+        a1.setId(5L);
+        a1.setName("小码");
+        when(agentDao.findById(5L)).thenReturn(a1);
+        when(agentDao.findById(6L)).thenReturn(null);
+        BizException ex = assertThrows(BizException.class, () -> service.delete(9L, 100L, 7L));
+        assertEquals("16010", ex.getCode());
+        assertTrue(ex.getMessage().contains("数字员工 2 个(小码(ID:5), ID:6)"));
+        verify(sdlcDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void delete_without_refs_succeeds() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        when(sdlcDao.softDelete(9L, 100L, 0, 7L)).thenReturn(1);
+        service.delete(9L, 100L, 7L);
+        verify(sdlcDao).softDelete(9L, 100L, 0, 7L);
+        verify(stepDao).deleteAllBySdlc(9L, 100L);
     }
 
     @Test

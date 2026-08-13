@@ -349,7 +349,8 @@ public class McpToolService {
                         + "When assigneeType is omitted the workitem is assigned to the creator (HUMAN), "
                         + "priority defaults to 2, no SDLC is bound, and no scheduling is triggered. "
                         + "To assign to a digital worker, pass assigneeType=AGENT with assigneeRef=<agentId>; "
-                        + "pass sdlcId to bind a specific SDLC, otherwise the agent's default SDLC is resolved. "
+                        + "the SDLC is resolved automatically by the server (agent default first, then workitem-type match); "
+                        + "do NOT ask the user to choose an SDLC and only pass sdlcId when the user explicitly names one. "
                         + "squadId is optional and only validated when assigneeType=AGENT and assigneeRef are both present. "
                         + "Assigning to an AGENT triggers squad validation, SDLC binding, an ASSIGN event, "
                         + "and dispatch scheduling (same side effects as a separate assign_workitem call). "
@@ -359,7 +360,7 @@ public class McpToolService {
                         + "Example (create and assign to a digital worker): "
                         + "{\"workType\":\"BUG\",\"title\":\"fix(dingtalk): @ mention not triggering\","
                         + "\"priority\":1,\"assigneeType\":\"AGENT\",\"assigneeRef\":40013,"
-                        + "\"sdlcId\":40014,\"contentMd\":\"...\"} "
+                        + "\"contentMd\":\"...\"} "
                         + "Before creating a workitem, assess whether the user request is sufficiently actionable. "
                         + "Do not create an executable workitem from a vague one-line request. "
                         + "If key context is missing, ask clarifying questions first unless the user explicitly "
@@ -381,8 +382,9 @@ public class McpToolService {
                                 prop("assigneeRef", "integer", "Optional. Assignee reference id: "
                                         + "userId when assigneeType=HUMAN, agentId when assigneeType=AGENT. "
                                         + "Required when assigneeType is provided."),
-                                prop("sdlcId", "integer", "Optional. SDLC flow id to bind when assigning to an AGENT. "
-                                        + "If omitted for an AGENT, the agent's default SDLC is resolved automatically."),
+                                prop("sdlcId", "integer", "Optional. Pass only when the user explicitly specifies "
+                                        + "the SDLC id to bind. Omit it to let the server auto-resolve the correct SDLC "
+                                        + "(agent default first, then workitem-type match)."),
                                 prop("squadId", "integer", "Optional. Squad id; only validated when assigneeType=AGENT "
                                         + "and assigneeRef are both present, in which case the agent must belong to the squad. "
                                         + "Omit to skip squad validation."))),
@@ -407,8 +409,10 @@ public class McpToolService {
                 tool(ASSIGN_WORKITEM, "Assign an existing AutoWonder workitem to a human or digital worker. "
                         + "id is the workitem id. When assigneeType=AGENT, assigneeRef is the agentId; "
                         + "when assigneeType=HUMAN, assigneeRef is the userId. "
-                        + "If the workitem has no bound SDLC yet, the agent's default SDLC is resolved automatically "
-                        + "(fails if the agent has none). "
+                        + "SDLC binding is resolved automatically by the server on first-time delivery start "
+                        + "(agent default first, then workitem-type match). Do NOT ask the user to choose an SDLC "
+                        + "and do NOT look up SDLCs to pick one yourself; omit sdlcId unless the user explicitly "
+                        + "names a specific SDLC id to bind. "
                         + "squadId is optional and only validated when assigneeType=AGENT with assigneeRef. "
                         + "Assigning to an AGENT triggers SDLC binding (first time), an ASSIGN event, and dispatch scheduling; "
                         + "it does NOT change the workitem status node. To reassign from HUMAN to an AGENT, pass "
@@ -423,6 +427,9 @@ public class McpToolService {
                                 prop("assigneeType", "string", "Required. Assignee type: HUMAN or AGENT."),
                                 prop("assigneeRef", "integer", "Optional in schema but required in practice. "
                                         + "Assignee reference id: userId for HUMAN, agentId for AGENT."),
+                                prop("sdlcId", "integer", "Optional. Pass only when the user explicitly specifies "
+                                        + "the SDLC id to bind. Omit it to let the server auto-resolve the correct SDLC "
+                                        + "(agent default first, then workitem-type match)."),
                                 prop("squadId", "integer", "Optional. Squad id; only validated when "
                                         + "assigneeType=AGENT and assigneeRef are both present."))),
                 tool(ADD_WORKITEM_COMMENT, "Add a comment to an AutoWonder workitem. "
@@ -455,8 +462,8 @@ public class McpToolService {
                 tool(RESUME_WORKITEM, "Resume a paused workitem by transitioning it to the configured active status node.",
                         schema(required("id", "toNodeId"), prop("id", "integer"), prop("toNodeId", "integer"))),
                 tool(LIST_STATUS_TEMPLATES, "List workitem status templates (status nodes and transitions) for a work type. "
-                        + "This returns status templates, NOT SDLC flows. To find an sdlcId to bind when assigning to a "
-                        + "digital worker, use autowonder.list_sdlcs (filter by workType and status) or autowonder.get_sdlc. "
+                        + "This returns status templates, NOT SDLC flows. Do not use this to pick an SDLC: when assigning "
+                        + "to a digital worker, omit sdlcId and the server auto-resolves the correct SDLC. "
                         + "workType is one of: REQ, BUG, TASK.",
                         schema(required("workType"),
                                 prop("workType", "string", "Required. Workitem type to list status templates for: REQ, BUG, or TASK."))),
@@ -571,6 +578,12 @@ public class McpToolService {
                 tool(CREATE_MEMORY, "Record a reusable memory (lesson learned, best practice, architecture or interface "
                         + "constraint, tool usage, domain knowledge) directly into the AutoWonder server memory store. "
                         + "Use this instead of writing a learning delta file; nothing is passed through local files. "
+                        + "Use contentMd for the markdown body. Do not pass content or entries; those fields belong "
+                        + "to learning_delta/memory_delta.json files, not this MCP tool. Valid scope values are "
+                        + "AGENT, SQUAD, and ORG. Do not pass GLOBAL; use ORG for organization-wide memories. "
+                        + "Personal or long-lived MCP tokens must pass scope explicitly. Dispatch-scoped SDLC "
+                        + "workers should omit scope and ownerRef; the server will force AGENT scope and ownerRef "
+                        + "to the current worker agent. "
                         + "Provenance is filled in server-side from the calling credential: when called with a dispatch "
                         + "credential the source agent, workitem and dispatch are recorded automatically, and the memory "
                         + "is always AGENT-scoped and owned by that agent. Promotion to SQUAD or ORG is a human review "
@@ -908,11 +921,7 @@ public class McpToolService {
                         requiredLong(safeArgs, "artifactId"), context.orgId(), context.userId());
                 yield Map.of("deleted", true);
             }
-            case TRANSITION_WORKITEM -> {
-                yield workitemService.transition(requiredLong(safeArgs, "id"), requiredLong(safeArgs, "toNodeId"),
-                        context.orgId(), context.userId());
-            }
-            case PAUSE_WORKITEM, RESUME_WORKITEM -> {
+            case TRANSITION_WORKITEM, PAUSE_WORKITEM, RESUME_WORKITEM -> {
                 yield workitemService.transition(requiredLong(safeArgs, "id"), requiredLong(safeArgs, "toNodeId"),
                         context.orgId(), context.userId());
             }

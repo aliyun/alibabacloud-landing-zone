@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { workTypeMap, priorityMap, STATUS_COLUMNS, classifyWorkitemStatus } from '../constants';
 import { groupPendingDecisionsByAssignee, isMyPendingDecision } from '../decisionGrouping';
 import { WorkitemHealthBadge } from './WorkitemHealthBadge';
+import { HumanInterventionBadge } from './HumanInterventionBadge';
 import type { Workitem } from '@/shared/types/workitem';
 
 const { Text, Paragraph } = Typography;
@@ -23,7 +24,10 @@ function WorkitemCard({ item }: { item: Workitem }) {
       styles={{ body: { padding: '12px' } }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-        <Tag color={workType.color} style={{ margin: 0 }}>{workType.label}</Tag>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Tag color={workType.color} style={{ margin: 0 }}>{workType.label}</Tag>
+          <HumanInterventionBadge item={item} />
+        </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <WorkitemHealthBadge item={item} />
           <Text type="secondary" style={{ fontSize: 12 }}>{priority.label}</Text>

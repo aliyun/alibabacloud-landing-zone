@@ -280,11 +280,14 @@ class DaemonArtifactControllerTest {
     void sanitizePathRejectsAbsoluteAndTraversal() {
         assertNull(DaemonArtifactController.sanitizePath("../secret"));
         assertNull(DaemonArtifactController.sanitizePath("/etc/passwd"));
+        assertNull(DaemonArtifactController.sanitizePath("C:\\temp\\secret.txt"));
         assertNull(DaemonArtifactController.sanitizePath("foo/../../bar"));
         assertNull(DaemonArtifactController.sanitizePath("foo\0bar"));
         assertNull(DaemonArtifactController.sanitizePath(""));
         assertNull(DaemonArtifactController.sanitizePath(null));
         assertEquals("deliverables/report.md", DaemonArtifactController.sanitizePath("deliverables/report.md"));
+        assertEquals("artifacts/output/handoff/handoff-to-指派操作人.md",
+                DaemonArtifactController.sanitizePath("artifacts/output/handoff/handoff-to-指派操作人.md"));
         assertEquals("file.txt", DaemonArtifactController.sanitizePath("file.txt"));
     }
 }

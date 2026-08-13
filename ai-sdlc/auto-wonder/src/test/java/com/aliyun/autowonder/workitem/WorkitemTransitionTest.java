@@ -88,6 +88,29 @@ class WorkitemTransitionTest {
     }
 
     @Test
+    void humanTransitionCanPublishIntoFinalDoneState() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        StatusTransitionDO tr = new StatusTransitionDO();
+        tr.setTemplateId(10L);
+        tr.setFromNodeId(20L);
+        tr.setToNodeId(21L);
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(tr);
+        when(nodeDao.findById(20L)).thenReturn(node(20L, "pending-decision"));
+        StatusNodeDO published = node(21L, "released");
+        published.setName("已发布");
+        published.setCategory("DONE");
+        when(nodeDao.findById(21L)).thenReturn(published);
+        when(workitemDao.updateStatus(5L, 100L, 21L, 0, 9L)).thenReturn(1);
+
+        service.transition(5L, 21L, 100L, 9L);
+
+        verify(workitemDao).updateStatus(5L, 100L, 21L, 0, 9L);
+        verify(eventDao).insert(argThat((WorkitemEventDO e) ->
+                "HUMAN".equals(e.getActorType()) && "released".equals(e.getToVal())));
+    }
+
+    @Test
     void transitionIllegalThrows13004() {
         WorkitemDO w = workitem(5L, 10L, 20L, 0);
         when(workitemDao.findById(5L)).thenReturn(w);
@@ -147,5 +170,29 @@ class WorkitemTransitionTest {
         when(nodeDao.findByTemplateAndCode(10L, "nope")).thenReturn(null);
         assertThrows(BizException.class, () -> service.agentTransition(5L, "nope", 100L, 555L));
         verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void agentCanAdvanceWorkitemIntoFinalDoneStateWhenTransitionExists() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        StatusNodeDO released = node(21L, "released");
+        released.setCategory("DONE");
+        when(nodeDao.findByTemplateAndCode(10L, "released")).thenReturn(released);
+        StatusTransitionDO transition = new StatusTransitionDO();
+        transition.setToNodeId(21L);
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(transition);
+        when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), eq(555L))).thenReturn(1);
+
+        when(nodeDao.findById(20L)).thenReturn(node(20L, "pending-decision"));
+
+        service.agentTransition(5L, "released", 100L, 555L);
+
+        verify(workitemDao).updateStatus(5L, 100L, 21L, 0, 555L);
+        verify(eventDao).insert(argThat((WorkitemEventDO e) ->
+                "STATUS_CHANGE".equals(e.getEventType())
+                        && "AGENT".equals(e.getActorType())
+                        && e.getActorRef() == 555L
+                        && "released".equals(e.getToVal())));
     }
 }
