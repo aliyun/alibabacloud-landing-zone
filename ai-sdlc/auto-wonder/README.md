@@ -37,3 +37,7 @@ Use the equivalent model name provided by the selected executor.
 Deployment details are in the
 [community runtime guide](docs/community/README.md) and the
 [Alibaba Cloud deployment Skill](skills/deploying-autowonder-on-alibaba-cloud/SKILL.md).
+
+## Roadmap / 路线图
+
+![AutoWonder Community roadmap](docs/images/autowonder-community-roadmap.png)
