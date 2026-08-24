@@ -8,11 +8,32 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `d77e29bfeee53e4176c0a051055280ec83f56743`
-- Community merge commit: `1cf50e3f8555fabf509dd18a51ef677f21c5b99c`
+- Synchronized `origin/master`: `985998be3c803be1973d0bebc16d009e7a46b122`
+- Community merge commit: `dd8b5c6a5e1991a67a94de58b83d20afcae925e3`
 - Synchronized at: 2026-08-24 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-24 (incremental): `d77e29bf` to `985998be`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `d77e29bfeee53e4176c0a051055280ec83f56743` |
+| Community before merge | `762cc25c4` (docs-policy update for docs/skills/) |
+| Merged `origin/master` | `985998be3c803be1973d0bebc16d009e7a46b122` |
+| Resulting merge commit | `dd8b5c6a5e1991a67a94de58b83d20afcae925e3` |
+
+Scope: 11 upstream commits, 20 changed paths. Adds per-step and workitem-level
+duration display in delivery progress UI, and syncs aw-execution-optimizer-skill
+Phase 6 quality verification and evidence-standards updates.
+
+Policy change: `docs/skills/` added to retained documents list. All 22 skill
+files restored from master. No conflicts beyond the expected modify/delete on
+previously excluded skill files — resolved by accepting master's version.
+
+No DDL, no configuration key change, no deployment impact. Backend and frontend
+changes are pure product features with no community boundary crossing.
+
 
 ### 2026-08-24: `d47d1721` to `d77e29bf`
 

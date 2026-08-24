@@ -74,6 +74,7 @@ import org.slf4j.MDC;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1009,6 +1010,7 @@ public class WorkitemService {
         result.setSteps(compatSteps);
         result.setWorkflowPlan(workflowPlan);
         result.setProcessGraph(buildProcessGraph(w, tenantId, dispatches));
+        result.setTotalDurationMs(workitemWallSpan(dispatches, new Date()));
         return result;
     }
 
@@ -1167,7 +1169,6 @@ public class WorkitemService {
                     latestWorkitemDispatch != null ? latestWorkitemDispatch.getId() : null,
                     List.of()));
             if (latestDispatch != null) {
-                vo.setDurationMs(durationOf(latestDispatch));
                 vo.setError(latestDispatch.getError());
                 vo.setExecutorName(resolveAgentName(latestDispatch.getAgentId()));
                 vo.setSubSteps(dispatchSubSteps(latestDispatch.getStatus()));
@@ -1235,7 +1236,8 @@ public class WorkitemService {
         List<DispatchRuntimeEventDO> displayRuntimeEvents = latestAgentDispatch == null
                 ? List.of()
                 : runtimeEventsForDispatch(agentId, latestAgentDispatch, allRuntimeEvents);
-        RuntimeStepState runtimeState = RuntimeStepState.from(displayRuntimeEvents, sdlcSteps);
+        Date progressNow = new Date();
+        RuntimeStepTimeline runtimeState = RuntimeStepTimeline.from(displayRuntimeEvents, sdlcSteps, progressNow);
 
         List<DeliveryStepVO> stepVOs = new ArrayList<>();
         for (SdlcStepDO step : sdlcSteps) {
@@ -1250,11 +1252,11 @@ public class WorkitemService {
                     latestAgentDispatch != null ? latestAgentDispatch.getId() : null,
                     allRuntimeEvents));
             if (latestDispatch != null) {
-                vo.setDurationMs(durationOf(latestDispatch));
                 vo.setError(latestDispatch.getError());
                 vo.setExecutorName(resolveAgentName(latestDispatch.getAgentId()));
                 vo.setSubSteps(dispatchSubSteps(latestDispatch.getStatus()));
             }
+            vo.setDurationMs(runtimeState.durationOf(step));
             String runtimeStatus = runtimeState.statusOf(step);
             if (runtimeStatus != null && runtimeState.isCurrent(step) && latestAgentDispatch != null) {
                 if (DispatchStatus.PAUSED.equals(latestAgentDispatch.getStatus())) {
@@ -1467,214 +1469,6 @@ public class WorkitemService {
                 .collect(Collectors.toList());
     }
 
-    private static class RuntimeStepState {
-        private final Map<Integer, List<DispatchRuntimeEventDO>> eventsByOrder;
-        private final Integer latestOrder;
-        private final String latestEventType;
-
-        private RuntimeStepState(Map<Integer, List<DispatchRuntimeEventDO>> eventsByOrder,
-                                 Integer latestOrder, String latestEventType) {
-            this.eventsByOrder = eventsByOrder;
-            this.latestOrder = latestOrder;
-            this.latestEventType = latestEventType;
-        }
-
-        static RuntimeStepState from(List<DispatchRuntimeEventDO> events, List<SdlcStepDO> steps) {
-            Map<Integer, SdlcStepDO> stepsByOrder = steps.stream()
-                    .filter(s -> s.getStepOrder() != null)
-                    .collect(Collectors.toMap(SdlcStepDO::getStepOrder, s -> s, (a, b) -> a, LinkedHashMap::new));
-            Map<Long, Integer> orderByStepId = steps.stream()
-                    .filter(s -> s.getId() != null && s.getStepOrder() != null)
-                    .collect(Collectors.toMap(SdlcStepDO::getId, SdlcStepDO::getStepOrder, (a, b) -> a));
-            Map<String, Integer> orderByName = steps.stream()
-                    .filter(s -> s.getName() != null && s.getStepOrder() != null)
-                    .collect(Collectors.toMap(s -> s.getName().trim(), SdlcStepDO::getStepOrder, (a, b) -> a));
-            Map<String, Integer> orderByCode = steps.stream()
-                    .filter(s -> s.getCode() != null && !s.getCode().isBlank() && s.getStepOrder() != null)
-                    .collect(Collectors.toMap(s -> s.getCode().trim(), SdlcStepDO::getStepOrder, (a, b) -> a));
-
-            Map<Integer, List<DispatchRuntimeEventDO>> byOrder = new LinkedHashMap<>();
-            Integer latestOrder = null;
-            String latestType = null;
-            for (DispatchRuntimeEventDO event : events) {
-                Integer order = resolveOrder(event, stepsByOrder, orderByStepId, orderByName, orderByCode);
-                if (order == null) {
-                    continue;
-                }
-                byOrder.computeIfAbsent(order, ignored -> new ArrayList<>()).add(event);
-                if (latestOrder == null || compareEvent(event, lastEvent(byOrder.get(latestOrder))) >= 0) {
-                    latestOrder = order;
-                    latestType = event.getEventType();
-                }
-            }
-            return new RuntimeStepState(byOrder, latestOrder, latestType);
-        }
-
-        String statusOf(SdlcStepDO step) {
-            if (latestOrder == null || step.getStepOrder() == null) {
-                return null;
-            }
-            int order = step.getStepOrder();
-            List<DispatchRuntimeEventDO> events = eventsByOrder.get(order);
-            DispatchRuntimeEventDO last = lastEvent(events);
-            if (last != null && "step.reused".equals(last.getEventType())) {
-                return "done";
-            }
-            if (last != null && "step.stale".equals(last.getEventType())) {
-                return "pending";
-            }
-            if (last != null && isFailureEvent(last)) {
-                return "failed";
-            }
-            if (order < latestOrder) {
-                return "done";
-            }
-            if (order > latestOrder) {
-                return "pending";
-            }
-            if (isCompletionEvent(latestEventType)) {
-                return "done";
-            }
-            return "active";
-        }
-
-        boolean isCurrent(SdlcStepDO step) {
-            return latestOrder != null && Objects.equals(latestOrder, step.getStepOrder());
-        }
-
-        List<SubStepVO> subStepsOf(SdlcStepDO step, String stepStatus) {
-            if (step.getStepOrder() == null) {
-                return List.of();
-            }
-            List<DispatchRuntimeEventDO> events = eventsByOrder.get(step.getStepOrder());
-            if (events == null || events.isEmpty()) {
-                return List.of();
-            }
-            List<SubStepVO> result = new ArrayList<>();
-            for (int i = 0; i < events.size(); i++) {
-                DispatchRuntimeEventDO event = events.get(i);
-                SubStepVO vo = new SubStepVO();
-                vo.setName(labelOf(event));
-                if (isFailureEvent(event)) {
-                    vo.setStatus("failed");
-                } else if (i == events.size() - 1
-                        && ("active".equals(stepStatus) || "paused".equals(stepStatus)
-                        || "failed".equals(stepStatus))) {
-                    vo.setStatus(stepStatus);
-                } else {
-                    vo.setStatus("done");
-                }
-                result.add(vo);
-            }
-            return result;
-        }
-
-        DispatchRuntimeEventDO lastEventOf(SdlcStepDO step) {
-            if (step.getStepOrder() == null) {
-                return null;
-            }
-            return lastEvent(eventsByOrder.get(step.getStepOrder()));
-        }
-
-        private static Integer resolveOrder(DispatchRuntimeEventDO event, Map<Integer, SdlcStepDO> stepsByOrder,
-                                            Map<Long, Integer> orderByStepId, Map<String, Integer> orderByName,
-                                            Map<String, Integer> orderByCode) {
-            if (event.getStepOrder() != null && stepsByOrder.containsKey(event.getStepOrder())) {
-                return event.getStepOrder();
-            }
-            if (event.getStepId() != null && orderByStepId.containsKey(event.getStepId())) {
-                return orderByStepId.get(event.getStepId());
-            }
-            if (event.getStepKey() != null) {
-                Integer order = orderByCode.get(event.getStepKey().trim());
-                if (order != null) {
-                    return order;
-                }
-            }
-            if (event.getStepName() != null) {
-                Integer order = orderByName.get(event.getStepName().trim());
-                if (order != null) {
-                    return order;
-                }
-            }
-            return null;
-        }
-
-        private static int compareEvent(DispatchRuntimeEventDO left, DispatchRuntimeEventDO right) {
-            if (right == null) {
-                return 1;
-            }
-            if (left.getId() != null && right.getId() != null) {
-                return left.getId().compareTo(right.getId());
-            }
-            if (left.getGmtCreate() != null && right.getGmtCreate() != null) {
-                return left.getGmtCreate().compareTo(right.getGmtCreate());
-            }
-            return 0;
-        }
-
-        private static DispatchRuntimeEventDO lastEvent(List<DispatchRuntimeEventDO> events) {
-            if (events == null || events.isEmpty()) {
-                return null;
-            }
-            return events.get(events.size() - 1);
-        }
-
-        private static boolean isCompletionEvent(String eventType) {
-            return "step.completed".equals(eventType)
-                    || "step.completion_requested".equals(eventType)
-                    || "completion_requested".equals(eventType)
-                    || "dispatch.completed".equals(eventType);
-        }
-
-        private static boolean isFailureEvent(DispatchRuntimeEventDO event) {
-            String type = event.getEventType();
-            return event.getError() != null
-                    || "step.failed".equals(type)
-                    || "dispatch.failed".equals(type);
-        }
-
-        private static String labelOf(DispatchRuntimeEventDO event) {
-            if (event.getMessage() != null && !event.getMessage().isBlank()
-                    && !looksLikeMojibake(event.getMessage())) {
-                return event.getMessage();
-            }
-            String eventLabel = runtimeEventLabel(event.getEventType());
-            if (eventLabel != null) {
-                return eventLabel;
-            }
-            if (event.getEventType() != null) {
-                return event.getEventType();
-            }
-            return "运行进度";
-        }
-
-        private static String runtimeEventLabel(String eventType) {
-            if (eventType == null) {
-                return null;
-            }
-            if (eventType.startsWith("step.started")) {
-                return "开始执行";
-            }
-            if (isCompletionEvent(eventType)) {
-                return "请求完成";
-            }
-            if ("step.gate_started".equals(eventType)) {
-                return "开始校验";
-            }
-            if ("step.gate_finished".equals(eventType)) {
-                return "校验完成";
-            }
-            if ("step.fix_required".equals(eventType)) {
-                return "需要修复";
-            }
-            if ("step.failed".equals(eventType) || "dispatch.failed".equals(eventType)) {
-                return "执行失败";
-            }
-            return null;
-        }
-    }
-
     private static boolean looksLikeMojibake(String text) {
         return MojibakeDetector.looksLikeMojibake(text);
     }
@@ -1754,6 +1548,39 @@ public class WorkitemService {
             }
         }
         return any ? total : null;
+    }
+
+    /**
+     * 工单执行总耗时：全部 dispatch 的墙钟跨度。
+     *
+     * <p>存在未终结 dispatch 时用 now 收口。该值 >= 各数字人耗时之和，
+     * 因为它包含数字人之间的交接与排队间隔。
+     */
+    private Long workitemWallSpan(List<DispatchDO> dispatches, Date now) {
+        if (dispatches == null || dispatches.isEmpty()) {
+            return null;
+        }
+        Long earliest = null;
+        Long latest = null;
+        boolean hasOpenDispatch = false;
+        for (DispatchDO d : dispatches) {
+            if (d.getGmtCreate() != null) {
+                long created = d.getGmtCreate().getTime();
+                earliest = earliest == null ? created : Math.min(earliest, created);
+            }
+            if (d.getGmtModified() != null) {
+                long modified = d.getGmtModified().getTime();
+                latest = latest == null ? modified : Math.max(latest, modified);
+            }
+            if (!DispatchStatus.isTerminal(d.getStatus())) {
+                hasOpenDispatch = true;
+            }
+        }
+        if (earliest == null) {
+            return null;
+        }
+        long end = hasOpenDispatch ? now.getTime() : (latest == null ? earliest : latest);
+        return Math.max(0L, end - earliest);
     }
 
     private String resolveAgentName(Long agentId) {

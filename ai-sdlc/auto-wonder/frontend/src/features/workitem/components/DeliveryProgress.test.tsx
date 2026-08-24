@@ -1204,4 +1204,65 @@ describe('DeliveryProgress', () => {
 
     expect(screen.getByText('artifact-1.md')).toBeInTheDocument();
   });
+
+  it('renders each agent total duration in the panel header', () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 1,
+        agentName: 'AW全栈开发',
+        status: 'finished',
+        durationMs: 5_520_000,
+        currentActivity: null,
+        steps: [],
+      }],
+    };
+
+    render(<DeliveryProgress progress={progress} />);
+
+    expect(screen.getByText('1时32分')).toBeInTheDocument();
+  });
+
+  it('renders the workitem total duration in the card title', () => {
+    const progress: DeliveryProgressModel = {
+      steps: [{
+        stepId: 101,
+        stepKey: 'coding',
+        name: '编码实现',
+        status: 'done',
+        executorName: null,
+        error: null,
+        subSteps: null,
+        durationMs: null,
+        attempts: null,
+      }],
+      totalDurationMs: 8_040_000,
+    };
+
+    render(<DeliveryProgress progress={progress} />);
+
+    expect(screen.getByText(/总耗时/)).toBeInTheDocument();
+    expect(screen.getByText('总耗时 2时14分')).toBeInTheDocument();
+  });
+
+  it('omits the total duration from the card title when it is null', () => {
+    const progress: DeliveryProgressModel = {
+      steps: [{
+        stepId: 101,
+        stepKey: 'coding',
+        name: '编码实现',
+        status: 'done',
+        executorName: null,
+        error: null,
+        subSteps: null,
+        durationMs: null,
+        attempts: null,
+      }],
+      totalDurationMs: null,
+    };
+
+    render(<DeliveryProgress progress={progress} />);
+
+    expect(screen.queryByText(/总耗时/)).not.toBeInTheDocument();
+  });
 });

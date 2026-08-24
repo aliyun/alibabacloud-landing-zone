@@ -642,7 +642,7 @@ class WorkitemServiceTest {
     }
 
     @Test
-    void delivery_progress_derives_duration_from_dispatch_timestamps() {
+    void delivery_progress_keeps_attempt_duration_but_not_step_duration_without_runtime_events() {
         WorkitemDO w = new WorkitemDO();
         w.setId(100L);
         w.setTenantId(7L);
@@ -681,11 +681,141 @@ class WorkitemServiceTest {
         DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
         DeliveryStepVO stepVO = progress.getSteps().get(0);
 
-        assertEquals(30_000L, stepVO.getDurationMs());
+        assertNull(stepVO.getDurationMs());
         assertEquals(2, stepVO.getAttempts().size());
         assertEquals(161_000L, stepVO.getAttempts().get(0).getDurationMs());
         assertEquals("worker", stepVO.getAttempts().get(0).getExecutorName());
         assertEquals(30_000L, stepVO.getAttempts().get(1).getDurationMs());
+    }
+
+    @Test
+    void assignsEachStepItsOwnDurationWithinASingleDispatch() {
+        // 一个 dispatch 覆盖 3 个步骤，runtime 事件给出各自的起止时间。
+        // 修复前：只有入口步骤有耗时且等于整个 dispatch 的 wall time，其余为 null。
+        // 修复后：三个步骤各自独立且互不相同。
+        List<DeliveryStepVO> steps = deliveryStepsForSingleDispatchFixture();
+
+        assertEquals(60_000L, steps.get(0).getDurationMs());
+        assertEquals(120_000L, steps.get(1).getDurationMs());
+        assertEquals(30_000L, steps.get(2).getDurationMs());
+    }
+
+    @Test
+    void leavesStepDurationNullWhenThereAreNoRuntimeEvents() {
+        // 老工单：有 dispatch 但没有 runtime 事件。
+        // 不得回退到 dispatch 耗时——错的数比没有数更糟。
+        List<DeliveryStepVO> steps = deliveryStepsWithoutRuntimeEventsFixture();
+
+        for (DeliveryStepVO step : steps) {
+            assertNull(step.getDurationMs());
+        }
+    }
+
+    private List<DeliveryStepVO> deliveryStepsForSingleDispatchFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "需求分析与评论"),
+                step(102L, 10L, 2, "编码实现"),
+                step(103L, 10L, 3, "自测与交付")
+        )));
+        // 一条 dispatch 横跨整个工作流，wall time 5 分钟
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.SUCCEEDED, 0L, 300_000L, null)
+        ));
+        when(runtimeEventDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                runtimeEvent(1L, 301L, 41L, "step.started", 1, "需求分析与评论", 1_000L, null),
+                runtimeEvent(2L, 301L, 41L, "step.completed", 1, "需求分析与评论", 61_000L, null),
+                runtimeEvent(3L, 301L, 41L, "step.started", 2, "编码实现", 62_000L, null),
+                runtimeEvent(4L, 301L, 41L, "step.completed", 2, "编码实现", 182_000L, null),
+                runtimeEvent(5L, 301L, 41L, "step.started", 3, "自测与交付", 183_000L, null),
+                runtimeEvent(6L, 301L, 41L, "step.completed", 3, "自测与交付", 213_000L, null)
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+        return progress.getAgents().get(0).getSteps();
+    }
+
+    @Test
+    void totalDurationSpansFromEarliestDispatchCreateToLatestModify() {
+        // 两条 dispatch：#1 [0, 60s]，#2 [90s, 200s] → wall span 应为 200s
+        DeliveryProgressVO progress = deliveryProgressForTwoTerminalDispatchesFixture();
+
+        assertEquals(200_000L, progress.getTotalDurationMs());
+    }
+
+    @Test
+    void totalDurationIsNullWhenThereAreNoDispatches() {
+        DeliveryProgressVO progress = deliveryProgressWithoutDispatchesFixture();
+
+        assertNull(progress.getTotalDurationMs());
+    }
+
+    private DeliveryProgressVO deliveryProgressForTwoTerminalDispatchesFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "编码实现")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.SUCCEEDED, 0L, 60_000L, null),
+                dispatch(302L, 101L, 41L, DispatchStatus.SUCCEEDED, 90_000L, 200_000L, null)
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        return service.getDeliveryProgress(100L, 7L);
+    }
+
+    private DeliveryProgressVO deliveryProgressWithoutDispatchesFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of());
+
+        return service.getDeliveryProgress(100L, 7L);
+    }
+
+    private List<DeliveryStepVO> deliveryStepsWithoutRuntimeEventsFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "需求分析与评论"),
+                step(102L, 10L, 2, "编码实现"),
+                step(103L, 10L, 3, "自测与交付")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.SUCCEEDED, 0L, 300_000L, null)
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+        return progress.getAgents().get(0).getSteps();
     }
 
     @Test
@@ -729,7 +859,7 @@ class WorkitemServiceTest {
         assertEquals("Agent Dev", dev.getAgentName());
         assertEquals("finished", dev.getStatus());
         assertEquals("done", dev.getSteps().get(0).getStatus());
-        assertEquals(120_000L, dev.getSteps().get(0).getDurationMs());
+        assertNull(dev.getSteps().get(0).getDurationMs());
 
         AgentDeliveryProgressVO cr = progress.getAgents().get(1);
         assertEquals(42L, cr.getAgentId());

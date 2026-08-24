@@ -176,6 +176,7 @@ export interface DeliveryProgress {
   agents?: AgentDeliveryProgress[] | null;
   workflowPlan?: WorkflowPlan | null;
   processGraph?: ProcessGraph | null;
+  totalDurationMs?: number | null;
 }
 
 export interface ProcessGraphNode {
