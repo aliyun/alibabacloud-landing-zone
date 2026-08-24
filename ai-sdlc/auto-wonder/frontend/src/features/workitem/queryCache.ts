@@ -4,7 +4,7 @@ const USER_LEVEL_QUERY_ROOTS = new Set([
   'platform-branding',
   'platform-im-channels',
   'user-im-identities',
-  'orgs',
+  'workspaces',
 ]);
 
 export function refreshTenantScopedQueries(queryClient: QueryClient) {

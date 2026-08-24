@@ -1,17 +1,10 @@
 import type { TrendEntry } from '../types';
+import { formatDurationCompact } from '@/shared/lib/duration';
 
 interface DurationTrendChartProps {
   data: TrendEntry[];
   width?: number;
   height?: number;
-}
-
-function formatSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return m > 0 ? `${h}h${m}m` : `${h}h`;
 }
 
 export function DurationTrendChart({ data, width = 480, height = 200 }: DurationTrendChartProps) {
@@ -47,7 +40,7 @@ export function DurationTrendChart({ data, width = 480, height = 200 }: Duration
         <g key={tick}>
           <line x1={pad.left} y1={toY(tick)} x2={pad.left + chartW} y2={toY(tick)} stroke="#f0f0f0" strokeWidth={1} />
           <text x={pad.left - 6} y={toY(tick) + 3} textAnchor="end" fontSize={10} fill="#bfbfbf">
-            {formatSeconds(tick)}
+            {formatDurationCompact(tick)}
           </text>
         </g>
       ))}

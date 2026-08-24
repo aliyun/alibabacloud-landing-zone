@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { buildStartupCommand, ExecutorListPage, readQoderStartupPreference, writeQoderStartupPreference } from './ExecutorListPage';
+import { CLIENT_KINDS, ExecutorListPage, isQoderClientKind, readQoderStartupPreference, writeQoderStartupPreference } from './ExecutorListPage';
+import { buildStartupCommand, detectStartupOs } from './startupCommand';
 import { QODER_MODELS, qoderOptionsForModel } from './qoderOptions';
 import { useAuthStore } from '@/shared/auth/store';
 
@@ -36,7 +37,7 @@ function renderPage() {
 describe('ExecutorListPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
     clearQoderPrefs();
     vi.restoreAllMocks();
   });
@@ -121,13 +122,17 @@ describe('ExecutorListPage', () => {
         success: true, code: '0', message: '', traceId: null,
         data: [{ id: 10, agentId: 1, agentName: 'Alpha', name: 'qoder-runner', status: 'OFFLINE', clientKind: 'QODER_CLI', lastHeartbeat: null, gmtCreate: '2026-07-01' }],
       })),
+      http.get('/api/executors/10/token', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: 'exec_test_token',
+      })),
     );
     renderPage();
 
     await screen.findByText('qoder-runner');
     await user.click(screen.getByRole('button', { name: /启动命令/ }));
 
-    expect(screen.getByRole('dialog', { name: 'Qoder 启动配置' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '启动命令 · qoder-runner' })).toBeInTheDocument();
     expect(screen.getByText('Qoder 模型')).toBeInTheDocument();
     expect(screen.getByText('Reasoning Effort')).toBeInTheDocument();
     expect(screen.getByText('Context Window')).toBeInTheDocument();
@@ -162,7 +167,7 @@ describe('ExecutorListPage', () => {
 
     await screen.findByText('qoder-runner');
     await user.click(screen.getByRole('button', { name: /启动命令/ }));
-    await user.click(screen.getByRole('button', { name: /OK|确/ }));
+    await user.click(screen.getByRole('button', { name: '复制启动命令' }));
 
     expect(execCommand).toHaveBeenCalledWith('copy');
   });
@@ -197,7 +202,7 @@ describe('ExecutorListPage', () => {
 
   it('keeps create visible but blocks non-admin users before opening the modal', async () => {
     const user = userEvent.setup();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     server.use(
       http.get('/api/agents', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],
@@ -216,28 +221,28 @@ describe('ExecutorListPage', () => {
     expect(await screen.findByText('当前为读写权限，新建执行器需要管理员权限')).toBeInTheDocument();
   });
 
-  it('builds a complete npm command for Qoder CLI', () => {
+  it.each([
+    ['QODER_CN_CLI', 'qodercn'],
+    ['QODER_CLI', 'qoder'],
+    ['CLAUDE_CODE', 'claude'],
+    ['CODEX_CLI', 'codex'],
+    ['CURSOR_CLI', 'cursor'],
+  ])('builds a complete npm command for %s', (clientKind, provider) => {
     expect(buildStartupCommand(
       'exec_test_token',
       10000,
-      'QODER_CLI',
+      clientKind,
       'provider-local',
       'https://daily.auto-wonder.example.com/api/mcp',
       '0.2.130',
     )).toBe(
-      'npx -y autowonder@0.2.130 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode provider-local',
+      `npx -y autowonder@0.2.130 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider ${provider} --memory-mode provider-local`,
     );
   });
 
-  it('rejects unsupported executor clients in the community frontend', () => {
-    expect(() => buildStartupCommand(
-      'exec_test_token',
-      10000,
-      'CLAUDE_CODE',
-      'provider-local',
-      'https://daily.auto-wonder.example.com/api/mcp',
-      '0.2.130',
-    )).toThrow('社区版仅支持 Qoder CLI');
+  it('offers only Qoder CLI clients when creating an executor', () => {
+    expect(CLIENT_KINDS.map((kind) => kind.value)).toEqual(['QODER_CN_CLI', 'QODER_CLI']);
+    expect(CLIENT_KINDS.every((kind) => isQoderClientKind(kind.value))).toBe(true);
   });
 
   it('uses provider model IDs and fixed Qoder runtime choices', () => {
@@ -286,6 +291,130 @@ describe('ExecutorListPage', () => {
     )).toThrow('MCP 地址格式不合法');
   });
 
+  it('wraps the Windows startup command with session-level UTF-8 console settings', () => {
+    const cmd = buildStartupCommand(
+      'exec_test_token',
+      10000,
+      'QODER_CLI',
+      'platform',
+      'http://daily.auto-wonder.example.com/api/mcp',
+      '0.2.130',
+      undefined,
+      'windows',
+    );
+    expect(cmd.startsWith('powershell -NoProfile -Command "')).toBe(true);
+    expect(cmd).toContain('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8');
+    expect(cmd).toContain('$OutputEncoding = [System.Text.Encoding]::UTF8');
+    expect(cmd).toContain('npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform');
+    expect(cmd.endsWith('"')).toBe(true);
+  });
+
+  it('keeps the posix startup command unwrapped when the os is explicit', () => {
+    expect(buildStartupCommand(
+      'exec_test_token',
+      10000,
+      'CLAUDE_CODE',
+      'platform',
+      'http://daily.auto-wonder.example.com/api/mcp',
+      '0.2.130',
+      undefined,
+      'posix',
+    )).toBe(
+      'npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider claude --memory-mode platform',
+    );
+  });
+
+  it('detects Windows from the browser platform and defaults to posix elsewhere', () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+    try {
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'Win32' });
+      expect(detectStartupOs()).toBe('windows');
+      Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' });
+      expect(detectStartupOs()).toBe('posix');
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(navigator, 'platform', originalPlatform);
+      } else {
+        Reflect.deleteProperty(navigator, 'platform');
+      }
+    }
+  });
+
+  it('builds a Qoder CLI CN command with the selected fixed runtime options', () => {
+    expect(buildStartupCommand(
+      'exec_test_token',
+      10000,
+      'QODER_CN_CLI',
+      'platform',
+      'http://daily.auto-wonder.example.com/api/mcp',
+      '0.2.130',
+      {
+        model: 'ultimate',
+        reasoningEffort: 'high',
+        contextWindow: '1000000',
+      },
+    )).toBe(
+      'npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qodercn --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
+    );
+  });
+
+  it('treats both Qoder client kinds as Qoder without normalizing them', () => {
+    expect(isQoderClientKind('QODER_CLI')).toBe(true);
+    expect(isQoderClientKind('QODER_CN_CLI')).toBe(true);
+    expect(isQoderClientKind('CLAUDE_CODE')).toBe(false);
+    expect(isQoderClientKind('CODEX_CLI')).toBe(false);
+    expect(isQoderClientKind('CURSOR_CLI')).toBe(false);
+    expect(isQoderClientKind(undefined)).toBe(false);
+  });
+
+  it('creates a Qoder CLI CN executor with QODER_CN_CLI and a qodercn startup command', async () => {
+    const user = userEvent.setup();
+    let createBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 1, name: 'Alpha', avatarUrl: null, status: 'ONLINE', onlineVersionId: null, editingVersionId: null, latestVersionNo: 1, version: 1, gmtCreate: '2026-07-01' }],
+      })),
+      http.get('/api/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [],
+      })),
+      http.get('/api/agents/1/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ id: 20, agentId: 1, agentName: 'Alpha', name: 'cn-runner', status: 'OFFLINE', clientKind: 'QODER_CN_CLI', lastHeartbeat: null, gmtCreate: '2026-07-01' }],
+      })),
+      http.post('/api/agents/1/executors', async ({ request }) => {
+        createBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { id: 20, name: 'cn-runner', token: 'exec_cn_token' },
+        });
+      }),
+    );
+    renderPage();
+
+    // Select the owning agent from the toolbar so the create form defaults to it.
+    await user.click(await screen.findByRole('combobox'));
+    await user.click(await screen.findByText('Alpha'));
+
+    await user.click(screen.getByRole('button', { name: /新建执行器/ }));
+    const createDialog = screen.getByRole('dialog', { name: '新建执行器' });
+    expect(within(createDialog).getByText('Qoder CLI CN')).toBeInTheDocument();
+
+    // Selecting Qoder CLI CN keeps the shared Qoder option fields visible.
+    await user.click(within(createDialog).getByText('Qoder CLI CN'));
+    expect(within(createDialog).getByText('Qoder 模型')).toBeInTheDocument();
+    expect(within(createDialog).getByText('Reasoning Effort')).toBeInTheDocument();
+    expect(within(createDialog).getByText('Context Window')).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('如: dev-machine-01'), 'cn-runner');
+    await user.click(screen.getByRole('dialog', { name: '新建执行器' }).querySelector('.ant-modal-footer button.ant-btn-primary')!);
+
+    await screen.findByText('执行器创建成功');
+    expect(createBody).toMatchObject({ name: 'cn-runner', clientKind: 'QODER_CN_CLI' });
+    expect(screen.getByText(/--provider qodercn/)).toBeInTheDocument();
+  });
+
   it('returns null from readQoderStartupPreference when no preference is stored', () => {
     expect(readQoderStartupPreference(99)).toBeNull();
   });
@@ -327,15 +456,134 @@ describe('ExecutorListPage', () => {
         success: true, code: '0', message: '', traceId: null,
         data: [{ id: 10, agentId: 1, agentName: 'Alpha', name: 'qoder-runner', status: 'OFFLINE', clientKind: 'QODER_CLI', lastHeartbeat: null, gmtCreate: '2026-07-01' }],
       })),
+      http.get('/api/executors/10/token', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: 'exec_test_token',
+      })),
     );
     renderPage();
 
     await screen.findByText('qoder-runner');
     await user.click(screen.getByRole('button', { name: /启动命令/ }));
 
-    const dialog = screen.getByRole('dialog', { name: 'Qoder 启动配置' });
+    const dialog = screen.getByRole('dialog', { name: '启动命令 · qoder-runner' });
     expect(dialog).toBeInTheDocument();
     const modelItems = await screen.findAllByText('Qwen3.8-Max');
     expect(modelItems.length).toBeGreaterThanOrEqual(1);
+  });
+
+  function mockExecutor(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 10000, agentId: 1, name: 'dev-machine-01', agentName: 'A', clientKind: 'CLAUDE_CODE',
+      status: 'OFFLINE', lastConnectIp: null, lastHeartbeat: null,
+      gmtCreate: '2026-08-24T10:00:00Z', ...overrides,
+    };
+  }
+
+  function serveExecutor(overrides: Record<string, unknown> = {}) {
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockExecutor(overrides)],
+      })),
+      http.get('/api/executors/10000/token', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: 'exec_test_token',
+      })),
+    );
+  }
+
+  it('opens a startup command modal with a preview for non-Qoder executors', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'CLAUDE_CODE' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+
+    expect(await screen.findByText(/启动命令 · dev-machine-01/)).toBeInTheDocument();
+    expect(await screen.findByText(/--provider claude/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制启动命令' })).toBeInTheDocument();
+  });
+
+  it('opens the same modal with Qoder fields for Qoder executors', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+
+    expect(await screen.findByText(/启动命令 · dev-machine-01/)).toBeInTheDocument();
+    expect(screen.getByText('Qoder 模型')).toBeInTheDocument();
+    expect(screen.getByText('Context Window')).toBeInTheDocument();
+  });
+
+  it('hides Qoder fields in the modal for non-Qoder executors', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'CODEX_CLI' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+
+    expect(await screen.findByText(/启动命令 · dev-machine-01/)).toBeInTheDocument();
+    expect(screen.queryByText('Qoder 模型')).not.toBeInTheDocument();
+  });
+
+  function mockClipboardWrite() {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    return writeText;
+  }
+
+  it('copies a bash debug command from the startup modal and warns about disk usage', async () => {
+    const user = userEvent.setup();
+    const writeText = mockClipboardWrite();
+    serveExecutor({ clientKind: 'CLAUDE_CODE' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    await user.click(await screen.findByRole('button', { name: /复制 debug 模式命令/ }));
+    await user.click(await screen.findByText('Mac / Linux (bash)'));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const cmd = writeText.mock.calls[0][0];
+    expect(cmd).toContain('--debug 2>&1 | tee ~/aw-claude-10000-');
+    expect(cmd).toMatch(/\.log$/);
+    expect(await screen.findByText(/避免日志写满磁盘/)).toBeInTheDocument();
+  });
+
+  it('copies a PowerShell debug command from the startup modal', async () => {
+    const user = userEvent.setup();
+    const writeText = mockClipboardWrite();
+    serveExecutor({ clientKind: 'CLAUDE_CODE' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    await user.click(await screen.findByRole('button', { name: /复制 debug 模式命令/ }));
+    await user.click(await screen.findByText('Windows (PowerShell 7+)'));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const cmd = writeText.mock.calls[0][0];
+    expect(cmd).toContain('--debug 2>&1 | Tee-Object -FilePath "$HOME/aw-claude-10000-');
+    expect(cmd).toMatch(/\.log"$/);
+  });
+
+  it('copies a plain startup command without the debug suffix', async () => {
+    const user = userEvent.setup();
+    const writeText = mockClipboardWrite();
+    serveExecutor({ clientKind: 'CLAUDE_CODE' });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    await user.click(await screen.findByRole('button', { name: '复制启动命令' }));
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const cmd = writeText.mock.calls[0][0];
+    expect(cmd).not.toContain('--debug');
+    expect(cmd).toContain('--provider claude');
+    expect(await screen.findByText('启动命令已复制')).toBeInTheDocument();
   });
 });

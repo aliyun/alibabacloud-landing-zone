@@ -40,7 +40,7 @@ class McpAccessTokenDaoSqlTest {
     }
 
     @Test
-    void insertPersistsTheOwnerWithoutOrganizationOrAccessLevel() throws Exception {
+    void insertPersistsTheOwnerWithoutWorkspaceOrAccessLevel() throws Exception {
         String insert = statement(mapperXml(), "insert", "insert");
 
         assertTrue(insert.contains(

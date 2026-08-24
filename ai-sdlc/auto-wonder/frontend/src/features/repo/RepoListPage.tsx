@@ -174,7 +174,7 @@ export function RepoListPage() {
               },
             ]}
           >
-            <Input placeholder="https://github.com/example/repo 或 git@example.com:org/repo.git" />
+            <Input placeholder="https://github.com/example/repo 或 git@example.com:workspace/repo.git" />
           </Form.Item>
           <Form.Item label="默认分支" name="defaultBranch">
             <Input placeholder="main" />

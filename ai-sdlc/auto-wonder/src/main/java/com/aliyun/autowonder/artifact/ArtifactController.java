@@ -5,8 +5,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -18,7 +18,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看工作项文档")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看工作项文档")
 public class ArtifactController {
 
     private final ArtifactService artifactService;
@@ -32,38 +32,38 @@ public class ArtifactController {
 
     @GetMapping("/workitems/{id}/artifacts")
     public Result<List<ArtifactVO>> listByWorkitem(@PathVariable("id") Long id) {
-        return Result.ok(artifactService.listByWorkitem(id, currentOrgId()));
+        return Result.ok(artifactService.listByWorkitem(id, currentWorkspaceId()));
     }
 
     @GetMapping("/workitems/{id}/requirement-documents")
     public Result<List<ArtifactVO>> listRequirementDocuments(@PathVariable("id") Long id) {
-        return Result.ok(requirementDocumentService.list(id, currentOrgId()));
+        return Result.ok(requirementDocumentService.list(id, currentWorkspaceId()));
     }
 
     @PostMapping("/workitems/{id}/requirement-documents")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "上传需求文档")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上传需求文档")
     public Result<List<ArtifactVO>> uploadRequirementDocuments(@PathVariable("id") Long id,
                                                                @RequestParam("files") MultipartFile[] files) throws Exception {
-        return Result.ok(requirementDocumentService.uploadWeb(id, files, currentOrgId(), currentUserId()));
+        return Result.ok(requirementDocumentService.uploadWeb(id, files, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/workitems/{id}/requirement-documents/{artifactId}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "删除需求文档")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除需求文档")
     public Result<Boolean> deleteRequirementDocument(@PathVariable("id") Long id,
                                                      @PathVariable("artifactId") Long artifactId) {
-        requirementDocumentService.delete(id, artifactId, currentOrgId(), currentUserId());
+        requirementDocumentService.delete(id, artifactId, currentWorkspaceId(), currentUserId());
         return Result.ok(true);
     }
 
     @GetMapping("/artifacts/{id}/download")
     public Result<String> download(@PathVariable("id") Long id) {
-        return Result.ok(artifactService.getDownloadUrl(id, currentOrgId()));
+        return Result.ok(artifactService.getDownloadUrl(id, currentWorkspaceId()));
     }
 
     @GetMapping("/artifacts/{id}/preview")
     public ResponseEntity<byte[]> preview(@PathVariable("id") Long id) {
         try {
-            ArtifactService.PreviewContent content = artifactService.getPreviewContent(id, currentOrgId());
+            ArtifactService.PreviewContent content = artifactService.getPreviewContent(id, currentWorkspaceId());
             return ResponseEntity.ok()
                     .contentType(contentType(content.getName()))
                     .header("X-Content-Type-Options", "nosniff")
@@ -76,12 +76,12 @@ public class ArtifactController {
         }
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 
     private long currentUserId() {

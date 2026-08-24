@@ -8,11 +8,58 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `d47d172129e4edaef4509148e6d5321200bc5e7d`
-- Community merge commit: `6f14874601a30c5c9db12433c4efe852c29912ca`
-- Synchronized at: 2026-08-11 (Asia/Shanghai)
+- Synchronized `origin/master`: `d77e29bfeee53e4176c0a051055280ec83f56743`
+- Community merge commit: `1cf50e3f8555fabf509dd18a51ef677f21c5b99c`
+- Synchronized at: 2026-08-24 (Asia/Shanghai)
 
 ## History
+
+### 2026-08-24: `d47d1721` to `d77e29bf`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `d47d172129e4edaef4509148e6d5321200bc5e7d` |
+| Community before merge | `5e37e83c78e9221e38500d67b35a9c131dba9fc1` |
+| Merged `origin/master` | `d77e29bfeee53e4176c0a051055280ec83f56743` |
+| Resulting merge commit | `1cf50e3f8555fabf509dd18a51ef677f21c5b99c` |
+
+Scope: 169 upstream commits and 411 final changed paths. Major changes: org →
+workspace API rename (`/api/orgs` → `/api/workspaces`), external workitem
+collaboration with principal identity and reconciliation, integration outbox
+receipt model, executor debug commands, Qoder CLI CN, workitem visual context
+attachments, assign-to-human, timeline operator display, kanban per-column
+query, memory scope grouping, Jedis 3.10.0, runtime 0.2.138.
+
+25 textual conflicts resolved across pom.xml, application.yml, frontend
+lockfile, 5 integration service/test files, frontend executor page/test,
+integration page test, branding service, IM notification resolver, access
+schema test, and outbox DAO/XML. All automatically merged shared files reviewed.
+
+Community adaptations: migrations renumbered V038–V040 (V039 branding reset
+excluded as no-op); AoneWorkitemMapper web-base-url made configurable;
+AoneOperationReadbackHandler converted to SecretCrypto; testing1 env excluded;
+design/assets/skills docs excluded per policy; openapi-reference corrected for
+workspace rename; deployment Skill runtime bumped to 0.2.138.
+
+Deployment review: runtime version is the only deployment contract change.
+Manifest, input catalog, and tests updated. No topology, credential, port,
+endpoint, database, or environment-template change. AUTOWONDER_AONE_WEB_BASE_URL
+added as optional empty-default key.
+
+Independent review: ancestry verified, all 411 upstream paths accounted for,
+community differences limited to documented boundaries (SecretCrypto,
+resolveArtifactBucket, configurable Aone web-base-url, public Node/npm
+toolchain, optional Aone, Qoder-only executor creation, excluded internal env,
+docs-policy, and the openapi-reference doc correction).
+
+Verification:
+- Maven clean verify: 2049 tests passed, 0 failures.
+- Frontend: 662 tests, 0 errors, 1 skipped (new external collaboration
+  rendering test, Antd timing); lint 0 errors.
+- Deployment Skill: 85 tests passed.
+- Internal reference scan, migration immutability, ancestry, dependency boundary:
+  all passed.
+
 
 ### 2026-08-11: `d5e36283` to `d47d1721`
 

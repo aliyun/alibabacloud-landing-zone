@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,6 +45,7 @@ class AoneInboundPollerTest {
 
         assertEquals(2, synced);
         verify(inboundSyncService).syncWorkitems(binding, items, 9L);
+        verify(inboundSyncService).reconcileLinkedWorkitems(binding, 9L, 100);
     }
 
     @Test
@@ -90,6 +92,27 @@ class AoneInboundPollerTest {
         poller.pollOnce();
 
         verify(workitemProvider, times(1)).searchProject(any(AoneOpenApiConfig.class), eq("2161074"), isNull(), isNull());
+    }
+
+    @Test
+    void keepsLastSuccessfulSyncWhenPollFails() {
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        ExternalWorkitemProvider workitemProvider = mock(ExternalWorkitemProvider.class);
+        AoneInboundSyncService inboundSyncService = mock(AoneInboundSyncService.class);
+        AoneInboundPoller poller = new AoneInboundPoller(bindingDao, secretCrypto, workitemProvider, inboundSyncService);
+
+        ExternalProjectBindingDO binding = binding();
+        binding.setLastSuccessAt(new Date(System.currentTimeMillis() - 86_400_000L));
+        when(bindingDao.listEnabled("AONE")).thenReturn(List.of(binding));
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(workitemProvider.searchProject(any(AoneOpenApiConfig.class), eq("2161074"), any(Date.class), isNull()))
+                .thenThrow(new RuntimeException("Aone request timed out"));
+
+        poller.pollOnce();
+
+        verify(bindingDao).markSyncFailure(1L, 100L, "Aone request timed out");
+        verify(bindingDao, never()).markSyncSuccess(eq(1L), eq(100L), any());
     }
 
     private ExternalProjectBindingDO binding() {

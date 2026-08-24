@@ -38,7 +38,7 @@
         LIMIT 1
     </select>
 
-    <select id="searchOrgCandidates" resultType="com.aliyun.autowonder.user.UserDO">
+    <select id="searchWorkspaceCandidates" resultType="com.aliyun.autowonder.user.UserDO">
         SELECT u.*
         FROM `user` u
         WHERE u.is_deleted = 0

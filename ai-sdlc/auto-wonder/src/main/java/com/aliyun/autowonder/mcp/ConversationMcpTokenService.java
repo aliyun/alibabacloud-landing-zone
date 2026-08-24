@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -43,14 +43,14 @@ public class ConversationMcpTokenService {
                 throw new IllegalArgumentException("invalid purpose");
             }
             long conversationId = ((Number) claims.get("subjectId")).longValue();
-            long tenantId = ((Number) claims.get("org")).longValue();
+            long tenantId = ((Number) claims.get("workspace")).longValue();
             AgentConversationDO conversation = conversationDao.findById(tenantId, conversationId);
             if (conversation == null || !"ACTIVE".equals(conversation.getStatus())) {
                 throw new IllegalArgumentException("conversation is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();
             return new McpAccessTokenService.Principal(
-                    tenantId, userId, conversationId, OrgAccessLevel.READ_WRITE,
+                    tenantId, userId, conversationId, WorkspaceAccessLevel.READ_WRITE,
                     McpAccessTokenService.CredentialType.CONVERSATION);
         } catch (Exception e) {
             throw new BizException(ErrorCode.UNAUTHORIZED);

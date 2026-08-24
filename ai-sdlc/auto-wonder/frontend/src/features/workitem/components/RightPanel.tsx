@@ -4,7 +4,14 @@ import { MessageOutlined, ArrowLeftOutlined } from '@ant-design/icons';
 import { WorkitemClarificationPanel } from '../clarification/WorkitemClarificationPanel';
 import { SquadMembers } from './SquadMembers';
 import { DeliveryProgress } from './DeliveryProgress';
-import type { Participant, DeliveryProgress as DeliveryProgressModel, DeliveryStep, Artifact } from '@/shared/types/workitem';
+import { ExternalCollaborationCard } from './ExternalCollaborationCard';
+import type {
+  Participant,
+  DeliveryProgress as DeliveryProgressModel,
+  DeliveryStep,
+  Artifact,
+  ExternalCollaboration,
+} from '@/shared/types/workitem';
 import { useContinueDispatch, usePauseDispatch } from '../hooks';
 import { AI_CLARIFICATION_ENABLED } from '../featureFlags';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -13,6 +20,7 @@ interface RightPanelProps {
   workitemId: string;
   participants: Participant[];
   participantsLoading?: boolean;
+  externalCollaboration?: ExternalCollaboration | null;
   steps: DeliveryStep[];
   progress?: DeliveryProgressModel | null;
   stepsLoading?: boolean;
@@ -25,6 +33,7 @@ export function RightPanel({
   workitemId,
   participants,
   participantsLoading,
+  externalCollaboration,
   steps,
   progress,
   stepsLoading,
@@ -74,6 +83,7 @@ export function RightPanel({
           </Button>
         ) : null}
 
+        <ExternalCollaborationCard collaboration={externalCollaboration} />
         <SquadMembers participants={participants} loading={participantsLoading} />
         <DeliveryProgress
           steps={steps}

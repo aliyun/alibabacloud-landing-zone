@@ -7,7 +7,7 @@ public class BizLog {
 
     private String requestId;
     private Long userId;
-    private Long orgId;
+    private Long workspaceId;
     private String operation;
     private String path;
     private String httpMethod;

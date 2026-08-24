@@ -26,7 +26,7 @@ function renderPage() {
 describe('AgentCreatePage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     vi.restoreAllMocks();
   });
 
@@ -84,7 +84,7 @@ describe('AgentCreatePage', () => {
     const error = vi.spyOn(message, 'error').mockImplementation(
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     server.use(
       http.post('/api/agents', () => {
         createCalls += 1;

@@ -27,7 +27,7 @@ export function OwnerTransferModal({
 
   return (
     <Modal
-      title="移交组织 Owner"
+      title="移交工作空间 Owner"
       open={open}
       okText="确认移交"
       cancelText="取消"

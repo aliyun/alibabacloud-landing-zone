@@ -6,7 +6,7 @@ export interface Memory {
   ownerRef: number | null;
   type: 'FACT' | 'RULE' | 'PREFERENCE';
   title: string | null;
-  contentMd: string;
+  contentMd: string | null;
   status: 'ADOPTED' | 'PENDING' | 'REJECTED';
   source: string | null;
   sourceRef: string | null;
@@ -26,6 +26,8 @@ export interface UpdateMemoryParams {
   title?: string;
   contentMd: string;
   type?: string;
+  scope?: string;
+  ownerRef?: number;
 }
 
 export interface ReviewMemoryParams {
@@ -45,6 +47,26 @@ export async function listMemories(params: {
   status?: string;
 }): Promise<Memory[]> {
   const resp = await apiClient.get<Memory[]>('/api/memories', { params });
+  return resp.data;
+}
+
+export interface MemoryGroup {
+  scope: 'ORG' | 'SQUAD' | 'AGENT';
+  ownerRef: number | null;
+  ownerName: string | null;
+  total: number;
+  memories: Memory[];
+}
+
+export async function listMemoryGroups(params: {
+  page?: number;
+  size?: number;
+  scope?: string;
+  ownerRef?: number;
+  type?: string;
+  status?: string;
+}): Promise<MemoryGroup[]> {
+  const resp = await apiClient.get<MemoryGroup[]>('/api/memories/grouped', { params });
   return resp.data;
 }
 

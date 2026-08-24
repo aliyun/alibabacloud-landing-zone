@@ -13,11 +13,13 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.TimeZone;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,7 +30,8 @@ class AoneWorkitemProviderTest {
 
     @Test
     void createCommentExtractsCommentIdFromAoneMessage() {
-        AoneWorkitemProvider provider = new AoneWorkitemProvider(new FakeAoneClient());
+        FakeAoneClient client = new FakeAoneClient();
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
 
         ExternalComment comment = provider.createComment(config(), "84189105", "WORKER_1782377321313", "hello");
 
@@ -36,6 +39,23 @@ class AoneWorkitemProviderTest {
         assertEquals("84189105", comment.getExternalWorkitemId());
         assertEquals("WORKER_1782377321313", comment.getAuthorStaffId());
         assertEquals("hello", comment.getContentMd());
+    }
+
+    @Test
+    void createCommentPostsContentInFormBodyNotUrlQuery() {
+        FakeAoneClient client = new FakeAoneClient();
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+        // Long CJK content URL-encoded into a GET query string overflows the gateway URL
+        // length limit; the content must travel in a POST form body instead.
+        String longContent = "治理结论" + "x".repeat(2000);
+
+        provider.createComment(config(), "84189105", "WORKER_1782377321313", longContent);
+
+        assertEquals("/issue/openapi/IssueTopService/createComment", client.lastPostPath);
+        assertEquals(longContent, client.lastPostQuery.get("content"));
+        assertEquals("84189105", client.lastPostQuery.get("targetId"));
+        assertEquals("WORKER_1782377321313", client.lastPostQuery.get("user"));
+        assertNull(client.lastGetPath);
     }
 
     @Test
@@ -49,6 +69,58 @@ class AoneWorkitemProviderTest {
         assertEquals(1, client.callCount);
         assertEquals("2161074", client.postQueries.get(0).get("akProjectId"));
         assertEquals(List.of("1000", "1001"), client.postQueries.get(0).get("idList"));
+    }
+
+    @Test
+    void searchByIdsBatchesRequestsToStayWithinIdListLimit() {
+        WindowFakeClient client = new WindowFakeClient();
+        client.addItems(120, BASE_MILLIS, 1000);
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < 120; i++) {
+            ids.add(String.valueOf(1000 + i));
+        }
+
+        PageResult<ExternalWorkitemSummary> page = provider.searchByIds(config(), "2161074", ids);
+
+        assertEquals(3, client.callCount);
+        for (Map<String, ?> query : client.postQueries) {
+            List<?> idList = (List<?>) query.get("idList");
+            assertTrue(idList.size() <= 50, "idList batch must not exceed 50 but was " + idList.size());
+        }
+        assertEquals(120, page.getItems().size());
+        assertEquals(120, distinctIds(page));
+        assertEquals(120, page.getTotalCount());
+    }
+
+    @Test
+    void searchByIdsExactlyFiftyIdsUsesSingleRequest() {
+        WindowFakeClient client = new WindowFakeClient();
+        client.addItems(50, BASE_MILLIS, 1000);
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < 50; i++) {
+            ids.add(String.valueOf(1000 + i));
+        }
+
+        PageResult<ExternalWorkitemSummary> page = provider.searchByIds(config(), "2161074", ids);
+
+        assertEquals(1, client.callCount);
+        assertEquals(50, page.getItems().size());
+        assertEquals(50, page.getTotalCount());
+    }
+
+    @Test
+    void searchByIdsEmptyIdsReturnsEmptyWithoutRequest() {
+        WindowFakeClient client = new WindowFakeClient();
+        client.addItems(3, BASE_MILLIS, 1000);
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+
+        PageResult<ExternalWorkitemSummary> page = provider.searchByIds(config(), "2161074", List.of());
+
+        assertEquals(0, client.callCount);
+        assertEquals(0, page.getItems().size());
+        assertEquals(0, page.getTotalCount());
     }
 
     @Test
@@ -140,6 +212,65 @@ class AoneWorkitemProviderTest {
     }
 
     @Test
+    void listCommentsMapsCreatorIdentityAndUserDisplayName() {
+        FakeAoneClient client = new FakeAoneClient();
+        JSONObject comment = new JSONObject();
+        comment.put("id", 124709025L);
+        comment.put("targetId", 84189105L);
+        comment.put("creator", "440501");
+        comment.put("user", "煊童");
+        comment.put("content", "请处理");
+        client.comments.add(comment);
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+
+        ExternalComment mapped = provider.listComments(config(), List.of("84189105")).get(0);
+
+        assertEquals("440501", mapped.getAuthorStaffId());
+        assertEquals("煊童", mapped.getAuthorName());
+        assertEquals("440501", mapped.getAuthor().getSubjectId());
+        assertEquals("煊童", mapped.getAuthor().getDisplayName());
+    }
+
+    @Test
+    void listCommentsResolvesInternalUserIdToStaffId() {
+        FakeAoneClient client = new FakeAoneClient();
+        JSONObject comment = new JSONObject();
+        comment.put("id", 126034247L);
+        comment.put("targetId", 85115148L);
+        comment.put("userId", 48730503L);
+        comment.put("content", "请处理");
+        client.comments.add(comment);
+        JSONObject user = new JSONObject();
+        user.put("staffId", "320687");
+        client.usersById.put("48730503", user);
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+
+        ExternalComment mapped = provider.listComments(config(), List.of("85115148")).get(0);
+
+        assertEquals("48730503", mapped.getAuthorInternalUserId());
+        assertEquals("320687", mapped.getAuthorStaffId());
+        assertEquals("320687", mapped.getAuthor().getSubjectId());
+        assertEquals("/ak/project/openapi/UserApiFacade/getById", client.lastGetPath);
+        assertEquals("48730503", client.lastGetQuery.get("id"));
+    }
+
+    @Test
+    void listCommentsKeepsBatchWhenAuthorLookupFails() {
+        FakeAoneClient client = new FakeAoneClient();
+        JSONObject comment = new JSONObject();
+        comment.put("id", 126034247L);
+        comment.put("targetId", 85115148L);
+        comment.put("userId", 48730503L);
+        client.comments.add(comment);
+        AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
+
+        ExternalComment mapped = provider.listComments(config(), List.of("85115148")).get(0);
+
+        assertEquals("48730503", mapped.getAuthorInternalUserId());
+        assertEquals(null, mapped.getAuthor());
+    }
+
+    @Test
     void updateContentUsesAoneIssueUpdateFields() {
         FakeAoneClient client = new FakeAoneClient();
         AoneWorkitemProvider provider = new AoneWorkitemProvider(client);
@@ -221,8 +352,20 @@ class AoneWorkitemProviderTest {
             if (offset > 5000) {
                 throw new IllegalStateException("not support offset value larger than 5000");
             }
+            List<Long> idFilter = null;
+            if (body.get("idList") instanceof List<?> idList) {
+                if (idList.size() > 50) {
+                    throw new IllegalStateException("idList max size 50");
+                }
+                idFilter = new ArrayList<>();
+                for (Object id : idList) {
+                    idFilter.add(Long.parseLong(String.valueOf(id)));
+                }
+            }
+            List<Long> finalIdFilter = idFilter;
             List<long[]> filtered = data.stream()
                     .filter(r -> r[1] >= from && r[1] <= to)
+                    .filter(r -> finalIdFilter == null || finalIdFilter.contains(r[0]))
                     .sorted(Comparator.comparingLong(r -> r[1]))
                     .collect(Collectors.toList());
             JSONArray issues = new JSONArray();
@@ -268,6 +411,8 @@ class AoneWorkitemProviderTest {
         private String lastGetPath;
         private Map<String, ?> lastGetQuery;
         private boolean failUpdate;
+        private final JSONArray comments = new JSONArray();
+        private final Map<String, JSONObject> usersById = new HashMap<>();
 
         @Override
         public JSONObject get(AoneOpenApiConfig config, String path, Map<String, ?> query) {
@@ -275,7 +420,13 @@ class AoneWorkitemProviderTest {
             lastGetQuery = query;
             JSONObject result = new JSONObject();
             if ("/issue/openapi/CommentTopService/get".equals(path)) {
-                result.put("result", new JSONArray());
+                result.put("result", comments);
+            } else if ("/ak/project/openapi/UserApiFacade/getById".equals(path)) {
+                JSONObject user = usersById.get(String.valueOf(query.get("id")));
+                if (user == null) {
+                    throw new IllegalStateException("aone user lookup failed");
+                }
+                return user;
             } else {
                 result.put("result", true);
                 result.put("message", "comment id:124709025");
@@ -289,6 +440,12 @@ class AoneWorkitemProviderTest {
             lastPostQuery = body;
             if (failUpdate && "/issue/openapi/IssueTopService/update".equals(path)) {
                 throw new IllegalStateException("aone update failed");
+            }
+            if ("/issue/openapi/IssueTopService/createComment".equals(path)) {
+                JSONObject commentResult = new JSONObject();
+                commentResult.put("result", true);
+                commentResult.put("message", "comment id:124709025");
+                return commentResult;
             }
             JSONObject issue = new JSONObject();
             issue.put("id", 84189105);

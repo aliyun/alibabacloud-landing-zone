@@ -21,7 +21,7 @@ function renderPage() {
 describe('AgentReviewPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
 
   it('renders empty state when no pending reviews', async () => {

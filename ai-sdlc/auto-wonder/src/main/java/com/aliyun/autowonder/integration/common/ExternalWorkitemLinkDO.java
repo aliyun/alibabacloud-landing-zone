@@ -16,9 +16,20 @@ public class ExternalWorkitemLinkDO {
     private String externalWorkitemId;
     private String externalWorkType;
     private Long workitemId;
+    private String externalUrl;
+    private String sourceStatusId;
+    private String sourceStatusName;
+    private String sourceLifecycle;
+    private Long reporterPrincipalId;
+    private Long businessOwnerPrincipalId;
+    private String principalRelationsJson;
     private Date remoteUpdatedAt;
     private String remoteVersionHash;
     private String lastSyncDirection;
+    private Date lastSyncAt;
+    private String syncStatus;
+    private String lastErrorCode;
+    private String lastError;
     private Date gmtCreate;
     private Date gmtModified;
 }

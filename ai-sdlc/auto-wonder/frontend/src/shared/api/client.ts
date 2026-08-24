@@ -67,15 +67,15 @@ function safeParse(text: string) {
 
 function isAccessDenied(code: string): boolean {
   return code === ErrorCodes.NO_PERMISSION
-    || code === ErrorCodes.ORG_ACCESS_INSUFFICIENT;
+    || code === ErrorCodes.WORKSPACE_ACCESS_INSUFFICIENT;
 }
 
 function isLoginRequest(url?: string): boolean {
   return url === '/api/auth/login';
 }
 
-async function synchronizeOrgAfterFailure(code: string): Promise<void> {
-  if (code === ErrorCodes.ORG_NOT_MEMBER) {
+async function synchronizeWorkspaceAfterFailure(code: string): Promise<void> {
+  if (code === ErrorCodes.WORKSPACE_NOT_MEMBER) {
     await refreshCurrentMembership();
     return;
   }
@@ -179,7 +179,7 @@ apiClient.interceptors.response.use(
         return handleUnauthorized(response.config);
       }
       const apiError = new ApiError(body.code, body.message, body.traceId);
-      await synchronizeOrgAfterFailure(body.code);
+      await synchronizeWorkspaceAfterFailure(body.code);
       throw apiError;
     }
     response.data = body.data;
@@ -193,7 +193,7 @@ apiClient.interceptors.response.use(
         return handleUnauthorized(error.config);
       }
       const apiErr = new ApiError(body.code, body.message, body.traceId);
-      await synchronizeOrgAfterFailure(body.code);
+      await synchronizeWorkspaceAfterFailure(body.code);
       throw apiErr;
     }
     throw new ApiError('10000', error.message || 'Network error', null);

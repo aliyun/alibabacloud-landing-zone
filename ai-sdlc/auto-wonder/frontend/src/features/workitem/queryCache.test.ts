@@ -43,7 +43,7 @@ describe('refreshTenantScopedQueries', () => {
       ['platform-branding', 'public'],
       ['platform-im-channels'],
       ['user-im-identities'],
-      ['orgs', 'mine'],
+      ['workspaces', 'mine'],
       ['workitems'],
     ]);
 
@@ -52,7 +52,7 @@ describe('refreshTenantScopedQueries', () => {
     expect(qc.getQueryData(['platform-branding', 'public'])).toBe('stub');
     expect(qc.getQueryData(['platform-im-channels'])).toBe('stub');
     expect(qc.getQueryData(['user-im-identities'])).toBe('stub');
-    expect(qc.getQueryData(['orgs', 'mine'])).toBe('stub');
+    expect(qc.getQueryData(['workspaces', 'mine'])).toBe('stub');
     expect(qc.getQueryData(['workitems'])).toBeUndefined();
   });
 

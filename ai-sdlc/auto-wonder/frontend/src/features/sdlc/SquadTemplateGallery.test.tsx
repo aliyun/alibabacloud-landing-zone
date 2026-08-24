@@ -66,7 +66,7 @@ const mockDetail = {
 describe('SquadTemplateGallery', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     vi.restoreAllMocks();
   });
 

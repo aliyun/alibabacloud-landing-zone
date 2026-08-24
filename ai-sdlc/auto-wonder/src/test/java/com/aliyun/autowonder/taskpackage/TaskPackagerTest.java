@@ -219,6 +219,26 @@ class TaskPackagerTest {
     }
 
     @Test
+    void visualRequirementDocumentBytesArePackagedWithoutManifestChange() throws Exception {
+        byte[] png = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00};
+        var stored = storage.put("autowonder-artifacts-daily", "t/100/workitem/3/requirements/screen.png", png);
+        TaskArtifactRef ref = new TaskArtifactRef();
+        ref.setName("requirements/screen.png");
+        ref.setOssRef(stored.getOssRef());
+        PackageContext c = baseCtx();
+        c.setRequirementDocuments(List.of(ref));
+
+        TaskPackageResult result = packager.build(c);
+        Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
+
+        assertArrayEquals(png, entries.get("requirements/screen.png"));
+        JSONObject manifest = JSON.parseObject(new String(entries.get("manifest.json"), StandardCharsets.UTF_8));
+        JSONObject document = manifest.getJSONArray("requirementDocuments").getJSONObject(0);
+        assertEquals("requirements/screen.png", document.getString("name"));
+        assertFalse(document.containsKey("contentType"));
+    }
+
+    @Test
     void duplicate_role_names_get_suffixed() throws Exception {
         PackageContext c = baseCtx();
         TeammateOutput a = new TeammateOutput();

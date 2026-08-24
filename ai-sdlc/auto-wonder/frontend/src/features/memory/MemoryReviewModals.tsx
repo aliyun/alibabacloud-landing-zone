@@ -6,7 +6,7 @@ const typeOptions = Object.entries(typeLabel).map(([value, label]) => ({ value, 
 const reviewScopeOptions = [
   { value: 'AGENT', label: '员工' },
   { value: 'SQUAD', label: '小队' },
-  { value: 'ORG', label: '组织全局' },
+  { value: 'ORG', label: '工作空间全局' },
 ];
 
 interface MemoryReviewModalsProps {

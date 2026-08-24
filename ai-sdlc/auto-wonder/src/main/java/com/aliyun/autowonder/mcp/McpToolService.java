@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
 import com.alibaba.fastjson.JSON;
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
@@ -26,8 +26,8 @@ import com.aliyun.autowonder.memory.MemoryService;
 import com.aliyun.autowonder.memory.dto.CreateMemoryRequest;
 import com.aliyun.autowonder.memory.dto.MemoryVO;
 import com.aliyun.autowonder.memory.dto.UpdateMemoryRequest;
-import com.aliyun.autowonder.org.OrgService;
-import com.aliyun.autowonder.org.dto.OrgVO;
+import com.aliyun.autowonder.workspace.WorkspaceService;
+import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.CreateRelationRequest;
 import com.aliyun.autowonder.repo.dto.CreateRepoRequest;
@@ -81,6 +81,7 @@ public class McpToolService {
     private static final String ADD_WORKITEM_COMMENT = "autowonder.add_workitem_comment";
     private static final String LIST_WORKITEM_COMMENTS = "autowonder.list_workitem_comments";
     private static final String UPLOAD_WORKITEM_DOCUMENT = "autowonder.upload_workitem_document";
+    private static final String WORKITEM_CLI_UPLOAD_TOKEN = "autowonder.workitem_cli_upload_token";
     private static final String LIST_WORKITEM_DOCUMENTS = "autowonder.list_workitem_documents";
     private static final String DELETE_WORKITEM_DOCUMENT = "autowonder.delete_workitem_document";
     private static final String TRANSITION_WORKITEM = "autowonder.transition_workitem";
@@ -106,10 +107,15 @@ public class McpToolService {
     private static final String UPDATE_AGENT = "autowonder.update_agent";
     private static final String SUBMIT_AGENT_FOR_REVIEW = "autowonder.submit_agent_for_review";
     private static final String PUBLISH_AGENT = "autowonder.publish_agent";
+    private static final String GET_AGENT_VERSION = "autowonder.get_agent_version";
+    private static final String UPDATE_AGENT_CONFIG = "autowonder.update_agent_config";
     private static final String GET_AGENT_VERSION_STATUS = "autowonder.get_agent_version_status";
     private static final String BIND_AGENT_REPOS = "autowonder.bind_agent_repos";
     private static final String BIND_AGENT_SKILLS = "autowonder.bind_agent_skills";
     private static final String BIND_AGENT_MEMORIES = "autowonder.bind_agent_memories";
+    private static final String UNBIND_AGENT_REPOS = "autowonder.unbind_agent_repos";
+    private static final String UNBIND_AGENT_SKILLS = "autowonder.unbind_agent_skills";
+    private static final String UNBIND_AGENT_MEMORIES = "autowonder.unbind_agent_memories";
     private static final String CREATE_SKILL = "autowonder.create_skill";
     private static final String LIST_SKILLS = "autowonder.list_skills";
     private static final String GET_SKILL = "autowonder.get_skill";
@@ -146,159 +152,171 @@ public class McpToolService {
     private static final Set<String> MEMORY_SCOPES = Set.of(MEMORY_SCOPE_AGENT, "SQUAD", "ORG");
     /**
      * Single tool registry: a tool cannot be half-registered, so it can never end up with an
-     * access level but no organization scope (which would skip the membership check).
+     * access level but no workspace scope (which would skip the membership check).
      */
     private static final Map<String, ToolAccess> TOOL_ACCESS =
             Map.ofEntries(
                     Map.entry(LIST_PROJECTS,
-                            globalTool(OrgAccessLevel.READ_ONLY)),
+                            globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(CREATE_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_WORKITEMS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ASSIGN_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ADD_WORKITEM_COMMENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_WORKITEM_COMMENTS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPLOAD_WORKITEM_DOCUMENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(WORKITEM_CLI_UPLOAD_TOKEN,
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_WORKITEM_DOCUMENTS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_WORKITEM_DOCUMENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(TRANSITION_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PAUSE_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(RESUME_WORKITEM,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_STATUS_TEMPLATES,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_STATUS_TEMPLATE,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(CREATE_SDLC,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SDLCS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_SDLC,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_SDLC,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_SDLC,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ADD_SDLC_STEP,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_SDLC_STEP,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_SDLC_STEP,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(REORDER_SDLC_STEPS,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ENABLE_SDLC,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DISABLE_SDLC,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_AGENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_AGENTS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_AGENT,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_AGENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_AGENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SUBMIT_AGENT_FOR_REVIEW,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PUBLISH_AGENT,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(GET_AGENT_VERSION,
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(UPDATE_AGENT_CONFIG,
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(GET_AGENT_VERSION_STATUS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(BIND_AGENT_REPOS,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(BIND_AGENT_SKILLS,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(BIND_AGENT_MEMORIES,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(UNBIND_AGENT_REPOS,
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(UNBIND_AGENT_SKILLS,
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(UNBIND_AGENT_MEMORIES,
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SKILLS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_SKILL,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_SKILL,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_SKILL,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(INSPECT_SKILL_PACKAGE,
-                            globalTool(OrgAccessLevel.READ_ONLY)),
+                            globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPLOAD_SKILL_PACKAGE,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL_FROM_PACKAGE,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_SKILL_PACKAGE,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_PLATFORM_SKILLS,
-                            globalTool(OrgAccessLevel.READ_ONLY)),
+                            globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(INSTALL_PLATFORM_SKILL,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_MEMORY,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SEARCH_MEMORIES,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_MEMORY,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_MEMORY,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DEPRECATE_MEMORY,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_MEMORY,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_REPOS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_REPO,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(LIST_REPO_RELATIONS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(CREATE_REPO_RELATION,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_REPO_RELATION,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_REPO,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_REPO,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_REPO,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SQUADS,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_SQUAD,
-                            orgTool(OrgAccessLevel.READ_ONLY)),
+                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(ADD_AGENT_TO_SQUAD,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(REMOVE_AGENT_FROM_SQUAD,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SQUAD,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PAUSE_DISPATCH,
-                            orgTool(OrgAccessLevel.READ_WRITE)),
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SET_AGENT_DEFAULT_SDLC,
-                            orgTool(OrgAccessLevel.READ_WRITE)));
+                            orgTool(WorkspaceAccessLevel.READ_WRITE)));
 
-    private static final String ORG_ID_DESCRIPTION =
-            "Required. Target organization id. Use autowonder.list_projects to discover the "
-                    + "organizations you can access; your permission follows your live "
-                    + "membership access level in this organization.";
+    private static final String WORKSPACE_ID_DESCRIPTION =
+            "Required. Target workspace id. Use autowonder.list_projects to discover the "
+                    + "workspaces you can access; your permission follows your live "
+                    + "membership access level in this workspace.";
 
-    private final OrgService orgService;
+    private final WorkspaceService workspaceService;
     private final WorkitemService workitemService;
     private final GuidanceService guidanceService;
     private final SkillService skillService;
@@ -309,22 +327,24 @@ public class McpToolService {
     private final PlatformSkillCatalog platformSkillCatalog;
     private final DispatchDao dispatchDao;
     private final RequirementDocumentService requirementDocumentService;
+    private final WorkitemCliUploadTokenService workitemCliUploadTokenService;
     private final MemoryService memoryService;
     private final RepoService repoService;
     private final SquadService squadService;
     private final DispatchPauseService dispatchPauseService;
 
-    public McpToolService(OrgService orgService, WorkitemService workitemService,
+    public McpToolService(WorkspaceService workspaceService, WorkitemService workitemService,
                           GuidanceService guidanceService, SkillService skillService,
                           SkillPackageService skillPackageService,
                           SdlcService sdlcService, AgentService agentService,
                           StatusTemplateService statusTemplateService,
                           PlatformSkillCatalog platformSkillCatalog, DispatchDao dispatchDao,
                           RequirementDocumentService requirementDocumentService,
+                          WorkitemCliUploadTokenService workitemCliUploadTokenService,
                           MemoryService memoryService, RepoService repoService,
                           SquadService squadService,
                           DispatchPauseService dispatchPauseService) {
-        this.orgService = orgService;
+        this.workspaceService = workspaceService;
         this.workitemService = workitemService;
         this.guidanceService = guidanceService;
         this.skillService = skillService;
@@ -335,6 +355,7 @@ public class McpToolService {
         this.platformSkillCatalog = platformSkillCatalog;
         this.dispatchDao = dispatchDao;
         this.requirementDocumentService = requirementDocumentService;
+        this.workitemCliUploadTokenService = workitemCliUploadTokenService;
         this.memoryService = memoryService;
         this.repoService = repoService;
         this.squadService = squadService;
@@ -343,8 +364,8 @@ public class McpToolService {
 
     public List<McpToolVO> listTools() {
         return List.of(
-                tool(LIST_PROJECTS, "List the AutoWonder organizations you can access, with your access level in each. Call this first to discover the orgId required by organization-scoped tools.", schema()),
-                tool(CREATE_WORKITEM, "Create an AutoWonder workitem in the given organization. "
+                tool(LIST_PROJECTS, "List the AutoWonder workspaces you can access, with your access level in each. Call this first to discover the workspaceId required by workspace-scoped tools.", schema()),
+                tool(CREATE_WORKITEM, "Create an AutoWonder workitem in the given workspace. "
                         + "workType must be one of REQ (requirement), BUG (defect), or TASK (task). "
                         + "When assigneeType is omitted the workitem is assigned to the creator (HUMAN), "
                         + "priority defaults to 2, no SDLC is bound, and no scheduling is triggered. "
@@ -388,12 +409,14 @@ public class McpToolService {
                                 prop("squadId", "integer", "Optional. Squad id; only validated when assigneeType=AGENT "
                                         + "and assigneeRef are both present, in which case the agent must belong to the squad. "
                                         + "Omit to skip squad validation."))),
-                tool(LIST_WORKITEMS, "List AutoWonder workitems in the given organization. "
+                tool(LIST_WORKITEMS, "List AutoWonder workitems in the given workspace. "
                         + "This is a business query tool for finding workitems; do not use it to discover parameter enums "
                         + "(use the create_workitem/assign_workitem descriptions or list_status_templates instead). "
                         + "All filters are optional. Defaults: page=1, size=20.",
                         schema(prop("workType", "string", "Optional. Filter by workitem type: REQ, BUG, or TASK."),
                                 prop("statusNodeId", "integer", "Optional. Filter by current status node id."),
+                                prop("statusCategory", "string", "Optional. Filter by kanban status category: "
+                                        + "NEW, IN_PROGRESS, PENDING_DECISION, or DONE."),
                                 prop("assigneeType", "string", "Optional. Filter by assignee type: HUMAN or AGENT."),
                                 prop("assigneeRef", "integer", "Optional. Filter by assignee reference id (userId or agentId)."),
                                 prop("pendingDecisionOnly", "boolean", "Optional. When true, return only workitems pending human decision."),
@@ -443,17 +466,42 @@ public class McpToolService {
                                         "Optional target real user ids mentioned in this comment."))),
                 tool(LIST_WORKITEM_COMMENTS, "List comments on an AutoWonder workitem.",
                         schema(required("id"), prop("id", "integer"))),
-                tool(UPLOAD_WORKITEM_DOCUMENT, "Upload a Markdown requirement/design document to an AutoWonder workitem. "
-                                + "Only .md/.markdown files are accepted; each workitem supports at most 10 documents "
-                                + "and 5MB total. Provide either contentMd or contentBase64; contentBase64 wins when both are set. "
+                tool(UPLOAD_WORKITEM_DOCUMENT, "DEPRECATED: Do not send file content or Base64 through MCP. "
+                                + "Use the AutoWonder CLI for every requirement/design attachment regardless of size. "
+                                + "Mint an upload token with autowonder.workitem_cli_upload_token and run the command it returns, e.g.: "
+                                + workitemCliUploadTokenService.tokenEnvHint() + " && "
+                                + workitemCliUploadTokenService.commandTemplate() + ". "
+                                + "Keep this legacy tool only as a fallback when the CLI is unavailable. "
+                                + "Supports Markdown (.md, .markdown) and static images (PNG, JPEG, WebP: .png, .jpg, .jpeg, .webp). "
+                                + "At most 10 attachments, 5MB each, 20MB total per workitem. "
+                                + "Use contentMd only for Markdown text and contentBase64 for images; contentBase64 wins when both are set. "
                                 + "IMPORTANT: For workitems that will be executed by a digital worker, upload all documents "
                                 + "before calling assign_workitem to ensure the first dispatch task includes these materials.",
-                        schema(required("id", "filename"), prop("id", "integer"), prop("filename", "string"),
-                                prop("contentMd", "string"), prop("contentBase64", "string"),
+                        schema(required("id", "filename"), prop("id", "integer"),
+                                prop("filename", "string", "Required. Attachment file name; only .md, .markdown, .png, .jpg, "
+                                        + ".jpeg, and .webp are accepted."),
+                                prop("contentMd", "string", "Markdown text body; Markdown files only. Ignored for images."),
+                                prop("contentBase64", "string", "Base64-encoded payload; the required form for PNG, JPEG, "
+                                        + "and WebP images. Wins over contentMd when both are set."),
                                 prop("sourcePath", "string", "Optional local source path for display/audit only."))),
-                tool(LIST_WORKITEM_DOCUMENTS, "List Markdown requirement/design documents uploaded to an AutoWonder workitem.",
+                tool(WORKITEM_CLI_UPLOAD_TOKEN, "Mint a 30-minute, user-level, upload-only token for the AutoWonder CLI "
+                                + "`workitem upload` command. Only long-lived personal MCP credentials can mint it; "
+                                + "dispatch and conversation credentials are rejected. The token is not bound to an "
+                                + "organization or workitem and can be reused until it expires for any workitem the user "
+                                + "can currently modify; every upload re-checks live write membership. "
+                                + "id is the initial workitem id, used for the preflight check and the first exact command; "
+                                + "it is not bound into the token. Returns the token, expiry, deployment server URL, "
+                                + "recommended runtime version, and ready-to-run POSIX and PowerShell commands, e.g.: "
+                                + workitemCliUploadTokenService.commandTemplate() + ". "
+                                + "Standard flow: 1) create_workitem without assigneeType; "
+                                + "2) call this tool; 3) run the returned CLI command to upload all attachments; "
+                                + "4) call list_workitem_documents to verify; 5) call assign_workitem.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Initial workitem id used for the preflight write-access "
+                                        + "check and the first generated upload command; not bound into the token."))),
+                tool(LIST_WORKITEM_DOCUMENTS, "List requirement/design context attachment documents uploaded to an AutoWonder workitem.",
                         schema(required("id"), prop("id", "integer"))),
-                tool(DELETE_WORKITEM_DOCUMENT, "Delete an uploaded Markdown requirement/design document from an AutoWonder workitem.",
+                tool(DELETE_WORKITEM_DOCUMENT, "Delete an uploaded requirement/design context attachment document from an AutoWonder workitem.",
                         schema(required("id", "artifactId"), prop("id", "integer"), prop("artifactId", "integer"))),
                 tool(TRANSITION_WORKITEM, "Transition an AutoWonder workitem to a status node.",
                         schema(required("id", "toNodeId"), prop("id", "integer"), prop("toNodeId", "integer"))),
@@ -485,16 +533,23 @@ public class McpToolService {
                 tool(ADD_SDLC_STEP, "Add a step to an AutoWonder SDLC flow, including enabled flows.",
                         schema(required("sdlcId"), prop("sdlcId", "integer"), prop("stepOrder", "integer"),
                                 prop("name", "string"), prop("kind", "string"), prop("instructionMd", "string"),
-                                prop("checklistJson", "string"), prop("gatePolicyJson", "string"),
+                                prop("checklistJson", "string",
+                                        "Checklist JSON array, e.g. [\"编译通过\",\"测试通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
+                                prop("gatePolicyJson", "string",
+                                        "Gate policy JSON object, e.g. {\"passCriteria\":\"checklist 全部通过且 evidence 目录非空\"}."),
                                 prop("required", "boolean"), prop("timeoutSeconds", "integer"),
                                 prop("retryBudget", "integer"), prop("code", "string"),
                                 prop("handlerType", "string"), prop("handlerRoleRef", "string"),
                                 prop("statusOnEnterCode", "string"), prop("onSuccess", "string"),
                                 prop("onFail", "string"))),
-                tool(UPDATE_SDLC_STEP, "Update a step in an AutoWonder SDLC flow, including enabled flows.",
+                tool(UPDATE_SDLC_STEP, "Update a step in an AutoWonder SDLC flow, including enabled flows. "
+                                + "Content fields (instructionMd, checklistJson, gatePolicyJson) are also editable on active flows.",
                         schema(required("sdlcId", "stepId"), prop("sdlcId", "integer"), prop("stepId", "integer"),
                                 prop("name", "string"), prop("kind", "string"), prop("instructionMd", "string"),
-                                prop("checklistJson", "string"), prop("gatePolicyJson", "string"),
+                                prop("checklistJson", "string",
+                                        "Checklist JSON array, e.g. [\"编译通过\",\"测试通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
+                                prop("gatePolicyJson", "string",
+                                        "Gate policy JSON object, e.g. {\"passCriteria\":\"checklist 全部通过且 evidence 目录非空\"}."),
                                 prop("required", "boolean"), prop("timeoutSeconds", "integer"),
                                 prop("retryBudget", "integer"), prop("code", "string"),
                                 prop("handlerType", "string"), prop("handlerRoleRef", "string"),
@@ -534,6 +589,21 @@ public class McpToolService {
                         + "making it effective for production use.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Agent id to publish."))),
+                tool(GET_AGENT_VERSION, "Get one complete AutoWonder digital worker version, including "
+                        + "configuration and exact repository, capability, and memory bindings.",
+                        schema(required("agentId", "versionNo"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                prop("versionNo", "integer", "Required. Version number."))),
+                tool(UPDATE_AGENT_CONFIG, "Replace the editable configuration of an AutoWonder digital worker. "
+                        + "Callers should send the complete desired configuration; the result is the editing version.",
+                        schema(required("agentId"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                prop("roleName", "string", "Role name."),
+                                prop("roleCode", "string", "Stable role code."),
+                                prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
+                                prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."),
+                                prop("sdlcId", "integer", "SDLC flow id."),
+                                prop("evolutionMode", "string", "Evolution mode."))),
                 tool(GET_AGENT_VERSION_STATUS, "Query the current editing and online version status of an "
                         + "AutoWonder digital worker. Returns agent info and the full version history.",
                         schema(required("id"),
@@ -552,6 +622,18 @@ public class McpToolService {
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to bind."),
                                 prop("source", "string", "Optional binding source; defaults to DIRECT."))),
+                tool(UNBIND_AGENT_REPOS, "Unbind exact repositories from an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "repoIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("repoIds", "integer", "Required. Repository ids to unbind."))),
+                tool(UNBIND_AGENT_SKILLS, "Unbind exact Skills, MCP servers, or Plugins from an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "skillIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("skillIds", "integer", "Required. Capability ids to unbind."))),
+                tool(UNBIND_AGENT_MEMORIES, "Unbind exact memories from an AutoWonder digital worker. Repeated ids are ignored.",
+                        schema(required("agentId", "memoryIds"),
+                                prop("agentId", "integer", "Required. Agent id."),
+                                primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to unbind."))),
                 tool(CREATE_SKILL, "Create a skill, MCP server, or plugin record.",
                         schema(required("type", "name"), prop("type", "string"), prop("name", "string"),
                                 prop("installSpec", "string"), prop("description", "string"))),
@@ -573,14 +655,14 @@ public class McpToolService {
                 tool(UPDATE_SKILL_PACKAGE, "Update an existing Skill or plugin with an uploaded Skill package reference.",
                         schema(required("id", "packageOssRef"), updateSkillPackageReferenceProps())),
                 tool(LIST_PLATFORM_SKILLS, "List installable AutoWonder platform skills.", schema()),
-                tool(INSTALL_PLATFORM_SKILL, "Install an AutoWonder platform skill into the given organization.",
+                tool(INSTALL_PLATFORM_SKILL, "Install an AutoWonder platform skill into the given workspace.",
                         schema(required("skillId"), prop("skillId", "string"))),
                 tool(CREATE_MEMORY, "Record a reusable memory (lesson learned, best practice, architecture or interface "
                         + "constraint, tool usage, domain knowledge) directly into the AutoWonder server memory store. "
                         + "Use this instead of writing a learning delta file; nothing is passed through local files. "
                         + "Use contentMd for the markdown body. Do not pass content or entries; those fields belong "
                         + "to learning_delta/memory_delta.json files, not this MCP tool. Valid scope values are "
-                        + "AGENT, SQUAD, and ORG. Do not pass GLOBAL; use ORG for organization-wide memories. "
+                        + "AGENT, SQUAD, and ORG. Do not pass GLOBAL; use ORG for workspace-wide memories. "
                         + "Personal or long-lived MCP tokens must pass scope explicitly. Dispatch-scoped SDLC "
                         + "workers should omit scope and ownerRef; the server will force AGENT scope and ownerRef "
                         + "to the current worker agent. "
@@ -636,9 +718,9 @@ public class McpToolService {
                                 prop("size", "integer", "Optional page size; defaults to 100 and is capped at 100."))),
                 tool(GET_REPO, "Get one repository registered in AutoWonder by id.",
                         schema(required("id"), prop("id", "integer", "Required. Repository id."))),
-                tool(LIST_REPO_RELATIONS, "Read the AutoWonder Repo Map. Pass repoId to return every inbound and outbound relation touching one repository; omit it to return all relations in the organization.",
+                tool(LIST_REPO_RELATIONS, "Read the AutoWonder Repo Map. Pass repoId to return every inbound and outbound relation touching one repository; omit it to return all relations in the workspace.",
                         schema(prop("repoId", "integer", "Optional repository id used to filter inbound and outbound relations."))),
-                tool(CREATE_REPO_RELATION, "Add a directed relation to the AutoWonder Repo Map. Both repositories must belong to the selected organization.",
+                tool(CREATE_REPO_RELATION, "Add a directed relation to the AutoWonder Repo Map. Both repositories must belong to the selected workspace.",
                         schema(required("fromRepoId", "toRepoId", "relationType"),
                                 prop("fromRepoId", "integer", "Required. Source repository id."),
                                 prop("toRepoId", "integer", "Required. Target repository id."),
@@ -646,7 +728,7 @@ public class McpToolService {
                                 prop("description", "string", "Optional human-readable explanation."))),
                 tool(DELETE_REPO_RELATION, "Delete one relation from the AutoWonder Repo Map.",
                         schema(required("id"), prop("id", "integer", "Required. Repo relation id."))),
-                tool(CREATE_REPO, "Create a new repository in AutoWonder. The repository will be registered under the specified organization.",
+                tool(CREATE_REPO, "Create a new repository in AutoWonder. The repository will be registered under the specified workspace.",
                         schema(required("name", "url"),
                                 prop("name", "string", "Required. Repository name."),
                                 prop("url", "string", "Required. Git repository URL (e.g. git@github.com:group/project.git)."),
@@ -661,7 +743,7 @@ public class McpToolService {
                                 prop("description", "string", "Optional. New repository description."))),
                 tool(DELETE_REPO, "Delete a repository from AutoWonder. The repository must not have any associated agent permissions.",
                         schema(required("id"), prop("id", "integer", "Required. Repository id."))),
-                tool(LIST_SQUADS, "List squads in the given organization.",
+                tool(LIST_SQUADS, "List squads in the given workspace.",
                         schema(prop("page", "integer", "Optional. Page number, 1-based; defaults to 1."),
                                 prop("size", "integer", "Optional. Page size; defaults to 20."))),
                 tool(GET_SQUAD, "Get one squad with its member agent ids.",
@@ -674,7 +756,7 @@ public class McpToolService {
                         schema(required("squadId", "agentId"),
                                 prop("squadId", "integer", "Required. Squad id."),
                                 prop("agentId", "integer", "Required. Agent id to remove."))),
-                tool(CREATE_SQUAD, "Create a new squad in the given organization. "
+                tool(CREATE_SQUAD, "Create a new squad in the given workspace. "
                         + "The squad is created empty; use add_agent_to_squad to add members afterwards.",
                         schema(required("name"),
                                 prop("name", "string", "Required. Squad name."),
@@ -699,68 +781,68 @@ public class McpToolService {
     public List<McpToolVO> listTools(
             McpAccessTokenService.Principal principal) {
         List<McpToolVO> tools;
-        OrgAccessLevel scopeLevel = principal.accessLevel();
+        WorkspaceAccessLevel scopeLevel = principal.accessLevel();
         if (scopeLevel == null) {
             tools = listTools();
-            List<OrgVO> orgs = orgService.listByUserWithAccess(principal.userId());
-            if (orgs == null) {
-                orgs = List.of();
+            List<WorkspaceVO> workspaces = workspaceService.listByUserWithAccess(principal.userId());
+            if (workspaces == null) {
+                workspaces = List.of();
             }
-            String readDesc = compactOrgDescription(orgs, false);
-            String writeDesc = compactOrgDescription(orgs, true);
+            String readDesc = compactWorkspaceDescription(workspaces, false);
+            String writeDesc = compactWorkspaceDescription(workspaces, true);
             if (readDesc != null) {
-                tools = applyOrgIdDescriptions(tools, readDesc, writeDesc);
+                tools = applyWorkspaceIdDescriptions(tools, readDesc, writeDesc);
             }
             return tools;
         }
         tools = listTools().stream()
                 .filter(tool -> scopeLevel.allows(toolAccess(tool.getName()).level()))
                 .toList();
-        OrgVO scopedOrg = orgService.getCurrent(principal.tenantId());
-        String orgName = scopedOrg != null ? scopedOrg.getName() : String.valueOf(principal.tenantId());
-        String desc = "Org: " + principal.tenantId() + "=" + orgName;
-        return applyOrgIdDescriptions(tools, desc, desc);
+        WorkspaceVO scopedWorkspace = workspaceService.getCurrent(principal.tenantId());
+        String workspaceName = scopedWorkspace != null ? scopedWorkspace.getName() : String.valueOf(principal.tenantId());
+        String desc = "Workspace: " + principal.tenantId() + "=" + workspaceName;
+        return applyWorkspaceIdDescriptions(tools, desc, desc);
     }
 
-    private String compactOrgDescription(List<OrgVO> orgs, boolean writeOnly) {
-        List<OrgVO> sorted = orgs.stream()
-                .sorted(Comparator.comparingLong(OrgVO::getId))
+    private String compactWorkspaceDescription(List<WorkspaceVO> workspaces, boolean writeOnly) {
+        List<WorkspaceVO> sorted = workspaces.stream()
+                .sorted(Comparator.comparingLong(WorkspaceVO::getId))
                 .toList();
         if (writeOnly) {
             sorted = sorted.stream()
                     .filter(o -> o.getAccessLevel() != null
-                            && o.getAccessLevel().allows(OrgAccessLevel.READ_WRITE))
+                            && o.getAccessLevel().allows(WorkspaceAccessLevel.READ_WRITE))
                     .toList();
         }
         if (sorted.isEmpty()) {
             return null;
         }
-        StringJoiner joiner = new StringJoiner(";", "Org: ", "");
-        for (OrgVO org : sorted) {
-            joiner.add(org.getId() + "=" + org.getName());
+        StringJoiner joiner = new StringJoiner(";", "Workspace: ", "");
+        for (WorkspaceVO workspace : sorted) {
+            joiner.add(workspace.getId() + "=" + workspace.getName());
         }
         return joiner.toString();
     }
 
-    private List<McpToolVO> applyOrgIdDescriptions(
+    private List<McpToolVO> applyWorkspaceIdDescriptions(
             List<McpToolVO> tools, String readDesc, String writeDesc) {
         for (McpToolVO tool : tools) {
             ToolAccess access = toolAccess(tool.getName());
-            if (!access.organizationScoped()) {
+            if (!access.workspaceScoped()) {
                 continue;
             }
-            String desc = access.level().allows(OrgAccessLevel.READ_WRITE)
+            String desc = access.level().allows(WorkspaceAccessLevel.READ_WRITE)
                     ? writeDesc : readDesc;
             if (desc == null) {
-                desc = "Org: none";
+                desc = "Workspace: none";
             }
-            replaceOrgIdDescription(tool, desc);
+            replaceWorkspaceIdDescription(tool, desc);
         }
         return tools;
     }
 
     @SuppressWarnings("unchecked")
-    private void replaceOrgIdDescription(McpToolVO tool, String description) {
+    private void replaceWorkspaceIdDescription(McpToolVO tool, String description) {
         Map<String, Object> schema = tool.getInputSchema();
         if (schema == null) {
             return;
@@ -769,14 +851,14 @@ public class McpToolService {
         if (properties == null) {
             return;
         }
-        Map<String, Object> orgId = (Map<String, Object>) properties.get("orgId");
-        if (orgId == null) {
+        Map<String, Object> workspaceId = (Map<String, Object>) properties.get("workspaceId");
+        if (workspaceId == null) {
             return;
         }
-        Map<String, Object> newOrgId = new LinkedHashMap<>(orgId);
-        newOrgId.put("description", description);
+        Map<String, Object> newWorkspaceId = new LinkedHashMap<>(workspaceId);
+        newWorkspaceId.put("description", description);
         Map<String, Object> newProperties = new LinkedHashMap<>(properties);
-        newProperties.put("orgId", newOrgId);
+        newProperties.put("workspaceId", newWorkspaceId);
         Map<String, Object> newSchema = new LinkedHashMap<>(schema);
         newSchema.put("properties", newProperties);
         tool.setInputSchema(newSchema);
@@ -786,87 +868,88 @@ public class McpToolService {
         Map<String, Object> safeArgs = args == null ? Map.of() : args;
         ToolExecutionContext context = resolveExecutionContext(principal, name, safeArgs);
         AutoWonderContext ambient = AutoWonderContext.get();
-        Long previousOrgId = ambient.getCurrentOrgId();
-        OrgAccessLevel previousAccessLevel = ambient.getOrgAccessLevel();
-        if (context.orgId() != null) {
-            ambient.setCurrentOrgId(context.orgId());
-            ambient.setOrgAccessLevel(context.accessLevel());
+        Long previousWorkspaceId = ambient.getCurrentWorkspaceId();
+        WorkspaceAccessLevel previousAccessLevel = ambient.getWorkspaceAccessLevel();
+        if (context.workspaceId() != null) {
+            ambient.setCurrentWorkspaceId(context.workspaceId());
+            ambient.setWorkspaceAccessLevel(context.accessLevel());
         }
         try {
             return invoke(context, name, safeArgs);
         } finally {
-            ambient.setCurrentOrgId(previousOrgId);
-            ambient.setOrgAccessLevel(previousAccessLevel);
+            ambient.setCurrentWorkspaceId(previousWorkspaceId);
+            ambient.setWorkspaceAccessLevel(previousAccessLevel);
         }
     }
 
     /**
-     * Organization authorization happens per call instead of at authentication time so a
+     * Workspace authorization happens per call instead of at authentication time so a
      * personal token always reflects its owner's live membership in the requested
-     * organization. Task-scoped credentials stay pinned to their own organization.
+     * workspace. Task-scoped credentials stay pinned to their own workspace.
      */
     private ToolExecutionContext resolveExecutionContext(
             McpAccessTokenService.Principal principal, String name, Map<String, Object> args) {
         ToolAccess access = toolAccess(name);
-        Long requestedOrgId = orgIdArgument(args);
-        if (principal.isOrgScoped()) {
-            long scopeOrgId = principal.tenantId();
-            if (requestedOrgId != null && requestedOrgId != scopeOrgId) {
+        Long requestedWorkspaceId = workspaceIdArgument(args);
+        if (principal.isWorkspaceScoped()) {
+            long scopeWorkspaceId = principal.tenantId();
+            if (requestedWorkspaceId != null && requestedWorkspaceId != scopeWorkspaceId) {
                 throw new BizException(ErrorCode.NO_PERMISSION,
-                        "任务作用域令牌不能访问其他组织");
+                        "任务作用域令牌不能访问其他工作空间");
             }
-            OrgAccessLevel scopeLevel = principal.accessLevel();
+            WorkspaceAccessLevel scopeLevel = principal.accessLevel();
             if (scopeLevel == null || !scopeLevel.allows(access.level())) {
                 throw new BizException(ErrorCode.NO_PERMISSION);
             }
-            return new ToolExecutionContext(scopeOrgId, principal.userId(), scopeLevel,
+            return new ToolExecutionContext(scopeWorkspaceId, principal.userId(), scopeLevel,
                     principal.tokenId(), principal.credentialType());
         }
-        if (!access.organizationScoped()) {
+        if (!access.workspaceScoped()) {
             return new ToolExecutionContext(null, principal.userId(), null,
                     principal.tokenId(), principal.credentialType());
         }
-        if (requestedOrgId == null) {
+        if (requestedWorkspaceId == null) {
             throw new BizException(ErrorCode.PARAM_INVALID,
-                    "组织域工具必须传入 orgId，可通过 autowonder.list_projects 获取");
+                    "工作空间域工具必须传入 workspaceId，可通过 autowonder.list_projects 获取");
         }
-        OrgAccessLevel memberLevel = orgService.activeAccessLevel(
-                requestedOrgId, principal.userId());
+        WorkspaceAccessLevel memberLevel = workspaceService.activeAccessLevel(
+                requestedWorkspaceId, principal.userId());
         if (!memberLevel.allows(access.level())) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
-        return new ToolExecutionContext(requestedOrgId, principal.userId(), memberLevel,
+        return new ToolExecutionContext(requestedWorkspaceId, principal.userId(), memberLevel,
                 principal.tokenId(), principal.credentialType());
     }
 
-    private Long orgIdArgument(Map<String, Object> args) {
-        Long orgId = lng(args, "orgId");
-        if (orgId == null) {
+    private Long workspaceIdArgument(Map<String, Object> args) {
+        Long workspaceId = lng(args, "workspaceId");
+        if (workspaceId == null) {
             return null;
         }
-        if (orgId <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "orgId 必须是正整数");
+        if (workspaceId <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "workspaceId 必须是正整数");
         }
-        return orgId;
+        return workspaceId;
     }
 
     private Object invoke(ToolExecutionContext context, String name,
                           Map<String, Object> safeArgs) {
         return switch (name) {
             case LIST_PROJECTS -> {
-                yield context.orgId() == null
-                        ? orgService.listByUserWithAccess(context.userId())
-                        : List.of(orgService.scopedOrg(context.orgId(), context.accessLevel()));
+                yield context.workspaceId() == null
+                        ? workspaceService.listByUserWithAccess(context.userId())
+                        : List.of(workspaceService.scopedWorkspace(context.workspaceId(), context.accessLevel()));
             }
             case CREATE_WORKITEM -> {
                 yield workitemService.create(toBean(safeArgs, CreateWorkitemRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case LIST_WORKITEMS -> {
                 yield workitemService.list(str(safeArgs, "workType"), lng(safeArgs, "statusNodeId"),
+                        str(safeArgs, "statusCategory"),
                         str(safeArgs, "assigneeType"), lng(safeArgs, "assigneeRef"),
                         bool(safeArgs, "pendingDecisionOnly", false), str(safeArgs, "mineScope"),
-                        context.orgId(), context.userId(),
+                        context.workspaceId(), context.userId(),
                         str(safeArgs, "keyword"),
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20)).getList();
             }
@@ -875,10 +958,10 @@ public class McpToolService {
             }
             case UPDATE_WORKITEM -> {
                 yield workitemService.updateContent(requiredLong(safeArgs, "id"), str(safeArgs, "title"),
-                        str(safeArgs, "contentMd"), context.orgId(), context.userId());
+                        str(safeArgs, "contentMd"), context.workspaceId(), context.userId());
             }
             case DELETE_WORKITEM -> {
-                workitemService.delete(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                workitemService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case ASSIGN_WORKITEM -> {
@@ -887,12 +970,12 @@ public class McpToolService {
                     DispatchDO dispatch = requireDispatchScope(context, workitemId);
                     yield workitemService.assignAs(workitemId, requiredString(safeArgs, "assigneeType"),
                             lng(safeArgs, "assigneeRef"), lng(safeArgs, "sdlcId"), lng(safeArgs, "squadId"),
-                            context.orgId(), context.userId(),
+                            context.workspaceId(), context.userId(),
                             AssignmentActor.agent(dispatch.getAgentId(), resolveAgentName(dispatch.getAgentId())));
                 }
                 yield workitemService.assign(workitemId, requiredString(safeArgs, "assigneeType"),
                         lng(safeArgs, "assigneeRef"), lng(safeArgs, "sdlcId"), lng(safeArgs, "squadId"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case ADD_WORKITEM_COMMENT -> {
                 AddCommentRequest req = toBean(safeArgs, AddCommentRequest.class);
@@ -900,8 +983,8 @@ public class McpToolService {
                 var comment = isDispatchCredential(context)
                         ? addDispatchAgentComment(context, workitemId, req.getContentMd(), req.getTargetHumanIds())
                         : workitemService.addComment(workitemId, req.getContentMd(), req.getTargetHumanIds(),
-                                context.orgId(), context.userId());
-                guidanceService.createForComment(context.orgId(), workitemId, comment.getId(),
+                                context.workspaceId(), context.userId());
+                guidanceService.createForComment(context.workspaceId(), workitemId, comment.getId(),
                         req.getContentMd(), req.getTargetAgentIds(), context.userId());
                 yield comment;
             }
@@ -911,29 +994,33 @@ public class McpToolService {
             case UPLOAD_WORKITEM_DOCUMENT -> {
                 yield requirementDocumentService.uploadMcp(requiredLong(safeArgs, "id"),
                         requiredString(safeArgs, "filename"), documentBytes(safeArgs),
-                        context.orgId(), context.userId(), str(safeArgs, "sourcePath"));
+                        context.workspaceId(), context.userId(), str(safeArgs, "sourcePath"));
+            }
+            case WORKITEM_CLI_UPLOAD_TOKEN -> {
+                yield workitemCliUploadTokenService.mint(context.credentialType(),
+                        context.userId(), requiredLong(safeArgs, "id"));
             }
             case LIST_WORKITEM_DOCUMENTS -> {
-                yield requirementDocumentService.list(requiredLong(safeArgs, "id"), context.orgId());
+                yield requirementDocumentService.list(requiredLong(safeArgs, "id"), context.workspaceId());
             }
             case DELETE_WORKITEM_DOCUMENT -> {
                 requirementDocumentService.delete(requiredLong(safeArgs, "id"),
-                        requiredLong(safeArgs, "artifactId"), context.orgId(), context.userId());
+                        requiredLong(safeArgs, "artifactId"), context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case TRANSITION_WORKITEM, PAUSE_WORKITEM, RESUME_WORKITEM -> {
                 yield workitemService.transition(requiredLong(safeArgs, "id"), requiredLong(safeArgs, "toNodeId"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case LIST_STATUS_TEMPLATES -> {
-                yield statusTemplateService.listTemplates(context.orgId(), requiredString(safeArgs, "workType"));
+                yield statusTemplateService.listTemplates(context.workspaceId(), requiredString(safeArgs, "workType"));
             }
             case GET_STATUS_TEMPLATE -> {
                 yield statusTemplateService.getTemplateDetail(requiredLong(safeArgs, "id"));
             }
             case CREATE_SDLC -> {
                 yield sdlcService.create(toBean(safeArgs, CreateSdlcRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case LIST_SDLCS -> {
                 yield sdlcService.list(str(safeArgs, "workType"), str(safeArgs, "status"),
@@ -944,65 +1031,76 @@ public class McpToolService {
             }
             case UPDATE_SDLC -> {
                 yield sdlcService.update(requiredLong(safeArgs, "id"), toBean(safeArgs, UpdateSdlcRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case DELETE_SDLC -> {
-                sdlcService.delete(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                sdlcService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case ADD_SDLC_STEP -> {
                 yield sdlcService.addStep(requiredLong(safeArgs, "sdlcId"), toBean(safeArgs, CreateStepRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case UPDATE_SDLC_STEP -> {
                 yield sdlcService.updateStep(requiredLong(safeArgs, "sdlcId"), requiredLong(safeArgs, "stepId"),
-                        toBean(safeArgs, UpdateStepRequest.class), context.orgId(), context.userId());
+                        toBean(safeArgs, UpdateStepRequest.class), context.workspaceId(), context.userId());
             }
             case DELETE_SDLC_STEP -> {
                 sdlcService.deleteStep(requiredLong(safeArgs, "sdlcId"), requiredLong(safeArgs, "stepId"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case REORDER_SDLC_STEPS -> {
                 sdlcService.reorderSteps(requiredLong(safeArgs, "sdlcId"), toBean(safeArgs, ReorderRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
                 yield Map.of("reordered", true);
             }
             case ENABLE_SDLC -> {
                 yield sdlcService.enable(requiredLong(safeArgs, "id"), lng(safeArgs, "statusTemplateId"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case DISABLE_SDLC -> {
-                sdlcService.disable(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                sdlcService.disable(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
                 yield Map.of("disabled", true);
             }
             case CREATE_AGENT -> {
                 yield agentService.create(toBean(normalizeAgentIdentityArgs(safeArgs), CreateAgentRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case LIST_AGENTS -> {
-                yield agentService.list(context.orgId(), str(safeArgs, "status"),
+                yield agentService.list(context.workspaceId(), str(safeArgs, "status"),
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             }
             case GET_AGENT -> {
                 yield agentService.get(requiredLong(safeArgs, "id"));
             }
             case DELETE_AGENT -> {
-                agentService.delete(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                agentService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case UPDATE_AGENT -> {
                 UpdateAgentRequest updateReq = toBean(normalizeAgentIdentityArgs(safeArgs), UpdateAgentRequest.class);
                 updateReq.setId(requiredLong(safeArgs, "id"));
-                yield agentService.updateAgent(updateReq, context.orgId(), context.userId());
+                yield agentService.updateAgent(updateReq, context.workspaceId(), context.userId());
             }
             case SUBMIT_AGENT_FOR_REVIEW -> {
                 yield agentService.submit(requiredLong(safeArgs, "id"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case PUBLISH_AGENT -> {
                 yield agentService.approve(requiredLong(safeArgs, "id"),
-                        context.orgId(), context.userId(), null);
+                        context.workspaceId(), context.userId(), null);
+            }
+            case GET_AGENT_VERSION -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                int versionNo = Math.toIntExact(requiredLong(safeArgs, "versionNo"));
+                yield agentService.getVersion(agentId, versionNo, context.workspaceId());
+            }
+            case UPDATE_AGENT_CONFIG -> {
+                UpdateConfigRequest request = toBean(normalizeAgentIdentityArgs(safeArgs),
+                        UpdateConfigRequest.class);
+                yield agentService.editConfig(requiredLong(safeArgs, "agentId"), request,
+                        context.workspaceId(), context.userId());
             }
             case GET_AGENT_VERSION_STATUS -> {
                 long agentId = requiredLong(safeArgs, "id");
@@ -1021,7 +1119,7 @@ public class McpToolService {
                     RepoPermRequest request = new RepoPermRequest();
                     request.setRepoId(repoId);
                     request.setPermLevel(permLevel);
-                    agentService.addRepoPerm(agentId, request, context.orgId(), context.userId());
+                    agentService.addRepoPerm(agentId, request, context.workspaceId(), context.userId());
                 }
                 yield Map.of("repoIds", repoIds);
             }
@@ -1031,7 +1129,7 @@ public class McpToolService {
                 for (Long skillId : skillIds) {
                     SkillRequest request = new SkillRequest();
                     request.setSkillId(skillId);
-                    agentService.addSkill(agentId, request, context.orgId(), context.userId());
+                    agentService.addSkill(agentId, request, context.workspaceId(), context.userId());
                 }
                 yield Map.of("skillIds", skillIds);
             }
@@ -1043,13 +1141,37 @@ public class McpToolService {
                     MemoryRefRequest request = new MemoryRefRequest();
                     request.setMemoryId(memoryId);
                     request.setSource(source);
-                    agentService.addMemoryRef(agentId, request, context.orgId(), context.userId());
+                    agentService.addMemoryRef(agentId, request, context.workspaceId(), context.userId());
+                }
+                yield Map.of("memoryIds", memoryIds);
+            }
+            case UNBIND_AGENT_REPOS -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> repoIds = requiredLongList(safeArgs, "repoIds");
+                for (Long repoId : repoIds) {
+                    agentService.removeRepoPerm(agentId, repoId, context.workspaceId(), context.userId());
+                }
+                yield Map.of("repoIds", repoIds);
+            }
+            case UNBIND_AGENT_SKILLS -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> skillIds = requiredLongList(safeArgs, "skillIds");
+                for (Long skillId : skillIds) {
+                    agentService.removeSkill(agentId, skillId, context.workspaceId(), context.userId());
+                }
+                yield Map.of("skillIds", skillIds);
+            }
+            case UNBIND_AGENT_MEMORIES -> {
+                long agentId = requiredLong(safeArgs, "agentId");
+                List<Long> memoryIds = requiredLongList(safeArgs, "memoryIds");
+                for (Long memoryId : memoryIds) {
+                    agentService.removeMemoryRef(agentId, memoryId, context.workspaceId(), context.userId());
                 }
                 yield Map.of("memoryIds", memoryIds);
             }
             case CREATE_SKILL -> {
                 yield skillService.create(toBean(safeArgs, CreateSkillRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case LIST_SKILLS -> {
                 yield skillService.list(str(safeArgs, "type"),
@@ -1060,10 +1182,10 @@ public class McpToolService {
             }
             case UPDATE_SKILL -> {
                 yield skillService.update(requiredLong(safeArgs, "id"), toBean(safeArgs, UpdateSkillRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case DELETE_SKILL -> {
-                skillService.delete(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                skillService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case INSPECT_SKILL_PACKAGE -> {
@@ -1073,20 +1195,20 @@ public class McpToolService {
                 yield uploadedPackageSchemaResult(skillPackageService.uploadMcpPackage(
                         requiredString(safeArgs, "fileName"), packageBytes(safeArgs), str(safeArgs, "type"),
                         str(safeArgs, "name"), str(safeArgs, "description"), stringList(safeArgs, "providers"),
-                        str(safeArgs, "expectedMd5"), context.orgId()));
+                        str(safeArgs, "expectedMd5"), context.workspaceId()));
             }
             case CREATE_SKILL_FROM_PACKAGE -> {
                 yield skillPackageService.createFromUploadedPackage(requiredString(safeArgs, "packageOssRef"),
                         str(safeArgs, "type"), str(safeArgs, "name"), str(safeArgs, "description"),
                         stringList(safeArgs, "providers"), str(safeArgs, "expectedMd5"),
-                        str(safeArgs, "idempotencyKey"), context.orgId(), context.userId());
+                        str(safeArgs, "idempotencyKey"), context.workspaceId(), context.userId());
             }
             case UPDATE_SKILL_PACKAGE -> {
                 yield skillPackageService.updateUploadedPackage(requiredLong(safeArgs, "id"),
                         requiredString(safeArgs, "packageOssRef"), str(safeArgs, "name"),
                         str(safeArgs, "description"), stringList(safeArgs, "providers"),
                         str(safeArgs, "expectedMd5"), str(safeArgs, "idempotencyKey"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case LIST_PLATFORM_SKILLS -> platformSkillCatalog.list();
             case CREATE_MEMORY -> createMemory(context, safeArgs);
@@ -1096,30 +1218,30 @@ public class McpToolService {
                 long memoryId = requiredLong(safeArgs, "id");
                 requireMutableMemory(context, memoryId);
                 yield memoryService.update(memoryId, toBean(safeArgs, UpdateMemoryRequest.class),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case DEPRECATE_MEMORY -> {
                 long memoryId = requiredLong(safeArgs, "id");
                 requireMutableMemory(context, memoryId);
                 yield memoryService.deprecateFromMcp(memoryId, str(safeArgs, "comment"),
-                        context.orgId(), context.userId());
+                        context.workspaceId(), context.userId());
             }
             case DELETE_MEMORY -> {
                 long memoryId = requiredLong(safeArgs, "id");
                 requireMutableMemory(context, memoryId);
-                memoryService.delete(memoryId, context.orgId(), context.userId());
+                memoryService.delete(memoryId, context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
-            case LIST_REPOS -> repoService.list(context.orgId(), integer(safeArgs, "page", 1),
+            case LIST_REPOS -> repoService.list(context.workspaceId(), integer(safeArgs, "page", 1),
                     integer(safeArgs, "size", 100));
-            case GET_REPO -> repoService.get(requiredLong(safeArgs, "id"), context.orgId());
+            case GET_REPO -> repoService.get(requiredLong(safeArgs, "id"), context.workspaceId());
             case LIST_REPO_RELATIONS -> {
                 Long repoId = lng(safeArgs, "repoId");
                 if (repoId != null) {
-                    repoService.get(repoId, context.orgId());
-                    yield repoService.listRelationsByRepoId(context.orgId(), repoId);
+                    repoService.get(repoId, context.workspaceId());
+                    yield repoService.listRelationsByRepoId(context.workspaceId(), repoId);
                 }
-                yield repoService.listRelations(context.orgId());
+                yield repoService.listRelations(context.workspaceId());
             }
             case CREATE_REPO_RELATION -> {
                 CreateRelationRequest request = new CreateRelationRequest();
@@ -1127,10 +1249,10 @@ public class McpToolService {
                 request.setToRepoId(requiredLong(safeArgs, "toRepoId"));
                 request.setRelationType(requiredString(safeArgs, "relationType"));
                 request.setDescription(str(safeArgs, "description"));
-                yield repoService.createRelation(request, context.orgId(), context.userId());
+                yield repoService.createRelation(request, context.workspaceId(), context.userId());
             }
             case DELETE_REPO_RELATION -> {
-                repoService.deleteRelation(requiredLong(safeArgs, "id"), context.orgId());
+                repoService.deleteRelation(requiredLong(safeArgs, "id"), context.workspaceId());
                 yield Map.of("deleted", true);
             }
             case CREATE_REPO -> {
@@ -1139,7 +1261,7 @@ public class McpToolService {
                 req.setUrl(requiredString(safeArgs, "url"));
                 req.setDefaultBranch(str(safeArgs, "defaultBranch"));
                 req.setDescription(str(safeArgs, "description"));
-                yield repoService.create(req, context.orgId(), context.userId());
+                yield repoService.create(req, context.workspaceId(), context.userId());
             }
             case UPDATE_REPO -> {
                 long repoId = requiredLong(safeArgs, "id");
@@ -1148,29 +1270,29 @@ public class McpToolService {
                 req.setUrl(str(safeArgs, "url"));
                 req.setDefaultBranch(str(safeArgs, "defaultBranch"));
                 req.setDescription(str(safeArgs, "description"));
-                yield repoService.update(repoId, req, context.orgId(), context.userId());
+                yield repoService.update(repoId, req, context.workspaceId(), context.userId());
             }
             case DELETE_REPO -> {
-                repoService.delete(requiredLong(safeArgs, "id"), context.orgId(), context.userId());
+                repoService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
                 yield Map.of("deleted", true);
             }
             case LIST_SQUADS -> squadService.list(integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             case GET_SQUAD -> squadService.get(requiredLong(safeArgs, "id"));
             case ADD_AGENT_TO_SQUAD -> {
                 squadService.addMembers(requiredLong(safeArgs, "squadId"),
-                        List.of(requiredLong(safeArgs, "agentId")), context.orgId());
+                        List.of(requiredLong(safeArgs, "agentId")), context.workspaceId());
                 yield Map.of("added", true);
             }
             case REMOVE_AGENT_FROM_SQUAD -> {
                 squadService.removeMember(requiredLong(safeArgs, "squadId"),
-                        requiredLong(safeArgs, "agentId"), context.orgId());
+                        requiredLong(safeArgs, "agentId"), context.workspaceId());
                 yield Map.of("removed", true);
             }
             case CREATE_SQUAD -> {
                 CreateSquadRequest req = new CreateSquadRequest();
                 req.setName(requiredString(safeArgs, "name"));
                 req.setDescription(str(safeArgs, "description"));
-                yield squadService.create(req, context.orgId(), context.userId());
+                yield squadService.create(req, context.workspaceId(), context.userId());
             }
             case SET_AGENT_DEFAULT_SDLC -> {
                 long agentId = requiredLong(safeArgs, "agentId");
@@ -1183,7 +1305,7 @@ public class McpToolService {
                 cfgReq.setResponsibilities(agent.getResponsibilities());
                 cfgReq.setSdlcId(sdlcId);
                 AgentVersionVO versionVO = agentService.editConfig(
-                        agentId, cfgReq, context.orgId(), context.userId());
+                        agentId, cfgReq, context.workspaceId(), context.userId());
                 yield Map.of(
                         "agentId", agentId,
                         "editingVersionId", versionVO.getId(),
@@ -1193,7 +1315,7 @@ public class McpToolService {
                 yield installPlatformSkill(requiredString(safeArgs, "skillId"), context);
             }
             case PAUSE_DISPATCH -> {
-                DispatchDO dispatch = dispatchPauseService.requestPause(context.orgId(),
+                DispatchDO dispatch = dispatchPauseService.requestPause(context.workspaceId(),
                         requiredLong(safeArgs, "workitemId"),
                         requiredLong(safeArgs, "dispatchId"), context.userId());
                 yield Map.of("dispatchId", dispatch.getId(), "status", dispatch.getStatus());
@@ -1206,7 +1328,7 @@ public class McpToolService {
             long workitemId, String contentMd, List<Long> targetHumanIds) {
         DispatchDO dispatch = requireDispatchScope(context, workitemId);
         return workitemService.addAgentComment(workitemId, contentMd, targetHumanIds,
-                context.orgId(), dispatch.getAgentId(), context.userId());
+                context.workspaceId(), dispatch.getAgentId(), context.userId());
     }
 
     private boolean isDispatchCredential(ToolExecutionContext context) {
@@ -1224,7 +1346,7 @@ public class McpToolService {
     private DispatchDO requireDispatchOwner(ToolExecutionContext context) {
         DispatchDO dispatch = dispatchDao.findById(-context.tokenId());
         if (dispatch == null
-                || !Objects.equals(dispatch.getTenantId(), context.orgId())
+                || !Objects.equals(dispatch.getTenantId(), context.workspaceId())
                 || dispatch.getAgentId() == null
                 || dispatch.getAgentId() <= 0) {
             throw new BizException(ErrorCode.NO_PERMISSION);
@@ -1243,7 +1365,7 @@ public class McpToolService {
         CreateMemoryRequest req = toBean(args, CreateMemoryRequest.class);
         if (!isDispatchCredential(context)) {
             req.setScope(requiredMemoryScope(req.getScope()));
-            return memoryService.create(req, context.orgId(), context.userId());
+            return memoryService.create(req, context.workspaceId(), context.userId());
         }
         DispatchDO dispatch = requireDispatchOwner(context);
         if (!MEMORY_SCOPE_AGENT.equals(memoryScope(req.getScope(), MEMORY_SCOPE_AGENT))) {
@@ -1251,7 +1373,7 @@ public class McpToolService {
         }
         req.setScope(MEMORY_SCOPE_AGENT);
         req.setOwnerRef(dispatch.getAgentId());
-        return memoryService.createFromMcp(req, context.orgId(), dispatch.getId(),
+        return memoryService.createFromMcp(req, context.workspaceId(), dispatch.getId(),
                 dispatch.getWorkitemId(), dispatch.getAgentId(), context.userId(),
                 memoryDedupeKey(dispatch.getId(), str(args, "idempotencyKey"), req));
     }
@@ -1262,7 +1384,7 @@ public class McpToolService {
         Long dispatchAgentId = isDispatchCredential(context)
                 ? requireDispatchOwner(context).getAgentId()
                 : null;
-        List<MemoryVO> memories = memoryService.list(context.orgId(), scope, lng(args, "ownerRef"),
+        List<MemoryVO> memories = memoryService.list(context.workspaceId(), scope, lng(args, "ownerRef"),
                 str(args, "type"), status == null ? "ADOPTED" : status, str(args, "keyword"),
                 dispatchAgentId, integer(args, "page", 1), integer(args, "size", 20));
         if (dispatchAgentId == null) {
@@ -1274,7 +1396,7 @@ public class McpToolService {
     }
 
     private MemoryVO requireVisibleMemory(ToolExecutionContext context, long memoryId) {
-        MemoryVO memory = memoryService.getScoped(memoryId, context.orgId());
+        MemoryVO memory = memoryService.getScoped(memoryId, context.workspaceId());
         if (isDispatchCredential(context)
                 && !isOwnAgentMemory(memory, requireDispatchOwner(context).getAgentId())) {
             throw new BizException(ErrorCode.NO_PERMISSION);
@@ -1283,7 +1405,7 @@ public class McpToolService {
     }
 
     private void requireMutableMemory(ToolExecutionContext context, long memoryId) {
-        MemoryVO memory = memoryService.getScoped(memoryId, context.orgId());
+        MemoryVO memory = memoryService.getScoped(memoryId, context.workspaceId());
         if (!isDispatchCredential(context)) {
             return;
         }
@@ -1311,7 +1433,7 @@ public class McpToolService {
             return defaultScope;
         }
         String normalized = scope.trim().toUpperCase(Locale.ROOT);
-        if (!MEMORY_SCOPES.contains(normalized)) {
+                if (!MEMORY_SCOPES.contains(normalized)) {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
         }
         return normalized;
@@ -1347,7 +1469,7 @@ public class McpToolService {
         req.setDescription(skill.getDescription());
         req.setInstallSpec(skill.getInstallSpec());
         try {
-            return skillService.create(req, context.orgId(), context.userId());
+            return skillService.create(req, context.workspaceId(), context.userId());
         } catch (BizException e) {
             if (!ErrorCode.SKILL_DUPLICATE_NAME.getCode().equals(e.getCode())) {
                 throw e;
@@ -1367,30 +1489,30 @@ public class McpToolService {
         return access;
     }
 
-    private static ToolAccess orgTool(OrgAccessLevel level) {
+    private static ToolAccess orgTool(WorkspaceAccessLevel level) {
         return new ToolAccess(level, true);
     }
 
-    private static ToolAccess globalTool(OrgAccessLevel level) {
+    private static ToolAccess globalTool(WorkspaceAccessLevel level) {
         return new ToolAccess(level, false);
     }
 
     private McpToolVO tool(String name, String description, Map<String, Object> schema) {
-        return new McpToolVO(name, description, withOrgId(name, schema), outputSchemaFor(name));
+        return new McpToolVO(name, description, withWorkspaceId(name, schema), outputSchemaFor(name));
     }
 
-    /** Injected from one place so a newly added organization-scoped tool cannot omit orgId. */
+    /** Injected from one place so a newly added workspace-scoped tool cannot omit workspaceId. */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> withOrgId(String name, Map<String, Object> schema) {
-        if (!toolAccess(name).organizationScoped()) {
+    private Map<String, Object> withWorkspaceId(String name, Map<String, Object> schema) {
+        if (!toolAccess(name).workspaceScoped()) {
             return schema;
         }
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("orgId", Map.of("type", "integer", "description", ORG_ID_DESCRIPTION));
+        properties.put("workspaceId", Map.of("type", "integer", "description", WORKSPACE_ID_DESCRIPTION));
         properties.putAll((Map<String, Object>) schema.getOrDefault("properties", Map.of()));
 
         List<String> required = new ArrayList<>();
-        required.add("orgId");
+        required.add("workspaceId");
         if (schema.get("required") instanceof List<?> existing) {
             existing.forEach(value -> required.add(String.valueOf(value)));
         }
@@ -1403,7 +1525,7 @@ public class McpToolService {
 
     private Map<String, Object> outputSchemaFor(String name) {
         return switch (name) {
-            case LIST_PROJECTS -> listOutputSchema(orgSchema());
+            case LIST_PROJECTS -> listOutputSchema(workspaceSchema());
             case CREATE_WORKITEM, GET_WORKITEM, UPDATE_WORKITEM, ASSIGN_WORKITEM,
                     TRANSITION_WORKITEM, PAUSE_WORKITEM, RESUME_WORKITEM -> workitemSchema();
             case LIST_WORKITEMS -> listOutputSchema(workitemSchema());
@@ -1411,6 +1533,21 @@ public class McpToolService {
             case ADD_WORKITEM_COMMENT -> commentSchema();
             case LIST_WORKITEM_COMMENTS -> listOutputSchema(commentSchema());
             case UPLOAD_WORKITEM_DOCUMENT -> artifactSchema();
+            case WORKITEM_CLI_UPLOAD_TOKEN -> schema(
+                    prop("token", "string", "The awupload_ token; pass it to the CLI via AUTOWONDER_UPLOAD_TOKEN or --token."),
+                    prop("tokenType", "string", "Always Bearer."),
+                    prop("expiresInSeconds", "integer", "Token lifetime in seconds; always 1800."),
+                    prop("expiresAt", "string", "ISO-8601 UTC expiry instant."),
+                    prop("serverUrl", "string", "Deployment public base URL used by the upload command."),
+                    prop("runtimeVersion", "string", "Recommended AutoWonder runtime npm package version."),
+                    prop("tokenEnvName", "string", "Environment variable name that carries the token."),
+                    prop("command", "string", "Ready-to-run POSIX command including the token export."),
+                    prop("powershellCommand", "string", "Ready-to-run PowerShell command including the token export."),
+                    arrayProp("supportedExtensions", Map.of("type", "string"),
+                            "Accepted attachment extensions."),
+                    prop("maxFiles", "integer", "Maximum attachments per workitem."),
+                    prop("maxFileSizeBytes", "integer", "Maximum bytes per attachment."),
+                    prop("maxTotalSizeBytes", "integer", "Maximum total bytes per workitem."));
             case LIST_WORKITEM_DOCUMENTS -> listOutputSchema(artifactSchema());
             case DELETE_WORKITEM_DOCUMENT -> schema(prop("deleted", "boolean", "Whether the document was deleted."));
             case LIST_STATUS_TEMPLATES -> listOutputSchema(statusTemplateSchema());
@@ -1426,10 +1563,14 @@ public class McpToolService {
                     SUBMIT_AGENT_FOR_REVIEW, PUBLISH_AGENT -> agentSchema();
             case LIST_AGENTS -> listOutputSchema(agentSchema());
             case DELETE_AGENT -> schema(prop("deleted", "boolean", "Whether the digital worker was deleted."));
+            case GET_AGENT_VERSION, UPDATE_AGENT_CONFIG -> agentVersionSchema();
             case GET_AGENT_VERSION_STATUS -> agentVersionStatusSchema();
             case BIND_AGENT_REPOS -> schema(primitiveArrayProp("repoIds", "integer", "Bound repository ids."));
             case BIND_AGENT_SKILLS -> schema(primitiveArrayProp("skillIds", "integer", "Bound capability ids."));
             case BIND_AGENT_MEMORIES -> schema(primitiveArrayProp("memoryIds", "integer", "Bound memory ids."));
+            case UNBIND_AGENT_REPOS -> schema(primitiveArrayProp("repoIds", "integer", "Unbound repository ids."));
+            case UNBIND_AGENT_SKILLS -> schema(primitiveArrayProp("skillIds", "integer", "Unbound capability ids."));
+            case UNBIND_AGENT_MEMORIES -> schema(primitiveArrayProp("memoryIds", "integer", "Unbound memory ids."));
             case CREATE_SKILL, GET_SKILL, UPDATE_SKILL, INSTALL_PLATFORM_SKILL,
                     CREATE_SKILL_FROM_PACKAGE, UPDATE_SKILL_PACKAGE -> skillSchema();
             case LIST_SKILLS -> listOutputSchema(skillSchema());
@@ -1463,12 +1604,12 @@ public class McpToolService {
         };
     }
 
-    private Map<String, Object> orgSchema() {
-        return schema(prop("id", "integer", "Organization id. Pass it as orgId to organization-scoped tools."),
-                prop("name", "string", "Organization name."),
-                prop("description", "string", "Organization description."),
+    private Map<String, Object> workspaceSchema() {
+        return schema(prop("id", "integer", "Workspace id. Pass it as workspaceId to workspace-scoped tools."),
+                prop("name", "string", "Workspace name."),
+                prop("description", "string", "Workspace description."),
                 prop("accessLevel", "string",
-                        "Your access level in this organization: READ_ONLY, READ_WRITE or ADMIN."));
+                        "Your access level in this workspace: READ_ONLY, READ_WRITE or ADMIN."));
     }
 
     private Map<String, Object> workitemSchema() {
@@ -1578,8 +1719,10 @@ public class McpToolService {
                 prop("name", "string", "Step name."),
                 prop("kind", "string", "Step kind."),
                 prop("instructionMd", "string", "Step instruction."),
-                prop("checklistJson", "string", "Checklist JSON."),
-                prop("gatePolicyJson", "string", "Gate policy JSON."),
+                prop("checklistJson", "string",
+                        "Checklist JSON array, e.g. [\"编译通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
+                prop("gatePolicyJson", "string",
+                        "Gate policy JSON object, e.g. {\"passCriteria\":\"checklist 全部通过且 evidence 目录非空\"}."),
                 prop("required", "boolean", "Whether the step is required."),
                 prop("timeoutSeconds", "integer", "Timeout seconds."),
                 prop("retryBudget", "integer", "Retry budget."),
@@ -1610,6 +1753,36 @@ public class McpToolService {
                 prop("skillCount", "integer", "Bound skill count."),
                 prop("memoryCount", "integer", "Bound memory count."),
                 prop("repoPermCount", "integer", "Repository permission count."));
+    }
+
+    private Map<String, Object> agentVersionSchema() {
+        return schema(prop("id", "integer", "Agent version id."),
+                prop("agentId", "integer", "Agent id."),
+                prop("versionNo", "integer", "Version number."),
+                prop("status", "string", "Version status."),
+                nullableProp("roleName", "string", "Role name."),
+                nullableProp("roleCode", "string", "Stable role code."),
+                nullableProp("businessBackground", "string", "SOUL.md Markdown content."),
+                nullableProp("responsibilities", "string", "AGENT.md Markdown content."),
+                nullableProp("sdlcId", "integer", "SDLC flow id."),
+                nullableProp("identityJson", "string", "Serialized identity extension fields."),
+                nullableProp("evolutionMode", "string", "Evolution mode."),
+                nullableProp("reviewerId", "integer", "Reviewer user id."),
+                nullableProp("reviewComment", "string", "Review comment."),
+                timestampProp("reviewedAt", "Review time."),
+                prop("version", "integer", "Optimistic lock version."),
+                timestampProp("gmtCreate", "Creation time."),
+                arrayProp("repoPerms", schema(
+                                prop("repoId", "integer", "Repository id."),
+                                prop("permLevel", "string", "Permission level.")),
+                        "Exact repository bindings."),
+                arrayProp("skills", schema(
+                                prop("skillId", "integer", "Capability id.")),
+                        "Exact Skill, MCP server, and Plugin bindings."),
+                arrayProp("memoryRefs", schema(
+                                prop("memoryId", "integer", "Memory id."),
+                                prop("source", "string", "Binding source.")),
+                        "Exact memory bindings."));
     }
 
     private Map<String, Object> agentVersionStatusSchema() {
@@ -1986,11 +2159,11 @@ public class McpToolService {
         return value == null ? defaultValue : value.intValue();
     }
 
-    private record ToolExecutionContext(Long orgId, long userId, OrgAccessLevel accessLevel,
+    private record ToolExecutionContext(Long workspaceId, long userId, WorkspaceAccessLevel accessLevel,
                                        long tokenId,
                                        McpAccessTokenService.CredentialType credentialType) {
     }
 
-    private record ToolAccess(OrgAccessLevel level, boolean organizationScoped) {
+    private record ToolAccess(WorkspaceAccessLevel level, boolean workspaceScoped) {
     }
 }

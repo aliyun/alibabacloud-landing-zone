@@ -75,10 +75,10 @@ function stubMcpEndpoints(tokens: unknown[] = []) {
         inputSchema: {
           type: 'object',
           properties: {
-            orgId: { type: 'integer', description: 'Required. Target organization id.' },
+            workspaceId: { type: 'integer', description: 'Required. Target workspace id.' },
             id: { type: 'integer' },
           },
-          required: ['orgId', 'id'],
+          required: ['workspaceId', 'id'],
         },
       },
     ]))),
@@ -281,7 +281,7 @@ describe('ProfileSettingsPage', () => {
     });
   });
 
-  it('keeps personal settings reachable without a current organization', async () => {
+  it('keeps personal settings reachable without a current workspace', async () => {
     useAuthStore.getState().setTokens('test-access', 'test-refresh');
     useAuthStore.getState().setUser({
       id: 1,
@@ -290,7 +290,7 @@ describe('ProfileSettingsPage', () => {
       email: 'alice@example.com',
     });
     server.use(
-      http.get('/api/orgs/mine', () => HttpResponse.json({
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
@@ -383,14 +383,14 @@ describe('ProfileSettingsPage', () => {
     });
   });
 
-  it('shows the required orgId parameter in the tool schema', async () => {
+  it('shows the required workspaceId parameter in the tool schema', async () => {
     stubMcpEndpoints();
 
     renderPage('/profile/settings?tab=mcp');
 
     await userEvent.click(await screen.findByRole('tab', { name: '工具' }));
 
-    expect(await screen.findByText('orgId')).toBeInTheDocument();
+    expect(await screen.findByText('workspaceId')).toBeInTheDocument();
   });
 
   it('groups memory MCP tools under memory management', async () => {
@@ -431,7 +431,7 @@ describe('ProfileSettingsPage', () => {
     expect(await screen.findByText('autowonder.get_workitem')).toBeInTheDocument();
     expect(screen.getByTestId('mcp-tools-table')).toBeInTheDocument();
 
-    expect(await screen.findByText('orgId')).toBeInTheDocument();
+    expect(await screen.findByText('workspaceId')).toBeInTheDocument();
     expect(screen.getByTestId('mcp-input-schema-table')).toBeInTheDocument();
     expect(screen.getByTestId('mcp-output-schema-table')).toBeInTheDocument();
   });

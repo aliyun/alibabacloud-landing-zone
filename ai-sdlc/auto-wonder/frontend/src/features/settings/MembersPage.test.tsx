@@ -41,15 +41,15 @@ beforeEach(() => {
     email: 'admin@co.com',
     nickname: '管理员',
   });
-  useAuthStore.getState().setCurrentOrg(
-    { id: 7, name: '测试组织', description: '' },
+  useAuthStore.getState().setCurrentWorkspace(
+    { id: 7, name: '测试工作空间', description: '' },
     'ADMIN',
   );
   server.use(
-    http.get('/api/orgs/current/members', () => HttpResponse.json({
+    http.get('/api/workspaces/current/members', () => HttpResponse.json({
       success: true, code: '0', message: '', data: mockMembers, traceId: null,
     })),
-    http.get('/api/orgs/current/membership', () => {
+    http.get('/api/workspaces/current/membership', () => {
       currentMembershipRequests += 1;
       return HttpResponse.json({
         success: true,
@@ -73,12 +73,18 @@ function renderPage() {
   );
 }
 
+async function waitForAdminControls() {
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: '移交 Owner' })).toBeEnabled();
+  });
+}
+
 describe('MembersPage', () => {
   it('renders owner, access levels, and identity tags without role data', async () => {
     renderPage();
 
     await screen.findByText('admin@co.com');
-    expect(screen.getByText('组织所有者')).toBeInTheDocument();
+    expect(screen.getByText('工作空间所有者')).toBeInTheDocument();
     expect(screen.getByText('读写权限')).toBeInTheDocument();
     expect(screen.getByText('需求管理员')).toBeInTheDocument();
     expect(screen.getByText('澄清员')).toBeInTheDocument();
@@ -87,7 +93,7 @@ describe('MembersPage', () => {
 
   it('synchronizes the refreshed current membership into the auth store', async () => {
     server.use(
-      http.get('/api/orgs/current/membership', () => HttpResponse.json({
+      http.get('/api/workspaces/current/membership', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
@@ -108,11 +114,11 @@ describe('MembersPage', () => {
     const accessHandler = vi.fn();
     const tagsHandler = vi.fn();
     server.use(
-      http.put('/api/orgs/current/members/2/access-level', async ({ request }) => {
+      http.put('/api/workspaces/current/members/2/access-level', async ({ request }) => {
         accessHandler(await request.json());
         return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
       }),
-      http.put('/api/orgs/current/members/2/identity-tags', async ({ request }) => {
+      http.put('/api/workspaces/current/members/2/identity-tags', async ({ request }) => {
         tagsHandler(await request.json());
         return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
       }),
@@ -121,6 +127,7 @@ describe('MembersPage', () => {
 
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
     expect(devRow).not.toBeNull();
+    await waitForAdminControls();
     await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
     await user.click(screen.getByLabelText('只读权限'));
     const tagsInput = screen.getByRole('combobox', { name: '身份标签' });
@@ -135,57 +142,72 @@ describe('MembersPage', () => {
     });
   });
 
-  it('keeps write controls visible but blocks a read-only member before opening or requesting', async () => {
+  it('disables every edit control for non-admin members and shows the admin-only tip', async () => {
     const user = userEvent.setup();
     const writeHandler = vi.fn();
-    useAuthStore.getState().setCurrentOrg(
-      { id: 7, name: '测试组织', description: '' },
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: '测试工作空间', description: '' },
       'READ_ONLY',
     );
     server.use(
-      http.get('/api/orgs/current/membership', () => HttpResponse.json({
+      http.get('/api/workspaces/current/membership', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
         data: { ...mockMembers[0], accessLevel: 'READ_ONLY' },
         traceId: null,
       })),
-      http.put('/api/orgs/current/members/2/access-level', writeHandler),
-      http.delete('/api/orgs/current/members/2', writeHandler),
-      http.post('/api/orgs/current/owner/transfer', writeHandler),
+      http.put('/api/workspaces/current/members/2/access-level', writeHandler),
+      http.delete('/api/workspaces/current/members/2', writeHandler),
+      http.post('/api/workspaces/current/owner/transfer', writeHandler),
     );
     renderPage();
 
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
     expect(devRow).not.toBeNull();
-    expect(screen.getByRole('button', { name: '添加成员' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '移交 Owner' })).toBeInTheDocument();
-    expect(within(devRow!).getByRole('button', { name: '编辑' })).toBeInTheDocument();
-    expect(within(devRow!).getByRole('button', { name: '移除' })).toBeInTheDocument();
+    const transferButton = screen.getByRole('button', { name: '移交 Owner' });
+    const addButton = screen.getByRole('button', { name: '添加成员' });
+    const editButton = within(devRow!).getByRole('button', { name: '编辑' });
+    const removeButton = within(devRow!).getByRole('button', { name: '移除' });
+    expect(transferButton).toBeDisabled();
+    expect(addButton).toBeDisabled();
+    expect(editButton).toBeDisabled();
+    expect(removeButton).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: '搜索全局人员' })).toBeDisabled();
 
-    await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
+    await user.hover(transferButton.parentElement!);
+    expect(await screen.findByText('仅管理员可操作')).toBeInTheDocument();
+
+    await user.click(editButton);
     expect(screen.queryByRole('dialog', { name: '编辑成员' })).not.toBeInTheDocument();
-    expect(
-      (await screen.findAllByText('当前为只读权限，编辑成员需要管理员权限')).length,
-    ).toBeGreaterThan(0);
-
-    await user.click(screen.getByRole('button', { name: '移交 Owner' }));
-    expect(screen.queryByRole('dialog', { name: '移交组织 Owner' })).not.toBeInTheDocument();
-
-    await user.click(within(devRow!).getByRole('button', { name: '移除' }));
+    await user.click(transferButton);
+    expect(screen.queryByRole('dialog', { name: '移交工作空间 Owner' })).not.toBeInTheDocument();
+    await user.click(removeButton);
     expect(screen.queryByText('确定移除该成员？')).not.toBeInTheDocument();
     expect(writeHandler).not.toHaveBeenCalled();
+  });
+
+  it('enables edit controls for admin members once membership loads', async () => {
+    renderPage();
+
+    const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
+    expect(devRow).not.toBeNull();
+    await waitForAdminControls();
+    expect(screen.getByRole('combobox', { name: '搜索全局人员' })).toBeEnabled();
+    expect(within(devRow!).getByRole('button', { name: '编辑' })).toBeEnabled();
+    expect(within(devRow!).getByRole('button', { name: '移除' })).toBeEnabled();
   });
 
   it('rechecks access when an already-open member editor is submitted', async () => {
     const user = userEvent.setup();
     const accessHandler = vi.fn();
     server.use(
-      http.put('/api/orgs/current/members/2/access-level', accessHandler),
+      http.put('/api/workspaces/current/members/2/access-level', accessHandler),
     );
     renderPage();
 
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
+    await waitForAdminControls();
     await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
     await user.click(screen.getByLabelText('只读权限'));
     act(() => {
@@ -206,7 +228,7 @@ describe('MembersPage', () => {
     const user = userEvent.setup();
     const transferHandler = vi.fn();
     server.use(
-      http.post('/api/orgs/current/owner/transfer', async ({ request }) => {
+      http.post('/api/workspaces/current/owner/transfer', async ({ request }) => {
         transferHandler(await request.json());
         return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
       }),
@@ -214,9 +236,10 @@ describe('MembersPage', () => {
     renderPage();
 
     await screen.findByText('dev1@co.com');
+    await waitForAdminControls();
     const initialMembershipRequests = currentMembershipRequests;
     await user.click(screen.getByRole('button', { name: '移交 Owner' }));
-    const dialog = screen.getByRole('dialog', { name: '移交组织 Owner' });
+    const dialog = screen.getByRole('dialog', { name: '移交工作空间 Owner' });
     expect(within(dialog).getByRole('button', { name: '确认移交' })).toBeDisabled();
 
     await user.click(within(dialog).getByRole('combobox', { name: '目标成员' }));
@@ -233,7 +256,7 @@ describe('MembersPage', () => {
   it('surfaces the original backend conflict message', async () => {
     const user = userEvent.setup();
     server.use(
-      http.put('/api/orgs/current/members/2/access-level', () => HttpResponse.json(
+      http.put('/api/workspaces/current/members/2/access-level', () => HttpResponse.json(
         {
           success: false,
           code: '10409',
@@ -247,6 +270,7 @@ describe('MembersPage', () => {
     renderPage();
 
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
+    await waitForAdminControls();
     await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
     await user.click(screen.getByLabelText('只读权限'));
     await user.click(screen.getByRole('button', { name: /保\s*存/ }));
@@ -258,7 +282,7 @@ describe('MembersPage', () => {
     const user = userEvent.setup();
     const addHandler = vi.fn();
     server.use(
-      http.get('/api/orgs/current/member-candidates', ({ request }) => {
+      http.get('/api/workspaces/current/member-candidates', ({ request }) => {
         expect(new URL(request.url).searchParams.get('keyword')).toBe('new');
         return HttpResponse.json({
           success: true,
@@ -268,7 +292,7 @@ describe('MembersPage', () => {
           traceId: null,
         });
       }),
-      http.post('/api/orgs/current/members', async ({ request }) => {
+      http.post('/api/workspaces/current/members', async ({ request }) => {
         addHandler(await request.json());
         return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
       }),
@@ -276,6 +300,7 @@ describe('MembersPage', () => {
     renderPage();
 
     await screen.findByText('admin@co.com');
+    await waitForAdminControls();
     await user.type(screen.getByRole('combobox', { name: '搜索全局人员' }), 'new');
     await user.click(await screen.findByText('新人 (newbie@co.com)'));
     await user.click(screen.getByRole('button', { name: '添加成员' }));

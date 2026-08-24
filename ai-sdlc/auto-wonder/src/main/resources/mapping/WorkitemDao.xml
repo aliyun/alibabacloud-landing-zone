@@ -26,6 +26,88 @@
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
         LIMIT 1 FOR UPDATE
     </select>
+    <!-- 最新一次派发已成功（与 WorkitemService.applyPendingDecision 的 latest dispatch 语义一致） -->
+    <sql id="latestDispatchSucceeded">
+        EXISTS (
+            SELECT 1 FROM dispatch d
+            WHERE d.id = (
+                SELECT MAX(d2.id) FROM dispatch d2
+                WHERE d2.tenant_id = w.tenant_id
+                  AND d2.workitem_id = w.id
+                  AND d2.is_deleted = 0
+            )
+              AND d.status = 'SUCCEEDED'
+              AND d.is_deleted = 0
+        )
+    </sql>
+    <!-- 状态节点未完成（与 WorkitemService.isDoneStatus 语义一致） -->
+    <sql id="notDoneNodeFilter">
+        NOT EXISTS (
+            SELECT 1 FROM status_node sn
+            WHERE sn.id = w.status_node_id
+              AND (
+                  UPPER(COALESCE(sn.category, '')) = 'DONE'
+                  OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
+                  OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
+                  OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
+                  OR COALESCE(sn.name, '') LIKE '%完成%'
+                  OR COALESCE(sn.name, '') LIKE '%关闭%'
+                  OR COALESCE(sn.name, '') LIKE '%发布%'
+                  OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
+                  OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
+                  OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
+              )
+        )
+    </sql>
+    <!-- 以下三段与前端 classifyStatus 的状态名关键词分类保持一致 -->
+    <sql id="statusNameDone">
+        EXISTS (
+            SELECT 1 FROM status_node snc
+            WHERE snc.id = w.status_node_id
+              AND (
+                  snc.name LIKE '%完成%'
+                  OR snc.name LIKE '%关闭%'
+                  OR snc.name LIKE '%发布%'
+                  OR UPPER(snc.name) LIKE '%DONE%'
+                  OR UPPER(snc.name) LIKE '%CLOSED%'
+                  OR UPPER(snc.name) LIKE '%PUBLISHED%'
+              )
+        )
+    </sql>
+    <sql id="statusNameInProgress">
+        EXISTS (
+            SELECT 1 FROM status_node snc
+            WHERE snc.id = w.status_node_id
+              AND (
+                  snc.name LIKE '%执行%'
+                  OR snc.name LIKE '%开发%'
+                  OR snc.name LIKE '%验证%'
+                  OR UPPER(snc.name) LIKE '%PROGRESS%'
+                  OR UPPER(snc.name) LIKE '%RUNNING%'
+              )
+        )
+    </sql>
+    <!-- 待决策：人工持单且最新派发成功且未完成，或状态名本身命中待决策关键词 -->
+    <sql id="statusPendingDecision">
+        (
+            (
+                w.assignee_type = 'HUMAN'
+                AND <include refid="latestDispatchSucceeded"/>
+                AND <include refid="notDoneNodeFilter"/>
+            )
+            OR EXISTS (
+                SELECT 1 FROM status_node snc
+                WHERE snc.id = w.status_node_id
+                  AND (
+                      snc.name LIKE '%决策%'
+                      OR snc.name LIKE '%审核%'
+                      OR snc.name LIKE '%阻塞%'
+                      OR UPPER(snc.name) LIKE '%DECISION%'
+                      OR UPPER(snc.name) LIKE '%REVIEW%'
+                  )
+            )
+        )
+    </sql>
     <sql id="listFilter">
         w.tenant_id = #{tenantId}
         AND w.is_deleted = 0
@@ -36,33 +118,8 @@
         <if test="pendingDecisionOnly">
             AND w.assignee_type = 'HUMAN'
             AND w.assignee_ref = #{currentUserId}
-            AND EXISTS (
-                SELECT 1 FROM dispatch d
-                WHERE d.id = (
-                    SELECT MAX(d2.id) FROM dispatch d2
-                    WHERE d2.tenant_id = w.tenant_id
-                      AND d2.workitem_id = w.id
-                      AND d2.is_deleted = 0
-                )
-                  AND d.status = 'SUCCEEDED'
-                  AND d.is_deleted = 0
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM status_node sn
-                WHERE sn.id = w.status_node_id
-                  AND (
-                      UPPER(COALESCE(sn.category, '')) = 'DONE'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
-                      OR COALESCE(sn.name, '') LIKE '%完成%'
-                      OR COALESCE(sn.name, '') LIKE '%关闭%'
-                      OR COALESCE(sn.name, '') LIKE '%发布%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
-                  )
-            )
+            AND <include refid="latestDispatchSucceeded"/>
+            AND <include refid="notDoneNodeFilter"/>
         </if>
         <if test="mineScope == 'CREATED'">AND w.creator_id = #{currentUserId}</if>
         <if test="mineScope == 'ASSIGNED'">AND w.assignee_type = 'HUMAN' AND w.assignee_ref = #{currentUserId}</if>
@@ -70,6 +127,26 @@
             AND (w.title LIKE CONCAT('%', #{keyword}, '%')
             <if test="keywordId != null">OR w.id = #{keywordId}</if>)
         </if>
+        <!-- 看板状态列过滤：先按状态过滤再分页，避免翻页找执行中工单 -->
+        <choose>
+            <when test="statusCategory == 'DONE'">
+                AND <include refid="statusNameDone"/>
+            </when>
+            <when test="statusCategory == 'PENDING_DECISION'">
+                AND NOT <include refid="statusNameDone"/>
+                AND <include refid="statusPendingDecision"/>
+            </when>
+            <when test="statusCategory == 'IN_PROGRESS'">
+                AND NOT <include refid="statusNameDone"/>
+                AND NOT <include refid="statusPendingDecision"/>
+                AND <include refid="statusNameInProgress"/>
+            </when>
+            <when test="statusCategory == 'NEW'">
+                AND NOT <include refid="statusNameDone"/>
+                AND NOT <include refid="statusPendingDecision"/>
+                AND NOT <include refid="statusNameInProgress"/>
+            </when>
+        </choose>
     </sql>
     <select id="list" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
         SELECT w.* FROM workitem w
@@ -86,6 +163,11 @@
     </select>
     <update id="updateContent">
         UPDATE workitem SET title = #{title}, content_md = #{contentMd},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateExternalContent">
+        UPDATE workitem SET title = #{title}, content_md = #{contentMd}, priority = #{priority},
             version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>

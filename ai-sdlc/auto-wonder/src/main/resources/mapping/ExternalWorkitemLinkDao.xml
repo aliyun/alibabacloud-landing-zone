@@ -5,15 +5,21 @@
     <insert id="insert" parameterType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO external_workitem_link (tenant_id, provider, binding_id, external_project_id,
-            external_workitem_id, external_work_type, workitem_id, remote_updated_at,
-            remote_version_hash, last_sync_direction)
+            external_workitem_id, external_work_type, workitem_id, external_url, source_status_id,
+            source_status_name, source_lifecycle, reporter_principal_id, business_owner_principal_id,
+            principal_relations_json, remote_updated_at, remote_version_hash, last_sync_direction,
+            last_sync_at, sync_status, last_error_code, last_error)
         VALUES (#{tenantId}, #{provider}, #{bindingId}, #{externalProjectId},
-            #{externalWorkitemId}, #{externalWorkType}, #{workitemId}, #{remoteUpdatedAt},
-            #{remoteVersionHash}, #{lastSyncDirection})
+            #{externalWorkitemId}, #{externalWorkType}, #{workitemId}, #{externalUrl}, #{sourceStatusId},
+            #{sourceStatusName}, COALESCE(#{sourceLifecycle}, 'ACTIVE'), #{reporterPrincipalId},
+            #{businessOwnerPrincipalId}, #{principalRelationsJson}, #{remoteUpdatedAt},
+            #{remoteVersionHash}, #{lastSyncDirection}, #{lastSyncAt},
+            COALESCE(#{syncStatus}, 'HEALTHY'), #{lastErrorCode}, #{lastError})
     </insert>
-    <select id="findByExternal" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+    <select id="findByExternalScope" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
         SELECT * FROM external_workitem_link
-        WHERE tenant_id = #{tenantId} AND provider = #{provider} AND external_workitem_id = #{externalWorkitemId}
+        WHERE tenant_id = #{tenantId} AND binding_id = #{bindingId}
+          AND external_workitem_id = #{externalWorkitemId}
         LIMIT 1
     </select>
     <select id="findByWorkitem" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
@@ -42,9 +48,40 @@
         ORDER BY gmt_create DESC, id DESC
         LIMIT #{offset}, #{limit}
     </select>
+    <select id="listByBindingAfterId" resultType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        SELECT * FROM external_workitem_link
+        WHERE binding_id = #{bindingId} AND id &gt; #{afterId}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
     <update id="updateRemoteState">
         UPDATE external_workitem_link
         SET remote_version_hash = #{remoteVersionHash}, last_sync_direction = #{lastSyncDirection}
+        WHERE id = #{id}
+    </update>
+    <update id="updateSnapshot" parameterType="com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO">
+        UPDATE external_workitem_link
+        SET external_url = #{externalUrl},
+            source_status_id = #{sourceStatusId},
+            source_status_name = #{sourceStatusName},
+            source_lifecycle = COALESCE(#{sourceLifecycle}, 'ACTIVE'),
+            reporter_principal_id = #{reporterPrincipalId},
+            business_owner_principal_id = #{businessOwnerPrincipalId},
+            principal_relations_json = #{principalRelationsJson},
+            remote_updated_at = #{remoteUpdatedAt},
+            remote_version_hash = #{remoteVersionHash},
+            last_sync_direction = #{lastSyncDirection},
+            last_sync_at = #{lastSyncAt},
+            sync_status = COALESCE(#{syncStatus}, 'HEALTHY'),
+            last_error_code = #{lastErrorCode},
+            last_error = #{lastError}
+        WHERE id = #{id}
+    </update>
+    <update id="updateSyncError">
+        UPDATE external_workitem_link
+        SET sync_status = #{syncStatus},
+            last_error_code = #{lastErrorCode},
+            last_error = #{lastError}
         WHERE id = #{id}
     </update>
 </mapper>

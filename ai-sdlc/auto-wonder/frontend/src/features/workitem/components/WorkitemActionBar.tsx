@@ -1,9 +1,10 @@
 import { Button, Space, Tooltip } from 'antd';
-import { SwapOutlined, UserSwitchOutlined, CommentOutlined, RocketOutlined, SyncOutlined, DeleteOutlined } from '@ant-design/icons';
+import { SwapOutlined, UserSwitchOutlined, CommentOutlined, RocketOutlined, SyncOutlined, DeleteOutlined, UserAddOutlined } from '@ant-design/icons';
 
 interface WorkitemActionBarProps {
   hasSdlc?: boolean;
   onStartDelivery?: () => void;
+  onAssignHuman?: () => void;
   onTransition?: () => void;
   onAddComment?: () => void;
   onSyncExternal?: () => void;
@@ -17,6 +18,7 @@ interface WorkitemActionBarProps {
 export function WorkitemActionBar({
   hasSdlc,
   onStartDelivery,
+  onAssignHuman,
   onTransition,
   onAddComment,
   onSyncExternal,
@@ -37,11 +39,14 @@ export function WorkitemActionBar({
         >
           {hasSdlc ? '重新指派' : '启动交付'}
         </Button>
+        <Button icon={<UserAddOutlined />} onClick={onAssignHuman}>
+          指派给真人
+        </Button>
         <Button icon={<SwapOutlined />} onClick={onTransition}>
           流转状态
         </Button>
         <Button icon={<SyncOutlined />} onClick={onSyncExternal} loading={syncExternalLoading}>
-          同步 Aone
+          立即对账
         </Button>
         <Button icon={<CommentOutlined />} onClick={onAddComment}>
           添加评论

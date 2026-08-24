@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory;
 
+import com.aliyun.autowonder.agent.AgentDO;
+import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentMemoryRefDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -26,7 +28,7 @@ class MemoryServiceTest {
     }
 
     @Test
-    void createManualIsPendingReviewAndOrgClearsOwner() {
+    void createManualIsPendingReviewAndWorkspaceClearsOwner() {
         CreateMemoryRequest req = new CreateMemoryRequest();
         req.setScope("ORG");
         req.setOwnerRef(1L);
@@ -174,7 +176,7 @@ class MemoryServiceTest {
     }
 
     @Test
-    void reviewCanPromoteAgentMemoryToSquadOrOrgScope() {
+    void reviewCanPromoteAgentMemoryToSquadOrWorkspaceScope() {
         MemoryDO m = new MemoryDO();
         m.setId(1L);
         m.setTenantId(1L);
@@ -196,7 +198,7 @@ class MemoryServiceTest {
     }
 
     @Test
-    void reviewPromotingToOrgClearsOwnerRef() {
+    void reviewPromotingToWorkspaceClearsOwnerRef() {
         MemoryDO m = new MemoryDO();
         m.setId(1L);
         m.setTenantId(1L);
@@ -240,7 +242,7 @@ class MemoryServiceTest {
     @Test
     void reviewAdoptDistributesUsingReviewedScope() {
         MemoryDistributionService distributionService = mock(MemoryDistributionService.class);
-        service = new MemoryService(memoryDao, memoryReviewDao, agentMemoryRefDao, distributionService);
+        service = new MemoryService(memoryDao, memoryReviewDao, agentMemoryRefDao, distributionService, null);
         MemoryDO m = new MemoryDO();
         m.setId(1L);
         m.setTenantId(1L);
@@ -553,5 +555,276 @@ class MemoryServiceTest {
         when(memoryDao.countPendingByTenant(100L)).thenReturn(5);
         assertEquals(5, service.countPendingReviews(100L));
         verify(memoryDao).countPendingByTenant(100L);
+    }
+
+    private MemoryGroupSummaryDO summary(String scope, Long ownerRef, long total, long latestId) {
+        MemoryGroupSummaryDO s = new MemoryGroupSummaryDO();
+        s.setScope(scope);
+        s.setOwnerRef(ownerRef);
+        s.setTotal(total);
+        s.setLatestId(latestId);
+        return s;
+    }
+
+    private MemoryDO groupedMemory(long id, String scope, Long ownerRef) {
+        MemoryDO m = stored(id, 1L, "ADOPTED", "memory-" + id, "content-" + id);
+        m.setScope(scope);
+        m.setOwnerRef(ownerRef);
+        return m;
+    }
+
+    @Test
+    void listGroupedGroupsByOwnerResolvesAgentNamesAndKeepsDescendingOrder() {
+        AgentDao agentDao = mock(AgentDao.class);
+        service = new MemoryService(memoryDao, memoryReviewDao, agentMemoryRefDao, agentDao);
+        when(memoryDao.listGroupSummaries(1L, null, null, null, null, 0, 10))
+                .thenReturn(java.util.List.of(
+                        summary("AGENT", 30L, 2L, 3L),
+                        summary("AGENT", 31L, 1L, 1L),
+                        summary("ORG", null, 1L, 0L)));
+        when(memoryDao.listByGroups(eq(1L), anyList(), isNull(), isNull(),
+                eq(MemoryService.GROUPED_MEMORY_FETCH_LIMIT)))
+                .thenReturn(java.util.List.of(
+                        groupedMemory(3L, "AGENT", 30L),
+                        groupedMemory(2L, "AGENT", 30L),
+                        groupedMemory(1L, "AGENT", 31L),
+                        groupedMemory(0L, "ORG", null)));
+        AgentDO agent = new AgentDO();
+        agent.setId(30L);
+        agent.setName("AW全栈开发");
+        when(agentDao.listByIds(eq(1L), anyCollection())).thenReturn(java.util.List.of(agent));
+
+        java.util.List<MemoryGroupVO> groups = service.listGrouped(1L, null, null, null, null, 1, 10);
+
+        assertEquals(3, groups.size());
+        MemoryGroupVO first = groups.get(0);
+        assertEquals("AGENT", first.getScope());
+        assertEquals(30L, first.getOwnerRef());
+        assertEquals("AW全栈开发", first.getOwnerName());
+        assertEquals(2L, first.getTotal());
+        assertEquals(java.util.List.of(3L, 2L),
+                first.getMemories().stream().map(MemoryVO::getId).toList());
+        MemoryGroupVO second = groups.get(1);
+        assertEquals(31L, second.getOwnerRef());
+        assertNull(second.getOwnerName(), "unresolved agent must surface as unassigned, not fail");
+        assertEquals(1, second.getMemories().size());
+        MemoryGroupVO org = groups.get(2);
+        assertEquals("ORG", org.getScope());
+        assertNull(org.getOwnerRef());
+        assertNull(org.getOwnerName());
+        assertEquals(1, org.getMemories().size());
+    }
+
+    @Test
+    void listGroupedPassesFiltersAndGroupPaginationToDao() {
+        when(memoryDao.listGroupSummaries(1L, "AGENT", 30L, "RULE", "ADOPTED", 10, 10))
+                .thenReturn(java.util.List.of());
+
+        java.util.List<MemoryGroupVO> groups = service.listGrouped(1L, "AGENT", 30L, "RULE", "ADOPTED", 2, 10);
+
+        assertTrue(groups.isEmpty());
+        verify(memoryDao).listGroupSummaries(1L, "AGENT", 30L, "RULE", "ADOPTED", 10, 10);
+        verify(memoryDao, never()).listByGroups(anyLong(), anyList(), any(), any(), anyInt());
+    }
+
+    @Test
+    void listGroupedClampsPageSize() {
+        when(memoryDao.listGroupSummaries(eq(1L), isNull(), isNull(), isNull(), isNull(),
+                anyInt(), anyInt())).thenReturn(java.util.List.of());
+
+        service.listGrouped(1L, null, null, null, null, 0, 500);
+
+        verify(memoryDao).listGroupSummaries(1L, null, null, null, null, 0, 50);
+    }
+
+    @Test
+    void listGroupedReturnsEmptyMemoriesWhenGroupRowsWereTruncated() {
+        when(memoryDao.listGroupSummaries(1L, null, null, null, null, 0, 10))
+                .thenReturn(java.util.List.of(summary("AGENT", 30L, 2L, 3L)));
+        when(memoryDao.listByGroups(eq(1L), anyList(), isNull(), isNull(), anyInt()))
+                .thenReturn(java.util.List.of());
+
+        java.util.List<MemoryGroupVO> groups = service.listGrouped(1L, null, null, null, null, 1, 10);
+
+        assertEquals(1, groups.size());
+        assertEquals(2L, groups.get(0).getTotal());
+        assertTrue(groups.get(0).getMemories().isEmpty());
+    }
+
+    @Test
+    void updatePromotesAdoptedAgentMemoryToSquadWithAuditAndDistribution() {
+        MemoryDistributionService distributionService = mock(MemoryDistributionService.class);
+        service = new MemoryService(memoryDao, memoryReviewDao, agentMemoryRefDao, distributionService, null);
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("AGENT");
+        m.setOwnerRef(30L);
+        m.setStatus("ADOPTED");
+        m.setTitle("旧标题");
+        m.setContentMd("旧正文");
+        m.setType("FACT");
+        m.setVersion(3);
+        when(memoryDao.findById(1L)).thenReturn(m);
+        when(memoryDao.update(1L, 1L, "旧标题", "旧正文", "FACT", 3, 2L)).thenReturn(1);
+        when(memoryDao.updateStatus(1L, 1L, "ADOPTED", null, "SQUAD", 9L, 4, 2L)).thenReturn(1);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setScope("SQUAD");
+        req.setOwnerRef(9L);
+
+        service.update(1L, req, 1L, 2L);
+
+        verify(memoryDao).updateStatus(1L, 1L, "ADOPTED", null, "SQUAD", 9L, 4, 2L);
+        verify(memoryReviewDao).insert(argThat(review -> "SCOPE_CHANGE".equals(review.getDecision())
+                && Long.valueOf(1L).equals(review.getMemoryId())
+                && Long.valueOf(2L).equals(review.getReviewerId())
+                && review.getComment().contains("AGENT")
+                && review.getComment().contains("SQUAD")));
+        verify(distributionService).distribute(argThat(memory -> "SQUAD".equals(memory.getScope())
+                && Long.valueOf(9L).equals(memory.getOwnerRef())
+                && "ADOPTED".equals(memory.getStatus())), eq(2L));
+    }
+
+    @Test
+    void updatePromotesAdoptedMemoryToOrgClearsOwnerRef() {
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("SQUAD");
+        m.setOwnerRef(9L);
+        m.setStatus("ADOPTED");
+        m.setTitle("标题");
+        m.setContentMd("正文");
+        m.setType("RULE");
+        m.setVersion(0);
+        when(memoryDao.findById(1L)).thenReturn(m);
+        when(memoryDao.update(1L, 1L, "标题", "正文", "RULE", 0, 2L)).thenReturn(1);
+        when(memoryDao.updateStatus(1L, 1L, "ADOPTED", null, "ORG", null, 1, 2L)).thenReturn(1);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setScope("ORG");
+        req.setOwnerRef(999L);
+
+        service.update(1L, req, 1L, 2L);
+
+        verify(memoryDao).updateStatus(1L, 1L, "ADOPTED", null, "ORG", null, 1, 2L);
+    }
+
+    @Test
+    void updateScopePromotionRequiresOwnerForSquad() {
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("AGENT");
+        m.setOwnerRef(30L);
+        m.setStatus("ADOPTED");
+        m.setVersion(0);
+        when(memoryDao.findById(1L)).thenReturn(m);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setScope("SQUAD");
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+        verify(memoryDao, never()).update(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyLong());
+        verify(memoryReviewDao, never()).insert(any());
+    }
+
+    @Test
+    void updateScopeChangeOnNonAdoptedMemoryThrows() {
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("AGENT");
+        m.setOwnerRef(30L);
+        m.setStatus("PENDING");
+        m.setVersion(0);
+        when(memoryDao.findById(1L)).thenReturn(m);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setScope("ORG");
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+
+        assertEquals(ErrorCode.MEMORY_SCOPE_CHANGE_NOT_ADOPTED.getCode(), ex.getCode());
+        verify(memoryDao, never()).update(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyLong());
+        verify(memoryDao, never()).updateStatus(anyLong(), anyLong(), anyString(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void updateWithoutScopeKeepsLegacyBehavior() {
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("AGENT");
+        m.setOwnerRef(30L);
+        m.setStatus("ADOPTED");
+        m.setTitle("旧标题");
+        m.setContentMd("旧正文");
+        m.setType("FACT");
+        m.setVersion(2);
+        when(memoryDao.findById(1L)).thenReturn(m);
+        when(memoryDao.update(1L, 1L, "新标题", "旧正文", "FACT", 2, 2L)).thenReturn(1);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setTitle("新标题");
+
+        service.update(1L, req, 1L, 2L);
+
+        verify(memoryDao).update(1L, 1L, "新标题", "旧正文", "FACT", 2, 2L);
+        verify(memoryDao, never()).updateStatus(anyLong(), anyLong(), anyString(), any(), any(), any(), anyInt(), anyLong());
+        verify(memoryReviewDao, never()).insert(any());
+    }
+
+    @Test
+    void updateSameScopeAndOwnerIsTreatedAsPlainEdit() {
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("AGENT");
+        m.setOwnerRef(30L);
+        m.setStatus("ADOPTED");
+        m.setTitle("标题");
+        m.setContentMd("正文");
+        m.setType("FACT");
+        m.setVersion(1);
+        when(memoryDao.findById(1L)).thenReturn(m);
+        when(memoryDao.update(1L, 1L, "标题", "正文", "FACT", 1, 2L)).thenReturn(1);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setScope("agent");
+        req.setOwnerRef(30L);
+
+        service.update(1L, req, 1L, 2L);
+
+        verify(memoryDao, never()).updateStatus(anyLong(), anyLong(), anyString(), any(), any(), any(), anyInt(), anyLong());
+        verify(memoryReviewDao, never()).insert(any());
+    }
+
+    @Test
+    void updateScopeChangeVersionConflictThrows() {
+        MemoryDO m = new MemoryDO();
+        m.setId(1L);
+        m.setTenantId(1L);
+        m.setScope("AGENT");
+        m.setOwnerRef(30L);
+        m.setStatus("ADOPTED");
+        m.setTitle("标题");
+        m.setContentMd("正文");
+        m.setType("FACT");
+        m.setVersion(5);
+        when(memoryDao.findById(1L)).thenReturn(m);
+        when(memoryDao.update(1L, 1L, "标题", "正文", "FACT", 5, 2L)).thenReturn(1);
+        when(memoryDao.updateStatus(1L, 1L, "ADOPTED", null, "ORG", null, 6, 2L)).thenReturn(0);
+
+        UpdateMemoryRequest req = new UpdateMemoryRequest();
+        req.setScope("ORG");
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+
+        assertEquals(ErrorCode.MEMORY_VERSION_CONFLICT.getCode(), ex.getCode());
+        verify(memoryReviewDao, never()).insert(any());
     }
 }

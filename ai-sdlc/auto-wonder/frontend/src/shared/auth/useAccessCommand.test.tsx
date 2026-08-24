@@ -15,7 +15,7 @@ describe('useAccessCommand', () => {
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
     const command = vi.fn();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     const { result } = renderHook(() => useAccessCommand());
 
     act(() => result.current('READ_WRITE', '编辑工单', command));
@@ -29,7 +29,7 @@ describe('useAccessCommand', () => {
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
     const command = vi.fn();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     const { result } = renderHook(() => useAccessCommand());
 
     act(() => result.current('ADMIN', '删除执行器', command));
@@ -40,7 +40,7 @@ describe('useAccessCommand', () => {
 
   it('invokes an allowed command exactly once and returns its result', () => {
     const command = vi.fn(() => 'done');
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
     const { result } = renderHook(() => useAccessCommand());
     let commandResult: string | undefined;
 
@@ -57,12 +57,12 @@ describe('useAccessCommand', () => {
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
     const command = vi.fn();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
     const { result } = renderHook(() => useAccessCommand());
     const existingCallback = result.current;
 
     act(() => {
-      useAuthStore.getState().setCurrentOrg(
+      useAuthStore.getState().setCurrentWorkspace(
         { id: 1, name: 'O', description: '' },
         'READ_ONLY',
       );

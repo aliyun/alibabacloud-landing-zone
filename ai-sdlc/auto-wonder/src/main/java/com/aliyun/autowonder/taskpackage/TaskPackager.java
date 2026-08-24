@@ -61,6 +61,8 @@ public class TaskPackager {
         StoredObject stored = storage.put(taskPkgBucket, key, zip);
         log.info("taskpackage uploaded dispatchId={} ossRef={}", ctx.getDispatchId(), stored.getOssRef());
         String url = storage.presignGet(stored.getOssRef(), DOWNLOAD_TTL_SECONDS);
+        log.info("taskpackage download url ready dispatchId={} ossRef={} ttlSeconds={} downloadUrl={}",
+                ctx.getDispatchId(), stored.getOssRef(), DOWNLOAD_TTL_SECONDS, url);
         return new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256);
     }
 

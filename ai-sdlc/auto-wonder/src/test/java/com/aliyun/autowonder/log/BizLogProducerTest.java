@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class BizLogProducerTest {
 
     private static final Set<String> CORE_FIELDS = Set.of(
-            "RequestId", "UserId", "OrgId", "Operation", "Path", "HttpMethod",
+            "RequestId", "UserId", "WorkspaceId", "Operation", "Path", "HttpMethod",
             "HttpStatus", "Success", "TotalUsedTimeMs", "RequestTime",
             "ErrorCode", "ErrorMsg");
 

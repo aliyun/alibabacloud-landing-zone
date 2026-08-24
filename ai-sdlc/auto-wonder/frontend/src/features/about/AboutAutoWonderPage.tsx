@@ -58,7 +58,7 @@ const quickStartSteps = [
     number: '06',
     icon: '🌱',
     title: '沉淀记忆与产物',
-    description: '交付产物可追溯，经验成为组织和数字员工记忆。',
+    description: '交付产物可追溯，经验成为工作空间和数字员工记忆。',
     className: 'about-aw-step-green',
   },
 ];
@@ -77,7 +77,7 @@ const principles = [
   },
   {
     label: '理念 03',
-    title: '每次交付都让组织更聪明',
+    title: '每次交付都让工作空间更聪明',
     description: '工单过程、产物、失败原因、项目经验和偏好，都会进入可审核、可复用的知识沉淀链路。',
     className: 'about-aw-principle-green',
   },
@@ -104,7 +104,7 @@ export function AboutAutoWonderPage() {
             会协作、会沉淀的数字员工小队
           </h1>
           <p>
-            AutoWonder 将工单系统、代码仓库、SDLC 流程、数字员工、执行器和组织记忆连接成一个闭环。
+            AutoWonder 将工单系统、代码仓库、SDLC 流程、数字员工、执行器和工作空间记忆连接成一个闭环。
             你定义工作方式，数字员工按小队协作推进研发任务，并把过程、产物和经验持续沉淀回来。
           </p>
           <div className="about-aw-hero-actions">

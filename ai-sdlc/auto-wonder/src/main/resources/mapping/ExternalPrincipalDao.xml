@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.integration.common.ExternalPrincipalDao">
+    <insert id="upsert" parameterType="com.aliyun.autowonder.integration.common.ExternalPrincipalDO">
+        INSERT INTO external_principal
+            (provider, subject_id, display_name)
+        VALUES
+            (#{provider}, #{subjectId}, #{displayName})
+        ON DUPLICATE KEY UPDATE
+            display_name = COALESCE(VALUES(display_name), display_name),
+            gmt_modified = CURRENT_TIMESTAMP(3)
+    </insert>
+
+    <select id="findBySource" resultType="com.aliyun.autowonder.integration.common.ExternalPrincipalDO">
+        SELECT *
+        FROM external_principal
+        WHERE provider = #{provider}
+          AND subject_id = #{subjectId}
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.integration.common.ExternalPrincipalDO">
+        SELECT * FROM external_principal WHERE id = #{id} LIMIT 1
+    </select>
+
+    <select id="listByIds" resultType="com.aliyun.autowonder.integration.common.ExternalPrincipalDO">
+        SELECT *
+        FROM external_principal
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        ORDER BY id ASC
+    </select>
+</mapper>

@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/client';
-import type { OrgAccessLevel } from '@/shared/types/common';
+import type { WorkspaceAccessLevel } from '@/shared/types/common';
 
 // --- System Settings ---
 
@@ -84,7 +84,7 @@ export async function updateNotifyPrefs(items: NotifyPrefItem[]): Promise<void> 
   await apiClient.put('/api/notifications/prefs', { items });
 }
 
-// --- Organization Membership ---
+// --- workspace Membership ---
 
 export interface MemberVO {
   userId: number;
@@ -93,7 +93,7 @@ export interface MemberVO {
   nickname: string;
   joinedAt: string;
   owner: boolean;
-  accessLevel: OrgAccessLevel;
+  accessLevel: WorkspaceAccessLevel;
   identityTags: string[];
 }
 
@@ -107,42 +107,42 @@ export interface MemberCandidateVO {
 }
 
 export async function getCurrentMembership(): Promise<CurrentMembershipVO> {
-  const resp = await apiClient.get<CurrentMembershipVO>('/api/orgs/current/membership');
+  const resp = await apiClient.get<CurrentMembershipVO>('/api/workspaces/current/membership');
   return resp.data;
 }
 
 export async function listMembers(): Promise<MemberVO[]> {
-  const resp = await apiClient.get<MemberVO[]>('/api/orgs/current/members');
+  const resp = await apiClient.get<MemberVO[]>('/api/workspaces/current/members');
   return resp.data;
 }
 
 export async function searchMemberCandidates(keyword: string): Promise<MemberCandidateVO[]> {
-  const resp = await apiClient.get<MemberCandidateVO[]>('/api/orgs/current/member-candidates', { params: { keyword } });
+  const resp = await apiClient.get<MemberCandidateVO[]>('/api/workspaces/current/member-candidates', { params: { keyword } });
   return resp.data;
 }
 
 export async function addMember(userId: number): Promise<void> {
-  await apiClient.post('/api/orgs/current/members', { userId });
+  await apiClient.post('/api/workspaces/current/members', { userId });
 }
 
 export async function removeMember(userId: number): Promise<void> {
-  await apiClient.delete(`/api/orgs/current/members/${userId}`);
+  await apiClient.delete(`/api/workspaces/current/members/${userId}`);
 }
 
 export async function updateMemberAccess(
   userId: number,
-  accessLevel: OrgAccessLevel,
+  accessLevel: WorkspaceAccessLevel,
 ): Promise<void> {
-  await apiClient.put(`/api/orgs/current/members/${userId}/access-level`, { accessLevel });
+  await apiClient.put(`/api/workspaces/current/members/${userId}/access-level`, { accessLevel });
 }
 
 export async function updateMemberIdentityTags(
   userId: number,
   identityTags: string[],
 ): Promise<void> {
-  await apiClient.put(`/api/orgs/current/members/${userId}/identity-tags`, { identityTags });
+  await apiClient.put(`/api/workspaces/current/members/${userId}/identity-tags`, { identityTags });
 }
 
 export async function transferOwner(targetUserId: number): Promise<void> {
-  await apiClient.post('/api/orgs/current/owner/transfer', { targetUserId });
+  await apiClient.post('/api/workspaces/current/owner/transfer', { targetUserId });
 }

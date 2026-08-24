@@ -12,7 +12,7 @@ import { MemoryReviewModals } from './MemoryReviewModals';
 const { Paragraph, Text } = Typography;
 
 const typeLabel: Record<string, string> = { FACT: '事实', RULE: '规则', PREFERENCE: '偏好' };
-const scopeLabel: Record<string, string> = { ORG: '组织全局', SQUAD: '小队', AGENT: '员工' };
+const scopeLabel: Record<string, string> = { ORG: '工作空间全局', SQUAD: '小队', AGENT: '员工' };
 const statusLabel: Record<string, { color: string; text: string }> = {
   ADOPTED: { color: 'success', text: '已采纳' },
   PENDING: { color: 'processing', text: '待审核' },

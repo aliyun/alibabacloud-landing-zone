@@ -43,7 +43,7 @@ export function SdlcGeneratePage() {
         >
           <AiSessionPanel
             scene="SDLC_GEN"
-            bizRefType="ORG"
+            bizRefType='ORG'
             bizRefId={0}
             onConfirm={() => accessCommand('READ_WRITE', 'AI 生成 SDLC', () => navigate('/sdlcs'))}
           />

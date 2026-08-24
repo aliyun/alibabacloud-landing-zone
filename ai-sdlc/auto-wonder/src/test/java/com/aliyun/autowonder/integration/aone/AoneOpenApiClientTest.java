@@ -69,7 +69,28 @@ class AoneOpenApiClientTest {
         assertEquals("1720680000000", seenTimestamp);
         assertEquals("1", seenRegion);
         assertEquals("0xSCEN8_v0H-PPIqpDLGhQMQBumpi9byCrdrXRoFpnixvkl5tCP1irXuT05LN4pW", seenSignature);
-        assertEquals("akProjectId=2161074&stamp=Req,Bug,Task", seenBody);
+        assertEquals("akProjectId=2161074&stamp=Req%2CBug%2CTask", seenBody);
+    }
+
+    @Test
+    void postFormPercentEncodesMultibyteAndReservedCharsIntoBody() throws Exception {
+        String baseUrl = startServer(200, "{\"success\":true,\"result\":{\"ok\":true}}");
+        AoneOpenApiClient client = client();
+        String longContent = "标题 & 特殊=字符\n" + "长内容".repeat(600);
+        Map<String, Object> form = new LinkedHashMap<>();
+        form.put("targetType", "Issue");
+        form.put("targetId", "85299639");
+        form.put("user", "WORKER_1");
+        form.put("content", longContent);
+
+        client.postForm(config(baseUrl), "/issue/openapi/IssueTopService/createComment", form);
+
+        // Content must travel in the body, percent-encoded: a GET query string of this size
+        // exceeds gateway URL length limits.
+        assertTrue(seenRawQuery == null || seenRawQuery.isBlank());
+        assertTrue(seenBody.startsWith("targetType=Issue&targetId=85299639&user=WORKER_1&content="));
+        assertTrue(seenBody.contains("%26") && seenBody.contains("%3D"));
+        assertFalse(seenBody.contains("长内容"));
     }
 
     @Test
@@ -121,7 +142,7 @@ class AoneOpenApiClientTest {
         String baseUrl = startServer(200, "{\"success\":true,\"result\":true,\"message\":\"comment id:124709025\",\"totalCount\":3}");
         AoneOpenApiClient client = client();
 
-        JSONObject result = client.get(config(baseUrl), "/issue/openapi/IssueTopService/createComment", Map.of());
+        JSONObject result = client.postForm(config(baseUrl), "/issue/openapi/IssueTopService/createComment", Map.of());
 
         assertEquals(Boolean.TRUE, result.getBoolean("result"));
         assertEquals("comment id:124709025", result.getString("message"));

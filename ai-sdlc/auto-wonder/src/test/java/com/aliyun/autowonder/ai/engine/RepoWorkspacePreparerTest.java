@@ -76,7 +76,7 @@ class RepoWorkspacePreparerTest {
         RepoDO repo = new RepoDO();
         repo.setId(7L);
         repo.setName("main-repo");
-        repo.setUrl("https://github.com/org/repo.git");
+        repo.setUrl("https://github.com/workspace/repo.git");
         when(repoDao.list(100L, 0, 100)).thenReturn(List.of(repo));
         RepoWorkspacePreparer preparer = new RepoWorkspacePreparer(repoDao, fakeGit.toString(), 120);
 
@@ -110,7 +110,7 @@ class RepoWorkspacePreparerTest {
         RepoDO repo = new RepoDO();
         repo.setId(7L);
         repo.setName("main-repo");
-        repo.setUrl("git@github.com:org/private.git");
+        repo.setUrl("git@github.com:workspace/private.git");
         when(repoDao.list(100L, 0, 100)).thenReturn(List.of(repo));
         RepoWorkspacePreparer preparer = new RepoWorkspacePreparer(repoDao, fakeGit.toString(), 120);
 

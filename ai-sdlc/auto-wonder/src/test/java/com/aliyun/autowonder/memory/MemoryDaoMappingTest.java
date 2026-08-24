@@ -116,6 +116,96 @@ class MemoryDaoMappingTest {
                 + "AND source_dedupe_key = ? AND is_deleted = 0 LIMIT 1", sql);
     }
 
+    @Test
+    void listGroupSummariesFiltersBeforeGroupingAndPagination() {
+        Map<String, Object> args = groupSummaryParams(a -> {
+            a.put("scope", "AGENT");
+            a.put("type", "RULE");
+            a.put("status", "ADOPTED");
+        });
+        String sql = sqlFor("com.aliyun.autowonder.memory.MemoryDao.listGroupSummaries", args);
+
+        int statusFilter = sql.indexOf("AND status = ?");
+        int groupBy = sql.indexOf("GROUP BY scope, owner_ref");
+        int limit = sql.indexOf("LIMIT");
+        assertTrue(statusFilter > 0 && sql.indexOf("WHERE") < statusFilter,
+                () -> "filters must live inside WHERE: " + sql);
+        assertTrue(statusFilter < groupBy,
+                () -> "filters must apply before GROUP BY aggregates: " + sql);
+        assertTrue(groupBy < limit,
+                () -> "group-level pagination must come after grouping: " + sql);
+        assertTrue(sql.contains("ORDER BY latest_id DESC"), () -> sql);
+        assertTrue(sql.contains("COUNT(*) AS total"), () -> sql);
+    }
+
+    @Test
+    void listGroupSummariesWithoutOptionalFiltersKeepsBaseSql() {
+        String sql = sqlFor("com.aliyun.autowonder.memory.MemoryDao.listGroupSummaries",
+                groupSummaryParams(a -> { }));
+
+        assertEquals("SELECT scope, owner_ref, COUNT(*) AS total, MAX(id) AS latest_id FROM memory "
+                + "WHERE tenant_id = ? AND is_deleted = 0 "
+                + "GROUP BY scope, owner_ref ORDER BY latest_id DESC LIMIT ?, ?", sql);
+    }
+
+    @Test
+    void listByGroupsHandlesNullOwnerRefWithIsNullAndBindsEverythingElse() {
+        MemoryGroupSummaryDO agentGroup = new MemoryGroupSummaryDO();
+        agentGroup.setScope("AGENT");
+        agentGroup.setOwnerRef(30L);
+        MemoryGroupSummaryDO orgGroup = new MemoryGroupSummaryDO();
+        orgGroup.setScope("ORG");
+        orgGroup.setOwnerRef(null);
+        Map<String, Object> args = new HashMap<>(Map.of(
+                "tenantId", 100L,
+                "groups", List.of(agentGroup, orgGroup),
+                "limit", 2000));
+        String sql = sqlFor("com.aliyun.autowonder.memory.MemoryDao.listByGroups", args);
+
+        assertTrue(sql.contains("(scope = ? AND owner_ref = ? ) OR (scope = ? AND owner_ref IS NULL )"),
+                () -> "null owner_ref must match via IS NULL, never owner_ref = ?: " + sql);
+        assertTrue(sql.indexOf("tenant_id = ?") < sql.indexOf("scope = ?"),
+                () -> "tenant isolation must precede group matching: " + sql);
+        assertTrue(sql.indexOf("ORDER BY id DESC") < sql.indexOf("LIMIT"),
+                () -> "group members must sort before truncation: " + sql);
+        assertFalse(sql.contains("(scope = ? AND owner_ref IS NULL ) OR (scope = ? AND owner_ref = ? )")
+                        && sql.indexOf("owner_ref IS NULL") > sql.lastIndexOf("owner_ref = ?"),
+                () -> "ORG group must not bind a null owner_ref as equality: " + sql);
+    }
+
+    @Test
+    void listByGroupsReappliesTypeAndStatusFilters() {
+        MemoryGroupSummaryDO agentGroup = new MemoryGroupSummaryDO();
+        agentGroup.setScope("AGENT");
+        agentGroup.setOwnerRef(30L);
+        Map<String, Object> args = new HashMap<>(Map.of(
+                "tenantId", 100L,
+                "groups", List.of(agentGroup),
+                "type", "RULE",
+                "status", "ADOPTED",
+                "limit", 2000));
+        String sql = sqlFor("com.aliyun.autowonder.memory.MemoryDao.listByGroups", args);
+
+        assertTrue(sql.contains("AND type = ?"), () -> sql);
+        assertTrue(sql.contains("AND status = ?"), () -> sql);
+        List<String> names = parameterNames("com.aliyun.autowonder.memory.MemoryDao.listByGroups", args);
+        assertEquals(List.of("tenantId", "type", "status"), names.subList(0, 3),
+                () -> "tenant and filters must bind before group predicates: " + names);
+        assertEquals("limit", names.get(names.size() - 1),
+                () -> "LIMIT must stay the final binding: " + names);
+        assertTrue(names.stream().anyMatch(n -> n.contains("scope")),
+                () -> "foreach group keys must bind as parameters: " + names);
+    }
+
+    private Map<String, Object> groupSummaryParams(java.util.function.Consumer<Map<String, Object>> customizer) {
+        Map<String, Object> args = new HashMap<>();
+        args.put("tenantId", 100L);
+        args.put("offset", 0);
+        args.put("limit", 10);
+        customizer.accept(args);
+        return args;
+    }
+
     private Map<String, Object> params(java.util.function.Consumer<Map<String, Object>> customizer) {
         Map<String, Object> args = new HashMap<>();
         args.put("tenantId", 100L);

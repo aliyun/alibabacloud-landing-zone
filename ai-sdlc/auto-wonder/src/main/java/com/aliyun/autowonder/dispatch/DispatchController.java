@@ -6,13 +6,13 @@ import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.dto.DispatchPageVO;
 import com.aliyun.autowonder.dispatch.dto.DispatchVO;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/dispatches")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看调度")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看调度")
 public class DispatchController {
 
     private final DispatchQueryService dispatchQueryService;
@@ -30,19 +30,19 @@ public class DispatchController {
             @RequestParam(value = "workitem_id", required = false) Long workitemId,
             @RequestParam(value = "time_range", defaultValue = "30d") String timeRange) {
         return Result.ok(dispatchQueryService.list(
-                currentOrgId(), status, agentId, workitemId, timeRange, page, pageSize));
+                currentWorkspaceId(), status, agentId, workitemId, timeRange, page, pageSize));
     }
 
     @GetMapping("/{id}")
     public Result<DispatchVO> get(@PathVariable("id") long id) {
-        return Result.ok(dispatchQueryService.get(currentOrgId(), id));
+        return Result.ok(dispatchQueryService.get(currentWorkspaceId(), id));
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

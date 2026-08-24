@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Artifact } from '@/shared/types/workitem';
@@ -7,7 +8,7 @@ import { findArtifactForPath, splitArtifactPathSegments } from '@/shared/lib/art
 interface MarkdownViewProps {
   content: string;
   className?: string;
-  mentionNames?: string[];
+  mentionNames?: Array<string | null | undefined>;
   artifacts?: Artifact[];
   onArtifactClick?: (artifact: Artifact) => void;
 }
@@ -44,9 +45,14 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function highlightMentions(content: string, mentionNames: string[] = []): string {
-  const names = Array.from(new Set(mentionNames.map((name) => name.trim()).filter(Boolean)))
-    .sort((a, b) => b.length - a.length);
+function highlightMentions(content: string, mentionNames: Array<string | null | undefined> = []): string {
+  // Participant names may arrive as null (e.g. deleted agents); skip them instead of crashing render.
+  const names = Array.from(new Set(
+    mentionNames
+      .filter((name): name is string => typeof name === 'string')
+      .map((name) => name.trim())
+      .filter(Boolean),
+  )).sort((a, b) => b.length - a.length);
 
   if (names.length === 0) return content;
 
@@ -75,7 +81,8 @@ function childrenText(children: unknown): string {
 }
 
 export function MarkdownView({ content, className, mentionNames, artifacts, onArtifactClick }: MarkdownViewProps) {
-  const linkedContent = linkArtifacts(content, artifacts);
+  const safeContent = content ?? '';
+  const linkedContent = linkArtifacts(safeContent, artifacts);
   const renderedContent = highlightMentions(linkedContent, mentionNames);
   const artifactsById = new Map((artifacts ?? []).map((artifact) => [String(artifact.id), artifact]));
 
@@ -154,6 +161,7 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
             );
           },
         }}
+        remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
         unwrapDisallowed
       >

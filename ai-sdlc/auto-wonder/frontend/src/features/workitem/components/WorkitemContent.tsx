@@ -12,10 +12,11 @@ interface WorkitemContentProps {
   title: string;
   contentMd: string;
   saving?: boolean;
+  readOnly?: boolean;
   onSave?: (values: { title: string; contentMd: string }) => Promise<void> | void;
 }
 
-export function WorkitemContent({ title, contentMd, saving = false, onSave }: WorkitemContentProps) {
+export function WorkitemContent({ title, contentMd, saving = false, readOnly = false, onSave }: WorkitemContentProps) {
   const accessCommand = useAccessCommand();
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
@@ -64,7 +65,9 @@ export function WorkitemContent({ title, contentMd, saving = false, onSave }: Wo
         <Text strong style={{ display: 'block', fontSize: 14 }}>
           需求/设计文档
         </Text>
-        {editing ? (
+        {readOnly ? (
+          <Text type="secondary">由外部工单维护</Text>
+        ) : editing ? (
           <Space>
             <CopyContentMenu contentMd={contentMd} />
             <Button icon={<CloseOutlined />} onClick={handleCancel} disabled={saving}>

@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.notification;
 
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,10 +13,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 class NotificationControllerPermissionTest {
 
     @Test
-    void personalNotificationEndpointsStayOutsideOrganizationAccessLadder() {
+    void personalNotificationEndpointsStayOutsideWorkspaceAccessLadder() {
         for (Method method : mappedMethods()) {
-            assertFalse(AnnotatedElementUtils.hasAnnotation(method, RequireOrgAccess.class),
-                    method.getName() + " should not require organization access");
+            assertFalse(AnnotatedElementUtils.hasAnnotation(method, RequireWorkspaceAccess.class),
+                    method.getName() + " should not require workspace access");
         }
     }
 

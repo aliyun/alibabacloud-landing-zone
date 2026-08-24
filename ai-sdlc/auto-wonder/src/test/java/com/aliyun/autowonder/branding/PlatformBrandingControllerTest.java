@@ -39,7 +39,7 @@ class PlatformBrandingControllerTest {
     }
 
     @Test
-    void updateRequiresFirstActiveUserInsteadOfOrgAdmin() {
+    void updateRequiresFirstActiveUserInsteadOfWorkspaceAdmin() {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         PlatformBrandingVO vo = branding("AutoWonder");
@@ -55,7 +55,7 @@ class PlatformBrandingControllerTest {
     }
 
     @Test
-    void uploadLogoRequiresFirstActiveUserInsteadOfOrgAdmin() {
+    void uploadLogoRequiresFirstActiveUserInsteadOfWorkspaceAdmin() {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         MockMultipartFile file = new MockMultipartFile(

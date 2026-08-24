@@ -26,7 +26,7 @@ describe('AboutAutoWonderPage', () => {
     expect(screen.getByText('沉淀记忆与产物')).toBeInTheDocument();
     expect(screen.getByText('不是聊天机器人，而是研发编排系统')).toBeInTheDocument();
     expect(screen.getByText('数字员工需要小队协作')).toBeInTheDocument();
-    expect(screen.getByText('每次交付都让组织更聪明')).toBeInTheDocument();
+    expect(screen.getByText('每次交付都让工作空间更聪明')).toBeInTheDocument();
   });
 
   it('matches the approved visual mock content structure', () => {

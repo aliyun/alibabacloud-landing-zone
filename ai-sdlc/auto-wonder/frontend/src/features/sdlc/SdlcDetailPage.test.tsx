@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -21,7 +21,7 @@ function renderPage(initialPath = '/sdlcs/1') {
 describe('SdlcDetailPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
 
   it('renders step chain with editor controls', async () => {
@@ -178,5 +178,41 @@ describe('SdlcDetailPage', () => {
 
     expect(await screen.findByText('空流程')).toBeInTheDocument();
     expect(screen.getByText('暂无步骤，添加后将在这里形成流程概览')).toBeInTheDocument();
+  });
+
+  it('surfaces the server error message when saving a step fails', async () => {
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '错误提示流程', description: '', status: 'DRAFT',
+            workType: 'BUG', isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01',
+            steps: [
+              { id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析', kind: 'analysis', instructionMd: '理解需求', checklistJson: null, gatePolicyJson: null, required: true, timeoutSeconds: null, retryBudget: null },
+            ],
+          },
+        });
+      }),
+      http.put('/api/sdlcs/1/steps/10', () => {
+        return HttpResponse.json({
+          success: false, code: '10001', message: 'checklistJson 不是合法的 JSON',
+          traceId: null, data: null,
+        }, { status: 400 });
+      }),
+    );
+
+    const { container } = renderPage();
+    expect(await screen.findByText('错误提示流程')).toBeInTheDocument();
+
+    const editButton = container.querySelector('.ant-table-row .anticon-edit')?.closest('button');
+    expect(editButton).toBeTruthy();
+    fireEvent.click(editButton!);
+
+    const okButton = await screen.findByRole('button', { name: /OK|确\s*定/ });
+    fireEvent.click(okButton);
+
+    expect(await screen.findByText('checklistJson 不是合法的 JSON')).toBeInTheDocument();
   });
 });

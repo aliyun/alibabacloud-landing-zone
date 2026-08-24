@@ -25,7 +25,7 @@ export function AuthEntryShell({ children }: AuthEntryShellProps) {
         <div>
           <div className="auth-entry-eyebrow">AutoWonder · Agent SDLC</div>
           <h1>登录后，把工单交给数字员工小队</h1>
-          <p>工单系统、仓库、SDLC、执行器和组织记忆在入口第一屏形成完整认知。</p>
+          <p>工单系统、仓库、SDLC、执行器和工作空间记忆在入口第一屏形成完整认知。</p>
         </div>
 
         <div className="auth-entry-stats" aria-label="AutoWonder 能力摘要">

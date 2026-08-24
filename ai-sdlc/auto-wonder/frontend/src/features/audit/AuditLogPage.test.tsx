@@ -53,11 +53,11 @@ describe('AuditLogPage', () => {
                 actorId: 10000,
                 actorType: 'HUMAN',
                 actorName: '蔡何',
-                module: 'ORGS',
-                action: 'CREATE_ORGS_ID_SWITCH',
-                targetType: 'orgs',
+                module: 'WORKSPACES',
+                action: 'CREATE_WORKSPACES_ID_SWITCH',
+                targetType: 'workspaces',
                 targetId: 10002,
-                detailJson: '{"path":"/api/orgs/10002/switch","method":"POST","status":200,"success":true,"actorType":"HUMAN","eventType":"http.post","triggerType":"ACTIVE","triggerSource":"USER_CLICK"}',
+                detailJson: '{"path":"/api/workspaces/10002/switch","method":"POST","status":200,"success":true,"actorType":"HUMAN","eventType":"http.post","triggerType":"ACTIVE","triggerSource":"USER_CLICK"}',
                 gmtCreate: '2026-07-19T13:40:19.267+00:00',
               },
               {
@@ -92,7 +92,7 @@ describe('AuditLogPage', () => {
     renderPage();
 
     expect(await screen.findByText('蔡何 (HUMAN)')).toBeInTheDocument();
-    expect(screen.getByText('CREATE_ORGS_ID_SWITCH')).toBeInTheDocument();
+    expect(screen.getByText('CREATE_WORKSPACES_ID_SWITCH')).toBeInTheDocument();
     expect(screen.getByText('lazy (HUMAN)')).toBeInTheDocument();
     expect(screen.getByText('CREATE_WORKITEMS_ID_TRANSITION')).toBeInTheDocument();
     expect(screen.getAllByText('ACTIVE / USER_CLICK')).toHaveLength(2);

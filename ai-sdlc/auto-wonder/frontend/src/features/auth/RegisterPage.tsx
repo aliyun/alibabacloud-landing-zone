@@ -33,7 +33,7 @@ export function RegisterPage() {
     <AuthEntryShell>
       <Card className="auth-entry-card" variant="borderless">
         <Title level={3} className="auth-entry-title">创建 AutoWonder 账号</Title>
-        <p className="auth-entry-subtitle">建立你的组织入口，连接工单、仓库和数字员工小队。</p>
+        <p className="auth-entry-subtitle">建立你的工作空间入口，连接工单、仓库和数字员工小队。</p>
         {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 16 }} />}
         <Form onFinish={onFinish} layout="vertical">
           <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>

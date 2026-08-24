@@ -59,7 +59,7 @@ describe('BrandingConfigPage', () => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
     server.use(
       http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
       http.get('/api/platform/im-channels', () => HttpResponse.json(imChannelsPayload())),
@@ -234,7 +234,7 @@ describe('BrandingConfigPage', () => {
     const error = vi.spyOn(message, 'error').mockImplementation(
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     server.use(
       http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
       http.put('/api/platform/branding', () => {

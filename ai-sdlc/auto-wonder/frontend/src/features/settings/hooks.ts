@@ -12,7 +12,7 @@ import {
   updateMemberAccess,
   updateMemberIdentityTags,
 } from './api';
-import type { OrgAccessLevel } from '@/shared/types/common';
+import type { WorkspaceAccessLevel } from '@/shared/types/common';
 
 const MEMBERS_QUERY_KEY = ['members'] as const;
 const CURRENT_MEMBERSHIP_QUERY_KEY = ['current-membership'] as const;
@@ -22,18 +22,18 @@ function showMutationError(error: unknown) {
 }
 
 export function useCurrentMembership() {
-  const currentOrg = useAuthStore((state) => state.currentOrg);
-  const setCurrentOrg = useAuthStore((state) => state.setCurrentOrg);
+  const currentWorkspace = useAuthStore((state) => state.currentWorkspace);
+  const setCurrentWorkspace = useAuthStore((state) => state.setCurrentWorkspace);
   const query = useQuery({
     queryKey: CURRENT_MEMBERSHIP_QUERY_KEY,
     queryFn: getCurrentMembership,
   });
 
   useEffect(() => {
-    if (currentOrg && query.data) {
-      setCurrentOrg(currentOrg, query.data.accessLevel);
+    if (currentWorkspace && query.data) {
+      setCurrentWorkspace(currentWorkspace, query.data.accessLevel);
     }
-  }, [currentOrg, query.data, setCurrentOrg]);
+  }, [currentWorkspace, query.data, setCurrentWorkspace]);
 
   return query;
 }
@@ -79,7 +79,7 @@ export function useRemoveMember() {
 export function useUpdateMemberAccess() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, accessLevel }: { userId: number; accessLevel: OrgAccessLevel }) =>
+    mutationFn: ({ userId, accessLevel }: { userId: number; accessLevel: WorkspaceAccessLevel }) =>
       updateMemberAccess(userId, accessLevel),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: MEMBERS_QUERY_KEY });
@@ -113,8 +113,8 @@ export function useTransferOwner() {
         queryFn: getCurrentMembership,
       }).then((membership) => {
         const auth = useAuthStore.getState();
-        if (auth.currentOrg) {
-          auth.setCurrentOrg(auth.currentOrg, membership.accessLevel);
+        if (auth.currentWorkspace) {
+          auth.setCurrentWorkspace(auth.currentWorkspace, membership.accessLevel);
         }
       }).catch(() => {
         message.warning('Owner 已移交，请刷新页面同步当前访问等级');

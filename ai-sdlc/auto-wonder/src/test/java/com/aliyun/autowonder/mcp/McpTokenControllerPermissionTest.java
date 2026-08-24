@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.mcp.dto.CreateMcpTokenRequest;
@@ -37,7 +37,7 @@ class McpTokenControllerPermissionTest {
     }
 
     @Test
-    void issueForwardsOnlyNameAndOwnerWithoutAnyOrganization() {
+    void issueForwardsOnlyNameAndOwnerWithoutAnyWorkspace() {
         CreateMcpTokenRequest request = new CreateMcpTokenRequest();
         request.setName("local-codex");
         AutoWonderContext.get().setUserId(7L);
@@ -48,7 +48,7 @@ class McpTokenControllerPermissionTest {
     }
 
     @Test
-    void personalEndpointsWorkWithoutASelectedOrganization() {
+    void personalEndpointsWorkWithoutASelectedWorkspace() {
         AutoWonderContext.get().setUserId(7L);
 
         controller.issue(null);
@@ -72,7 +72,7 @@ class McpTokenControllerPermissionTest {
     }
 
     @Test
-    void personalTokenEndpointsStayOutsideOrganizationAccessLadder() throws Exception {
+    void personalTokenEndpointsStayOutsideWorkspaceAccessLadder() throws Exception {
         assertExempt(McpTokenController.class.getMethod("issue", CreateMcpTokenRequest.class));
         assertExempt(McpTokenController.class.getMethod("list"));
         assertExempt(McpTokenController.class.getMethod("revoke", Long.class));
@@ -81,7 +81,7 @@ class McpTokenControllerPermissionTest {
     }
 
     private void assertExempt(Method method) {
-        assertFalse(AnnotatedElementUtils.hasAnnotation(method, RequireOrgAccess.class),
-                method.getName() + " should not require organization access");
+        assertFalse(AnnotatedElementUtils.hasAnnotation(method, RequireWorkspaceAccess.class),
+                method.getName() + " should not require workspace access");
     }
 }

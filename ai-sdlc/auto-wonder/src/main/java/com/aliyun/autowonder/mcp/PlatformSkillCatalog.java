@@ -19,7 +19,7 @@ public class PlatformSkillCatalog {
                             "autowonder.list_workitem_comments", "autowonder.update_workitem",
                             "autowonder.delete_workitem", "autowonder.assign_workitem",
                             "autowonder.transition_workitem", "autowonder.pause_workitem",
-                            "autowonder.resume_workitem")),
+                            "autowonder.resume_workitem", "autowonder.workitem_cli_upload_token")),
             skill("autowonder-sdlc-manager", "CODEX_SKILL", "AutoWonder SDLC Manager",
                     "Manage AutoWonder SDLC flows, steps, enablement and workitem status templates.",
                     List.of("autowonder.create_sdlc", "autowonder.list_sdlcs", "autowonder.get_sdlc",

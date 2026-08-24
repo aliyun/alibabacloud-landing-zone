@@ -3,19 +3,12 @@ import { Table, Empty } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { useHumanAgentSlowTail } from '../hooks';
+import { formatDurationCompact } from '@/shared/lib/duration';
 import type { P90Workitem } from '../types';
 
 interface SlowTailTableProps {
   startDate: string;
   endDate: string;
-}
-
-function formatSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 function humanRatio(item: P90Workitem): number {
@@ -47,19 +40,19 @@ const columns: ColumnsType<P90Workitem> = [
     dataIndex: 'totalDurationSeconds',
     width: 90,
     sorter: (a, b) => a.totalDurationSeconds - b.totalDurationSeconds,
-    render: (v: number) => <span style={{ fontWeight: 500 }}>{formatSeconds(v)}</span>,
+    render: (v: number) => <span style={{ fontWeight: 500 }}>{formatDurationCompact(v)}</span>,
   },
   {
     title: '人工',
     dataIndex: 'humanDurationSeconds',
     width: 80,
-    render: (v: number) => <span style={{ color: '#1890ff' }}>{formatSeconds(v)}</span>,
+    render: (v: number) => <span style={{ color: '#1890ff' }}>{formatDurationCompact(v)}</span>,
   },
   {
     title: 'Agent',
     dataIndex: 'agentDurationSeconds',
     width: 80,
-    render: (v: number) => <span style={{ color: '#faad14' }}>{formatSeconds(v)}</span>,
+    render: (v: number) => <span style={{ color: '#faad14' }}>{formatDurationCompact(v)}</span>,
   },
   {
     title: '人工占比',

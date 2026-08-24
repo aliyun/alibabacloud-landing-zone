@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.mcp.dto.IssuedMcpTokenVO;
@@ -186,19 +186,19 @@ public class McpAccessTokenService {
     }
 
     /**
-     * A personal credential authenticates only its owner; the organization and access level are
-     * resolved per tool call from the caller's live membership in the requested organization.
-     * Task-scoped credentials stay pinned to the organization they were issued for.
+     * A personal credential authenticates only its owner; the workspace and access level are
+     * resolved per tool call from the caller's live membership in the requested workspace.
+     * Task-scoped credentials stay pinned to the workspace they were issued for.
      */
     public record Principal(Long tenantId, long userId, long tokenId,
-                            OrgAccessLevel accessLevel,
+                            WorkspaceAccessLevel accessLevel,
                             CredentialType credentialType) {
 
         public Principal {
             boolean personal = credentialType == CredentialType.LONG_LIVED;
             if (personal != (tenantId == null) || personal != (accessLevel == null)) {
                 throw new IllegalArgumentException(
-                        "personal credentials carry no organization, task-scoped ones must");
+                        "personal credentials carry no workspace, task-scoped ones must");
             }
         }
 
@@ -207,7 +207,7 @@ public class McpAccessTokenService {
                     CredentialType.LONG_LIVED);
         }
 
-        public boolean isOrgScoped() {
+        public boolean isWorkspaceScoped() {
             return credentialType != CredentialType.LONG_LIVED;
         }
     }

@@ -23,13 +23,15 @@ import com.aliyun.autowonder.guidance.GuidanceDO;
 import com.aliyun.autowonder.guidance.GuidanceDao;
 import com.aliyun.autowonder.im.notification.WorkitemCommentMentionedEvent;
 import com.aliyun.autowonder.im.notification.WorkitemHumanAssignedEvent;
+import com.aliyun.autowonder.integration.ExternalWorkitemViewService;
+import com.aliyun.autowonder.workitem.dto.ExternalCollaborationVO;
 import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDao;
 import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO;
 import com.aliyun.autowonder.integration.event.WorkitemCommentCreatedEvent;
 import com.aliyun.autowonder.integration.event.WorkitemContentUpdatedEvent;
 import com.aliyun.autowonder.integration.event.WorkitemStatusChangedEvent;
-import com.aliyun.autowonder.org.OrgMemberDO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.sdlc.SdlcDO;
 import com.aliyun.autowonder.sdlc.SdlcDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
@@ -43,6 +45,7 @@ import com.aliyun.autowonder.statemachine.StatusTemplateDao;
 import com.aliyun.autowonder.statemachine.StatusTransitionDao;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
+import com.aliyun.autowonder.util.MojibakeDetector;
 import com.aliyun.autowonder.websocket.PresenceManager;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
 import com.aliyun.autowonder.workitem.dto.AgentDeliveryProgressVO;
@@ -51,6 +54,7 @@ import com.aliyun.autowonder.workitem.dto.DeliveryProgressVO;
 import com.aliyun.autowonder.workitem.dto.DeliveryStepVO;
 import com.aliyun.autowonder.workitem.dto.DispatchAttemptVO;
 import com.aliyun.autowonder.workitem.dto.EventVO;
+import com.aliyun.autowonder.workitem.dto.ExternalPrincipalVO;
 import com.aliyun.autowonder.workitem.dto.ParticipantVO;
 import com.aliyun.autowonder.workitem.dto.ProcessGraphEdgeVO;
 import com.aliyun.autowonder.workitem.dto.ProcessGraphNodeVO;
@@ -62,6 +66,7 @@ import com.aliyun.autowonder.workitem.dto.WorkflowPlanStepVO;
 import com.aliyun.autowonder.workitem.dto.WorkflowPlanVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -104,10 +109,11 @@ public class WorkitemService {
     private final SquadMemberDao squadMemberDao;
     private final ExecutorDao executorDao;
     private final UserDao userDao;
-    private final OrgMemberDao orgMemberDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
     private final GuidanceDao guidanceDao;
     private final PresenceManager presenceManager;
     private final ExternalWorkitemLinkDao externalWorkitemLinkDao;
+    private final ExternalWorkitemViewService externalWorkitemViewService;
     private final ApplicationEventPublisher eventPublisher;
 
     /** A non-terminal (running) dispatch idle longer than this is treated as stalled. Default 60m. */
@@ -125,10 +131,11 @@ public class WorkitemService {
                            SquadMemberDao squadMemberDao,
                            ExecutorDao executorDao,
                            UserDao userDao,
-                           OrgMemberDao orgMemberDao,
+                           WorkspaceMemberDao workspaceMemberDao,
                            GuidanceDao guidanceDao,
                            PresenceManager presenceManager,
                            ExternalWorkitemLinkDao externalWorkitemLinkDao,
+                           ExternalWorkitemViewService externalWorkitemViewService,
                            ApplicationEventPublisher eventPublisher) {
         this.workitemDao = workitemDao;
         this.commentDao = commentDao;
@@ -146,11 +153,33 @@ public class WorkitemService {
         this.squadMemberDao = squadMemberDao;
         this.executorDao = executorDao;
         this.userDao = userDao;
-        this.orgMemberDao = orgMemberDao;
+        this.workspaceMemberDao = workspaceMemberDao;
         this.guidanceDao = guidanceDao;
         this.presenceManager = presenceManager;
         this.externalWorkitemLinkDao = externalWorkitemLinkDao;
+        this.externalWorkitemViewService = externalWorkitemViewService;
         this.eventPublisher = eventPublisher;
+    }
+
+    WorkitemService(WorkitemDao workitemDao, WorkitemCommentDao commentDao,
+                    WorkitemCommentMentionDao commentMentionDao,
+                    WorkitemEventDao eventDao, StatusTemplateDao templateDao,
+                    StatusNodeDao nodeDao, StatusTransitionDao transitionDao,
+                    SdlcDao sdlcDao, SdlcStepDao stepDao,
+                    DispatchDao dispatchDao, DispatchRuntimeEventDao runtimeEventDao, AgentDao agentDao,
+                    AgentSdlcResolver sdlcResolver,
+                    SquadMemberDao squadMemberDao,
+                    ExecutorDao executorDao,
+                    UserDao userDao,
+                    WorkspaceMemberDao workspaceMemberDao,
+                    GuidanceDao guidanceDao,
+                    PresenceManager presenceManager,
+                    ExternalWorkitemLinkDao externalWorkitemLinkDao,
+                    ApplicationEventPublisher eventPublisher) {
+        this(workitemDao, commentDao, commentMentionDao, eventDao, templateDao, nodeDao, transitionDao,
+                sdlcDao, stepDao, dispatchDao, runtimeEventDao, agentDao, sdlcResolver,
+                squadMemberDao, executorDao, userDao, workspaceMemberDao, guidanceDao, presenceManager,
+                externalWorkitemLinkDao, null, eventPublisher);
     }
 
     WorkitemService(WorkitemDao workitemDao, WorkitemCommentDao commentDao,
@@ -169,7 +198,7 @@ public class WorkitemService {
         this(workitemDao, commentDao, null, eventDao, templateDao, nodeDao, transitionDao,
                 sdlcDao, stepDao, dispatchDao, runtimeEventDao, agentDao, sdlcResolver,
                 squadMemberDao, executorDao, userDao, null, guidanceDao, presenceManager,
-                externalWorkitemLinkDao, eventPublisher);
+                externalWorkitemLinkDao, null, eventPublisher);
     }
 
     @Transactional
@@ -203,7 +232,7 @@ public class WorkitemService {
         w.setVersion(0);
         workitemDao.insert(w);
 
-        writeEvent(tenantId, w.getId(), "CREATE", null, init.getCode(), "HUMAN", userId);
+        writeEvent(tenantId, w.getId(), WorkitemEventType.CREATE.code(), null, init.getCode(), "HUMAN", userId);
         if (req.getAssigneeType() != null) {
             return assign(w.getId(), req.getAssigneeType(), req.getAssigneeRef(),
                     req.getSdlcId(), req.getSquadId(), tenantId, userId);
@@ -216,10 +245,14 @@ public class WorkitemService {
         if (w == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        return toVO(w);
+        WorkitemVO vo = toVO(w);
+        if (externalWorkitemViewService != null && w.getTenantId() != null && w.getId() != null) {
+            vo.setExternalCollaboration(externalWorkitemViewService.find(w.getTenantId(), w.getId()));
+        }
+        return vo;
     }
 
-    public PageResult<WorkitemVO> list(String workType, Long statusNodeId,
+    public PageResult<WorkitemVO> list(String workType, Long statusNodeId, String statusCategory,
                                       String assigneeType, Long assigneeRef, boolean pendingDecisionOnly,
                                       String mineScope,
                                       long tenantId, long currentUserId, String keyword, int page, int size) {
@@ -228,6 +261,7 @@ public class WorkitemService {
         int offset = (p - 1) * s;
         String trimmed = keyword == null ? null : keyword.trim();
         String effectiveKeyword = (trimmed != null && !trimmed.isEmpty()) ? trimmed : null;
+        String effectiveStatusCategory = normalizeStatusCategory(statusCategory);
         Long keywordId = null;
         if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
             try {
@@ -235,9 +269,11 @@ public class WorkitemService {
             } catch (NumberFormatException ignored) {
             }
         }
-        long total = workitemDao.count(tenantId, workType, statusNodeId, assigneeType, assigneeRef,
+        long total = workitemDao.count(tenantId, workType, statusNodeId, effectiveStatusCategory,
+                assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId);
-        List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, assigneeType, assigneeRef,
+        List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, effectiveStatusCategory,
+                assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, offset, s);
         Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(rows);
 
@@ -293,6 +329,10 @@ public class WorkitemService {
                     .filter(link -> link.getWorkitemId() != null)
                     .collect(Collectors.groupingBy(ExternalWorkitemLinkDO::getWorkitemId));
         Map<Long, List<DispatchDO>> allDispatchesByWorkitem = loadAllDispatches(workitemIds);
+        Map<Long, ExternalPrincipalVO> sourceCreators = externalWorkitemViewService == null
+                ? Map.of()
+                : externalWorkitemViewService.reportersByWorkitem(
+                        extLinksMap.values().stream().flatMap(List::stream).toList());
 
         long now = System.currentTimeMillis();
         List<WorkitemVO> result = new ArrayList<>();
@@ -302,9 +342,25 @@ public class WorkitemService {
             applyPendingDecision(vo, w, latest, nodeMap);
             applyHealth(vo, w, latest, now, nodeMap);
             applyDeleteEligibility(vo, w, extLinksMap, allDispatchesByWorkitem);
+            if (SOURCE_TYPE_EXTERNAL.equals(vo.getSourceType())) {
+                applyExternalSource(vo, extLinksMap.getOrDefault(w.getId(), List.of()));
+                vo.setSourceCreator(sourceCreators.get(w.getId()));
+            }
             result.add(vo);
         }
         return new PageResult<>(result, total, p, s);
+    }
+
+    private static final Set<String> STATUS_CATEGORIES =
+            Set.of("NEW", "IN_PROGRESS", "PENDING_DECISION", "DONE");
+
+    /** 看板状态列筛选值归一化，非法值视为不过滤。 */
+    private String normalizeStatusCategory(String statusCategory) {
+        if (statusCategory == null || statusCategory.isBlank()) {
+            return null;
+        }
+        String v = statusCategory.trim().toUpperCase();
+        return STATUS_CATEGORIES.contains(v) ? v : null;
     }
 
     private Map<Long, DispatchDO> loadLatestDispatches(List<WorkitemDO> rows) {
@@ -425,7 +481,7 @@ public class WorkitemService {
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
-        writeEvent(tenantId, id, "STATUS_CHANGE",
+        writeEvent(tenantId, id, WorkitemEventType.STATUS_CHANGE.code(),
                 fromNode == null ? null : fromNode.getCode(),
                 toNode == null ? null : toNode.getCode(), "HUMAN", userId);
         eventPublisher.publishEvent(new WorkitemStatusChangedEvent(tenantId, id, toNodeId, userId));
@@ -457,7 +513,7 @@ public class WorkitemService {
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
-        writeEvent(tenantId, id, "STATUS_CHANGE",
+        writeEvent(tenantId, id, WorkitemEventType.STATUS_CHANGE.code(),
                 fromNode == null ? null : fromNode.getCode(),
                 toNode.getCode(), "AGENT", agentId);
         return toVO(workitemDao.findById(id));
@@ -494,7 +550,7 @@ public class WorkitemService {
         WorkitemEventDO assignEvent = new WorkitemEventDO();
         assignEvent.setTenantId(tenantId);
         assignEvent.setWorkitemId(id);
-        assignEvent.setEventType("ASSIGN");
+        assignEvent.setEventType(WorkitemEventType.ASSIGN.code());
         assignEvent.setFromVal(fromVal);
         assignEvent.setToVal(toVal);
         assignEvent.setActorType(effectiveActor.type());
@@ -578,9 +634,9 @@ public class WorkitemService {
                     current.getVersion(), userId) == 0) {
                 continue;
             }
-            writeEvent(tenantId, workitemId, "ASSIGN",
+            writeEvent(tenantId, workitemId, WorkitemEventType.ASSIGN.code(),
                     fromRef == null ? null : String.valueOf(fromRef), String.valueOf(targetAgentId),
-                    "SYSTEM", userId, assignDetailJson(fromType, "AGENT"));
+                    "HUMAN", userId, assignDetailJson(fromType, "AGENT"));
             return;
         }
         throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
@@ -634,6 +690,9 @@ public class WorkitemService {
         if (w == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
+        if (!safeList(externalWorkitemLinkDao.listByWorkitem(tenantId, id)).isEmpty()) {
+            throw new BizException(ErrorCode.WORKITEM_EXTERNAL_CONTENT_READ_ONLY);
+        }
         String effectiveTitle = title == null ? w.getTitle() : title;
         String effectiveContentMd = contentMd == null ? w.getContentMd() : contentMd;
         if (Objects.equals(w.getTitle(), effectiveTitle) && Objects.equals(w.getContentMd(), effectiveContentMd)) {
@@ -643,7 +702,7 @@ public class WorkitemService {
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
-        writeEvent(tenantId, id, "EDIT", null, null, "HUMAN", userId);
+        writeEvent(tenantId, id, WorkitemEventType.EDIT.code(), null, null, "HUMAN", userId);
         eventPublisher.publishEvent(new WorkitemContentUpdatedEvent(tenantId, id, effectiveTitle, effectiveContentMd, userId));
         return toVO(workitemDao.findById(id));
     }
@@ -667,7 +726,7 @@ public class WorkitemService {
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
-        writeEvent(tenantId, id, "DELETE", null, null, "HUMAN", userId);
+        writeEvent(tenantId, id, WorkitemEventType.DELETE.code(), null, null, "HUMAN", userId);
     }
 
     @Transactional
@@ -693,7 +752,7 @@ public class WorkitemService {
         c.setContentMd(contentMd);
         commentDao.insert(c);
         persistHumanMentions(tenantId, workitemId, c.getId(), targetHumans);
-        writeEvent(tenantId, workitemId, "COMMENT", null, null, "HUMAN", userId);
+        writeEvent(tenantId, workitemId, WorkitemEventType.COMMENT.code(), null, null, "HUMAN", userId);
         if (c.getId() != null) {
             eventPublisher.publishEvent(new WorkitemCommentCreatedEvent(tenantId, workitemId, c.getId(),
                     "HUMAN", userId, contentMd));
@@ -712,16 +771,16 @@ public class WorkitemService {
             if (targetHumanId == null || humans.containsKey(targetHumanId)) {
                 continue;
             }
-            if (orgMemberDao == null) {
+            if (workspaceMemberDao == null) {
                 continue;
             }
-            OrgMemberDO member = orgMemberDao.findByOrgAndUser(tenantId, targetHumanId);
+            WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(tenantId, targetHumanId);
             if (member == null || member.getStatus() == null || member.getStatus() != 0) {
-                throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+                throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
             }
             UserDO user = userDao.findById(targetHumanId);
             if (user == null) {
-                throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+                throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
             }
             humans.put(targetHumanId, user);
         }
@@ -877,7 +936,7 @@ public class WorkitemService {
         c.setContentMd(contentMd);
         commentDao.insert(c);
         persistHumanMentions(tenantId, workitemId, c.getId(), targetHumans);
-        writeEvent(tenantId, workitemId, "COMMENT", null, null, "AGENT", agentId);
+        writeEvent(tenantId, workitemId, WorkitemEventType.COMMENT.code(), null, null, "AGENT", agentId);
         if (c.getId() != null) {
             eventPublisher.publishEvent(new WorkitemCommentCreatedEvent(tenantId, workitemId, c.getId(),
                     "AGENT", agentId, contentMd));
@@ -1227,7 +1286,8 @@ public class WorkitemService {
             if (!runtimeSubSteps.isEmpty()) {
                 vo.setSubSteps(runtimeSubSteps);
             }
-            if (lastEvent != null && lastEvent.getError() != null) {
+            if (lastEvent != null && lastEvent.getError() != null
+                    && !looksLikeMojibake(lastEvent.getError())) {
                 vo.setError(lastEvent.getError());
             }
             if (runtimeStatus != null && latestDispatch == null && !agentDispatches.isEmpty()) {
@@ -1267,6 +1327,7 @@ public class WorkitemService {
                 .filter(Objects::nonNull)
                 .filter(event -> "agent.progress".equals(event.getEventType()))
                 .filter(event -> event.getMessage() != null && !event.getMessage().isBlank())
+                .filter(event -> !looksLikeMojibake(event.getMessage()))
                 .max((left, right) -> {
                     if (left.getId() != null && right.getId() != null) {
                         return left.getId().compareTo(right.getId());
@@ -1612,27 +1673,10 @@ public class WorkitemService {
             }
             return null;
         }
+    }
 
-        private static boolean looksLikeMojibake(String text) {
-            if (text == null || text.isBlank()) {
-                return false;
-            }
-            if (text.indexOf('\uFFFD') >= 0) {
-                return true;
-            }
-            int suspicious = 0;
-            int visible = 0;
-            for (int i = 0; i < text.length(); i++) {
-                char ch = text.charAt(i);
-                if (!Character.isWhitespace(ch)) {
-                    visible++;
-                }
-                if ((ch >= '\u00C0' && ch <= '\u024F') || ch == '\u00A0') {
-                    suspicious++;
-                }
-            }
-            return suspicious >= 3 && suspicious * 2 >= Math.max(1, visible);
-        }
+    private static boolean looksLikeMojibake(String text) {
+        return MojibakeDetector.looksLikeMojibake(text);
     }
 
     private boolean completedAgentWorkflow(List<DispatchDO> dispatches) {
@@ -1981,8 +2025,8 @@ public class WorkitemService {
             }
             addMentionCandidate(candidates, toAgentParticipant(tenantId, agent.getId()), query, effectiveLimit);
         }
-        if (orgMemberDao != null) {
-            for (OrgMemberDO member : safeList(orgMemberDao.listByTenant(tenantId))) {
+        if (workspaceMemberDao != null) {
+            for (WorkspaceMemberDO member : safeList(workspaceMemberDao.listByTenant(tenantId))) {
                 if (member == null || member.getUserId() == null
                         || member.getStatus() == null || member.getStatus() != 0) {
                     continue;
@@ -1998,7 +2042,8 @@ public class WorkitemService {
 
     private void addMentionCandidate(LinkedHashMap<String, ParticipantVO> candidates,
             ParticipantVO participant, String query, int limit) {
-        if (participant == null || participant.getUserId() == null || candidates.size() >= limit) {
+        if (participant == null || participant.getUserId() == null || participant.getName() == null
+                || participant.getName().isBlank() || candidates.size() >= limit) {
             return;
         }
         if (!matchesMentionQuery(participant, query)) {
@@ -2099,6 +2144,11 @@ public class WorkitemService {
 
     public List<TimelineItemVO> getUnifiedTimeline(long workitemId) {
         List<TimelineItemVO> items = new ArrayList<>();
+        WorkitemDO workitem = workitemDao.findById(workitemId);
+        ExternalCollaborationVO externalCollaboration = workitem == null || workitem.getTenantId() == null
+                || externalWorkitemViewService == null
+                ? null
+                : externalWorkitemViewService.find(workitem.getTenantId(), workitemId);
 
         for (WorkitemCommentDO c : commentDao.listByWorkitem(workitemId)) {
             TimelineItemVO item = new TimelineItemVO();
@@ -2124,18 +2174,73 @@ public class WorkitemService {
             item.setAuthorName(resolveActorDisplayName(e.getActorType(), e.getActorRef()));
             String fromVal = resolveEventValueDisplay(e, e.getFromVal(), "fromType");
             String toVal = resolveEventValueDisplay(e, e.getToVal(), "toType");
-            if (e.getFromVal() != null && e.getToVal() != null) {
-                item.setContent(e.getEventType() + ": " + fromVal + " → " + toVal);
-            } else if (e.getToVal() != null) {
-                item.setContent(e.getEventType() + ": → " + toVal);
-            } else {
-                item.setContent(e.getEventType());
+            item.setContent(appendOperator(formatTimelineEventContent(e, fromVal, toVal), e));
+            if (isAoneSyncEvent(e) && externalCollaboration != null) {
+                item.setSourceProvider(externalCollaboration.getProvider());
+                item.setSourceExternalWorkitemId(externalCollaboration.getExternalWorkitemId());
+                item.setSourceExternalUrl(externalCollaboration.getExternalUrl());
             }
             items.add(item);
         }
 
-        items.sort(Comparator.comparing(TimelineItemVO::getGmtCreate));
+        items.sort(Comparator
+                .comparing(TimelineItemVO::getGmtCreate,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(TimelineItemVO::getId,
+                        Comparator.nullsLast(Comparator.reverseOrder())));
         return items;
+    }
+
+    private String formatTimelineEventContent(WorkitemEventDO event, String fromVal, String toVal) {
+        WorkitemEventType eventType = WorkitemEventType.fromCode(event.getEventType()).orElse(null);
+        String label = eventType == null ? event.getEventType() : eventType.actionLabel();
+        if (eventType == WorkitemEventType.AONE_IMPORT || eventType == WorkitemEventType.AONE_UPDATE) {
+            return label;
+        }
+        if (eventType == WorkitemEventType.EXTERNAL_COMMENT_EDIT
+                || eventType == WorkitemEventType.EXTERNAL_COMMENT_AUTHOR_CHANGE
+                || eventType == WorkitemEventType.EXTERNAL_COMMENT_DELETE) {
+            return event.getFromVal() == null || event.getFromVal().isBlank()
+                    ? label
+                    : label + "（评论 #" + event.getFromVal() + "）";
+        }
+        if (event.getFromVal() != null && event.getToVal() != null) {
+            return label + ": " + fromVal + " → " + toVal;
+        }
+        if (event.getToVal() != null) {
+            return label + ": " + toVal;
+        }
+        return label;
+    }
+
+    private String appendOperator(String content, WorkitemEventDO event) {
+        String operator = operatorDisplayName(event);
+        if (operator == null) {
+            return content;
+        }
+        return content + " （操作人：" + operator + "）";
+    }
+
+    private String operatorDisplayName(WorkitemEventDO event) {
+        if (event == null) {
+            return null;
+        }
+        WorkitemEventType eventType = WorkitemEventType.fromCode(event.getEventType()).orElse(null);
+        if (eventType != WorkitemEventType.STATUS_CHANGE && eventType != WorkitemEventType.ASSIGN) {
+            return null;
+        }
+        String actorType = event.getActorType();
+        Long actorRef = event.getActorRef();
+        if (actorType == null || "SYSTEM".equals(actorType) || actorRef == null || actorRef == 0L) {
+            return null;
+        }
+        String display = resolveActorDisplayName(actorType, actorRef);
+        return display == null || display.isBlank() ? null : display;
+    }
+
+    private boolean isAoneSyncEvent(WorkitemEventDO event) {
+        return event != null && (WorkitemEventType.AONE_IMPORT.code().equals(event.getEventType())
+                || WorkitemEventType.AONE_UPDATE.code().equals(event.getEventType()));
     }
 
     private String resolveActorName(String actorType, Long actorRef) {
@@ -2156,6 +2261,9 @@ public class WorkitemService {
             }
             return user.getUsername();
         }
+        if ("EXTERNAL".equals(actorType) && externalWorkitemViewService != null) {
+            return externalWorkitemViewService.principalName(actorRef);
+        }
         return null;
     }
 
@@ -2174,6 +2282,9 @@ public class WorkitemService {
     }
 
     private String resolveActorDisplayName(String actorType, Long actorRef) {
+        if ("EXTERNAL".equals(actorType) && externalWorkitemViewService != null) {
+            return externalWorkitemViewService.principalDisplayName(actorRef);
+        }
         String name = resolveActorName(actorType, actorRef);
         if (actorRef == null) {
             return name;
@@ -2185,11 +2296,18 @@ public class WorkitemService {
     }
 
     private String resolveEventValueDisplay(WorkitemEventDO event, String value, String typeKey) {
-        if (value == null || value.isBlank() || event == null || !"ASSIGN".equals(event.getEventType())) {
+        if (value == null || value.isBlank() || event == null
+                || (!WorkitemEventType.ASSIGN.code().equals(event.getEventType())
+                && !WorkitemEventType.EXTERNAL_BUSINESS_OWNER_CHANGE.code().equals(event.getEventType()))) {
             return value;
         }
         try {
             long ref = Long.parseLong(value);
+            if (WorkitemEventType.EXTERNAL_BUSINESS_OWNER_CHANGE.code().equals(event.getEventType())) {
+                String display = externalWorkitemViewService == null ? null
+                        : externalWorkitemViewService.principalCompactDisplayName(ref);
+                return display == null ? value : display;
+            }
             String explicitType = eventDetailType(event.getDetailJson(), typeKey);
             if (explicitType != null) {
                 String explicitDisplay = resolveActorDisplayName(explicitType, ref);
@@ -2398,6 +2516,22 @@ public class WorkitemService {
         if (running) {
             vo.setDeletable(false);
             vo.setDeletableReason(ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessage());
+        }
+    }
+
+    private void applyExternalSource(WorkitemVO vo, List<ExternalWorkitemLinkDO> links) {
+        ExternalWorkitemLinkDO preferred = safeList(links).stream()
+                .filter(Objects::nonNull)
+                .min(Comparator
+                        .comparing((ExternalWorkitemLinkDO link) -> !"AONE".equals(link.getProvider()))
+                        .thenComparing(ExternalWorkitemLinkDO::getGmtCreate,
+                                Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(ExternalWorkitemLinkDO::getId,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(null);
+        if (preferred != null) {
+            vo.setSourceProvider(preferred.getProvider());
+            vo.setSourceUrl(preferred.getExternalUrl());
         }
     }
 

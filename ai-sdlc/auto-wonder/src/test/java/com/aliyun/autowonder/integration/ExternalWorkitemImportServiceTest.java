@@ -67,7 +67,7 @@ class ExternalWorkitemImportServiceTest {
     @Test
     void importWorkitemCreatesStandardWorkitemAndLink() {
         ExternalWorkitemImportRequest req = request();
-        when(linkDao.findByExternal(100L, "JIRA", "PROJ-123")).thenReturn(null);
+        when(linkDao.findByExternalScope(100L, 0L, "PROJ-123")).thenReturn(null);
         when(templateDao.findDefaultByType("BUG")).thenReturn(template(20L, "BUG"));
         when(nodeDao.findInitNode(20L)).thenReturn(node(30L, 20L));
         doAnswer(invocation -> {
@@ -111,7 +111,7 @@ class ExternalWorkitemImportServiceTest {
         ExternalWorkitemImportRequest req = request();
         req.setUpdateExisting(false);
         ExternalWorkitemLinkDO existingLink = link(9001L);
-        when(linkDao.findByExternal(100L, "JIRA", "PROJ-123")).thenReturn(existingLink);
+        when(linkDao.findByExternalScope(100L, 0L, "PROJ-123")).thenReturn(existingLink);
         doAnswer(invocation -> {
             invocation.<ExternalWorkitemImportRecordDO>getArgument(0).setId(7002L);
             return null;
@@ -137,7 +137,7 @@ class ExternalWorkitemImportServiceTest {
         WorkitemDO existing = existingWorkitem();
         existing.setTemplateId(88L);
         existing.setStatusNodeId(99L);
-        when(linkDao.findByExternal(100L, "JIRA", "PROJ-123")).thenReturn(existingLink);
+        when(linkDao.findByExternalScope(100L, 0L, "PROJ-123")).thenReturn(existingLink);
         when(workitemDao.findById(9001L)).thenReturn(existing);
         when(workitemDao.updateContent(9001L, 100L, "支付失败提示已更新",
                 serviceContent(req), 3, 9L)).thenReturn(1);
@@ -206,7 +206,7 @@ class ExternalWorkitemImportServiceTest {
                 "issueKind", "task",
                 "p", 3,
                 "owner", "wangwu"));
-        when(linkDao.findByExternal(100L, "JIRA", "PROJ-456")).thenReturn(null);
+        when(linkDao.findByExternalScope(100L, 0L, "PROJ-456")).thenReturn(null);
         when(templateDao.findDefaultByType("TASK")).thenReturn(template(21L, "TASK"));
         when(nodeDao.findInitNode(21L)).thenReturn(node(31L, 21L));
         doAnswer(invocation -> {

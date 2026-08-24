@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -38,7 +38,7 @@ const versionData = {
 describe('AgentEditPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
 
   it('renders config form with version data', async () => {
@@ -224,5 +224,42 @@ describe('AgentEditPage', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /OK/ }));
 
     expect(await screen.findByText('当前版本不是草稿,无法编辑')).toBeInTheDocument();
+  });
+
+  it('renders with null contentMd memories and imports them with fallback label', async () => {
+    const imported: Array<{ memoryId: number; source: string }> = [];
+    const memoriesData = [
+      { id: 41, scope: 'ORG', ownerRef: null, type: 'FACT', title: '仅标题记忆', contentMd: null, status: 'PENDING', source: 'MCP', sourceRef: null, version: 0, gmtCreate: '2026-08-01' },
+      { id: 42, scope: 'ORG', ownerRef: null, type: 'FACT', title: '正常记忆', contentMd: 'React rules 正常内容', status: 'ADOPTED', source: null, sourceRef: null, version: 0, gmtCreate: '2026-08-01' },
+    ];
+    server.use(
+      http.get('/api/agents/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: agentData })),
+      http.get('/api/agents/1/versions/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionData })),
+      http.get('/api/repos', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 100 } })),
+      http.get('/api/skills', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 100 } })),
+      http.get('/api/memories', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: memoriesData, total: 2, pageNum: 1, pageSize: 100 } })),
+      http.get('/api/sdlcs', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 100 } })),
+      http.post('/api/agents/1/memories', async ({ request }) => {
+        imported.push(await request.json() as { memoryId: number; source: string });
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
+      }),
+    );
+
+    // Regression guard: page must not throw (null.slice) during inline options computation.
+    renderPage();
+    expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /导入记忆/ }));
+    const dialog = await screen.findByRole('dialog', { name: /导入记忆/ });
+    await userEvent.click(within(dialog).getAllByRole('combobox')[0]);
+
+    // contentMd=null memory falls back to its title; normal memory keeps content prefix.
+    await screen.findByText('仅标题记忆');
+    expect(screen.getByText('React rules 正常内容')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('仅标题记忆'));
+    await userEvent.click(within(dialog).getByRole('button', { name: /OK/ }));
+
+    await waitFor(() => expect(imported).toEqual([{ memoryId: 41, source: 'ORG' }]));
   });
 });

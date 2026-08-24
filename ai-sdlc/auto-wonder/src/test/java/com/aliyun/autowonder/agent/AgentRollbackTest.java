@@ -6,7 +6,7 @@ import com.aliyun.autowonder.agent.dto.AgentVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionSummaryVO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +22,7 @@ class AgentRollbackTest {
     AgentRepoPermDao repoPermDao;
     AgentSkillDao skillDao;
     AgentMemoryRefDao memoryRefDao;
-    OrgDao orgDao;
+    WorkspaceDao workspaceDao;
     AgentService service;
 
     @BeforeEach
@@ -32,8 +32,8 @@ class AgentRollbackTest {
         repoPermDao = mock(AgentRepoPermDao.class);
         skillDao = mock(AgentSkillDao.class);
         memoryRefDao = mock(AgentMemoryRefDao.class);
-        orgDao = mock(OrgDao.class);
-        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, orgDao,
+        workspaceDao = mock(WorkspaceDao.class);
+        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 mock(ExecutorDao.class), mock(ExecutorRegistry.class));
     }
 

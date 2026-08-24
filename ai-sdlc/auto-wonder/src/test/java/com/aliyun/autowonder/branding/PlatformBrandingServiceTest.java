@@ -23,6 +23,7 @@ class PlatformBrandingServiceTest {
 
         assertEquals("AutoWonder", config.getPlatformName());
         assertEquals("#f97316", config.getPrimaryColor());
+        assertNull(config.getDomain());
         assertEquals("https://daily.auto-wonder.example.com/api/mcp", config.getMcpBaseUrl());
         assertEquals("0.2.130", config.getRecommendedRuntimeVersion());
         assertEquals("x.x.x", config.getDeploymentVersion());
@@ -211,6 +212,39 @@ class PlatformBrandingServiceTest {
                 () -> new PlatformBrandingService(
                         dao, new InMemoryObjectStorage(), props,
                         "https://daily.auto-wonder.example.com", "0.2.130", "not-a-version"));
+    }
+
+    @Test
+    void exposesTrustedPublicBaseUrlAndRuntimeVersion() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService service = newService(dao);
+
+        assertEquals("https://daily.auto-wonder.example.com", service.trustedPublicBaseUrl());
+        assertEquals("0.2.130", service.recommendedRuntimeVersion());
+    }
+
+    @Test
+    void trustedBaseUrlSupportsPrivateDeploymentsAndStripsTrailingSlashes() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        OssProperties props = new OssProperties();
+        PlatformBrandingService service = new PlatformBrandingService(
+                dao, new InMemoryObjectStorage(), props,
+                "http://autowonder.internal.example.com:8080//", "1.0.0", "x.x.x");
+
+        assertEquals("http://autowonder.internal.example.com:8080", service.trustedPublicBaseUrl());
+        assertEquals("http://autowonder.internal.example.com:8080/api/mcp",
+                service.publicConfig().getMcpBaseUrl());
+    }
+
+    @Test
+    void recommendedRuntimeVersionPreservesPrereleaseSuffix() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        OssProperties props = new OssProperties();
+        PlatformBrandingService service = new PlatformBrandingService(
+                dao, new InMemoryObjectStorage(), props,
+                "https://daily.auto-wonder.example.com", "0.3.0-beta.2", "x.x.x");
+
+        assertEquals("0.3.0-beta.2", service.recommendedRuntimeVersion());
     }
 
     private static PlatformBrandingService newService(PlatformBrandingDao dao) {

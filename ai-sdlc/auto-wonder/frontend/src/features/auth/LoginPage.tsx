@@ -23,7 +23,7 @@ export function LoginPage() {
       const resp = await login(values);
       setTokens(resp.accessToken, resp.refreshToken);
       setUser(resp.user);
-      navigate('/orgs');
+      navigate('/workspaces');
     } catch (e) {
       if (e instanceof ApiError) {
         setError(e.message);

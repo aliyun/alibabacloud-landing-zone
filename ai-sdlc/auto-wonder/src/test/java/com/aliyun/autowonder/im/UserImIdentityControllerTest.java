@@ -2,8 +2,8 @@ package com.aliyun.autowonder.im;
 
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessAspect;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessAspect;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest;
 import com.aliyun.autowonder.im.dto.UserImIdentityVO;
 import org.junit.jupiter.api.AfterEach;
@@ -28,16 +28,16 @@ class UserImIdentityControllerTest {
     }
 
     @Test
-    void classDoesNotRequireOrgAccessSoPersonalListWorksWithoutCurrentOrg() throws Exception {
-        RequireOrgAccess classAccess =
-                UserImIdentityController.class.getAnnotation(RequireOrgAccess.class);
+    void classDoesNotRequireWorkspaceAccessSoPersonalListWorksWithoutCurrentWorkspace() throws Exception {
+        RequireWorkspaceAccess classAccess =
+                UserImIdentityController.class.getAnnotation(RequireWorkspaceAccess.class);
         assertNull(classAccess,
-                "class-level @RequireOrgAccess must be removed so /profile/settings "
-                        + "IM tab remains usable when currentOrgId is null or stale (design §10.1)");
+                "class-level @RequireWorkspaceAccess must be removed so /profile/settings "
+                        + "IM tab remains usable when currentWorkspaceId is null or stale (design §10.1)");
     }
 
     @Test
-    void listReturnsOkWhenCurrentOrgIdIsNull() {
+    void listReturnsOkWhenCurrentWorkspaceIdIsNull() {
         UserImIdentityService service = mock(UserImIdentityService.class);
         UserImIdentityController controller = new UserImIdentityController(service);
         AutoWonderContext.get().setUserId(200L);
@@ -51,11 +51,11 @@ class UserImIdentityControllerTest {
     }
 
     @Test
-    void updateDingTalkUsesCurrentUserWithoutOrganizationDependency() {
+    void updateDingTalkUsesCurrentUserWithoutWorkspaceDependency() {
         UserImIdentityService service = mock(UserImIdentityService.class);
         UserImIdentityController controller = proxiedController(service);
         AutoWonderContext.get().setUserId(200L);
-        AutoWonderContext.get().setCurrentOrgId(null);
+        AutoWonderContext.get().setCurrentWorkspaceId(null);
         UpdateUserImIdentityRequest request = new UpdateUserImIdentityRequest();
         request.setExternalUserId("220791");
         UserImIdentityVO saved = new UserImIdentityVO();
@@ -71,11 +71,11 @@ class UserImIdentityControllerTest {
     }
 
     @Test
-    void testEndpointUsesCurrentUserWithoutOrganizationDependency() {
+    void testEndpointUsesCurrentUserWithoutWorkspaceDependency() {
         UserImIdentityService service = mock(UserImIdentityService.class);
         UserImIdentityController controller = proxiedController(service);
         AutoWonderContext.get().setUserId(200L);
-        AutoWonderContext.get().setCurrentOrgId(null);
+        AutoWonderContext.get().setCurrentWorkspaceId(null);
 
         Result<Void> result = controller.testDingTalk();
 
@@ -87,7 +87,7 @@ class UserImIdentityControllerTest {
     private UserImIdentityController proxiedController(UserImIdentityService service) {
         AspectJProxyFactory factory =
                 new AspectJProxyFactory(new UserImIdentityController(service));
-        factory.addAspect(new OrgAccessAspect());
+        factory.addAspect(new WorkspaceAccessAspect());
         return factory.getProxy();
     }
 }

@@ -51,7 +51,13 @@ public class WsDispatchTransport implements DispatchTransport {
     public void dispatch(DispatchDO dispatch, TaskPackageResult taskPackage) {
         log.info("dispatch sending dispatchId={} executorId={} pkgSize={}",
                 dispatch.getId(), dispatch.getExecutorId(), taskPackage.getSize());
-        String frameJson = buildFrame(dispatch, taskPackage);
+        TaskDispatchFrame frame = buildFrame(dispatch, taskPackage);
+        log.info("dispatch urls dispatchId={} executorId={} downloadUrl={} packageRefreshPath={}"
+                        + " artifactUploadPath={} checkpointUploadPath={} resumeMode={} resumeCheckpointUrl={}",
+                dispatch.getId(), dispatch.getExecutorId(), frame.getDownloadUrl(),
+                frame.getPackageRefreshPath(), frame.getArtifactUploadPath(),
+                frame.getCheckpointUploadPath(), frame.getResumeMode(), frame.getResumeCheckpointUrl());
+        String frameJson = JSON.toJSONString(frame);
 
         ExecutorSession es = sessionRegistry.findByExecutorId(dispatch.getExecutorId());
         if (es != null && es.getSession().isOpen()) {
@@ -81,7 +87,7 @@ public class WsDispatchTransport implements DispatchTransport {
         }
     }
 
-    private String buildFrame(DispatchDO dispatch, TaskPackageResult pkg) {
+    private TaskDispatchFrame buildFrame(DispatchDO dispatch, TaskPackageResult pkg) {
         TaskDispatchFrame f = new TaskDispatchFrame();
         f.setDispatchId(dispatch.getId());
         f.setExecutorId(dispatch.getExecutorId());
@@ -114,6 +120,6 @@ public class WsDispatchTransport implements DispatchTransport {
             f.setResumeCheckpointSeq(resume.checkpointSeq());
             f.setResumeCheckpointCandidates(resume.checkpointCandidates());
         }
-        return JSON.toJSONString(f);
+        return f;
     }
 }

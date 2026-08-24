@@ -4,6 +4,7 @@ import { ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { useHumanAgentParticipation, useForceRefreshParticipation } from '../hooks';
+import { formatDurationZh } from '@/shared/lib/duration';
 import { DurationPie } from './DurationPie';
 import { DurationTrendChart } from './DurationTrendChart';
 import { RatioTrendChart } from './RatioTrendChart';
@@ -22,14 +23,6 @@ function defaultDateRange(): [Dayjs, Dayjs] {
   const end = dayjs().subtract(1, 'day');
   const start = end.subtract(29, 'day');
   return [start, end];
-}
-
-function formatSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds}秒`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}分钟`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return m > 0 ? `${h}小时${m}分` : `${h}小时`;
 }
 
 export function ParticipationTab() {
@@ -108,10 +101,10 @@ export function ParticipationTab() {
       {/* Summary cards */}
       {data.average && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 18 }}>
-          <StatCard label="平均总时长" value={formatSeconds(data.average.totalDurationSeconds)} />
-          <StatCard label="平均人工时长" value={formatSeconds(data.average.humanDurationSeconds)} color="#1890ff" />
-          <StatCard label="平均Agent时长" value={formatSeconds(data.average.agentDurationSeconds)} color="#faad14" />
-          <StatCard label="P90工单耗时" value={data.p90 ? formatSeconds(data.p90.totalDurationSeconds) : '-'} />
+          <StatCard label="平均总时长" value={formatDurationZh(data.average.totalDurationSeconds)} />
+          <StatCard label="平均人工时长" value={formatDurationZh(data.average.humanDurationSeconds)} color="#1890ff" />
+          <StatCard label="平均Agent时长" value={formatDurationZh(data.average.agentDurationSeconds)} color="#faad14" />
+          <StatCard label="P90工单耗时" value={data.p90 ? formatDurationZh(data.p90.totalDurationSeconds) : '-'} />
         </div>
       )}
 

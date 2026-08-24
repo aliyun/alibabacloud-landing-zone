@@ -20,10 +20,10 @@ class RepoConnectionTesterTest {
     void buildLsRemoteCommandUsesGitAndBranch() {
         RepoConnectionTester tester = new RepoConnectionTester("git", 10);
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("https://github.com/org/repo.git");
+        req.setUrl("https://github.com/workspace/repo.git");
         req.setDefaultBranch("main");
 
-        assertEquals(List.of("git", "ls-remote", "--heads", "https://github.com/org/repo.git", "main"),
+        assertEquals(List.of("git", "ls-remote", "--heads", "https://github.com/workspace/repo.git", "main"),
                 tester.buildLsRemoteCommand(req));
     }
 
@@ -31,10 +31,10 @@ class RepoConnectionTesterTest {
     void buildLsRemoteCommandOmitsBranchWhenBlank() {
         RepoConnectionTester tester = new RepoConnectionTester("git", 10);
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("git@github.com:org/repo.git");
+        req.setUrl("git@github.com:workspace/repo.git");
         req.setDefaultBranch("   ");
 
-        assertEquals(List.of("git", "ls-remote", "--heads", "git@github.com:org/repo.git"),
+        assertEquals(List.of("git", "ls-remote", "--heads", "git@github.com:workspace/repo.git"),
                 tester.buildLsRemoteCommand(req));
     }
 
@@ -42,7 +42,7 @@ class RepoConnectionTesterTest {
     void sshUrlCarriesNoCredentialArgumentsAndReliesOnLocalGit() {
         RepoConnectionTester tester = new RepoConnectionTester("git", 10);
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("git@github.com:org/repo.git");
+        req.setUrl("git@github.com:workspace/repo.git");
 
         List<String> command = tester.buildLsRemoteCommand(req);
 
@@ -75,7 +75,7 @@ class RepoConnectionTesterTest {
         assertTrue(fakeGit.toFile().setExecutable(true, true));
         RepoConnectionTester tester = new RepoConnectionTester(fakeGit.toString(), 10);
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("https://github.com/org/repo.git");
+        req.setUrl("https://github.com/workspace/repo.git");
 
         RepoConnectionTestResult result = tester.test(req);
 
@@ -94,7 +94,7 @@ class RepoConnectionTesterTest {
         assertTrue(fakeGit.toFile().setExecutable(true, true));
         RepoConnectionTester tester = new RepoConnectionTester(fakeGit.toString(), 10);
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("https://github.com/org/private.git");
+        req.setUrl("https://github.com/workspace/private.git");
 
         RepoConnectionTestResult result = tester.test(req);
 
@@ -112,7 +112,7 @@ class RepoConnectionTesterTest {
         assertTrue(fakeGit.toFile().setExecutable(true, true));
         RepoConnectionTester tester = new RepoConnectionTester(fakeGit.toString(), 10);
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("https://github.com/org/private.git");
+        req.setUrl("https://github.com/workspace/private.git");
 
         RepoConnectionTestResult result = tester.test(req);
 

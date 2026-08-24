@@ -1,7 +1,9 @@
 package com.aliyun.autowonder.websocket;
 
-import javax.servlet.http.HttpServletRequest;
 import javax.websocket.Session;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public final class ClientIpResolver {
 
@@ -10,41 +12,44 @@ public final class ClientIpResolver {
     private ClientIpResolver() {}
 
     public static String resolve(Session session) {
-        Object req = session.getUserProperties().get("javax.servlet.http.HttpServletRequest");
-        if (!(req instanceof HttpServletRequest)) {
+        Map<String, List<String>> headers = handshakeHeaders(session);
+        if (headers == null) {
             return null;
         }
-        HttpServletRequest httpReq = (HttpServletRequest) req;
-
-        String ip = firstValidHeader(httpReq, "X-Forwarded-For");
+        String ip = firstValidHeader(headers, "x-forwarded-for");
         if (ip == null) {
-            ip = firstValidHeader(httpReq, "X-Real-IP");
-        }
-        if (ip == null) {
-            ip = trimToNull(httpReq.getRemoteAddr());
+            ip = firstValidHeader(headers, "x-real-ip");
         }
         return truncate(ip);
     }
 
-    private static String firstValidHeader(HttpServletRequest req, String header) {
-        String value = req.getHeader(header);
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        for (String part : value.split(",")) {
-            String trimmed = part.trim();
-            if (!trimmed.isEmpty() && !trimmed.equalsIgnoreCase("unknown")) {
-                return trimmed;
-            }
+    @SuppressWarnings("unchecked")
+    private static Map<String, List<String>> handshakeHeaders(Session session) {
+        Object value = session.getUserProperties()
+                .get(HandshakeHeaderCapturingConfigurator.HANDSHAKE_HEADERS_KEY);
+        if (value instanceof Map) {
+            return (Map<String, List<String>>) value;
         }
         return null;
     }
 
-    private static String trimToNull(String s) {
-        if (s == null || s.isBlank()) {
+    private static String firstValidHeader(Map<String, List<String>> headers, String name) {
+        List<String> values = headers.get(name.toLowerCase(Locale.ROOT));
+        if (values == null) {
             return null;
         }
-        return s.trim();
+        for (String value : values) {
+            if (value == null) {
+                continue;
+            }
+            for (String part : value.split(",")) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty() && !trimmed.equalsIgnoreCase("unknown")) {
+                    return trimmed;
+                }
+            }
+        }
+        return null;
     }
 
     private static String truncate(String ip) {

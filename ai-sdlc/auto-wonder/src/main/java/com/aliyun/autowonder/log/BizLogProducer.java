@@ -106,7 +106,7 @@ public class BizLogProducer {
         item.SetTime((int) (time.getTime() / 1000));
         item.PushBack("RequestId", ObjectUtils.nullSafeToString(bizLog.getRequestId()));
         item.PushBack("UserId", ObjectUtils.nullSafeToString(bizLog.getUserId()));
-        item.PushBack("OrgId", ObjectUtils.nullSafeToString(bizLog.getOrgId()));
+        item.PushBack("WorkspaceId", ObjectUtils.nullSafeToString(bizLog.getWorkspaceId()));
         item.PushBack("Operation", ObjectUtils.nullSafeToString(bizLog.getOperation()));
         item.PushBack("Path", ObjectUtils.nullSafeToString(bizLog.getPath()));
         item.PushBack("HttpMethod", ObjectUtils.nullSafeToString(bizLog.getHttpMethod()));

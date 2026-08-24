@@ -42,7 +42,7 @@ export const DEFAULT_BRANDING: PlatformBranding = {
   primaryColor: '#f97316',
   domain: null,
   mcpBaseUrl: '',
-  recommendedRuntimeVersion: '0.2.130',
+  recommendedRuntimeVersion: '0.2.138',
   deploymentVersion: 'x.x.x',
   canManage: false,
 };

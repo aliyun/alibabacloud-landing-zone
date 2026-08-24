@@ -144,6 +144,20 @@ class WorkitemMutationTest {
     }
 
     @Test
+    void updateContentRejectsExternalLinkedWorkitem() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 0, 9L));
+        when(externalWorkitemLinkDao.listByWorkitem(100L, 5L))
+                .thenReturn(java.util.List.of(new ExternalWorkitemLinkDO()));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.updateContent(5L, "new title", "new body", 100L, 7L));
+
+        assertEquals("13008", ex.getCode());
+        verify(workitemDao, never()).updateContent(any(), any(), any(), any(), any(), any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
     void deleteSoftDeletesNativeWorkitemAndWritesEvent() {
         when(workitemDao.findById(5L)).thenReturn(workitem(5L, 3, 9L));
         when(externalWorkitemLinkDao.listByWorkitem(100L, 5L)).thenReturn(java.util.List.of());

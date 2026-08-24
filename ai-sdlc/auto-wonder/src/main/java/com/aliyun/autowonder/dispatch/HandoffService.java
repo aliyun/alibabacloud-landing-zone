@@ -7,13 +7,14 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.filter.BizLoggerFilter;
 import com.aliyun.autowonder.im.notification.WorkitemHumanAssignedEvent;
-import com.aliyun.autowonder.org.OrgDO;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDO;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.AssignmentActor;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDO;
+import com.aliyun.autowonder.workitem.WorkitemEventType;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
 import com.aliyun.autowonder.workitem.WorkitemService;
 import org.slf4j.Logger;
@@ -31,10 +32,10 @@ import org.springframework.transaction.annotation.Transactional;
  * (its min-stepOrder first step), a dispatch is enqueued there, and the assignee is
  * synced to the target agent. An unresolved AGENT request is assigned only to the
  * workitem's configured human operator, so a completed digital-worker step cannot
- * strand a workitem or unexpectedly escalate to an organization owner. Explicit
+ * strand a workitem or unexpectedly escalate to an workspace owner. Explicit
  * HUMAN requests use the regular fallback chain:
  * concrete numeric user id, then the workitem's
- * assign-operator, then the tenant admin (org owner).
+ * assign-operator, then the tenant admin (workspace owner).
  */
 @Service
 public class HandoffService {
@@ -47,29 +48,29 @@ public class HandoffService {
     private final DispatchService dispatchService;
     private final AgentRoleResolver roleResolver;
     private final AgentSdlcResolver sdlcResolver;
-    private final OrgDao orgDao;
+    private final WorkspaceDao workspaceDao;
     private final WorkitemEventDao eventDao;
     private final DispatchDao dispatchDao;
     private final AgentDao agentDao;
     private final ApplicationEventPublisher eventPublisher;
 
     public HandoffService(WorkitemDao workitemDao, DispatchService dispatchService,
-            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, OrgDao orgDao,
+            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, WorkspaceDao workspaceDao,
             WorkitemEventDao eventDao) {
-        this(workitemDao, dispatchService, roleResolver, sdlcResolver, orgDao, eventDao,
+        this(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao,
                 null, null, null);
     }
 
     @Autowired
     public HandoffService(WorkitemDao workitemDao, DispatchService dispatchService,
-            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, OrgDao orgDao,
+            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, WorkspaceDao workspaceDao,
             WorkitemEventDao eventDao, DispatchDao dispatchDao, AgentDao agentDao,
             ApplicationEventPublisher eventPublisher) {
         this.workitemDao = workitemDao;
         this.dispatchService = dispatchService;
         this.roleResolver = roleResolver;
         this.sdlcResolver = sdlcResolver;
-        this.orgDao = orgDao;
+        this.workspaceDao = workspaceDao;
         this.eventDao = eventDao;
         this.dispatchDao = dispatchDao;
         this.agentDao = agentDao;
@@ -143,7 +144,9 @@ public class HandoffService {
         WorkitemDO reloaded = workitemDao.findById(workitemId);
         Integer nextVersion = reloaded != null ? reloaded.getVersion() : w.getVersion();
         workitemDao.updateAssignee(workitemId, tenantId, "AGENT", targetAgentId, nextVersion, SYSTEM_USER_ID);
-        writeAssignEvent(tenantId, workitemId, w.getAssigneeRef(), targetAgentId, w.getAssigneeType(), "AGENT");
+        AssignmentActor sourceActor = resolveSourceActor(tenantId, workitemId, dispatchId, "AGENT_HANDOFF");
+        writeAssignEvent(tenantId, workitemId, w.getAssigneeRef(), targetAgentId, sourceActor,
+                w.getAssigneeType(), "AGENT");
         log.info("handoff to AGENT workitemId={} target={} targetAgentId={} sdlcId={} firstStepId={}",
                 workitemId, to, targetAgentId, targetSdlcId, first.getId());
         DispatchDO d = dispatchService.enqueueHandoff(tenantId, workitemId,
@@ -191,17 +194,12 @@ public class HandoffService {
         return HandoffResult.human(resolved, fallbackReason);
     }
 
-    private void writeAssignEvent(long tenantId, long workitemId, Long fromRef, Long toRef,
-            String fromType, String toType) {
-        writeAssignEvent(tenantId, workitemId, fromRef, toRef, AssignmentActor.system("系统"), fromType, toType);
-    }
-
     private WorkitemEventDO writeAssignEvent(long tenantId, long workitemId, Long fromRef, Long toRef,
             AssignmentActor actor, String fromType, String toType) {
         WorkitemEventDO e = new WorkitemEventDO();
         e.setTenantId(tenantId);
         e.setWorkitemId(workitemId);
-        e.setEventType("ASSIGN");
+        e.setEventType(WorkitemEventType.ASSIGN.code());
         e.setFromVal(fromRef == null ? null : String.valueOf(fromRef));
         e.setToVal(toRef == null ? null : String.valueOf(toRef));
         e.setActorType(actor.type());
@@ -265,8 +263,8 @@ public class HandoffService {
     }
 
     private Long resolveTenantAdminUserId(long tenantId) {
-        OrgDO org = orgDao.findById(tenantId);
-        return org != null ? org.getOwnerId() : null;
+        WorkspaceDO workspace = workspaceDao.findById(tenantId);
+        return workspace != null ? workspace.getOwnerId() : null;
     }
 
     private String currentRequestId() {

@@ -30,9 +30,20 @@
         WHERE provider = #{provider} AND enabled = 1 AND is_deleted = 0
         ORDER BY id ASC
     </select>
-    <update id="updateHealth">
+    <update id="markSyncSuccess">
         UPDATE external_project_binding
-        SET last_success_at = #{lastSuccessAt}, last_error = #{lastError}
+        SET last_success_at = #{lastSuccessAt},
+            last_error = NULL
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="markSyncFailure">
+        UPDATE external_project_binding
+        SET last_error = #{lastError}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+    </update>
+    <update id="updateReconcileCursor">
+        UPDATE external_project_binding
+        SET reconcile_cursor = #{reconcileCursor}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
 </mapper>

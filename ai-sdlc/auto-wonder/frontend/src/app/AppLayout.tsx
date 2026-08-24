@@ -9,7 +9,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
 import { logout } from '@/features/auth/api';
 import { apiClient } from '@/shared/api/client';
-import type { OrgInfo, SwitchOrgResponse, UserInfo } from '@/shared/types/common';
+import type { WorkspaceInfo, SwitchWorkspaceResponse, UserInfo } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
 import { BRANDING_QUERY_KEY, DEFAULT_BRANDING, getPublicBranding } from '@/features/platform/brandingApi';
 import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
@@ -42,13 +42,13 @@ export function shouldUseMobileLayout(screens: Record<string, boolean | undefine
   return Boolean(screens.xs && !screens.md);
 }
 
-export function buildHeaderContext(pathname: string, orgName: string) {
+export function buildHeaderContext(pathname: string, workspaceName: string) {
   const pageItem = [...NAV_ITEMS]
     .filter((item) => navItemMatchesPath(item, pathname))
     .sort((a, b) => b.key.length - a.key.length)[0];
 
   if (!pageItem) {
-    return { orgName, sectionTitle: '', pageTitle: '' };
+    return { workspaceName, sectionTitle: '', pageTitle: '' };
   }
 
   const sectionItem = [...NAV_ITEMS]
@@ -56,7 +56,7 @@ export function buildHeaderContext(pathname: string, orgName: string) {
     .sort((a, b) => b.key.length - a.key.length)[0];
 
   return {
-    orgName,
+    workspaceName,
     sectionTitle: sectionItem?.label || '',
     pageTitle: pageItem.label,
   };
@@ -72,8 +72,8 @@ export function buildUserDisplay(user: UserInfo | null) {
   };
 }
 
-export function getOrgDeepLinkId(search: string): number | null {
-  const value = new URLSearchParams(search).get('orgId');
+export function getWorkspaceDeepLinkId(search: string): number | null {
+  const value = new URLSearchParams(search).get('workspaceId');
   if (!value || !/^\d+$/.test(value)) {
     return null;
   }
@@ -81,9 +81,9 @@ export function getOrgDeepLinkId(search: string): number | null {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
-export function removeOrgDeepLink(search: string): string {
+export function removeWorkspaceDeepLink(search: string): string {
   const params = new URLSearchParams(search);
-  params.delete('orgId');
+  params.delete('workspaceId');
   const nextSearch = params.toString();
   return nextSearch ? `?${nextSearch}` : '';
 }
@@ -107,11 +107,11 @@ export function AppLayout() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
-  const currentOrg = useAuthStore((s) => s.currentOrg);
+  const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
   const refreshToken = useAuthStore((s) => s.refreshToken);
   const clear = useAuthStore((s) => s.clear);
   const setAccessToken = useAuthStore((s) => s.setAccessToken);
-  const setCurrentOrg = useAuthStore((s) => s.setCurrentOrg);
+  const setCurrentWorkspace = useAuthStore((s) => s.setCurrentWorkspace);
 
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsedPref);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -132,83 +132,83 @@ export function AppLayout() {
     queryFn: getPublicBranding,
   });
 
-  const { data: orgs } = useQuery({
-    queryKey: ['orgs', 'mine'],
+  const { data: workspaces } = useQuery({
+    queryKey: ['workspaces', 'mine'],
     queryFn: async () => {
-      const resp = await apiClient.get<OrgInfo[]>('/api/orgs/mine');
+      const resp = await apiClient.get<WorkspaceInfo[]>('/api/workspaces/mine');
       return resp.data;
     },
   });
-  const [switchingOrgId, setSwitchingOrgId] = useState<number | null>(null);
+  const [switchingWorkspaceId, setSwitchingWorkspaceId] = useState<number | null>(null);
   const switchingRef = useRef<number | null>(null);
 
-  const handleOrgSwitch = useCallback(async (org: OrgInfo) => {
-    if (org.id === currentOrg?.id || switchingRef.current === org.id) return;
-    switchingRef.current = org.id;
-    setSwitchingOrgId(org.id);
+  const handleWorkspaceSwitch = useCallback(async (workspace: WorkspaceInfo) => {
+    if (workspace.id === currentWorkspace?.id || switchingRef.current === workspace.id) return;
+    switchingRef.current = workspace.id;
+    setSwitchingWorkspaceId(workspace.id);
     try {
-      const resp = await apiClient.post<SwitchOrgResponse>(`/api/orgs/${org.id}/switch`);
+      const resp = await apiClient.post<SwitchWorkspaceResponse>(`/api/workspaces/${workspace.id}/switch`);
       setAccessToken(resp.data.accessToken);
-      setCurrentOrg(org, resp.data.accessLevel);
+      setCurrentWorkspace(workspace, resp.data.accessLevel);
       await refreshTenantScopedQueries(queryClient);
-      message.success(`已切换到 ${org.name}`);
+      message.success(`已切换到 ${workspace.name}`);
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '切换组织失败');
+      message.error(e instanceof ApiError ? e.message : '切换工作空间失败');
     } finally {
       switchingRef.current = null;
-      setSwitchingOrgId(null);
+      setSwitchingWorkspaceId(null);
     }
-  }, [currentOrg?.id, setAccessToken, setCurrentOrg, queryClient]);
+  }, [currentWorkspace?.id, setAccessToken, setCurrentWorkspace, queryClient]);
 
   useEffect(() => {
-    const targetOrgId = getOrgDeepLinkId(location.search);
-    if (!targetOrgId) {
+    const targetWorkspaceId = getWorkspaceDeepLinkId(location.search);
+    if (!targetWorkspaceId) {
       return;
     }
-    const cleanPath = `${location.pathname}${removeOrgDeepLink(location.search)}${location.hash}`;
-    if (currentOrg?.id === targetOrgId) {
+    const cleanPath = `${location.pathname}${removeWorkspaceDeepLink(location.search)}${location.hash}`;
+    if (currentWorkspace?.id === targetWorkspaceId) {
       navigate(cleanPath, { replace: true });
       return;
     }
     let cancelled = false;
-    async function switchToLinkedOrg() {
+    async function switchToLinkedWorkspace() {
       try {
-        const orgsResp = await apiClient.get<OrgInfo[]>('/api/orgs/mine');
+        const workspacesResp = await apiClient.get<WorkspaceInfo[]>('/api/workspaces/mine');
         if (cancelled) {
           return;
         }
-        const targetOrg = orgsResp.data.find((org) => org.id === targetOrgId);
-        if (!targetOrg) {
-          message.error('你不在该工单所属组织中');
+        const targetWorkspace = workspacesResp.data.find((workspace) => workspace.id === targetWorkspaceId);
+        if (!targetWorkspace) {
+          message.error('你不在该工单所属工作空间中');
           return;
         }
-        const switchResp = await apiClient.post<SwitchOrgResponse>(`/api/orgs/${targetOrgId}/switch`);
+        const switchResp = await apiClient.post<SwitchWorkspaceResponse>(`/api/workspaces/${targetWorkspaceId}/switch`);
         if (cancelled) {
           return;
         }
         setAccessToken(switchResp.data.accessToken);
-        setCurrentOrg(targetOrg, switchResp.data.accessLevel);
+        setCurrentWorkspace(targetWorkspace, switchResp.data.accessLevel);
         await refreshTenantScopedQueries(queryClient);
         navigate(cleanPath, { replace: true });
       } catch {
         if (!cancelled) {
-          message.error('切换到工单所属组织失败');
+          message.error('切换到工单所属工作空间失败');
         }
       }
     }
-    void switchToLinkedOrg();
+    void switchToLinkedWorkspace();
     return () => {
       cancelled = true;
     };
   }, [
-    currentOrg?.id,
+    currentWorkspace?.id,
     location.hash,
     location.pathname,
     location.search,
     navigate,
     queryClient,
     setAccessToken,
-    setCurrentOrg,
+    setCurrentWorkspace,
   ]);
 
   const toggleCollapsed = () => {
@@ -237,22 +237,22 @@ export function AppLayout() {
     { key: 'logout', label: '退出登录', icon: <LogoutOutlined />, onClick: handleLogout },
   ];
 
-  const orgMenuItems = [
-    ...(orgs || []).map((org) => ({
-      key: `org-${org.id}`,
-      label: org.name,
-      icon: org.id === currentOrg?.id
-        ? (org.id === switchingOrgId ? <LoadingOutlined /> : <CheckOutlined style={{ color: '#ff6a00' }} />)
-        : (org.id === switchingOrgId ? <LoadingOutlined /> : undefined),
-      disabled: org.id === switchingOrgId,
-      onClick: () => { void handleOrgSwitch(org); },
+  const workspaceMenuItems = [
+    ...(workspaces || []).map((workspace) => ({
+      key: `workspace-${workspace.id}`,
+      label: workspace.name,
+      icon: workspace.id === currentWorkspace?.id
+        ? (workspace.id === switchingWorkspaceId ? <LoadingOutlined /> : <CheckOutlined style={{ color: '#ff6a00' }} />)
+        : (workspace.id === switchingWorkspaceId ? <LoadingOutlined /> : undefined),
+      disabled: workspace.id === switchingWorkspaceId,
+      onClick: () => { void handleWorkspaceSwitch(workspace); },
     })),
     { type: 'divider' as const },
-    { key: 'manage-orgs', label: '管理组织...', onClick: () => navigate('/orgs') },
+    { key: 'manage-workspaces', label: '管理工作空间...', onClick: () => navigate('/workspaces') },
   ];
 
-  const orgName = currentOrg?.name || '未选择';
-  const { sectionTitle, pageTitle } = buildHeaderContext(location.pathname, orgName);
+  const workspaceName = currentWorkspace?.name || '未选择';
+  const { sectionTitle, pageTitle } = buildHeaderContext(location.pathname, workspaceName);
   const userDisplay = buildUserDisplay(user);
   const menuButtonLabel = isMobile ? '打开菜单' : collapsed ? '展开菜单' : '折叠菜单';
 
@@ -271,9 +271,9 @@ export function AppLayout() {
             {!collapsed && <Text strong style={{ fontSize: 14, color: '#374151' }}>{branding.platformName}</Text>}
           </div>
 
-          <Dropdown menu={{ items: orgMenuItems }} trigger={['click']} placement="bottomLeft">
+          <Dropdown menu={{ items: workspaceMenuItems }} trigger={['click']} placement="bottomLeft">
             <div
-              title={collapsed ? orgName : undefined}
+              title={collapsed ? workspaceName : undefined}
               style={{
                 margin: collapsed ? '8px auto' : '8px 12px',
                 padding: collapsed ? 0 : '7px 10px',
@@ -296,7 +296,7 @@ export function AppLayout() {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontWeight: 600, fontSize: 11, flexShrink: 0,
               }}>
-                {orgName[0]}
+                {workspaceName[0]}
               </div>
               {!collapsed && (
                 <>
@@ -309,9 +309,9 @@ export function AppLayout() {
                       color: '#374151',
                       fontWeight: 500,
                     }}
-                    title={orgName}
+                    title={workspaceName}
                   >
-                    {orgName}
+                    {workspaceName}
                   </span>
                   <DownOutlined style={{ fontSize: 9, color: '#aaa' }} />
                 </>
@@ -334,7 +334,7 @@ export function AppLayout() {
           <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
           <Text strong style={{ fontSize: 14, color: '#374151' }}>{branding.platformName}</Text>
         </div>
-        <Dropdown menu={{ items: orgMenuItems }} trigger={['click']} placement="bottomLeft">
+        <Dropdown menu={{ items: workspaceMenuItems }} trigger={['click']} placement="bottomLeft">
           <div
             style={{
               margin: '8px 12px',
@@ -355,7 +355,7 @@ export function AppLayout() {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontWeight: 600, fontSize: 11, flexShrink: 0,
             }}>
-              {orgName[0]}
+              {workspaceName[0]}
             </div>
             <span
               style={{
@@ -366,9 +366,9 @@ export function AppLayout() {
                 color: '#374151',
                 fontWeight: 500,
               }}
-              title={orgName}
+              title={workspaceName}
             >
-              {orgName}
+              {workspaceName}
             </span>
             <DownOutlined style={{ fontSize: 9, color: '#aaa' }} />
           </div>

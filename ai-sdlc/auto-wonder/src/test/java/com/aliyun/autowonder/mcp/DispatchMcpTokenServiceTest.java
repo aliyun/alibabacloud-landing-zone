@@ -1,14 +1,14 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
-import com.aliyun.autowonder.org.OrgMemberDO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -36,7 +36,7 @@ class DispatchMcpTokenServiceTest {
     private static final long USER_ID = 7L;
 
     private DispatchDao dispatchDao;
-    private OrgMemberDao orgMemberDao;
+    private WorkspaceMemberDao workspaceMemberDao;
     private DispatchMcpTokenService service;
 
     @BeforeEach
@@ -46,9 +46,9 @@ class DispatchMcpTokenServiceTest {
         JwtProperties properties = new JwtProperties(env);
         properties.setSecret(SECRET);
         dispatchDao = mock(DispatchDao.class);
-        orgMemberDao = mock(OrgMemberDao.class);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
         service = new DispatchMcpTokenService(
-                new JwtService(properties), dispatchDao, mock(WorkitemDao.class), orgMemberDao);
+                new JwtService(properties), dispatchDao, mock(WorkitemDao.class), workspaceMemberDao);
     }
 
     @Test
@@ -67,7 +67,7 @@ class DispatchMcpTokenServiceTest {
                 .getBody();
         assertEquals("dispatch-mcp", claims.get("purpose", String.class));
         assertEquals(DISPATCH_ID, claims.get("subjectId", Number.class).longValue());
-        assertEquals(TENANT_ID, claims.get("org", Number.class).longValue());
+        assertEquals(TENANT_ID, claims.get("workspace", Number.class).longValue());
         assertEquals(USER_ID, claims.get("uid", Number.class).longValue());
         assertEquals(String.valueOf(USER_ID), claims.getSubject());
 
@@ -96,7 +96,7 @@ class DispatchMcpTokenServiceTest {
             assertEquals(TENANT_ID, principal.tenantId(), status);
             assertEquals(USER_ID, principal.userId(), status);
             assertEquals(-DISPATCH_ID, principal.tokenId(), status);
-            assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel(), status);
+            assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel(), status);
             assertEquals(McpAccessTokenService.CredentialType.DISPATCH,
                     principal.credentialType(), status);
         }
@@ -124,37 +124,37 @@ class DispatchMcpTokenServiceTest {
     void authenticateReflectsActualAdminAccessLevel() {
         DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
         when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
-        OrgMemberDO member = new OrgMemberDO();
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setAccessLevel("ADMIN");
-        when(orgMemberDao.findByOrgAndUser(TENANT_ID, USER_ID)).thenReturn(member);
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(member);
 
         McpAccessTokenService.Principal principal = service.authenticate(service.issue(dispatch));
 
-        assertEquals(OrgAccessLevel.ADMIN, principal.accessLevel());
+        assertEquals(WorkspaceAccessLevel.ADMIN, principal.accessLevel());
     }
 
     @Test
     void authenticateFallsBackToReadWriteWhenMemberNotFound() {
         DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
         when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
-        when(orgMemberDao.findByOrgAndUser(TENANT_ID, USER_ID)).thenReturn(null);
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(null);
 
         McpAccessTokenService.Principal principal = service.authenticate(service.issue(dispatch));
 
-        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
     }
 
     @Test
     void authenticateFallsBackToReadWriteForInvalidAccessLevel() {
         DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
         when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
-        OrgMemberDO member = new OrgMemberDO();
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setAccessLevel("INVALID_LEVEL");
-        when(orgMemberDao.findByOrgAndUser(TENANT_ID, USER_ID)).thenReturn(member);
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(member);
 
         McpAccessTokenService.Principal principal = service.authenticate(service.issue(dispatch));
 
-        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
     }
 
     private DispatchDO dispatch(String status) {
