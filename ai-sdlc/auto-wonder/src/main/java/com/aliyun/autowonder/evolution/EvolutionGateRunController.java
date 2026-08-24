@@ -4,13 +4,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/gates")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看演进门禁运行")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进门禁运行")
 public class EvolutionGateRunController {
 
     private final EvolutionGateRunLiteService gateRunService;
@@ -20,9 +20,9 @@ public class EvolutionGateRunController {
     }
 
     @PostMapping
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "记录演进门禁运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "记录演进门禁运行")
     public Result<EvolutionGateRunDO> record(@RequestBody EvolutionGateRunCommand req) {
-        return Result.ok(gateRunService.record(req, currentOrgId(), currentUserId()));
+        return Result.ok(gateRunService.record(req, currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -33,11 +33,11 @@ public class EvolutionGateRunController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

@@ -87,6 +87,37 @@ describe('WorkitemKanban 待决策按人分类', () => {
 
     expect(screen.getByText('普通任务')).toBeInTheDocument();
   });
+
+  it('labels imported workitems and shows the external reporter', () => {
+    renderKanban({ items: [mk({
+      id: 10,
+      title: '来源需求',
+      statusName: '待处理',
+      sourceType: 'EXTERNAL',
+      sourceProvider: 'AONE',
+      sourceUrl: 'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+      creatorDisplayName: '导入人（10009）',
+      sourceCreator: {
+        id: 20001, provider: 'AONE', subjectId: '440501', subjectType: 'USER',
+        displayName: '煊童', mappedUserId: null,
+      },
+    })] });
+
+    const sourceLink = screen.getByRole('link', { name: /来自 Aone/ });
+    expect(sourceLink).toHaveAttribute(
+      'href',
+      'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+    );
+    expect(sourceLink).toHaveAttribute('target', '_blank');
+    expect(screen.getByText('来源提出人: 煊童（440501）')).toBeInTheDocument();
+    expect(screen.queryByText('创建者: 导入人（10009）')).not.toBeInTheDocument();
+  });
+
+  it('does not add a source tag to locally created workitems', () => {
+    renderKanban({ items: [mk({ id: 11, title: '本地创建', sourceType: 'NATIVE' })] });
+
+    expect(screen.queryByText(/来自 Aone/)).not.toBeInTheDocument();
+  });
 });
 
 describe('WorkitemKanban 需人工标记', () => {

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { Badge, Card, Tag, Typography, Empty, Spin } from 'antd';
-import { UserOutlined, RobotOutlined } from '@ant-design/icons';
+import { Badge, Button, Card, Tag, Typography, Empty, Spin } from 'antd';
+import { LinkOutlined, UserOutlined, RobotOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { workTypeMap, priorityMap, STATUS_COLUMNS, classifyWorkitemStatus } from '../constants';
 import { groupPendingDecisionsByAssignee, isMyPendingDecision } from '../decisionGrouping';
@@ -9,6 +9,25 @@ import { HumanInterventionBadge } from './HumanInterventionBadge';
 import type { Workitem } from '@/shared/types/workitem';
 
 const { Text, Paragraph } = Typography;
+
+function localCreatorLabel(item: Workitem) {
+  return item.creatorDisplayName || item.creatorName || '未提供';
+}
+
+function reporterLabel(item: Workitem) {
+  const reporter = item.sourceCreator;
+  if (!reporter) return '未返回';
+  if (reporter.displayName && reporter.subjectId) {
+    return `${reporter.displayName}（${reporter.subjectId}）`;
+  }
+  return reporter.displayName || reporter.subjectId || '未返回';
+}
+
+function sourceProviderLabel(provider?: string | null) {
+  if (!provider) return '外部工单';
+  if (provider.toUpperCase() === 'AONE') return 'Aone';
+  return provider.charAt(0).toUpperCase() + provider.slice(1).toLowerCase();
+}
 
 function WorkitemCard({ item }: { item: Workitem }) {
   const navigate = useNavigate();
@@ -36,6 +55,17 @@ function WorkitemCard({ item }: { item: Workitem }) {
       <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8, fontWeight: 500 }}>
         {item.title}
       </Paragraph>
+      {item.sourceType === 'EXTERNAL' && (
+        <div style={{ marginBottom: 6, fontSize: 12 }} onClick={(event) => event.stopPropagation()}>
+          {item.sourceUrl ? (
+            <Typography.Link href={item.sourceUrl} target="_blank" rel="noreferrer">
+              <LinkOutlined /> 来自 {sourceProviderLabel(item.sourceProvider)}
+            </Typography.Link>
+          ) : (
+            <Text type="secondary"><LinkOutlined /> 来自 {sourceProviderLabel(item.sourceProvider)}</Text>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           {item.assigneeType === 'AGENT' ? <RobotOutlined /> : <UserOutlined />}
@@ -45,11 +75,11 @@ function WorkitemCard({ item }: { item: Workitem }) {
           <Text type="secondary" style={{ fontSize: 11 }}>{item.statusName}</Text>
         )}
       </div>
-      {item.creatorDisplayName && (
-        <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
-          创建者: {item.creatorDisplayName}
-        </Text>
-      )}
+      <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
+        {item.sourceType === 'EXTERNAL'
+          ? `来源提出人: ${reporterLabel(item)}`
+          : `创建者: ${localCreatorLabel(item)}`}
+      </Text>
     </Card>
   );
 }
@@ -90,9 +120,25 @@ interface WorkitemKanbanProps {
   onlyMine?: boolean;
   /** 当前登录人 id，用于 onlyMine 过滤 */
   currentUserId?: number | null;
+  /** 需要展示的状态列，默认展示全部四列 */
+  columnKeys?: string[];
+  /** 各列的服务端真实总数，与当前加载条数无关 */
+  columnTotals?: Record<string, number>;
+  /** 各列是否还有未加载的工单 */
+  columnHasMore?: Record<string, boolean>;
+  onLoadMore?: (key: string) => void;
 }
 
-export function WorkitemKanban({ items, loading, onlyMine = false, currentUserId = null }: WorkitemKanbanProps) {
+export function WorkitemKanban({
+  items,
+  loading,
+  onlyMine = false,
+  currentUserId = null,
+  columnKeys,
+  columnTotals,
+  columnHasMore,
+  onLoadMore,
+}: WorkitemKanbanProps) {
   const grouped = useMemo(() => {
     const groups: Record<string, Workitem[]> = {};
     STATUS_COLUMNS.forEach(col => { groups[col.key] = []; });
@@ -103,17 +149,25 @@ export function WorkitemKanban({ items, loading, onlyMine = false, currentUserId
     return groups;
   }, [items]);
 
+  const visibleColumns = columnKeys
+    ? STATUS_COLUMNS.filter(col => columnKeys.includes(col.key))
+    : STATUS_COLUMNS;
+
   return (
     <Spin spinning={!!loading}>
     <div style={{ display: 'flex', gap: 16, overflowX: 'auto', padding: '4px 0', minHeight: 400 }}>
-      {STATUS_COLUMNS.map(col => {
+      {visibleColumns.map(col => {
         const isPending = col.key === 'PENDING_DECISION';
         const colItems = isPending && onlyMine
           ? grouped[col.key].filter(i => isMyPendingDecision(i, currentUserId))
           : grouped[col.key];
+        // onlyMine 会在本地二次过滤，此时服务端总数不再代表可见条数
+        const serverTotal = isPending && onlyMine ? undefined : columnTotals?.[col.key];
+        const badgeCount = serverTotal ?? colItems.length;
         return (
           <div
             key={col.key}
+            data-testid={`kanban-column-${col.key}`}
             style={{
               flex: '1 1 0',
               minWidth: 260,
@@ -128,7 +182,7 @@ export function WorkitemKanban({ items, loading, onlyMine = false, currentUserId
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12, gap: 8 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: col.color }} />
               <Text strong>{col.title}</Text>
-              <Badge count={colItems.length} style={{ backgroundColor: col.color }} />
+              <Badge count={badgeCount} style={{ backgroundColor: col.color }} />
             </div>
             <div style={{ flex: 1, overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
               {isPending ? (
@@ -138,6 +192,16 @@ export function WorkitemKanban({ items, loading, onlyMine = false, currentUserId
               ) : (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无工单" />
               )}
+              {columnHasMore?.[col.key] && onLoadMore ? (
+                <Button
+                  block
+                  size="small"
+                  type="link"
+                  onClick={() => onLoadMore(col.key)}
+                >
+                  加载更多（已显示 {colItems.length}/{badgeCount}）
+                </Button>
+              ) : null}
             </div>
           </div>
         );

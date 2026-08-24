@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Button, Card, List, message, Popconfirm, Space, Spin, Tooltip, Typography } from 'antd';
-import { DeleteOutlined, DownloadOutlined, EyeOutlined, FileMarkdownOutlined, UploadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, EyeOutlined, FileImageOutlined, FileMarkdownOutlined, UploadOutlined } from '@ant-design/icons';
 import type { Artifact } from '@/shared/types/workitem';
 import { getArtifactDownloadUrl } from '../api';
 import { useDeleteRequirementDocument, useUploadRequirementDocuments } from '../hooks';
@@ -9,7 +9,10 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { Text } = Typography;
 const MAX_DOCUMENTS = 10;
-const MAX_TOTAL_BYTES = 5 * 1024 * 1024;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.png', '.jpg', '.jpeg', '.webp'];
+const VISUAL_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 interface RequirementDocumentsCardProps {
   workitemId: number | string;
@@ -21,9 +24,14 @@ function displayName(name: string): string {
   return name.startsWith('requirements/') ? name.slice('requirements/'.length) : name;
 }
 
-function isMarkdownFile(file: File): boolean {
-  const lower = file.name.toLowerCase();
-  return lower.endsWith('.md') || lower.endsWith('.markdown');
+function isSupportedContextFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return ALLOWED_EXTENSIONS.some((extension) => name.endsWith(extension));
+}
+
+function isVisualName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return VISUAL_EXTENSIONS.some((extension) => lower.endsWith(extension));
 }
 
 function formatBytes(size: number | null): string {
@@ -42,15 +50,19 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
   const deleteMutation = useDeleteRequirementDocument(workitemId);
 
   const handleFiles = (fileList: FileList | null) => {
-    accessCommand('READ_WRITE', '上传需求文档', () => {
+    accessCommand('READ_WRITE', '上传需求/设计上下文', () => {
       const files = Array.from(fileList ?? []);
       if (files.length === 0) return;
-      if (files.some((file) => !isMarkdownFile(file))) {
-        message.error('仅支持上传 .md 或 .markdown 文档');
+      if (files.some((file) => !isSupportedContextFile(file))) {
+        message.error('仅支持上传 .md、.markdown、.png、.jpg、.jpeg、.webp 文件');
+        return;
+      }
+      if (files.some((file) => file.size > MAX_FILE_BYTES)) {
+        message.error('单个附件大小不能超过 5 MB');
         return;
       }
       if (documents.length + files.length > MAX_DOCUMENTS) {
-        message.error(`单个工单最多上传 ${MAX_DOCUMENTS} 个需求文档`);
+        message.error(`单个工单最多上传 ${MAX_DOCUMENTS} 个需求/设计上下文附件`);
         return;
       }
       const existingNames = new Set(documents.map((doc) => displayName(doc.name).toLowerCase()));
@@ -58,7 +70,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       for (const file of files) {
         const lower = file.name.toLowerCase();
         if (existingNames.has(lower) || selectedNames.has(lower)) {
-          message.error(`需求文档已存在：${file.name}`);
+          message.error(`附件已存在：${file.name}`);
           return;
         }
         selectedNames.add(lower);
@@ -66,7 +78,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       const currentSize = documents.reduce((sum, doc) => sum + (doc.size ?? 0), 0);
       const selectedSize = files.reduce((sum, file) => sum + file.size, 0);
       if (currentSize + selectedSize > MAX_TOTAL_BYTES) {
-        message.error('单个工单需求文档总大小不能超过 5 MB');
+        message.error('单个工单需求/设计上下文总大小不能超过 20 MB');
         return;
       }
       uploadMutation.mutate({ files });
@@ -81,16 +93,16 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
   return (
     <Card
       data-testid="requirement-documents-card"
-      title="需求/设计文档"
+      title="需求/设计上下文"
       extra={(
         <>
           <input
             ref={inputRef}
             data-testid="requirement-document-file-input"
-            aria-label="选择需求文档"
+            aria-label="选择需求/设计上下文文件"
             type="file"
             multiple
-            accept=".md,.markdown"
+            accept=".md,.markdown,.png,.jpg,.jpeg,.webp"
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
             onChange={(event) => {
               handleFiles(event.target.files);
@@ -103,7 +115,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
             disabled={uploadMutation.isPending || documents.length >= MAX_DOCUMENTS}
             onClick={() => accessCommand(
               'READ_WRITE',
-              '上传需求文档',
+              '上传需求/设计上下文',
               () => inputRef.current?.click(),
             )}
           >
@@ -113,10 +125,13 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       )}
       style={{ marginTop: 14 }}
     >
+      <Text type="secondary" style={{ display: 'block', marginBottom: documents.length === 0 ? 0 : 8 }}>
+        支持 Markdown、PNG、JPEG、WebP；最多 10 个附件，单个最大 5 MB，总计不超过 20 MB。
+      </Text>
       {loading ? (
         <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
       ) : documents.length === 0 ? (
-        <Text type="secondary">暂无需求文档，可上传需求澄清或设计 Markdown 文档。</Text>
+        <Text type="secondary">暂无需求/设计上下文，可上传需求澄清、设计 Markdown 文档或设计截图。</Text>
       ) : (
         <List
           dataSource={documents}
@@ -176,7 +191,9 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
               ]}
             >
               <List.Item.Meta
-                avatar={<FileMarkdownOutlined style={{ color: '#1677ff', fontSize: 20 }} />}
+                avatar={isVisualName(artifact.name)
+                  ? <FileImageOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+                  : <FileMarkdownOutlined style={{ color: '#1677ff', fontSize: 20 }} />}
                 title={<Text>{displayName(artifact.name)}</Text>}
                 description={(
                   <Space size={8}>

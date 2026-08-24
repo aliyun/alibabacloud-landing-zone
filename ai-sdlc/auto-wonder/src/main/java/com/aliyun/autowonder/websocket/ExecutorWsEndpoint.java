@@ -11,7 +11,7 @@ import java.util.Map;
 import com.aliyun.autowonder.executor.ExecutorService;
 import com.aliyun.autowonder.guidance.GuidanceService;
 
-@ServerEndpoint("/ws/executor")
+@ServerEndpoint(value = "/ws/executor", configurator = HandshakeHeaderCapturingConfigurator.class)
 public class ExecutorWsEndpoint {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutorWsEndpoint.class);

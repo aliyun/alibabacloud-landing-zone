@@ -16,5 +16,8 @@ public class ExternalCommentLinkDO {
     private String externalCommentId;
     private Long workitemCommentId;
     private String direction;
+    private Date sourceUpdatedAt;
+    private String sourceStatus;
     private Date gmtCreate;
+    private Date gmtModified;
 }

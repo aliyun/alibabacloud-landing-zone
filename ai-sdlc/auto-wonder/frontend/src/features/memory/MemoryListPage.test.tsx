@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -31,7 +31,7 @@ describe('MemoryListPage', () => {
     expect(normalizeMemoryOwnerRef(null)).toBeUndefined();
   });
 
-  it('offers employee squad and organization scopes without repository scope', async () => {
+  it('offers employee squad and workspace scopes without repository scope', async () => {
     server.use(
       http.get('/api/memories', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],
@@ -44,7 +44,7 @@ describe('MemoryListPage', () => {
 
     expect((await screen.findAllByText('员工')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('小队').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('组织全局').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('工作空间全局').length).toBeGreaterThan(0);
     expect(screen.queryByText('仓库')).not.toBeInTheDocument();
   });
 
@@ -294,5 +294,207 @@ describe('MemoryListPage', () => {
     const scrollContainer = await screen.findByText(longContent);
     expect(scrollContainer).toBeInTheDocument();
     expect(scrollContainer.style.overflowY).toBe('auto');
+  });
+
+  const groupedFixture = [
+    {
+      scope: 'AGENT', ownerRef: 400130, ownerName: 'AW全栈开发', total: 2,
+      memories: [
+        {
+          id: 3, scope: 'AGENT', ownerRef: 400130, type: 'FACT', status: 'ADOPTED',
+          title: '分组记忆一', contentMd: '内容一',
+          sourceRef: null, gmtCreate: '2026-08-02',
+        },
+        {
+          id: 2, scope: 'AGENT', ownerRef: 400130, type: 'RULE', status: 'ADOPTED',
+          title: '分组记忆二', contentMd: '内容二',
+          sourceRef: null, gmtCreate: '2026-08-01',
+        },
+      ],
+    },
+    {
+      scope: 'AGENT', ownerRef: 999999, ownerName: null, total: 1,
+      memories: [
+        {
+          id: 1, scope: 'AGENT', ownerRef: 999999, type: 'FACT', status: 'PENDING',
+          title: '孤儿记忆', contentMd: '内容三',
+          sourceRef: null, gmtCreate: '2026-08-01',
+        },
+      ],
+    },
+    {
+      scope: 'ORG', ownerRef: null, ownerName: null, total: 1,
+      memories: [
+        {
+          id: 4, scope: 'ORG', ownerRef: null, type: 'FACT', status: 'ADOPTED',
+          title: '组织记忆', contentMd: '内容四',
+          sourceRef: null, gmtCreate: '2026-07-30',
+        },
+      ],
+    },
+  ];
+
+  const agentHandlers = [
+    http.get('/api/agents/400130', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null,
+      data: { id: 400130, name: 'AW全栈开发' },
+    })),
+    http.get('/api/agents/999999', () => HttpResponse.json({
+      success: false, code: 'AGENT_NOT_FOUND', message: 'not found', traceId: null, data: null,
+    })),
+  ];
+
+  it('groups memories by digital worker in the by-agent view', async () => {
+    let groupRequests = 0;
+    server.use(
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/memories/grouped', () => {
+        groupRequests += 1;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+        });
+      }),
+    );
+    renderPage();
+
+    expect(groupRequests).toBe(0);
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+
+    expect(await screen.findByText('AW全栈开发')).toBeInTheDocument();
+    expect(screen.getByText('2 条记忆')).toBeInTheDocument();
+    expect(screen.getAllByText('1 条记忆')).toHaveLength(2);
+    expect(screen.getByText(/未归属/)).toBeInTheDocument();
+    expect(screen.getByText('组织级')).toBeInTheDocument();
+    expect(screen.getByText('分组记忆一')).toBeInTheDocument();
+    expect(screen.getByText('分组记忆二')).toBeInTheDocument();
+    expect(screen.getByText('孤儿记忆')).toBeInTheDocument();
+    expect(screen.getByText('组织记忆')).toBeInTheDocument();
+    expect(groupRequests).toBeGreaterThan(0);
+  });
+
+  it('passes type and status filters to the grouped endpoint', async () => {
+    const seenUrls: string[] = [];
+    server.use(
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/memories/grouped', ({ request }) => {
+        seenUrls.push(new URL(request.url).search);
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+        });
+      }),
+    );
+    renderPage();
+
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+    await screen.findByText('分组记忆一');
+
+    fireEvent.click(screen.getByRole('radio', { name: '规则' }));
+    await vi.waitFor(() => {
+      expect(seenUrls.some((q) => q.includes('type=RULE'))).toBe(true);
+    });
+  });
+
+  it('keeps the timeline view on the flat list endpoint after switching back', async () => {
+    server.use(
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{
+          id: 5, scope: 'ORG', type: 'FACT', status: 'ADOPTED',
+          title: '时间线记忆', contentMd: '时间线内容',
+          sourceRef: null, gmtCreate: '2026-08-03',
+        }],
+      })),
+      http.get('/api/memories/grouped', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+      })),
+    );
+    renderPage();
+    await screen.findByText('时间线记忆');
+
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+    await screen.findByText('分组记忆一');
+
+    fireEvent.click(screen.getByRole('radio', { name: '时间线' }));
+
+    expect(await screen.findByText('时间线记忆')).toBeInTheDocument();
+    expect(screen.queryByText('分组记忆一')).not.toBeInTheDocument();
+  });
+
+  it('promotes an adopted memory to squad scope from the edit modal', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{
+          id: 1, scope: 'AGENT', ownerRef: 400130, type: 'FACT', status: 'ADOPTED',
+          title: '员工记忆', contentMd: '原始内容',
+          sourceRef: null, gmtCreate: '2026-08-01',
+        }],
+      })),
+      http.get('/api/agents/400130', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { id: 400130, name: '测试员工' },
+      })),
+      http.put('/api/memories/1', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: 1, scope: 'SQUAD', ownerRef: 9, type: 'FACT', status: 'ADOPTED',
+            title: '员工记忆', contentMd: '原始内容',
+            sourceRef: null, gmtCreate: '2026-08-01',
+          },
+        });
+      }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /编辑/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑记忆' });
+    const scopeSelect = within(dialog).getByRole('combobox', { name: '范围' });
+    await userEvent.click(scopeSelect);
+    await userEvent.click((await screen.findAllByText('小队'))[0]);
+
+    const ownerInput = within(dialog).getByLabelText('小队 ID');
+    await userEvent.clear(ownerInput);
+    await userEvent.type(ownerInput, '9');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+
+    await vi.waitFor(() => expect(putBody).not.toBeNull());
+    expect(putBody!.scope).toBe('SQUAD');
+    expect(putBody!.ownerRef).toBe(9);
+    expect(putBody!.title).toBe('员工记忆');
+    await vi.waitFor(() => expect(successSpy).toHaveBeenCalledWith('已提升为小队记忆'));
+    successSpy.mockRestore();
+  });
+
+  it('hides the scope option when editing a non-adopted memory', async () => {
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{
+          id: 2, scope: 'AGENT', ownerRef: 400130, type: 'FACT', status: 'PENDING',
+          title: '待审核记忆', contentMd: '内容',
+          sourceRef: null, gmtCreate: '2026-08-01',
+        }],
+      })),
+      http.get('/api/agents/400130', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { id: 400130, name: '测试员工' },
+      })),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /编辑/ }));
+
+    const dialog = await screen.findByRole('dialog', { name: '编辑记忆' });
+    expect(within(dialog).queryByRole('combobox', { name: '范围' })).not.toBeInTheDocument();
   });
 });

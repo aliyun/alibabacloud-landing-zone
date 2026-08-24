@@ -4,8 +4,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.template.dto.ApplyResultVO;
 import com.aliyun.autowonder.template.dto.SquadTemplateDetailVO;
 import com.aliyun.autowonder.template.dto.SquadTemplateVO;
@@ -15,7 +15,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/squad-templates")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看小队模板")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看小队模板")
 public class SquadTemplateController {
 
     private final SquadTemplateService templateService;
@@ -26,7 +26,7 @@ public class SquadTemplateController {
 
     @GetMapping
     public Result<List<SquadTemplateVO>> list() {
-        return Result.ok(templateService.list(currentOrgId()));
+        return Result.ok(templateService.list(currentWorkspaceId()));
     }
 
     @GetMapping("/{id}")
@@ -35,9 +35,9 @@ public class SquadTemplateController {
     }
 
     @PostMapping("/{id}/apply")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "应用小队模板")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "应用小队模板")
     public Result<ApplyResultVO> apply(@PathVariable("id") Long id) {
-        return Result.ok(templateService.apply(id, currentOrgId(), currentUserId()));
+        return Result.ok(templateService.apply(id, currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -48,11 +48,11 @@ public class SquadTemplateController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

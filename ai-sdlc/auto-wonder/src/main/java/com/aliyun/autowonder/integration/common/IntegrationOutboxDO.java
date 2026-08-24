@@ -15,6 +15,8 @@ public class IntegrationOutboxDO {
     private Long workitemId;
     private String eventType;
     private String payloadJson;
+    private String operationKey;
+    private Long lockVersion;
     private String status;
     private Integer retryCount;
     private Date nextRetryAt;

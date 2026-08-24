@@ -62,7 +62,7 @@ class UserServiceLoginTest {
         assertNotNull(resp.getRefreshToken());
         TokenPayload payload = jwtService.parse(resp.getAccessToken());
         assertEquals(42L, payload.getUserId());
-        assertNull(payload.getCurrentOrgId());
+        assertNull(payload.getCurrentWorkspaceId());
         verify(sessionService).storeRefresh(eq(resp.getRefreshToken()), eq(42L), anyInt());
     }
 

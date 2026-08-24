@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.user;
 
 import com.aliyun.autowonder.common.error.BizException;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.user.dto.DeactivationRequest;
 import com.aliyun.autowonder.user.dto.DeactivationStatusVO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
@@ -17,8 +17,8 @@ import static org.mockito.Mockito.*;
 class AccountDeactivationServiceTest {
 
     private AccountDeactivationService newService(UserDao userDao, WorkitemDao workitemDao,
-                                                   OrgMemberDao orgMemberDao) {
-        return new AccountDeactivationService(userDao, workitemDao, orgMemberDao);
+                                                   WorkspaceMemberDao workspaceMemberDao) {
+        return new AccountDeactivationService(userDao, workitemDao, workspaceMemberDao);
     }
 
     private UserDO makeUser(Long id, String username) {
@@ -33,15 +33,15 @@ class AccountDeactivationServiceTest {
     void initiateDeactivationSuccess() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         when(userDao.findById(1L)).thenReturn(user);
         when(workitemDao.countActiveByAssignee("HUMAN", 1L)).thenReturn(0);
-        when(orgMemberDao.isSoleAdminOfAnyOrg(1L)).thenReturn(false);
+        when(workspaceMemberDao.isSoleAdminOfAnyWorkspace(1L)).thenReturn(false);
         when(userDao.updateDeactivation(eq(1L), any(Date.class), any(Date.class))).thenReturn(1);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationRequest req = new DeactivationRequest();
         req.setConfirmUsername("testuser");
 
@@ -53,7 +53,7 @@ class AccountDeactivationServiceTest {
     void initiateDeactivationAlreadyPending() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         user.setDeactivatedAt(new Date());
@@ -62,7 +62,7 @@ class AccountDeactivationServiceTest {
         user.setCoolingOffExpiresAt(cal.getTime());
         when(userDao.findById(1L)).thenReturn(user);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationRequest req = new DeactivationRequest();
         req.setConfirmUsername("testuser");
 
@@ -75,13 +75,13 @@ class AccountDeactivationServiceTest {
     void initiateDeactivationBlockedByWorkitems() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         when(userDao.findById(1L)).thenReturn(user);
         when(workitemDao.countActiveByAssignee("HUMAN", 1L)).thenReturn(3);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationRequest req = new DeactivationRequest();
         req.setConfirmUsername("testuser");
 
@@ -94,14 +94,14 @@ class AccountDeactivationServiceTest {
     void initiateDeactivationBlockedBySoleAdmin() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         when(userDao.findById(1L)).thenReturn(user);
         when(workitemDao.countActiveByAssignee("HUMAN", 1L)).thenReturn(0);
-        when(orgMemberDao.isSoleAdminOfAnyOrg(1L)).thenReturn(true);
+        when(workspaceMemberDao.isSoleAdminOfAnyWorkspace(1L)).thenReturn(true);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationRequest req = new DeactivationRequest();
         req.setConfirmUsername("testuser");
 
@@ -114,12 +114,12 @@ class AccountDeactivationServiceTest {
     void initiateDeactivationUsernameMismatch() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         when(userDao.findById(1L)).thenReturn(user);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationRequest req = new DeactivationRequest();
         req.setConfirmUsername("wronguser");
 
@@ -132,7 +132,7 @@ class AccountDeactivationServiceTest {
     void revokeDeactivationSuccess() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         user.setDeactivatedAt(new Date());
@@ -142,7 +142,7 @@ class AccountDeactivationServiceTest {
         when(userDao.findById(1L)).thenReturn(user);
         when(userDao.revokeDeactivation(eq(1L), any(Date.class))).thenReturn(1);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
 
         assertDoesNotThrow(() -> svc.revokeDeactivation(1L));
         verify(userDao).revokeDeactivation(eq(1L), any(Date.class));
@@ -152,12 +152,12 @@ class AccountDeactivationServiceTest {
     void revokeDeactivationNotPending() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         when(userDao.findById(1L)).thenReturn(user);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
 
         BizException ex = assertThrows(BizException.class,
                 () -> svc.revokeDeactivation(1L));
@@ -168,12 +168,12 @@ class AccountDeactivationServiceTest {
     void getDeactivationStatusWhenNotPending() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         when(userDao.findById(1L)).thenReturn(user);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationStatusVO status = svc.getDeactivationStatus(1L);
 
         assertFalse(status.isPending());
@@ -184,7 +184,7 @@ class AccountDeactivationServiceTest {
     void getDeactivationStatusWhenPending() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user = makeUser(1L, "testuser");
         user.setDeactivatedAt(new Date());
@@ -193,7 +193,7 @@ class AccountDeactivationServiceTest {
         user.setCoolingOffExpiresAt(cal.getTime());
         when(userDao.findById(1L)).thenReturn(user);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         DeactivationStatusVO status = svc.getDeactivationStatus(1L);
 
         assertTrue(status.isPending());
@@ -205,13 +205,13 @@ class AccountDeactivationServiceTest {
     void processExpiredDeactivations() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO expiredUser = makeUser(1L, "expired");
         when(userDao.listExpiredDeactivations(100)).thenReturn(Collections.singletonList(expiredUser));
         when(userDao.anonymizeUser(1L)).thenReturn(1);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         int processed = svc.processExpiredDeactivations();
 
         assertEquals(1, processed);
@@ -222,7 +222,7 @@ class AccountDeactivationServiceTest {
     void processExpiredDeactivationsHandlesErrors() {
         UserDao userDao = mock(UserDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
 
         UserDO user1 = makeUser(1L, "user1");
         UserDO user2 = makeUser(2L, "user2");
@@ -230,7 +230,7 @@ class AccountDeactivationServiceTest {
         when(userDao.anonymizeUser(1L)).thenThrow(new RuntimeException("db error"));
         when(userDao.anonymizeUser(2L)).thenReturn(1);
 
-        AccountDeactivationService svc = newService(userDao, workitemDao, orgMemberDao);
+        AccountDeactivationService svc = newService(userDao, workitemDao, workspaceMemberDao);
         int processed = svc.processExpiredDeactivations();
 
         assertEquals(1, processed);

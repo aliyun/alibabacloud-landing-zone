@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.common.error.BizException;
@@ -10,7 +10,7 @@ import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.mcp.dto.IssuedMcpTokenVO;
 import com.aliyun.autowonder.mcp.dto.McpAccessTokenVO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,7 +67,7 @@ class McpAccessTokenServiceTest {
     }
 
     @Test
-    void issuePersistsOnlyTheOwnerWithoutOrganizationOrLevel() {
+    void issuePersistsOnlyTheOwnerWithoutWorkspaceOrLevel() {
         doAnswer(invocation -> {
             ((McpAccessTokenDO) invocation.getArgument(0)).setId(10L);
             return null;
@@ -93,7 +93,7 @@ class McpAccessTokenServiceTest {
     }
 
     @Test
-    void issueNeedsNoOrganizationMembershipLookup() {
+    void issueNeedsNoWorkspaceMembershipLookup() {
         service.issue("token", USER_ID);
 
         verify(tokenDao).insert(any(McpAccessTokenDO.class));
@@ -110,7 +110,7 @@ class McpAccessTokenServiceTest {
     }
 
     @Test
-    void listReturnsEveryPersonalTokenOfTheOwnerRegardlessOfOrganization() {
+    void listReturnsEveryPersonalTokenOfTheOwnerRegardlessOfWorkspace() {
         when(tokenDao.listByUser(USER_ID))
                 .thenReturn(List.of(tokenRow(1L, "first"), tokenRow(2L, "second")));
 
@@ -180,7 +180,7 @@ class McpAccessTokenServiceTest {
     }
 
     @Test
-    void migratedLongLivedTokenAuthenticatesWithoutOrganizationOrLevel() {
+    void migratedLongLivedTokenAuthenticatesWithoutWorkspaceOrLevel() {
         McpAccessTokenDO row = tokenRow(1L, "legacy");
         when(tokenDao.findByHash(McpAccessTokenService.hash(LONG_TOKEN))).thenReturn(row);
         when(tokenDao.touchLastUsed(eq(1L), any())).thenReturn(1);
@@ -190,7 +190,7 @@ class McpAccessTokenServiceTest {
 
         assertNull(principal.tenantId());
         assertNull(principal.accessLevel());
-        assertFalse(principal.isOrgScoped());
+        assertFalse(principal.isWorkspaceScoped());
         assertEquals(USER_ID, principal.userId());
         assertEquals(1L, principal.tokenId());
         assertEquals(McpAccessTokenService.CredentialType.LONG_LIVED,
@@ -237,7 +237,7 @@ class McpAccessTokenServiceTest {
     }
 
     @Test
-    void conversationTokenStaysScopedToItsOrganization() {
+    void conversationTokenStaysScopedToItsWorkspace() {
         AgentConversationDao conversationDao = mock(AgentConversationDao.class);
         AgentConversationDO conversation = new AgentConversationDO();
         conversation.setId(22L);
@@ -254,9 +254,9 @@ class McpAccessTokenServiceTest {
                 authService.authenticateBearer("Bearer " + token);
 
         assertEquals(TENANT_ID, principal.tenantId());
-        assertTrue(principal.isOrgScoped());
+        assertTrue(principal.isWorkspaceScoped());
         assertEquals(USER_ID, principal.userId());
-        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
         assertEquals(McpAccessTokenService.CredentialType.CONVERSATION,
                 principal.credentialType());
 
@@ -266,7 +266,7 @@ class McpAccessTokenServiceTest {
     }
 
     @Test
-    void dispatchPrincipalStaysOrganizationScopedReadWrite() {
+    void dispatchPrincipalStaysWorkspaceScopedReadWrite() {
         DispatchDao dispatchDao = mock(DispatchDao.class);
         DispatchDO dispatch = new DispatchDO();
         dispatch.setId(99L);
@@ -275,7 +275,7 @@ class McpAccessTokenServiceTest {
         dispatch.setStatus("RUNNING");
         when(dispatchDao.findById(99L)).thenReturn(dispatch);
         DispatchMcpTokenService dispatchTokens = new DispatchMcpTokenService(
-                testJwtService(), dispatchDao, mock(WorkitemDao.class), mock(OrgMemberDao.class));
+                testJwtService(), dispatchDao, mock(WorkitemDao.class), mock(WorkspaceMemberDao.class));
         String token = dispatchTokens.issue(dispatch);
 
         McpAccessTokenService authService =
@@ -284,8 +284,8 @@ class McpAccessTokenServiceTest {
                 authService.authenticateBearer("Bearer " + token);
 
         assertEquals(TENANT_ID, principal.tenantId());
-        assertTrue(principal.isOrgScoped());
-        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
+        assertTrue(principal.isWorkspaceScoped());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
         assertEquals(McpAccessTokenService.CredentialType.DISPATCH,
                 principal.credentialType());
 
@@ -311,13 +311,13 @@ class McpAccessTokenServiceTest {
         when(workitemDao.findById(300L)).thenReturn(workitem);
         when(dispatchDao.findById(100L)).thenReturn(dispatch);
         DispatchMcpTokenService tokens = new DispatchMcpTokenService(
-                testJwtService(), dispatchDao, workitemDao, mock(OrgMemberDao.class));
+                testJwtService(), dispatchDao, workitemDao, mock(WorkspaceMemberDao.class));
 
         McpAccessTokenService.Principal principal =
                 tokens.authenticate(tokens.issue(dispatch));
 
         assertEquals(8L, principal.userId());
-        assertEquals(OrgAccessLevel.READ_WRITE, principal.accessLevel());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
         assertEquals(McpAccessTokenService.CredentialType.DISPATCH,
                 principal.credentialType());
     }

@@ -12,8 +12,8 @@ import com.aliyun.autowonder.integration.dto.AoneTestConnectionResult;
 import com.aliyun.autowonder.integration.provider.ExternalProject;
 import com.aliyun.autowonder.integration.provider.ExternalProjectMember;
 import com.aliyun.autowonder.integration.provider.PageResult;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,7 +29,7 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "autowonder.integration.aone", name = "enabled",
         havingValue = "true", matchIfMissing = false)
 @RequestMapping("/api/integrations/aone")
-@RequireOrgAccess(value = OrgAccessLevel.ADMIN, action = "管理Aone集成")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理Aone集成")
 public class AoneIntegrationController {
 
     private final AoneIntegrationService integrationService;
@@ -47,13 +47,13 @@ public class AoneIntegrationController {
 
     @PostMapping("/bindings")
     public Result<AoneBindingVO> createBinding(@RequestBody AoneBindingRequest req) {
-        return Result.ok(integrationService.createBinding(req, currentOrgId(), currentUserId()));
+        return Result.ok(integrationService.createBinding(req, currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/bindings")
     public Result<List<AoneBindingVO>> listBindings(@RequestParam(value = "page", defaultValue = "1") int page,
                                                     @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(integrationService.listBindings(currentOrgId(), page, size));
+        return Result.ok(integrationService.listBindings(currentWorkspaceId(), page, size));
     }
 
     @PostMapping("/projects/search")
@@ -72,7 +72,7 @@ public class AoneIntegrationController {
 
     @PostMapping("/bindings/{id}/sync-now")
     public Result<AoneSyncResult> syncNow(@PathVariable("id") Long id, @RequestBody AoneSyncNowRequest req) {
-        return Result.ok(integrationService.syncNow(id, req.getIssueIds(), currentOrgId(), currentUserId()));
+        return Result.ok(integrationService.syncNow(id, req.getIssueIds(), currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/outbox/dispatch-now")
@@ -86,9 +86,9 @@ public class AoneIntegrationController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) throw new BizException(ErrorCode.ORG_NOT_MEMBER);
-        return orgId;
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
+        return workspaceId;
     }
 }

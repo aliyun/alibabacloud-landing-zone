@@ -26,7 +26,7 @@ function renderPage() {
 describe('AgentListPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     vi.restoreAllMocks();
   });
 
@@ -74,7 +74,7 @@ describe('AgentListPage', () => {
     const error = vi.spyOn(message, 'error').mockImplementation(
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     server.use(
       http.get('/api/agents', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],

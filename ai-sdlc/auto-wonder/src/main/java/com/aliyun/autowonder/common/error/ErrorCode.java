@@ -10,16 +10,16 @@ public enum ErrorCode {
     NOT_FOUND("10404", "资源不存在"),
     CONFLICT("10409", "数据冲突"),
     RATE_LIMITED("10429", "请求过于频繁"),
-    // 11xxx 组织
-    ORG_NOT_MEMBER("11001", "非该组织成员"),
-    ORG_NAME_REQUIRED("11002", "组织名不能为空"),
-    ORG_NAME_DUPLICATE("11003", "组织名称已存在"),
-    // 12xxx 组织访问等级
-    ORG_ACCESS_LEVEL_INVALID("12007", "组织访问级别不合法"),
-    ORG_ACCESS_INSUFFICIENT("12008", "组织访问级别不足"),
-    ORG_OWNER_MUTATION_PROTECTED("12009", "组织所有者不可直接修改"),
-    ORG_SELF_LEVEL_MUTATION_FORBIDDEN("12010", "不可修改自己的组织访问级别"),
-    ORG_OWNER_TRANSFER_INVALID("12011", "组织所有者转让不合法"),
+    // 11xxx 工作空间
+    WORKSPACE_NOT_MEMBER("11001", "非该工作空间成员"),
+    WORKSPACE_NAME_REQUIRED("11002", "工作空间名不能为空"),
+    WORKSPACE_NAME_DUPLICATE("11003", "工作空间名称已存在"),
+    // 12xxx 工作空间访问等级
+    WORKSPACE_ACCESS_LEVEL_INVALID("12007", "工作空间访问级别不合法"),
+    WORKSPACE_ACCESS_INSUFFICIENT("12008", "工作空间访问级别不足"),
+    WORKSPACE_OWNER_MUTATION_PROTECTED("12009", "工作空间所有者不可直接修改"),
+    WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN("12010", "不可修改自己的工作空间访问级别"),
+    WORKSPACE_OWNER_TRANSFER_INVALID("12011", "工作空间所有者转让不合法"),
     // 13xxx 状态机/工单/澄清
     WORK_TYPE_INVALID("13001", "工单类型不合法"),
     STATUS_TEMPLATE_NOT_FOUND("13002", "未找到默认状态模版"),
@@ -28,6 +28,7 @@ public enum ErrorCode {
     WORKITEM_VERSION_CONFLICT("13005", "工单已被修改,请重试"),
     WORKITEM_EXTERNAL_NO_DELETE("13006", "外部平台集成工单不可删除"),
     WORKITEM_RUNNING_NO_DELETE("13007", "工单正在执行中，请等待完成或结束后再删除"),
+    WORKITEM_EXTERNAL_CONTENT_READ_ONLY("13008", "外部工单的标题和描述由来源平台维护"),
     STATUS_TEMPLATE_NAME_REQUIRED("13010", "模版名称不能为空"),
     STATUS_TEMPLATE_WORK_TYPE_REQUIRED("13011", "工单类型不能为空"),
     STATUS_TEMPLATE_DELETE_IN_USE("13012", "模版被工单引用,无法删除"),
@@ -113,6 +114,7 @@ public enum ErrorCode {
     MEMORY_VERSION_CONFLICT("21004", "记忆已被修改,请重试"),
     MEMORY_NOT_PENDING("21005", "记忆非待审核状态"),
     MEMORY_ALREADY_REVIEWED("21006", "记忆已被审核"),
+    MEMORY_SCOPE_CHANGE_NOT_ADOPTED("21007", "仅已采纳记忆支持变更范围"),
     // 22xxx 技能中心
     SKILL_NOT_FOUND("22001", "技能不存在"),
     SKILL_NAME_REQUIRED("22002", "技能名称不能为空"),
@@ -141,7 +143,7 @@ public enum ErrorCode {
     // 29xxx 账号注销
     DEACTIVATION_ALREADY_PENDING("29001", "账号注销申请已提交，当前处于冷静期"),
     DEACTIVATION_BLOCKED_BY_WORKITEMS("29002", "存在未完结的工单，请先处理后再申请注销"),
-    DEACTIVATION_BLOCKED_BY_SOLE_ADMIN("29003", "您是某组织的唯一管理员，请先转让管理权后再申请注销"),
+    DEACTIVATION_BLOCKED_BY_SOLE_ADMIN("29003", "您是某工作空间的唯一管理员，请先转让管理权后再申请注销"),
     DEACTIVATION_NOT_PENDING("29004", "当前没有进行中的注销申请"),
     DEACTIVATION_ALREADY_REVOKED("29005", "注销申请已撤销"),
     DEACTIVATION_CONFIRM_MISMATCH("29006", "确认输入不匹配，请重新输入用户名确认"),

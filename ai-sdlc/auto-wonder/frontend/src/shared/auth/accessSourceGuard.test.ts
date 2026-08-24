@@ -12,7 +12,7 @@ const productionModules = import.meta.glob([
   import: 'default',
 }) as Record<string, string>;
 
-describe('organization access source guard', () => {
+describe('workspace access source guard', () => {
   it('does not restore legacy permission gates or role APIs', () => {
     const forbidden = [
       /\bPermGate\b/,
@@ -30,7 +30,7 @@ describe('organization access source guard', () => {
     }
   });
 
-  it('does not hide or disable controls based on organization access level', () => {
+  it('does not hide or disable controls based on workspace access level', () => {
     const accessControlledPresentation = [
       /accessLevel[^\n]{0,120}\b(?:disabled|hidden)\b/,
       /\b(?:disabled|hidden)\b[^\n]{0,120}accessLevel/,

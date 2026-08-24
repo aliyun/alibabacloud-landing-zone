@@ -4,7 +4,7 @@ import { AppLayout } from './AppLayout';
 import { RouteGuard } from './RouteGuard';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { RegisterPage } from '@/features/auth/RegisterPage';
-import { OrgSelectPage } from '@/features/auth/OrgSelectPage';
+import { WorkspaceSelectPage } from '@/features/auth/WorkspaceSelectPage';
 import { WorkitemListPage } from '@/features/workitem/WorkitemListPage';
 import { WorkitemCreatePage } from '@/features/workitem/WorkitemCreatePage';
 import { WorkitemDetailPage } from '@/features/workitem/WorkitemDetailPage';
@@ -48,22 +48,22 @@ export function createAppRoutes(): RouteObject[] {
       ],
     },
     {
-      path: '/orgs',
-      element: <RouteGuard requireOrg={false}><OrgSelectPage /></RouteGuard>,
+      path: '/workspaces',
+      element: <RouteGuard requireWorkspace={false}><WorkspaceSelectPage /></RouteGuard>,
     },
     {
-      path: '/orgs/branding',
-      element: <RouteGuard requireOrg={false}><BrandingConfigPage /></RouteGuard>,
+      path: '/workspaces/branding',
+      element: <RouteGuard requireWorkspace={false}><BrandingConfigPage /></RouteGuard>,
     },
     {
-      element: <RouteGuard requireOrg={false}><AppLayout /></RouteGuard>,
+      element: <RouteGuard requireWorkspace={false}><AppLayout /></RouteGuard>,
       children: [
         { path: '/profile/settings', element: <ProfileSettingsPage /> },
       ],
     },
     {
       path: '/platform/branding',
-      element: <Navigate to="/orgs" replace />,
+      element: <Navigate to="/workspaces" replace />,
     },
     {
       path: '/open-platform',

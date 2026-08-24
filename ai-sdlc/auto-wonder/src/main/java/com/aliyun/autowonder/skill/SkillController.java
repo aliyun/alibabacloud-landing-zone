@@ -4,8 +4,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
 import com.aliyun.autowonder.skill.dto.SkillConnectionTestVO;
 import com.aliyun.autowonder.skill.dto.SkillPackageInspectVO;
@@ -18,7 +18,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/skills")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看技能")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看技能")
 public class SkillController {
 
     private final SkillService skillService;
@@ -33,9 +33,9 @@ public class SkillController {
     }
 
     @PostMapping
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "创建技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建技能")
     public Result<SkillVO> create(@RequestBody CreateSkillRequest req) {
-        return Result.ok(skillService.create(req, currentOrgId(), currentUserId()));
+        return Result.ok(skillService.create(req, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/package/inspect")
@@ -44,13 +44,13 @@ public class SkillController {
     }
 
     @PostMapping("/package")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "从技能包创建技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "从技能包创建技能")
     public Result<SkillVO> createFromPackage(@RequestParam("file") MultipartFile file,
 			@RequestParam(value = "type", defaultValue = "SKILL") String type,
 			@RequestParam(value = "name", required = false) String name,
 			@RequestParam(value = "description", required = false) String description,
 			@RequestParam(value = "providers", required = false) List<String> providers) {
-        return Result.ok(skillPackageService.createFromPackage(file, type, name, description, providers, currentOrgId(), currentUserId()));
+        return Result.ok(skillPackageService.createFromPackage(file, type, name, description, providers, currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/{id}")
@@ -59,10 +59,10 @@ public class SkillController {
     }
 
     @PostMapping("/{id}/connection-test")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "测试技能连接")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "测试技能连接")
     public Result<SkillConnectionTestVO> testConnection(@PathVariable("id") Long id,
             @RequestParam(value = "executorId", required = false) Long executorId) {
-        return Result.ok(skillConnectionTestService.test(id, currentOrgId(), executorId));
+        return Result.ok(skillConnectionTestService.test(id, currentWorkspaceId(), executorId));
     }
 
     @GetMapping
@@ -74,24 +74,24 @@ public class SkillController {
     }
 
     @PutMapping("/{id}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "更新技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新技能")
     public Result<SkillVO> update(@PathVariable("id") Long id, @RequestBody UpdateSkillRequest req) {
-        return Result.ok(skillService.update(id, req, currentOrgId(), currentUserId()));
+        return Result.ok(skillService.update(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/package")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "更新技能包")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新技能包")
     public Result<SkillVO> updatePackage(@PathVariable("id") Long id, @RequestParam("file") MultipartFile file,
 			@RequestParam(value = "name", required = false) String name,
 			@RequestParam(value = "description", required = false) String description,
 			@RequestParam(value = "providers", required = false) List<String> providers) {
-        return Result.ok(skillPackageService.updatePackage(id, file, name, description, providers, currentOrgId(), currentUserId()));
+        return Result.ok(skillPackageService.updatePackage(id, file, name, description, providers, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "删除技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除技能")
     public Result<Void> delete(@PathVariable("id") Long id) {
-        skillService.delete(id, currentOrgId(), currentUserId());
+        skillService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
@@ -103,11 +103,11 @@ public class SkillController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

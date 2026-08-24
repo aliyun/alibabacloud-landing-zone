@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.workitem;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.integration.AoneWorkitemRefreshService;
@@ -32,7 +32,7 @@ class WorkitemControllerTest {
         GuidanceService guidanceService = mock(GuidanceService.class);
         WorkitemController controller =
                 new WorkitemController(workitemService, refreshService, guidanceService);
-        setContext(OrgAccessLevel.READ_ONLY);
+        setContext(WorkspaceAccessLevel.READ_ONLY);
         WorkitemVO workitem = new WorkitemVO();
         List<CommentVO> comments = List.of(new CommentVO());
         List<TimelineItemVO> timeline = List.of(new TimelineItemVO());
@@ -55,7 +55,7 @@ class WorkitemControllerTest {
         GuidanceService guidanceService = mock(GuidanceService.class);
         WorkitemController controller =
                 new WorkitemController(workitemService, refreshService, guidanceService);
-        setContext(OrgAccessLevel.READ_WRITE);
+        setContext(WorkspaceAccessLevel.READ_WRITE);
         when(workitemService.listComments(2L)).thenReturn(List.of());
         when(workitemService.getUnifiedTimeline(3L)).thenReturn(List.of());
 
@@ -68,9 +68,9 @@ class WorkitemControllerTest {
         verify(refreshService).refreshIfLinked(3L, 100L, 7L);
     }
 
-    private void setContext(OrgAccessLevel accessLevel) {
-        AutoWonderContext.get().setCurrentOrgId(100L);
+    private void setContext(WorkspaceAccessLevel accessLevel) {
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
         AutoWonderContext.get().setUserId(7L);
-        AutoWonderContext.get().setOrgAccessLevel(accessLevel);
+        AutoWonderContext.get().setWorkspaceAccessLevel(accessLevel);
     }
 }

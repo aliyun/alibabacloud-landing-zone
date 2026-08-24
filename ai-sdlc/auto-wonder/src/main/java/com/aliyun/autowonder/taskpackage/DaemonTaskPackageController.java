@@ -5,6 +5,8 @@ import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchStatus;
 import com.aliyun.autowonder.storage.ObjectStorage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +21,7 @@ import java.util.Set;
 @RequestMapping("/api/daemon")
 public class DaemonTaskPackageController {
 
+    private static final Logger log = LoggerFactory.getLogger(DaemonTaskPackageController.class);
     private static final int DOWNLOAD_TTL_SECONDS = 600;
     private static final Set<String> REFRESHABLE_STATUSES = Set.of(
             DispatchStatus.DISPATCHED,
@@ -53,8 +56,11 @@ public class DaemonTaskPackageController {
                 || dispatch.getPackageOssRef().isBlank()) {
             return ResponseEntity.status(409).body(Map.of("error", "package URL is not refreshable"));
         }
+        String downloadUrl = storage.presignGet(dispatch.getPackageOssRef(), DOWNLOAD_TTL_SECONDS);
+        log.info("taskpackage download url refreshed dispatchId={} ossRef={} ttlSeconds={} downloadUrl={}",
+                dispatchId, dispatch.getPackageOssRef(), DOWNLOAD_TTL_SECONDS, downloadUrl);
         return ResponseEntity.ok(Map.of(
-                "downloadUrl", storage.presignGet(dispatch.getPackageOssRef(), DOWNLOAD_TTL_SECONDS),
+                "downloadUrl", downloadUrl,
                 "expiresInSeconds", DOWNLOAD_TTL_SECONDS
         ));
     }

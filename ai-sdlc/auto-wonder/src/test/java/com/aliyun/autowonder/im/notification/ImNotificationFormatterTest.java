@@ -29,12 +29,12 @@ class ImNotificationFormatterTest {
         assertEquals("""
                 ### 需要你处理
 
-                **组织**：研发效能部
+                **工作空间**：研发效能部
                 **工单**：生产环境发布审批
                 **状态**：已指派
                 **指派人**：张三
 
-                [查看工单](https://auto.example.com/workitems/42?orgId=7)""", message);
+                [查看工单](https://auto.example.com/workitems/42?workspaceId=7)""", message);
         assertFalse(message.contains("查看工单：https://"));
         assertFalse(message.contains("正文"));
         assertFalse(message.contains("40013"));
@@ -67,13 +67,13 @@ class ImNotificationFormatterTest {
         assertEquals("""
                 ### 评论中提到了你
 
-                **组织**：研发效能部
+                **工作空间**：研发效能部
                 **工单**：生产环境发布审批
                 **评论人**：AW项目管理员
                 **提及内容**：
                 > @李四 请确认一下这个非常长的评论内容不应该完整塞进通知里，...
 
-                [查看工单](https://auto.example.com/workitems/42?orgId=7)""", message);
+                [查看工单](https://auto.example.com/workitems/42?workspaceId=7)""", message);
         assertFalse(message.contains("后面的内容"));
         assertFalse(message.contains("40013"));
     }

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { ApiOutlined, CloudSyncOutlined, SaveOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
@@ -155,10 +155,19 @@ function AoneIntegrationPanel() {
       render: (v) => v ? <Tag color="success">启用</Tag> : <Tag>停用</Tag>,
     },
     {
-      title: '最近同步',
+      title: '最近成功同步',
       dataIndex: 'lastSuccessAt',
       width: 180,
-      render: (v) => v ? new Date(v).toLocaleString('zh-CN') : '-',
+      render: (_, record) => (
+        <Space direction="vertical" size={2}>
+          <span>{record.lastSuccessAt ? new Date(record.lastSuccessAt).toLocaleString('zh-CN') : '-'}</span>
+          {record.lastError && (
+            <Tooltip title={record.lastError}>
+              <Tag color="error">最近同步失败</Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
   ];
 

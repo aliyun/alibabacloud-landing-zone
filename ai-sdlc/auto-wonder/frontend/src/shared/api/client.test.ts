@@ -118,8 +118,8 @@ describe('apiClient', () => {
     let mutationCalls = 0;
     let membershipCalls = 0;
     useAuthStore.getState().setTokens('still-valid', 'refresh-token');
-    useAuthStore.getState().setCurrentOrg(
-      { id: 7, name: 'Org', description: '' },
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: 'Workspace', description: '' },
       'ADMIN',
     );
     server.use(
@@ -133,7 +133,7 @@ describe('apiClient', () => {
           traceId: 'trace-denied',
         }, { status: 403 });
       }),
-      http.get('/api/orgs/current/membership', () => {
+      http.get('/api/workspaces/current/membership', () => {
         membershipCalls += 1;
         return HttpResponse.json({
           success: true,
@@ -158,11 +158,11 @@ describe('apiClient', () => {
     useAuthStore.getState().clear();
   });
 
-  it('refreshes membership after an organization access-level denial', async () => {
+  it('refreshes membership after an workspace access-level denial', async () => {
     let membershipCalls = 0;
     useAuthStore.getState().setTokens('still-valid', 'refresh-token');
-    useAuthStore.getState().setCurrentOrg(
-      { id: 7, name: 'Org', description: '' },
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: 'Workspace', description: '' },
       'ADMIN',
     );
     server.use(
@@ -177,7 +177,7 @@ describe('apiClient', () => {
         },
         traceId: 'trace-access-denied',
       }, { status: 403 })),
-      http.get('/api/orgs/current/membership', () => {
+      http.get('/api/workspaces/current/membership', () => {
         membershipCalls += 1;
         return HttpResponse.json({
           success: true,
@@ -201,27 +201,27 @@ describe('apiClient', () => {
     useAuthStore.getState().clear();
   });
 
-  it('clears a removed member organization immediately after a normal API response', async () => {
+  it('clears a removed member workspace immediately after a normal API response', async () => {
     let membershipCalls = 0;
     useAuthStore.getState().setTokens('still-valid', 'refresh-token');
-    useAuthStore.getState().setCurrentOrg(
-      { id: 7, name: 'Removed Org', description: '' },
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: 'Removed Workspace', description: '' },
       'ADMIN',
     );
     server.use(
       http.get('/api/protected-read', () => HttpResponse.json({
         success: false,
         code: '11001',
-        message: '当前用户不是该组织成员',
+        message: '当前用户不是该工作空间成员',
         data: null,
         traceId: 'trace-removed',
       }, { status: 403 })),
-      http.get('/api/orgs/current/membership', () => {
+      http.get('/api/workspaces/current/membership', () => {
         membershipCalls += 1;
         return HttpResponse.json({
           success: false,
           code: '11001',
-          message: '当前用户不是该组织成员',
+          message: '当前用户不是该工作空间成员',
           data: null,
           traceId: null,
         }, { status: 403 });
@@ -234,28 +234,28 @@ describe('apiClient', () => {
     });
 
     expect(membershipCalls).toBe(1);
-    expect(useAuthStore.getState().currentOrg).toBeNull();
+    expect(useAuthStore.getState().currentWorkspace).toBeNull();
     expect(useAuthStore.getState().accessLevel).toBeNull();
     expect(useAuthStore.getState().accessToken).toBe('still-valid');
     useAuthStore.getState().clear();
   });
 
-  it('keeps the current organization when switching to an unrelated organization is denied', async () => {
+  it('keeps the current workspace when switching to an unrelated workspace is denied', async () => {
     let membershipCalls = 0;
     useAuthStore.getState().setTokens('still-valid', 'refresh-token');
-    useAuthStore.getState().setCurrentOrg(
-      { id: 7, name: 'Current Org', description: '' },
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: 'Current Workspace', description: '' },
       'READ_WRITE',
     );
     server.use(
-      http.post('/api/orgs/99/switch', () => HttpResponse.json({
+      http.post('/api/workspaces/99/switch', () => HttpResponse.json({
         success: false,
         code: '11001',
-        message: '当前用户不是该组织成员',
+        message: '当前用户不是该工作空间成员',
         data: null,
         traceId: 'trace-switch-denied',
       }, { status: 403 })),
-      http.get('/api/orgs/current/membership', () => {
+      http.get('/api/workspaces/current/membership', () => {
         membershipCalls += 1;
         return HttpResponse.json({
           success: true,
@@ -267,13 +267,13 @@ describe('apiClient', () => {
       }),
     );
 
-    await expect(apiClient.post('/api/orgs/99/switch')).rejects.toMatchObject({
+    await expect(apiClient.post('/api/workspaces/99/switch')).rejects.toMatchObject({
       code: '11001',
       traceId: 'trace-switch-denied',
     });
 
     expect(membershipCalls).toBe(1);
-    expect(useAuthStore.getState().currentOrg?.id).toBe(7);
+    expect(useAuthStore.getState().currentWorkspace?.id).toBe(7);
     expect(useAuthStore.getState().accessLevel).toBe('READ_WRITE');
     useAuthStore.getState().clear();
   });

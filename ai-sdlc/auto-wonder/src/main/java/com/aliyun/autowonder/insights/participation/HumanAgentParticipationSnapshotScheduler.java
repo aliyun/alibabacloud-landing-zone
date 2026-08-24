@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.insights.participation;
 
-import com.aliyun.autowonder.org.OrgDO;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDO;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,14 +16,14 @@ public class HumanAgentParticipationSnapshotScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(HumanAgentParticipationSnapshotScheduler.class);
 
-    private final OrgDao orgDao;
+    private final WorkspaceDao workspaceDao;
     private final HumanAgentParticipationRefreshService refreshService;
     private final HumanAgentParticipationProperties properties;
 
-    public HumanAgentParticipationSnapshotScheduler(OrgDao orgDao,
+    public HumanAgentParticipationSnapshotScheduler(WorkspaceDao workspaceDao,
                                                      HumanAgentParticipationRefreshService refreshService,
                                                      HumanAgentParticipationProperties properties) {
-        this.orgDao = orgDao;
+        this.workspaceDao = workspaceDao;
         this.refreshService = refreshService;
         this.properties = properties;
     }
@@ -33,9 +33,9 @@ public class HumanAgentParticipationSnapshotScheduler {
     public void nightlyRebuild() {
         ZoneId zone = ZoneId.of(properties.getTimezone());
         LocalDate dataThrough = LocalDate.now(zone).minusDays(1);
-        List<OrgDO> tenants = orgDao.listActive();
+        List<WorkspaceDO> tenants = workspaceDao.listActive();
         log.info("Participation nightly rebuild starting tenants={} dataThrough={}", tenants.size(), dataThrough);
-        for (OrgDO tenant : tenants) {
+        for (WorkspaceDO tenant : tenants) {
             refreshService.requestRefresh(tenant.getId());
         }
     }

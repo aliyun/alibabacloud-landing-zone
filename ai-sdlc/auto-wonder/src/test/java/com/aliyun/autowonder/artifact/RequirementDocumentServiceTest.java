@@ -8,10 +8,13 @@ import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -21,10 +24,15 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RequirementDocumentServiceTest {
+
+    private static final byte[] PNG = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00};
+    private static final byte[] JPEG = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00};
+    private static final byte[] WEBP = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 0};
 
     ArtifactDao artifactDao;
     WorkitemDao workitemDao;
@@ -70,6 +78,23 @@ class RequirementDocumentServiceTest {
                         && RequirementDocumentService.TYPE.equals(artifact.getType())
                         && artifact.getMetaJson().contains("\"source\":\"MCP\"")));
         verify(auditLogService).record(any());
+    }
+
+    @Test
+    void uploadCliStoresFilesInInputOrderWithCliAuditSource() throws Exception {
+        var vos = service.uploadCli(3L, new MultipartFile[]{
+                new MockMultipartFile("files", "a.md", "text/markdown",
+                        "# A".getBytes(StandardCharsets.UTF_8)),
+                new MockMultipartFile("files", "b.png", "image/png", PNG)}, 100L, 7L);
+
+        assertEquals(List.of("requirements/a.md", "requirements/b.png"),
+                vos.stream().map(vo -> vo.getName()).collect(java.util.stream.Collectors.toList()));
+        assertEquals("# A", new String(storage.get("artifact-bucket/t/100/workitem/3/requirements/a.md"),
+                StandardCharsets.UTF_8));
+        verify(artifactDao, times(2)).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"source\":\"CLI\"")));
+        verify(auditLogService, times(2)).record(argThat(record ->
+                "CLI".equals(record.getTriggerSource())));
     }
 
     @Test
@@ -170,5 +195,90 @@ class RequirementDocumentServiceTest {
 
         assertEquals("17010", ex.getCode());
         verify(artifactDao, never()).deleteById(anyLong(), anyLong());
+    }
+
+    @Test
+    void uploadMcpStoresVisualContextWithDetectedContentType() {
+        service.uploadMcp(3L, "screen.png", PNG, 100L, 7L, "/tmp/screen.png");
+
+        assertArrayEquals(PNG, storage.get("artifact-bucket/t/100/workitem/3/requirements/screen.png"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"image/png\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"VISUAL\"")));
+    }
+
+    @Test
+    void uploadMcpStoresJpegVisualContextWithDetectedContentType() {
+        service.uploadMcp(3L, "shot.jpeg", JPEG, 100L, 7L, null);
+
+        assertArrayEquals(JPEG, storage.get("artifact-bucket/t/100/workitem/3/requirements/shot.jpeg"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"image/jpeg\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"VISUAL\"")));
+    }
+
+    @Test
+    void uploadMcpStoresWebpVisualContextWithDetectedContentType() {
+        service.uploadMcp(3L, "flow.webp", WEBP, 100L, 7L, null);
+
+        assertArrayEquals(WEBP, storage.get("artifact-bucket/t/100/workitem/3/requirements/flow.webp"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"image/webp\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"VISUAL\"")));
+    }
+
+    @Test
+    void uploadRejectsImageWithMismatchedMagicBytes() {
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "screen.png",
+                "not-an-image".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "shot.jpg", PNG, 100L, 7L, null));
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "flow.webp",
+                "RIFFxxxxAVI ".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsUnsupportedVisualExtensions() {
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "anim.gif", PNG, 100L, 7L, null));
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "vector.svg", PNG, 100L, 7L, null));
+
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsImageAbovePerFileLimit() {
+        byte[] oversized = pngWithSize(5 * 1024 * 1024 + 1);
+
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "big.png", oversized, 100L, 7L, null));
+
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadEnforcesAggregateSizeLimitAtTwentyMebibytes() {
+        ArtifactDO existing = new ArtifactDO();
+        existing.setName("requirements/existing.md");
+        existing.setSize(15L * 1024L * 1024L);
+        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE))
+                .thenReturn(List.of(existing));
+
+        service.uploadMcp(3L, "screen.png", pngWithSize(5 * 1024 * 1024), 100L, 7L, null);
+
+        ArtifactDO larger = new ArtifactDO();
+        larger.setName("requirements/existing.md");
+        larger.setSize(16L * 1024L * 1024L);
+        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE))
+                .thenReturn(List.of(larger));
+
+        BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, "screen2.png",
+                pngWithSize(5 * 1024 * 1024), 100L, 7L, null));
+        assertEquals("10001", ex.getCode());
+    }
+
+    private static byte[] pngWithSize(int size) {
+        byte[] bytes = new byte[size];
+        System.arraycopy(PNG, 0, bytes, 0, PNG.length);
+        return bytes;
     }
 }

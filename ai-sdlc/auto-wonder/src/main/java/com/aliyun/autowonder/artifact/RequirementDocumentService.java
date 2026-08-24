@@ -33,8 +33,15 @@ public class RequirementDocumentService {
     public static final String PREFIX = "requirements/";
     public static final String CLARIFICATION_FILENAME = "clarification.md";
     private static final int MAX_DOCUMENTS = 10;
-    private static final long MAX_TOTAL_BYTES = 5L * 1024L * 1024L;
-    private static final String CONTENT_TYPE_MARKDOWN = "text/markdown";
+    private static final long MAX_TOTAL_BYTES = 20L * 1024L * 1024L;
+    private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
+
+    private enum ContextKind { MARKDOWN, VISUAL }
+
+    private record ContextFileType(String contentType, ContextKind contextKind) { }
+
+    private static final ContextFileType MARKDOWN_TYPE =
+            new ContextFileType("text/markdown", ContextKind.MARKDOWN);
 
     private final ArtifactDao artifactDao;
     private final WorkitemDao workitemDao;
@@ -54,24 +61,36 @@ public class RequirementDocumentService {
 
     public synchronized List<ArtifactVO> uploadWeb(long workitemId, MultipartFile[] files,
                                                    long tenantId, long userId) throws IOException {
+        return uploadMultipart(workitemId, files, tenantId, userId, "WEB");
+    }
+
+    public synchronized List<ArtifactVO> uploadCli(long workitemId, MultipartFile[] files,
+                                                   long tenantId, long userId) throws IOException {
+        return uploadMultipart(workitemId, files, tenantId, userId, "CLI");
+    }
+
+    private List<ArtifactVO> uploadMultipart(long workitemId, MultipartFile[] files,
+                                             long tenantId, long userId, String source) throws IOException {
         if (files == null || files.length == 0) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
         List<Candidate> candidates = new ArrayList<>();
         for (MultipartFile file : files) {
             String filename = sanitizeFilename(file.getOriginalFilename());
+            ContextFileType type = fileTypeFor(filename);
             byte[] bytes = file.getBytes();
-            validateMarkdownBytes(bytes);
-            candidates.add(new Candidate(filename, bytes, null));
+            validateBytes(bytes, type);
+            candidates.add(new Candidate(filename, bytes, null, type));
         }
-        return uploadCandidates(workitemId, candidates, tenantId, userId, "WEB");
+        return uploadCandidates(workitemId, candidates, tenantId, userId, source);
     }
 
     public synchronized ArtifactVO uploadMcp(long workitemId, String filename, byte[] bytes,
                                              long tenantId, long userId, String sourcePath) {
         String safeFilename = sanitizeFilename(filename);
-        validateMarkdownBytes(bytes);
-        return uploadCandidates(workitemId, List.of(new Candidate(safeFilename, bytes, sourcePath)),
+        ContextFileType type = fileTypeFor(safeFilename);
+        validateBytes(bytes, type);
+        return uploadCandidates(workitemId, List.of(new Candidate(safeFilename, bytes, sourcePath, type)),
                 tenantId, userId, "MCP").get(0);
     }
 
@@ -93,7 +112,7 @@ public class RequirementDocumentService {
         }
         byte[] bytes = contentMd == null ? new byte[0] : contentMd.getBytes(StandardCharsets.UTF_8);
         return uploadCandidates(workitemId,
-                List.of(new Candidate(CLARIFICATION_FILENAME, bytes, "autowonder:clarification")),
+                List.of(new Candidate(CLARIFICATION_FILENAME, bytes, "autowonder:clarification", MARKDOWN_TYPE)),
                 tenantId, userId, "CLARIFICATION").get(0);
     }
 
@@ -147,7 +166,7 @@ public class RequirementDocumentService {
         artifact.setType(TYPE);
         artifact.setOssRef(stored.getOssRef());
         artifact.setSize(stored.getSize());
-        artifact.setMetaJson(metaJson(source, userId, candidate.sourcePath));
+        artifact.setMetaJson(metaJson(source, userId, candidate.sourcePath, candidate.type));
         try {
             artifactDao.insert(artifact);
         } catch (RuntimeException e) {
@@ -175,7 +194,7 @@ public class RequirementDocumentService {
             if (!names.add(name)) {
                 throw new BizException(ErrorCode.CONFLICT);
             }
-            if (candidate.bytes.length > MAX_TOTAL_BYTES) {
+            if (candidate.bytes.length > MAX_FILE_BYTES) {
                 throw new BizException(ErrorCode.PARAM_INVALID);
             }
             totalBytes += candidate.bytes.length;
@@ -217,17 +236,40 @@ public class RequirementDocumentService {
                 throw new BizException(ErrorCode.PARAM_INVALID);
             }
         }
-        String lower = filename.toLowerCase(Locale.ROOT);
-        if (!lower.endsWith(".md") && !lower.endsWith(".markdown")) {
-            throw new BizException(ErrorCode.PARAM_INVALID);
-        }
         return filename;
     }
 
-    private void validateMarkdownBytes(byte[] bytes) {
-        if (bytes == null || bytes.length > MAX_TOTAL_BYTES) {
+    private ContextFileType fileTypeFor(String filename) {
+        String lower = filename.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+            return MARKDOWN_TYPE;
+        }
+        if (lower.endsWith(".png")) {
+            return new ContextFileType("image/png", ContextKind.VISUAL);
+        }
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+            return new ContextFileType("image/jpeg", ContextKind.VISUAL);
+        }
+        if (lower.endsWith(".webp")) {
+            return new ContextFileType("image/webp", ContextKind.VISUAL);
+        }
+        throw new BizException(ErrorCode.PARAM_INVALID);
+    }
+
+    private void validateBytes(byte[] bytes, ContextFileType type) {
+        if (bytes == null || bytes.length > MAX_FILE_BYTES) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
+        if (type.contextKind() == ContextKind.MARKDOWN) {
+            validateMarkdownBytes(bytes);
+            return;
+        }
+        if (!hasImageSignature(type.contentType(), bytes)) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+    }
+
+    private void validateMarkdownBytes(byte[] bytes) {
         try {
             StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
@@ -238,11 +280,32 @@ public class RequirementDocumentService {
         }
     }
 
-    private String metaJson(String source, long userId, String sourcePath) {
+    private boolean hasImageSignature(String contentType, byte[] bytes) {
+        switch (contentType) {
+            case "image/png":
+                return bytes.length >= 8
+                        && bytes[0] == (byte) 0x89 && bytes[1] == (byte) 0x50
+                        && bytes[2] == (byte) 0x4E && bytes[3] == (byte) 0x47
+                        && bytes[4] == (byte) 0x0D && bytes[5] == (byte) 0x0A
+                        && bytes[6] == (byte) 0x1A && bytes[7] == (byte) 0x0A;
+            case "image/jpeg":
+                return bytes.length >= 3
+                        && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8 && bytes[2] == (byte) 0xFF;
+            case "image/webp":
+                return bytes.length >= 12
+                        && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                        && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+            default:
+                return false;
+        }
+    }
+
+    private String metaJson(String source, long userId, String sourcePath, ContextFileType type) {
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("source", source);
         meta.put("uploaderId", userId);
-        meta.put("contentType", CONTENT_TYPE_MARKDOWN);
+        meta.put("contentType", type.contentType());
+        meta.put("contextKind", type.contextKind().name());
         if (sourcePath != null && !sourcePath.isBlank()) {
             meta.put("sourcePath", sourcePath);
         }
@@ -285,11 +348,13 @@ public class RequirementDocumentService {
         private final String filename;
         private final byte[] bytes;
         private final String sourcePath;
+        private final ContextFileType type;
 
-        private Candidate(String filename, byte[] bytes, String sourcePath) {
+        private Candidate(String filename, byte[] bytes, String sourcePath, ContextFileType type) {
             this.filename = filename;
             this.bytes = bytes;
             this.sourcePath = sourcePath;
+            this.type = type;
         }
     }
 }

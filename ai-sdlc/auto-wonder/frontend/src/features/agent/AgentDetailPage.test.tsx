@@ -53,7 +53,7 @@ function renderPage() {
 describe('AgentDetailPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
 
   it('renders header name, status and version', async () => {
@@ -223,7 +223,7 @@ describe('AgentDetailPage', () => {
 
   it('keeps delete visible but does not open confirmation for a read-only member', async () => {
     const error = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     mockAgent({ status: 'DRAFT', onlineVersionId: null });
 
     renderPage();

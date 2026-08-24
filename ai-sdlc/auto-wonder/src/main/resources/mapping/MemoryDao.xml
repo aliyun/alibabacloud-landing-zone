@@ -63,6 +63,35 @@
         SELECT COUNT(*) FROM memory
         WHERE tenant_id = #{tenantId} AND status = 'PENDING' AND is_deleted = 0
     </select>
+    <select id="listGroupSummaries" resultType="com.aliyun.autowonder.memory.MemoryGroupSummaryDO">
+        SELECT scope, owner_ref, COUNT(*) AS total, MAX(id) AS latest_id FROM memory
+        <where>
+            tenant_id = #{tenantId} AND is_deleted = 0
+            <if test="scope != null">AND scope = #{scope}</if>
+            <if test="ownerRef != null">AND owner_ref = #{ownerRef}</if>
+            <if test="type != null">AND type = #{type}</if>
+            <if test="status != null">AND status = #{status}</if>
+        </where>
+        GROUP BY scope, owner_ref
+        ORDER BY latest_id DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+    <select id="listByGroups" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT * FROM memory
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        <if test="type != null">AND type = #{type}</if>
+        <if test="status != null">AND status = #{status}</if>
+        AND
+        <foreach collection="groups" item="g" open="(" close=")" separator=" OR ">
+            (scope = #{g.scope} AND
+            <choose>
+                <when test="g.ownerRef != null">owner_ref = #{g.ownerRef}</when>
+                <otherwise>owner_ref IS NULL</otherwise>
+            </choose>)
+        </foreach>
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
     <select id="listApplicableToAgent" resultType="com.aliyun.autowonder.memory.MemoryDO">
         SELECT m.* FROM memory m
         WHERE m.tenant_id = #{tenantId}

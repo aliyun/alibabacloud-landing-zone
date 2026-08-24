@@ -6,8 +6,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/workitems/{workitemId}/clarification")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看澄清信息")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看澄清信息")
 public class ClarificationController {
 
     private final ClarificationService clarificationService;
@@ -32,11 +32,11 @@ public class ClarificationController {
     }
 
     @PutMapping
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "更新澄清信息")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新澄清信息")
     public Result<ClarificationVO> put(@PathVariable("workitemId") Long workitemId,
                                        @RequestBody PutClarificationRequest req) {
         return Result.ok(clarificationService.put(workitemId, req.getContentMd(),
-                currentOrgId(), currentUserId()));
+                currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -47,11 +47,11 @@ public class ClarificationController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   Button,
   Card,
@@ -8,11 +8,12 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { ACCESS_LEVEL_LABEL } from '@/shared/auth/access';
-import type { OrgAccessLevel } from '@/shared/types/common';
+import type { WorkspaceAccessLevel } from '@/shared/types/common';
 import {
   useAddMember,
   useCurrentMembership,
@@ -27,7 +28,7 @@ import { MemberAccessModal } from './MemberAccessModal';
 import { OwnerTransferModal } from './OwnerTransferModal';
 import type { MemberVO } from './api';
 
-const ACCESS_LEVEL_COLORS: Record<OrgAccessLevel, string> = {
+const ACCESS_LEVEL_COLORS: Record<WorkspaceAccessLevel, string> = {
   READ_ONLY: 'default',
   READ_WRITE: 'blue',
   ADMIN: 'green',
@@ -36,7 +37,8 @@ const ACCESS_LEVEL_COLORS: Record<OrgAccessLevel, string> = {
 export function MembersPage() {
   const accessCommand = useAccessCommand();
   const { data: members = [], isLoading } = useMembers();
-  useCurrentMembership();
+  const { data: membership } = useCurrentMembership();
+  const isAdmin = membership?.accessLevel === 'ADMIN';
   const [candidateKeyword, setCandidateKeyword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<number>();
   const { data: candidates = [], isFetching: candidatesLoading } =
@@ -47,10 +49,22 @@ export function MembersPage() {
   const updateTagsMutation = useUpdateMemberIdentityTags();
   const transferOwnerMutation = useTransferOwner();
 
-  const [levelFilter, setLevelFilter] = useState<OrgAccessLevel | 'ALL'>('ALL');
+  const [levelFilter, setLevelFilter] = useState<WorkspaceAccessLevel | 'ALL'>('ALL');
   const [editTarget, setEditTarget] = useState<MemberVO | null>(null);
   const [removeConfirmUserId, setRemoveConfirmUserId] = useState<number>();
   const [ownerTransferOpen, setOwnerTransferOpen] = useState(false);
+
+  const adminOnlyTip = (control: ReactNode) => {
+    if (isAdmin) {
+      return <>{control}</>;
+    }
+    return (
+      <Tooltip title="仅管理员可操作">
+        {/* antd Tooltip 对 disabled 控件不触发鼠标事件，须用 span 包裹 */}
+        <span>{control}</span>
+      </Tooltip>
+    );
+  };
 
   const filteredMembers = levelFilter === 'ALL'
     ? members
@@ -69,7 +83,7 @@ export function MembersPage() {
   };
 
   const handleEditConfirm = async (values: {
-    accessLevel: OrgAccessLevel;
+    accessLevel: WorkspaceAccessLevel;
     identityTags: string[];
   }) => {
     if (!editTarget) return;
@@ -115,7 +129,7 @@ export function MembersPage() {
         <div>
           <Space size={6}>
             <span style={{ fontWeight: 500 }}>{member.nickname || member.username}</span>
-            {member.owner && <Tag color="gold">组织所有者</Tag>}
+            {member.owner && <Tag color="gold">工作空间所有者</Tag>}
           </Space>
           <div style={{ fontSize: 12, color: '#666' }}>{member.email}</div>
         </div>
@@ -124,7 +138,7 @@ export function MembersPage() {
     {
       title: '访问等级',
       dataIndex: 'accessLevel',
-      render: (level: OrgAccessLevel) => (
+      render: (level: WorkspaceAccessLevel) => (
         <Tag color={ACCESS_LEVEL_COLORS[level]}>{ACCESS_LEVEL_LABEL[level]}</Tag>
       ),
     },
@@ -149,30 +163,35 @@ export function MembersPage() {
       key: 'action',
       render: (_, member) => (
         <Space>
-          <Button
-            type="link"
-            size="small"
-            onClick={() => accessCommand('ADMIN', '编辑成员', () => setEditTarget(member))}
-          >
-            编辑
-          </Button>
-          <Popconfirm
-            title="确定移除该成员？"
-            open={removeConfirmUserId === member.userId}
-            onOpenChange={(open) => {
-              if (!open) {
-                setRemoveConfirmUserId(undefined);
-                return;
-              }
-              accessCommand('ADMIN', '移除成员', () => setRemoveConfirmUserId(member.userId));
-            }}
-            onConfirm={() => accessCommand('ADMIN', '移除成员', () =>
-              removeMemberMutation.mutate(member.userId, {
-                onSettled: () => setRemoveConfirmUserId(undefined),
-              }))}
-          >
-            <Button type="link" size="small" danger>移除</Button>
-          </Popconfirm>
+          {adminOnlyTip(
+            <Button
+              type="link"
+              size="small"
+              disabled={!isAdmin}
+              onClick={() => accessCommand('ADMIN', '编辑成员', () => setEditTarget(member))}
+            >
+              编辑
+            </Button>,
+          )}
+          {adminOnlyTip(
+            <Popconfirm
+              title="确定移除该成员？"
+              open={removeConfirmUserId === member.userId}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setRemoveConfirmUserId(undefined);
+                  return;
+                }
+                accessCommand('ADMIN', '移除成员', () => setRemoveConfirmUserId(member.userId));
+              }}
+              onConfirm={() => accessCommand('ADMIN', '移除成员', () =>
+                removeMemberMutation.mutate(member.userId, {
+                  onSettled: () => setRemoveConfirmUserId(undefined),
+                }))}
+            >
+              <Button type="link" size="small" danger disabled={!isAdmin}>移除</Button>
+            </Popconfirm>,
+          )}
         </Space>
       ),
     },
@@ -181,13 +200,14 @@ export function MembersPage() {
   return (
     <Card
       title="成员管理"
-      extra={(
+      extra={adminOnlyTip(
         <Button
+          disabled={!isAdmin}
           onClick={() =>
             accessCommand('ADMIN', '移交 Owner', () => setOwnerTransferOpen(true))}
         >
           移交 Owner
-        </Button>
+        </Button>,
       )}
     >
       <Space
@@ -203,40 +223,45 @@ export function MembersPage() {
             { label: '只读', value: 'READ_ONLY' },
           ]}
           value={levelFilter}
-          onChange={(value) => setLevelFilter(value as OrgAccessLevel | 'ALL')}
+          onChange={(value) => setLevelFilter(value as WorkspaceAccessLevel | 'ALL')}
         />
         <Space.Compact>
-          <Select
-            showSearch
-            allowClear
-            filterOption={false}
-            aria-label="搜索全局人员"
-            value={selectedUserId}
-            placeholder="搜索全局人员"
-            loading={candidatesLoading}
-            style={{ width: 280 }}
-            onSearch={setCandidateKeyword}
-            onClear={() => {
-              setSelectedUserId(undefined);
-              setCandidateKeyword('');
-            }}
-            onChange={setSelectedUserId}
-            options={candidates.map((candidate) => ({
-              value: candidate.userId,
-              label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
-            }))}
-            notFoundContent={
-              candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
-            }
-          />
-          <Button
-            type="primary"
-            disabled={selectedUserId === undefined}
-            loading={addMemberMutation.isPending}
-            onClick={handleAddMember}
-          >
-            添加成员
-          </Button>
+          {adminOnlyTip(
+            <Select
+              showSearch
+              allowClear
+              filterOption={false}
+              aria-label="搜索全局人员"
+              disabled={!isAdmin}
+              value={selectedUserId}
+              placeholder="搜索全局人员"
+              loading={candidatesLoading}
+              style={{ width: 280 }}
+              onSearch={setCandidateKeyword}
+              onClear={() => {
+                setSelectedUserId(undefined);
+                setCandidateKeyword('');
+              }}
+              onChange={setSelectedUserId}
+              options={candidates.map((candidate) => ({
+                value: candidate.userId,
+                label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
+              }))}
+              notFoundContent={
+                candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
+              }
+            />,
+          )}
+          {adminOnlyTip(
+            <Button
+              type="primary"
+              disabled={!isAdmin || selectedUserId === undefined}
+              loading={addMemberMutation.isPending}
+              onClick={handleAddMember}
+            >
+              添加成员
+            </Button>,
+          )}
         </Space.Compact>
       </Space>
       <Table

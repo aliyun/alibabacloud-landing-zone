@@ -300,7 +300,7 @@ public class AgentConversationService {
             out.setTenantId(tenantId);
             out.setConversationId(conversationId);
             out.setDirection("OUT");
-            out.setContent(replyMarkdown);
+            out.setContent(outboundReplyContent(replyMarkdown, error));
             out.setRequestId(currentRequestId());
             out.setStatus(status);
             out.setError(error);
@@ -314,6 +314,17 @@ public class AgentConversationService {
             }
             return new PostCommitEffects(channelReply, nextQueuedDispatch(tenantId, conv));
         });
+    }
+
+    private String outboundReplyContent(String replyMarkdown, String error) {
+        if (replyMarkdown != null && !replyMarkdown.isBlank()) {
+            return replyMarkdown;
+        }
+        // 空内容 OUT turn 在澄清界面渲染为空泡，会造成问答断裂；落库可见兜底文案。
+        if (error != null && !error.isBlank()) {
+            return "回复失败：" + error;
+        }
+        return "（数字人未返回内容）";
     }
 
     private boolean isActiveInboundTurn(AgentConversationTurnDO inboundTurn, Long conversationId) {

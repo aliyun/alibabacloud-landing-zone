@@ -737,6 +737,11 @@ function AgentPanel({
           </Text>
         </Tooltip>
         <Tag color={label.color} style={{ marginInlineEnd: 0, flexShrink: 0 }}>{label.text}</Tag>
+        {agent.durationMs != null && (
+          <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+            {formatDuration(agent.durationMs)}
+          </Text>
+        )}
         <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
           {agentArtifacts.length > 0 ? `${agentArtifacts.length} artifacts` : '无产物'}
         </Text>
@@ -794,12 +799,24 @@ export function DeliveryProgress({ steps = [], progress, artifacts = [], artifac
   const agents = progress?.agents ?? [];
   const displaySteps = agents.length > 0 ? [] : (progress?.steps ?? steps);
   const activeKeys = defaultAgentActiveKeys(agents);
+  const cardTitle = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ flex: 1 }}>交付进度跟踪</span>
+      {progress?.totalDurationMs != null && (
+        <Tooltip title="总耗时为从首次派发到当前/结束的实际墙钟时间，包含数字人之间的交接与排队间隔，因此大于各步骤耗时之和。">
+          <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
+            总耗时 {formatDuration(progress.totalDurationMs)}
+          </Text>
+        </Tooltip>
+      )}
+    </div>
+  );
 
   if (agents.length > 0) {
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
         {progress?.workflowPlan && <WorkflowPlanSummary plan={progress.workflowPlan} />}
-        <Card size="small" title="交付进度跟踪" data-testid="delivery-progress-card" styles={{ body: { padding: '6px 8px' } }}>
+        <Card size="small" title={cardTitle} data-testid="delivery-progress-card" styles={{ body: { padding: '6px 8px' } }}>
           <Collapse
             bordered={false}
             defaultActiveKey={activeKeys}
@@ -820,7 +837,7 @@ export function DeliveryProgress({ steps = [], progress, artifacts = [], artifac
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={8}>
       {progress?.workflowPlan && <WorkflowPlanSummary plan={progress.workflowPlan} />}
-      <Card size="small" title="交付进度跟踪" data-testid="delivery-progress-card" styles={{ body: { padding: '6px 8px' } }}>
+      <Card size="small" title={cardTitle} data-testid="delivery-progress-card" styles={{ body: { padding: '6px 8px' } }}>
         <StepList steps={displaySteps} onContinue={onContinue} continuingDispatchId={continuingDispatchId} onPause={onPause} pausingDispatchId={pausingDispatchId} />
       </Card>
     </Space>

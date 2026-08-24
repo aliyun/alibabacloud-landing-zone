@@ -21,7 +21,7 @@ class WebAuditInterceptorTest {
     void recordsAuthenticatedHumanMutation() {
         AuditLogService auditLogService = mock(AuditLogService.class);
         WebAuditInterceptor interceptor = new WebAuditInterceptor(auditLogService);
-        AutoWonderContext.get().setCurrentOrgId(100L);
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
         AutoWonderContext.get().setUserId(7L);
         MockHttpServletRequest request = new MockHttpServletRequest("PUT", "/api/workitems/42/content");
         request.setQueryString("source=console");
@@ -49,7 +49,7 @@ class WebAuditInterceptorTest {
     void skipsReadAndDaemonEndpoints() {
         AuditLogService auditLogService = mock(AuditLogService.class);
         WebAuditInterceptor interceptor = new WebAuditInterceptor(auditLogService);
-        AutoWonderContext.get().setCurrentOrgId(100L);
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
         AutoWonderContext.get().setUserId(7L);
 
         interceptor.afterCompletion(new MockHttpServletRequest("GET", "/api/workitems/42"),

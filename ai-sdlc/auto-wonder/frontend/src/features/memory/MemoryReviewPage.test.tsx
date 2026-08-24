@@ -47,7 +47,7 @@ describe('MemoryReviewPage', () => {
     renderPage();
 
     expect(await screen.findByText('接口约束')).toBeInTheDocument();
-    expect(screen.getByText('组织全局')).toBeInTheDocument();
+    expect(screen.getByText('工作空间全局')).toBeInTheDocument();
     expect(screen.getByText('待审核')).toBeInTheDocument();
     expect(screen.getByText('LEARNING_DELTA')).toBeInTheDocument();
     expect(screen.getByText('dispatch-42')).toBeInTheDocument();

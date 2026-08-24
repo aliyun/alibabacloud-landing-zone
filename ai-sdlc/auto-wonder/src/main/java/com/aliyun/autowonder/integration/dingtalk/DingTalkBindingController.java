@@ -4,8 +4,8 @@ import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingUpsertRequest;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingView;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/integrations/dingtalk/bindings")
-@RequireOrgAccess(value = OrgAccessLevel.ADMIN, action = "管理钉钉绑定")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理钉钉绑定")
 public class DingTalkBindingController {
 
     private static final Logger log = LoggerFactory.getLogger(DingTalkBindingController.class);
@@ -34,7 +34,7 @@ public class DingTalkBindingController {
 
     @GetMapping
     public Result<List<BindingView>> list() {
-        Long tenantId = AutoWonderContext.get().getCurrentOrgId();
+        Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         List<BindingView> views = service.list(tenantId).stream()
                 .map(this::toView).collect(Collectors.toList());
         return Result.ok(views);
@@ -42,7 +42,7 @@ public class DingTalkBindingController {
 
     @GetMapping("/{id}")
     public Result<BindingView> get(@PathVariable Long id) {
-        Long tenantId = AutoWonderContext.get().getCurrentOrgId();
+        Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         DingtalkRobotBindingDO row = service.get(tenantId, id);
         if (row == null) {
             throw new IllegalArgumentException("binding not found: " + id);
@@ -52,7 +52,7 @@ public class DingTalkBindingController {
 
     @PostMapping
     public Result<BindingView> create(@RequestBody BindingUpsertRequest req) {
-        Long tenantId = AutoWonderContext.get().getCurrentOrgId();
+        Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         Long userId = AutoWonderContext.get().getUserId();
         DingtalkRobotBindingDO row = service.create(tenantId, userId, req.getAppKey(),
                 req.getAppSecret(), req.getRobotCode(), req.getAgentId(), req.getTransportMode(),
@@ -64,7 +64,7 @@ public class DingTalkBindingController {
 
     @PutMapping("/{id}")
     public Result<BindingView> update(@PathVariable Long id, @RequestBody BindingUpsertRequest req) {
-        Long tenantId = AutoWonderContext.get().getCurrentOrgId();
+        Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         Long userId = AutoWonderContext.get().getUserId();
         DingtalkRobotBindingDO oldRow = service.get(tenantId, id);
         DingtalkRobotBindingDO row = service.update(tenantId, userId, id, req.getAppKey(),
@@ -77,7 +77,7 @@ public class DingTalkBindingController {
 
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        Long tenantId = AutoWonderContext.get().getCurrentOrgId();
+        Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         DingtalkRobotBindingDO oldRow = service.get(tenantId, id);
         service.delete(tenantId, id);
         stopStream(oldRow);

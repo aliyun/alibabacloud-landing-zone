@@ -132,7 +132,7 @@ export function AgentCreatePage() {
               <AiSessionPanel
                 key={naturalSessionKey}
                 scene="AGENT_CONFIG_GEN"
-                bizRefType="ORG"
+                bizRefType='ORG'
                 bizRefId={0}
                 onConfirm={handleGeneratedDraft}
               />

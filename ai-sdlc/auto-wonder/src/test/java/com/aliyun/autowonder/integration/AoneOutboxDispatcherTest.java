@@ -7,37 +7,105 @@ import com.aliyun.autowonder.integration.common.ExternalProjectBindingDao;
 import com.aliyun.autowonder.integration.common.IntegrationOutboxDO;
 import com.aliyun.autowonder.integration.common.IntegrationOutboxDao;
 import com.aliyun.autowonder.integration.generic.GenericHttpWorkitemWritebackProvider;
+import com.aliyun.autowonder.integration.provider.ExternalComment;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemProvider;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import org.junit.jupiter.api.Test;
 
+import java.net.SocketTimeoutException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AoneOutboxDispatcherTest {
 
     @Test
-    void disabledAoneDispatchesOnlyNonAoneRows() {
+    void concurrentDispatchCandidatesProduceOnlyOneExternalWrite() {
         IntegrationOutboxDao outboxDao = mock(IntegrationOutboxDao.class);
-        com.aliyun.autowonder.integration.aone.AoneIntegrationProperties properties =
-                new com.aliyun.autowonder.integration.aone.AoneIntegrationProperties();
-        AoneOutboxDispatcher dispatcher = new AoneOutboxDispatcher(outboxDao,
-                mock(ExternalProjectBindingDao.class), mock(ExternalCommentLinkDao.class), List.of(),
-                mock(SecretCrypto.class), mock(GenericHttpWorkitemWritebackProvider.class), properties);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        ExternalWorkitemProvider workitemProvider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        when(workitemProvider.provider()).thenReturn(AoneIntegrationService.PROVIDER);
+        AoneOutboxDispatcher dispatcher = new AoneOutboxDispatcher(outboxDao, bindingDao,
+                mock(ExternalCommentLinkDao.class), List.of(workitemProvider), secretCrypto,
+                mock(GenericHttpWorkitemWritebackProvider.class));
+        IntegrationOutboxDO outbox = contentOutbox();
+        ExternalProjectBindingDO binding = binding();
+        binding.setWritebackStaffId("WORKER_1");
+        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox, outbox));
+        when(outboxDao.markSending(11L, 0L)).thenReturn(1);
+        when(outboxDao.markSucceeded(any(), anyLong())).thenReturn(1);
+        when(bindingDao.findById(1L)).thenReturn(binding);
+        when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
 
-        dispatcher.dispatchPending(20);
+        assertEquals(1, dispatcher.dispatchPending(20));
 
-        verify(outboxDao).listPendingExcludingProvider("AONE", 20);
-        verify(outboxDao, never()).listPendingAny(20);
+        verify(workitemProvider, times(1)).updateContent(any(), eq("59066940"),
+                eq("WORKER_1"), eq("新标题"), eq("新正文"));
+    }
+
+    @Test
+    void timeoutAfterProviderMayHaveSucceededBecomesUnknownInsteadOfRetry() {
+        IntegrationOutboxDao outboxDao = mock(IntegrationOutboxDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        ExternalWorkitemProvider workitemProvider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        when(workitemProvider.provider()).thenReturn(AoneIntegrationService.PROVIDER);
+        AoneOutboxDispatcher dispatcher = new AoneOutboxDispatcher(outboxDao, bindingDao,
+                mock(ExternalCommentLinkDao.class), List.of(workitemProvider), secretCrypto,
+                mock(GenericHttpWorkitemWritebackProvider.class));
+        IntegrationOutboxDO outbox = contentOutbox();
+        ExternalProjectBindingDO binding = binding();
+        binding.setWritebackStaffId("WORKER_1");
+        ready(outboxDao, outbox);
+        when(bindingDao.findById(1L)).thenReturn(binding);
+        when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
+        doThrow(new IllegalStateException("timeout", new SocketTimeoutException("response lost")))
+                .when(workitemProvider).updateContent(any(), any(), any(), any(), any());
+
+        assertEquals(0, dispatcher.dispatchPending(20));
+
+        verify(outboxDao).markUnknown(eq(11L), eq(1L), eq("timeout"));
+        verify(outboxDao, never()).markFailed(any(), anyLong(), any(Boolean.class), any());
+    }
+
+    @Test
+    void localAckFailureAfterExternalCommentSuccessBecomesUnknown() {
+        IntegrationOutboxDao outboxDao = mock(IntegrationOutboxDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
+        ExternalWorkitemProvider workitemProvider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        when(workitemProvider.provider()).thenReturn(AoneIntegrationService.PROVIDER);
+        AoneOutboxDispatcher dispatcher = new AoneOutboxDispatcher(outboxDao, bindingDao,
+                commentLinkDao, List.of(workitemProvider), secretCrypto,
+                mock(GenericHttpWorkitemWritebackProvider.class));
+        IntegrationOutboxDO outbox = commentOutbox();
+        ExternalProjectBindingDO binding = binding();
+        binding.setWritebackStaffId("WORKER_1");
+        ExternalComment externalComment = new ExternalComment();
+        externalComment.setExternalId("external-comment");
+        ready(outboxDao, outbox);
+        when(bindingDao.findById(1L)).thenReturn(binding);
+        when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
+        when(workitemProvider.createComment(any(), any(), any(), any())).thenReturn(externalComment);
+        doThrow(new IllegalStateException("local receipt link unavailable"))
+                .when(commentLinkDao).insert(any());
+
+        assertEquals(0, dispatcher.dispatchPending(20));
+
+        verify(outboxDao).markUnknown(10L, 1L, "local receipt link unavailable");
+        verify(outboxDao, never()).markFailed(any(), anyLong(), any(Boolean.class), any());
     }
 
     @Test
@@ -53,13 +121,13 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding();
         binding.setWritebackStaffId(" ");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
 
         int success = dispatcher.dispatchPending(20);
 
         assertEquals(0, success);
-        verify(outboxDao).markFailed(10L, "FAILED_RETRYABLE", "Aone writeback staffId is required");
+        verify(outboxDao).markFailed(10L, 1L, true, "Aone writeback staffId is required");
         verify(workitemProvider, never()).createComment(any(), eq("59066940"), any(), any());
     }
 
@@ -76,13 +144,13 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding();
         binding.setWritebackStaffId(" ");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
 
         int success = dispatcher.dispatchPending(20);
 
         assertEquals(0, success);
-        verify(outboxDao).markFailed(11L, "FAILED_RETRYABLE", "Aone writeback staffId is required");
+        verify(outboxDao).markFailed(11L, 1L, true, "Aone writeback staffId is required");
         verify(workitemProvider, never()).updateContent(any(), eq("59066940"), any(), any(), any());
     }
 
@@ -100,7 +168,7 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding();
         binding.setWritebackStaffId("WORKER_1782377321313");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
         when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
 
@@ -109,7 +177,7 @@ class AoneOutboxDispatcherTest {
         assertEquals(1, success);
         verify(workitemProvider).updateContent(any(), eq("59066940"), eq("WORKER_1782377321313"),
                 eq("新标题"), eq("新正文"));
-        verify(outboxDao).markSucceeded(11L);
+        verify(outboxDao).markSucceeded(11L, 1L);
     }
 
     @Test
@@ -127,7 +195,7 @@ class AoneOutboxDispatcherTest {
         IntegrationOutboxDO outbox = contentOutbox("JIRA");
         ExternalProjectBindingDO binding = binding("JIRA");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
         when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
 
@@ -137,7 +205,7 @@ class AoneOutboxDispatcherTest {
         verify(jiraProvider).updateContent(any(), eq("59066940"), isNull(),
                 eq("新标题"), eq("新正文"));
         verify(aoneProvider, never()).updateContent(any(), any(), any(), any(), any());
-        verify(outboxDao).markSucceeded(11L);
+        verify(outboxDao).markSucceeded(11L, 1L);
     }
 
     @Test
@@ -153,7 +221,7 @@ class AoneOutboxDispatcherTest {
         IntegrationOutboxDO outbox = contentOutbox("JIRA");
         ExternalProjectBindingDO binding = binding("JIRA");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
         when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
 
@@ -163,7 +231,7 @@ class AoneOutboxDispatcherTest {
         verify(genericProvider).updateContent(eq("JIRA"), any(), eq("59066940"),
                 eq("新标题"), eq("新正文"));
         verify(aoneProvider, never()).updateContent(any(), any(), any(), any(), any());
-        verify(outboxDao).markSucceeded(11L);
+        verify(outboxDao).markSucceeded(11L, 1L);
     }
 
     @Test
@@ -180,7 +248,7 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding("JIRA");
         binding.setCredentialRef(null);
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
 
         int success = dispatcher.dispatchPending(20);
@@ -189,7 +257,7 @@ class AoneOutboxDispatcherTest {
         verify(secretCrypto, never()).decrypt(any());
         verify(genericProvider).updateContent(eq("JIRA"), any(), eq("59066940"),
                 eq("新标题"), eq("新正文"));
-        verify(outboxDao).markSucceeded(11L);
+        verify(outboxDao).markSucceeded(11L, 1L);
     }
 
     @Test
@@ -206,7 +274,7 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding();
         binding.setWritebackStaffId("WORKER_1");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
         when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
         doThrow(new AoneOpenApiException("状态流转限制,不能将状态置为Closed", true))
@@ -215,7 +283,7 @@ class AoneOutboxDispatcherTest {
         int success = dispatcher.dispatchPending(20);
 
         assertEquals(0, success);
-        verify(outboxDao).markFailed(eq(11L), eq("FAILED_PERMANENT"), any());
+        verify(outboxDao).markFailed(eq(11L), eq(1L), eq(false), any());
     }
 
     @Test
@@ -233,7 +301,7 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding();
         binding.setWritebackStaffId("WORKER_1");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
         when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
         doThrow(new AoneOpenApiException("over rate limit. rate limit is 100"))
@@ -242,7 +310,7 @@ class AoneOutboxDispatcherTest {
         int success = dispatcher.dispatchPending(20);
 
         assertEquals(0, success);
-        verify(outboxDao).markFailed(eq(11L), eq("FAILED_RETRYABLE"), any());
+        verify(outboxDao).markFailed(eq(11L), eq(1L), eq(true), any());
     }
 
     @Test
@@ -260,7 +328,7 @@ class AoneOutboxDispatcherTest {
         ExternalProjectBindingDO binding = binding();
         binding.setWritebackStaffId("WORKER_1");
 
-        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        ready(outboxDao, outbox);
         when(bindingDao.findById(1L)).thenReturn(binding);
         when(secretCrypto.decrypt("secret-ref")).thenReturn("secret");
         doThrow(new AoneOpenApiException("over rate limit. rate limit is 100"))
@@ -269,7 +337,7 @@ class AoneOutboxDispatcherTest {
         int success = dispatcher.dispatchPending(20);
 
         assertEquals(0, success);
-        verify(outboxDao).markFailed(eq(11L), eq("FAILED_PERMANENT"), any());
+        verify(outboxDao).markFailed(eq(11L), eq(1L), eq(false), any());
     }
 
     private IntegrationOutboxDO commentOutbox() {
@@ -280,6 +348,7 @@ class AoneOutboxDispatcherTest {
         outbox.setBindingId(1L);
         outbox.setWorkitemId(10356L);
         outbox.setEventType("COMMENT_CREATE");
+        outbox.setLockVersion(0L);
         outbox.setPayloadJson("{\"externalWorkitemId\":\"59066940\",\"commentId\":10849,\"contentMd\":\"hello\"}");
         outbox.setStatus("PENDING");
         outbox.setRetryCount(0);
@@ -298,6 +367,7 @@ class AoneOutboxDispatcherTest {
         outbox.setBindingId(1L);
         outbox.setWorkitemId(10356L);
         outbox.setEventType("CONTENT_UPDATE");
+        outbox.setLockVersion(0L);
         outbox.setPayloadJson("{\"externalWorkitemId\":\"59066940\",\"title\":\"新标题\",\"contentMd\":\"新正文\"}");
         outbox.setStatus("PENDING");
         outbox.setRetryCount(0);
@@ -318,5 +388,11 @@ class AoneOutboxDispatcherTest {
         binding.setCredentialRef("secret-ref");
         binding.setRegionId("1");
         return binding;
+    }
+
+    private void ready(IntegrationOutboxDao outboxDao, IntegrationOutboxDO outbox) {
+        when(outboxDao.listPendingAny(20)).thenReturn(List.of(outbox));
+        when(outboxDao.markSending(outbox.getId(), outbox.getLockVersion())).thenReturn(1);
+        when(outboxDao.markSucceeded(any(), anyLong())).thenReturn(1);
     }
 }

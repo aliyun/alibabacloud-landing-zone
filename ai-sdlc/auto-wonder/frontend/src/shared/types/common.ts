@@ -20,13 +20,13 @@ export interface UserInfo {
   email: string;
 }
 
-export interface OrgInfo {
+export interface WorkspaceInfo {
   id: number;
   name: string;
   description: string;
 }
 
-export type OrgAccessLevel = 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
+export type WorkspaceAccessLevel = 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
 
 export interface LoginResponse {
   userId: number;
@@ -35,9 +35,9 @@ export interface LoginResponse {
   user: UserInfo;
 }
 
-export interface SwitchOrgResponse {
+export interface SwitchWorkspaceResponse {
   accessToken: string;
-  accessLevel: OrgAccessLevel;
+  accessLevel: WorkspaceAccessLevel;
 }
 
 export class ApiError extends Error {
@@ -55,8 +55,8 @@ export class ApiError extends Error {
 export const ErrorCodes = {
   UNAUTHORIZED: '10401',
   NO_PERMISSION: '10403',
-  ORG_NOT_MEMBER: '11001',
-  ORG_ACCESS_INSUFFICIENT: '12008',
+  WORKSPACE_NOT_MEMBER: '11001',
+  WORKSPACE_ACCESS_INSUFFICIENT: '12008',
   NOT_FOUND: '10404',
   CONFLICT: '10409',
   RATE_LIMITED: '10429',

@@ -18,7 +18,7 @@ public interface UserDao {
 
     Long findFirstActiveUserId();
 
-    List<UserDO> searchOrgCandidates(@Param("tenantId") Long tenantId,
+    List<UserDO> searchWorkspaceCandidates(@Param("tenantId") Long tenantId,
                                       @Param("keyword") String keyword,
                                       @Param("limit") int limit);
 

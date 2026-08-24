@@ -13,6 +13,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.evolution.EvolutionTelemetryEvidenceLiteService;
 import com.aliyun.autowonder.evolution.EvolutionTrialAssignmentLiteService;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.util.MojibakeDetector;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.storage.ObjectStorageException;
 import com.aliyun.autowonder.taskpackage.PackageContext;
@@ -922,6 +923,12 @@ public class DispatchService {
         event.setError(truncateCodePoints(firstText(detail, "error", "errorMessage"),
                 MAX_PROGRESS_TEXT_CHARS));
         event.setDetailJson(detail.toJSONString());
+        if (MojibakeDetector.looksLikeMojibake(event.getMessage())
+                || MojibakeDetector.looksLikeMojibake(event.getError())) {
+            log.warn("dispatch progress mojibake detected dispatchId={} agentId={} workitemId={} eventType={} "
+                            + "executor environment may decode subprocess output with the wrong charset",
+                    d.getId(), d.getAgentId(), d.getWorkitemId(), eventType);
+        }
         event.setEventTime(detail.getDate("eventTime"));
         runtimeEventDao.insert(event);
         recordAgentAudit(d, "RUNTIME_EVENT", eventType, "runtime.progress",

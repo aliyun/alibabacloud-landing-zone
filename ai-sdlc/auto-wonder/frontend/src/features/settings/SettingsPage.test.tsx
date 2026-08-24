@@ -58,7 +58,7 @@ function useCommonSettingsHandlers(overrides: Parameters<typeof server.use>) {
 describe('SettingsPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
   });
 
   it('renders AI quota and usage from dedicated APIs', async () => {
@@ -170,7 +170,7 @@ describe('SettingsPage', () => {
 
   it('keeps save commands visible but blocks read-only users before mutation', async () => {
     let quotaUpdates = 0;
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     useCommonSettingsHandlers([
       http.put('/api/ai-usage/quota', () => {
         quotaUpdates += 1;

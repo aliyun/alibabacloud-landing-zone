@@ -387,6 +387,10 @@ public class DispatchCheckpointService {
                         "sha256:" + item.getSha256(), item.getCheckpointSeq())).toList()
                 : List.of();
         String downloadUrl = candidates.isEmpty() ? null : candidates.get(0).getDownloadUrl();
+        log.info("dispatch resume checkpoint urls dispatchId={} sourceDispatchId={} checkpointSeq={}"
+                        + " candidateCount={} checkpointDownloadUrl={}",
+                dispatch.getId(), source.dispatchId(), checkpoint.getCheckpointSeq(),
+                candidates.size(), downloadUrl);
         return descriptor(dispatch,
                 source.dispatchId(),
                 providerSession == null ? checkpoint.getProvider() : providerSession.provider(),

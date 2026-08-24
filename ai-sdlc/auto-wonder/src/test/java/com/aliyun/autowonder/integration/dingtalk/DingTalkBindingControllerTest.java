@@ -52,7 +52,7 @@ class DingTalkBindingControllerTest {
 
     @Test
     void createEnabledStreamBindingStartsClientAfterCreate() {
-        AutoWonderContext.get().setCurrentOrgId(1L);
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
         AutoWonderContext.get().setUserId(9L);
         BindingUpsertRequest req = request("STREAM", "ENABLED");
         DingtalkRobotBindingDO row = binding(7L, "STREAM", "ENABLED");
@@ -70,7 +70,7 @@ class DingTalkBindingControllerTest {
 
     @Test
     void createDoesNotStartDisabledOrHttpCallbackBinding() {
-        AutoWonderContext.get().setCurrentOrgId(1L);
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
         AutoWonderContext.get().setUserId(9L);
         BindingUpsertRequest httpReq = request("HTTP_CALLBACK", "ENABLED");
         DingtalkRobotBindingDO httpRow = binding(7L, "HTTP_CALLBACK", "ENABLED");
@@ -91,7 +91,7 @@ class DingTalkBindingControllerTest {
 
     @Test
     void updateStopsOldClientThenStartsUpdatedStreamBinding() {
-        AutoWonderContext.get().setCurrentOrgId(1L);
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
         AutoWonderContext.get().setUserId(9L);
         BindingUpsertRequest req = request("STREAM", "ENABLED");
         DingtalkRobotBindingDO oldRow = binding(7L, "STREAM", "ENABLED");
@@ -113,7 +113,7 @@ class DingTalkBindingControllerTest {
 
     @Test
     void updateToDisabledStopsOldClientAndDoesNotStartUpdatedBinding() {
-        AutoWonderContext.get().setCurrentOrgId(1L);
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
         AutoWonderContext.get().setUserId(9L);
         BindingUpsertRequest req = request("STREAM", "DISABLED");
         DingtalkRobotBindingDO oldRow = binding(7L, "STREAM", "ENABLED");
@@ -130,7 +130,7 @@ class DingTalkBindingControllerTest {
 
     @Test
     void deleteStopsExistingClientAfterDelete() {
-        AutoWonderContext.get().setCurrentOrgId(1L);
+        AutoWonderContext.get().setCurrentWorkspaceId(1L);
         DingtalkRobotBindingDO oldRow = binding(7L, "STREAM", "ENABLED");
         when(svc.get(1L, 7L)).thenReturn(oldRow);
 

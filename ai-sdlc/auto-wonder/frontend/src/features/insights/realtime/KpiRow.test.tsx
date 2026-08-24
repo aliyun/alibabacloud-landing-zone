@@ -24,7 +24,13 @@ describe('KpiRow', () => {
     expect(screen.getByText('平均耗时')).toBeInTheDocument();
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.getByText('57')).toBeInTheDocument();
-    expect(screen.getByText('34 分钟')).toBeInTheDocument();
+    expect(screen.getByText('34分钟')).toBeInTheDocument();
+  });
+
+  it('converts 平均耗时 to hours when >= 60 minutes', () => {
+    render(<KpiRow kpi={{ ...sampleKpi, avgTaskDurationMinutes: 90 }} />);
+
+    expect(screen.getByText('1小时30分')).toBeInTheDocument();
   });
 
   it('clickable KPIs have button role and cursor pointer', () => {

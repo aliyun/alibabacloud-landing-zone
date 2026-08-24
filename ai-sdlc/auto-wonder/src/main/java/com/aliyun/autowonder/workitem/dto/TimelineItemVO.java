@@ -16,5 +16,9 @@ public class TimelineItemVO {
     private boolean isAgent;
     private String content;
     private Date gmtCreate;
+    /** Source workitem metadata used when rendering an external-sync timeline event. */
+    private String sourceProvider;
+    private String sourceExternalWorkitemId;
+    private String sourceExternalUrl;
     private List<CommentInteractionVO> interactions;
 }

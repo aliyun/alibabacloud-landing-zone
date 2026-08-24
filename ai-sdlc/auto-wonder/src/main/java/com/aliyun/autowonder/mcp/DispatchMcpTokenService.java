@@ -1,13 +1,13 @@
 package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.auth.jwt.JwtService;
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
-import com.aliyun.autowonder.org.OrgMemberDO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.springframework.stereotype.Service;
@@ -25,14 +25,14 @@ public class DispatchMcpTokenService {
     private final JwtService jwtService;
     private final DispatchDao dispatchDao;
     private final WorkitemDao workitemDao;
-    private final OrgMemberDao orgMemberDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
 
     public DispatchMcpTokenService(JwtService jwtService, DispatchDao dispatchDao,
-                                   WorkitemDao workitemDao, OrgMemberDao orgMemberDao) {
+                                   WorkitemDao workitemDao, WorkspaceMemberDao workspaceMemberDao) {
         this.jwtService = jwtService;
         this.dispatchDao = dispatchDao;
         this.workitemDao = workitemDao;
-        this.orgMemberDao = orgMemberDao;
+        this.workspaceMemberDao = workspaceMemberDao;
     }
 
     public String issue(DispatchDO dispatch) {
@@ -63,13 +63,13 @@ public class DispatchMcpTokenService {
                 throw new IllegalArgumentException("invalid purpose");
             }
             long dispatchId = ((Number) claims.get("subjectId")).longValue();
-            long tenantId = ((Number) claims.get("org")).longValue();
+            long tenantId = ((Number) claims.get("workspace")).longValue();
             DispatchDO dispatch = dispatchDao.findById(dispatchId);
             if (dispatch == null || !tenantIdEquals(dispatch, tenantId) || !ACTIVE.contains(dispatch.getStatus())) {
                 throw new IllegalArgumentException("dispatch is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();
-            OrgAccessLevel level = resolveAccessLevel(tenantId, userId);
+            WorkspaceAccessLevel level = resolveAccessLevel(tenantId, userId);
             return new McpAccessTokenService.Principal(
                     tenantId, userId, -dispatchId, level,
                     McpAccessTokenService.CredentialType.DISPATCH);
@@ -82,18 +82,18 @@ public class DispatchMcpTokenService {
         return dispatch.getTenantId() != null && dispatch.getTenantId() == tenantId;
     }
 
-    private OrgAccessLevel resolveAccessLevel(long tenantId, long userId) {
-        if (orgMemberDao == null) {
-            return OrgAccessLevel.READ_WRITE;
+    private WorkspaceAccessLevel resolveAccessLevel(long tenantId, long userId) {
+        if (workspaceMemberDao == null) {
+            return WorkspaceAccessLevel.READ_WRITE;
         }
-        OrgMemberDO member = orgMemberDao.findByOrgAndUser(tenantId, userId);
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(tenantId, userId);
         if (member == null || member.getAccessLevel() == null) {
-            return OrgAccessLevel.READ_WRITE;
+            return WorkspaceAccessLevel.READ_WRITE;
         }
         try {
-            return OrgAccessLevel.valueOf(member.getAccessLevel());
+            return WorkspaceAccessLevel.valueOf(member.getAccessLevel());
         } catch (IllegalArgumentException e) {
-            return OrgAccessLevel.READ_WRITE;
+            return WorkspaceAccessLevel.READ_WRITE;
         }
     }
 }

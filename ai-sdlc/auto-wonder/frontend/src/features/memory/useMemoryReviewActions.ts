@@ -59,7 +59,7 @@ export function useMemoryReviewActions() {
   const openEditApprove = (record: Memory) => {
     runWithAccess('READ_WRITE', '编辑并采纳记忆', () => {
       setCurrentMemory(record);
-      setEditedContent(record.contentMd);
+      setEditedContent(record.contentMd ?? '');
       setEditedType(record.type);
       setReviewScope(record.scope);
       setReviewOwnerRef(record.ownerRef == null ? '' : String(record.ownerRef));

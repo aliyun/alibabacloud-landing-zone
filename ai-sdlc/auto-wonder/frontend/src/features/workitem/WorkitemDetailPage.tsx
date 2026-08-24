@@ -13,6 +13,7 @@ import { WorkitemMeta } from './components/WorkitemMeta';
 import { HumanInterventionAlert } from './components/HumanInterventionBadge';
 import { WorkitemActionBar } from './components/WorkitemActionBar';
 import { StartDeliveryModal } from './components/StartDeliveryModal';
+import { AssignHumanModal } from './components/AssignHumanModal';
 import { WorkitemContent } from './components/WorkitemContent';
 import { RequirementDocumentsCard } from './components/RequirementDocumentsCard';
 import { ClarificationResult } from './components/ClarificationResult';
@@ -29,6 +30,7 @@ export function WorkitemDetailPage() {
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [assignHumanOpen, setAssignHumanOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -116,6 +118,11 @@ export function WorkitemDetailPage() {
               workitem.sdlcId != null ? '重新指派工单' : '启动工单交付',
               () => setDeliveryOpen(true),
             )}
+            onAssignHuman={() => accessCommand(
+              'READ_WRITE',
+              '指派工单给真人',
+              () => setAssignHumanOpen(true),
+            )}
             onTransition={() => accessCommand('READ_WRITE', '流转工单状态', () => setTransitionOpen(true))}
             onSyncExternal={() => accessCommand(
               'READ_WRITE',
@@ -132,6 +139,7 @@ export function WorkitemDetailPage() {
             title={workitem.title}
             contentMd={workitem.contentMd}
             saving={updateContentMutation.isPending}
+            readOnly={Boolean(workitem.externalCollaboration)}
             onSave={handleSaveContent}
           />
           <RequirementDocumentsCard
@@ -174,6 +182,7 @@ export function WorkitemDetailPage() {
           workitemId={id}
           participants={participants}
           participantsLoading={participantsLoading}
+          externalCollaboration={workitem.externalCollaboration}
           steps={progress?.steps || []}
           progress={progress}
           stepsLoading={progressLoading}
@@ -188,6 +197,11 @@ export function WorkitemDetailPage() {
         workitemId={id}
         hasSdlc={workitem.sdlcId != null}
         onClose={() => setDeliveryOpen(false)}
+      />
+      <AssignHumanModal
+        open={assignHumanOpen}
+        workitemId={id}
+        onClose={() => setAssignHumanOpen(false)}
       />
       <Modal
         title="流转状态"

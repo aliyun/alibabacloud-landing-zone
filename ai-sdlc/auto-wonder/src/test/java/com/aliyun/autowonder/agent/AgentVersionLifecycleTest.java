@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.agent;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
 
@@ -8,8 +8,8 @@ import com.aliyun.autowonder.agent.dto.AgentVersionVO;
 import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
-import com.aliyun.autowonder.org.OrgDO;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDO;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -28,7 +28,7 @@ class AgentVersionLifecycleTest {
     AgentRepoPermDao repoPermDao;
     AgentSkillDao skillDao;
     AgentMemoryRefDao memoryRefDao;
-    OrgDao orgDao;
+    WorkspaceDao workspaceDao;
     AgentService service;
 
     @BeforeEach
@@ -38,8 +38,8 @@ class AgentVersionLifecycleTest {
         repoPermDao = mock(AgentRepoPermDao.class);
         skillDao = mock(AgentSkillDao.class);
         memoryRefDao = mock(AgentMemoryRefDao.class);
-        orgDao = mock(OrgDao.class);
-        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, orgDao,
+        workspaceDao = mock(WorkspaceDao.class);
+        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 mock(ExecutorDao.class), mock(ExecutorRegistry.class));
     }
 
@@ -241,12 +241,12 @@ class AgentVersionLifecycleTest {
         pending.setCreatorId(7L);
         pending.setRoleName("coder");
         pending.setVersion(0);
-        OrgDO org = new OrgDO();
-        org.setId(100L);
-        org.setOwnerId(7L);
+        WorkspaceDO workspace = new WorkspaceDO();
+        workspace.setId(100L);
+        workspace.setOwnerId(7L);
         when(agentDao.findById(10L)).thenReturn(agent);
         when(versionDao.findById(20L)).thenReturn(pending);
-        when(orgDao.findById(100L)).thenReturn(org);
+        when(workspaceDao.findById(100L)).thenReturn(workspace);
         when(versionDao.updateStatus(eq(20L), eq(100L), eq("APPROVED"),
                 eq(7L), eq("owner approve"), anyString(), eq(0), eq(7L))).thenReturn(1);
         when(agentDao.updateStatus(eq(10L), eq(100L), eq("ONLINE"),
@@ -283,12 +283,12 @@ class AgentVersionLifecycleTest {
         pending.setCreatorId(7L);
         pending.setRoleName("coder");
         pending.setVersion(0);
-        OrgDO org = new OrgDO();
-        org.setId(100L);
-        org.setOwnerId(9L);
+        WorkspaceDO workspace = new WorkspaceDO();
+        workspace.setId(100L);
+        workspace.setOwnerId(9L);
         when(agentDao.findById(10L)).thenReturn(agent);
         when(versionDao.findById(20L)).thenReturn(pending);
-        when(orgDao.findById(100L)).thenReturn(org);
+        when(workspaceDao.findById(100L)).thenReturn(workspace);
         when(versionDao.updateStatus(eq(20L), eq(100L), eq("APPROVED"),
                 eq(7L), eq("admin approve"), anyString(), eq(0), eq(7L))).thenReturn(1);
         when(agentDao.updateStatus(eq(10L), eq(100L), eq("ONLINE"),
@@ -303,8 +303,8 @@ class AgentVersionLifecycleTest {
 
         AutoWonderContext context = AutoWonderContext.get();
         context.setUserId(7L);
-        context.setCurrentOrgId(100L);
-        context.setOrgAccessLevel(OrgAccessLevel.ADMIN);
+        context.setCurrentWorkspaceId(100L);
+        context.setWorkspaceAccessLevel(WorkspaceAccessLevel.ADMIN);
         try {
             AgentVO vo = service.approve(10L, 100L, 7L, "admin approve");
 
@@ -316,21 +316,21 @@ class AgentVersionLifecycleTest {
 
     @Test
     void approve_rejects_read_write_creator_self_approval() {
-        assertOwnVersionApprovalDenied(100L, 7L, OrgAccessLevel.READ_WRITE);
+        assertOwnVersionApprovalDenied(100L, 7L, WorkspaceAccessLevel.READ_WRITE);
     }
 
     @Test
     void approve_rejects_admin_context_for_different_user() {
-        assertOwnVersionApprovalDenied(100L, 8L, OrgAccessLevel.ADMIN);
+        assertOwnVersionApprovalDenied(100L, 8L, WorkspaceAccessLevel.ADMIN);
     }
 
     @Test
     void approve_rejects_admin_context_for_different_org() {
-        assertOwnVersionApprovalDenied(200L, 7L, OrgAccessLevel.ADMIN);
+        assertOwnVersionApprovalDenied(200L, 7L, WorkspaceAccessLevel.ADMIN);
     }
 
     private void assertOwnVersionApprovalDenied(
-            long contextOrgId, long contextUserId, OrgAccessLevel contextAccessLevel) {
+            long contextWorkspaceId, long contextUserId, WorkspaceAccessLevel contextAccessLevel) {
         AgentDO agent = new AgentDO();
         agent.setId(10L);
         agent.setTenantId(100L);
@@ -341,17 +341,17 @@ class AgentVersionLifecycleTest {
         pending.setTenantId(100L);
         pending.setStatus("PENDING_REVIEW");
         pending.setCreatorId(7L);
-        OrgDO org = new OrgDO();
-        org.setId(100L);
-        org.setOwnerId(9L);
+        WorkspaceDO workspace = new WorkspaceDO();
+        workspace.setId(100L);
+        workspace.setOwnerId(9L);
         when(agentDao.findById(10L)).thenReturn(agent);
         when(versionDao.findById(20L)).thenReturn(pending);
-        when(orgDao.findById(100L)).thenReturn(org);
+        when(workspaceDao.findById(100L)).thenReturn(workspace);
 
         AutoWonderContext context = AutoWonderContext.get();
         context.setUserId(contextUserId);
-        context.setCurrentOrgId(contextOrgId);
-        context.setOrgAccessLevel(contextAccessLevel);
+        context.setCurrentWorkspaceId(contextWorkspaceId);
+        context.setWorkspaceAccessLevel(contextAccessLevel);
         try {
             BizException ex = assertThrows(BizException.class,
                     () -> service.approve(10L, 100L, 7L, "self approve"));

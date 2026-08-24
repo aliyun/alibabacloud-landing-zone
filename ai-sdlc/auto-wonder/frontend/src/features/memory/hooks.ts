@@ -17,6 +17,21 @@ export function useMemoryList(params: {
   });
 }
 
+export function useMemoryGroups(params?: {
+  page?: number;
+  size?: number;
+  scope?: string;
+  ownerRef?: number;
+  type?: string;
+  status?: string;
+}) {
+  return useQuery({
+    queryKey: ['memories', 'grouped', params],
+    queryFn: () => api.listMemoryGroups(params!),
+    enabled: params !== undefined,
+  });
+}
+
 export function usePendingReviews(params?: { page?: number; size?: number }) {
   return useQuery({
     queryKey: ['memories', 'reviews', params],

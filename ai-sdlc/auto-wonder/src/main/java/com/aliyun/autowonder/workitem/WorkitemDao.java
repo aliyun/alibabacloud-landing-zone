@@ -15,6 +15,7 @@ public interface WorkitemDao {
     List<WorkitemDO> list(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
             @Param("statusNodeId") Long statusNodeId,
+            @Param("statusCategory") String statusCategory,
             @Param("assigneeType") String assigneeType,
             @Param("assigneeRef") Long assigneeRef,
             @Param("pendingDecisionOnly") boolean pendingDecisionOnly,
@@ -25,6 +26,7 @@ public interface WorkitemDao {
     long count(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
             @Param("statusNodeId") Long statusNodeId,
+            @Param("statusCategory") String statusCategory,
             @Param("assigneeType") String assigneeType,
             @Param("assigneeRef") Long assigneeRef,
             @Param("pendingDecisionOnly") boolean pendingDecisionOnly,
@@ -33,6 +35,10 @@ public interface WorkitemDao {
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId);
     int updateContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("title") String title, @Param("contentMd") String contentMd,
+            @Param("version") Integer version, @Param("modifierId") Long modifierId);
+    int updateExternalContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("title") String title, @Param("contentMd") String contentMd,
+            @Param("priority") Integer priority,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int softDelete(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);

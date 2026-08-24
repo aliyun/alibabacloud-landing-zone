@@ -4,13 +4,22 @@
 <mapper namespace="com.aliyun.autowonder.workitem.WorkitemCommentDao">
     <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemCommentDO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO workitem_comment (tenant_id, workitem_id, author_type, author_ref, content_md)
-        VALUES (#{tenantId}, #{workitemId}, #{authorType}, #{authorRef}, #{contentMd})
+        INSERT INTO workitem_comment (tenant_id, workitem_id, author_type, author_ref, content_md, gmt_create)
+        VALUES (#{tenantId}, #{workitemId}, #{authorType}, #{authorRef}, #{contentMd},
+                COALESCE(#{gmtCreate}, CURRENT_TIMESTAMP(3)))
     </insert>
     <select id="findById" resultType="com.aliyun.autowonder.workitem.WorkitemCommentDO">
         SELECT * FROM workitem_comment WHERE tenant_id = #{tenantId} AND id = #{id} LIMIT 1
     </select>
+    <update id="updateExternalContent">
+        UPDATE workitem_comment
+        SET author_ref = COALESCE(#{authorRef}, author_ref),
+            content_md = COALESCE(#{contentMd}, content_md)
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND author_type = 'EXTERNAL'
+    </update>
     <select id="listByWorkitem" resultType="com.aliyun.autowonder.workitem.WorkitemCommentDO">
-        SELECT * FROM workitem_comment WHERE workitem_id = #{workitemId} ORDER BY id ASC
+        SELECT * FROM workitem_comment
+        WHERE workitem_id = #{workitemId}
+        ORDER BY gmt_create DESC, id DESC
     </select>
 </mapper>

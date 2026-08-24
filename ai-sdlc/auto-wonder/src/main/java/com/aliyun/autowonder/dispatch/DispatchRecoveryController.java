@@ -4,8 +4,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.websocket.PresenceManager;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,7 +16,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/workitems")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看调度恢复")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看调度恢复")
 public class DispatchRecoveryController {
 
     private final DispatchService dispatchService;
@@ -31,10 +31,10 @@ public class DispatchRecoveryController {
     }
 
     @PostMapping("/{workitemId}/dispatches/{dispatchId}/pause")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "暂停调度")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "暂停调度")
     public Result<Map<String, Object>> pauseDispatch(@PathVariable long workitemId,
             @PathVariable long dispatchId) {
-        DispatchDO dispatch = pauseService.requestPause(currentOrgId(), workitemId,
+        DispatchDO dispatch = pauseService.requestPause(currentWorkspaceId(), workitemId,
                 dispatchId, currentUserId());
         return Result.ok(Map.of(
                 "dispatchId", dispatch.getId(),
@@ -42,10 +42,10 @@ public class DispatchRecoveryController {
     }
 
     @PostMapping("/{workitemId}/dispatches/{dispatchId}/continue")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "继续调度")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "继续调度")
     public Result<Map<String, Object>> continueDispatch(@PathVariable long workitemId,
             @PathVariable long dispatchId) {
-        long tenantId = currentOrgId();
+        long tenantId = currentWorkspaceId();
         DispatchDO source = dispatchService.loadForTenant(dispatchId);
         if (source.getTenantId() != tenantId || source.getWorkitemId() != workitemId) {
             throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
@@ -64,10 +64,10 @@ public class DispatchRecoveryController {
                 "status", created.getStatus()));
     }
 
-    private long currentOrgId() {
-        Long value = AutoWonderContext.get().getCurrentOrgId();
+    private long currentWorkspaceId() {
+        Long value = AutoWonderContext.get().getCurrentWorkspaceId();
         if (value == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
         return value;
     }

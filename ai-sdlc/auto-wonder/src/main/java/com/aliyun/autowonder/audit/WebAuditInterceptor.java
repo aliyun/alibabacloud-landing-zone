@@ -28,7 +28,7 @@ public class WebAuditInterceptor implements HandlerInterceptor {
             return;
         }
         AutoWonderContext ctx = AutoWonderContext.get();
-        Long tenantId = ctx.getCurrentOrgId();
+        Long tenantId = ctx.getCurrentWorkspaceId();
         Long userId = ctx.getUserId();
         if (tenantId == null || userId == null) {
             return;

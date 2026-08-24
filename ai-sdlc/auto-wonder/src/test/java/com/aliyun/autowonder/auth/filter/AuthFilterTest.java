@@ -1,14 +1,14 @@
 package com.aliyun.autowonder.auth.filter;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.auth.jwt.TokenPayload;
 import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
-import com.aliyun.autowonder.org.OrgMemberDO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.user.UserDao;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -45,8 +45,8 @@ class AuthFilterTest {
     void whitelisted_path_passes_without_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/auth/login");
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -56,14 +56,14 @@ class AuthFilterTest {
 
         assertEquals(200, resp.getStatus());
         assertNotNull(chain.getRequest()); // 链继续
-        verifyNoInteractions(orgMemberDao);
+        verifyNoInteractions(workspaceMemberDao);
     }
 
     @Test
     void mcp_root_path_passes_without_platform_jwt() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/mcp");
         req.setQueryString("token=awmcp_secret");
@@ -90,7 +90,7 @@ class AuthFilterTest {
     void mcp_token_management_path_still_requires_platform_jwt() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/mcp/tokens");
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -106,7 +106,7 @@ class AuthFilterTest {
     void dingtalk_callback_passes_without_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("POST",
                 "/api/integrations/dingtalk/callback");
@@ -123,7 +123,7 @@ class AuthFilterTest {
     void dingtalk_non_callback_integration_still_requires_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET",
                 "/api/integrations/dingtalk/bindings");
@@ -139,7 +139,7 @@ class AuthFilterTest {
     @Test
     void integration_capabilities_are_public_read_only_metadata() throws Exception {
         AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
-                mock(OrgMemberDao.class), mock(UserDao.class));
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest req = new MockHttpServletRequest("GET",
                 "/api/integrations/capabilities");
@@ -156,7 +156,7 @@ class AuthFilterTest {
     void branding_public_reads_are_whitelisted_but_logo_upload_requires_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
         MockHttpServletRequest publicReq = new MockHttpServletRequest("GET", "/api/platform/branding/public");
         MockHttpServletResponse publicResp = new MockHttpServletResponse();
@@ -181,35 +181,90 @@ class AuthFilterTest {
     }
 
     @Test
+    void cli_workitem_upload_post_passes_without_session_token() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+
+        MockHttpServletRequest req = new MockHttpServletRequest("POST",
+                "/api/cli/workitems/50063/requirement-documents");
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(req, resp, chain);
+
+        assertEquals(200, resp.getStatus());
+        assertNotNull(chain.getRequest());
+    }
+
+    @Test
+    void cli_workitem_upload_non_post_methods_still_require_session_token() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+
+        for (String method : new String[]{"GET", "PUT", "DELETE"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest(method,
+                    "/api/cli/workitems/50063/requirement-documents");
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(401, resp.getStatus(), method);
+            assertNull(chain.getRequest(), method);
+        }
+    }
+
+    @Test
+    void unrelated_cli_routes_are_not_whitelisted() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+
+        for (String path : new String[]{
+                "/api/cli/workitems/50063",
+                "/api/cli/workitems/50063/requirement-documents/9",
+                "/api/cli/workitems/abc/requirement-documents",
+                "/api/cli/other"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", path);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(401, resp.getStatus(), path);
+            assertNull(chain.getRequest(), path);
+        }
+    }
+
+    @Test
     void valid_token_sets_context_and_continues() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
         when(sessionService.isBlacklisted(anyString())).thenReturn(false);
-        OrgMemberDO activeMember =
-                member(0, 0, OrgAccessLevel.READ_WRITE.name());
-        when(orgMemberDao.findByOrgAndUser(100L, 42L))
+        WorkspaceMemberDO activeMember =
+                member(0, 0, WorkspaceAccessLevel.READ_WRITE.name());
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L))
                 .thenReturn(activeMember);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
 
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-a"));
-        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/current");
         req.addHeader("Authorization", "Bearer " + token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
 
         AtomicReference<Long> seenUser = new AtomicReference<>();
-        AtomicReference<Long> seenOrg = new AtomicReference<>();
-        AtomicReference<OrgAccessLevel> seenLevel = new AtomicReference<>();
-        AtomicReference<OrgMemberDO> seenMember = new AtomicReference<>();
+        AtomicReference<Long> seenWorkspace = new AtomicReference<>();
+        AtomicReference<WorkspaceAccessLevel> seenLevel = new AtomicReference<>();
+        AtomicReference<WorkspaceMemberDO> seenMember = new AtomicReference<>();
         AtomicReference<String> seenTraceId = new AtomicReference<>();
         MockFilterChain chain = new MockFilterChain(new javax.servlet.http.HttpServlet() {
             @Override
             protected void service(javax.servlet.http.HttpServletRequest r,
                                    javax.servlet.http.HttpServletResponse s) {
                 seenUser.set(AutoWonderContext.get().getUserId());
-                seenOrg.set(AutoWonderContext.get().getCurrentOrgId());
-                seenLevel.set(AutoWonderContext.get().getOrgAccessLevel());
-                seenMember.set(AutoWonderContext.get().getOrgMember());
+                seenWorkspace.set(AutoWonderContext.get().getCurrentWorkspaceId());
+                seenLevel.set(AutoWonderContext.get().getWorkspaceAccessLevel());
+                seenMember.set(AutoWonderContext.get().getWorkspaceMember());
                 seenTraceId.set(AutoWonderContext.get().getTraceId());
             }
         });
@@ -217,27 +272,27 @@ class AuthFilterTest {
         filter.doFilter(req, resp, chain);
 
         assertEquals(42L, seenUser.get());
-        assertEquals(100L, seenOrg.get());
-        assertEquals(OrgAccessLevel.READ_WRITE, seenLevel.get());
+        assertEquals(100L, seenWorkspace.get());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, seenLevel.get());
         assertNotNull(seenMember.get());
         assertSame(activeMember, seenMember.get());
         assertNotNull(seenTraceId.get());
-        verify(orgMemberDao, times(1)).findByOrgAndUser(100L, 42L);
+        verify(workspaceMemberDao, times(1)).findByWorkspaceAndUser(100L, 42L);
         // 过滤器结束后上下文已清理
         assertNull(AutoWonderContext.get().getUserId());
-        assertNull(AutoWonderContext.get().getCurrentOrgId());
-        assertNull(AutoWonderContext.get().getOrgAccessLevel());
+        assertNull(AutoWonderContext.get().getCurrentWorkspaceId());
+        assertNull(AutoWonderContext.get().getWorkspaceAccessLevel());
         assertNull(AutoWonderContext.get().getTraceId());
     }
 
     @Test
-    void validTokenSnapshotsOperatorAndOrganizationIntoBusinessLog() throws Exception {
+    void validTokenSnapshotsOperatorAndWorkspaceIntoBusinessLog() throws Exception {
         JwtService jwt = newJwtService();
         SessionService sessions = mock(SessionService.class);
-        OrgMemberDao members = mock(OrgMemberDao.class);
+        WorkspaceMemberDao members = mock(WorkspaceMemberDao.class);
         when(sessions.isBlacklisted(anyString())).thenReturn(false);
-        when(members.findByOrgAndUser(100L, 42L))
-                .thenReturn(member(0, 0, OrgAccessLevel.READ_WRITE.name()));
+        when(members.findByWorkspaceAndUser(100L, 42L))
+                .thenReturn(member(0, 0, WorkspaceAccessLevel.READ_WRITE.name()));
         BizLog log = new BizLog();
         AutoWonderContext.get().setBizLog(log);
         String token = jwt.signAccess(new TokenPayload(42L, 100L, "jti-log"));
@@ -246,46 +301,46 @@ class AuthFilterTest {
                 new MockHttpServletResponse(), new MockFilterChain());
 
         assertEquals(42L, log.getUserId());
-        assertEquals(100L, log.getOrgId());
+        assertEquals(100L, log.getWorkspaceId());
     }
 
     @Test
-    void valid_token_without_current_org_sets_user_and_does_not_query_membership() throws Exception {
+    void valid_token_without_current_workspace_sets_user_and_does_not_query_membership() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
 
-        String token = jwtService.signAccess(new TokenPayload(42L, null, "jti-no-org"));
+        String token = jwtService.signAccess(new TokenPayload(42L, null, "jti-no-workspace"));
         MockHttpServletRequest req = authenticatedRequest(token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
         AtomicReference<Long> seenUser = new AtomicReference<>();
-        AtomicReference<Long> seenOrg = new AtomicReference<>();
+        AtomicReference<Long> seenWorkspace = new AtomicReference<>();
         MockFilterChain chain = new MockFilterChain(new javax.servlet.http.HttpServlet() {
             @Override
             protected void service(javax.servlet.http.HttpServletRequest r,
                                    javax.servlet.http.HttpServletResponse s) {
                 seenUser.set(AutoWonderContext.get().getUserId());
-                seenOrg.set(AutoWonderContext.get().getCurrentOrgId());
+                seenWorkspace.set(AutoWonderContext.get().getCurrentWorkspaceId());
             }
         });
 
         filter.doFilter(req, resp, chain);
 
         assertEquals(42L, seenUser.get());
-        assertNull(seenOrg.get());
-        verifyNoInteractions(orgMemberDao);
+        assertNull(seenWorkspace.get());
+        verifyNoInteractions(workspaceMemberDao);
         assertNull(AutoWonderContext.get().getUserId());
     }
 
     @ParameterizedTest
-    @MethodSource("organizationRecoveryRoutes")
-    void organization_recovery_routes_validate_jwt_but_skip_stale_membership(
+    @MethodSource("workspaceRecoveryRoutes")
+    void workspace_recovery_routes_validate_jwt_but_skip_stale_membership(
             String method, String path) throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 999L, "jti-recovery"));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         req.addHeader("Authorization", "Bearer " + token);
@@ -304,17 +359,17 @@ class AuthFilterTest {
         assertEquals(200, resp.getStatus());
         assertEquals(42L, seenUser.get());
         assertNotNull(chain.getRequest());
-        verifyNoInteractions(orgMemberDao);
+        verifyNoInteractions(workspaceMemberDao);
     }
 
     @ParameterizedTest
-    @MethodSource("organizationRecoveryRoutes")
-    void organization_recovery_routes_still_require_jwt(String method, String path)
+    @MethodSource("workspaceRecoveryRoutes")
+    void workspace_recovery_routes_still_require_jwt(String method, String path)
             throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -323,18 +378,18 @@ class AuthFilterTest {
 
         assertEquals(401, resp.getStatus());
         assertNull(chain.getRequest());
-        verifyNoInteractions(orgMemberDao);
+        verifyNoInteractions(workspaceMemberDao);
     }
 
     @Test
     void member_management_route_does_not_skip_current_membership_lookup() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 999L, "jti-members"));
         MockHttpServletRequest req = new MockHttpServletRequest(
-                "GET", "/api/orgs/current/members");
+                "GET", "/api/workspaces/current/members");
         req.addHeader("Authorization", "Bearer " + token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -343,15 +398,15 @@ class AuthFilterTest {
 
         assertEquals(403, resp.getStatus());
         assertNull(chain.getRequest());
-        verify(orgMemberDao, times(1)).findByOrgAndUser(999L, 42L);
+        verify(workspaceMemberDao, times(1)).findByWorkspaceAndUser(999L, 42L);
     }
 
     @Test
     void missing_membership_returns_403_with_ids_and_cleans_context() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-missing-member"));
         MockHttpServletRequest req = authenticatedRequest(token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -365,20 +420,20 @@ class AuthFilterTest {
         assertTrue(resp.getContentAsString().contains("\"request_id\":\"rid-member-fail\""));
         assertTrue(resp.getContentAsString().matches(".*\"traceId\":\"[^\"]+\".*"));
         assertNull(chain.getRequest());
-        verify(orgMemberDao, times(1)).findByOrgAndUser(100L, 42L);
+        verify(workspaceMemberDao, times(1)).findByWorkspaceAndUser(100L, 42L);
         assertNull(AutoWonderContext.get().getUserId());
-        assertNull(AutoWonderContext.get().getCurrentOrgId());
-        assertNull(AutoWonderContext.get().getOrgAccessLevel());
+        assertNull(AutoWonderContext.get().getCurrentWorkspaceId());
+        assertNull(AutoWonderContext.get().getWorkspaceAccessLevel());
     }
 
     @Test
     void deleted_membership_returns_403() throws Exception {
-        assertMembershipRejected(member(0, 1, OrgAccessLevel.ADMIN.name()));
+        assertMembershipRejected(member(0, 1, WorkspaceAccessLevel.ADMIN.name()));
     }
 
     @Test
     void inactive_membership_returns_403() throws Exception {
-        assertMembershipRejected(member(1, 0, OrgAccessLevel.ADMIN.name()));
+        assertMembershipRejected(member(1, 0, WorkspaceAccessLevel.ADMIN.name()));
     }
 
     @Test
@@ -395,9 +450,9 @@ class AuthFilterTest {
     void missing_token_returns_401_json() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(OrgMemberDao.class), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, mock(WorkspaceMemberDao.class), mock(UserDao.class));
 
-        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/current");
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
         AutoWonderContext.get().setRequestId("rid-auth-fail");
@@ -414,12 +469,12 @@ class AuthFilterTest {
     void blacklisted_token_returns_401() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
         when(sessionService.isBlacklisted("jti-b")).thenReturn(true);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
 
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-b"));
-        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/current");
         req.addHeader("Authorization", "Bearer " + token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -428,15 +483,15 @@ class AuthFilterTest {
 
         assertEquals(401, resp.getStatus());
         assertNull(chain.getRequest());
-        verifyNoInteractions(orgMemberDao);
+        verifyNoInteractions(workspaceMemberDao);
     }
 
-    private void assertMembershipRejected(OrgMemberDO member) throws Exception {
+    private void assertMembershipRejected(WorkspaceMemberDO member) throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        when(orgMemberDao.findByOrgAndUser(100L, 42L)).thenReturn(member);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-rejected"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -446,16 +501,16 @@ class AuthFilterTest {
         assertEquals(403, resp.getStatus());
         assertTrue(resp.getContentAsString().contains("\"code\":\"11001\""));
         assertNull(chain.getRequest());
-        verify(orgMemberDao, times(1)).findByOrgAndUser(100L, 42L);
+        verify(workspaceMemberDao, times(1)).findByWorkspaceAndUser(100L, 42L);
         assertNull(AutoWonderContext.get().getUserId());
     }
 
-    private void assertInvalidAccessLevel(OrgMemberDO member) throws Exception {
+    private void assertInvalidAccessLevel(WorkspaceMemberDO member) throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
-        OrgMemberDao orgMemberDao = mock(OrgMemberDao.class);
-        when(orgMemberDao.findByOrgAndUser(100L, 42L)).thenReturn(member);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, orgMemberDao, mock(UserDao.class));
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, mock(UserDao.class));
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-invalid-level"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -465,32 +520,32 @@ class AuthFilterTest {
         assertEquals(500, resp.getStatus());
         assertTrue(resp.getContentAsString().contains("\"code\":\"12007\""));
         assertNull(chain.getRequest());
-        verify(orgMemberDao, times(1)).findByOrgAndUser(100L, 42L);
-        assertNull(AutoWonderContext.get().getOrgAccessLevel());
+        verify(workspaceMemberDao, times(1)).findByWorkspaceAndUser(100L, 42L);
+        assertNull(AutoWonderContext.get().getWorkspaceAccessLevel());
     }
 
     private MockHttpServletRequest authenticatedRequest(String token) {
-        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/orgs/current");
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/current");
         req.addHeader("Authorization", "Bearer " + token);
         return req;
     }
 
-    private OrgMemberDO member(int status, int isDeleted, String accessLevel) {
-        OrgMemberDO member = new OrgMemberDO();
+    private WorkspaceMemberDO member(int status, int isDeleted, String accessLevel) {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setStatus(status);
         member.setIsDeleted(isDeleted);
         member.setAccessLevel(accessLevel);
         return member;
     }
 
-    private static Stream<Arguments> organizationRecoveryRoutes() {
+    private static Stream<Arguments> workspaceRecoveryRoutes() {
         return Stream.of(
-                Arguments.of("POST", "/api/orgs"),
-                Arguments.of("POST", "/api/orgs/"),
-                Arguments.of("GET", "/api/orgs/mine"),
-                Arguments.of("GET", "/api/orgs/mine/"),
-                Arguments.of("POST", "/api/orgs/123/switch"),
-                Arguments.of("POST", "/api/orgs/123/switch/"),
+                Arguments.of("POST", "/api/workspaces"),
+                Arguments.of("POST", "/api/workspaces/"),
+                Arguments.of("GET", "/api/workspaces/mine"),
+                Arguments.of("GET", "/api/workspaces/mine/"),
+                Arguments.of("POST", "/api/workspaces/123/switch"),
+                Arguments.of("POST", "/api/workspaces/123/switch/"),
                 Arguments.of("GET", "/api/mcp/tokens"),
                 Arguments.of("POST", "/api/mcp/tokens"),
                 Arguments.of("DELETE", "/api/mcp/tokens/1"),

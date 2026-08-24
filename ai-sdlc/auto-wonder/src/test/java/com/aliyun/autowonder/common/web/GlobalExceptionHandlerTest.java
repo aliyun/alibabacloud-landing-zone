@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.common.web;
 
-import com.aliyun.autowonder.access.OrgAccessDeniedException;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.dto.OrgAccessDeniedVO;
+import com.aliyun.autowonder.access.WorkspaceAccessDeniedException;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.dto.WorkspaceAccessDeniedVO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
@@ -37,7 +37,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void orgNotMemberBizExceptionReturnsHttp403WithBody() {
-        assertBizResponse(ErrorCode.ORG_NOT_MEMBER, HttpStatus.FORBIDDEN);
+        assertBizResponse(ErrorCode.WORKSPACE_NOT_MEMBER, HttpStatus.FORBIDDEN);
     }
 
     @Test
@@ -53,24 +53,24 @@ class GlobalExceptionHandlerTest {
     @Test
     void parameterValidationBizExceptionsReturnHttp400() {
         assertBizResponse(ErrorCode.PARAM_INVALID, HttpStatus.BAD_REQUEST);
-        assertBizResponse(ErrorCode.ORG_ACCESS_LEVEL_INVALID, HttpStatus.BAD_REQUEST);
+        assertBizResponse(ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID, HttpStatus.BAD_REQUEST);
     }
 
     @Test
     void nullAccessLevelBizExceptionReturnsHttp400WithSpecificCode() {
         ResponseEntity<Result<Void>> response =
-                handler.handleBiz(new BizException(ErrorCode.ORG_ACCESS_LEVEL_INVALID));
+                handler.handleBiz(new BizException(ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID));
 
         assertErrorResponse(
-                response, HttpStatus.BAD_REQUEST, ErrorCode.ORG_ACCESS_LEVEL_INVALID);
+                response, HttpStatus.BAD_REQUEST, ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
     }
 
     @Test
     void governanceConflictBizExceptionsReturnHttp409() {
         assertBizResponse(ErrorCode.CONFLICT, HttpStatus.CONFLICT);
-        assertBizResponse(ErrorCode.ORG_OWNER_MUTATION_PROTECTED, HttpStatus.CONFLICT);
-        assertBizResponse(ErrorCode.ORG_SELF_LEVEL_MUTATION_FORBIDDEN, HttpStatus.CONFLICT);
-        assertBizResponse(ErrorCode.ORG_OWNER_TRANSFER_INVALID, HttpStatus.CONFLICT);
+        assertBizResponse(ErrorCode.WORKSPACE_OWNER_MUTATION_PROTECTED, HttpStatus.CONFLICT);
+        assertBizResponse(ErrorCode.WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN, HttpStatus.CONFLICT);
+        assertBizResponse(ErrorCode.WORKSPACE_OWNER_TRANSFER_INVALID, HttpStatus.CONFLICT);
     }
 
     @Test
@@ -96,38 +96,38 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void handlesOrgAccessDenialAsStructuredHttp403() {
+    void handlesWorkspaceAccessDenialAsStructuredHttp403() {
         AutoWonderContext.get().setTraceId("trace-access");
         AutoWonderContext.get().setRequestId("request-access");
-        OrgAccessDeniedException error = new OrgAccessDeniedException(
-                OrgAccessLevel.READ_ONLY, OrgAccessLevel.ADMIN, "管理组织");
+        WorkspaceAccessDeniedException error = new WorkspaceAccessDeniedException(
+                WorkspaceAccessLevel.READ_ONLY, WorkspaceAccessLevel.ADMIN, "管理工作空间");
 
-        ResponseEntity<Result<OrgAccessDeniedVO>> response =
-                handler.handleOrgAccessDenied(error);
+        ResponseEntity<Result<WorkspaceAccessDeniedVO>> response =
+                handler.handleWorkspaceAccessDenied(error);
 
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
         assertNotNull(response.getBody());
         assertFalse(response.getBody().isSuccess());
-        assertEquals(ErrorCode.ORG_ACCESS_INSUFFICIENT.getCode(), response.getBody().getCode());
-        assertEquals("组织访问级别不足，无法管理组织", response.getBody().getMessage());
+        assertEquals(ErrorCode.WORKSPACE_ACCESS_INSUFFICIENT.getCode(), response.getBody().getCode());
+        assertEquals("工作空间访问级别不足，无法管理工作空间", response.getBody().getMessage());
         assertEquals("trace-access", response.getBody().getTraceId());
         assertEquals("request-access", response.getBody().getRequestId());
-        assertEquals(OrgAccessLevel.READ_ONLY, response.getBody().getData().getCurrent());
-        assertEquals(OrgAccessLevel.ADMIN, response.getBody().getData().getRequired());
-        assertEquals("管理组织", response.getBody().getData().getAction());
+        assertEquals(WorkspaceAccessLevel.READ_ONLY, response.getBody().getData().getCurrent());
+        assertEquals(WorkspaceAccessLevel.ADMIN, response.getBody().getData().getRequired());
+        assertEquals("管理工作空间", response.getBody().getData().getAction());
     }
 
     @Test
-    void invalidOrganizationAccessLevelJsonReturnsHttp400WithSpecificCode() {
+    void invalidWorkspaceAccessLevelJsonReturnsHttp400WithSpecificCode() {
         InvalidFormatException invalidLevel = InvalidFormatException.from(
-                null, "invalid organization access level", "OWNER", OrgAccessLevel.class);
+                null, "invalid workspace access level", "OWNER", WorkspaceAccessLevel.class);
         HttpMessageNotReadableException error = new HttpMessageNotReadableException(
                 "JSON parse error", new IllegalArgumentException(invalidLevel));
 
         ResponseEntity<Result<Void>> response = handler.handleMessageNotReadable(error);
 
         assertErrorResponse(
-                response, HttpStatus.BAD_REQUEST, ErrorCode.ORG_ACCESS_LEVEL_INVALID);
+                response, HttpStatus.BAD_REQUEST, ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
     }
 
     @Test

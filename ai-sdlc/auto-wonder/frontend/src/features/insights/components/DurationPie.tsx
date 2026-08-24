@@ -1,16 +1,9 @@
 import type { DurationSummary } from '../types';
+import { formatDurationCompact } from '@/shared/lib/duration';
 
 interface DurationPieProps {
   data: DurationSummary;
   size?: number;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 export function DurationPie({ data, size = 140 }: DurationPieProps) {
@@ -40,12 +33,12 @@ export function DurationPie({ data, size = 140 }: DurationPieProps) {
         <circle cx={cx} cy={cy} r={r * 0.55} fill="#fff" />
         <text x={cx} y={cy - 4} textAnchor="middle" fontSize={12} fill="#595959">Total</text>
         <text x={cx} y={cy + 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#262626">
-          {formatDuration(data.totalDurationSeconds)}
+          {formatDurationCompact(data.totalDurationSeconds)}
         </text>
       </svg>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <LegendItem color="#1890ff" label="Human" value={formatDuration(data.humanDurationSeconds)} percent={Math.round(humanRatio * 100)} />
-        <LegendItem color="#faad14" label="Agent" value={formatDuration(data.agentDurationSeconds)} percent={Math.round((1 - humanRatio) * 100)} />
+        <LegendItem color="#1890ff" label="Human" value={formatDurationCompact(data.humanDurationSeconds)} percent={Math.round(humanRatio * 100)} />
+        <LegendItem color="#faad14" label="Agent" value={formatDurationCompact(data.agentDurationSeconds)} percent={Math.round((1 - humanRatio) * 100)} />
       </div>
     </div>
   );

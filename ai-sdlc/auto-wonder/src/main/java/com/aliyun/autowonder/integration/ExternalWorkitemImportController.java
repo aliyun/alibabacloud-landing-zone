@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.integration;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
@@ -29,13 +29,13 @@ public class ExternalWorkitemImportController {
     }
 
     @PostMapping("/import")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "导入外部工单")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "导入外部工单")
     public Result<ExternalWorkitemImportResult> importWorkitem(@RequestBody ExternalWorkitemImportRequest req) {
-        return Result.ok(importService.importWorkitem(req, currentOrgId(), currentUserId()));
+        return Result.ok(importService.importWorkitem(req, currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/import-records")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看外部工单导入记录")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看外部工单导入记录")
     public Result<List<ExternalWorkitemImportRecordVO>> listRecords(
             @RequestParam(value = "sourceSystem", required = false) String sourceSystem,
             @RequestParam(value = "externalWorkitemId", required = false) String externalWorkitemId,
@@ -43,7 +43,7 @@ public class ExternalWorkitemImportController {
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         return Result.ok(importService.listRecords(sourceSystem, externalWorkitemId, status,
-                currentOrgId(), page, size));
+                currentWorkspaceId(), page, size));
     }
 
     private long currentUserId() {
@@ -54,11 +54,11 @@ public class ExternalWorkitemImportController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

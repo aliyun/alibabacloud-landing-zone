@@ -216,7 +216,7 @@ class ImNotificationWorkerSchedulerIsolationTest {
             properties.setMaxAttempts(3);
             when(contextResolver.resolve(org.mockito.ArgumentMatchers.any()))
                     .thenReturn(new ImNotificationMessageContext(
-                            "测试组织", "待处理", "https://test.example.com", 7L));
+                            "测试工作空间", "待处理", "https://test.example.com", 7L));
             when(provider.provider()).thenReturn("DINGTALK");
             worker = new ImNotificationWorker(
                     queue,

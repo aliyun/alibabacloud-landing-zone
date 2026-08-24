@@ -25,6 +25,8 @@ history, not in the published community tree.
 - `docs/community/upstream-sync-log.md`: verified upstream baselines and history.
 - `docs/community/docs-policy.md`: this retention policy.
 - `docs/community/squad-template-seed.md`: template data and deployment contract.
+- `docs/skills/`: published product Skills (e.g. execution optimizer); sync from
+  master as-is.
 
 The deployment Skill under `skills/deploying-autowonder-on-alibaba-cloud/` owns
 the detailed Alibaba Cloud deployment, operations, troubleshooting, acceptance,

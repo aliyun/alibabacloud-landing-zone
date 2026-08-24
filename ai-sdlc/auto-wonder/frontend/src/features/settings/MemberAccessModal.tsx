@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { Form, Modal, Radio, Select } from 'antd';
-import type { OrgAccessLevel } from '@/shared/types/common';
+import type { WorkspaceAccessLevel } from '@/shared/types/common';
 import type { MemberVO } from './api';
 
 interface MemberAccessForm {
-  accessLevel: OrgAccessLevel;
+  accessLevel: WorkspaceAccessLevel;
   identityTags: string[];
 }
 

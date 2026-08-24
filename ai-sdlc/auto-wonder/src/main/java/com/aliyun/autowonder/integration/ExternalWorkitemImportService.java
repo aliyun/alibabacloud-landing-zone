@@ -20,6 +20,7 @@ import com.aliyun.autowonder.statemachine.StatusTemplateDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDO;
+import com.aliyun.autowonder.workitem.WorkitemEventType;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -76,7 +77,7 @@ public class ExternalWorkitemImportService {
             String sourceSystem = normalizeSource(req.getSourceSystem());
             String workType = normalizeWorkType(req.getType());
             String rawJson = JSON.toJSONString(req);
-            ExternalWorkitemLinkDO link = linkDao.findByExternal(tenantId, sourceSystem, req.getExternalWorkitemId());
+            ExternalWorkitemLinkDO link = linkDao.findByExternalScope(tenantId, 0L, req.getExternalWorkitemId());
             if (link == null) {
                 return createImport(req, tenantId, userId, sourceSystem, workType, rawJson);
             }
@@ -120,7 +121,7 @@ public class ExternalWorkitemImportService {
         workitem.setCreatorId(userId);
         workitem.setVersion(0);
         workitemDao.insert(workitem);
-        writeEvent(tenantId, workitem.getId(), "EXTERNAL_IMPORT", null, req.getExternalWorkitemId(), userId);
+        writeEvent(tenantId, workitem.getId(), WorkitemEventType.EXTERNAL_IMPORT.code(), null, req.getExternalWorkitemId(), userId);
 
         ExternalWorkitemLinkDO newLink = new ExternalWorkitemLinkDO();
         newLink.setTenantId(tenantId);
@@ -168,7 +169,7 @@ public class ExternalWorkitemImportService {
             }
         }
         if (changed) {
-            writeEvent(tenantId, existing.getId(), "EXTERNAL_UPDATE", null, req.getExternalWorkitemId(), userId);
+            writeEvent(tenantId, existing.getId(), WorkitemEventType.EXTERNAL_UPDATE.code(), null, req.getExternalWorkitemId(), userId);
         }
         linkDao.updateRemoteState(link.getId(), hash(rawJson), DIRECTION_INBOUND);
         ExternalWorkitemImportRecordDO record = record(req, tenantId, sourceSystem, existing.getId(),

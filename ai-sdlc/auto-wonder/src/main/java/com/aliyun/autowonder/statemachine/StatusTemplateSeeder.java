@@ -16,7 +16,7 @@ public class StatusTemplateSeeder {
         this.transitionDao = transitionDao;
     }
 
-    /** 为新组织播种 REQ/TASK/BUG 三套默认状态模版(节点 + 流转边)。 */
+    /** 为新工作空间播种 REQ/TASK/BUG 三套默认状态模版(节点 + 流转边)。 */
     public void seed(long tenantId, long creatorId) {
         seedTemplate(tenantId, creatorId, "REQ", "需求默认流程", new String[][]{
                 {"new", "新建", "INIT"},

@@ -1,5 +1,6 @@
 import type { Health } from './api';
 import { BRAND, cardStyle } from './theme';
+import { formatMinutesCompact } from '@/shared/lib/duration';
 
 interface Props {
   health: Health;
@@ -10,7 +11,7 @@ export default function HealthPanel({ health }: Props) {
     { value: `${health.successRate.toFixed(0)}%`, label: '成功率', color: BRAND.green },
     { value: health.failedOrTimeout, label: '失败/超时', color: BRAND.red },
     { value: health.retries, label: '返工重试', color: BRAND.gold },
-    { value: `${health.avgDurationMinutes}m`, label: '平均时长', color: '#1f2937' },
+    { value: formatMinutesCompact(health.avgDurationMinutes), label: '平均时长', color: '#1f2937' },
   ];
   return (
     <div style={cardStyle}>

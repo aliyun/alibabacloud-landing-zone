@@ -30,8 +30,8 @@ public class JwtService {
                 .setIssuedAt(new Date(now))
                 .setExpiration(new Date(now + properties.getAccessTtlSeconds() * 1000L))
                 .signWith(key);
-        if (payload.getCurrentOrgId() != null) {
-            builder.claim("org", payload.getCurrentOrgId());
+        if (payload.getCurrentWorkspaceId() != null) {
+            builder.claim("workspace", payload.getCurrentWorkspaceId());
         }
         return builder.compact();
     }
@@ -46,8 +46,8 @@ public class JwtService {
         p.setJti(claims.getId());
         Number uid = claims.get("uid", Number.class);
         p.setUserId(uid == null ? null : uid.longValue());
-        Number org = claims.get("org", Number.class);
-        p.setCurrentOrgId(org == null ? null : org.longValue());
+        Number workspace = claims.get("workspace", Number.class);
+        p.setCurrentWorkspaceId(workspace == null ? null : workspace.longValue());
         return p;
     }
 
@@ -56,7 +56,7 @@ public class JwtService {
         return Jwts.builder()
                 .setSubject(String.valueOf(userId))
                 .claim("uid", userId)
-                .claim("org", tenantId)
+                .claim("workspace", tenantId)
                 .claim("purpose", purpose)
                 .claim("subjectId", subjectId)
                 .setIssuedAt(new Date(now))
@@ -69,8 +69,28 @@ public class JwtService {
         Claims claims = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
         return Map.of(
                 "uid", claims.get("uid", Number.class).longValue(),
-                "org", claims.get("org", Number.class).longValue(),
+                "workspace", claims.get("workspace", Number.class).longValue(),
                 "purpose", claims.get("purpose", String.class),
                 "subjectId", claims.get("subjectId", Number.class).longValue());
+    }
+
+    public String signUserPurpose(long userId, String purpose, long ttlSeconds) {
+        long now = System.currentTimeMillis();
+        return Jwts.builder()
+                .setSubject(String.valueOf(userId))
+                .claim("uid", userId)
+                .claim("purpose", purpose)
+                .setIssuedAt(new Date(now))
+                .setExpiration(new Date(now + ttlSeconds * 1000L))
+                .signWith(key)
+                .compact();
+    }
+
+    public Map<String, Object> parseUserPurpose(String token) {
+        Claims claims = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
+        return Map.of(
+                "uid", claims.get("uid", Number.class).longValue(),
+                "purpose", claims.get("purpose", String.class),
+                "exp", claims.getExpiration().getTime() / 1000L);
     }
 }

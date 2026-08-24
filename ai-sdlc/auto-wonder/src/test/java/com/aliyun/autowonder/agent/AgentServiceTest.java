@@ -6,10 +6,11 @@ import com.aliyun.autowonder.agent.dto.AgentVO;
 import com.aliyun.autowonder.agent.dto.AgentVersionVO;
 import com.aliyun.autowonder.agent.dto.CreateAgentRequest;
 import com.aliyun.autowonder.agent.dto.UpdateAgentRequest;
+import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -25,7 +26,7 @@ class AgentServiceTest {
     AgentRepoPermDao repoPermDao;
     AgentSkillDao skillDao;
     AgentMemoryRefDao memoryRefDao;
-    OrgDao orgDao;
+    WorkspaceDao workspaceDao;
     ExecutorDao executorDao;
     ExecutorRegistry executorRegistry;
     AgentService service;
@@ -37,10 +38,10 @@ class AgentServiceTest {
         repoPermDao = mock(AgentRepoPermDao.class);
         skillDao = mock(AgentSkillDao.class);
         memoryRefDao = mock(AgentMemoryRefDao.class);
-        orgDao = mock(OrgDao.class);
+        workspaceDao = mock(WorkspaceDao.class);
         executorDao = mock(ExecutorDao.class);
         executorRegistry = mock(ExecutorRegistry.class);
-        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, orgDao,
+        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 executorDao, executorRegistry);
     }
 
@@ -204,6 +205,35 @@ class AgentServiceTest {
         assertEquals(22L, vo.getSkills().get(0).getSkillId());
         assertEquals(33L, vo.getMemoryRefs().get(0).getMemoryId());
         assertEquals("ORG", vo.getMemoryRefs().get(0).getSource());
+    }
+
+    @Test
+    void getVersion_rejects_agent_from_another_tenant() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(200L);
+        when(agentDao.findById(1L)).thenReturn(agent);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.getVersion(1L, 1, 100L));
+
+        assertEquals("14001", ex.getCode());
+        verify(versionDao, never()).findByAgentAndNo(anyLong(), anyInt());
+    }
+
+    @Test
+    void editConfig_rejects_agent_from_another_tenant() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(200L);
+        when(agentDao.findById(1L)).thenReturn(agent);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.editConfig(1L, new UpdateConfigRequest(), 100L, 7L));
+
+        assertEquals("14001", ex.getCode());
+        verify(versionDao, never()).updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(),
+                anyInt(), anyLong());
     }
 
     @Test

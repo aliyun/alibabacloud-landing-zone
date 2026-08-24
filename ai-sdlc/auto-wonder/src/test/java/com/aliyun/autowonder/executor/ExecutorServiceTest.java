@@ -70,6 +70,34 @@ class ExecutorServiceTest {
     }
 
     @Test
+    void create_persists_qoder_cn_client_kind_verbatim() {
+        doAnswer(inv -> { ((ExecutorDO) inv.getArgument(0)).setId(1L); return null; })
+                .when(executorDao).insert(any());
+        when(tokenService.issue(1L))
+                .thenReturn(new TokenService.IssuedToken("plain-cn", "sha256:cndeadbeef"));
+        CreateExecutorRequest req = new CreateExecutorRequest();
+        req.setName("cn-cli");
+        req.setClientKind("QODER_CN_CLI");
+
+        IssuedExecutorVO vo = service.create(5L, req, 100L, 7L);
+
+        assertEquals(1L, vo.getId());
+        verify(executorDao).insert(argThat((ExecutorDO e) ->
+                "QODER_CN_CLI".equals(e.getClientKind())));
+    }
+
+    @Test
+    void list_returns_qoder_cn_client_kind_verbatim() {
+        ExecutorDO e = exec(1L, 5L);
+        e.setClientKind("QODER_CN_CLI");
+        when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
+
+        List<ExecutorVO> vos = service.listByAgent(5L, 100L);
+
+        assertEquals("QODER_CN_CLI", vos.get(0).getClientKind());
+    }
+
+    @Test
     void list_reflects_online_status() {
         ExecutorDO e1 = exec(1L, 5L);
         ExecutorDO e2 = exec(2L, 5L);

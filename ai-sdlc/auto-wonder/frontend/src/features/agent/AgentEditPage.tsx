@@ -535,7 +535,7 @@ export function AgentEditPage() {
         <Select mode="multiple" placeholder="选择记忆（可多选）" style={{ width: '100%' }} value={selectedMemoryIds}
           onChange={setSelectedMemoryIds} showSearch optionFilterProp="label"
           options={memoriesList.filter(m => !memories.some(me => me.memoryId === m.id))
-            .map(m => ({ value: m.id, label: m.contentMd.slice(0, 60) })) || []}
+            .map(m => ({ value: m.id, label: (m.contentMd || m.title || '').slice(0, 60) })) || []}
         />
       </Modal>
     </div>

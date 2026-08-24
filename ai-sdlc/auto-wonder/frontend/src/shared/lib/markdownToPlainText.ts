@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { markdownAllowedElements, markdownSanitizeSchema } from '@/shared/ui/MarkdownView';
@@ -73,6 +74,7 @@ export function markdownToPlainText(contentMd: string): string {
       ReactMarkdown,
       {
         allowedElements: markdownAllowedElements,
+        remarkPlugins: [remarkGfm],
         rehypePlugins: [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]],
         unwrapDisallowed: true,
       },

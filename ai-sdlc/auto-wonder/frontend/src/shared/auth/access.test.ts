@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { allows } from './access';
 
-describe('organization access levels', () => {
+describe('workspace access levels', () => {
   it('orders read only below read write below admin', () => {
     expect(allows('READ_ONLY', 'READ_ONLY')).toBe(true);
     expect(allows('READ_ONLY', 'READ_WRITE')).toBe(false);

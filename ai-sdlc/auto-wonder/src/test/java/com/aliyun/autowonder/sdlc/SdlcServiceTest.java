@@ -9,6 +9,7 @@ import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 
@@ -309,6 +310,51 @@ class SdlcServiceTest {
     }
 
     @Test
+    void updateStep_explicitNull_clearsTimeoutAndRetry() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        step.setTimeoutSeconds(600);
+        step.setRetryBudget(2);
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setTimeoutSeconds(null);
+        req.setRetryBudget(null);
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
+                any(), any(), any(), any(), any(), isNull(), isNull(),
+                any(), any(), any(), any(), any(), any(), eq(7L));
+    }
+
+    @Test
+    void updateStep_absentFields_keepTimeoutAndRetry() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        step.setTimeoutSeconds(600);
+        step.setRetryBudget(2);
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setName("new");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(eq(1L), eq(100L), eq("new"),
+                any(), any(), any(), any(), any(), eq(600), eq(2),
+                any(), any(), any(), any(), any(), any(), eq(7L));
+    }
+
+    @Test
     void deleteStep_enabled_succeeds() {
         SdlcDO s = sdlc(9L, "ENABLED");
         when(sdlcDao.findById(9L)).thenReturn(s);
@@ -355,6 +401,59 @@ class SdlcServiceTest {
                 any(), any(), any(), any(), any(), any(), eq(7L));
         verify(stepDao).updateOrder(2L, 100L, 1, 7L);
         verify(stepDao).updateOrder(1L, 100L, 2, 7L);
+    }
+
+    @Test
+    void active_flow_allows_step_content_edit() {
+        SdlcDO active = sdlc(9L, "ACTIVE");
+        when(sdlcDao.findById(9L)).thenReturn(active);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setName("old");
+        SdlcStepDO updated = new SdlcStepDO();
+        updated.setId(1L);
+        updated.setSdlcId(9L);
+        updated.setName("old");
+        updated.setInstructionMd("new instruction");
+        updated.setChecklistJson("[\"编译通过\"]");
+        updated.setGatePolicyJson("{\"passCriteria\":\"证据目录非空\"}");
+        when(stepDao.findById(1L)).thenReturn(step).thenReturn(updated);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setInstructionMd("new instruction");
+        req.setChecklistJson("[\"编译通过\"]");
+        req.setGatePolicyJson("{\"passCriteria\":\"证据目录非空\"}");
+        StepVO vo = service.updateStep(9L, 1L, req, 100L, 7L);
+
+        assertEquals("new instruction", vo.getInstructionMd());
+        assertEquals("[\"编译通过\"]", vo.getChecklistJson());
+        assertEquals("{\"passCriteria\":\"证据目录非空\"}", vo.getGatePolicyJson());
+        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
+                any(), eq("new instruction"), eq("[\"编译通过\"]"), eq("{\"passCriteria\":\"证据目录非空\"}"),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(7L));
+    }
+
+    @Test
+    void active_flow_rejects_structural_step_changes() {
+        SdlcDO active = sdlc(9L, "ACTIVE");
+        when(sdlcDao.findById(9L)).thenReturn(active);
+
+        CreateStepRequest create = new CreateStepRequest();
+        create.setName("x");
+        BizException addEx = assertThrows(BizException.class,
+                () -> service.addStep(9L, create, 100L, 7L));
+        assertEquals("16003", addEx.getCode());
+
+        BizException deleteEx = assertThrows(BizException.class,
+                () -> service.deleteStep(9L, 1L, 100L, 7L));
+        assertEquals("16003", deleteEx.getCode());
+
+        ReorderRequest reorder = new ReorderRequest();
+        reorder.setStepIds(List.of(1L));
+        BizException reorderEx = assertThrows(BizException.class,
+                () -> service.reorderSteps(9L, reorder, 100L, 7L));
+        assertEquals("16003", reorderEx.getCode());
     }
 
     @Test
@@ -537,5 +636,243 @@ class SdlcServiceTest {
         service.addStep(9L, req, 100L, 7L);
 
         verify(stepDao).insert(argThat(step -> step.getStepOrder() == 1));
+    }
+
+    @Test
+    void addStep_duplicate_key_retries_with_recalculated_order() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO existing = new SdlcStepDO();
+        existing.setId(1L); existing.setSdlcId(9L); existing.setStepOrder(3);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of(existing));
+        doThrow(new DuplicateKeyException("uk_sdlc_order"))
+                .doNothing()
+                .when(stepDao).insert(any(SdlcStepDO.class));
+        CreateStepRequest req = new CreateStepRequest();
+        req.setStepOrder(3);
+        req.setName("conflicting step");
+
+        StepVO vo = service.addStep(9L, req, 100L, 7L);
+
+        verify(stepDao, times(2)).insert(any(SdlcStepDO.class));
+        assertEquals(4, vo.getStepOrder());
+    }
+
+    @Test
+    void addStep_duplicate_key_exhausted_throws_business_error_not_10000() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of());
+        doThrow(new DuplicateKeyException("uk_sdlc_order"))
+                .when(stepDao).insert(any(SdlcStepDO.class));
+        CreateStepRequest req = new CreateStepRequest();
+        req.setName("always conflicting");
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.addStep(9L, req, 100L, 7L));
+
+        assertEquals("16012", ex.getCode());
+        verify(stepDao, times(3)).insert(any(SdlcStepDO.class));
+    }
+
+    @Test
+    void addStep_non_positive_stepOrder_is_recalculated_server_side() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO existing = new SdlcStepDO();
+        existing.setId(1L); existing.setSdlcId(9L); existing.setStepOrder(1);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of(existing));
+        CreateStepRequest req = new CreateStepRequest();
+        req.setStepOrder(0);
+        req.setName("sanitized");
+
+        service.addStep(9L, req, 100L, 7L);
+
+        verify(stepDao).insert(argThat(step -> step.getStepOrder() == 2));
+    }
+
+    @Test
+    void reorder_uses_negative_temp_band_before_assigning_target_orders() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO st1 = new SdlcStepDO(); st1.setId(1L); st1.setSdlcId(9L); st1.setStepOrder(1);
+        SdlcStepDO st2 = new SdlcStepDO(); st2.setId(2L); st2.setSdlcId(9L); st2.setStepOrder(2);
+        when(stepDao.listBySdlc(9L)).thenReturn(List.of(st1, st2));
+        when(stepDao.updateOrder(anyLong(), eq(100L), anyInt(), eq(7L))).thenReturn(1);
+
+        ReorderRequest req = new ReorderRequest();
+        req.setStepIds(List.of(2L, 1L));
+        service.reorderSteps(9L, req, 100L, 7L);
+
+        org.mockito.InOrder inOrder = inOrder(stepDao);
+        inOrder.verify(stepDao).updateOrder(2L, 100L, Integer.MIN_VALUE, 7L);
+        inOrder.verify(stepDao).updateOrder(1L, 100L, Integer.MIN_VALUE + 1, 7L);
+        inOrder.verify(stepDao).updateOrder(2L, 100L, 1, 7L);
+        inOrder.verify(stepDao).updateOrder(1L, 100L, 2, 7L);
+    }
+
+    @Test
+    void updateStep_invalid_checklistJson_throws_param_error_not_conflict() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setChecklistJson("{invalid-json");
+        BizException ex = assertThrows(BizException.class,
+                () -> service.updateStep(9L, 1L, req, 100L, 7L));
+
+        assertEquals("10001", ex.getCode());
+        assertTrue(ex.getMessage().contains("checklistJson"));
+        verify(stepDao, never()).update(anyLong(), anyLong(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void updateStep_invalid_gatePolicyJson_throws_param_error_not_conflict() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setGatePolicyJson("coverageThreshold:80");
+        BizException ex = assertThrows(BizException.class,
+                () -> service.updateStep(9L, 1L, req, 100L, 7L));
+
+        assertEquals("10001", ex.getCode());
+        assertTrue(ex.getMessage().contains("gatePolicyJson"));
+        verify(stepDao, never()).update(anyLong(), anyLong(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void updateStep_keeps_existing_valid_json_when_request_omits_fields() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        step.setChecklistJson("[\"a\"]");
+        step.setGatePolicyJson("{\"b\":1}");
+        SdlcStepDO updated = new SdlcStepDO();
+        updated.setId(1L);
+        updated.setSdlcId(9L);
+        updated.setStepOrder(1);
+        updated.setName("new");
+        updated.setChecklistJson("[\"a\"]");
+        updated.setGatePolicyJson("{\"b\":1}");
+        when(stepDao.findById(1L)).thenReturn(step).thenReturn(updated);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setName("new");
+        StepVO vo = service.updateStep(9L, 1L, req, 100L, 7L);
+
+        assertEquals("new", vo.getName());
+        verify(stepDao).update(eq(1L), eq(100L), eq("new"),
+                any(), any(), eq("[\"a\"]"), eq("{\"b\":1}"), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), eq(7L));
+    }
+
+    @Test
+    void addStep_invalid_checklistJson_throws_param_error_and_skips_insert() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        CreateStepRequest req = new CreateStepRequest();
+        req.setName("new step");
+        req.setChecklistJson("确认需求边界");
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.addStep(9L, req, 100L, 7L));
+
+        assertEquals("10001", ex.getCode());
+        assertTrue(ex.getMessage().contains("checklistJson"));
+        verify(stepDao, never()).insert(any(SdlcStepDO.class));
+    }
+
+    @Test
+    void addStep_invalid_gatePolicyJson_throws_param_error_and_skips_insert() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        CreateStepRequest req = new CreateStepRequest();
+        req.setName("new step");
+        req.setGatePolicyJson("{\"coverageThreshold\":80");
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.addStep(9L, req, 100L, 7L));
+
+        assertEquals("10001", ex.getCode());
+        assertTrue(ex.getMessage().contains("gatePolicyJson"));
+        verify(stepDao, never()).insert(any(SdlcStepDO.class));
+    }
+
+    @Test
+    void updateStep_blank_checklistJson_clears_field_to_null_without_conflict() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        step.setChecklistJson("[\"a\"]");
+        step.setGatePolicyJson("{\"b\":1}");
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setChecklistJson("");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
+                any(), any(), isNull(), eq("{\"b\":1}"), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), eq(7L));
+    }
+
+    @Test
+    void updateStep_whitespace_gatePolicyJson_clears_field_to_null_without_conflict() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        step.setChecklistJson("[\"a\"]");
+        step.setGatePolicyJson("{\"b\":1}");
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setGatePolicyJson("   ");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
+                any(), any(), eq("[\"a\"]"), isNull(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), eq(7L));
+    }
+
+    @Test
+    void addStep_blank_json_fields_are_normalized_to_null() {
+        SdlcDO s = sdlc(9L, "DRAFT");
+        when(sdlcDao.findById(9L)).thenReturn(s);
+        CreateStepRequest req = new CreateStepRequest();
+        req.setName("new step");
+        req.setChecklistJson("");
+        req.setGatePolicyJson(" ");
+
+        service.addStep(9L, req, 100L, 7L);
+
+        verify(stepDao).insert(argThat(step ->
+                step.getChecklistJson() == null && step.getGatePolicyJson() == null));
     }
 }

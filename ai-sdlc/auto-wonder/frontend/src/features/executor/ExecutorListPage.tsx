@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Card, Table, Tag, Badge, Button, Space, Modal, Form, Input, Select, message, Popconfirm, Alert, Typography, Tooltip } from 'antd';
-import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CodeOutlined, EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Badge, Button, Space, Modal, Form, Input, Select, message, Popconfirm, Alert, Typography, Dropdown, Tooltip, Segmented } from 'antd';
+import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CodeOutlined, EyeOutlined, EyeInvisibleOutlined, CodeSandboxOutlined, DownOutlined, BugOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listExecutors, createExecutor, deleteExecutor, getExecutorToken } from './api';
 import { listAgents } from '@/features/agent/api';
@@ -10,12 +10,19 @@ import type { ColumnsType } from 'antd/es/table';
 import { QODER_MODELS, qoderOptionsForModel, type QoderLaunchOptions } from './qoderOptions';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
+import { buildDebugCommand, buildStartupCommand, detectStartupOs, type DebugShell, type StartupOs } from './startupCommand';
 
-const CLIENT_KINDS: { value: string; label: string; color: string; Icon: typeof CodeOutlined }[] = [
+export const CLIENT_KINDS: { value: string; label: string; color: string; Icon: typeof CodeOutlined }[] = [
+  { value: 'QODER_CN_CLI', label: 'Qoder CLI CN', color: '#1677ff', Icon: CodeOutlined },
   { value: 'QODER_CLI', label: 'Qoder CLI', color: '#1677ff', Icon: CodeOutlined },
 ];
 
 const clientKindMap = Object.fromEntries(CLIENT_KINDS.map((k) => [k.value, k]));
+
+export function isQoderClientKind(kind?: string): boolean {
+  return kind === 'QODER_CLI' || kind === 'QODER_CN_CLI';
+}
+
 
 const QODER_PREFS_KEY_PREFIX = 'autowonder.executor.qoderStartupOptions';
 
@@ -47,40 +54,39 @@ export function writeQoderStartupPreference(executorId: number, pref: QoderStart
   }
 }
 
-export function buildWsUrl(mcpBaseUrl: string): string {
-  let url: URL;
-  try {
-    url = new URL(mcpBaseUrl);
-  } catch {
-    throw new Error('MCP 地址格式不合法');
-  }
-  const proto = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${url.host}/ws/executor`;
-}
-
-export function buildStartupCommand(
-  token: string,
-  executorId: number,
-  clientKind: string,
-  memoryMode: string,
-  mcpBaseUrl: string,
-  runtimeVersion: string,
-  qoder?: QoderLaunchOptions,
-): string {
-  if (clientKind !== 'QODER_CLI') {
-    throw new Error('社区版仅支持 Qoder CLI');
-  }
-  const qoderFlags = qoder
-    ? ` --model ${qoder.model} --reasoning-effort ${qoder.reasoningEffort} --context-window ${qoder.contextWindow}`
-    : '';
-  return `npx -y autowonder@${runtimeVersion} connect --ws-url ${buildWsUrl(mcpBaseUrl)} --token ${token} --executor-id ${executorId} --provider qoder --memory-mode ${memoryMode}${qoderFlags}`;
-}
-
 const statusBadge: Record<string, { status: 'success' | 'processing' | 'default'; text: string }> = {
   ONLINE: { status: 'success', text: '在线' },
   BUSY: { status: 'processing', text: '忙碌' },
   OFFLINE: { status: 'default', text: '离线' },
 };
+
+const DEBUG_WARNING = '仅在需要排查问题时使用。debug 模式会持续写入完整日志，长期运行可能占满磁盘。排查结束后请改回普通启动命令。';
+
+const DEBUG_SHELL_ITEMS: { key: DebugShell; label: string }[] = [
+  { key: 'bash', label: 'Mac / Linux (bash)' },
+  { key: 'powershell', label: 'Windows (PowerShell 7+)' },
+];
+
+const SHELL_LABEL: Record<DebugShell, string> = {
+  bash: 'bash',
+  powershell: 'PowerShell',
+};
+
+function CopyCommandActions({ onCopy }: { onCopy: (shell?: DebugShell) => void }) {
+  return (
+    <Space>
+      <Button type="primary" onClick={() => onCopy()}>复制启动命令</Button>
+      <Tooltip title={DEBUG_WARNING}>
+        <Dropdown
+          trigger={['click']}
+          menu={{ items: DEBUG_SHELL_ITEMS, onClick: ({ key }) => onCopy(key as DebugShell) }}
+        >
+          <Button icon={<BugOutlined />}>复制 debug 模式命令 <DownOutlined /></Button>
+        </Dropdown>
+      </Tooltip>
+    </Space>
+  );
+}
 
 function ClientKindSelect({ value, onChange }: { value?: string; onChange?: (v: string) => void }) {
   return (
@@ -137,6 +143,7 @@ export function ExecutorListPage() {
   const [revealedTokens, setRevealedTokens] = useState<Record<number, string>>({});
   const [loadingTokenId, setLoadingTokenId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [startupOs, setStartupOs] = useState<StartupOs>(detectStartupOs());
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents', 1, 100],
@@ -202,13 +209,46 @@ export function ExecutorListPage() {
   const startupQoderModel = Form.useWatch('model', startupForm) ?? 'qmodel_latest';
   const startupQoderOptions = qoderOptionsForModel(startupQoderModel);
   const qoderModelOptions = qoderOptionsForModel(qoderModel);
-  const tokenQoderOptions: QoderLaunchOptions | undefined = tokenResult?.clientKind === 'QODER_CLI'
+  const tokenQoderOptions: QoderLaunchOptions | undefined = tokenResult && isQoderClientKind(tokenResult.clientKind)
     ? {
         model: tokenResult.model ?? 'auto',
         reasoningEffort: tokenResult.reasoningEffort ?? qoderOptionsForModel(tokenResult.model ?? 'auto').defaultReasoningEffort,
         contextWindow: tokenResult.contextWindow ?? qoderOptionsForModel(tokenResult.model ?? 'auto').defaultContextWindow,
       }
     : undefined;
+
+  const startupMemoryMode = Form.useWatch('memoryMode', startupForm) ?? 'platform';
+  const startupReasoningEffort = Form.useWatch('reasoningEffort', startupForm);
+  const startupContextWindow = Form.useWatch('contextWindow', startupForm);
+  const startupIsQoder = startupTarget ? isQoderClientKind(startupTarget.clientKind) : false;
+  const startupQoderLaunch: QoderLaunchOptions | undefined = startupIsQoder
+    ? {
+        model: startupQoderModel,
+        reasoningEffort: startupReasoningEffort ?? startupQoderOptions.defaultReasoningEffort,
+        contextWindow: startupContextWindow ?? startupQoderOptions.defaultContextWindow,
+      }
+    : undefined;
+
+  let startupPreview = '';
+  if (startupTarget) {
+    if (!mcpBaseUrl) {
+      startupPreview = 'MCP 地址未加载，无法生成启动命令';
+    } else {
+      try {
+        startupPreview = buildStartupCommand(
+          revealedTokens[startupTarget.id] ?? '',
+          startupTarget.id,
+          startupTarget.clientKind,
+          startupMemoryMode,
+          mcpBaseUrl,
+          runtimeVersion,
+          startupQoderLaunch,
+        );
+      } catch (error) {
+        startupPreview = error instanceof Error ? error.message : '启动命令生成失败';
+      }
+    }
+  }
 
   const handleCopyToken = () => {
     runAccessCommand('ADMIN', '复制执行器 Token', async () => {
@@ -262,10 +302,53 @@ export function ExecutorListPage() {
     });
   };
 
+  const copyCommand = async (
+    spec: {
+      token: string;
+      executorId: number;
+      clientKind: string;
+      memoryMode: string;
+      qoder?: QoderLaunchOptions;
+    },
+    shell?: DebugShell,
+    os: StartupOs = 'posix',
+  ) => {
+    if (!mcpBaseUrl) {
+      message.error('MCP 地址未加载，无法生成启动命令');
+      return;
+    }
+    let cmd: string;
+    try {
+      // debug suffix is a shell redirection, so it must wrap the plain command,
+      // never the Windows powershell -Command form
+      const base = buildStartupCommand(
+        spec.token, spec.executorId, spec.clientKind, spec.memoryMode,
+        mcpBaseUrl, runtimeVersion, spec.qoder, shell ? 'posix' : os,
+      );
+      cmd = shell
+        ? buildDebugCommand(base, spec.clientKind, spec.executorId, shell, new Date())
+        : base;
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '启动命令生成失败');
+      return;
+    }
+    const copied = await copyTextToClipboard(cmd);
+    if (copied) {
+      if (shell) {
+        message.warning(`debug 命令已复制（${SHELL_LABEL[shell]}）——仅用于排查问题，排查完请改回普通启动命令，避免日志写满磁盘`, 6);
+      } else {
+        message.success('启动命令已复制');
+      }
+    } else {
+      message.warning('自动复制失败，请手动复制');
+    }
+  };
+
   const copyStartupCmd = async (
     record: ExecutorVO,
     memoryMode: string,
     qoder?: QoderLaunchOptions,
+    shell?: DebugShell,
   ) => {
     let token = revealedTokens[record.id];
     if (!token) {
@@ -277,28 +360,24 @@ export function ExecutorListPage() {
         return;
       }
     }
-    if (!mcpBaseUrl) {
-      message.error('MCP 地址未加载，无法生成启动命令');
-      return;
-    }
-    let cmd: string;
-    try {
-      cmd = buildStartupCommand(token, record.id, record.clientKind, memoryMode, mcpBaseUrl, runtimeVersion, qoder);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : '启动命令生成失败');
-      return;
-    }
-    const copied = await copyTextToClipboard(cmd);
-    if (copied) {
-      message.success('启动命令已复制');
-    } else {
-      message.warning('自动复制失败，请手动复制');
-    }
+    await copyCommand(
+      { token, executorId: record.id, clientKind: record.clientKind, memoryMode, qoder },
+      shell,
+    );
   };
 
-  const openQoderStartup = (record: ExecutorVO) => {
-    runAccessCommand('ADMIN', '查看执行器启动命令', () => {
-      const saved = readQoderStartupPreference(record.id);
+  const openStartupModal = (record: ExecutorVO) => {
+    runAccessCommand('ADMIN', '查看执行器启动命令', async () => {
+      if (!revealedTokens[record.id]) {
+        try {
+          const token = await getExecutorToken(record.id);
+          setRevealedTokens((prev) => ({ ...prev, [record.id]: token }));
+        } catch {
+          message.error('Token 不可回显，无法生成启动命令');
+          return;
+        }
+      }
+      const saved = isQoderClientKind(record.clientKind) ? readQoderStartupPreference(record.id) : null;
       const model = saved?.model ?? 'qmodel_latest';
       const options = qoderOptionsForModel(model);
       startupForm.setFieldsValue({
@@ -311,22 +390,39 @@ export function ExecutorListPage() {
     });
   };
 
-  const copyConfiguredQoderCommand = async () => {
-    runAccessCommand('ADMIN', '复制执行器启动命令', async () => {
+  const copyFromStartupModal = (shell?: DebugShell) => {
+    runAccessCommand('ADMIN', shell ? '复制执行器 debug 启动命令' : '复制执行器启动命令', async () => {
       if (!startupTarget) return;
       const values = await startupForm.validateFields();
-      writeQoderStartupPreference(startupTarget.id, {
-        memoryMode: values.memoryMode,
-        model: values.model,
-        reasoningEffort: values.reasoningEffort,
-        contextWindow: values.contextWindow,
-      });
-      await copyStartupCmd(startupTarget, values.memoryMode, {
-        model: values.model,
-        reasoningEffort: values.reasoningEffort,
-        contextWindow: values.contextWindow,
-      });
+      if (isQoderClientKind(startupTarget.clientKind)) {
+        writeQoderStartupPreference(startupTarget.id, {
+          memoryMode: values.memoryMode,
+          model: values.model,
+          reasoningEffort: values.reasoningEffort,
+          contextWindow: values.contextWindow,
+        });
+        await copyStartupCmd(startupTarget, values.memoryMode, {
+          model: values.model,
+          reasoningEffort: values.reasoningEffort,
+          contextWindow: values.contextWindow,
+        }, shell);
+      } else {
+        await copyStartupCmd(startupTarget, values.memoryMode, undefined, shell);
+      }
       setStartupTarget(null);
+    });
+  };
+
+  const copyFromTokenModal = (shell?: DebugShell) => {
+    runAccessCommand('ADMIN', shell ? '复制执行器 debug 启动命令' : '复制执行器启动命令', async () => {
+      if (!tokenResult) return;
+      await copyCommand({
+        token: tokenResult.token,
+        executorId: tokenResult.id,
+        clientKind: tokenResult.clientKind,
+        memoryMode: tokenResult.memoryMode,
+        qoder: tokenQoderOptions,
+      }, shell, startupOs);
     });
   };
 
@@ -388,10 +484,8 @@ export function ExecutorListPage() {
       title: '操作', width: 170, fixed: 'right',
       render: (_: unknown, record: ExecutorVO) => (
         <Space size={0}>
-          {record.clientKind === 'QODER_CLI' && (
-            <Button type="link" size="small" icon={<CodeOutlined />}
-              onClick={() => openQoderStartup(record)}>启动命令</Button>
-          )}
+          <Button type="link" size="small" icon={<CodeSandboxOutlined />}
+            onClick={() => openStartupModal(record)}>启动命令</Button>
           <Popconfirm
             title="确认删除此执行器？"
             open={deleteConfirmId === record.id}
@@ -477,7 +571,7 @@ export function ExecutorListPage() {
               { value: 'none', label: '关闭记忆' },
             ]} />
           </Form.Item>
-          {clientKind === 'QODER_CLI' && (
+          {isQoderClientKind(clientKind) && (
             <>
               <Form.Item label="Qoder 模型" name="model" rules={[{ required: true, message: '请选择 Qoder 模型' }]}>
                 <Select options={QODER_MODELS} onChange={(model) => {
@@ -502,8 +596,12 @@ export function ExecutorListPage() {
         </Form>
       </Modal>
 
-      <Modal title="Qoder 启动配置" open={!!startupTarget}
-        onOk={copyConfiguredQoderCommand} onCancel={() => setStartupTarget(null)}>
+      <Modal title={`启动命令 · ${startupTarget?.name ?? ''}`} open={!!startupTarget} width={720}
+        onCancel={() => setStartupTarget(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setStartupTarget(null)}>取消</Button>,
+          <CopyCommandActions key="copy" onCopy={(shell) => copyFromStartupModal(shell)} />,
+        ]}>
         <Form form={startupForm} layout="vertical">
           <Form.Item label="记忆模式" name="memoryMode" rules={[{ required: true }]}>
             <Select options={[
@@ -512,22 +610,34 @@ export function ExecutorListPage() {
               { value: 'none', label: '关闭记忆' },
             ]} />
           </Form.Item>
-          <Form.Item label="Qoder 模型" name="model" rules={[{ required: true }]}>
-            <Select options={QODER_MODELS} onChange={(model) => {
-              const options = qoderOptionsForModel(model);
-              startupForm.setFieldsValue({
-                reasoningEffort: options.defaultReasoningEffort,
-                contextWindow: options.defaultContextWindow,
-              });
-            }} />
-          </Form.Item>
-          <Form.Item label="Reasoning Effort" name="reasoningEffort" rules={[{ required: true }]}>
-            <Select options={startupQoderOptions.reasoningEfforts} />
-          </Form.Item>
-          <Form.Item label="Context Window" name="contextWindow" rules={[{ required: true }]}>
-            <Select options={startupQoderOptions.contextWindows} />
-          </Form.Item>
+          {startupIsQoder && (
+            <>
+              <Form.Item label="Qoder 模型" name="model" rules={[{ required: true }]}>
+                <Select options={QODER_MODELS} onChange={(model) => {
+                  const options = qoderOptionsForModel(model);
+                  startupForm.setFieldsValue({
+                    reasoningEffort: options.defaultReasoningEffort,
+                    contextWindow: options.defaultContextWindow,
+                  });
+                }} />
+              </Form.Item>
+              <Form.Item label="Reasoning Effort" name="reasoningEffort" rules={[{ required: true }]}>
+                <Select options={startupQoderOptions.reasoningEfforts} />
+              </Form.Item>
+              <Form.Item label="Context Window" name="contextWindow" rules={[{ required: true }]}>
+                <Select options={startupQoderOptions.contextWindows} />
+              </Form.Item>
+            </>
+          )}
         </Form>
+        <Typography.Text strong>命令预览</Typography.Text>
+        <div style={{
+          marginTop: 4, padding: '8px 12px',
+          background: '#f5f5f5', borderRadius: 6, fontFamily: 'monospace', fontSize: 13,
+          wordBreak: 'break-all', lineHeight: 1.6,
+        }}>
+          {startupPreview}
+        </div>
       </Modal>
 
       {/* Token Display Modal */}
@@ -548,6 +658,16 @@ export function ExecutorListPage() {
         {tokenResult && (
           <div style={{ marginTop: 16 }}>
             <Typography.Text strong>启动命令:</Typography.Text>
+            <Segmented
+              size="small"
+              value={startupOs}
+              onChange={(value) => setStartupOs(value as StartupOs)}
+              options={[
+                { value: 'windows', label: 'Windows' },
+                { value: 'posix', label: 'macOS / Linux' },
+              ]}
+              style={{ display: 'block', marginTop: 8 }}
+            />
             <div style={{
               marginTop: 4, padding: '8px 12px',
               background: '#f5f5f5', borderRadius: 6, fontFamily: 'monospace', fontSize: 13,
@@ -562,45 +682,13 @@ export function ExecutorListPage() {
                   mcpBaseUrl,
                   runtimeVersion,
                   tokenQoderOptions,
+                  startupOs,
                 )
                 : 'MCP 地址未加载，无法生成启动命令'}
             </div>
-            <Button
-              icon={<CopyOutlined />}
-              size="small"
-              style={{ marginTop: 8 }}
-              onClick={() => {
-                runAccessCommand('ADMIN', '复制执行器启动命令', async () => {
-                  if (!mcpBaseUrl) {
-                    message.error('MCP 地址未加载，无法生成启动命令');
-                    return;
-                  }
-                  let cmd: string;
-                  try {
-                    cmd = buildStartupCommand(
-                      tokenResult.token,
-                      tokenResult.id,
-                      tokenResult.clientKind,
-                      tokenResult.memoryMode,
-                      mcpBaseUrl,
-                      runtimeVersion,
-                      tokenQoderOptions,
-                    );
-                  } catch (error) {
-                    message.error(error instanceof Error ? error.message : '启动命令生成失败');
-                    return;
-                  }
-                  const copied = await copyTextToClipboard(cmd);
-                  if (copied) {
-                    message.success('启动命令已复制到剪贴板');
-                  } else {
-                    message.warning('自动复制失败，请手动复制');
-                  }
-                });
-              }}
-            >
-              复制启动命令
-            </Button>
+            <div style={{ marginTop: 12 }}>
+              <CopyCommandActions onCopy={(shell) => copyFromTokenModal(shell)} />
+            </div>
           </div>
         )}
       </Modal>

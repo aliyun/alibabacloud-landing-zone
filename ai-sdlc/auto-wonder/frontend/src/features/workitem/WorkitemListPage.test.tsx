@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
 import { MemoryRouter } from 'react-router-dom';
@@ -49,7 +49,7 @@ describe('WorkitemListPage', () => {
     expect(screen.getByText('修复搜索Bug')).toBeInTheDocument();
     expect(screen.getAllByText('待处理').length).toBeGreaterThan(0);
     expect(screen.getAllByText('执行中').length).toBeGreaterThan(0);
-    expect(screen.getByText('共 6001 条')).toBeInTheDocument();
+    expect(screen.getByText('总工单数 6001 个')).toBeInTheDocument();
   });
 
   it('shows the 异常 tag for a stuck workitem in kanban', async () => {
@@ -142,7 +142,7 @@ describe('WorkitemListPage', () => {
     const error = vi.spyOn(message, 'error').mockImplementation(
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     server.use(
       http.get('/api/workitems', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: pageData([]),
@@ -379,6 +379,35 @@ describe('WorkitemListPage', () => {
     expect(window.localStorage.getItem('autowonder.workitems.scope')).toBe('ALL');
   });
 
+  it('sends statusCategory param and resets page when status filter changes', async () => {
+    const requests: string[] = [];
+    server.use(
+      http.get('/api/workitems', ({ request }) => {
+        requests.push(new URL(request.url).searchParams.toString());
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([]),
+        });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText('工单');
+
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0));
+    expect(requests[0]).not.toContain('statusCategory');
+
+    const statusSelect = document.querySelectorAll('.ant-select-selector')[1]!;
+    await userEvent.click(statusSelect);
+    await userEvent.click(await screen.findByTitle('执行中'));
+
+    await waitFor(() => {
+      const lastReq = requests[requests.length - 1];
+      expect(lastReq).toContain('statusCategory=IN_PROGRESS');
+      expect(lastReq).toContain('page=1');
+    });
+  });
+
   it('sends keyword param and resets page on search', async () => {
     const requests: string[] = [];
     server.use(
@@ -435,5 +464,115 @@ describe('WorkitemListPage', () => {
         expect(lastReq).not.toContain('keyword=');
       });
     }
+  });
+});
+
+// 看板列必须按状态各自向服务端查询：否则服务端先分页、前端再按状态分类，
+// 「执行中」列的内容会随全量列表的页码变化，用户只能一直翻页找执行中的工单。
+describe('WorkitemListPage 看板按状态列查询', () => {
+  const CARDS = [
+    { id: 1, title: '待处理-A', statusName: '待处理', cat: 'NEW' },
+    { id: 2, title: '待处理-B', statusName: '待处理', cat: 'NEW' },
+    { id: 3, title: '执行中-A', statusName: '开发中', cat: 'IN_PROGRESS' },
+    { id: 4, title: '执行中-B', statusName: '开发中', cat: 'IN_PROGRESS' },
+    { id: 5, title: '已完成-A', statusName: '已完成', cat: 'DONE' },
+  ].map(({ cat, ...card }) => ({
+    card: {
+      ...card, workType: 'REQ', priority: 2, assigneeType: 'AGENT', assigneeRef: 5,
+      assigneeName: '代码助手', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01',
+    },
+    cat,
+  }));
+
+  /** 与真实服务端一致：带 statusCategory 时只返回该状态，且 total 是该状态的真实总数 */
+  function useStatusAwareServer(requests: string[], totalOverride?: Record<string, number>) {
+    server.use(
+      http.get('/api/workitems', ({ request }) => {
+        const url = new URL(request.url);
+        requests.push(url.searchParams.toString());
+        const statusCategory = url.searchParams.get('statusCategory');
+        const size = Number(url.searchParams.get('size') ?? '50');
+        const pool = statusCategory ? CARDS.filter(x => x.cat === statusCategory) : CARDS;
+        const list = pool.slice(0, size).map(x => x.card);
+        const total = (statusCategory && totalOverride?.[statusCategory]) ?? pool.length;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { list, total, pageNum: 1, pageSize: size },
+        });
+      }),
+    );
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('每个状态列各发一次带 statusCategory 的请求，且看板不再有全局分页', async () => {
+    const requests: string[] = [];
+    useStatusAwareServer(requests);
+
+    renderPage();
+    expect(await screen.findByText('执行中-A')).toBeInTheDocument();
+
+    await waitFor(() => {
+      for (const key of ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE']) {
+        expect(requests.some(q => q.includes(`statusCategory=${key}`))).toBe(true);
+      }
+    });
+    // 看板不再暴露全局分页，避免用户靠翻页找某个状态的工单
+    expect(document.querySelector('.ant-pagination')).toBeNull();
+  });
+
+  it('执行中列一次展示该状态的工单，不受其他状态工单和页码影响', async () => {
+    const requests: string[] = [];
+    useStatusAwareServer(requests);
+
+    renderPage();
+    const inProgress = await screen.findByTestId('kanban-column-IN_PROGRESS');
+
+    // 两条执行中工单同时出现在执行中列里（旧实现下第二条可能落到下一页）
+    await waitFor(() => {
+      expect(within(inProgress).getByText('执行中-A')).toBeInTheDocument();
+      expect(within(inProgress).getByText('执行中-B')).toBeInTheDocument();
+    });
+    expect(within(inProgress).queryByText('待处理-A')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('kanban-column-NEW')).getByText('待处理-A')).toBeInTheDocument();
+  });
+
+  it('列徽标用服务端总数，超出已加载条数时可加载更多', async () => {
+    const requests: string[] = [];
+    useStatusAwareServer(requests, { IN_PROGRESS: 137 });
+
+    renderPage();
+    const inProgress = await screen.findByTestId('kanban-column-IN_PROGRESS');
+    await waitFor(() => expect(within(inProgress).getByText('执行中-A')).toBeInTheDocument());
+
+    // 徽标显示该状态真实总数 137，而不是当前页命中的 2 条
+    expect(within(inProgress).getByTitle('137')).toBeInTheDocument();
+
+    await userEvent.click(within(inProgress).getByRole('button', { name: /加载更多/ }));
+
+    await waitFor(() => {
+      const inProgressRequests = requests.filter(q => q.includes('statusCategory=IN_PROGRESS'));
+      expect(inProgressRequests[inProgressRequests.length - 1]).toContain('size=100');
+    });
+  });
+
+  it('选择状态筛选后只展示该状态列', async () => {
+    const requests: string[] = [];
+    useStatusAwareServer(requests);
+
+    renderPage();
+    await screen.findByTestId('kanban-column-NEW');
+
+    const statusSelect = document.querySelectorAll('.ant-select-selector')[1]!;
+    await userEvent.click(statusSelect);
+    await userEvent.click(await screen.findByTitle('执行中'));
+
+    await waitFor(() => expect(screen.queryByTestId('kanban-column-NEW')).not.toBeInTheDocument());
+    expect(screen.getByTestId('kanban-column-IN_PROGRESS')).toBeInTheDocument();
+    expect(screen.queryByTestId('kanban-column-DONE')).not.toBeInTheDocument();
   });
 });

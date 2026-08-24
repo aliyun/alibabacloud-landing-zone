@@ -4,8 +4,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.squad.dto.AddMembersRequest;
 import com.aliyun.autowonder.squad.dto.CreateSquadRequest;
 import com.aliyun.autowonder.squad.dto.SquadMemberVO;
@@ -25,7 +25,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/squads")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看小队")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看小队")
 public class SquadController {
 
     private final SquadService squadService;
@@ -35,9 +35,9 @@ public class SquadController {
     }
 
     @PostMapping
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "创建小队")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建小队")
     public Result<SquadVO> create(@RequestBody CreateSquadRequest req) {
-        return Result.ok(squadService.create(req, currentOrgId(), currentUserId()));
+        return Result.ok(squadService.create(req, currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/{id}")
@@ -53,34 +53,34 @@ public class SquadController {
     }
 
     @PutMapping("/{id}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "更新小队")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新小队")
     public Result<SquadVO> update(@PathVariable("id") Long id, @RequestBody UpdateSquadRequest req) {
-        return Result.ok(squadService.update(id, req, currentOrgId(), currentUserId()));
+        return Result.ok(squadService.update(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "删除小队")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除小队")
     public Result<Void> delete(@PathVariable("id") Long id) {
-        squadService.delete(id, currentOrgId(), currentUserId());
+        squadService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @GetMapping("/{id}/members")
     public Result<List<SquadMemberVO>> listMembers(@PathVariable("id") Long id) {
-        return Result.ok(squadService.listMembers(id, currentOrgId()));
+        return Result.ok(squadService.listMembers(id, currentWorkspaceId()));
     }
 
     @PostMapping("/{id}/members")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "添加小队成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加小队成员")
     public Result<Void> addMembers(@PathVariable("id") Long id, @RequestBody AddMembersRequest req) {
-        squadService.addMembers(id, req.getAgentIds(), currentOrgId());
+        squadService.addMembers(id, req.getAgentIds(), currentWorkspaceId());
         return Result.ok(null);
     }
 
     @DeleteMapping("/{id}/members/{agentId}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "移除小队成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除小队成员")
     public Result<Void> removeMember(@PathVariable("id") Long id, @PathVariable("agentId") Long agentId) {
-        squadService.removeMember(id, agentId, currentOrgId());
+        squadService.removeMember(id, agentId, currentWorkspaceId());
         return Result.ok(null);
     }
 
@@ -92,11 +92,11 @@ public class SquadController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

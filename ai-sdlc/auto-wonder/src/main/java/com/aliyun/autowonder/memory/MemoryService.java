@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.memory;
 
 import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.agent.AgentDO;
+import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentMemoryRefDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -19,20 +21,28 @@ public class MemoryService {
     private final MemoryReviewDao memoryReviewDao;
     private final AgentMemoryRefDao agentMemoryRefDao;
     private final MemoryDistributionService memoryDistributionService;
+    private final AgentDao agentDao;
 
     @Autowired
     public MemoryService(MemoryDao memoryDao, MemoryReviewDao memoryReviewDao,
                          AgentMemoryRefDao agentMemoryRefDao,
-                         MemoryDistributionService memoryDistributionService) {
+                         MemoryDistributionService memoryDistributionService,
+                         AgentDao agentDao) {
         this.memoryDao = memoryDao;
         this.memoryReviewDao = memoryReviewDao;
         this.agentMemoryRefDao = agentMemoryRefDao;
         this.memoryDistributionService = memoryDistributionService;
+        this.agentDao = agentDao;
     }
 
     MemoryService(MemoryDao memoryDao, MemoryReviewDao memoryReviewDao,
                   AgentMemoryRefDao agentMemoryRefDao) {
-        this(memoryDao, memoryReviewDao, agentMemoryRefDao, null);
+        this(memoryDao, memoryReviewDao, agentMemoryRefDao, null, null);
+    }
+
+    MemoryService(MemoryDao memoryDao, MemoryReviewDao memoryReviewDao,
+                  AgentMemoryRefDao agentMemoryRefDao, AgentDao agentDao) {
+        this(memoryDao, memoryReviewDao, agentMemoryRefDao, null, agentDao);
     }
 
     public MemoryVO create(CreateMemoryRequest req, long tenantId, long userId) {
@@ -181,6 +191,63 @@ public class MemoryService {
         return memoryDao.countPendingByTenant(tenantId);
     }
 
+    static final int GROUPED_MEMORY_FETCH_LIMIT = 2000;
+
+    public List<MemoryGroupVO> listGrouped(long tenantId, String scope, Long ownerRef,
+                                           String type, String status, int page, int size) {
+        int p = Math.max(page, 1);
+        int sz = Math.min(Math.max(size, 1), 50);
+        int offset = (p - 1) * sz;
+        List<MemoryGroupSummaryDO> summaries =
+                memoryDao.listGroupSummaries(tenantId, scope, ownerRef, type, status, offset, sz);
+        if (summaries.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<MemoryDO> memories =
+                memoryDao.listByGroups(tenantId, summaries, type, status, GROUPED_MEMORY_FETCH_LIMIT);
+        Map<String, List<MemoryVO>> byGroup = new HashMap<>();
+        for (MemoryDO m : memories) {
+            byGroup.computeIfAbsent(groupKey(m.getScope(), m.getOwnerRef()), k -> new ArrayList<>())
+                    .add(toVO(m));
+        }
+        Map<Long, String> agentNames = resolveAgentNames(tenantId, summaries);
+        List<MemoryGroupVO> result = new ArrayList<>();
+        for (MemoryGroupSummaryDO s : summaries) {
+            MemoryGroupVO group = new MemoryGroupVO();
+            group.setScope(s.getScope());
+            group.setOwnerRef(s.getOwnerRef());
+            group.setTotal(s.getTotal());
+            if ("AGENT".equals(s.getScope()) && s.getOwnerRef() != null) {
+                group.setOwnerName(agentNames.get(s.getOwnerRef()));
+            }
+            group.setMemories(byGroup.getOrDefault(groupKey(s.getScope(), s.getOwnerRef()),
+                    new ArrayList<>()));
+            result.add(group);
+        }
+        return result;
+    }
+
+    private Map<Long, String> resolveAgentNames(long tenantId, List<MemoryGroupSummaryDO> summaries) {
+        Set<Long> agentIds = new LinkedHashSet<>();
+        for (MemoryGroupSummaryDO s : summaries) {
+            if ("AGENT".equals(s.getScope()) && s.getOwnerRef() != null) {
+                agentIds.add(s.getOwnerRef());
+            }
+        }
+        if (agentIds.isEmpty() || agentDao == null) {
+            return Collections.emptyMap();
+        }
+        Map<Long, String> names = new HashMap<>();
+        for (AgentDO agent : agentDao.listByIds(tenantId, agentIds)) {
+            names.put(agent.getId(), agent.getName());
+        }
+        return names;
+    }
+
+    private static String groupKey(String scope, Long ownerRef) {
+        return scope + ":" + (ownerRef == null ? "" : ownerRef);
+    }
+
     static String escapeLikeWildcards(String keyword) {
         if (keyword == null || keyword.isEmpty()) {
             return keyword;
@@ -195,6 +262,7 @@ public class MemoryService {
         return escaped.toString();
     }
 
+    @Transactional
     public MemoryVO update(long id, UpdateMemoryRequest req, long tenantId, long userId) {
         MemoryDO m = memoryDao.findById(id);
         if (m == null) {
@@ -203,9 +271,44 @@ public class MemoryService {
         String title = req.getTitle() != null ? req.getTitle().trim() : m.getTitle();
         String contentMd = req.getContentMd() != null ? req.getContentMd() : m.getContentMd();
         String type = req.getType() != null ? req.getType() : m.getType();
+        String requestedScope = normalizeScope(req.getScope());
+        Long requestedOwnerRef = null;
+        boolean scopeChanged = false;
+        if (requestedScope != null) {
+            if (!"ORG".equals(requestedScope) && req.getOwnerRef() == null) {
+                throw new BizException(ErrorCode.PARAM_INVALID);
+            }
+            requestedOwnerRef = "ORG".equals(requestedScope) ? null : req.getOwnerRef();
+            scopeChanged = !requestedScope.equals(m.getScope())
+                    || !Objects.equals(requestedOwnerRef, m.getOwnerRef());
+        }
+        if (scopeChanged && !"ADOPTED".equals(m.getStatus())) {
+            throw new BizException(ErrorCode.MEMORY_SCOPE_CHANGE_NOT_ADOPTED);
+        }
         int rows = memoryDao.update(id, tenantId, title, contentMd, type, m.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.MEMORY_VERSION_CONFLICT);
+        }
+        if (scopeChanged) {
+            int scopeRows = memoryDao.updateStatus(id, tenantId, m.getStatus(), null,
+                    requestedScope, requestedOwnerRef, m.getVersion() + 1, userId);
+            if (scopeRows == 0) {
+                throw new BizException(ErrorCode.MEMORY_VERSION_CONFLICT);
+            }
+            MemoryReviewDO audit = new MemoryReviewDO();
+            audit.setTenantId(tenantId);
+            audit.setMemoryId(id);
+            audit.setReviewerId(userId);
+            audit.setDecision("SCOPE_CHANGE");
+            audit.setComment("范围变更: " + m.getScope() + "(" + m.getOwnerRef() + ") -> "
+                    + requestedScope + "(" + requestedOwnerRef + ")");
+            memoryReviewDao.insert(audit);
+            if (memoryDistributionService != null) {
+                m.setScope(requestedScope);
+                m.setOwnerRef(requestedOwnerRef);
+                m.setContentMd(contentMd);
+                memoryDistributionService.distribute(m, userId);
+            }
         }
         return get(id);
     }
@@ -353,7 +456,7 @@ public class MemoryService {
             return null;
         }
         String normalized = scope.trim().toUpperCase(Locale.ROOT);
-        if (!Set.of("AGENT", "SQUAD", "ORG").contains(normalized)) {
+                if (!Set.of("AGENT", "SQUAD", "ORG").contains(normalized)) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
         return normalized;

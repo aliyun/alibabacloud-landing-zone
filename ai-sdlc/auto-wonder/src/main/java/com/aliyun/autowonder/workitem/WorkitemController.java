@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.workitem;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.PageResult;
@@ -35,7 +35,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/workitems")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看工作项")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看工作项")
 public class WorkitemController {
 
     private final WorkitemService workitemService;
@@ -50,9 +50,9 @@ public class WorkitemController {
     }
 
     @PostMapping
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "创建工作项")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建工作项")
     public Result<WorkitemVO> create(@RequestBody CreateWorkitemRequest req) {
-        return Result.ok(workitemService.create(req, currentOrgId(), currentUserId()));
+        return Result.ok(workitemService.create(req, currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/{id}")
@@ -65,6 +65,7 @@ public class WorkitemController {
     public Result<PageResult<WorkitemVO>> list(
             @RequestParam(value = "workType", required = false) String workType,
             @RequestParam(value = "statusNodeId", required = false) Long statusNodeId,
+            @RequestParam(value = "statusCategory", required = false) String statusCategory,
             @RequestParam(value = "assigneeType", required = false) String assigneeType,
             @RequestParam(value = "assigneeRef", required = false) Long assigneeRef,
             @RequestParam(value = "pendingDecisionOnly", defaultValue = "false") boolean pendingDecisionOnly,
@@ -72,45 +73,45 @@ public class WorkitemController {
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(workitemService.list(workType, statusNodeId, assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentOrgId(), currentUserId(), keyword, page, size));
+        return Result.ok(workitemService.list(workType, statusNodeId, statusCategory, assigneeType, assigneeRef,
+                pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, page, size));
     }
 
     @PostMapping("/{id}/transition")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "流转工作项")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "流转工作项")
     public Result<WorkitemVO> transition(@PathVariable("id") Long id, @RequestBody TransitionRequest req) {
         if (req.getToNodeId() == null) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
-        return Result.ok(workitemService.transition(id, req.getToNodeId(), currentOrgId(), currentUserId()));
+        return Result.ok(workitemService.transition(id, req.getToNodeId(), currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/assignee")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "指派工作项")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "指派工作项")
     public Result<WorkitemVO> assign(@PathVariable("id") Long id, @RequestBody AssignRequest req) {
         return Result.ok(workitemService.assign(id, req.getAssigneeType(), req.getAssigneeRef(),
-                req.getSdlcId(), req.getSquadId(), currentOrgId(), currentUserId()));
+                req.getSdlcId(), req.getSquadId(), currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/content")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "更新工作项内容")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新工作项内容")
     public Result<WorkitemVO> updateContent(@PathVariable("id") Long id, @RequestBody UpdateContentRequest req) {
         return Result.ok(workitemService.updateContent(id, req.getTitle(), req.getContentMd(),
-                currentOrgId(), currentUserId()));
+                currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "删除工作项")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除工作项")
     public Result<Void> delete(@PathVariable("id") Long id) {
-        workitemService.delete(id, currentOrgId(), currentUserId());
+        workitemService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/comments")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "添加工作项评论")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加工作项评论")
     @Transactional
     public Result<CommentVO> addComment(@PathVariable("id") Long id, @RequestBody AddCommentRequest req) {
-        long tenantId = currentOrgId();
+        long tenantId = currentWorkspaceId();
         long userId = currentUserId();
         CommentVO comment = workitemService.addComment(id, req.getContentMd(), req.getTargetHumanIds(), tenantId, userId);
         guidanceService.createForComment(tenantId, id, comment.getId(), req.getContentMd(),
@@ -133,32 +134,32 @@ public class WorkitemController {
     public Result<List<TimelineItemVO>> unifiedTimeline(@PathVariable("id") Long id) {
         refreshExternalWorkitemIfWritable(id);
         List<TimelineItemVO> timeline = workitemService.getUnifiedTimeline(id);
-        guidanceService.attachInteractionStatuses(currentOrgId(), id, timeline);
+        guidanceService.attachInteractionStatuses(currentWorkspaceId(), id, timeline);
         return Result.ok(timeline);
     }
 
     @GetMapping("/{id}/delivery-progress")
     public Result<DeliveryProgressVO> deliveryProgress(@PathVariable("id") Long id) {
-        return Result.ok(workitemService.getDeliveryProgress(id, currentOrgId()));
+        return Result.ok(workitemService.getDeliveryProgress(id, currentWorkspaceId()));
     }
 
     @GetMapping("/{id}/participants")
     public Result<List<ParticipantVO>> participants(@PathVariable("id") Long id) {
-        return Result.ok(workitemService.getParticipants(id, currentOrgId()));
+        return Result.ok(workitemService.getParticipants(id, currentWorkspaceId()));
     }
 
     @GetMapping("/{id}/mention-candidates")
     public Result<List<ParticipantVO>> mentionCandidates(@PathVariable("id") Long id,
             @RequestParam(value = "q", required = false) String q,
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
-        return Result.ok(workitemService.getMentionCandidates(id, currentOrgId(), q, limit));
+        return Result.ok(workitemService.getMentionCandidates(id, currentWorkspaceId(), q, limit));
     }
 
     private void refreshExternalWorkitemIfWritable(Long workitemId) {
-        OrgAccessLevel accessLevel = AutoWonderContext.get().getOrgAccessLevel();
-        if (accessLevel != null && accessLevel.allows(OrgAccessLevel.READ_WRITE)) {
+        WorkspaceAccessLevel accessLevel = AutoWonderContext.get().getWorkspaceAccessLevel();
+        if (accessLevel != null && accessLevel.allows(WorkspaceAccessLevel.READ_WRITE)) {
             aoneWorkitemRefreshService.refreshIfLinked(
-                    workitemId, currentOrgId(), currentUserId());
+                    workitemId, currentWorkspaceId(), currentUserId());
         }
     }
 
@@ -170,11 +171,11 @@ public class WorkitemController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

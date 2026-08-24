@@ -17,7 +17,13 @@ required for a community build and runtime.
    - `SecretCrypto` replaces KeyCenter;
    - OSS remains mandatory;
    - public SLS remains supported;
-   - Aone remains optional and disabled by default;
+   - BUC (internal unified authentication) related features are excluded entirely;
+     do not sync BUC integration code, configuration, or UI to community;
+   - Aone (internal workitem system) related feature iterations are excluded;
+     the existing Aone integration remains as-is (optional and disabled by default)
+     but new Aone-specific feature development on master need not be synced —
+     only sync Aone changes when they are inseparable from a broader product
+     feature that community requires;
    - the community frontend supports creating Qoder CLI executors only; preserve
      this restriction when syncing executor UI changes from master;
    - the supported release target remains Linux x86_64 until expanded explicitly.
