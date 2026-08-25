@@ -25,7 +25,7 @@ class UpgradePolicyTest(unittest.TestCase):
 
     def test_rolling_upgrade_failure_never_rolls_back_automatically(self):
         initialize = (
-            SKILL_ROOT / "scripts" / "initialize-and-verify.sh"
+            SKILL_ROOT / "scripts" / "internal" / "operations.sh"
         ).read_text(encoding="utf-8")
         rolling = initialize.split("  rolling-upgrade)", 1)[1].split(
             "  rolling-start)", 1

@@ -23,7 +23,7 @@ while (($#)); do
   esac
 done
 require_file "$manifest"; [[ -d "$source_dir" ]] || die "source directory missing"
-require_command jq; require_command git
+require_command jq
 json_validate "$manifest"; reject_secret_keys "$manifest"
 profile=${profile:-$(jq -r '.cloudProfile // empty' "$manifest")}
 ossutil_contract=not-checked; ossutil_version=not-checked
@@ -34,6 +34,8 @@ jq -e '.schemaVersion == 1 and .slsEnabled == true and .aoneEnabled == false and
 jq -e '.topology == "multi-az-ha" or .topology == "experience"' "$manifest" >/dev/null || die "unsupported topology"
 jq -e '.architecture == null or .architecture == "x86_64"' "$manifest" >/dev/null || die "only x86_64 is supported"
 jq -e '.stateMode == "remote" or .stateMode == "local"' "$manifest" >/dev/null || die "invalid state mode"
+jq -e 'if .mode == "new" then .environment == "auto-wonder-prod" and .topology == "multi-az-ha" and .sizePreset == "small" and .stateMode == "remote" and .lifecycle == "persistent" and .executionMode == "unattended" and (.accountUid|test("^[0-9]{15,20}$")) else true end' "$manifest" >/dev/null || die "new deployment fixed environment, topology, sizing, account UID, lifecycle, execution mode, or remote state is invalid"
+jq -e 'if .mode == "new" then .billing.strategy == "subscription-first" and .billing.purchasePeriodMonths == 1 and .billing.autoRenew == true and .billing.autoRenewPeriodMonths == 1 and .billing.payAsYouGoExceptions == ["ALB","OSS","SLS"] else true end' "$manifest" >/dev/null || die "new deployment billing must buy one month and continuously auto-renew monthly; only ALB, OSS, and SLS may remain pay-as-you-go"
 jq -e '.lifecycle == "persistent" or .lifecycle == "temporary"' "$manifest" >/dev/null || die "invalid lifecycle"
 jq -e '.executionMode == "staged" or .executionMode == "unattended"' "$manifest" >/dev/null || die "invalid execution mode"
 jq -e '.ingressScenario as $s | ($s == "no-domain-no-certificate" or $s == "domain-no-certificate" or $s == "domain-with-certificate") and (if ($s|startswith("domain-")) then (.domain|length)>0 else true end)' "$manifest" >/dev/null || die "invalid ingress scenario"
@@ -44,12 +46,7 @@ for query in '.organizationName' '.resolvedInfrastructure.ecsImageId' '.resolved
   json_required "$manifest" "$query"
 done
 jq -e '.resolvedInfrastructure.rdsStorageGb > 0' "$manifest" >/dev/null || die "resolved RDS storage is required"
-
-commit=$(json_string "$manifest" '.repositoryCommit')
-if [[ "$commit" != "HEAD" ]]; then
-  actual=$(git -C "$source_dir" rev-parse HEAD)
-  [[ "$actual" == "$commit" ]] || die "source commit does not match manifest"
-fi
+jq -e '.resolvedInfrastructure.ecsVcpus == 2 and .resolvedInfrastructure.ecsMemoryGiB == 4 and .resolvedInfrastructure.preferredEcsInstanceType == "ecs.c8a.large"' "$manifest" >/dev/null || die "small ECS sizing must be 2 vCPU and 4 GiB with ecs.c8a.large preferred"
 
 if [[ "$dry_run" == false ]]; then
   for command in aliyun terraform ossutil openssl curl; do require_command "$command"; done
@@ -59,8 +56,23 @@ if [[ "$dry_run" == false ]]; then
   run_aliyun() {
     if [[ -n "$profile" ]]; then aliyun "$@" --profile "$profile"; else aliyun "$@"; fi
   }
-  run_aliyun sts GetCallerIdentity --region "$region" >/dev/null || die "Alibaba Cloud identity probe failed"
+  identity=$(run_aliyun sts GetCallerIdentity --region "$region") || die "Alibaba Cloud identity probe failed"
+  if [[ $(jq -r '.mode' "$manifest") == new ]]; then
+    [[ $(jq -r '.AccountId' <<<"$identity") == $(json_string "$manifest" '.accountUid') ]] || die "Alibaba Cloud account identity mismatch"
+  fi
   run_aliyun ecs DescribeZones --region "$region" --RegionId "$region" >/dev/null || die "zone inventory probe failed"
+  ecs_instance_type=$(json_string "$manifest" '.resolvedInfrastructure.ecsInstanceType')
+  instance_types=$(run_aliyun ecs DescribeInstanceTypes --region "$region" --InstanceTypes.1 "$ecs_instance_type") || die "ECS instance type probe failed"
+  jq -e --arg instanceType "$ecs_instance_type" '
+    .. | objects |
+    select(.InstanceTypeId? == $instanceType) |
+    .CpuCoreCount == 2 and .MemorySize == 4 and .CpuArchitecture == "X86"
+  ' <<<"$instance_types" >/dev/null || die "resolved ECS instance type must provide exactly 2 vCPU and 4 GiB"
+  while IFS= read -r zone; do
+    zone=${zone%$'\r'}
+    available=$(run_aliyun ecs DescribeAvailableResource --region "$region" --RegionId "$region" --ZoneId "$zone" --DestinationResource InstanceType --InstanceChargeType PrePaid --InstanceType "$ecs_instance_type") || die "ECS subscription availability probe failed for zone"
+    jq -e --arg instanceType "$ecs_instance_type" '.. | objects | select(.Value? == $instanceType)' <<<"$available" >/dev/null || die "ecs instance type is unavailable in zone: $zone"
+  done < <(jq -r '.availabilityZones[0:2][]' "$manifest")
   if [[ -n "$profile" ]]; then atomic_jq "$manifest" --arg profile "$profile" '.cloudProfile=$profile'; fi
 fi
 jq -n --arg region "$region" --argjson dryRun "$dry_run" --arg ossutilContract "$ossutil_contract" --arg ossutilVersion "$ossutil_version" \

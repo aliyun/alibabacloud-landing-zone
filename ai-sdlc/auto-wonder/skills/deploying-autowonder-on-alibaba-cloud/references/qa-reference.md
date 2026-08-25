@@ -6,10 +6,15 @@ Use this reference for read-only operational questions. Prefix answers with the
 evidence class: **Repository default**, **Manifest value**, **Live observation**,
 or **Recommendation**. Never present a default as the state of a live deployment.
 
+New deployments always use `auto-wonder-prod`, the current local HEAD, and an
+automatic private OSS Terraform backend at the fixed absolute deployment path.
+Users are not asked for environment, source, optional tags, state bucket, or
+backend file information.
+
 ## Resource And Network Inventory
 
 - **Repository default:** true multi-zone HA uses two ECS nodes in distinct
-  zones, cross-zone NLB, HA MySQL, multi-zone Redis, two OSS buckets, three SLS
+  zones, dual-zone ALB, HA MySQL, multi-zone Redis, two OSS buckets, three SLS
   stores, and one scoped application RAM user.
 - **Manifest value:** region is one of `cn-zhangjiakou`, `cn-hangzhou`,
   `cn-shanghai`, or `cn-beijing`; topology, sizing, lifecycle, and ingress are
@@ -17,7 +22,7 @@ or **Recommendation**. Never present a default as the state of a live deployment
 - **Live observation:** obtain resource state from Terraform output/state plus
   read-only Alibaba Cloud APIs. Do not infer health from the manifest alone.
 - **Repository default:** ECS has no NAT, public EIP, or SSH. Public ingress is
-  NLB port 80 restricted to approved CIDRs and forwarded to ECS port 7001.
+  ALB HTTP port 80 restricted to approved CIDRs and forwarded to ECS port 7001.
 
 ## Host Layout And Service
 
@@ -68,9 +73,9 @@ master keys, Terraform state, presigned URLs, or executor tokens into chat/logs.
 
 ## Domain And TLS
 
-- No domain: temporary `ws://<nlb-address>/ws/executor`.
+- No domain: temporary `ws://<alb-address>/ws/executor`.
 - Domain without certificate: temporary `ws://<domain>/ws/executor`.
-- Domain with certificate: bind a trusted certificate to the NLB path, then
+- Domain with certificate: bind a trusted certificate to the ALB path, then
   verify `wss://<domain>/ws/executor` with the actual packaged executor.
 
 DNS and certificate binding can remain pending while base deployment completes.
@@ -125,7 +130,7 @@ diagnostic output.
 ## Costs And Limits
 
 **Recommendation:** use current plan and price APIs for estimates. The dominant
-drivers are HA compute/database/cache, NLB traffic, OSS storage/requests, SLS
+drivers are HA compute/database/cache, ALB traffic, OSS storage/requests, SLS
 ingestion/index/retention, and remote state. V1 supports only new isolated Linux
 x86_64 deployments; it does not import/reuse existing resources, mutate DNS,
 automate certificate binding, support ARM, replace mandatory OSS, or silently

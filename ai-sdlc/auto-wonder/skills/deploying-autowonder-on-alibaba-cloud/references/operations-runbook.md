@@ -19,31 +19,60 @@ ad hoc cloud mutations.
    recorded exception: a 15-minute private-intranet presigned URL for secret-file
    transport. Never print it; delete the unique OSS object
    immediately after installation and treat the URL as exposed until expiry.
-5. Resume only after reconciling Git, manifest, Terraform state, and live state.
+5. For a new deployment, resume after reconciling the manifest, Terraform state,
+   artifact hashes, and live state. Upgrade mode additionally reconciles Git.
 
 ## Phase 1: Preflight
 
-**Inputs:** completed questionnaire, exact source commit, two candidate zones,
-local credential chain.
+**Inputs:** completed questionnaire, current workspace contents, two candidate
+zones, and local credential chain. New deployments use fixed
+environment `auto-wonder-prod` and mandatory remote state.
 
 Resolve image and ECS/RDS/Redis SKUs with read-only inventory and price APIs,
 then record them in the manifest. Run `scripts/preflight.sh --manifest <file>
 --source-dir <repo>`. It validates tools, account identity, region, resolved
-x86_64 inputs, two distinct zones, CIDRs, tags, topology, and source commit.
+x86_64 inputs, two distinct zones, CIDRs, tags, and topology. Do not inspect or
+validate Git information for a new deployment.
+
+For each selected zone, query ECS availability by instance type only using
+`DescribeAvailableResource` with `InstanceType`. Do not pass CPU or memory
+parameters in that request. Check CPU count, memory size, and x86_64 architecture
+separately from the `DescribeInstanceTypes` response before accepting the type.
 Stop on identity mismatch, unsupported HA inventory, public egress/SSH
 requirement, invalid CIDR, or a secret-bearing manifest.
 
 **Output:** reconciled preflight evidence and resolved non-secret inputs.
 
+After preflight approval run `scripts/terraform-backend.sh prepare --manifest
+<file>`. It computes the fixed bucket, key, and absolute backend path, creates or
+exactly reconciles the private bucket, and records a ready checkpoint. Never ask
+the user for backend coordinates or adopt a mismatched bucket.
+
 ## Phase 2: Terraform Plan
+
+Terraform init acceleration runs automatically as a background default; do not
+ask the user to enable or configure it. `terraform-stage.sh` generates an
+isolated `*.tfrc` and exports `TF_CLI_CONFIG_FILE` before Terraform runs. On
+Windows, run `scripts/windows/configure-terraform-acceleration.ps1` in the same
+PowerShell process as Terraform; on macOS and Linux the stage script calls
+`scripts/configure-terraform-acceleration.sh`. Both routes use the Alibaba Cloud
+mirror only for `aliyun/alicloud` and `hashicorp/alicloud`, leave other providers
+on the direct route, and preserve any existing global CLI configuration.
 
 Run `scripts/terraform-stage.sh plan --manifest <file> --work-dir <dir>`. The
 stage formats, initializes, validates, and saves an immutable plan plus its hash.
 Reject wildcard application permissions, public SSH, absent tags, same-zone HA,
-secret defaults, or unexpected destroy/replace actions. Show the sanitized plan,
-cost drivers, and security exceptions for final confirmation.
+secret defaults, or unexpected destroy/replace actions. Complete the machine
+review, including cost drivers and the live pricing check. If no safety stop is
+triggered, automatically approve the exact saved-plan fingerprint and continue
+directly to apply. Do not ask the user to confirm the Terraform plan. Do not emit
+an intermediate message claiming that a final mandatory review is coming.
 
 **Output:** plan file and `terraform.planFingerprint` in the manifest.
+
+Terraform accepts only the helper-recorded
+`<deployment-root>/terraform/backend.hcl`; an arbitrary path or local-state
+fallback is a safety failure.
 
 If provider distribution is unreachable, use a deployment-local filesystem
 mirror only after verifying the official archive checksum. Point Terraform at
@@ -56,14 +85,16 @@ Run `scripts/terraform-stage.sh apply --manifest <file> --work-dir <dir>
 --approved-plan-sha256 <hash>`. Apply only the reviewed saved plan. Then run the
 inventory command, reconcile IDs without publishing them, verify zones, tags,
 protection, listener sources, private endpoints, and application RAM scope.
+Uncommitted or untracked workspace changes must not block Terraform apply.
 
 **Output:** infrastructure inventory and **Infrastructure ready** candidate.
 
 ## Phase 4: Immutable Build And Transfer
 
-Run `scripts/build-release.sh` against the exact repository commit. It runs the
-complete build verification with `-DskipFrontend=false`, records
-JAR/schema/template-seed hashes, and refuses a dirty or mismatched source. It
+Run `scripts/build-release.sh` against the current workspace contents. For a new
+deployment it does not inspect or validate Git information and accepts
+uncommitted or untracked changes. It runs the complete build verification with
+`-DskipFrontend=false` and records JAR/schema/template-seed hashes. It
 must find `static/index.html` and compiled assets inside the JAR before sealing;
 never deploy a backend-only JAR or reuse stale frontend output. The seed artifact is
 `autowonder-community-templates.sql`. Phase 4 ends with the sealed local release;
@@ -133,7 +164,7 @@ Install `assets/systemd/autowonder.service`, point `/opt/autowonder/current`
 atomically at the new release, and start one node. Require systemd active state,
 a port 7001 listener, `/checkpreload.htm` body `success`, the public branding
 endpoint, non-root process ownership, and capabilities before enabling it in
-NLB. Never use authenticated `/api/health` as a startup probe. Repeat for the
+ALB. Never use authenticated `/api/health` as a startup probe. Repeat for the
 second node. Logs live
 under `/var/lib/autowonder/logs` and in the systemd journal.
 
@@ -160,9 +191,10 @@ Run `scripts/initialize-and-verify.sh` acceptance checks:
 - stored credential begins with `enc:v1:`, excludes plaintext, and decrypts after restart;
 - unique records arrive in system, business, and metrics SLS destinations;
 - rolling restart and ECS reboot recovery;
-- real packaged runtime/executor connects through NLB port 80;
+- real packaged runtime/executor connects through ALB port 80;
 - tags comply and proxy, application, journal, and Cloud Assistant evidence has
-  no query token or credential material.
+  no query token or credential secret material. A RAM AccessKey ID alone is
+  permitted as a non-secret resource identifier.
 
 Security-group listings are control-plane evidence; use real data-plane probes.
 If SLS reports `IndexConfigNotExist`, cursor movement is degraded evidence, not
@@ -204,6 +236,7 @@ destination before deleting any temporary handoff material.
 ## Resume And Confirmation
 
 In staged mode ask only whether to start the next recorded phase. In unattended
-mode continue after the single final plan confirmation, stopping on any safety
-condition. A completed mutation is never repeated until its postcondition proves
-it did not finish. Teardown is always a separate mode and confirmation.
+new-deployment mode, automatically approve a machine-reviewed safe Terraform
+plan and continue directly to apply, stopping on any safety condition. A
+completed mutation is never repeated until its postcondition proves it did not
+finish. Teardown is always a separate mode and confirmation.

@@ -15,6 +15,9 @@ REQUIRED = [
     "scripts/plan-upgrade.sh",
     "scripts/build-release.sh",
     "scripts/terraform-stage.sh",
+    "scripts/terraform-backend.sh",
+    "scripts/configure-terraform-acceleration.sh",
+    "scripts/windows/configure-terraform-acceleration.ps1",
     "scripts/deploy-via-cloud-assistant.sh",
     "scripts/initialize-and-verify.sh",
     "scripts/sanitize-evidence.sh",
@@ -61,7 +64,6 @@ REQUIRED_SKILL_TERMS = [
     "Teardown",
     "Upgrade existing deployment",
     "one consolidated questionnaire",
-    "staged",
     "unattended",
     "sanitized manifest",
     "OSS is mandatory",
@@ -165,6 +167,87 @@ class SkillBundleTest(unittest.TestCase):
         for script in [path for path in REQUIRED if path.startswith("scripts/")]:
             self.assertIn(script, skill)
 
+    def test_new_deployment_questionnaire_is_fixed_and_copyable(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        catalog = (SKILL_ROOT / "references/input-catalog.md").read_text(encoding="utf-8")
+        combined = skill + catalog
+        self.assertIn("请提供部署区域，比如北京、杭州", combined)
+        self.assertIn("请复制下面的模板并填写", combined)
+        self.assertIn("auto-wonder-prod", combined)
+        self.assertIn("current workspace contents", combined)
+        self.assertIn("never ask", combined.lower())
+        self.assertIn("backend.hcl", combined)
+        self.assertIn("persistent", combined)
+        self.assertIn("unattended", combined)
+        self.assertNotIn("生命周期与执行方式", combined)
+        self.assertNotIn("拓扑与规格", combined)
+        self.assertIn("ALB", combined)
+        for obsolete in (
+            "Environment and suffix",
+            "Source | repository URL",
+            "Tags | optional",
+            "backend must already exist",
+        ):
+            self.assertNotIn(obsolete, combined)
+
+    def test_new_deployment_auto_approves_safe_terraform_plan(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references/operations-runbook.md").read_text(encoding="utf-8")
+        combined = skill + runbook
+        for required in (
+            "automatically approve",
+            "machine review",
+            "continue directly to apply",
+            "Do not ask the user to confirm the Terraform plan",
+        ):
+            self.assertIn(required, combined)
+        for obsolete in (
+            "ask once after the final plan",
+            "security exceptions for final confirmation",
+            "single final plan confirmation",
+        ):
+            self.assertNotIn(obsolete, combined)
+        stage = (SKILL_ROOT / "scripts/terraform-stage.sh").read_text(encoding="utf-8")
+        plan_branch = stage.split("  plan)", 1)[1].split("  apply)", 1)[0]
+        self.assertIn("awaiting-machine-review", plan_branch)
+        self.assertNotIn("awaiting-approval", plan_branch)
+
+    def test_new_deployment_uses_current_workspace_without_git_gate(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        catalog = (SKILL_ROOT / "references/input-catalog.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references/operations-runbook.md").read_text(encoding="utf-8")
+        combined = skill + catalog + runbook
+        for required in (
+            "current workspace contents",
+            "Do not inspect or validate Git information",
+            "must not block Terraform apply",
+            "uncommitted or untracked changes",
+        ):
+            self.assertIn(required, combined)
+        for obsolete in (
+            "current local worktree and exact HEAD",
+            "automatically observed current local HEAD",
+            "refuses a dirty or mismatched source",
+        ):
+            self.assertNotIn(obsolete, combined)
+
+        preflight = (SKILL_ROOT / "scripts/preflight.sh").read_text(encoding="utf-8")
+        self.assertNotIn("rev-parse HEAD", preflight)
+        self.assertNotIn("source commit does not match manifest", preflight)
+
+        build = (SKILL_ROOT / "scripts/build-release.sh").read_text(encoding="utf-8")
+        new_mode = build.split('if [[ "$mode" == upgrade ]]', 1)
+        self.assertEqual(2, len(new_mode), "build must isolate upgrade-only Git validation")
+        self.assertNotIn("status --porcelain", new_mode[0])
+
+    def test_ecs_availability_query_uses_instance_type_only(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references/operations-runbook.md").read_text(encoding="utf-8")
+        combined = skill + runbook
+        self.assertIn("query ECS availability by instance type only", combined)
+        self.assertIn("do not pass cpu or memory", combined.lower())
+        self.assertIn("DescribeInstanceTypes", combined)
+
     def test_skill_documents_portable_build_environment(self):
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         for term in [
@@ -179,6 +262,12 @@ class SkillBundleTest(unittest.TestCase):
             self.assertIn(term, skill, f"SKILL.md must document {term!r}")
         self.assertNotIn("Docker", skill, "ECS JAR deployment must not require Docker")
         self.assertNotIn("BuildKit", skill, "ECS JAR deployment must not require BuildKit")
+
+    def test_new_deployment_uses_alb_without_nlb_wording(self):
+        paths = [SKILL_ROOT / "SKILL.md"] + [SKILL_ROOT / path for path in REFERENCE_PATHS]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+        self.assertIn("Application Load Balancer", combined)
+        self.assertNotRegex(combined, r"\bNLB\b|nlb[_-]")
 
 
 if __name__ == "__main__":

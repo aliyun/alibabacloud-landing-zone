@@ -6,6 +6,12 @@ Use this reference after a failed check. For each case, collect sanitized
 evidence, apply the narrow fix, and resume at the stated idempotent boundary.
 Never broaden permissions or expose credentials to make progress.
 
+## Automatic Backend Mismatch
+
+If the derived bucket, account, region, ACL, tags, state key, or fixed
+`backend.hcl` path differs from the manifest, stop. Do not ask for a replacement
+path, add a guessed suffix, adopt the bucket, or fall back to local state.
+
 ## Known Failure Patterns
 
 ### Active Alibaba Cloud Profile Cannot Refresh
@@ -206,10 +212,10 @@ rename it, for example `JSON_PATH`, run `bash -n`, and rerun the complete check.
 
 ### Real Executor Fails While Simple Probes Pass
 
-**Symptom:** browser/curl connects but the packaged daemon cannot reach the NLB.
+**Symptom:** browser/curl connects but the packaged daemon cannot reach the ALB.
 **Cause:** endpoint policy may classify the daemon or destination port. **Evidence:**
 actual daemon result on both direct ports without its token. **Safe fix:** use the
-NLB endpoint on port 80 and require trusted `wss://` for production. **Unsafe:**
+ALB endpoint on port 80 and require trusted `wss://` for production. **Unsafe:**
 claim success from a substitute client. **Resume:** executor acceptance.
 
 ### Copy Buttons Fail On A Plaintext Endpoint
