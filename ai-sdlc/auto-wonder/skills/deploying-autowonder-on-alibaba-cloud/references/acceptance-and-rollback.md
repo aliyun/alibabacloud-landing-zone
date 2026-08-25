@@ -5,6 +5,12 @@
 Use this reference to classify completion, capture safe evidence, roll back an
 application release, or prepare a separately confirmed environment teardown.
 
+Teardown first applies the exact reviewed main destroy plan and verifies an
+empty managed state. It then deletes every state object version and multipart
+upload, deletes the dedicated OSS state bucket, and removes the local backend
+directory. Never retain the backend after successful teardown or delete it while
+main destruction is failed or uncertain.
+
 ## Independent Completion Statuses
 
 Never collapse these into one optimistic result:
@@ -12,7 +18,7 @@ Never collapse these into one optimistic result:
 | Status | Required evidence |
 | --- | --- |
 | **Infrastructure ready** | Terraform resources reconcile; two zones, tags, protection, listener CIDRs, private service paths, and scoped RAM policy pass |
-| **Application ready** | both systemd services, per-node health, `/checkpreload.htm`, capabilities, and public NLB ingress pass |
+| **Application ready** | both systemd services, per-node health, `/checkpreload.htm`, capabilities, and public ALB ingress pass |
 | **Business initialized** | `admin` and the requested organization exist; ownership/admin role is verified |
 | **Release accepted** | RDS/Redis persistence, OSS server I/O through the intranet endpoint and externally reachable public signed URLs, `enc:v1:` restart use, three SLS destinations, restart/reboot, packaged executor, tags, and secret scan pass |
 | **TLS accepted** | trusted certificate, hostname, handshake, and real `wss://` executor pass |
@@ -45,7 +51,7 @@ or forward-fix plan instead of repointing the symlink.
 2. Stop `autowonder.service` on the failed node.
 3. Verify the prior version directory and recorded hash.
 4. Atomically repoint `/opt/autowonder/current` to the previous release.
-5. Start the service and require local health before NLB re-enable.
+5. Start the service and require local health before ALB re-enable.
 6. Repeat only if the second node also requires rollback.
 7. Preserve diagnostics under `/var/lib/autowonder/logs` and sanitized invocation
    evidence; remove only unique temporary OSS objects.
@@ -95,7 +101,7 @@ choice. Revoke the application AccessKey after dependent services are stopped.
 
 ## Post-Rollback Or Teardown Verification
 
-For rollback, confirm both nodes, NLB, data access, executor connectivity, and
+For rollback, confirm both nodes, ALB, data access, executor connectivity, and
 secret-log scan again. For teardown, verify the reviewed resources are absent,
 no chargeable orphan remains, credentials are revoked, DNS guidance is complete,
 and retained backups/state have a named owner and expiration. Report failures

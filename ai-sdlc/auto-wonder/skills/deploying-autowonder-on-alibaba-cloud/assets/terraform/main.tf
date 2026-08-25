@@ -56,7 +56,7 @@ variable "zone_b_id" {
 }
 
 variable "public_source_cidrs" {
-  description = "Public client CIDRs allowed to reach AutoWonder through NLB."
+  description = "Public client CIDRs allowed to reach AutoWonder through ALB."
   type        = list(string)
   validation {
     condition = length(var.public_source_cidrs) > 0 && alltrue([
@@ -79,6 +79,42 @@ variable "lifecycle_mode" {
   validation {
     condition     = contains(["persistent", "temporary"], var.lifecycle_mode)
     error_message = "lifecycle_mode must be persistent or temporary."
+  }
+}
+
+variable "billing_strategy" {
+  description = "Fixed subscription-first billing policy for new deployments."
+  type        = string
+  validation {
+    condition     = var.billing_strategy == "subscription-first"
+    error_message = "billing_strategy must be subscription-first."
+  }
+}
+
+variable "purchase_period_months" {
+  description = "Initial subscription purchase period."
+  type        = number
+  validation {
+    condition     = var.purchase_period_months == 1
+    error_message = "Initial subscription purchase must be exactly one month."
+  }
+}
+
+variable "auto_renew" {
+  description = "Continuous automatic renewal for subscription resources."
+  type        = bool
+  validation {
+    condition     = var.auto_renew
+    error_message = "Automatic renewal must be enabled."
+  }
+}
+
+variable "auto_renew_period_months" {
+  description = "Months purchased by each automatic renewal."
+  type        = number
+  validation {
+    condition     = var.auto_renew_period_months == 1
+    error_message = "Each automatic renewal must purchase exactly one month."
   }
 }
 
@@ -106,7 +142,7 @@ variable "ecs_image_id" {
 }
 
 variable "ecs_instance_type" {
-  description = "Verified x86_64 ECS instance type available in both zones."
+  description = "Verified x86_64 ECS instance type with exactly 2 vCPU and 4 GiB available in both zones; prefer ecs.c8a.large."
   type        = string
   default     = "ecs.c8a.large"
 }
@@ -116,8 +152,8 @@ variable "ecs_password" {
   type        = string
   sensitive   = true
   validation {
-    condition     = length(var.ecs_password) >= 8 && length(var.ecs_password) <= 32
-    error_message = "ecs_password must be 8-32 characters."
+    condition     = length(var.ecs_password) >= 8 && length(var.ecs_password) <= 30 && can(regex("[A-Z]", var.ecs_password)) && can(regex("[a-z]", var.ecs_password)) && can(regex("[0-9]", var.ecs_password)) && can(regex("[^A-Za-z0-9]", var.ecs_password))
+    error_message = "ecs_password must be 8-30 characters and include uppercase, lowercase, numeric, and special characters."
   }
 }
 
@@ -154,8 +190,8 @@ variable "rds_password" {
   type        = string
   sensitive   = true
   validation {
-    condition     = length(var.rds_password) >= 8 && length(var.rds_password) <= 32
-    error_message = "rds_password must be 8-32 characters."
+    condition     = length(var.rds_password) >= 8 && length(var.rds_password) <= 32 && can(regex("[A-Z]", var.rds_password)) && can(regex("[a-z]", var.rds_password)) && can(regex("[0-9]", var.rds_password)) && can(regex("[^A-Za-z0-9]", var.rds_password))
+    error_message = "rds_password must be 8-32 characters and include uppercase, lowercase, numeric, and special characters."
   }
 }
 
@@ -174,8 +210,8 @@ variable "redis_password" {
   type        = string
   sensitive   = true
   validation {
-    condition     = length(var.redis_password) >= 8 && length(var.redis_password) <= 32
-    error_message = "redis_password must be 8-32 characters."
+    condition     = length(var.redis_password) >= 8 && length(var.redis_password) <= 32 && can(regex("[A-Z]", var.redis_password)) && can(regex("[a-z]", var.redis_password)) && can(regex("[0-9]", var.redis_password)) && can(regex("[^A-Za-z0-9]", var.redis_password))
+    error_message = "redis_password must be 8-32 characters and include uppercase, lowercase, numeric, and special characters."
   }
 }
 
@@ -254,7 +290,7 @@ resource "alicloud_security_group_rule" "vpc_internal" {
   cidr_ip           = var.vpc_cidr
 }
 
-resource "alicloud_security_group_rule" "nlb_health" {
+resource "alicloud_security_group_rule" "alb_service" {
   type              = "ingress"
   ip_protocol       = "tcp"
   nic_type          = "intranet"
@@ -263,18 +299,6 @@ resource "alicloud_security_group_rule" "nlb_health" {
   priority          = 10
   security_group_id = alicloud_security_group.app.id
   cidr_ip           = "100.64.0.0/10"
-}
-
-resource "alicloud_security_group_rule" "nlb_client" {
-  for_each          = toset(var.public_source_cidrs)
-  type              = "ingress"
-  ip_protocol       = "tcp"
-  nic_type          = "intranet"
-  policy            = "accept"
-  port_range        = "7001/7001"
-  priority          = 10
-  security_group_id = alicloud_security_group.app.id
-  cidr_ip           = each.value
 }
 
 resource "alicloud_instance" "app" {
@@ -287,19 +311,27 @@ resource "alicloud_instance" "app" {
   vswitch_id                 = each.value.vswitch_id
   system_disk_category       = "cloud_essd"
   system_disk_size           = 60
-  instance_charge_type       = "PostPaid"
+  instance_charge_type       = "PrePaid"
+  period                     = var.purchase_period_months
+  period_unit                = "Month"
+  renewal_status             = var.auto_renew ? "AutoRenewal" : "Normal"
+  auto_renew_period          = var.auto_renew_period_months
   internet_max_bandwidth_out = 0
   password                   = var.ecs_password
   tags                       = local.tags
 }
 
-resource "alicloud_nlb_load_balancer" "app" {
-  load_balancer_name = "${local.name_prefix}-nlb"
-  load_balancer_type = "Network"
-  address_type       = "Internet"
-  address_ip_version = "Ipv4"
-  vpc_id             = alicloud_vpc.main.id
-  tags               = local.tags
+resource "alicloud_alb_load_balancer" "app" {
+  load_balancer_name     = "${local.name_prefix}-alb"
+  load_balancer_edition  = "Basic"
+  address_type           = "Internet"
+  address_allocated_mode = "Fixed"
+  vpc_id                 = alicloud_vpc.main.id
+  tags                   = local.tags
+
+  load_balancer_billing_config {
+    pay_type = "PayAsYouGo"
+  }
 
   zone_mappings {
     zone_id    = var.zone_a_id
@@ -311,42 +343,78 @@ resource "alicloud_nlb_load_balancer" "app" {
   }
 }
 
-resource "alicloud_nlb_server_group" "app" {
-  server_group_name  = "${local.name_prefix}-backend"
-  server_group_type  = "Instance"
-  vpc_id             = alicloud_vpc.main.id
-  protocol           = "TCP"
-  scheduler          = "Wrr"
-  address_ip_version = "Ipv4"
-  tags               = local.tags
+resource "alicloud_alb_server_group" "app" {
+  server_group_name = "${local.name_prefix}-backend"
+  vpc_id            = alicloud_vpc.main.id
+  protocol          = "HTTP"
+  tags              = local.tags
 
-  health_check {
+  sticky_session_config {
+    sticky_session_enabled = false
+  }
+
+  health_check_config {
     health_check_enabled      = true
-    health_check_type         = "TCP"
     health_check_connect_port = local.server_group_port
+    health_check_protocol     = "HTTP"
+    health_check_method       = "GET"
+    health_check_path         = "/checkpreload.htm"
+    health_check_codes        = ["http_2xx"]
+    health_check_http_version = "HTTP1.1"
     healthy_threshold         = 2
     unhealthy_threshold       = 2
     health_check_interval     = 10
+    health_check_timeout      = 5
+  }
+
+  dynamic "servers" {
+    for_each = alicloud_instance.app
+    content {
+      server_type = "Ecs"
+      server_id   = servers.value.id
+      port        = local.server_group_port
+      weight      = 100
+    }
   }
 }
 
-resource "alicloud_nlb_server_group_server_attachment" "app" {
-  for_each        = alicloud_instance.app
-  server_group_id = alicloud_nlb_server_group.app.id
-  server_type     = "Ecs"
-  server_id       = each.value.id
-  port            = local.server_group_port
-  weight          = 100
+resource "alicloud_alb_listener" "application" {
+  load_balancer_id     = alicloud_alb_load_balancer.app.id
+  listener_protocol    = "HTTP"
+  listener_port        = 80
+  listener_description = "${local.name_prefix}-http-80"
+  idle_timeout         = 600
+  request_timeout      = 600
+  tags                 = local.tags
+
+  default_actions {
+    type = "ForwardGroup"
+    forward_group_config {
+      server_group_tuples {
+        server_group_id = alicloud_alb_server_group.app.id
+      }
+    }
+  }
 }
 
-resource "alicloud_nlb_listener" "application" {
-  load_balancer_id     = alicloud_nlb_load_balancer.app.id
-  listener_protocol    = "TCP"
-  listener_port        = 80
-  listener_description = "${local.name_prefix}-tcp-80"
-  server_group_id      = alicloud_nlb_server_group.app.id
-  idle_timeout         = 900
-  tags                 = local.tags
+resource "alicloud_alb_acl" "public_sources" {
+  acl_name = "${local.name_prefix}-public-sources"
+  tags     = local.tags
+}
+
+resource "alicloud_alb_acl_entry_attachment" "public_sources" {
+  for_each    = toset(var.public_source_cidrs)
+  acl_id      = alicloud_alb_acl.public_sources.id
+  entry       = each.value
+  description = "AutoWonder-client-source"
+}
+
+resource "alicloud_alb_listener_acl_attachment" "public_sources" {
+  acl_id      = alicloud_alb_acl.public_sources.id
+  listener_id = alicloud_alb_listener.application.id
+  acl_type    = "White"
+
+  depends_on = [alicloud_alb_acl_entry_attachment.public_sources]
 }
 
 resource "alicloud_db_instance" "main" {
@@ -356,7 +424,10 @@ resource "alicloud_db_instance" "main" {
   instance_storage         = var.rds_storage_gb
   db_instance_storage_type = var.rds_storage_type
   category                 = var.rds_category
-  instance_charge_type     = "Postpaid"
+  instance_charge_type     = "Prepaid"
+  period                   = var.purchase_period_months
+  auto_renew               = var.auto_renew
+  auto_renew_period        = var.auto_renew_period_months
   instance_name            = "${local.name_prefix}-rds"
   vswitch_id               = join(",", [alicloud_vswitch.zone_a.id, alicloud_vswitch.zone_b.id])
   zone_id                  = var.zone_a_id
@@ -405,7 +476,10 @@ resource "alicloud_kvstore_instance" "main" {
   vswitch_id                  = alicloud_vswitch.zone_a.id
   zone_id                     = var.zone_a_id
   secondary_zone_id           = var.zone_b_id
-  payment_type                = "PostPaid"
+  payment_type                = "PrePaid"
+  period                      = tostring(var.purchase_period_months)
+  auto_renew                  = var.auto_renew
+  auto_renew_period           = var.auto_renew_period_months
   password                    = var.redis_password
   security_ips                = [var.vpc_cidr]
   instance_release_protection = local.persistent
@@ -416,6 +490,7 @@ resource "alicloud_kvstore_instance" "main" {
 
 resource "alicloud_oss_bucket" "package" {
   bucket        = "${local.name_prefix}-packages"
+  acl           = "private"
   storage_class = "Standard"
   force_destroy = !local.persistent
   tags          = local.tags
@@ -427,6 +502,7 @@ resource "alicloud_oss_bucket" "package" {
 
 resource "alicloud_oss_bucket" "artifact" {
   bucket        = "${local.name_prefix}-artifacts"
+  acl           = "private"
   storage_class = "Standard"
   force_destroy = !local.persistent
   tags          = local.tags
@@ -434,16 +510,6 @@ resource "alicloud_oss_bucket" "artifact" {
   versioning {
     status = local.persistent ? "Enabled" : "Suspended"
   }
-}
-
-resource "alicloud_oss_bucket_acl" "package" {
-  bucket = alicloud_oss_bucket.package.bucket
-  acl    = "private"
-}
-
-resource "alicloud_oss_bucket_acl" "artifact" {
-  bucket = alicloud_oss_bucket.artifact.bucket
-  acl    = "private"
 }
 
 resource "alicloud_log_project" "main" {
@@ -587,12 +653,12 @@ output "ecs_private_ips" {
   value = { for zone, instance in alicloud_instance.app : zone => instance.private_ip }
 }
 
-output "nlb_id" {
-  value = alicloud_nlb_load_balancer.app.id
+output "load_balancer_id" {
+  value = alicloud_alb_load_balancer.app.id
 }
 
-output "nlb_dns_name" {
-  value = alicloud_nlb_load_balancer.app.dns_name
+output "load_balancer_address" {
+  value = alicloud_alb_load_balancer.app.dns_name
 }
 
 output "rds" {

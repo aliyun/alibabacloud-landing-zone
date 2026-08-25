@@ -1,0 +1,4 @@
+interface:
+  display_name: "升级 AutoWonder（阿里云）"
+  short_description: "全自动发现并升级现有阿里云 AutoWonder 部署"
+  default_prompt: "Use $upgrading-autowonder-on-alibaba-cloud to automatically discover, verify, plan, build, roll out, and accept an existing AutoWonder deployment. Ask only for an unresolved top-level deployment folder or confirmation of destructive impact, and finish with one upgrade report."
