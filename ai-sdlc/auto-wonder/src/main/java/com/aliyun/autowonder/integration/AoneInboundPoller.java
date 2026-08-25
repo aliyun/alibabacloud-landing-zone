@@ -38,6 +38,7 @@ public class AoneInboundPoller {
      * previous full scan was running so they aren't skipped by the createdAt lower bound.
      */
     private static final long INCREMENTAL_OVERLAP_MILLIS = 60 * 60 * 1000L;
+    private static final int RECONCILE_BATCH_SIZE = 100;
 
     private final ExternalProjectBindingDao bindingDao;
     private final SecretCrypto secretCrypto;
@@ -86,12 +87,19 @@ public class AoneInboundPoller {
                     log.info("Aone inbound poll success bindingId={} projectId={} syncedIssueCount={}",
                             binding.getId(), binding.getExternalProjectId(), issueIds.size());
                 } else {
-                    bindingDao.updateHealth(binding.getId(), binding.getTenantId(), new Date(), null);
+                    bindingDao.markSyncSuccess(binding.getId(), binding.getTenantId(), new Date());
                     log.info("Aone inbound poll success (no workitems) bindingId={} projectId={}",
                             binding.getId(), binding.getExternalProjectId());
                 }
+                int reconciled = inboundSyncService.reconcileLinkedWorkitems(
+                        binding, actorId(binding), RECONCILE_BATCH_SIZE);
+                synced += reconciled;
+                if (reconciled > 0) {
+                    log.info("Aone linked workitem reconciliation success bindingId={} reconciledCount={}",
+                            binding.getId(), reconciled);
+                }
             } catch (Exception e) {
-                bindingDao.updateHealth(binding.getId(), binding.getTenantId(), null, e.getMessage());
+                bindingDao.markSyncFailure(binding.getId(), binding.getTenantId(), e.getMessage());
                 log.warn("Aone inbound poll failed bindingId={} tenantId={} projectId={} projectName={} error={}",
                         binding.getId(), binding.getTenantId(), binding.getExternalProjectId(),
                         binding.getExternalProjectName(), e.getMessage(), e);
@@ -125,7 +133,8 @@ public class AoneInboundPoller {
     /**
      * First poll (never succeeded) scans the whole project; later polls only fetch workitems
      * created since the last success, minus an overlap so items created during the previous scan
-     * aren't missed. Re-importing overlapping items is harmless — syncWorkitems skips already-linked ones.
+     * aren't missed. Re-reading overlapping items is harmless because syncWorkitems upserts by
+     * the binding-scoped external workitem identity.
      */
     private Date incrementalFrom(ExternalProjectBindingDO binding) {
         Date lastSuccessAt = binding.getLastSuccessAt();

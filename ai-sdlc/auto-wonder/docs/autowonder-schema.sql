@@ -4,7 +4,7 @@
 -- 说明：
 --   1. 全局约定（详设 01 §1.1）—— 业务表统一含基础字段：
 --        gmt_create / gmt_modified / creator_id / modifier_id / is_deleted / version（并发敏感表）
---   2. 除全局表（user）外，所有业务表含 tenant_id（= org.id），行级租户隔离。
+--   2. 除全局表（user / permission / external_principal）外，所有业务表含 tenant_id（= org.id），行级租户隔离。
 --   3. 主键为 BIGINT UNSIGNED AUTO_INCREMENT（从 10000 起）。
 --   4. 外键关系以索引表达，不建物理 FK（便于分库与软删）。
 -- =============================================================================
@@ -792,7 +792,7 @@ CREATE TABLE IF NOT EXISTS `sdlc_step` (
   `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`            BIGINT UNSIGNED NOT NULL,
   `sdlc_id`              BIGINT UNSIGNED NOT NULL,
-  `step_order`           INT             NOT NULL COMMENT '步序（同 sdlc 内唯一、单调）',
+  `step_order`           INT             NOT NULL COMMENT '步序（同 sdlc 内唯一、单调；软删除行置为 -id 释放正数占位）',
   `name`                 VARCHAR(128)    NOT NULL,
   `kind`                 VARCHAR(32)     DEFAULT NULL COMMENT '内部步骤类型：analysis/implementation/test/handoff 等',
   `instruction_md`       MEDIUMTEXT      DEFAULT NULL COMMENT '给数字员工执行本步骤的详细说明',
@@ -927,6 +927,18 @@ CREATE TABLE IF NOT EXISTS `system_setting` (
   UNIQUE KEY `uk_setting` (`tenant_id`, `setting_group`, `setting_key`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='系统设置';
 
+-- 外部平台身份（全局表，无 tenant_id）
+CREATE TABLE IF NOT EXISTS `external_principal` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `provider` VARCHAR(32) NOT NULL COMMENT '来源平台，例如 AONE 或 JIRA',
+  `subject_id` VARCHAR(128) NOT NULL COMMENT '来源侧主体稳定 ID',
+  `display_name` VARCHAR(256) DEFAULT NULL COMMENT '来源侧展示名称',
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_external_principal` (`provider`, `subject_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部平台身份主体';
+
 -- 外部项目绑定
 CREATE TABLE IF NOT EXISTS `external_project_binding` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -942,6 +954,7 @@ CREATE TABLE IF NOT EXISTS `external_project_binding` (
   `poll_interval_seconds` INT NOT NULL DEFAULT 3,
   `enabled` TINYINT NOT NULL DEFAULT 1,
   `last_success_at` DATETIME(3) DEFAULT NULL,
+  `reconcile_cursor` VARCHAR(512) DEFAULT NULL COMMENT '已关联工单分批对账游标',
   `last_error` TEXT DEFAULT NULL,
   `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -963,14 +976,26 @@ CREATE TABLE IF NOT EXISTS `external_workitem_link` (
   `external_workitem_id` VARCHAR(64) NOT NULL,
   `external_work_type` VARCHAR(32) DEFAULT NULL,
   `workitem_id` BIGINT UNSIGNED NOT NULL,
+  `external_url` VARCHAR(1024) DEFAULT NULL COMMENT '外部工单原始链接',
+  `source_status_id` VARCHAR(64) DEFAULT NULL COMMENT '来源业务状态 ID',
+  `source_status_name` VARCHAR(128) DEFAULT NULL COMMENT '来源业务状态名称',
+  `source_lifecycle` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT '来源生命周期：ACTIVE、CLOSED、DELETED 或 UNAVAILABLE',
+  `reporter_principal_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '归一化后的需求提出者身份主体',
+  `business_owner_principal_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '归一化后的当前业务负责人身份主体',
+  `principal_relations_json` JSON DEFAULT NULL COMMENT '来源系统定义的身份参与关系组',
   `remote_updated_at` DATETIME(3) DEFAULT NULL,
   `remote_version_hash` VARCHAR(64) DEFAULT NULL,
   `last_sync_direction` VARCHAR(16) DEFAULT NULL,
+  `last_sync_at` DATETIME(3) DEFAULT NULL COMMENT '当前工单最后成功同步时间',
+  `sync_status` VARCHAR(32) NOT NULL DEFAULT 'HEALTHY' COMMENT '同步状态：HEALTHY、DELAYED 或 ACTION_REQUIRED',
+  `last_error_code` VARCHAR(64) DEFAULT NULL COMMENT '工单级稳定错误码',
+  `last_error` TEXT DEFAULT NULL COMMENT '脱敏后的工单同步错误摘要',
   `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_external_workitem` (`tenant_id`, `provider`, `external_workitem_id`),
-  UNIQUE KEY `uk_local_workitem` (`tenant_id`, `provider`, `workitem_id`)
+  UNIQUE KEY `uk_external_workitem_scope` (`tenant_id`, `binding_id`, `external_workitem_id`),
+  UNIQUE KEY `uk_local_workitem` (`tenant_id`, `provider`, `workitem_id`),
+  KEY `idx_workitem_binding_reconcile` (`binding_id`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部工单映射';
 
 -- 外部工单导入记录
@@ -1005,9 +1030,13 @@ CREATE TABLE IF NOT EXISTS `external_comment_link` (
   `external_comment_id` VARCHAR(64) NOT NULL,
   `workitem_comment_id` BIGINT UNSIGNED NOT NULL,
   `direction` VARCHAR(16) NOT NULL,
+  `source_updated_at` DATETIME(3) DEFAULT NULL COMMENT '来源侧评论更新时间',
+  `source_status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT '来源评论状态：ACTIVE 或 DELETED',
   `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_external_comment` (`tenant_id`, `provider`, `external_comment_id`),
+  UNIQUE KEY `uk_external_comment_scope`
+    (`tenant_id`, `binding_id`, `external_workitem_id`, `external_comment_id`),
   KEY `idx_local_comment` (`tenant_id`, `workitem_comment_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部评论映射';
 
@@ -1029,7 +1058,7 @@ CREATE TABLE IF NOT EXISTS `external_status_mapping` (
   UNIQUE KEY `uk_external_status` (`tenant_id`, `provider`, `binding_id`, `external_status_name`, `work_type`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部状态映射';
 
--- 外部系统写回队列
+-- 外部评论写回回执（兼容存量写回队列）
 CREATE TABLE IF NOT EXISTS `integration_outbox` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id` BIGINT UNSIGNED NOT NULL,
@@ -1038,6 +1067,8 @@ CREATE TABLE IF NOT EXISTS `integration_outbox` (
   `workitem_id` BIGINT UNSIGNED NOT NULL,
   `event_type` VARCHAR(32) NOT NULL,
   `payload_json` JSON NOT NULL,
+  `operation_key` VARCHAR(191) NOT NULL COMMENT '评论语义幂等键；存量任务使用 legacy:<id>',
+  `lock_version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '执行抢占与恢复接管的数字栅栏',
   `status` VARCHAR(32) NOT NULL,
   `retry_count` INT NOT NULL DEFAULT 0,
   `next_retry_at` DATETIME(3) DEFAULT NULL,
@@ -1045,8 +1076,10 @@ CREATE TABLE IF NOT EXISTS `integration_outbox` (
   `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  KEY `idx_pending` (`provider`, `status`, `next_retry_at`)
-) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部系统写回队列';
+  UNIQUE KEY `uk_external_operation` (`tenant_id`, `provider`, `binding_id`, `operation_key`),
+  KEY `idx_pending` (`provider`, `status`, `next_retry_at`),
+  KEY `idx_receipt_recovery` (`status`, `gmt_modified`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部评论写回回执与存量写回队列';
 
 -- Aone OpenAPI 全局限流桶
 CREATE TABLE IF NOT EXISTS `aone_rate_bucket` (
@@ -1233,9 +1266,9 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- 详设06: sdlc, sdlc_step
 -- 详设08: notification, notify_pref, ai_usage, ai_quota, system_setting
 -- 模版间: squad_template
--- 集成: external_project_binding, external_workitem_link, external_comment_link,
---       external_status_mapping, integration_outbox
--- MCP: mcp_access_token（个人资产表，无 tenant_id，不在租户表白名单内）
+-- 集成: external_principal, external_project_binding, external_workitem_link,
+--       external_comment_link, external_status_mapping, integration_outbox
+-- MCP: mcp_access_token
 -- 平台 IM: platform_im_channel_config, user_im_identity
 -- 钉钉: dingtalk_robot_binding, agent_conversation, agent_conversation_turn
 -- =============================================================================

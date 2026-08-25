@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.auth.filter;
 
 import com.alibaba.fastjson.JSON;
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.auth.jwt.TokenPayload;
 import com.aliyun.autowonder.auth.session.SessionService;
@@ -9,8 +9,8 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
-import com.aliyun.autowonder.org.OrgMemberDO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -31,8 +31,10 @@ public class AuthFilter extends OncePerRequestFilter {
     private static final String INTEGRATION_CAPABILITIES_PATH = "/api/integrations/capabilities";
     private static final String PLATFORM_BRANDING_PUBLIC_PATH = "/api/platform/branding/public";
     private static final String PLATFORM_BRANDING_LOGO_PATH = "/api/platform/branding/logo";
-    private static final Pattern ORG_SWITCH_PATH =
-            Pattern.compile("^/api/orgs/[0-9]+/switch$");
+    private static final Pattern WORKSPACE_SWITCH_PATH =
+            Pattern.compile("^/api/workspaces/[0-9]+/switch$");
+    private static final Pattern CLI_WORKITEM_UPLOAD_PATH =
+            Pattern.compile("^/api/cli/workitems/[0-9]+/requirement-documents$");
     private static final String PERSONAL_MCP_TOKEN_PREFIX = "/api/mcp/tokens";
     private static final String PERSONAL_USER_API_PREFIX = "/api/users/me/";
     private static final List<String> WHITELIST_PREFIXES = List.of(
@@ -40,14 +42,14 @@ public class AuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final SessionService sessionService;
-    private final OrgMemberDao orgMemberDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
     private final UserDao userDao;
 
     public AuthFilter(JwtService jwtService, SessionService sessionService,
-                      OrgMemberDao orgMemberDao, UserDao userDao) {
+                      WorkspaceMemberDao workspaceMemberDao, UserDao userDao) {
         this.jwtService = jwtService;
         this.sessionService = sessionService;
-        this.orgMemberDao = orgMemberDao;
+        this.workspaceMemberDao = workspaceMemberDao;
         this.userDao = userDao;
     }
 
@@ -88,30 +90,30 @@ public class AuthFilter extends OncePerRequestFilter {
         try {
             AutoWonderContext ctx = AutoWonderContext.get();
             ctx.setUserId(payload.getUserId());
-            ctx.setCurrentOrgId(payload.getCurrentOrgId());
+            ctx.setCurrentWorkspaceId(payload.getCurrentWorkspaceId());
             BizLog bizLog = ctx.getBizLog();
             if (bizLog != null) {
                 bizLog.setUserId(payload.getUserId());
-                bizLog.setOrgId(payload.getCurrentOrgId());
+                bizLog.setWorkspaceId(payload.getCurrentWorkspaceId());
             }
             ctx.setTraceId(UUID.randomUUID().toString());
-            if (payload.getCurrentOrgId() != null
+            if (payload.getCurrentWorkspaceId() != null
                     && !isLoginOnlyRequest(request)) {
-                OrgMemberDO member = orgMemberDao.findByOrgAndUser(
-                        payload.getCurrentOrgId(), payload.getUserId());
+                WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(
+                        payload.getCurrentWorkspaceId(), payload.getUserId());
                 if (member == null
                         || !Integer.valueOf(0).equals(member.getIsDeleted())
                         || !Integer.valueOf(0).equals(member.getStatus())) {
                     writeFailure(response, HttpServletResponse.SC_FORBIDDEN,
-                            ErrorCode.ORG_NOT_MEMBER);
+                            ErrorCode.WORKSPACE_NOT_MEMBER);
                     return;
                 }
                 try {
-                    ctx.setOrgAccessLevel(OrgAccessLevel.valueOf(member.getAccessLevel()));
-                    ctx.setOrgMember(member);
+                    ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.valueOf(member.getAccessLevel()));
+                    ctx.setWorkspaceMember(member);
                 } catch (IllegalArgumentException | NullPointerException e) {
                     writeFailure(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-                            ErrorCode.ORG_ACCESS_LEVEL_INVALID);
+                            ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
                     return;
                 }
             }
@@ -132,6 +134,10 @@ public class AuthFilter extends OncePerRequestFilter {
                 || INTEGRATION_CAPABILITIES_PATH.equals(path))) {
             return true;
         }
+        if ("POST".equalsIgnoreCase(request.getMethod())
+                && CLI_WORKITEM_UPLOAD_PATH.matcher(path).matches()) {
+            return true;
+        }
         for (String prefix : WHITELIST_PREFIXES) {
             if (path.startsWith(prefix)) {
                 return true;
@@ -149,9 +155,9 @@ public class AuthFilter extends OncePerRequestFilter {
         if (path.startsWith(PERSONAL_USER_API_PREFIX)) {
             return true;
         }
-        return ("POST".equalsIgnoreCase(method) && "/api/orgs".equals(path))
-                || ("GET".equalsIgnoreCase(method) && "/api/orgs/mine".equals(path))
-                || ("POST".equalsIgnoreCase(method) && ORG_SWITCH_PATH.matcher(path).matches());
+        return ("POST".equalsIgnoreCase(method) && "/api/workspaces".equals(path))
+                || ("GET".equalsIgnoreCase(method) && "/api/workspaces/mine".equals(path))
+                || ("POST".equalsIgnoreCase(method) && WORKSPACE_SWITCH_PATH.matcher(path).matches());
     }
 
     private boolean isDeactivationRevokeRequest(HttpServletRequest request) {

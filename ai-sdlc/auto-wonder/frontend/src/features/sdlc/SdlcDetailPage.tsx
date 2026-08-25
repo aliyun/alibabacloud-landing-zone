@@ -78,12 +78,14 @@ export function SdlcDetailPage() {
   const addStepMutation = useMutation({
     mutationFn: (data: CreateStepParams) => addStep(sdlcId, data),
     onSuccess: () => { invalidate(); setStepModalOpen(false); stepForm.resetFields(); message.success('步骤已添加'); },
+    onError: (e) => { message.error(e instanceof Error ? e.message : '添加步骤失败'); },
   });
 
   const updateStepMutation = useMutation({
     mutationFn: ({ stepId, data }: { stepId: SdlcId; data: Partial<CreateStepParams> }) =>
       updateStep(sdlcId, stepId, data),
     onSuccess: () => { invalidate(); setStepModalOpen(false); setEditingStep(null); stepForm.resetFields(); message.success('步骤已更新'); },
+    onError: (e) => { message.error(e instanceof Error ? e.message : '更新步骤失败'); },
   });
 
   const deleteStepMutation = useMutation({
@@ -137,8 +139,8 @@ export function SdlcDetailPage() {
         checklistJson: step.checklistJson || undefined,
         gatePolicyJson: step.gatePolicyJson || undefined,
         required: step.required ?? true,
-        timeoutSeconds: step.timeoutSeconds || undefined,
-        retryBudget: step.retryBudget || undefined,
+        timeoutSeconds: step.timeoutSeconds ?? undefined,
+        retryBudget: step.retryBudget ?? undefined,
       });
       setStepModalOpen(true);
     });
@@ -148,7 +150,11 @@ export function SdlcDetailPage() {
     const values = await stepForm.validateFields();
     accessCommand('READ_WRITE', editingStep ? '编辑 SDLC 步骤' : '添加 SDLC 步骤', () => {
       if (editingStep) {
-        updateStepMutation.mutate({ stepId: editingStep.id, data: values });
+        // 清空输入框时显式传 null，让后端将超时/重试恢复为未配置
+        updateStepMutation.mutate({
+          stepId: editingStep.id,
+          data: { ...values, timeoutSeconds: values.timeoutSeconds ?? null, retryBudget: values.retryBudget ?? null },
+        });
       } else {
         addStepMutation.mutate({ ...values, stepOrder: steps.length + 1 });
       }
@@ -454,7 +460,7 @@ export function SdlcDetailPage() {
         <div style={{ height: 'calc(100vh - 170px)', minHeight: 520 }}>
           <AiSessionPanel
             scene="SDLC_GEN"
-            bizRefType="ORG"
+            bizRefType='ORG'
             bizRefId={0}
             onConfirm={() => {
               queryClient.invalidateQueries({ queryKey: ['sdlcs'] });

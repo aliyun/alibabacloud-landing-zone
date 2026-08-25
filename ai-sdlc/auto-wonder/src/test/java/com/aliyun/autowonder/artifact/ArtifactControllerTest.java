@@ -23,10 +23,10 @@ class ArtifactControllerTest {
     }
 
     @Test
-    void previewReturnsMarkdownFromCurrentOrgAsSameOriginResponse() {
+    void previewReturnsMarkdownFromCurrentWorkspaceAsSameOriginResponse() {
         ArtifactService service = mock(ArtifactService.class);
         ArtifactController controller = new ArtifactController(service, mock(RequirementDocumentService.class));
-        AutoWonderContext.get().setCurrentOrgId(100L);
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
         byte[] bytes = "# Report".getBytes(StandardCharsets.UTF_8);
         when(service.getPreviewContent(7L, 100L))
                 .thenReturn(new ArtifactService.PreviewContent("artifacts/output/report.md", bytes));
@@ -43,7 +43,7 @@ class ArtifactControllerTest {
     void previewReturnsVideoContentType() {
         ArtifactService service = mock(ArtifactService.class);
         ArtifactController controller = new ArtifactController(service, mock(RequirementDocumentService.class));
-        AutoWonderContext.get().setCurrentOrgId(100L);
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
         byte[] bytes = new byte[] {0, 1, 2};
         when(service.getPreviewContent(7L, 100L))
                 .thenReturn(new ArtifactService.PreviewContent("artifacts/output/demo.mp4", bytes));
@@ -59,7 +59,7 @@ class ArtifactControllerTest {
     void previewReturnsNonSuccessStatusForBusinessFailures() {
         ArtifactService service = mock(ArtifactService.class);
         ArtifactController controller = new ArtifactController(service, mock(RequirementDocumentService.class));
-        AutoWonderContext.get().setCurrentOrgId(100L);
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
         when(service.getPreviewContent(7L, 100L)).thenThrow(new BizException(ErrorCode.ARTIFACT_NOT_FOUND));
 
         ResponseEntity<byte[]> response = controller.preview(7L);

@@ -1,9 +1,9 @@
 package com.aliyun.autowonder.context;
 
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.log.BizLog;
-import com.aliyun.autowonder.org.OrgMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 
 public class AutoWonderContext {
 
@@ -19,11 +19,11 @@ public class AutoWonderContext {
 
     private Long userId;
 
-    private Long currentOrgId;
+    private Long currentWorkspaceId;
 
-    private OrgAccessLevel orgAccessLevel;
+    private WorkspaceAccessLevel workspaceAccessLevel;
 
-    private OrgMemberDO orgMember;
+    private WorkspaceMemberDO workspaceMember;
 
     private Boolean debug;
 
@@ -83,28 +83,28 @@ public class AutoWonderContext {
         this.userId = userId;
     }
 
-    public Long getCurrentOrgId() {
-        return currentOrgId;
+    public Long getCurrentWorkspaceId() {
+        return currentWorkspaceId;
     }
 
-    public void setCurrentOrgId(Long currentOrgId) {
-        this.currentOrgId = currentOrgId;
+    public void setCurrentWorkspaceId(Long currentWorkspaceId) {
+        this.currentWorkspaceId = currentWorkspaceId;
     }
 
-    public OrgAccessLevel getOrgAccessLevel() {
-        return orgAccessLevel;
+    public WorkspaceAccessLevel getWorkspaceAccessLevel() {
+        return workspaceAccessLevel;
     }
 
-    public void setOrgAccessLevel(OrgAccessLevel orgAccessLevel) {
-        this.orgAccessLevel = orgAccessLevel;
+    public void setWorkspaceAccessLevel(WorkspaceAccessLevel workspaceAccessLevel) {
+        this.workspaceAccessLevel = workspaceAccessLevel;
     }
 
-    public OrgMemberDO getOrgMember() {
-        return orgMember;
+    public WorkspaceMemberDO getWorkspaceMember() {
+        return workspaceMember;
     }
 
-    public void setOrgMember(OrgMemberDO orgMember) {
-        this.orgMember = orgMember;
+    public void setWorkspaceMember(WorkspaceMemberDO workspaceMember) {
+        this.workspaceMember = workspaceMember;
     }
 
     public void setDebug(String debug) {

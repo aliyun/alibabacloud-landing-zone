@@ -3,8 +3,8 @@ package com.aliyun.autowonder.workitem;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.integration.event.WorkitemCommentCreatedEvent;
 import com.aliyun.autowonder.im.notification.WorkitemCommentMentionedEvent;
-import com.aliyun.autowonder.org.OrgMemberDO;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.util.Date;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,7 +37,7 @@ class WorkitemCommentTest {
     StatusTransitionDao transitionDao;
     AgentDao agentDao;
     UserDao userDao;
-    OrgMemberDao orgMemberDao;
+    WorkspaceMemberDao workspaceMemberDao;
     ApplicationEventPublisher eventPublisher;
     WorkitemService service;
 
@@ -51,7 +52,7 @@ class WorkitemCommentTest {
         transitionDao = mock(StatusTransitionDao.class);
         agentDao = mock(AgentDao.class);
         userDao = mock(UserDao.class);
-        orgMemberDao = mock(OrgMemberDao.class);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
         service = new WorkitemService(workitemDao, commentDao, commentMentionDao, eventDao,
                 templateDao, nodeDao, transitionDao,
@@ -63,7 +64,7 @@ class WorkitemCommentTest {
                 mock(com.aliyun.autowonder.squad.SquadMemberDao.class),
                 mock(com.aliyun.autowonder.executor.ExecutorDao.class),
                 userDao,
-                orgMemberDao,
+                workspaceMemberDao,
                 mock(com.aliyun.autowonder.guidance.GuidanceDao.class),
                 mock(com.aliyun.autowonder.websocket.PresenceManager.class),
                 mock(com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDao.class),
@@ -98,11 +99,11 @@ class WorkitemCommentTest {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88L);
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
-        OrgMemberDO member = new OrgMemberDO();
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setTenantId(100L);
         member.setUserId(9L);
         member.setStatus(0);
-        when(orgMemberDao.findByOrgAndUser(100L, 9L)).thenReturn(member);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 9L)).thenReturn(member);
         UserDO user = new UserDO();
         user.setId(9L);
         user.setNickname("李四");
@@ -131,10 +132,10 @@ class WorkitemCommentTest {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88L);
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
-        OrgMemberDO selfMember = member(100L, 7L);
-        OrgMemberDO otherMember = member(100L, 9L);
-        when(orgMemberDao.findByOrgAndUser(100L, 7L)).thenReturn(selfMember);
-        when(orgMemberDao.findByOrgAndUser(100L, 9L)).thenReturn(otherMember);
+        WorkspaceMemberDO selfMember = member(100L, 7L);
+        WorkspaceMemberDO otherMember = member(100L, 9L);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(selfMember);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 9L)).thenReturn(otherMember);
         UserDO self = user(7L, "张三", "zhangsan");
         UserDO other = user(9L, "李四", "lisi");
         when(userDao.findById(7L)).thenReturn(self);
@@ -161,12 +162,12 @@ class WorkitemCommentTest {
     }
 
     @Test
-    void addCommentRejectsHumanMentionOutsideOrg() {
+    void addCommentRejectsHumanMentionOutsideWorkspace() {
         WorkitemDO w = new WorkitemDO();
         w.setId(5L);
         w.setTenantId(100L);
         when(workitemDao.findById(5L)).thenReturn(w);
-        when(orgMemberDao.findByOrgAndUser(100L, 9L)).thenReturn(null);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 9L)).thenReturn(null);
 
         BizException ex = assertThrows(BizException.class,
                 () -> service.addComment(5L, "@李四 请确认", List.of(9L), 100L, 7L));
@@ -203,8 +204,8 @@ class WorkitemCommentTest {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88L);
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
-        OrgMemberDO member = member(100L, 9L);
-        when(orgMemberDao.listByTenant(100L)).thenReturn(List.of(member));
+        WorkspaceMemberDO member = member(100L, 9L);
+        when(workspaceMemberDao.listByTenant(100L)).thenReturn(List.of(member));
         UserDO other = user(9L, "李四", "lisi");
         when(userDao.findById(9L)).thenReturn(other);
         when(agentDao.listByTenant(100L)).thenReturn(List.of());
@@ -276,8 +277,8 @@ class WorkitemCommentTest {
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
         UserDO user = user(9L, "李四", "lisi");
-        OrgMemberDO member = member(10000L, 9L);
-        when(orgMemberDao.listByTenant(10000L)).thenReturn(List.of(member));
+        WorkspaceMemberDO member = member(10000L, 9L);
+        when(workspaceMemberDao.listByTenant(10000L)).thenReturn(List.of(member));
         when(userDao.findById(9L)).thenReturn(user);
         AgentDO agent = new AgentDO();
         agent.setId(10001L);
@@ -317,7 +318,7 @@ class WorkitemCommentTest {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
-        when(orgMemberDao.findByOrgAndUser(10000L, 9L)).thenReturn(member(10000L, 9L));
+        when(workspaceMemberDao.findByWorkspaceAndUser(10000L, 9L)).thenReturn(member(10000L, 9L));
         when(userDao.findById(9L)).thenReturn(user(9L, "李四", "lisi"));
 
         service.addAgentComment(500L, "@李四 请确认", List.of(9L), 10000L, 10001L, 9L);
@@ -328,7 +329,7 @@ class WorkitemCommentTest {
     }
 
     @Test
-    void plainTextMentionIgnoresInactiveOrgMember() {
+    void plainTextMentionIgnoresInactiveWorkspaceMember() {
         WorkitemDO w = new WorkitemDO();
         w.setId(500L);
         w.setTenantId(10000L);
@@ -338,9 +339,9 @@ class WorkitemCommentTest {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
-        OrgMemberDO inactive = member(10000L, 9L);
+        WorkspaceMemberDO inactive = member(10000L, 9L);
         inactive.setStatus(1);
-        when(orgMemberDao.listByTenant(10000L)).thenReturn(List.of(inactive));
+        when(workspaceMemberDao.listByTenant(10000L)).thenReturn(List.of(inactive));
         when(userDao.findById(9L)).thenReturn(user(9L, "李四", "lisi"));
         when(agentDao.listByTenant(10000L)).thenReturn(List.of());
         when(commentDao.listByWorkitem(500L)).thenReturn(List.of());
@@ -362,8 +363,8 @@ class WorkitemCommentTest {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
             return null;
         }).when(commentDao).insert(any(WorkitemCommentDO.class));
-        OrgMemberDO member = member(10000L, 9L);
-        when(orgMemberDao.listByTenant(10000L)).thenReturn(List.of(member));
+        WorkspaceMemberDO member = member(10000L, 9L);
+        when(workspaceMemberDao.listByTenant(10000L)).thenReturn(List.of(member));
         when(userDao.findById(9L)).thenReturn(user(9L, "李四", "lisi"));
         when(agentDao.listByTenant(10000L)).thenReturn(List.of());
         when(commentDao.listByWorkitem(500L)).thenReturn(List.of());
@@ -383,8 +384,8 @@ class WorkitemCommentTest {
         verify(commentDao, never()).insert(any());
     }
 
-    private static OrgMemberDO member(long tenantId, long userId) {
-        OrgMemberDO member = new OrgMemberDO();
+    private static WorkspaceMemberDO member(long tenantId, long userId) {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setTenantId(tenantId);
         member.setUserId(userId);
         member.setStatus(0);
@@ -426,11 +427,11 @@ class WorkitemCommentTest {
         reviewer.setUsername("lisi");
         when(userDao.findById(7L)).thenReturn(creator);
         when(userDao.findById(9L)).thenReturn(reviewer);
-        OrgMemberDO member = new OrgMemberDO();
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setTenantId(100L);
         member.setUserId(9L);
         member.setStatus(0);
-        when(orgMemberDao.listByTenant(100L)).thenReturn(List.of(member));
+        when(workspaceMemberDao.listByTenant(100L)).thenReturn(List.of(member));
         AgentDO agent = new AgentDO();
         agent.setId(12L);
         agent.setName("Coder-01");
@@ -485,6 +486,29 @@ class WorkitemCommentTest {
     }
 
     @Test
+    void unifiedTimelineReturnsNewestItemsFirst() {
+        WorkitemCommentDO olderComment = new WorkitemCommentDO();
+        olderComment.setId(1L);
+        olderComment.setWorkitemId(5L);
+        olderComment.setAuthorType("SYSTEM");
+        olderComment.setContentMd("较早评论");
+        olderComment.setGmtCreate(new Date(1_000L));
+        WorkitemEventDO newerEvent = new WorkitemEventDO();
+        newerEvent.setId(2L);
+        newerEvent.setEventType("AONE_UPDATE");
+        newerEvent.setActorType("SYSTEM");
+        newerEvent.setGmtCreate(new Date(2_000L));
+        when(commentDao.listByWorkitem(5L)).thenReturn(List.of(olderComment));
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(newerEvent));
+
+        List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
+
+        assertEquals(List.of(2L, 1L), items.stream().map(TimelineItemVO::getId).toList());
+        assertEquals("已从 Aone 工单同步更新", items.get(0).getContent());
+        assertEquals("较早评论", items.get(1).getContent());
+    }
+
+    @Test
     void unifiedTimelineFormatsAssignEventWithHumanTargetDisplayName() {
         WorkitemEventDO e = new WorkitemEventDO();
         e.setId(2L);
@@ -511,6 +535,65 @@ class WorkitemCommentTest {
 
         assertEquals(1, items.size());
         assertEquals("数字人(10001)", items.get(0).getAuthorName());
-        assertEquals("ASSIGN: 数字人(10001) → 真人(10000)", items.get(0).getContent());
+        assertEquals("交付负责人已变更: 数字人(10001) → 真人(10000) （操作人：数字人(10001)）",
+                items.get(0).getContent());
+    }
+
+    @Test
+    void unifiedTimelineShowsHumanOperatorOnStatusChangeEvent() {
+        WorkitemEventDO e = new WorkitemEventDO();
+        e.setId(3L);
+        e.setEventType("STATUS_CHANGE");
+        e.setFromVal("verifying");
+        e.setToVal("closed");
+        e.setActorType("HUMAN");
+        e.setActorRef(10000L);
+        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(e));
+        UserDO user = new UserDO();
+        user.setId(10000L);
+        user.setUsername("caihe");
+        user.setNickname("蔡何");
+        when(userDao.findById(10000L)).thenReturn(user);
+
+        List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
+
+        assertEquals(1, items.size());
+        assertEquals("工单状态已变更: verifying → closed （操作人：蔡何(10000)）", items.get(0).getContent());
+    }
+
+    @Test
+    void unifiedTimelineOmitsOperatorForSystemActorAssignEvent() {
+        WorkitemEventDO e = new WorkitemEventDO();
+        e.setId(4L);
+        e.setEventType("ASSIGN");
+        e.setFromVal("40014");
+        e.setToVal("40013");
+        e.setActorType("SYSTEM");
+        e.setActorRef(0L);
+        e.setDetailJson("{\"fromType\":\"AGENT\",\"toType\":\"AGENT\"}");
+        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(e));
+
+        List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
+
+        assertEquals(1, items.size());
+        assertEquals("交付负责人已变更: 40014 → 40013", items.get(0).getContent());
+    }
+
+    @Test
+    void unifiedTimelineHidesExternalCommentTimestampAndShowsChineseAction() {
+        WorkitemEventDO event = new WorkitemEventDO();
+        event.setId(2L);
+        event.setEventType("EXTERNAL_COMMENT_AUTHOR_CHANGE");
+        event.setFromVal("126033914");
+        event.setToVal("1785923204000");
+        event.setActorType("SYSTEM");
+        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(eventDao.listByWorkitem(5L)).thenReturn(List.of(event));
+
+        List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
+
+        assertEquals("外部评论作者身份已更新（评论 #126033914）", items.get(0).getContent());
     }
 }

@@ -30,10 +30,10 @@ public class TenantInterceptor implements Interceptor {
         MappedStatement ms = (MappedStatement) meta.getValue("delegate.mappedStatement");
         BoundSql boundSql = (BoundSql) meta.getValue("delegate.boundSql");
 
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId != null && ms.getSqlCommandType() == SqlCommandType.SELECT) {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId != null && ms.getSqlCommandType() == SqlCommandType.SELECT) {
             String original = boundSql.getSql();
-            String rewritten = TenantSqlRewriter.rewriteSelect(original, orgId, TenantTables.TABLES);
+            String rewritten = TenantSqlRewriter.rewriteSelect(original, workspaceId, TenantTables.TABLES);
             if (!rewritten.equals(original)) {
                 meta.setValue("delegate.boundSql.sql", rewritten);
             }

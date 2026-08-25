@@ -48,6 +48,10 @@ export function WorkitemClarificationPanel({
   const [inputValue, setInputValue] = useState('');
   const composingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Guards the auto-create effect: createMutation is a new object every
+  // render (react-query v5), so without this set a persistent create failure
+  // would re-trigger mutate on every effect run (request storm + toast spam).
+  const autoCreateAttemptedRef = useRef(new Set<number>());
 
   const agentOptions = useMemo(
     () =>
@@ -130,10 +134,23 @@ export function WorkitemClarificationPanel({
   );
 
   useEffect(() => {
-    if (conversations.data && conversations.data.length > 0 && conversationId === null) {
+    if (!conversations.data || conversationId !== null) return;
+    if (conversations.data.length > 0) {
       setConversationId(conversations.data[0].id);
+      return;
     }
-  }, [conversations.data, conversationId]);
+    if (!effectiveAgentId || createMutation.isPending) return;
+    if (autoCreateAttemptedRef.current.has(effectiveAgentId)) return;
+    autoCreateAttemptedRef.current.add(effectiveAgentId);
+    createMutation.mutate(effectiveAgentId, {
+      onSuccess: (conv) => {
+        setConversationId(conv.id);
+      },
+      onError: () => {
+        message.error('自动创建会话失败，请点击「新对话」重试');
+      },
+    });
+  }, [conversations.data, conversationId, effectiveAgentId, createMutation, workitemId]);
 
   const handleCreateConversation = useCallback(() => {
     const agentId = effectiveAgentId;
@@ -308,6 +325,7 @@ export function WorkitemClarificationPanel({
 function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: string }) {
   const isUser = turn.direction === 'IN' || turn.direction === 'INBOUND';
   const label = isUser ? '你' : (agentName || 'AI');
+  const hasContent = !!turn.content && turn.content.trim().length > 0;
   const icon = isUser
     ? <UserOutlined style={{ fontSize: 12, marginRight: 4 }} />
     : <RobotOutlined style={{ fontSize: 12, marginRight: 4 }} />;
@@ -345,7 +363,11 @@ function TurnBubble({ turn, agentName }: { turn: ClarificationTurn; agentName?: 
             lineHeight: '1.6',
           }}
         >
-          {isUser ? turn.content : <MarkdownView content={turn.content} />}
+          {isUser
+            ? turn.content
+            : hasContent
+              ? <MarkdownView content={turn.content} />
+              : <Typography.Text type="secondary">（未返回内容）</Typography.Text>}
           {turn.error ? (
             <Typography.Text type="danger" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
               {turn.error}

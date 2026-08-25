@@ -16,6 +16,7 @@ import com.aliyun.autowonder.guidance.GuidanceDao;
 import com.aliyun.autowonder.guidance.GuidanceDO;
 import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO;
 import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDao;
+import com.aliyun.autowonder.integration.ExternalWorkitemViewService;
 import com.aliyun.autowonder.im.notification.WorkitemHumanAssignedEvent;
 import com.aliyun.autowonder.sdlc.SdlcDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
@@ -448,14 +449,54 @@ class WorkitemServiceTest {
     void list_maps_to_vos_with_page_metadata() {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
-        when(workitemDao.count(100L, "REQ", null, null, null, false, null, 7L, null, null)).thenReturn(101L);
-        when(workitemDao.list(100L, "REQ", null, null, null, false, null, 7L, null, null, 20, 20)).thenReturn(List.of(w));
-        PageResult<WorkitemVO> page = service.list("REQ", null, null, null, false, null, 100L, 7L, null, 2, 20);
+        when(workitemDao.count(100L, "REQ", null, null, null, null, false, null, 7L, null, null)).thenReturn(101L);
+        when(workitemDao.list(100L, "REQ", null, null, null, null, false, null, 7L, null, null, 20, 20)).thenReturn(List.of(w));
+        PageResult<WorkitemVO> page = service.list("REQ", null, null, null, null, false, null, 100L, 7L, null, 2, 20);
         assertEquals(101L, page.getTotal());
         assertEquals(2, page.getPageNum());
         assertEquals(20, page.getPageSize());
         assertEquals(1, page.getList().size());
         assertEquals(1L, page.getList().get(0).getId());
+    }
+
+    @Test
+    void list_exposes_preferred_external_source_link_for_cards() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        w.setTenantId(100L);
+        w.setWorkType("REQ");
+        w.setAssigneeType("EXTERNAL");
+        w.setAssigneeRef(0L);
+        w.setPriority(2);
+        w.setVersion(0);
+
+        ExternalWorkitemLinkDO jira = new ExternalWorkitemLinkDO();
+        jira.setId(10L);
+        jira.setTenantId(100L);
+        jira.setWorkitemId(1L);
+        jira.setProvider("JIRA");
+        jira.setExternalUrl("https://jira.example.com/browse/REQ-1");
+        ExternalWorkitemLinkDO aone = new ExternalWorkitemLinkDO();
+        aone.setId(11L);
+        aone.setTenantId(100L);
+        aone.setWorkitemId(1L);
+        aone.setProvider("AONE");
+        aone.setExternalUrl("https://project.aone.alibaba-inc.com/req/1");
+
+        when(workitemDao.count(100L, null, null, null, null, null, false, null, 7L, null, null))
+                .thenReturn(1L);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, 0, 20))
+                .thenReturn(List.of(w));
+        when(dispatchDao.listLatestByWorkitemIds(List.of(1L))).thenReturn(List.of());
+        when(externalWorkitemLinkDao.listByWorkitemIds(eq(100L), any())).thenReturn(List.of(jira, aone));
+        when(dispatchDao.listByWorkitemIds(any())).thenReturn(List.of());
+
+        WorkitemVO vo = service.list(null, null, null, null, null, false, null,
+                100L, 7L, null, 1, 20).getList().get(0);
+
+        assertEquals("EXTERNAL", vo.getSourceType());
+        assertEquals("AONE", vo.getSourceProvider());
+        assertEquals("https://project.aone.alibaba-inc.com/req/1", vo.getSourceUrl());
     }
 
     @Test
@@ -467,10 +508,10 @@ class WorkitemServiceTest {
         DispatchDO latest = new DispatchDO();
         latest.setWorkitemId(1L);
         latest.setStatus(DispatchStatus.SUCCEEDED);
-        when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, 0, 20)).thenReturn(List.of(w));
         when(dispatchDao.listLatestByWorkitemIds(List.of(1L))).thenReturn(List.of(latest));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, false, null, 100L, 7L, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, 1, 20);
 
         assertEquals(1, page.getList().size());
         assertTrue(page.getList().get(0).getPendingDecision());
@@ -490,11 +531,11 @@ class WorkitemServiceTest {
         DispatchDO latest = new DispatchDO();
         latest.setWorkitemId(1L);
         latest.setStatus(DispatchStatus.SUCCEEDED);
-when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null, 0, 20)).thenReturn(List.of(w));
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(released));
         when(dispatchDao.listLatestByWorkitemIds(List.of(1L))).thenReturn(List.of(latest));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, false, null, 100L, 7L, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, 1, 20);
 
         assertEquals(1, page.getList().size());
         assertEquals("已发布", page.getList().get(0).getStatusName());
@@ -517,12 +558,12 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         DispatchDO succeededForAgent = new DispatchDO();
         succeededForAgent.setWorkitemId(2L);
         succeededForAgent.setStatus(DispatchStatus.SUCCEEDED);
-        when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null, 0, 20))
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, 0, 20))
                 .thenReturn(List.of(human, agent));
         when(dispatchDao.listLatestByWorkitemIds(List.of(1L, 2L)))
                 .thenReturn(List.of(failed, succeededForAgent));
 
-        PageResult<WorkitemVO> page = service.list(null, null, null, null, false, null, 100L, 7L, null, 1, 20);
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, 1, 20);
 
         assertFalse(page.getList().get(0).getPendingDecision());
         assertFalse(page.getList().get(1).getPendingDecision());
@@ -530,21 +571,37 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
 
     @Test
     void list_passes_filters_and_pending_decision_to_dao() {
-        when(workitemDao.list(100L, "REQ", null, "AGENT", 42L, true, null, 7L, null, null, 0, 100))
+        when(workitemDao.list(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, 0, 100))
                 .thenReturn(java.util.List.of());
 
-        service.list("REQ", null, "AGENT", 42L, true, null, 100L, 7L, null, 1, 100);
+        service.list("REQ", null, null, "AGENT", 42L, true, null, 100L, 7L, null, 1, 100);
 
-        verify(workitemDao).count(100L, "REQ", null, "AGENT", 42L, true, null, 7L, null, null);
-        verify(workitemDao).list(100L, "REQ", null, "AGENT", 42L, true, null, 7L, null, null, 0, 100);
+        verify(workitemDao).count(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null);
+        verify(workitemDao).list(100L, "REQ", null, null, "AGENT", 42L, true, null, 7L, null, null, 0, 100);
     }
 
     @Test
     void list_clamps_page_size_to_two_hundred() {
-        service.list(null, null, null, null, false, null, 100L, 7L, null, 1, 1000);
+        service.list(null, null, null, null, null, false, null, 100L, 7L, null, 1, 1000);
 
-        verify(workitemDao).count(100L, null, null, null, null, false, null, 7L, null, null);
-        verify(workitemDao).list(100L, null, null, null, null, false, null, 7L, null, null, 0, 200);
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, 0, 200);
+    }
+
+    @Test
+    void list_passes_normalized_status_category_to_dao() {
+        service.list(null, null, "in_progress", null, null, false, null, 100L, 7L, null, 1, 20);
+
+        verify(workitemDao).count(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null);
+        verify(workitemDao).list(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, 0, 20);
+    }
+
+    @Test
+    void list_ignores_unknown_status_category() {
+        service.list(null, null, "WHATEVER", null, null, false, null, 100L, 7L, null, 1, 20);
+
+        verify(workitemDao).count(100L, null, null, null, null, null, false, null, 7L, null, null);
+        verify(workitemDao).list(100L, null, null, null, null, null, false, null, 7L, null, null, 0, 20);
     }
 
     @Test
@@ -585,7 +642,7 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
     }
 
     @Test
-    void delivery_progress_derives_duration_from_dispatch_timestamps() {
+    void delivery_progress_keeps_attempt_duration_but_not_step_duration_without_runtime_events() {
         WorkitemDO w = new WorkitemDO();
         w.setId(100L);
         w.setTenantId(7L);
@@ -624,11 +681,141 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
         DeliveryStepVO stepVO = progress.getSteps().get(0);
 
-        assertEquals(30_000L, stepVO.getDurationMs());
+        assertNull(stepVO.getDurationMs());
         assertEquals(2, stepVO.getAttempts().size());
         assertEquals(161_000L, stepVO.getAttempts().get(0).getDurationMs());
         assertEquals("worker", stepVO.getAttempts().get(0).getExecutorName());
         assertEquals(30_000L, stepVO.getAttempts().get(1).getDurationMs());
+    }
+
+    @Test
+    void assignsEachStepItsOwnDurationWithinASingleDispatch() {
+        // 一个 dispatch 覆盖 3 个步骤，runtime 事件给出各自的起止时间。
+        // 修复前：只有入口步骤有耗时且等于整个 dispatch 的 wall time，其余为 null。
+        // 修复后：三个步骤各自独立且互不相同。
+        List<DeliveryStepVO> steps = deliveryStepsForSingleDispatchFixture();
+
+        assertEquals(60_000L, steps.get(0).getDurationMs());
+        assertEquals(120_000L, steps.get(1).getDurationMs());
+        assertEquals(30_000L, steps.get(2).getDurationMs());
+    }
+
+    @Test
+    void leavesStepDurationNullWhenThereAreNoRuntimeEvents() {
+        // 老工单：有 dispatch 但没有 runtime 事件。
+        // 不得回退到 dispatch 耗时——错的数比没有数更糟。
+        List<DeliveryStepVO> steps = deliveryStepsWithoutRuntimeEventsFixture();
+
+        for (DeliveryStepVO step : steps) {
+            assertNull(step.getDurationMs());
+        }
+    }
+
+    private List<DeliveryStepVO> deliveryStepsForSingleDispatchFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "需求分析与评论"),
+                step(102L, 10L, 2, "编码实现"),
+                step(103L, 10L, 3, "自测与交付")
+        )));
+        // 一条 dispatch 横跨整个工作流，wall time 5 分钟
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.SUCCEEDED, 0L, 300_000L, null)
+        ));
+        when(runtimeEventDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                runtimeEvent(1L, 301L, 41L, "step.started", 1, "需求分析与评论", 1_000L, null),
+                runtimeEvent(2L, 301L, 41L, "step.completed", 1, "需求分析与评论", 61_000L, null),
+                runtimeEvent(3L, 301L, 41L, "step.started", 2, "编码实现", 62_000L, null),
+                runtimeEvent(4L, 301L, 41L, "step.completed", 2, "编码实现", 182_000L, null),
+                runtimeEvent(5L, 301L, 41L, "step.started", 3, "自测与交付", 183_000L, null),
+                runtimeEvent(6L, 301L, 41L, "step.completed", 3, "自测与交付", 213_000L, null)
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+        return progress.getAgents().get(0).getSteps();
+    }
+
+    @Test
+    void totalDurationSpansFromEarliestDispatchCreateToLatestModify() {
+        // 两条 dispatch：#1 [0, 60s]，#2 [90s, 200s] → wall span 应为 200s
+        DeliveryProgressVO progress = deliveryProgressForTwoTerminalDispatchesFixture();
+
+        assertEquals(200_000L, progress.getTotalDurationMs());
+    }
+
+    @Test
+    void totalDurationIsNullWhenThereAreNoDispatches() {
+        DeliveryProgressVO progress = deliveryProgressWithoutDispatchesFixture();
+
+        assertNull(progress.getTotalDurationMs());
+    }
+
+    private DeliveryProgressVO deliveryProgressForTwoTerminalDispatchesFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "编码实现")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.SUCCEEDED, 0L, 60_000L, null),
+                dispatch(302L, 101L, 41L, DispatchStatus.SUCCEEDED, 90_000L, 200_000L, null)
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        return service.getDeliveryProgress(100L, 7L);
+    }
+
+    private DeliveryProgressVO deliveryProgressWithoutDispatchesFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of());
+
+        return service.getDeliveryProgress(100L, 7L);
+    }
+
+    private List<DeliveryStepVO> deliveryStepsWithoutRuntimeEventsFixture() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "需求分析与评论"),
+                step(102L, 10L, 2, "编码实现"),
+                step(103L, 10L, 3, "自测与交付")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.SUCCEEDED, 0L, 300_000L, null)
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+        return progress.getAgents().get(0).getSteps();
     }
 
     @Test
@@ -672,7 +859,7 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         assertEquals("Agent Dev", dev.getAgentName());
         assertEquals("finished", dev.getStatus());
         assertEquals("done", dev.getSteps().get(0).getStatus());
-        assertEquals(120_000L, dev.getSteps().get(0).getDurationMs());
+        assertNull(dev.getSteps().get(0).getDurationMs());
 
         AgentDeliveryProgressVO cr = progress.getAgents().get(1);
         assertEquals(42L, cr.getAgentId());
@@ -963,6 +1150,70 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
                 .toList();
         assertEquals(List.of("开始执行", "请求完成", "开始校验", "校验完成", "正常进度"), subStepNames);
         assertTrue(subStepNames.stream().noneMatch(name -> name.contains("�") || name.startsWith("step.")));
+    }
+
+    @Test
+    void delivery_progress_hides_mojibake_current_activity() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "编码实现")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.RUNNING, 1_000L, 301_000L, null)
+        ));
+        when(runtimeEventDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                runtimeEvent(1L, 301L, 41L, "agent.progress", 1, "编码实现",
+                        5_000L, "正在运行测试"),
+                runtimeEvent(2L, 301L, 41L, "agent.progress", 1, "编码实现",
+                        6_000L, "运行测试\uFFFD\uFFFD\uFFFD\uFFFD")
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+
+        AgentDeliveryProgressVO agent = progress.getAgents().get(0);
+        assertEquals("正在运行测试", agent.getCurrentActivity());
+    }
+
+    @Test
+    void delivery_progress_current_activity_null_when_only_mojibake_reported() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(100L);
+        w.setTenantId(7L);
+        w.setSdlcId(10L);
+        w.setCurrentStepId(101L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(41L);
+        when(workitemDao.findById(100L)).thenReturn(w);
+
+        when(sdlcResolver.resolveSdlcId(7L, 41L)).thenReturn(10L);
+        when(sdlcStepDao.listBySdlc(10L)).thenReturn(new ArrayList<>(List.of(
+                step(101L, 10L, 1, "编码实现")
+        )));
+        when(dispatchDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                dispatch(301L, 101L, 41L, DispatchStatus.RUNNING, 1_000L, 301_000L, null)
+        ));
+        when(runtimeEventDao.listByWorkitem(7L, 100L)).thenReturn(List.of(
+                runtimeEvent(1L, 301L, 41L, "agent.progress", 1, "编码实现",
+                        5_000L, "\uFFFD\uFFFD\uFFFD\uFFFD\u0432\uFFFD\uFFFD\uFFFD"),
+                runtimeEvent(2L, 301L, 41L, "agent.progress", 1, "编码实现",
+                        6_000L, "\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD")
+        ));
+        when(agentDao.findById(41L)).thenReturn(agent(41L, "AW全栈开发"));
+
+        DeliveryProgressVO progress = service.getDeliveryProgress(100L, 7L);
+
+        AgentDeliveryProgressVO agent = progress.getAgents().get(0);
+        assertNull(agent.getCurrentActivity());
     }
 
     @Test
@@ -1523,11 +1774,14 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         agentCr.setOnlineVersionId(401L);
         AgentDO conflictResolver = agent(44L, "AW代码冲突解决工程师");
         conflictResolver.setOnlineVersionId(404L);
+        AgentDO unnamedAgent = agent(46L, null);
+        unnamedAgent.setOnlineVersionId(406L);
         AgentDO draftAgent = agent(45L, "AW未发布员工");
-        when(agentDao.listByTenant(7L)).thenReturn(List.of(agentCr, conflictResolver, draftAgent));
+        when(agentDao.listByTenant(7L)).thenReturn(List.of(agentCr, conflictResolver, unnamedAgent, draftAgent));
         when(agentDao.findById(42L)).thenReturn(agent(42L, "Agent CR"));
         when(agentDao.findById(43L)).thenReturn(agent(43L, "Agent Testing"));
         when(agentDao.findById(44L)).thenReturn(agent(44L, "AW代码冲突解决工程师"));
+        when(agentDao.findById(46L)).thenReturn(agent(46L, null));
 
         List<ParticipantVO> candidates = service.getMentionCandidates(100L, 7L);
 
@@ -1656,7 +1910,7 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         order.verify(workitemDao).updateAssignee(500L, 100L, "AGENT", 40013L, 4, 0L);
         order.verify(eventDao).insert(argThat((WorkitemEventDO event) -> "ASSIGN".equals(event.getEventType())
                 && "40014".equals(event.getFromVal()) && "40013".equals(event.getToVal())
-                && "SYSTEM".equals(event.getActorType())));
+                && "HUMAN".equals(event.getActorType())));
     }
 
     @Test
@@ -1804,8 +2058,8 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         w2.setVersion(0);
         w2.setGmtCreate(new Date());
 
-        when(workitemDao.count(tenantId, "BUG", null, null, null, false, null, 10L, null, null)).thenReturn(2L);
-        when(workitemDao.list(tenantId, "BUG", null, null, null, false, null, 10L, null, null, 0, 20))
+        when(workitemDao.count(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null)).thenReturn(2L);
+        when(workitemDao.list(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, 0, 20))
                 .thenReturn(List.of(w1, w2));
 
         DispatchDO d1 = new DispatchDO();
@@ -1835,7 +2089,7 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         when(externalWorkitemLinkDao.listByWorkitemIds(eq(tenantId), any())).thenReturn(List.of());
         when(dispatchDao.listByWorkitemIds(any())).thenReturn(List.of());
 
-        PageResult<WorkitemVO> result = service.list("BUG", null, null, null, false, null,
+        PageResult<WorkitemVO> result = service.list("BUG", null, null, null, null, false, null,
                 tenantId, 10L, null, 1, 20);
 
         assertEquals(2, result.getList().size());
@@ -1886,8 +2140,8 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         w.setGmtCreate(new Date());
         w.setGmtModified(new Date());
 
-        when(workitemDao.count(tenantId, "REQ", null, null, null, false, null, 50L, null, null)).thenReturn(1L);
-        when(workitemDao.list(tenantId, "REQ", null, null, null, false, null, 50L, null, null, 0, 20))
+        when(workitemDao.count(tenantId, "REQ", null, null, null, null, false, null, 50L, null, null)).thenReturn(1L);
+        when(workitemDao.list(tenantId, "REQ", null, null, null, null, false, null, 50L, null, null, 0, 20))
                 .thenReturn(List.of(w));
         when(dispatchDao.listLatestByWorkitemIds(List.of(10L))).thenReturn(List.of());
 
@@ -1912,7 +2166,7 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         when(externalWorkitemLinkDao.listByWorkitemIds(eq(tenantId), any())).thenReturn(List.of());
         when(dispatchDao.listByWorkitemIds(any())).thenReturn(List.of());
 
-        PageResult<WorkitemVO> result = service.list("REQ", null, null, null, false, null,
+        PageResult<WorkitemVO> result = service.list("REQ", null, null, null, null, false, null,
                 tenantId, 50L, null, 1, 20);
 
         WorkitemVO vo = result.getList().get(0);
@@ -1951,8 +2205,8 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         w.setVersion(1);
         w.setGmtCreate(new Date());
 
-        when(workitemDao.count(tenantId, "BUG", null, null, null, false, null, 10L, null, null)).thenReturn(1L);
-        when(workitemDao.list(tenantId, "BUG", null, null, null, false, null, 10L, null, null, 0, 20))
+        when(workitemDao.count(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null)).thenReturn(1L);
+        when(workitemDao.list(tenantId, "BUG", null, null, null, null, false, null, 10L, null, null, 0, 20))
                 .thenReturn(List.of(w));
 
         DispatchDO latestSucceeded = new DispatchDO();
@@ -1977,7 +2231,7 @@ when(workitemDao.list(100L, null, null, null, null, false, null, 7L, null, null,
         when(sdlcDao.listByIds(any())).thenReturn(List.of(sdlc));
         when(externalWorkitemLinkDao.listByWorkitemIds(eq(tenantId), any())).thenReturn(List.of());
 
-        PageResult<WorkitemVO> result = service.list("BUG", null, null, null, false, null,
+        PageResult<WorkitemVO> result = service.list("BUG", null, null, null, null, false, null,
                 tenantId, 10L, null, 1, 20);
 
         WorkitemVO vo = result.getList().get(0);

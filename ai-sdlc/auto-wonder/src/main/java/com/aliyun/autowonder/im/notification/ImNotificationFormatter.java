@@ -10,14 +10,14 @@ public class ImNotificationFormatter {
         String normalizedBaseUrl = trimTrailingSlash(context.baseUrl());
         if (ImNotificationTask.TYPE_COMMENT_MENTION.equals(task.notificationType())) {
             return "### 评论中提到了你\n\n"
-                    + "**组织**：" + safeText(context.orgName()) + "\n"
+                    + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
                     + "**工单**：" + safeText(task.workitemTitle()) + "\n"
                     + "**评论人**：" + safeText(task.actorDisplayName()) + "\n"
                     + commentSnippetBlock(task.commentContentMd())
                     + "[查看工单](" + workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()) + ")";
         }
         return "### 需要你处理\n\n"
-                + "**组织**：" + safeText(context.orgName()) + "\n"
+                + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
                 + "**工单**：" + safeText(task.workitemTitle()) + "\n"
                 + "**状态**：" + safeText(context.statusName()) + "\n"
                 + "**指派人**：" + safeText(task.actorDisplayName()) + "\n\n"
@@ -25,7 +25,7 @@ public class ImNotificationFormatter {
     }
 
     private static String workitemUrl(String baseUrl, long workitemId, long tenantId) {
-        return baseUrl + "/workitems/" + workitemId + "?orgId=" + tenantId;
+        return baseUrl + "/workitems/" + workitemId + "?workspaceId=" + tenantId;
     }
 
     private static String safeText(String value) {

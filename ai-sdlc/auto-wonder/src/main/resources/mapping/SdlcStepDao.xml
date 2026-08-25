@@ -31,12 +31,13 @@
             on_success = #{onSuccess}, on_fail = #{onFail}, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
+    <!-- 软删除时把 step_order 置为 -id，释放 uk_sdlc_order 占用的正数序号，避免新增/重排步骤唯一键冲突 -->
     <update id="softDelete">
-        UPDATE sdlc_step SET is_deleted = 1, modifier_id = #{modifierId}
+        UPDATE sdlc_step SET is_deleted = 1, step_order = -id, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
     <update id="deleteAllBySdlc">
-        UPDATE sdlc_step SET is_deleted = 1
+        UPDATE sdlc_step SET is_deleted = 1, step_order = -id
         WHERE sdlc_id = #{sdlcId} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
     <update id="updateOrder">

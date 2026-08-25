@@ -31,7 +31,7 @@ describe('LoginPage', () => {
     renderLogin();
     expect(screen.getByText('AutoWonder · Agent SDLC')).toBeInTheDocument();
     expect(screen.getByText('登录后，把工单交给数字员工小队')).toBeInTheDocument();
-    expect(screen.getByText('工单系统、仓库、SDLC、执行器和组织记忆在入口第一屏形成完整认知。')).toBeInTheDocument();
+    expect(screen.getByText('工单系统、仓库、SDLC、执行器和工作空间记忆在入口第一屏形成完整认知。')).toBeInTheDocument();
     expect(screen.getByText('6')).toBeInTheDocument();
     expect(screen.getByText('上手步骤')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();

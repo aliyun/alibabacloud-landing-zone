@@ -1,3 +1,6 @@
 node_modules
 dist
 *.local
+# TypeScript incremental build cache; regenerated on every build and a
+# constant source of merge conflicts between parallel branches.
+*.tsbuildinfo

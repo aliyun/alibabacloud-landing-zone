@@ -2,8 +2,8 @@ package com.aliyun.autowonder.im.notification;
 
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.branding.dto.PlatformBrandingVO;
-import com.aliyun.autowonder.org.OrgDO;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDO;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
@@ -14,16 +14,16 @@ import org.springframework.stereotype.Component;
 public class ImNotificationMessageContextResolver {
     private static final String FALLBACK_STATUS_NAME = "已指派";
 
-    private final OrgDao orgDao;
+    private final WorkspaceDao workspaceDao;
     private final WorkitemDao workitemDao;
     private final StatusNodeDao statusNodeDao;
     private final PlatformBrandingService brandingService;
 
-    public ImNotificationMessageContextResolver(OrgDao orgDao,
+    public ImNotificationMessageContextResolver(WorkspaceDao workspaceDao,
                                                 WorkitemDao workitemDao,
                                                 StatusNodeDao statusNodeDao,
                                                 PlatformBrandingService brandingService) {
-        this.orgDao = orgDao;
+        this.workspaceDao = workspaceDao;
         this.workitemDao = workitemDao;
         this.statusNodeDao = statusNodeDao;
         this.brandingService = brandingService;
@@ -31,16 +31,16 @@ public class ImNotificationMessageContextResolver {
 
     public ImNotificationMessageContext resolve(ImNotificationTask task) {
         WorkitemDO workitem = workitemDao.findById(task.workitemId());
-        String orgName = resolveOrgName(task.tenantId());
+        String workspaceName = resolveWorkspaceName(task.tenantId());
         String statusName = resolveStatusName(workitem);
         String baseUrl = resolveBaseUrl();
-        return new ImNotificationMessageContext(orgName, statusName, baseUrl, task.tenantId());
+        return new ImNotificationMessageContext(workspaceName, statusName, baseUrl, task.tenantId());
     }
 
-    private String resolveOrgName(long tenantId) {
-        OrgDO org = orgDao.findById(tenantId);
-        return hasText(org == null ? null : org.getName())
-                ? org.getName().trim()
+    private String resolveWorkspaceName(long tenantId) {
+        WorkspaceDO workspace = workspaceDao.findById(tenantId);
+        return hasText(workspace == null ? null : workspace.getName())
+                ? workspace.getName().trim()
                 : PlatformBrandingService.DEFAULT_PLATFORM_NAME;
     }
 
@@ -64,7 +64,9 @@ public class ImNotificationMessageContextResolver {
     private String resolveBaseUrl() {
         PlatformBrandingVO branding = brandingService.publicConfig();
         String domain = branding == null ? null : branding.getDomain();
-        return hasText(domain) ? domain.trim() : null;
+        // A blank branding domain means unconfigured; fall back to the required
+        // per-deployment autowonder.public-base-url to keep notification links clickable.
+        return hasText(domain) ? domain.trim() : brandingService.trustedPublicBaseUrl();
     }
 
     private static boolean hasText(String value) {

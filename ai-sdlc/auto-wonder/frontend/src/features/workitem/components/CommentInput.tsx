@@ -101,6 +101,7 @@ export function CommentInput({ workitemId, participants = [], mentionCandidates,
     const normalizedQuery = mentionQuery?.toLowerCase() ?? '';
 
     return allMentionCandidates
+      .filter((item) => typeof item.name === 'string' && item.name.trim() !== '')
       .filter((item) => item.name.toLowerCase().includes(normalizedQuery)
         || String(item.displayId ?? item.userId).toLowerCase().includes(normalizedQuery))
       .map((item) => {

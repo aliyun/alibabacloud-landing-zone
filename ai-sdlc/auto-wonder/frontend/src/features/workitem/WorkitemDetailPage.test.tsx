@@ -150,7 +150,7 @@ function renderPage(id = '1') {
 describe('WorkitemDetailPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
 
   afterEach(() => {
@@ -297,16 +297,16 @@ describe('WorkitemDetailPage', () => {
     );
     renderPage();
 
-    const input = await screen.findByLabelText('选择需求文档');
+    const input = await screen.findByLabelText('选择需求/设计上下文文件');
     fireEvent.change(input, { target: { files: [new File(['plain'], 'notes.txt', { type: 'text/plain' })] } });
 
-    expect(await screen.findByText('仅支持上传 .md 或 .markdown 文档')).toBeInTheDocument();
+    expect(await screen.findByText('仅支持上传 .md、.markdown、.png、.jpg、.jpeg、.webp 文件')).toBeInTheDocument();
     expect(uploadRequested).toBe(false);
   });
 
   it('keeps requirement document commands visible but blocks a read-only member', async () => {
     const inputClick = vi.spyOn(HTMLInputElement.prototype, 'click');
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     server.use(
       http.get('/api/workitems/1/requirement-documents', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
@@ -322,7 +322,7 @@ describe('WorkitemDetailPage', () => {
     expect(deleteButton).toBeEnabled();
 
     await userEvent.click(uploadButton);
-    expect(await screen.findByText('当前为只读权限，上传需求文档需要读写权限')).toBeInTheDocument();
+    expect(await screen.findByText('当前为只读权限，上传需求/设计上下文需要读写权限')).toBeInTheDocument();
     expect(inputClick).not.toHaveBeenCalled();
 
     await userEvent.click(deleteButton);
@@ -371,6 +371,71 @@ describe('WorkitemDetailPage', () => {
 
     await waitFor(() => expect(deleteRequested).toBe(true));
     expect(await screen.findByText('需求文档已删除')).toBeInTheDocument();
+  });
+
+  it.skip('renders provider-neutral external collaboration relations and hides empty groups', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          ...mockWorkitem,
+          sourceType: 'EXTERNAL',
+          assigneeRef: null,
+          assigneeName: null,
+          assigneeDisplayName: null,
+          creatorDisplayName: '导入人（10009）',
+          externalCollaboration: {
+            provider: 'AONE',
+            externalProjectId: '2087214',
+            externalWorkitemId: '84877007',
+            externalUrl: 'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+            sourceStatusId: '100',
+            sourceStatusName: '处理中',
+            sourceLifecycle: 'ACTIVE',
+            reporter: {
+              id: 10001, provider: 'AONE', subjectId: '001', subjectType: 'USER',
+              displayName: '需求提出人', mappedUserId: null,
+            },
+            businessOwner: {
+              id: 10002, provider: 'AONE', subjectId: '002', subjectType: 'USER',
+              displayName: '业务负责人', mappedUserId: null,
+            },
+            principalRelations: [
+              {
+                sourceKey: 'collaborators',
+                displayName: '协作者',
+                principals: [{
+                  id: 10003, provider: 'AONE', subjectId: '003', subjectType: 'USER',
+                  displayName: '外部协作者', mappedUserId: null,
+                }],
+              },
+              { sourceKey: 'watchers', displayName: '关注者', principals: [] },
+            ],
+            lastSyncAt: '2026-07-31T10:00:00Z',
+            syncStatus: 'HEALTHY',
+            lastErrorCode: null,
+            lastError: null,
+          },
+        },
+      })),
+      ...setupHandlers(),
+    );
+    renderPage();
+
+    expect(await screen.findByText('创建者: 导入人（10009）')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '重新指派' })).toBeInTheDocument();
+    expect(await screen.findByText('外部协作')).toBeInTheDocument();
+    expect(screen.getByText('需求提出人（001）')).toBeInTheDocument();
+    expect(screen.getByText('业务负责人（002）')).toBeInTheDocument();
+    expect(screen.getByText('协作者')).toBeInTheDocument();
+    expect(screen.getByText('外部协作者（003）')).toBeInTheDocument();
+    expect(screen.queryByText('关注者')).not.toBeInTheDocument();
+    expect(screen.getByText('由外部工单维护')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /打开Aone工单/ })).toHaveAttribute(
+      'href',
+      'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+    );
   });
 
   it('shows squad members in right panel', async () => {
@@ -969,7 +1034,7 @@ describe('WorkitemDetailPage', () => {
 
     renderPage();
 
-    await userEvent.click(await screen.findByRole('button', { name: /同步 Aone/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /立即对账/ }));
 
     expect(syncRequested).toBe(true);
     expect(await screen.findByText('同步完成：新增 0，更新 1，评论 2')).toBeInTheDocument();
@@ -1120,6 +1185,22 @@ describe('WorkitemDetailPage', () => {
     expect(await screen.findByRole('menuitem', { name: /王五工程师/ })).toBeInTheDocument();
   });
 
+  it('ignores mention candidates without a name instead of crashing the workitem page', async () => {
+    server.use(
+      http.get('/api/workitems/1/mention-candidates', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [...mockParticipants, {
+          userId: '999', name: null, role: 'AGENT', roleName: '开发小队成员', isAgent: true, online: false,
+        }],
+      })),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1/mention-candidates'),
+    );
+
+    renderPage();
+
+    expect(await screen.findByPlaceholderText('输入评论，键入 @ 选择成员...')).toBeInTheDocument();
+  });
+
   it('keeps a query-only selected mention target after the query clears and more text is typed', async () => {
     const remoteOnlyCandidate = {
       userId: '500', name: '王五工程师', role: 'DEV', roleName: '开发', isAgent: false, online: false,
@@ -1239,5 +1320,31 @@ describe('WorkitemDetailPage', () => {
 
     await user.click(composer);
     expect(composer).toHaveAttribute('rows', '3');
+  });
+
+  it('assigns the workitem to a human user via the assign-to-human modal', async () => {
+    let assignBody: Record<string, unknown> | null = null;
+    server.use(
+      ...setupHandlers(),
+      http.put('/api/workitems/1/assignee', async ({ request }) => {
+        assignBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...mockWorkitem, assigneeType: 'HUMAN', assigneeRef: '200', assigneeName: '张三' },
+        });
+      }),
+    );
+    renderPage();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: '跨境支付重构' });
+    await user.click(screen.getByRole('button', { name: /指派给真人/ }));
+
+    const select = await screen.findByLabelText('指派给');
+    await user.click(select);
+    await user.click(await screen.findByTitle('张三'));
+    await user.click(screen.getByRole('button', { name: /^指\s*派$/ }));
+
+    await waitFor(() => expect(assignBody).toMatchObject({ assigneeType: 'HUMAN', assigneeRef: '200' }));
   });
 });

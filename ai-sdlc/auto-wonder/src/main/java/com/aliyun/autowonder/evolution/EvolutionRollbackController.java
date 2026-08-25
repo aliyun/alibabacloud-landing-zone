@@ -4,13 +4,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/rollback")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看演进回滚")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进回滚")
 public class EvolutionRollbackController {
 
     private final EvolutionReleaseRollbackLiteService rollbackService;
@@ -20,9 +20,9 @@ public class EvolutionRollbackController {
     }
 
     @PostMapping("/{proposalId}")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "回滚演进变更")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "回滚演进变更")
     public Result<EvolutionRollbackResult> rollback(@PathVariable("proposalId") Long proposalId) {
-        return Result.ok(rollbackService.rollback(proposalId, currentOrgId(), currentUserId()));
+        return Result.ok(rollbackService.rollback(proposalId, currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -33,11 +33,11 @@ public class EvolutionRollbackController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

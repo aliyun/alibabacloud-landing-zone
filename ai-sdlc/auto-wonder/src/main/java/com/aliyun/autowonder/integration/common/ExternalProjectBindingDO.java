@@ -21,6 +21,7 @@ public class ExternalProjectBindingDO {
     private Integer pollIntervalSeconds;
     private Integer enabled;
     private Date lastSuccessAt;
+    private String reconcileCursor;
     private String lastError;
     private Date gmtCreate;
     private Date gmtModified;

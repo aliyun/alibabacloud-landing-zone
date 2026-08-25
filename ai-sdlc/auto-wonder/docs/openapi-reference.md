@@ -9,7 +9,7 @@
 | Base URL | `https://{host}:7001` |
 | 认证方式 | Bearer JWT Token (通过 `/api/auth/login` 获取) |
 | 请求头 | `Authorization: Bearer <accessToken>`, `Content-Type: application/json` |
-| 组织上下文 | JWT 中携带当前 org，切换组织需调用 `/api/orgs/{id}/switch` 获取新 token |
+| 组织上下文 | JWT 中携带当前 org，切换组织需调用 `/api/workspaces/{id}/switch` 获取新 token |
 | 统一响应格式 | `{ "success": true, "code": "OK", "data": <T>, "message": "" }` |
 | 分页约定 | `page` (从 1 开始), `size` (默认 20) |
 | 访问控制 | 组织成员使用 `READ_ONLY < READ_WRITE < ADMIN` 三档访问等级；身份标签不参与鉴权 |
@@ -52,44 +52,44 @@
 
 | 方法 | 路径 | 访问要求 | 说明 |
 |------|------|------|------|
-| POST | `/api/orgs` | 登录即可 | 创建组织 |
-| GET | `/api/orgs/mine` | 登录即可 | 我加入的组织列表 |
-| POST | `/api/orgs/{id}/switch` | 登录即可 | 切换当前组织 (返回新 token) |
-| GET | `/api/orgs/current` | READ_ONLY | 获取当前组织信息 |
-| GET | `/api/orgs/current/membership` | READ_ONLY | 获取当前成员访问等级和身份标签 |
-| GET | `/api/orgs/current/members` | ADMIN | 列出组织成员 |
-| GET | `/api/orgs/current/member-candidates` | ADMIN | 搜索可添加的全局人员 |
-| POST | `/api/orgs/current/members` | ADMIN | 添加成员，默认 `READ_ONLY` |
-| DELETE | `/api/orgs/current/members/{userId}` | ADMIN | 移除成员 |
-| PUT | `/api/orgs/current/members/{userId}/access-level` | ADMIN | 修改成员访问等级 |
-| PUT | `/api/orgs/current/members/{userId}/identity-tags` | ADMIN | 修改成员身份标签 |
-| POST | `/api/orgs/current/owner/transfer` | ADMIN | 移交组织所有者 |
+| POST | `/api/workspaces` | 登录即可 | 创建组织 |
+| GET | `/api/workspaces/mine` | 登录即可 | 我加入的组织列表 |
+| POST | `/api/workspaces/{id}/switch` | 登录即可 | 切换当前组织 (返回新 token) |
+| GET | `/api/workspaces/current` | READ_ONLY | 获取当前组织信息 |
+| GET | `/api/workspaces/current/membership` | READ_ONLY | 获取当前成员访问等级和身份标签 |
+| GET | `/api/workspaces/current/members` | ADMIN | 列出组织成员 |
+| GET | `/api/workspaces/current/member-candidates` | ADMIN | 搜索可添加的全局人员 |
+| POST | `/api/workspaces/current/members` | ADMIN | 添加成员，默认 `READ_ONLY` |
+| DELETE | `/api/workspaces/current/members/{userId}` | ADMIN | 移除成员 |
+| PUT | `/api/workspaces/current/members/{userId}/access-level` | ADMIN | 修改成员访问等级 |
+| PUT | `/api/workspaces/current/members/{userId}/identity-tags` | ADMIN | 修改成员身份标签 |
+| POST | `/api/workspaces/current/owner/transfer` | ADMIN | 移交组织所有者 |
 
-### POST /api/orgs
+### POST /api/workspaces
 ```json
 // Request
 { "name": "string", "description": "string", "background": "string" }
-// Response: OrgVO
+// Response: WorkspaceVO
 ```
 
-### POST /api/orgs/{id}/switch
+### POST /api/workspaces/{id}/switch
 ```json
-// Response: SwitchOrgResponse
+// Response: SwitchWorkspaceResponse
 { "accessToken": "new-jwt...", "accessLevel": "READ_ONLY|READ_WRITE|ADMIN" }
 ```
 
-### POST /api/orgs/current/members
+### POST /api/workspaces/current/members
 ```json
 // Request
 { "userId": 10001 }
 ```
 
-### PUT /api/orgs/current/members/{userId}/access-level
+### PUT /api/workspaces/current/members/{userId}/access-level
 ```json
 { "accessLevel": "READ_ONLY|READ_WRITE|ADMIN" }
 ```
 
-### PUT /api/orgs/current/members/{userId}/identity-tags
+### PUT /api/workspaces/current/members/{userId}/identity-tags
 ```json
 { "identityTags": ["需求管理员", "澄清员"] }
 ```
@@ -104,7 +104,7 @@
 | READ_WRITE | 包含只读能力，并可执行组织业务的创建、修改、删除、审核和运行 |
 | ADMIN | 包含读写能力，并可管理成员、owner、系统设置、外部集成和执行器 |
 
-身份标签只用于任务协作和人员识别，不授予任何访问能力。长效 MCP Token 是**用户个人资产**，不绑定组织、也不保存 per-token 权限上限；调用组织域工具时按 `(orgId, userId)` 实时解析成员等级作为有效等级。工单 dispatch Token 固定为 `READ_WRITE`，并继续受工单、dispatch 和有效期约束。
+身份标签只用于任务协作和人员识别，不授予任何访问能力。长效 MCP Token 是**用户个人资产**，不绑定工作空间、也不保存 per-token 权限上限；调用工作空间域工具时按 `(workspaceId, userId)` 实时解析成员等级作为有效等级。工单 dispatch Token 固定为 `READ_WRITE`，并继续受工单、dispatch 和有效期约束。
 
 ### 长效 MCP Token（个人资产）
 
@@ -129,17 +129,17 @@
 
 1. 在「个人设置 -> MCP 令牌」创建个人 Token（不需要先选择组织）。
 2. 调用 `autowonder.list_projects` 发现自己可访问的组织及权限等级。
-3. 调用组织域工具时传入 `orgId`（必填、正整数）。
-4. 权限跟随你在该 `orgId` 内的实时成员等级：离开组织或被降权后立即生效。
+3. 调用工作空间域工具时传入 `workspaceId`（必填、正整数）。
+4. 权限跟随你在该 `workspaceId` 内的实时成员等级：离开工作空间或被降权后立即生效。
 
 `autowonder.list_projects`、`autowonder.inspect_skill_package`、`autowonder.list_platform_skills`
-不访问组织数据，不需要 `orgId`；其余工具全部必填 `orgId`。
+不访问工作空间数据，不需要 `workspaceId`；其余工具全部必填 `workspaceId`。
 
-缺少 `orgId` 或 `orgId` 非正整数返回 `PARAM_INVALID`；不是目标组织有效成员返回 `ORG_NOT_MEMBER`；
+缺少 `workspaceId` 或 `workspaceId` 非正整数返回 `PARAM_INVALID`；不是目标工作空间有效成员返回 `WORKSPACE_NOT_MEMBER`；
 成员等级不足返回 `NO_PERMISSION`。
 
-dispatch / conversation Token 仍锁定在自身组织：省略 `orgId` 时沿用该组织，传入其他组织的
-`orgId` 返回 `NO_PERMISSION`。
+dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspaceId` 时沿用该工作空间，传入其他工作空间的
+`workspaceId` 返回 `NO_PERMISSION`。
 
 客户端 MCP endpoint 来自部署属性 `autowonder.public-base-url`，组织管理员不能修改该地址；执行器启动命令的 WebSocket 地址也从同一部署地址派生。
 

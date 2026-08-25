@@ -44,14 +44,14 @@ class RepoServiceTest {
 
         CreateRepoRequest req = new CreateRepoRequest();
         req.setName("my-repo");
-        req.setUrl("https://github.com/org/repo.git");
+        req.setUrl("https://github.com/workspace/repo.git");
         req.setDefaultBranch("main");
         req.setDescription("desc");
 
         RepoVO vo = service.create(req, 1L, 2L);
         assertEquals(100L, vo.getId());
         assertEquals("my-repo", vo.getName());
-        assertEquals("https://github.com/org/repo.git", vo.getUrl());
+        assertEquals("https://github.com/workspace/repo.git", vo.getUrl());
         assertEquals("UNSCANNED", vo.getScanStatus());
         verify(repoDao).insert(any());
     }
@@ -62,11 +62,11 @@ class RepoServiceTest {
         repo.setId(1L);
         repo.setTenantId(1L);
         repo.setName("my-repo");
-        repo.setUrl("https://github.com/org/repo.git");
+        repo.setUrl("https://github.com/workspace/repo.git");
         repo.setDefaultBranch("main");
         repo.setVersion(3);
         when(repoDao.findById(1L)).thenReturn(repo);
-        when(repoDao.update(1L, 1L, "my-repo", "https://github.com/org/repo.git", "main",
+        when(repoDao.update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", "main",
                 "new desc", 3, 2L)).thenReturn(1);
 
         UpdateRepoRequest req = new UpdateRepoRequest();
@@ -74,14 +74,14 @@ class RepoServiceTest {
 
         service.update(1L, req, 1L, 2L);
 
-        verify(repoDao).update(1L, 1L, "my-repo", "https://github.com/org/repo.git", "main",
+        verify(repoDao).update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", "main",
                 "new desc", 3, 2L);
     }
 
     @Test
     void createMissingNameThrows() {
         CreateRepoRequest req = new CreateRepoRequest();
-        req.setUrl("https://github.com/org/repo.git");
+        req.setUrl("https://github.com/workspace/repo.git");
 
         BizException ex = assertThrows(BizException.class, () -> service.create(req, 1L, 2L));
         assertEquals(ErrorCode.REPO_NAME_REQUIRED.getCode(), ex.getCode());
@@ -268,7 +268,7 @@ class RepoServiceTest {
     @Test
     void testConnectionDelegatesToGitTester() {
         TestRepoConnectionRequest req = new TestRepoConnectionRequest();
-        req.setUrl("git@github.com:org/repo.git");
+        req.setUrl("git@github.com:workspace/repo.git");
         req.setDefaultBranch("main");
         when(connectionTester.test(req)).thenReturn(RepoConnectionTestResult.ok("连接成功"));
 

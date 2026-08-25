@@ -5,8 +5,8 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.integration.dto.AoneSyncResult;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/workitems")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看外部工作项同步")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看外部工作项同步")
 public class ExternalWorkitemSyncController {
 
     private final ExternalWorkitemSyncService syncService;
@@ -24,9 +24,9 @@ public class ExternalWorkitemSyncController {
     }
 
     @PostMapping("/{id}/external-sync")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "同步外部工作项")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "同步外部工作项")
     public Result<AoneSyncResult> syncExternal(@PathVariable("id") Long id) {
-        return Result.ok(syncService.syncLocalWorkitem(id, currentOrgId(), currentUserId()));
+        return Result.ok(syncService.syncLocalWorkitem(id, currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -37,11 +37,11 @@ public class ExternalWorkitemSyncController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

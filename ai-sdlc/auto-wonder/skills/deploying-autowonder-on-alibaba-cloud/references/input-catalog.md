@@ -2,97 +2,88 @@
 
 ## Purpose
 
-Use this reference before a new deployment or when creating a separate
-environment. Collect every choice once, show one sanitized review, and do not
-reopen configuration questions after approval.
+Collect new-deployment choices once with one copyable template. Environment,
+source, tags, and Terraform state OSS coordinates are fixed and must never be
+asked of the user.
 
 ## One-Time Questionnaire
 
-Ask for the complete table in one message. Apply the listed default when the
-user does not override it.
+Send this exact copyable template. Do not replace the first field with region
+choices and do not add environment, source, tags, or backend questions.
 
-| Input | Allowed values or validation | Default |
-| --- | --- | --- |
-| Mode | new, resume, QA, teardown | new |
-| Region | `cn-zhangjiakou`, `cn-hangzhou`, `cn-shanghai`, `cn-beijing` | none |
-| Environment and suffix | lowercase letters, digits, hyphens; globally unique suffix | none |
-| Account UID | identity check and collision-resistant naming only | none |
-| Topology | `multi-az-ha` or explicitly selected `experience` | `multi-az-ha` |
-| Size | small, medium, or custom SKU overrides | small |
-| Networks | non-overlapping VPC CIDR and two VSwitch CIDRs | suggested private ranges |
-| Public sources | one or more approved CIDRs for NLB port 80 | none |
-| Ingress | no domain/no certificate; domain/no certificate; domain/certificate | no domain/no certificate |
-| Domain | DNS name for either domain scenario | empty otherwise |
-| State | protected remote state or local state | remote |
-| Lifecycle | persistent or temporary test | persistent |
-| Organization | required non-empty first organization name | none; user must provide |
-| Source | repository URL, ref, and exact commit | community ref |
-| Execution | staged or unattended | staged |
-| Tags | optional Owner, CostCenter, and custom tags | none |
+```text
+请复制下面的模板并填写：
 
-Also confirm the two availability zones discovered by preflight. They must be
-different for `multi-az-ha`. Custom tags cannot replace `Project`, `Environment`,
-`DeploymentId`, `ManagedBy`, or `Topology`, and must never contain secrets.
+请提供部署区域，比如北京、杭州：
+阿里云账号 UID：
+组织名称：
+公网访问来源 CIDR：（填写“自动识别”或具体 CIDR）
+接入方式：（无域名 / 有域名无证书 / 有域名和证书）
+域名：（无域名时填写“无”）
+网络 CIDR：（填写“自动建议”或 VPC CIDR、两个交换机 CIDR）
+```
+
+Map 北京、杭州、上海、张家口 to `cn-beijing`, `cn-hangzhou`,
+`cn-shanghai`, `cn-zhangjiakou`. An ambiguous or unsupported place name
+requires correction; never guess.
 
 ## Fixed Decisions
 
-- OSS is mandatory: create a private package bucket and a private artifact bucket.
-- Application `OSS_ENDPOINT` is the regional intranet endpoint for server-side
-  object I/O. `OSS_PUBLIC_ENDPOINT` is the matching regional public HTTPS
-  endpoint for links consumed by browsers and executor runtimes.
-- SLS is enabled and creates system, business, and metrics stores.
-- Aone is disabled. Linux x86_64 and Java 21 are the supported runtime.
-- Executor commands use manifest `recommendedRuntimeVersion` (`0.2.130` for this release).
-- ECS has no NAT, public EIP, or SSH access. Cloud Assistant performs host work.
-- DNS is not modified. The user owns DNS and certificate binding.
+- `environment` and its required tag are always `auto-wonder-prod`.
+- Topology is always dual-zone high availability: two ECS instances in separate
+  zones, HA RDS, cross-zone Redis, and a dual-zone public Application Load
+  Balancer (ALB). Sizing is always the small preset. Never ask the user for
+  topology, load-balancer type, or sizing.
+- Each ECS node is exactly 2 vCPU and 4 GiB memory. Prefer `ecs.c8a.large`.
+  A fallback must be x86_64, provide the same 2-vCPU/4-GiB capacity, and be
+  available in both selected zones. Stop instead of lowering or raising capacity.
+- Lifecycle is always `persistent` (formal production environment) and execution
+  mode is always `unattended`. Never ask the user to choose or confirm either
+  value. Obtain one confirmation after the final deployment plan, then continue
+  automatically until a safety stop or failure.
+- Use the current workspace contents, including uncommitted or untracked
+  changes. Do not inspect or validate Git information, and do not fetch, pull,
+  merge, checkout, or ask for a repository/ref/commit. Git state must not block
+  Terraform apply or the application build.
+- Optional tags are not collected. Derive only Project, Environment,
+  DeploymentId, ManagedBy, and Topology.
+- Remote Terraform state is mandatory. Never ask for a state bucket or backend
+  path and never fall back to local state.
+- Existing Terraform creates the private application package and artifact OSS
+  buckets. `scripts/terraform-backend.sh` separately creates the state bucket.
+- SLS is enabled, Aone is disabled, and ECS has no NAT, public EIP, or SSH.
 - The initial username is `admin`; generate its password during initialization.
 
-## Ingress Choice
+## Automatic State Backend
 
-| Scenario | Initial executor URL | TLS state |
-| --- | --- | --- |
-| No domain, no certificate | `ws://<nlb-address>/ws/executor` | pending; temporary plaintext |
-| Domain, no certificate | `ws://<domain>/ws/executor` | pending; temporary plaintext |
-| Domain and certificate | same temporary endpoint until binding, then `wss://<domain>/ws/executor` | accepted only after a trusted handshake |
+The bucket is `aw-tfstate-<deployment-id>-<hash12>`, where `hash12` is the first
+12 lowercase hex characters of SHA-256 over
+`<account-uid>|<region-id>|<deployment-id>`. The state key is always
+`states/<deployment-id>/terraform.tfstate`.
 
-The NLB TCP listener exposes public port 80 to the approved CIDRs and forwards
-to ECS application port 7001. Plaintext on port 80 is never described as TLS.
+The protected deployment root is
+`<current-project-root>/deployments/<deployment-id>`. The backend file is always
+`<deployment-root>/terraform/backend.hcl`. Resolve it programmatically and write
+it to `terraform.stateReference`; the model and user never choose it.
 
-## Manifest And Terraform Mapping
+Prepare reconciles account ownership, region, private ACL, required tags, and
+name. An exact match is idempotent; a collision or mismatch stops. After verified
+main Terraform destruction, delete all object versions and multipart uploads,
+delete the bucket, and remove the local backend directory. Retain no state copy.
 
-Write non-secret answers to a copy of
-`assets/templates/deployment-manifest.json`. The principal mapping is:
+## Application OSS And Ingress
 
-| Answer | Manifest key | Terraform input |
-| --- | --- | --- |
-| region | `region` | `region` |
-| environment | `environment` | `environment` |
-| generated ID | `deploymentId`, tag value | `deployment_id` |
-| topology | `topology`, tag value | `topology` |
-| size | `sizePreset` | resolved ECS/RDS/Redis SKU variables |
-| zones | resource planning record | `zone_a_id`, `zone_b_id` |
-| public CIDRs | `publicSourceCidrs` | `public_source_cidrs` |
-| ingress/domain | `ingressScenario`, `domain` | listener/domain metadata inputs |
-| state choice | `stateMode`, `terraform.stateReference` | backend bootstrap choice |
-| lifecycle | `lifecycle` | `lifecycle_mode` |
-| org | `organizationName` | initialization script only |
-| source | `repositoryUrl`, `repositoryRef`, `repositoryCommit` | build script only |
-| execution | `executionMode` | orchestrator only |
-| tags | `tags` | `common_tags` |
+Application `OSS_ENDPOINT` is the regional intranet HTTPS endpoint and
+`OSS_PUBLIC_ENDPOINT` is the matching public HTTPS endpoint. Both remain
+mandatory. No-domain and domain-without-certificate scenarios use `ws://` on
+port 80; only a trusted certificate handshake satisfies `wss://` TLS acceptance.
 
-The manifest must remain sanitized. Never add passwords, SecretCrypto master
-key, JWT secret, AK/SK, STS token, presigned URL, query token, or administrator
-password. Pass required Terraform secrets through protected `TF_VAR_*`
-environment variables or mode-restricted transient files.
+## Manifest And Review
 
-For remote state, `terraform.stateReference` is the path to a protected OSS
-backend configuration file. The backend must already exist; V1 stops instead of
-silently writing state locally when that reference is absent.
+Create a sanitized copy of `assets/templates/deployment-manifest.json`. Record
+the generated DeploymentId, resolved region, answers, and automatic backend
+metadata. Never store passwords, AK/SK, tokens, signed URLs,
+or administrator credentials.
 
-## Review And Confirmation
-
-Show one sanitized table covering every answer, resolved defaults, topology,
-estimated cost drivers, security exceptions, state location, and planned phases.
-In staged mode, subsequent prompts ask only whether to start the next already
-defined phase. In unattended mode, ask once after final plan review. A later
-configuration change invalidates the plan fingerprint and requires a new review.
+Show one review covering answers, fixed values, risks, cost drivers, and phases.
+After its single confirmation, unattended execution continues automatically.

@@ -46,7 +46,9 @@ function CommentCard({
   onArtifactClick?: (artifact: Artifact) => void;
 }) {
   const bgColor = item.isAgent ? '#ff6a00' : '#1677ff';
-  const mentionNames = participants?.map((participant) => participant.name) ?? [];
+  const mentionNames = participants
+    ?.map((participant) => participant.name)
+    .filter((name): name is string => Boolean(name)) ?? [];
 
   return (
     <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
@@ -126,6 +128,22 @@ function formatSystemContent(content: string, participants: Participant[] = []):
   return `ASSIGN: ${formatParticipantLabel(participantById.get(fromId), fromId)} -> ${formatParticipantLabel(participantById.get(toId), toId)}`;
 }
 
+function renderSystemItem(item: TimelineItem, participants: Participant[] = []) {
+  const content = formatSystemContent(item.content, participants);
+  if (item.sourceProvider === 'AONE' && item.sourceExternalWorkitemId) {
+    const marker = '已从 Aone 工单';
+    if (content.startsWith(marker)) {
+      const workitemId = item.sourceExternalWorkitemId;
+      const link = item.sourceExternalUrl ? (
+        <Typography.Link href={item.sourceExternalUrl} target="_blank" rel="noreferrer">{workitemId}</Typography.Link>
+      ) : workitemId;
+      const action = content.slice(marker.length).replace(/^[:\s]+/, '');
+      return <>{marker} {link}{action ? ` ${action}` : ''}</>;
+    }
+  }
+  return content;
+}
+
 function SystemCard({ item, participants }: { item: TimelineItem; participants?: Participant[] }) {
   return (
     <div
@@ -141,7 +159,7 @@ function SystemCard({ item, participants }: { item: TimelineItem; participants?:
         <Text type="secondary" style={{ fontSize: 12 }}>系统</Text>
         <Text type="secondary" style={{ fontSize: 12 }}>{formatTime(item.gmtCreate)}</Text>
       </div>
-      <div>{formatSystemContent(item.content, participants)}</div>
+      <div>{renderSystemItem(item, participants)}</div>
     </div>
   );
 }

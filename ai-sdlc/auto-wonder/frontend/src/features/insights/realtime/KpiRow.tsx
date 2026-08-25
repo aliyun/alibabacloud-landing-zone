@@ -1,5 +1,6 @@
 import type { Kpi } from './api';
 import { BRAND } from './theme';
+import { formatMinutesZh } from '@/shared/lib/duration';
 
 export type KpiKey = 'runningDispatches' | 'todayCompletedTasks' | 'weekCompletedTasks';
 
@@ -21,7 +22,7 @@ export default function KpiRow({ kpi, onKpiClick }: Props) {
     { label: '正在运行', value: kpi.runningDispatches, hero: true, clickable: true, key: 'runningDispatches' },
     { label: '今日完成', value: kpi.todayCompletedTasks, hero: true, clickable: true, key: 'todayCompletedTasks' },
     { label: '本周完成', value: kpi.weekCompletedTasks, clickable: true, key: 'weekCompletedTasks' },
-    { label: '平均耗时', value: `${kpi.avgTaskDurationMinutes} 分钟` },
+    { label: '平均耗时', value: formatMinutesZh(kpi.avgTaskDurationMinutes) },
     { label: '进行中工单', value: kpi.inProgressWorkitems },
     { label: '排队等待', value: kpi.queuedDispatches },
     { label: '活跃小队', value: kpi.activeSquads },

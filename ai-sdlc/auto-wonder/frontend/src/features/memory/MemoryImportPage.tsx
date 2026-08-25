@@ -13,7 +13,7 @@ export function MemoryImportPage() {
       <Card title="AI 记忆导入" styles={{ body: { height: '70vh', padding: 0 } }}>
         <AiSessionPanel
           scene="MEMORY_IMPORT"
-          bizRefType="ORG"
+          bizRefType='ORG'
           bizRefId={0}
           onConfirm={() => navigate('/memories')}
         />

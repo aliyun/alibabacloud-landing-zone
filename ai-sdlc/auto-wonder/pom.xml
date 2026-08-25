@@ -23,7 +23,7 @@
         <okhttp_version>4.9.0</okhttp_version>
         <gson_version>2.9.1</gson_version>
         <dropwizard-metrics-version>4.1.2</dropwizard-metrics-version>
-        <jedis.version>3.8.0</jedis.version>
+        <jedis.version>3.10.0</jedis.version>
         <node.version>v22.22.2</node.version>
         <npm.version>10.9.7</npm.version>
         <skipFrontend>false</skipFrontend>
@@ -330,6 +330,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

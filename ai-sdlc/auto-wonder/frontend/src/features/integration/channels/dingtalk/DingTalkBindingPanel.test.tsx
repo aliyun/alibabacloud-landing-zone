@@ -40,7 +40,7 @@ const agentsBody = ok([
 describe('DingTalkBindingPanel', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
   });
 
   it('renders existing bindings with robot code and linked agent name', async () => {
@@ -177,7 +177,7 @@ describe('DingTalkBindingPanel', () => {
 
   it('keeps create visible but blocks non-admin users before opening the drawer', async () => {
     const user = userEvent.setup();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     server.use(
       http.get('/api/integrations/dingtalk/bindings', () => HttpResponse.json(ok([]))),
       http.get('/api/agents', () => HttpResponse.json(agentsBody)),

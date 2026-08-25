@@ -143,9 +143,9 @@ public class McpController {
             AutoWonderContext ctx = AutoWonderContext.get();
             ctx.setUserId(principal.userId());
             ctx.setTraceId(UUID.randomUUID().toString());
-            if (principal.isOrgScoped()) {
-                ctx.setCurrentOrgId(principal.tenantId());
-                ctx.setOrgAccessLevel(principal.accessLevel());
+            if (principal.isWorkspaceScoped()) {
+                ctx.setCurrentWorkspaceId(principal.tenantId());
+                ctx.setWorkspaceAccessLevel(principal.accessLevel());
             }
             return action.get();
         } finally {

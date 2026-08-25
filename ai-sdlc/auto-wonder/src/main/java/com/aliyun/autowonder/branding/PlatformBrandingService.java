@@ -39,6 +39,7 @@ public class PlatformBrandingService {
     private final PlatformBrandingDao brandingDao;
     private final ObjectStorage objectStorage;
     private final String bucket;
+    private final String publicBaseUrl;
     private final String trustedMcpBaseUrl;
     private final String recommendedRuntimeVersion;
     private final String deploymentVersion;
@@ -47,18 +48,27 @@ public class PlatformBrandingService {
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.2.130}") String recommendedRuntimeVersion,
+                                   @Value("${autowonder.runtime.recommended-version:0.2.138}") String recommendedRuntimeVersion,
                                    @Value("${autowonder.version:x.x.x}") String deploymentVersion) {
         this.brandingDao = brandingDao;
         this.objectStorage = objectStorage;
         this.bucket = ossProperties.resolveArtifactBucket();
-        this.trustedMcpBaseUrl = deriveMcpBaseUrl(publicBaseUrl);
+        this.publicBaseUrl = requirePublicBaseUrl(publicBaseUrl);
+        this.trustedMcpBaseUrl = this.publicBaseUrl + "/api/mcp";
         this.recommendedRuntimeVersion = requireRuntimeVersion(recommendedRuntimeVersion);
         this.deploymentVersion = normalizeDeploymentVersion(deploymentVersion);
     }
 
     public PlatformBrandingVO publicConfig() {
         return toVO(currentOrDefault(), false);
+    }
+
+    public String trustedPublicBaseUrl() {
+        return publicBaseUrl;
+    }
+
+    public String recommendedRuntimeVersion() {
+        return recommendedRuntimeVersion;
     }
 
     public PlatformBrandingVO adminConfig(boolean canManage) {
@@ -168,6 +178,7 @@ public class PlatformBrandingService {
         fallback.setPlatformName(DEFAULT_PLATFORM_NAME);
         fallback.setThemeKey(DEFAULT_THEME_KEY);
         fallback.setPrimaryColor(DEFAULT_PRIMARY_COLOR);
+        // An unconfigured domain stays empty so callers fall back to autowonder.public-base-url.
         fallback.setDomain(null);
         return fallback;
     }
@@ -219,11 +230,6 @@ public class PlatformBrandingService {
             throw new BizException(ErrorCode.PARAM_INVALID, "主题颜色格式不合法");
         }
         return trimmed.toLowerCase();
-    }
-
-    private static String deriveMcpBaseUrl(String domain) {
-        String base = requirePublicBaseUrl(domain);
-        return base + "/api/mcp";
     }
 
     private static String requireRuntimeVersion(String value) {

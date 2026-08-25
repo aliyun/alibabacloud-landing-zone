@@ -17,6 +17,10 @@ public interface ExternalProjectBindingDao {
                                         @Param("offset") int offset,
                                         @Param("limit") int limit);
     List<ExternalProjectBindingDO> listEnabled(@Param("provider") String provider);
-    int updateHealth(@Param("id") Long id, @Param("tenantId") Long tenantId,
-                     @Param("lastSuccessAt") Date lastSuccessAt, @Param("lastError") String lastError);
+    int markSyncSuccess(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                        @Param("lastSuccessAt") Date lastSuccessAt);
+    int markSyncFailure(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                        @Param("lastError") String lastError);
+    int updateReconcileCursor(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                              @Param("reconcileCursor") String reconcileCursor);
 }

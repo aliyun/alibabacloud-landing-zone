@@ -4,13 +4,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/run")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看演进运行")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进运行")
 public class EvolutionRunController {
 
     private final EvolutionAssetRouterLiteService routerService;
@@ -20,9 +20,9 @@ public class EvolutionRunController {
     }
 
     @PostMapping
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "执行演进运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "执行演进运行")
     public Result<EvolutionRunResult> run(@RequestBody EvolutionRunCommand req) {
-        return Result.ok(routerService.run(req, currentOrgId(), currentUserId()));
+        return Result.ok(routerService.run(req, currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -33,11 +33,11 @@ public class EvolutionRunController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

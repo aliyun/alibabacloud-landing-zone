@@ -70,8 +70,8 @@ export interface CreateStepParams {
   checklistJson?: string;
   gatePolicyJson?: string;
   required?: boolean;
-  timeoutSeconds?: number;
-  retryBudget?: number;
+  timeoutSeconds?: number | null;
+  retryBudget?: number | null;
 }
 
 export async function addStep(sdlcId: SdlcId, data: CreateStepParams): Promise<SdlcStep> {

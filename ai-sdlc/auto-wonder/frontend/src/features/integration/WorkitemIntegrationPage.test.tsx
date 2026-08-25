@@ -21,7 +21,7 @@ function renderPage() {
 describe('WorkitemIntegrationPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
     server.use(
       http.get('/api/integrations/capabilities', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: { aoneEnabled: true },
@@ -52,7 +52,7 @@ describe('WorkitemIntegrationPage', () => {
   it('keeps integration commands visible but blocks non-admin execution', async () => {
     const user = userEvent.setup();
     let searchCalls = 0;
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     server.use(
       http.get('/api/integrations/aone/bindings', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],
@@ -71,5 +71,37 @@ describe('WorkitemIntegrationPage', () => {
 
     expect(searchCalls).toBe(0);
     expect(await screen.findByText('当前为读写权限，搜索可托管项目需要管理员权限')).toBeInTheDocument();
+  });
+
+  it('keeps the last successful sync time visible when the latest sync failed', async () => {
+    server.use(
+      http.get('/api/integrations/aone/bindings', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{
+          id: 10007,
+          provider: 'AONE',
+          externalProjectId: '1086837',
+          externalProjectName: 'Terraform - 客户问题',
+          baseUrl: 'http://aone-api.alibaba-inc.com',
+          clientKey: 'terraform-competition-dashboard',
+          credentialMasked: '***',
+          regionId: '1',
+          writebackStaffId: '10009',
+          pollIntervalSeconds: 15,
+          enabled: true,
+          lastSuccessAt: '2026-08-06T14:43:07Z',
+          lastError: 'Aone request timed out',
+        }],
+      })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('最近成功同步')).toBeInTheDocument();
+    expect(await screen.findByText('最近同步失败')).toBeInTheDocument();
+    expect(screen.getByText(/2026\/8\/6/)).toBeInTheDocument();
   });
 });

@@ -47,6 +47,10 @@ class TerraformContractTest(unittest.TestCase):
             "public_source_cidrs",
             "common_tags",
             "lifecycle_mode",
+            "billing_strategy",
+            "purchase_period_months",
+            "auto_renew",
+            "auto_renew_period_months",
             "ecs_password",
             "rds_password",
             "redis_password",
@@ -67,7 +71,8 @@ class TerraformContractTest(unittest.TestCase):
             self.assertRegex(body, r"sensitive\s*=\s*true")
             self.assertNotRegex(body, r"(?m)^\s*default\s*=")
             self.assertIn("length(var.", body)
-            self.assertRegex(body, r"<=\s*32")
+            expected_max = 30 if name == "ecs_password" else 32
+            self.assertRegex(body, rf"<=\s*{expected_max}")
 
     def test_builds_two_zone_ha_data_and_compute_topology(self):
         self.assertRegex(self.terraform, r"for_each\s*=\s*local\.ecs_nodes")
@@ -86,19 +91,35 @@ class TerraformContractTest(unittest.TestCase):
         self.assertIn("redis.shard.small.ce", redis_class)
         self.assertRegex(self.terraform, r'host_name\s*=\s*"autowonder-\$\{replace\(each\.key, "_", "-"\)\}"')
 
-    def test_exposes_nlb_port_80_to_backend_7001(self):
-        self.assertIn('address_type       = "Internet"', self.terraform)
+    def test_exposes_alb_http_port_80_to_backend_7001(self):
+        for resource in (
+            'resource "alicloud_alb_load_balancer" "app"',
+            'resource "alicloud_alb_server_group" "app"',
+            'resource "alicloud_alb_listener" "application"',
+        ):
+            self.assertIn(resource, self.terraform)
+        self.assertNotRegex(self.terraform, r"alicloud_nlb|\bnlb[_-]")
+        self.assertRegex(self.terraform, r'address_type\s*=\s*"Internet"')
         self.assertIn("listener_port        = 80", self.terraform)
+        self.assertIn('listener_protocol    = "HTTP"', self.terraform)
         self.assertNotIn("listener_port        = 443", self.terraform)
         self.assertNotIn("listener_port        = 7001", self.terraform)
         self.assertIn("server_group_port = 7001", self.terraform)
+        self.assertIn('health_check_path         = "/checkpreload.htm"', self.terraform)
         self.assertIn("zone_mappings", self.terraform)
 
     def test_creates_mandatory_private_oss_and_three_sls_destinations(self):
         self.assertIn('resource "alicloud_oss_bucket" "package"', self.terraform)
         self.assertIn('resource "alicloud_oss_bucket" "artifact"', self.terraform)
-        self.assertIn('resource "alicloud_oss_bucket_acl" "package"', self.terraform)
-        self.assertIn('resource "alicloud_oss_bucket_acl" "artifact"', self.terraform)
+        for name in ("package", "artifact"):
+            block = re.search(
+                rf'resource "alicloud_oss_bucket" "{name}"\s*\{{(.*?)\n\}}',
+                self.terraform,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(block)
+            self.assertRegex(block.group(1), r'acl\s*=\s*"private"')
+        self.assertNotIn('resource "alicloud_oss_bucket_acl"', self.terraform)
         for name in ["system", "business", "metrics"]:
             self.assertIn(f'resource "alicloud_log_store" "{name}"', self.terraform)
         self.assertEqual(self.terraform.count('telemetry_type        = "Metrics"'), 1)
@@ -142,6 +163,21 @@ class TerraformContractTest(unittest.TestCase):
         self.assertIn("temporary", lifecycle)
         self.assertIn("deletion_protection", self.terraform)
         self.assertIn("backup_retention_period", self.terraform)
+
+    def test_supported_core_resources_buy_one_month_and_auto_renew_monthly(self):
+        for required in (
+            'instance_charge_type       = "PrePaid"',
+            'period                     = var.purchase_period_months',
+            'period_unit                = "Month"',
+            'renewal_status             = var.auto_renew ? "AutoRenewal" : "Normal"',
+            'auto_renew_period          = var.auto_renew_period_months',
+            'instance_charge_type     = "Prepaid"',
+            'auto_renew               = var.auto_renew',
+            'payment_type                = "PrePaid"',
+            'period                      = tostring(var.purchase_period_months)',
+        ):
+            self.assertIn(required, self.terraform)
+        self.assertIn('pay_type = "PayAsYouGo"', self.terraform)
 
     def test_example_contains_no_secrets(self):
         text = TFVARS_FILE.read_text(encoding="utf-8")

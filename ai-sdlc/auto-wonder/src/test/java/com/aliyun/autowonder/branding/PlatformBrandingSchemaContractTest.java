@@ -22,6 +22,20 @@ class PlatformBrandingSchemaContractTest {
         assertFalse(mapper.contains("mcp_base_url"));
     }
 
+    @Test
+    void seededBrandingDomainIsUnconfiguredSoLinksUseDeploymentBaseUrl() throws Exception {
+        String schema = Files.readString(Path.of("docs/autowonder-schema.sql"));
+
+        int insertStart = schema.indexOf("INSERT INTO `platform_branding_config`");
+        assertTrue(insertStart >= 0, "missing platform_branding_config seed insert");
+        int insertEnd = schema.indexOf(";", insertStart);
+        String seedInsert = schema.substring(insertStart, insertEnd);
+        assertTrue(seedInsert.contains("NULL"),
+                "seed domain must be NULL so unconfigured deployments fall back to public-base-url");
+        assertFalse(seedInsert.contains("auto-wonder.alibaba.net"),
+                "seed must not preset the internal default domain");
+    }
+
     private static String tableDefinition(String schema, String table) {
         var matcher = Pattern.compile(
                 "(?is)CREATE TABLE IF NOT EXISTS `" + table + "`\\s*\\((.*?)\\)\\s*ENGINE=")

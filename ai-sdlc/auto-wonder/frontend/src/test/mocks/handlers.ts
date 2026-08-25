@@ -71,13 +71,13 @@ export const handlers = [
       traceId: 'trace-1',
     });
   }),
-  http.get('/api/orgs/mine', () => {
+  http.get('/api/workspaces/mine', () => {
     return HttpResponse.json({
       success: true,
       code: '0',
       message: '',
       data: [],
-      traceId: 'trace-orgs-mine',
+      traceId: 'trace-workspaces-mine',
     });
   }),
   http.get('/api/agents/reviews/count', () => {

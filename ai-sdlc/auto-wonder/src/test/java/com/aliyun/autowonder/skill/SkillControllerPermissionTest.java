@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.skill;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,12 +11,12 @@ class SkillControllerPermissionTest {
 
     @Test
     void connectionTestRequiresReadWriteAccess() throws NoSuchMethodException {
-        RequireOrgAccess access = SkillController.class
+        RequireWorkspaceAccess access = SkillController.class
                 .getMethod("testConnection", Long.class, Long.class)
-                .getAnnotation(RequireOrgAccess.class);
+                .getAnnotation(RequireWorkspaceAccess.class);
 
         assertNotNull(access);
-        assertEquals(OrgAccessLevel.READ_WRITE, access.value());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, access.value());
         assertEquals("测试技能连接", access.action());
     }
 }

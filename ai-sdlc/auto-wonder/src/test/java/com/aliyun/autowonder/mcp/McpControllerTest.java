@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
@@ -53,7 +53,7 @@ class McpControllerTest {
         McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
         McpToolService toolService = mock(McpToolService.class);
         McpAccessTokenService.Principal principal =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
         when(tokenService.authenticate(null, "awmcp_query_token")).thenReturn(principal);
         when(toolService.listTools(principal)).thenReturn(List.of());
 
@@ -88,7 +88,7 @@ class McpControllerTest {
         McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
         McpToolService toolService = mock(McpToolService.class);
         McpAccessTokenService.Principal principal =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
         when(tokenService.authenticate(null, "awmcp_query_token")).thenReturn(principal);
         when(toolService.listTools(principal)).thenReturn(List.of());
 
@@ -105,7 +105,7 @@ class McpControllerTest {
         McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
         McpToolService toolService = mock(McpToolService.class);
         McpAccessTokenService.Principal principal =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
         when(tokenService.authenticate(null, "awmcp_query_token")).thenReturn(principal);
         when(toolService.call(principal, "autowonder.list_projects", Map.of()))
                 .thenReturn(List.of(Map.of("id", 100L)));
@@ -127,7 +127,7 @@ class McpControllerTest {
         McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
         McpToolService toolService = mock(McpToolService.class);
         McpAccessTokenService.Principal principal =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
         when(tokenService.authenticate(null, "awmcp_query_token")).thenReturn(principal);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new McpController(tokenService, toolService)).build();
 
@@ -148,7 +148,7 @@ class McpControllerTest {
         McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
         McpToolService toolService = mock(McpToolService.class);
         McpAccessTokenService.Principal principal =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
         when(tokenService.authenticate(null, "awmcp_query_token")).thenReturn(principal);
         MockMvc mvc = MockMvcBuilders.standaloneSetup(new McpController(tokenService, toolService)).build();
 
@@ -166,16 +166,16 @@ class McpControllerTest {
         McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
         McpToolService toolService = mock(McpToolService.class);
         McpAccessTokenService.Principal principal =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
         McpToolVO visible = new McpToolVO();
         visible.setName("autowonder.list_projects");
         when(tokenService.authenticate(null, "awmcp_query_token"))
                 .thenReturn(principal);
         when(toolService.listTools(principal)).thenAnswer(invocation -> {
-            assertEquals(100L, AutoWonderContext.get().getCurrentOrgId());
+            assertEquals(100L, AutoWonderContext.get().getCurrentWorkspaceId());
             assertEquals(7L, AutoWonderContext.get().getUserId());
-            assertEquals(OrgAccessLevel.READ_ONLY,
-                    AutoWonderContext.get().getOrgAccessLevel());
+            assertEquals(WorkspaceAccessLevel.READ_ONLY,
+                    AutoWonderContext.get().getWorkspaceAccessLevel());
             return List.of(visible);
         });
         McpController controller = new McpController(tokenService, toolService);
@@ -193,7 +193,7 @@ class McpControllerTest {
     }
 
     private McpAccessTokenService.Principal principal(
-            OrgAccessLevel accessLevel) {
+            WorkspaceAccessLevel accessLevel) {
         return new McpAccessTokenService.Principal(
                 100L, 7L, 1L, accessLevel,
                 McpAccessTokenService.CredentialType.CONVERSATION);

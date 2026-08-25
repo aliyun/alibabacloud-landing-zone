@@ -7,7 +7,7 @@ import com.aliyun.autowonder.agent.dto.SkillRequest;
 import com.aliyun.autowonder.agent.dto.MemoryRefRequest;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.memory.MemoryDO;
@@ -27,7 +27,7 @@ class AgentSubTableTest {
     AgentRepoPermDao repoPermDao;
     AgentSkillDao skillDao;
     AgentMemoryRefDao memoryRefDao;
-    OrgDao orgDao;
+    WorkspaceDao workspaceDao;
     AgentService service;
 	SkillDao capabilityDao;
 
@@ -38,9 +38,9 @@ class AgentSubTableTest {
         repoPermDao = mock(AgentRepoPermDao.class);
         skillDao = mock(AgentSkillDao.class);
         memoryRefDao = mock(AgentMemoryRefDao.class);
-        orgDao = mock(OrgDao.class);
+        workspaceDao = mock(WorkspaceDao.class);
 		capabilityDao = mock(SkillDao.class);
-        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, orgDao,
+        service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 mock(ExecutorDao.class), mock(ExecutorRegistry.class), capabilityDao);
     }
 

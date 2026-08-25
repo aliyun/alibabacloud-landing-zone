@@ -4,13 +4,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/admin")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看演进管理信息")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进管理信息")
 public class EvolutionAdminController {
 
     private final EvolutionAdminQueryLiteService adminQueryService;
@@ -24,7 +24,7 @@ public class EvolutionAdminController {
 
     @GetMapping("/overview")
     public Result<EvolutionAdminOverviewVO> overview(@RequestParam(value = "limit", required = false) Integer limit) {
-        return Result.ok(adminQueryService.overview(currentOrgId(), limit));
+        return Result.ok(adminQueryService.overview(currentWorkspaceId(), limit));
     }
 
     @GetMapping("/asset-manifest")
@@ -36,14 +36,14 @@ public class EvolutionAdminController {
         query.setAssetType(assetType);
         query.setContextKey(contextKey);
         query.setLimit(limit);
-        return Result.ok(assetManifestService.manifest(currentOrgId(), query));
+        return Result.ok(assetManifestService.manifest(currentWorkspaceId(), query));
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

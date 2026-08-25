@@ -107,4 +107,42 @@ class WorkitemDaoMappingTest {
         assertTrue(!assignedBlock.contains("sn.category") && !assignedBlock.contains("DONE"),
                 "ASSIGNED scope must not include status exclusion clauses");
     }
+
+    @Test
+    void statusCategoryFilterIsAppliedInsideListFilterBeforePagination() throws Exception {
+        String xml = new String(
+                getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
+                StandardCharsets.UTF_8);
+
+        assertTrue(xml.contains("<when test=\"statusCategory == 'IN_PROGRESS'\">"),
+                "listFilter should support IN_PROGRESS status category");
+        assertTrue(xml.contains("<when test=\"statusCategory == 'DONE'\">"),
+                "listFilter should support DONE status category");
+        assertTrue(xml.contains("<when test=\"statusCategory == 'PENDING_DECISION'\">"),
+                "listFilter should support PENDING_DECISION status category");
+        assertTrue(xml.contains("<when test=\"statusCategory == 'NEW'\">"),
+                "listFilter should support NEW status category");
+
+        int filterEnd = xml.indexOf("</sql>", xml.indexOf("<sql id=\"listFilter\">"));
+        int statusCategoryIdx = xml.indexOf("statusCategory == 'DONE'");
+        assertTrue(statusCategoryIdx > xml.indexOf("<sql id=\"listFilter\">") && statusCategoryIdx < filterEnd,
+                "status category filter must live inside listFilter so LIMIT pagination applies after it");
+    }
+
+    @Test
+    void statusCategoryInProgressExcludesDoneAndPendingDecision() throws Exception {
+        String xml = new String(
+                getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
+                StandardCharsets.UTF_8);
+
+        int start = xml.indexOf("<when test=\"statusCategory == 'IN_PROGRESS'\">");
+        int end = xml.indexOf("</when>", start);
+        String block = xml.substring(start, end);
+        assertTrue(block.contains("AND NOT <include refid=\"statusNameDone\"/>"),
+                "IN_PROGRESS must exclude done workitems");
+        assertTrue(block.contains("AND NOT <include refid=\"statusPendingDecision\"/>"),
+                "IN_PROGRESS must exclude pending-decision workitems, matching kanban column semantics");
+        assertTrue(block.contains("AND <include refid=\"statusNameInProgress\"/>"),
+                "IN_PROGRESS must match in-progress status names");
+    }
 }

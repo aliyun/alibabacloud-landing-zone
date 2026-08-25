@@ -10,8 +10,9 @@ state, and lifecycle behavior before planning or when answering architecture QA.
 The default `multi-zone HA` environment contains:
 
 - one VPC and two VSwitches in different availability zones;
-- two Linux x86_64 ECS nodes, one in each zone, with no public IP;
-- one cross-zone public NLB with a TCP listener on port 80;
+- two Linux x86_64 ECS nodes, one in each zone, each exactly 2 vCPU and 4 GiB
+  memory, with no public IP; prefer `ecs.c8a.large`;
+- one dual-zone public Application Load Balancer (ALB) with an HTTP listener on port 80;
 - MySQL 8 in a region-supported HA or cluster form;
 - Redis 7 in a region-supported multi-zone primary/replica form;
 - two private OSS buckets and one SLS project;
@@ -19,14 +20,16 @@ The default `multi-zone HA` environment contains:
 
 Preflight resolves current regional inventory instead of assuming fixed zone or
 SKU names. Stop when two zones or a genuine HA database/cache product cannot be
-supplied. Two nodes in one zone and an RDS Basic instance are not HA.
+supplied. An ECS fallback is permitted only when it is x86_64, exactly 2 vCPU
+and 4 GiB, and available in both zones. Two nodes in one zone and an RDS Basic
+instance are not HA.
 
 The `experience` topology is a separately chosen low-cost environment. Label it
 as non-HA and never silently downgrade the default.
 
 ## Traffic And Egress
 
-The NLB accepts only configured source CIDRs on public port 80, then forwards
+The ALB whitelist accepts only configured source CIDRs on public port 80, then forwards
 to ECS application port 7001. RDS and Redis accept only the minimum
 private network scope. ECS uses private endpoints for RDS, Redis, OSS, and SLS.
 There is no NAT, no public EIP, and no SSH rule. Git checkout and application
@@ -63,7 +66,7 @@ The application endpoint is a bare regional hostname, without `http://` or
 Terraform uses the operator's existing local Alibaba Cloud credential chain and
 does not create an operator. It creates one application RAM identity whose
 policy is scoped to the exact two buckets, the created SLS project, and its three
-stores. It has no ECS, NLB, VPC, RDS, or Redis control-plane permission.
+stores. It has no ECS, ALB, VPC, RDS, or Redis control-plane permission.
 
 The generated application AK/SK is secret deployment input. It must not appear
 in the sanitized manifest, Terraform command line, Cloud Assistant output, logs,
@@ -77,21 +80,23 @@ Apply supported tags to every taggable resource:
 | Key | Source |
 | --- | --- |
 | `Project=AutoWonder` | fixed |
-| `Environment` | questionnaire |
+| `Environment=auto-wonder-prod` | fixed |
 | `DeploymentId` | generated |
 | `ManagedBy=Terraform` | fixed |
 | `Topology` | selected topology |
-| `Owner`, `CostCenter` | optional |
+| `Owner`, `CostCenter` | not collected for new deployments |
 
-System keys win over custom tags. Report provider resource types that cannot be
-tagged, then run a post-apply tag inventory instead of silently omitting them.
+Only system tags are generated for new deployments. Report provider resource
+types that cannot be tagged, then run a post-apply tag inventory.
 
 ## State And Lifecycle
 
-Protected remote Terraform state is the default; local state is an explicit
-choice with restrictive permissions and a backup warning. `sensitive = true`
+Protected remote Terraform state is mandatory and automatic. The dedicated
+private state bucket and fixed absolute `backend.hcl` path are derived by
+`scripts/terraform-backend.sh`; they are never user inputs. `sensitive = true`
 only hides CLI rendering: state still contains values, so access to state is
-access to secrets.
+access to secrets. The state bucket is deleted only after verified main
+Terraform destruction.
 
 Persistent environments enable available deletion protection and backups.
 Temporary test environments allow planned teardown. Normal application rollback
@@ -100,7 +105,7 @@ its own impact review and destructive confirmation.
 
 ## Cost Drivers
 
-Major cost drivers are two ECS nodes, public NLB traffic, HA RDS, multi-zone
+Major cost drivers are two ECS nodes, public ALB traffic, HA RDS, multi-zone
 Redis, storage/requests in two OSS buckets, SLS ingestion/indexing/retention, and
 remote state resources. Presets express an intention; query live inventory and
 pricing before plan approval. Recommendations are not a live price quote.

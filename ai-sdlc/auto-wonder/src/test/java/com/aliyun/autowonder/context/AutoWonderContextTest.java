@@ -9,11 +9,11 @@ class AutoWonderContextTest {
     void tearDown() { AutoWonderContext.destroy(); }
 
     @Test
-    void holdsUserAndOrg() {
+    void holdsUserAndWorkspace() {
         AutoWonderContext.get().setUserId(7L);
-        AutoWonderContext.get().setCurrentOrgId(9L);
+        AutoWonderContext.get().setCurrentWorkspaceId(9L);
         assertEquals(7L, AutoWonderContext.get().getUserId());
-        assertEquals(9L, AutoWonderContext.get().getCurrentOrgId());
+        assertEquals(9L, AutoWonderContext.get().getCurrentWorkspaceId());
     }
 
     @Test

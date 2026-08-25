@@ -12,6 +12,7 @@ SCRIPTS = [
     "preflight.sh",
     "plan-upgrade.sh",
     "terraform-stage.sh",
+    "terraform-backend.sh",
     "build-release.sh",
     "deploy-via-cloud-assistant.sh",
     "initialize-and-verify.sh",
@@ -42,6 +43,164 @@ class ScriptContracts(unittest.TestCase):
         "AUTOWONDER_SIGAR_ENABLED": "true",
     }
 
+    def test_backend_metadata_is_deterministic_and_uses_fixed_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "region": "cn-hangzhou",
+                "environment": "auto-wonder-prod",
+                "deploymentId": "prod-abc12345",
+                "accountUid": "1234567890123456",
+                "stateMode": "remote",
+                "terraform": {"backendStatus": "pending"},
+            }))
+            command = [
+                "bash", str(ROOT / "scripts/terraform-backend.sh"), "metadata",
+                "--manifest", str(manifest), "--project-root", str(root),
+            ]
+            first = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(0, first.returncode, first.stderr)
+            first_data = json.loads(manifest.read_text())
+            second = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(0, second.returncode, second.stderr)
+            second_data = json.loads(manifest.read_text())
+            self.assertEqual(first_data["terraform"], second_data["terraform"])
+            self.assertRegex(first_data["terraform"]["stateBucket"], r"^aw-tfstate-prod-abc12345-[0-9a-f]{12}$")
+            self.assertEqual("states/prod-abc12345/terraform.tfstate", first_data["terraform"]["stateKey"])
+            self.assertEqual(
+                str(root.resolve()).replace("\\", "/") + "/deployments/prod-abc12345/terraform/backend.hcl",
+                first_data["terraform"]["stateReference"],
+            )
+
+            other = json.loads(manifest.read_text())
+            other["deploymentId"] = "prod-def67890"
+            other["terraform"] = {"backendStatus": "pending"}
+            manifest.write_text(json.dumps(other))
+            different = subprocess.run(command, text=True, capture_output=True)
+            self.assertEqual(0, different.returncode, different.stderr)
+            self.assertNotEqual(first_data["terraform"]["stateBucket"], json.loads(manifest.read_text())["terraform"]["stateBucket"])
+
+    def test_backend_prepare_uses_ossutil_v2_bucket_tags_command(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "schemaVersion": 1,
+                "region": "cn-beijing",
+                "environment": "auto-wonder-prod",
+                "deploymentId": "prod-abc12345",
+                "accountUid": "1234567890123456",
+                "stateMode": "remote",
+                "terraform": {"backendStatus": "pending"},
+            }))
+            binary_dir = root / "bin"
+            binary_dir.mkdir()
+            log = root / "ossutil.log"
+            cli_dir = root / ".aliyun"
+            cli_dir.mkdir()
+            (cli_dir / "config.json").write_text(json.dumps({
+                "current": "default",
+                "profiles": [{"name": "default", "access_key_id": "test-id",
+                              "access_key_secret": "test-secret", "sts_token": "test-token"}],
+            }))
+
+            aliyun = binary_dir / "aliyun"
+            aliyun.write_text("#!/usr/bin/env bash\necho '{\"AccountId\":\"1234567890123456\"}'\n")
+            aliyun.chmod(0o755)
+
+            ossutil = binary_dir / "ossutil"
+            ossutil.write_text(r'''#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$OSSUTIL_LOG"
+case "${1:-}:${2:-}" in
+  version:*|--version:*) echo 'ossutil version 2.1.0';;
+  help:cp|help:rm) echo '--endpoint --region --force';;
+  help:presign) echo '--expires-duration --endpoint --region';;
+  stat:*) exit 0;;
+  api:put-bucket-acl|api:put-bucket-versioning|api:put-bucket-tags) exit 0;;
+  api:put-bucket-tagging) echo 'unknown command' >&2; exit 1;;
+  *) exit 1;;
+esac
+''')
+            ossutil.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{binary_dir}:{env['PATH']}"
+            env["OSSUTIL_LOG"] = str(log)
+            env["HOME"] = str(root)
+
+            result = subprocess.run([
+                "bash", str(ROOT / "scripts/terraform-backend.sh"), "prepare",
+                "--manifest", str(manifest), "--project-root", str(root),
+            ], text=True, capture_output=True, env=env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("api put-bucket-tags ", log.read_text())
+            self.assertEqual("ready", json.loads(manifest.read_text())["terraform"]["backendStatus"])
+
+    def test_ossutil_legacy_uses_cli_profile_via_protected_temporary_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cli_config = root / "config.json"
+            cli_config.write_text(json.dumps({
+                "current": "deploy",
+                "profiles": [{"name": "deploy", "access_key_id": "test-id",
+                              "access_key_secret": "TEST_SECRET", "sts_token": "TEST_TOKEN"}],
+            }))
+            fake = root / "ossutil"
+            observed = root / "observed.json"
+            fake.write_text(r'''#!/usr/bin/env bash
+set -eu
+config=${2:-}
+python3 - "$config" "$OSSUTIL_OBSERVED" <<'PY'
+import json, os, pathlib, stat, sys
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "mode": stat.S_IMODE(p.stat().st_mode),
+    "has_id": "accessKeyID=test-id" in text,
+    "has_secret": "accessKeySecret=TEST_SECRET" in text,
+    "has_token": "stsToken=TEST_TOKEN" in text,
+    "path": str(p),
+}))
+PY
+''')
+            fake.chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                "ALIBABA_CLOUD_CLI_CONFIG_FILE": str(cli_config),
+                "OSSUTIL_OBSERVED": str(observed),
+                "OSSUTIL_BIN": str(fake),
+                "OSSUTIL_CONTRACT": "legacy",
+            })
+            result = subprocess.run([
+                "bash", "-c", 'source "$1"; ossutil_cli stat oss://example',
+                "bash", str(ROOT / "scripts/lib.sh"),
+            ], text=True, capture_output=True, env=env)
+            self.assertEqual(0, result.returncode, result.stderr)
+            data = json.loads(observed.read_text())
+            self.assertEqual(0o600, data["mode"])
+            self.assertTrue(data["has_id"] and data["has_secret"] and data["has_token"])
+            self.assertFalse(Path(data["path"]).exists())
+            self.assertNotIn("TEST_SECRET", result.stdout + result.stderr)
+            self.assertNotIn("TEST_TOKEN", result.stdout + result.stderr)
+
+    def test_backend_destroy_requires_verified_main_destroy(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "region": "cn-hangzhou", "environment": "auto-wonder-prod",
+                "deploymentId": "prod-abc12345", "accountUid": "1234567890123456",
+                "stateMode": "remote", "terraform": {"mainDestroyVerified": False},
+            }))
+            result = subprocess.run([
+                "bash", str(ROOT / "scripts/terraform-backend.sh"), "destroy",
+                "--manifest", str(manifest), "--project-root", str(root),
+            ], text=True, capture_output=True)
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("main Terraform destroy is not verified", result.stderr)
+
     def test_scripts_have_safe_shell_contract(self):
         for name in SCRIPTS:
             path = ROOT / "scripts" / name
@@ -70,6 +229,22 @@ class ScriptContracts(unittest.TestCase):
             deploy,
         )
 
+    def test_preflight_enforces_two_vcpu_four_gib_ecs_in_both_zones(self):
+        preflight = (ROOT / "scripts/preflight.sh").read_text()
+        for required in (
+            '.resolvedInfrastructure.ecsVcpus == 2',
+            '.resolvedInfrastructure.ecsMemoryGiB == 4',
+            'DescribeInstanceTypes',
+            '.CpuCoreCount == 2',
+            '.MemorySize == 4',
+            '.CpuArchitecture == "X86"',
+            'DescribeAvailableResource',
+            '--InstanceType "$ecs_instance_type"',
+            'ecs instance type is unavailable in zone',
+        ):
+            self.assertIn(required, preflight)
+        self.assertNotIn('--Cores 2 --Memory 4 --InstanceType', preflight)
+
     def test_preflight_dry_run_accepts_valid_manifest_and_rejects_secret(self):
         with tempfile.TemporaryDirectory() as td:
             manifest = self.valid_manifest(Path(td) / "manifest.json")
@@ -89,6 +264,75 @@ class ScriptContracts(unittest.TestCase):
             ], text=True, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("TEST_SECRET_DO_NOT_PRINT", result.stdout + result.stderr)
+
+    def test_preflight_queries_ecs_stock_by_instance_type_without_cpu_memory_conflict(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / "manifest.json")
+            data = json.loads(manifest.read_text())
+            data["mode"] = "resume"
+            manifest.write_text(json.dumps(data))
+
+            binary_dir = root / "bin"
+            binary_dir.mkdir()
+            for name in ("terraform", "openssl", "curl"):
+                executable = binary_dir / name
+                executable.write_text("#!/usr/bin/env bash\nexit 0\n")
+                executable.chmod(0o755)
+
+            ossutil = binary_dir / "ossutil"
+            ossutil.write_text(r'''#!/usr/bin/env bash
+set -eu
+case "${1:-}:${2:-}" in
+  version:*|--version:*) echo 'ossutil version 2.1.0';;
+  help:cp|help:rm) echo '--endpoint --region --force';;
+  help:presign) echo '--expires-duration --endpoint --region';;
+  *) exit 1;;
+esac
+''')
+            ossutil.chmod(0o755)
+
+            aliyun = binary_dir / "aliyun"
+            aliyun.write_text(r'''#!/usr/bin/env bash
+set -eu
+product=${1:-}; operation=${2:-}; shift 2
+case "$product:$operation" in
+  sts:GetCallerIdentity) echo '{"AccountId":"1234567890123456"}';;
+  ecs:DescribeZones) echo '{"Zones":{"Zone":[]}}';;
+  ecs:DescribeInstanceTypes)
+    echo '{"InstanceTypes":{"InstanceType":[{"InstanceTypeId":"ecs.c8a.large","CpuCoreCount":2,"MemorySize":4,"CpuArchitecture":"X86"}]}}'
+    ;;
+  ecs:DescribeAvailableResource)
+    has_type=false; has_cores=false; has_memory=false
+    for arg in "$@"; do
+      if [[ "$arg" == *$'\r'* ]]; then
+        echo 'zone contains a carriage return' >&2
+        exit 1
+      fi
+      [[ "$arg" == --InstanceType ]] && has_type=true
+      [[ "$arg" == --Cores ]] && has_cores=true
+      [[ "$arg" == --Memory ]] && has_memory=true
+    done
+    if [[ "$has_type" == true && ("$has_cores" == true || "$has_memory" == true) ]]; then
+      echo 'InvalidParam.TypeAndCpuMem.Conflict' >&2
+      exit 1
+    fi
+    echo '{"AvailableZones":{"AvailableZone":[{"AvailableResources":{"AvailableResource":[{"SupportedResources":{"SupportedResource":[{"Value":"ecs.c8a.large"}]}}]}}]}}'
+    ;;
+  *) exit 1;;
+esac
+''')
+            aliyun.chmod(0o755)
+
+            env = os.environ.copy()
+            env["PATH"] = f"{binary_dir}:{env['PATH']}"
+            result = subprocess.run([
+                "bash", str(ROOT / "scripts/preflight.sh"),
+                "--manifest", str(manifest), "--source-dir", str(ROOT.parents[1]),
+            ], text=True, capture_output=True, env=env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual("passed", json.loads(result.stdout)["status"])
 
     def test_terraform_apply_requires_matching_plan_hash(self):
         with tempfile.TemporaryDirectory() as td:
@@ -138,6 +382,10 @@ if [[ "$*" == *'output -json'* ]]; then printf '{}\\n'; fi
             self.assertEqual(tfvars["zone_a_id"], "zone-a")
             self.assertEqual(tfvars["zone_b_id"], "zone-b")
             self.assertEqual(tfvars["lifecycle_mode"], "persistent")
+            self.assertEqual(tfvars["billing_strategy"], "subscription-first")
+            self.assertEqual(tfvars["purchase_period_months"], 1)
+            self.assertIs(tfvars["auto_renew"], True)
+            self.assertEqual(tfvars["auto_renew_period_months"], 1)
             self.assertEqual(tfvars["ecs_image_id"], "aliyun-test-x86_64.vhd")
             self.assertEqual(tfvars["vpc_cidr"], "10.0.0.0/16")
             self.assertNotIn("availability_zones", tfvars)
@@ -163,7 +411,7 @@ if [[ "$*" == *'output -json'* ]]; then printf '{}\\n'; fi
             fake.write_text("""#!/usr/bin/env bash
 set -eu
 cat <<'JSON'
-{"region":{"value":"cn-hangzhou"},"ecs_instance_ids":{"value":{"zone_a":"i-a","zone_b":"i-b"}},"nlb_dns_name":{"value":"example.nlb.aliyuncs.com"},"rds":{"value":{"connection":"db.internal","port":"3306","database":"autowonder","account":"autowonder"}},"redis":{"value":{"connection":"redis.internal","port":6379}},"oss":{"value":{"package_bucket":"pkg-example","artifact_bucket":"arti-example","control_endpoint":"oss-cn-hangzhou.aliyuncs.com","runtime_endpoint":"oss-cn-hangzhou-internal.aliyuncs.com"}},"sls":{"value":{"project":"logs-example","stores":{"system":"system","business":"business","metrics":"metrics"},"control_endpoint":"cn-hangzhou.log.aliyuncs.com","runtime_endpoint":"cn-hangzhou-intranet.log.aliyuncs.com"}}}
+{"region":{"value":"cn-hangzhou"},"ecs_instance_ids":{"value":{"zone_a":"i-a","zone_b":"i-b"}},"load_balancer_address":{"value":"example.alb.aliyuncs.com"},"rds":{"value":{"connection":"db.internal","port":"3306","database":"autowonder","account":"autowonder"}},"redis":{"value":{"connection":"redis.internal","port":6379}},"oss":{"value":{"package_bucket":"pkg-example","artifact_bucket":"arti-example","control_endpoint":"oss-cn-hangzhou.aliyuncs.com","runtime_endpoint":"oss-cn-hangzhou-internal.aliyuncs.com"}},"sls":{"value":{"project":"logs-example","stores":{"system":"system","business":"business","metrics":"metrics"},"control_endpoint":"cn-hangzhou.log.aliyuncs.com","runtime_endpoint":"cn-hangzhou-intranet.log.aliyuncs.com"}}}
 JSON
 """)
             fake.chmod(0o755)
@@ -430,6 +678,7 @@ printf '%s|%s|%s\n' "$(cloud_assistant_invocation_id <<<"$legacy")" "$(cloud_ass
             fake = root / "ossutil"
             fake.write_text(r'''#!/usr/bin/env bash
 set -eu
+if [[ ${1:-} == -c ]]; then shift 2; fi
 case "${OSSUTIL_FAKE_MODE}:${1:-}:${2:-}" in
   v2:version:*|v2:--version:*) echo 'ossutil version 2.1.0';;
   legacy:version:*|legacy:--version:*) echo 'ossutil version 1.7.19';;
@@ -926,10 +1175,15 @@ esac
             "topology": "multi-az-ha", "architecture": "x86_64", "availabilityZones": ["zone-a", "zone-b"],
             "network": {"vpcCidr": "10.0.0.0/16", "zoneACidr": "10.0.1.0/24", "zoneBCidr": "10.0.2.0/24"},
             "resolvedInfrastructure": {"ecsImageId": "aliyun-test-x86_64.vhd", "ecsInstanceType": "ecs.c8a.large",
+                                       "preferredEcsInstanceType": "ecs.c8a.large", "ecsVcpus": 2,
+                                       "ecsMemoryGiB": 4,
                                        "rdsInstanceType": "mysql.n2.medium.2c", "rdsCategory": "HighAvailability",
                                        "rdsStorageType": "cloud_essd", "rdsStorageGb": 100,
                                        "redisInstanceClass": "redis.shard.small.ce"},
             "stateMode": "local", "lifecycle": "persistent", "executionMode": "staged",
+            "billing": {"strategy": "subscription-first", "purchasePeriodMonths": 1,
+                        "autoRenew": True, "autoRenewPeriodMonths": 1,
+                        "payAsYouGoExceptions": ["ALB", "OSS", "SLS"]},
             "ingressScenario": "no-domain-no-certificate", "domain": "", "publicSourceCidrs": ["198.51.100.0/24"],
             "applicationBaseUrl": "http://public-nlb.example.com",
             "releaseVersion": "0.4.0",

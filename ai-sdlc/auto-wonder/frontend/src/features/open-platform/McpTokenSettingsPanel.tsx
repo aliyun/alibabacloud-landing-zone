@@ -31,7 +31,7 @@ const { Paragraph, Text } = Typography;
 const TOKEN_PLACEHOLDER = '<MCP_TOKEN>';
 
 export const MCP_PERMISSION_HINT =
-  'MCP token 权限跟随你在目标组织中的权限；调用组织域工具时需要传入 orgId。';
+  'MCP token 权限跟随你在目标工作空间中的权限；调用工作空间域工具时需要传入 workspaceId。';
 
 type CapabilityMeta = {
   key: string;
@@ -94,8 +94,8 @@ const CAPABILITIES: CapabilityMeta[] = [
   },
   {
     key: 'project',
-    title: '组织发现',
-    description: '列出可访问组织及权限等级，用于获取 orgId。',
+    title: '工作空间发现',
+    description: '列出可访问工作空间及权限等级，用于获取 workspaceId。',
     color: 'green',
     match: (name) => name.includes('project'),
   },

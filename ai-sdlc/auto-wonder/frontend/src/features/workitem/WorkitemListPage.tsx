@@ -1,18 +1,24 @@
-import { useState } from 'react';
-import { Table, Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Pagination, Input } from 'antd';
-import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined } from '@ant-design/icons';
+import { useMemo, useState } from 'react';
+import { Table, Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input } from 'antd';
+import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined, LinkOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { useDeleteWorkitem, useWorkitemList } from './hooks';
+import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns } from './hooks';
 import { WorkitemKanban } from './components/WorkitemKanban';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
 import { HumanInterventionBadge } from './components/HumanInterventionBadge';
-import { workTypeMap } from './constants';
+import { workTypeMap, STATUS_COLUMNS } from './constants';
 import type { Workitem } from '@/shared/types/workitem';
+import type { WorkitemStatusCategory } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 type ViewMode = 'kanban' | 'table';
 type Scope = 'ALL' | 'PENDING' | 'CREATED' | 'ASSIGNED';
+type StatusCategory = WorkitemStatusCategory;
+
+/** 看板每列首屏加载条数，点「加载更多」按此步长递增 */
+const KANBAN_COLUMN_PAGE_SIZE = 50;
+const ALL_STATUS_KEYS = STATUS_COLUMNS.map(col => col.key as StatusCategory);
 
 const SCOPE_STORAGE_KEY = 'autowonder.workitems.scope';
 const LEGACY_PENDING_KEY = 'autowonder.workitems.onlyMyPendingDecision';
@@ -111,13 +117,36 @@ export function WorkitemListPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(100);
   const [workType, setWorkType] = useState<string | undefined>();
+  const [statusCategory, setStatusCategory] = useState<StatusCategory | undefined>();
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   const [scope, setScope] = useState<Scope>(readScopePreference);
   const [keyword, setKeyword] = useState<string | undefined>();
+  const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
 
-  const { data, isLoading } = useWorkitemList({ page, size, workType, ...scopeToQuery(scope), keyword });
+  const isKanban = viewMode === 'kanban';
+  const baseQuery = { workType, ...scopeToQuery(scope), keyword };
+
+  // 表格视图用全量分页查询；看板视图下只取 total 给页面标题用
+  const { data, isLoading } = useWorkitemList(
+    { ...baseQuery, statusCategory, page: isKanban ? 1 : page, size: isKanban ? 1 : size },
+  );
   const items = data?.list ?? [];
   const total = data?.total ?? 0;
+
+  // 看板每列各自带 statusCategory 去服务端查，列内容不再取决于全量列表的页码
+  const visibleColumnKeys = statusCategory ? [statusCategory] : ALL_STATUS_KEYS;
+  const kanbanColumns = useWorkitemKanbanColumns(
+    baseQuery, visibleColumnKeys, columnSizes, KANBAN_COLUMN_PAGE_SIZE, isKanban,
+  );
+  const kanbanItems = useMemo(() => {
+    const byId = new Map<number | string, Workitem>();
+    kanbanColumns.forEach(col => col.items.forEach(item => byId.set(item.id, item)));
+    return Array.from(byId.values());
+  }, [kanbanColumns]);
+  const columnTotals = Object.fromEntries(kanbanColumns.map(col => [col.key, col.total]));
+  const columnHasMore = Object.fromEntries(kanbanColumns.map(col => [col.key, col.hasMore]));
+  const kanbanLoading = kanbanColumns.some(col => col.isLoading);
+
   const deleteMutation = useDeleteWorkitem();
 
   const columns: ColumnsType<Workitem> = [
@@ -154,7 +183,34 @@ export function WorkitemListPage() {
     },
     {
       title: '创建者', dataIndex: 'creatorDisplayName', width: 140,
-      render: (name: string | null) => name || '-',
+      render: (name: string | null, record: Workitem) => {
+        if (record.sourceType !== 'EXTERNAL') return name || record.creatorName || '-';
+        const sourceCreator = record.sourceCreator;
+        if (!sourceCreator) return '来源创建者未返回';
+        if (sourceCreator.displayName && sourceCreator.subjectId) {
+          return `${sourceCreator.displayName}（${sourceCreator.subjectId}）`;
+        }
+        return sourceCreator.displayName || sourceCreator.subjectId || '来源创建者未返回';
+      },
+    },
+    {
+      title: '来源', dataIndex: 'sourceType', width: 100,
+      render: (sourceType: string | null, record: Workitem) => {
+        if (sourceType !== 'EXTERNAL') return '-';
+        const provider = record.sourceProvider?.toUpperCase() === 'AONE'
+          ? 'Aone'
+          : record.sourceProvider || '外部工单';
+        return record.sourceUrl ? (
+          <a
+            href={record.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <LinkOutlined /> 来自 {provider}
+          </a>
+        ) : <span><LinkOutlined /> 来自 {provider}</span>;
+      },
     },
     {
       title: 'SDLC', dataIndex: 'sdlcName', width: 120,
@@ -187,6 +243,7 @@ export function WorkitemListPage() {
     setScope(next);
     writeScopePreference(next);
     setPage(1);
+    setColumnSizes({});
   };
 
   const handlePageChange = (nextPage: number, nextSize: number) => {
@@ -225,34 +282,41 @@ export function WorkitemListPage() {
           placeholder="类型筛选"
           allowClear
           style={{ width: 120 }}
-          onChange={(v) => { setWorkType(v); setPage(1); }}
+          onChange={(v) => { setWorkType(v); setPage(1); setColumnSizes({}); }}
           options={[
             { value: 'REQ', label: '需求' },
             { value: 'TASK', label: '任务' },
             { value: 'BUG', label: '缺陷' },
           ]}
         />
+        <Select
+          placeholder="状态筛选"
+          allowClear
+          style={{ width: 120 }}
+          value={statusCategory}
+          onChange={(v) => { setStatusCategory(v); setPage(1); setColumnSizes({}); }}
+          options={STATUS_COLUMNS.map(col => ({ value: col.key as StatusCategory, label: col.title }))}
+        />
         <Input.Search
           allowClear
           placeholder="搜索工单ID或标题"
-          onSearch={(v) => { setKeyword(v || undefined); setPage(1); }}
+          onSearch={(v) => { setKeyword(v || undefined); setPage(1); setColumnSizes({}); }}
           style={{ width: 220 }}
         />
       </Space>
 
       {viewMode === 'kanban' ? (
-        <>
-          <WorkitemKanban items={items} loading={isLoading} />
-          <Pagination
-            current={page}
-            pageSize={size}
-            total={total}
-            onChange={handlePageChange}
-            showSizeChanger
-            showTotal={(itemTotal) => `共 ${itemTotal} 条`}
-            style={{ marginTop: 16, textAlign: 'right' }}
-          />
-        </>
+        <WorkitemKanban
+          items={kanbanItems}
+          loading={kanbanLoading}
+          columnKeys={visibleColumnKeys}
+          columnTotals={columnTotals}
+          columnHasMore={columnHasMore}
+          onLoadMore={(key) => setColumnSizes(prev => ({
+            ...prev,
+            [key]: (prev[key] ?? KANBAN_COLUMN_PAGE_SIZE) + KANBAN_COLUMN_PAGE_SIZE,
+          }))}
+        />
       ) : (
         <Table
           rowKey="id"

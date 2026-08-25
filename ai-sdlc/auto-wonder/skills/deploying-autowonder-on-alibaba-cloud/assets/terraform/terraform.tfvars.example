@@ -7,6 +7,10 @@ zone_a_id           = "cn-beijing-a"
 zone_b_id           = "cn-beijing-b"
 public_source_cidrs = ["203.0.113.10/32"]
 lifecycle_mode      = "persistent"
+billing_strategy              = "subscription-first"
+purchase_period_months        = 1
+auto_renew                    = true
+auto_renew_period_months      = 1
 ecs_image_id        = "replace-with-a-verified-x86-64-image-id"
 
 common_tags = {

@@ -3,11 +3,14 @@ import { useAuthStore } from '@/shared/auth/store';
 import type { PageResult } from '@/shared/types/common';
 import type { Workitem, WorkitemDetail, TimelineEvent, Comment, Participant, DeliveryProgress, TimelineItem, Clarification, Artifact, RuntimeTrace, RuntimeTraceObservation, RuntimeTraceTurn } from '@/shared/types/workitem';
 
+export type WorkitemStatusCategory = 'NEW' | 'IN_PROGRESS' | 'PENDING_DECISION' | 'DONE';
+
 export interface WorkitemQuery {
   page: number;
   size: number;
   workType?: string;
   statusNodeId?: number;
+  statusCategory?: WorkitemStatusCategory;
   assigneeType?: string;
   assigneeRef?: number;
   pendingDecisionOnly?: boolean;

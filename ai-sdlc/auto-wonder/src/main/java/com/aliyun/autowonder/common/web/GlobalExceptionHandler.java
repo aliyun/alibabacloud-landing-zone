@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.common.web;
 
-import com.aliyun.autowonder.access.OrgAccessDeniedException;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.dto.OrgAccessDeniedVO;
+import com.aliyun.autowonder.access.WorkspaceAccessDeniedException;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.dto.WorkspaceAccessDeniedVO;
 import com.aliyun.autowonder.common.error.AlreadyLoggedException;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -12,6 +12,7 @@ import javax.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -33,29 +34,29 @@ public class GlobalExceptionHandler {
         HttpStatus status = HttpStatus.OK;
         if (ErrorCode.UNAUTHORIZED.getCode().equals(ex.getCode())) {
             status = HttpStatus.UNAUTHORIZED;
-        } else if (ErrorCode.ORG_NOT_MEMBER.getCode().equals(ex.getCode())
+        } else if (ErrorCode.WORKSPACE_NOT_MEMBER.getCode().equals(ex.getCode())
                 || ErrorCode.NO_PERMISSION.getCode().equals(ex.getCode())) {
             status = HttpStatus.FORBIDDEN;
         } else if (ErrorCode.PARAM_INVALID.getCode().equals(ex.getCode())
-                || ErrorCode.ORG_ACCESS_LEVEL_INVALID.getCode().equals(ex.getCode())) {
+                || ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID.getCode().equals(ex.getCode())) {
             status = HttpStatus.BAD_REQUEST;
         } else if (ErrorCode.CONFLICT.getCode().equals(ex.getCode())
-                || ErrorCode.ORG_OWNER_MUTATION_PROTECTED.getCode().equals(ex.getCode())
-                || ErrorCode.ORG_SELF_LEVEL_MUTATION_FORBIDDEN.getCode().equals(ex.getCode())
-                || ErrorCode.ORG_OWNER_TRANSFER_INVALID.getCode().equals(ex.getCode())) {
+                || ErrorCode.WORKSPACE_OWNER_MUTATION_PROTECTED.getCode().equals(ex.getCode())
+                || ErrorCode.WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN.getCode().equals(ex.getCode())
+                || ErrorCode.WORKSPACE_OWNER_TRANSFER_INVALID.getCode().equals(ex.getCode())) {
             status = HttpStatus.CONFLICT;
         }
         return ResponseEntity.status(status)
                 .body(Result.fail(ex.getCode(), ex.getMessage()));
     }
 
-    @ExceptionHandler(OrgAccessDeniedException.class)
-    public ResponseEntity<Result<OrgAccessDeniedVO>> handleOrgAccessDenied(
-            OrgAccessDeniedException ex) {
-        OrgAccessDeniedVO data = new OrgAccessDeniedVO(
+    @ExceptionHandler(WorkspaceAccessDeniedException.class)
+    public ResponseEntity<Result<WorkspaceAccessDeniedVO>> handleWorkspaceAccessDenied(
+            WorkspaceAccessDeniedException ex) {
+        WorkspaceAccessDeniedVO data = new WorkspaceAccessDeniedVO(
                 ex.getCurrent(), ex.getRequired(), ex.getAction());
-        Result<OrgAccessDeniedVO> result = Result.fail(
-                ErrorCode.ORG_ACCESS_INSUFFICIENT.getCode(), ex.getMessage(), data);
+        Result<WorkspaceAccessDeniedVO> result = Result.fail(
+                ErrorCode.WORKSPACE_ACCESS_INSUFFICIENT.getCode(), ex.getMessage(), data);
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(result);
     }
 
@@ -69,8 +70,8 @@ public class GlobalExceptionHandler {
             HttpMessageNotReadableException ex) {
         Throwable rootCause = rootCause(ex);
         ErrorCode errorCode = rootCause instanceof InvalidFormatException invalidFormat
-                && OrgAccessLevel.class.equals(invalidFormat.getTargetType())
-                ? ErrorCode.ORG_ACCESS_LEVEL_INVALID
+                && WorkspaceAccessLevel.class.equals(invalidFormat.getTargetType())
+                ? ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID
                 : ErrorCode.PARAM_INVALID;
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Result.fail(errorCode));
@@ -100,6 +101,15 @@ public class GlobalExceptionHandler {
                 MDC.get("requestId"));
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(Result.fail(ErrorCode.PARAM_INVALID.getCode(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Result<Void>> handleDataIntegrityViolation(
+            DataIntegrityViolationException ex) {
+        Throwable cause = ex.getMostSpecificCause();
+        LOGGER.warn("data integrity violation: {}", cause != null ? cause.getMessage() : ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.fail(ErrorCode.CONFLICT.getCode(), "数据冲突，请刷新页面后重试"));
     }
 
     @ExceptionHandler(Throwable.class)

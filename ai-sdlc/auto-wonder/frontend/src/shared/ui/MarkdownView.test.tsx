@@ -4,6 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { MarkdownView } from './MarkdownView';
 
 describe('MarkdownView', () => {
+  it('ignores null member names when highlighting mentions', () => {
+    render(
+      <MarkdownView
+        content="请 @有效成员 处理"
+        mentionNames={[null, undefined, '  有效成员  ']}
+      />,
+    );
+
+    expect(screen.getByText('@有效成员')).toBeInTheDocument();
+  });
+
   it('renders sanitized Aone html as readable rich text', () => {
     render(
       <MarkdownView
@@ -178,6 +189,27 @@ describe('MarkdownView', () => {
     expect(screen.queryByRole('button', { name: /打开产物/ })).not.toBeInTheDocument();
   });
 
+  it('renders gfm pipe tables as real tables', () => {
+    const { container } = render(
+      <MarkdownView
+        content={['| 列A | 列B |', '| --- | --- |', '| 值1 | 值2 |'].join('\n')}
+      />,
+    );
+
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(screen.getAllByRole('columnheader').map((el) => el.textContent)).toEqual(['列A', '列B']);
+    expect(screen.getAllByRole('cell').map((el) => el.textContent)).toEqual(['值1', '值2']);
+  });
+
+  it('renders gfm strikethrough as del elements', () => {
+    const { container } = render(<MarkdownView content="~~已废弃~~方案" />);
+
+    const del = container.querySelector('del');
+    expect(del).not.toBeNull();
+    expect(del).toHaveTextContent('已废弃');
+  });
+
   it('keeps unmatched artifact-looking paths as plain text', () => {
     render(<MarkdownView content="证据：artifacts/output/deliverables/missing.md" artifacts={[]} />);
 
@@ -204,5 +236,23 @@ describe('MarkdownView', () => {
     expect(screen.getByRole('link', { name: '报告' })).toHaveAttribute('href', 'artifacts/output/deliverables/report.md');
     expect(container).toHaveTextContent('https://example.com/deliverables/report.md');
     expect(screen.getAllByRole('button', { name: /打开产物/ })).toHaveLength(1);
+  });
+
+  it('skips null or undefined mention names instead of crashing render', () => {
+    render(
+      <MarkdownView
+        content="请 @张三 确认结论"
+        mentionNames={['张三', null, undefined, '   ']}
+      />,
+    );
+
+    const mention = screen.getByText('@张三');
+    expect(mention).toHaveStyle({ color: '#0958d9', backgroundColor: '#e6f4ff' });
+    expect(screen.getByText(/确认结论/)).toBeInTheDocument();
+  });
+
+  it('renders without crashing when content is null', () => {
+    const { container } = render(<MarkdownView content={null as unknown as string} mentionNames={['张三']} />);
+    expect(container.firstElementChild).toBeInTheDocument();
   });
 });

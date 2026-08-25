@@ -45,4 +45,24 @@ describe('CommentInput mention menu', () => {
     openMentionMenu();
     expect(screen.getAllByRole('menuitem')).toHaveLength(15);
   });
+
+  it('skips candidates with null names instead of crashing the detail page', () => {
+    const candidates: Participant[] = [
+      ...buildCandidates(2),
+      {
+        userId: 40013,
+        targetType: 'AGENT',
+        name: null as unknown as string,
+        displayId: '40013',
+        role: 'AGENT',
+        roleName: '开发小队成员',
+        isAgent: true,
+        online: false,
+      },
+    ];
+    render(<CommentInput workitemId="1" mentionCandidates={candidates} />);
+    const menu = openMentionMenu();
+    expect(menu).toBeInTheDocument();
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+  });
 });

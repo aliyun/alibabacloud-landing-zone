@@ -10,8 +10,8 @@ import {
   AppLayout,
   buildHeaderContext,
   buildUserDisplay,
-  getOrgDeepLinkId,
-  removeOrgDeepLink,
+  getWorkspaceDeepLinkId,
+  removeWorkspaceDeepLink,
   shouldUseMobileLayout,
 } from './AppLayout';
 import { useAuthStore } from '@/shared/auth/store';
@@ -47,24 +47,24 @@ describe('AppLayout', () => {
     vi.clearAllMocks();
   });
 
-  it('builds organization-aware header context for nested routes', () => {
+  it('builds workspace-aware header context for nested routes', () => {
     expect(buildHeaderContext('/settings/roles', '星云工坊')).toEqual({
-      orgName: '星云工坊',
+      workspaceName: '星云工坊',
       sectionTitle: '系统设置',
       pageTitle: '成员管理',
     });
     expect(buildHeaderContext('/repos/map', '星云工坊')).toEqual({
-      orgName: '星云工坊',
+      workspaceName: '星云工坊',
       sectionTitle: '仓库',
       pageTitle: '仓库关系图',
     });
     expect(buildHeaderContext('/open-platform', '星云工坊')).toEqual({
-      orgName: '星云工坊',
+      workspaceName: '星云工坊',
       sectionTitle: '',
       pageTitle: '',
     });
     expect(buildHeaderContext('/about', '星云工坊')).toEqual({
-      orgName: '星云工坊',
+      workspaceName: '星云工坊',
       sectionTitle: '',
       pageTitle: '关于 AutoWonder',
     });
@@ -90,7 +90,7 @@ describe('AppLayout', () => {
   });
 
   it('refreshes current membership on mount and when the window regains focus', () => {
-    useAuthStore.getState().setCurrentOrg(
+    useAuthStore.getState().setCurrentWorkspace(
       { id: 7, name: '星云工坊', description: '' },
       'ADMIN',
     );
@@ -110,22 +110,22 @@ describe('AppLayout', () => {
     expect(refreshCurrentMembership).toHaveBeenCalledTimes(2);
   });
 
-  it('parses and removes one-shot org deep-link parameters', () => {
-    expect(getOrgDeepLinkId('?orgId=8')).toBe(8);
-    expect(getOrgDeepLinkId('?orgId=0')).toBeNull();
-    expect(getOrgDeepLinkId('?orgId=abc')).toBeNull();
-    expect(removeOrgDeepLink('?orgId=8&tab=timeline')).toBe('?tab=timeline');
-    expect(removeOrgDeepLink('?orgId=8')).toBe('');
+  it('parses and removes one-shot workspace deep-link parameters', () => {
+    expect(getWorkspaceDeepLinkId('?workspaceId=8')).toBe(8);
+    expect(getWorkspaceDeepLinkId('?workspaceId=0')).toBeNull();
+    expect(getWorkspaceDeepLinkId('?workspaceId=abc')).toBeNull();
+    expect(removeWorkspaceDeepLink('?workspaceId=8&tab=timeline')).toBe('?tab=timeline');
+    expect(removeWorkspaceDeepLink('?workspaceId=8')).toBe('');
   });
 
-  it('renders org context and complete user information in the header', () => {
+  it('renders workspace context and complete user information in the header', () => {
     useAuthStore.getState().setUser({
       id: 1,
       username: 'alice',
       nickname: '爱丽丝',
       email: 'alice@example.com',
     });
-    useAuthStore.getState().setCurrentOrg({ id: 7, name: '星云工坊', description: '研发组织' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
 
     renderWithQueryClient(
       <MemoryRouter initialEntries={['/settings/roles']}>
@@ -138,9 +138,9 @@ describe('AppLayout', () => {
     );
 
     expect(screen.getAllByText('星云工坊')).toHaveLength(1);
-    const orgInitialMarks = screen.getAllByText('星');
-    expect(orgInitialMarks).toHaveLength(1);
-    orgInitialMarks.forEach((mark) => {
+    const workspaceInitialMarks = screen.getAllByText('星');
+    expect(workspaceInitialMarks).toHaveLength(1);
+    workspaceInitialMarks.forEach((mark) => {
       expect(mark).toHaveStyle({ color: '#ff6a00', borderColor: 'rgba(255, 106, 0, 0.28)' });
     });
     expect(screen.getByText('爱')).toHaveStyle({ color: '#ff6a00', borderColor: 'rgba(255, 106, 0, 0.28)' });
@@ -158,7 +158,7 @@ describe('AppLayout', () => {
       nickname: '爱丽丝',
       email: 'alice@example.com',
     });
-    useAuthStore.getState().setCurrentOrg({ id: 7, name: '星云工坊', description: '研发组织' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
 
     renderWithQueryClient(
       <MemoryRouter initialEntries={['/workitems']}>
@@ -177,37 +177,37 @@ describe('AppLayout', () => {
     expect(await screen.findByText('个人设置页')).toBeInTheDocument();
   });
 
-  it('switches to the deep-linked workitem organization and cleans the url', async () => {
+  it('switches to the deep-linked workitem workspace and cleans the url', async () => {
     useAuthStore.getState().setUser({
       id: 1,
       username: 'alice',
       nickname: '爱丽丝',
       email: 'alice@example.com',
     });
-    useAuthStore.getState().setAccessToken('org-7-token');
-    useAuthStore.getState().setCurrentOrg({ id: 7, name: '星云工坊', description: '研发组织' }, 'READ_ONLY');
+    useAuthStore.getState().setAccessToken('workspace-7-token');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
     server.use(
-      http.get('/api/orgs/mine', () => HttpResponse.json({
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
         traceId: null,
         data: [
-          { id: 7, name: '星云工坊', description: '研发组织' },
-          { id: 8, name: '平台商业化', description: '私有化组织' },
+          { id: 7, name: '星云工坊', description: '研发工作空间' },
+          { id: 8, name: '平台商业化', description: '私有化工作空间' },
         ],
       })),
-      http.post('/api/orgs/8/switch', () => HttpResponse.json({
+      http.post('/api/workspaces/8/switch', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
         traceId: null,
-        data: { accessToken: 'org-8-token', accessLevel: 'READ_ONLY' },
+        data: { accessToken: 'workspace-8-token', accessLevel: 'READ_ONLY' },
       })),
     );
 
     const { queryClient } = renderWithQueryClient(
-      <MemoryRouter initialEntries={['/workitems/42?orgId=8']}>
+      <MemoryRouter initialEntries={['/workitems/42?workspaceId=8']}>
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/workitems/:id" element={<><LocationProbe /><div>工单详情页</div></>} />
@@ -216,38 +216,38 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
     queryClient.setQueryData(['workitems', { page: 1 }], { list: [{ id: 101 }] });
-    queryClient.setQueryData(['workitem', '42'], { id: 42, title: '旧组织详情缓存' });
+    queryClient.setQueryData(['workitem', '42'], { id: 42, title: '旧工作空间详情缓存' });
     queryClient.setQueryData(['workitem', '42', 'unified-timeline'], [{ id: 1 }]);
 
     await waitFor(() => {
-      expect(useAuthStore.getState().currentOrg?.id).toBe(8);
+      expect(useAuthStore.getState().currentWorkspace?.id).toBe(8);
     });
-    expect(useAuthStore.getState().accessToken).toBe('org-8-token');
+    expect(useAuthStore.getState().accessToken).toBe('workspace-8-token');
     expect(await screen.findByTestId('location-probe')).toHaveTextContent('/workitems/42');
-    await waitFor(() => expect(screen.getByTestId('location-probe')).not.toHaveTextContent('orgId=8'));
+    await waitFor(() => expect(screen.getByTestId('location-probe')).not.toHaveTextContent('workspaceId=8'));
     expect(queryClient.getQueryData(['workitems', { page: 1 }])).toBeUndefined();
     expect(queryClient.getQueryData(['workitem', '42'])).toBeUndefined();
     expect(queryClient.getQueryData(['workitem', '42', 'unified-timeline'])).toBeUndefined();
   });
 
-  it('opens org dropdown menu from the sidebar org chip', async () => {
+  it('opens workspace dropdown menu from the sidebar workspace chip', async () => {
     useAuthStore.getState().setUser({
       id: 1,
       username: 'alice',
       nickname: '爱丽丝',
       email: 'alice@example.com',
     });
-    useAuthStore.getState().setAccessToken('org-7-token');
-    useAuthStore.getState().setCurrentOrg({ id: 7, name: '星云工坊', description: '研发组织' }, 'READ_ONLY');
+    useAuthStore.getState().setAccessToken('workspace-7-token');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
     server.use(
-      http.get('/api/orgs/mine', () => HttpResponse.json({
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
         traceId: null,
         data: [
-          { id: 7, name: '星云工坊', description: '研发组织' },
-          { id: 8, name: '平台商业化', description: '私有化组织' },
+          { id: 7, name: '星云工坊', description: '研发工作空间' },
+          { id: 8, name: '平台商业化', description: '私有化工作空间' },
         ],
       })),
     );
@@ -266,35 +266,35 @@ describe('AppLayout', () => {
     await userEvent.click(screen.getByText('星云工坊'));
 
     expect(await screen.findByText('平台商业化')).toBeInTheDocument();
-    expect(await screen.findByText('管理组织...')).toBeInTheDocument();
+    expect(await screen.findByText('管理工作空间...')).toBeInTheDocument();
   });
 
-  it('switches org from the sidebar dropdown without navigating away', async () => {
+  it('switches workspace from the sidebar dropdown without navigating away', async () => {
     useAuthStore.getState().setUser({
       id: 1,
       username: 'alice',
       nickname: '爱丽丝',
       email: 'alice@example.com',
     });
-    useAuthStore.getState().setAccessToken('org-7-token');
-    useAuthStore.getState().setCurrentOrg({ id: 7, name: '星云工坊', description: '研发组织' }, 'READ_ONLY');
+    useAuthStore.getState().setAccessToken('workspace-7-token');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
     server.use(
-      http.get('/api/orgs/mine', () => HttpResponse.json({
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
         traceId: null,
         data: [
-          { id: 7, name: '星云工坊', description: '研发组织' },
-          { id: 8, name: '平台商业化', description: '私有化组织' },
+          { id: 7, name: '星云工坊', description: '研发工作空间' },
+          { id: 8, name: '平台商业化', description: '私有化工作空间' },
         ],
       })),
-      http.post('/api/orgs/8/switch', () => HttpResponse.json({
+      http.post('/api/workspaces/8/switch', () => HttpResponse.json({
         success: true,
         code: '0',
         message: '',
         traceId: null,
-        data: { accessToken: 'org-8-token', accessLevel: 'READ_ONLY' },
+        data: { accessToken: 'workspace-8-token', accessLevel: 'READ_ONLY' },
       })),
     );
 
@@ -303,7 +303,7 @@ describe('AppLayout', () => {
         <Routes>
           <Route element={<AppLayout />}>
             <Route path="/workitems" element={<><LocationProbe /><div>工单页</div></>} />
-            <Route path="/orgs" element={<div>组织选择页</div>} />
+            <Route path="/workspaces" element={<div>工作空间选择页</div>} />
           </Route>
         </Routes>
       </MemoryRouter>,
@@ -317,24 +317,24 @@ describe('AppLayout', () => {
     await userEvent.click(await screen.findByText('平台商业化'));
 
     await waitFor(() => {
-      expect(useAuthStore.getState().currentOrg?.id).toBe(8);
+      expect(useAuthStore.getState().currentWorkspace?.id).toBe(8);
     });
-    expect(useAuthStore.getState().accessToken).toBe('org-8-token');
+    expect(useAuthStore.getState().accessToken).toBe('workspace-8-token');
     expect(await screen.findByTestId('location-probe')).toHaveTextContent('/workitems');
-    expect(screen.queryByText('组织选择页')).not.toBeInTheDocument();
+    expect(screen.queryByText('工作空间选择页')).not.toBeInTheDocument();
     expect(queryClient.getQueryData(['workitems', { page: 1 }])).toBeUndefined();
     expect(queryClient.getQueryData(['agents', 1, 10])).toBeUndefined();
   });
 
-  it('removes the legacy "切换组织" menu item from the user dropdown', async () => {
+  it('removes the legacy "切换工作空间" menu item from the user dropdown', async () => {
     useAuthStore.getState().setUser({
       id: 1,
       username: 'alice',
       nickname: '爱丽丝',
       email: 'alice@example.com',
     });
-    useAuthStore.getState().setAccessToken('org-7-token');
-    useAuthStore.getState().setCurrentOrg({ id: 7, name: '星云工坊', description: '研发组织' }, 'READ_ONLY');
+    useAuthStore.getState().setAccessToken('workspace-7-token');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
 
     renderWithQueryClient(
       <MemoryRouter initialEntries={['/workitems']}>
@@ -347,13 +347,13 @@ describe('AppLayout', () => {
     );
 
     await userEvent.click(screen.getByText('爱丽丝'));
-    expect(screen.queryByText('切换组织')).not.toBeInTheDocument();
+    expect(screen.queryByText('切换工作空间')).not.toBeInTheDocument();
     expect(screen.getByText('个人设置')).toBeInTheDocument();
     expect(screen.getByText('退出登录')).toBeInTheDocument();
   });
 
-  it('applies truncation constraints for long org and user text', () => {
-    const longOrgName = '超长组织名称'.repeat(12);
+  it('applies truncation constraints for long workspace and user text', () => {
+    const longWorkspaceName = '超长工作空间名称'.repeat(12);
     const longNickname = '超长昵称'.repeat(12);
     const longEmail = `${'verylong'.repeat(8)}@example.com`;
 
@@ -363,7 +363,7 @@ describe('AppLayout', () => {
       nickname: longNickname,
       email: longEmail,
     });
-    useAuthStore.getState().setCurrentOrg({ id: 8, name: longOrgName, description: '长组织' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 8, name: longWorkspaceName, description: '长工作空间' }, 'READ_ONLY');
 
     renderWithQueryClient(
       <MemoryRouter initialEntries={['/status-templates']}>
@@ -375,9 +375,9 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
 
-    const orgTexts = screen.getAllByTitle(longOrgName);
-    expect(orgTexts).toHaveLength(1);
-    expect(orgTexts[0]).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+    const workspaceTexts = screen.getAllByTitle(longWorkspaceName);
+    expect(workspaceTexts).toHaveLength(1);
+    expect(workspaceTexts[0]).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
     expect(screen.getByTitle(longNickname)).toHaveStyle({ textOverflow: 'ellipsis', maxWidth: '220px' });
     expect(screen.getByTitle(longEmail)).toHaveStyle({ textOverflow: 'ellipsis', maxWidth: '220px' });
     expect(screen.getByTitle('状态模版')).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });

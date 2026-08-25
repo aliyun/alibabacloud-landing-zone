@@ -36,7 +36,7 @@ public class NotificationController {
         int sz = Math.min(Math.max(size, 1), 100);
         int offset = (p - 1) * sz;
         List<NotificationVO> result = new ArrayList<>();
-        for (NotificationDO n : notificationDao.listByRecipient(currentOrgId(), currentUserId(), status, offset, sz)) {
+        for (NotificationDO n : notificationDao.listByRecipient(currentWorkspaceId(), currentUserId(), status, offset, sz)) {
             result.add(toVO(n));
         }
         return Result.ok(result);
@@ -44,25 +44,25 @@ public class NotificationController {
 
     @GetMapping("/unread-count")
     public Result<Integer> unreadCount() {
-        return Result.ok(notifyService.unreadCount(currentOrgId(), currentUserId()));
+        return Result.ok(notifyService.unreadCount(currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/{id}/read")
     public Result<Void> markRead(@PathVariable("id") Long id) {
-        notifyService.markRead(id, currentOrgId(), currentUserId());
+        notifyService.markRead(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/read-all")
     public Result<Void> markAllRead() {
-        notifyService.markAllRead(currentOrgId(), currentUserId());
+        notifyService.markAllRead(currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @GetMapping("/prefs")
     public Result<List<NotifyPrefVO>> listPrefs() {
         List<NotifyPrefVO> result = new ArrayList<>();
-        for (NotifyPrefDO p : prefDao.listByUser(currentOrgId(), currentUserId())) {
+        for (NotifyPrefDO p : prefDao.listByUser(currentWorkspaceId(), currentUserId())) {
             NotifyPrefVO vo = new NotifyPrefVO();
             vo.setType(p.getType());
             vo.setInApp(p.getInApp() != null && p.getInApp() == 1);
@@ -77,7 +77,7 @@ public class NotificationController {
         if (req.getItems() == null || req.getItems().isEmpty()) {
             return Result.ok(null);
         }
-        long tenantId = currentOrgId();
+        long tenantId = currentWorkspaceId();
         long userId = currentUserId();
         for (UpdatePrefRequest.PrefItem item : req.getItems()) {
             NotifyPrefDO existing = prefDao.findByUserAndType(tenantId, userId, item.getType());
@@ -116,9 +116,9 @@ public class NotificationController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) { throw new BizException(ErrorCode.ORG_NOT_MEMBER); }
-        return orgId;
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) { throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER); }
+        return workspaceId;
     }
 }

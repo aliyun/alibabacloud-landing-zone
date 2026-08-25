@@ -510,6 +510,49 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    void acknowledgeTurnPersistsFailureNoticeWhenReplyIsEmpty() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel("WORKITEM_CLARIFICATION");
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L))
+                .thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "FAILED", "boom"))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "FAILED", "boom", null, null);
+
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "回复失败：boom".equals(t.getContent())
+                && "FAILED".equals(t.getStatus())
+                && "boom".equals(t.getError())));
+    }
+
+    @Test
+    void acknowledgeTurnPersistsPlaceholderWhenReplyAndErrorAreBlank() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel("WORKITEM_CLARIFICATION");
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L))
+                .thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "  ", null);
+
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "（数字人未返回内容）".equals(t.getContent())));
+        verify(sinkRegistry, never()).resolve(any());
+    }
+
+    @Test
     void acknowledgeDispatchesNextQueuedTurnAfterDelivery() {
         AgentConversationDO conv = existingConversationWithSession();
         when(convDao.findById(1L, 77L)).thenReturn(conv);

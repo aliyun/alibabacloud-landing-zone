@@ -1,8 +1,19 @@
 package com.aliyun.autowonder.mcp;
 
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.auth.jwt.JwtProperties;
+import com.aliyun.autowonder.auth.jwt.JwtService;
+import com.aliyun.autowonder.branding.PlatformBrandingDao;
+import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.mcp.dto.WorkitemCliUploadTokenVO;
+import com.aliyun.autowonder.storage.InMemoryObjectStorage;
+import com.aliyun.autowonder.storage.OssProperties;
+import com.aliyun.autowonder.workitem.WorkitemDO;
+import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.agent.AgentService;
@@ -22,8 +33,8 @@ import com.aliyun.autowonder.memory.MemoryService;
 import com.aliyun.autowonder.memory.dto.CreateMemoryRequest;
 import com.aliyun.autowonder.memory.dto.MemoryVO;
 import com.aliyun.autowonder.memory.dto.UpdateMemoryRequest;
-import com.aliyun.autowonder.org.OrgService;
-import com.aliyun.autowonder.org.dto.OrgVO;
+import com.aliyun.autowonder.workspace.WorkspaceService;
+import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.CreateRelationRequest;
 import com.aliyun.autowonder.repo.dto.CreateRepoRequest;
@@ -52,6 +63,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.core.env.Environment;
 
 import java.util.Date;
 import java.util.Map;
@@ -63,10 +75,10 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class McpToolServiceTest {
-    private static final long ORG_ID = 100L;
+    private static final long WORKSPACE_ID = 100L;
     private static final long USER_ID = 7L;
 
-    OrgService orgService;
+    WorkspaceService workspaceService;
     WorkitemService workitemService;
     GuidanceService guidanceService;
     SkillService skillService;
@@ -76,6 +88,7 @@ class McpToolServiceTest {
     StatusTemplateService statusTemplateService;
     DispatchDao dispatchDao;
     RequirementDocumentService requirementDocumentService;
+    WorkitemCliUploadTokenService workitemCliUploadTokenService;
     MemoryService memoryService;
     RepoService repoService;
     SquadService squadService;
@@ -85,7 +98,7 @@ class McpToolServiceTest {
 
     @BeforeEach
     void setUp() {
-        orgService = mock(OrgService.class);
+        workspaceService = mock(WorkspaceService.class);
         workitemService = mock(WorkitemService.class);
         guidanceService = mock(GuidanceService.class);
         skillService = mock(SkillService.class);
@@ -95,15 +108,23 @@ class McpToolServiceTest {
         statusTemplateService = mock(StatusTemplateService.class);
         dispatchDao = mock(DispatchDao.class);
         requirementDocumentService = mock(RequirementDocumentService.class);
+        workitemCliUploadTokenService = mock(WorkitemCliUploadTokenService.class);
+        when(workitemCliUploadTokenService.commandTemplate()).thenReturn(
+                "npx -y autowonder@0.2.130 workitem upload --server-url https://daily.auto-wonder.example.com"
+                        + " --workitem-id <workitem-id>"
+                        + " --file <filepath-1> --file <filepath-2> --file <images-1> --json");
+        when(workitemCliUploadTokenService.tokenEnvHint()).thenReturn(
+                "export AUTOWONDER_UPLOAD_TOKEN='<token returned by autowonder.workitem_cli_upload_token>'");
         memoryService = mock(MemoryService.class);
         repoService = mock(RepoService.class);
         squadService = mock(SquadService.class);
         dispatchPauseService = mock(DispatchPauseService.class);
-        service = new McpToolService(orgService, workitemService, guidanceService, skillService,
+        service = new McpToolService(workspaceService, workitemService, guidanceService, skillService,
                 skillPackageService, sdlcService, agentService, statusTemplateService,
-                new PlatformSkillCatalog(), dispatchDao, requirementDocumentService, memoryService, repoService,
+                new PlatformSkillCatalog(), dispatchDao, requirementDocumentService,
+                workitemCliUploadTokenService, memoryService, repoService,
                 squadService, dispatchPauseService);
-        principal = principal(OrgAccessLevel.READ_WRITE);
+        principal = principal(WorkspaceAccessLevel.READ_WRITE);
     }
 
     @Test
@@ -120,6 +141,7 @@ class McpToolServiceTest {
                 "autowonder.get_sdlc",
                 "autowonder.list_agents",
                 "autowonder.get_agent",
+                "autowonder.get_agent_version",
                 "autowonder.get_agent_version_status",
                 "autowonder.list_skills",
                 "autowonder.get_skill",
@@ -136,40 +158,40 @@ class McpToolServiceTest {
                 .map(McpToolVO::getName)
                 .collect(java.util.stream.Collectors.toSet());
         Set<String> readOnlyCatalog =
-                service.listTools(scopedPrincipal(OrgAccessLevel.READ_ONLY)).stream()
+                service.listTools(scopedPrincipal(WorkspaceAccessLevel.READ_ONLY)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet());
 
         assertEquals(expectedReadOnly, readOnlyCatalog);
         assertEquals(fullCatalog,
-                service.listTools(scopedPrincipal(OrgAccessLevel.READ_WRITE)).stream()
+                service.listTools(scopedPrincipal(WorkspaceAccessLevel.READ_WRITE)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet()));
         assertEquals(fullCatalog,
-                service.listTools(scopedPrincipal(OrgAccessLevel.ADMIN)).stream()
+                service.listTools(scopedPrincipal(WorkspaceAccessLevel.ADMIN)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet()));
-        assertEquals(71, fullCatalog.size());
+        assertEquals(77, fullCatalog.size());
     }
 
     @Test
     void agentBindingToolsDeduplicateIdsAndDelegateToAgentService() {
         assertEquals(Map.of("repoIds", List.of(11L, 12L)),
                 service.call(principal, "autowonder.bind_agent_repos",
-                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
                                 "repoIds", List.of(11L, 11L, 12L), "permLevel", "WRITE")));
         assertEquals(Map.of("skillIds", List.of(21L, 22L)),
                 service.call(principal, "autowonder.bind_agent_skills",
-                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
                                 "skillIds", List.of(21L, 21L, 22L))));
         assertEquals(Map.of("memoryIds", List.of(31L, 32L)),
                 service.call(principal, "autowonder.bind_agent_memories",
-                        Map.of("orgId", ORG_ID, "agentId", 5L,
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
                                 "memoryIds", List.of(31L, 31L, 32L), "source", "ORG")));
 
-        verify(agentService, times(2)).addRepoPerm(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
-        verify(agentService, times(2)).addSkill(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
-        verify(agentService, times(2)).addMemoryRef(eq(5L), any(), eq(ORG_ID), eq(USER_ID));
+        verify(agentService, times(2)).addRepoPerm(eq(5L), any(), eq(WORKSPACE_ID), eq(USER_ID));
+        verify(agentService, times(2)).addSkill(eq(5L), any(), eq(WORKSPACE_ID), eq(USER_ID));
+        verify(agentService, times(2)).addMemoryRef(eq(5L), any(), eq(WORKSPACE_ID), eq(USER_ID));
 
         assertEquals("array", ((Map<?, ?>) outputProperties(toolByName("autowonder.bind_agent_repos"))
                 .get("repoIds")).get("type"));
@@ -180,14 +202,37 @@ class McpToolServiceTest {
     }
 
     @Test
+    void agentUnbindingToolsDeduplicateIdsAndDelegateToAgentService() {
+        assertEquals(Map.of("repoIds", List.of(11L, 12L)),
+                service.call(principal, "autowonder.unbind_agent_repos",
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
+                                "repoIds", List.of(11L, 11L, 12L))));
+        assertEquals(Map.of("skillIds", List.of(21L, 22L)),
+                service.call(principal, "autowonder.unbind_agent_skills",
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
+                                "skillIds", List.of(21L, 21L, 22L))));
+        assertEquals(Map.of("memoryIds", List.of(31L, 32L)),
+                service.call(principal, "autowonder.unbind_agent_memories",
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
+                                "memoryIds", List.of(31L, 31L, 32L))));
+
+        verify(agentService).removeRepoPerm(5L, 11L, WORKSPACE_ID, USER_ID);
+        verify(agentService).removeRepoPerm(5L, 12L, WORKSPACE_ID, USER_ID);
+        verify(agentService).removeSkill(5L, 21L, WORKSPACE_ID, USER_ID);
+        verify(agentService).removeSkill(5L, 22L, WORKSPACE_ID, USER_ID);
+        verify(agentService).removeMemoryRef(5L, 31L, WORKSPACE_ID, USER_ID);
+        verify(agentService).removeMemoryRef(5L, 32L, WORKSPACE_ID, USER_ID);
+    }
+
+    @Test
     void squadToolsDelegateToSquadServiceAndExposePrimitiveMemberIds() {
         SquadVO squad = new SquadVO();
         when(squadService.get(42L)).thenReturn(squad);
 
-        assertEquals(squad, service.call(principal, "autowonder.get_squad", Map.of("orgId", ORG_ID, "id", 42L)));
+        assertEquals(squad, service.call(principal, "autowonder.get_squad", Map.of("workspaceId", WORKSPACE_ID, "id", 42L)));
         assertEquals(Map.of("added", true), service.call(principal, "autowonder.add_agent_to_squad",
-                Map.of("orgId", ORG_ID, "squadId", 42L, "agentId", 5L)));
-        verify(squadService).addMembers(42L, List.of(5L), ORG_ID);
+                Map.of("workspaceId", WORKSPACE_ID, "squadId", 42L, "agentId", 5L)));
+        verify(squadService).addMembers(42L, List.of(5L), WORKSPACE_ID);
 
         Map<String, Object> properties = outputProperties(toolByName("autowonder.get_squad"));
         @SuppressWarnings("unchecked")
@@ -202,28 +247,28 @@ class McpToolServiceTest {
         RepoVO repo = new RepoVO();
         repo.setId(10L);
         repo.setName("service");
-        when(repoService.list(ORG_ID, 1, 100)).thenReturn(List.of(repo));
+        when(repoService.list(WORKSPACE_ID, 1, 100)).thenReturn(List.of(repo));
         RepoRelationVO relation = new RepoRelationVO();
         relation.setId(91L);
         relation.setFromRepoId(10L);
         relation.setToRepoId(11L);
         relation.setRelationType("DEPENDS_ON");
-        when(repoService.listRelationsByRepoId(ORG_ID, 10L)).thenReturn(List.of(relation));
-        when(repoService.createRelation(any(CreateRelationRequest.class), eq(ORG_ID), eq(USER_ID)))
+        when(repoService.listRelationsByRepoId(WORKSPACE_ID, 10L)).thenReturn(List.of(relation));
+        when(repoService.createRelation(any(CreateRelationRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
                 .thenReturn(relation);
 
         assertEquals(List.of(repo), service.call(principal, "autowonder.list_repos",
-                Map.of("orgId", ORG_ID)));
+                Map.of("workspaceId", WORKSPACE_ID)));
         assertEquals(List.of(relation), service.call(principal, "autowonder.list_repo_relations",
-                Map.of("orgId", ORG_ID, "repoId", 10L)));
+                Map.of("workspaceId", WORKSPACE_ID, "repoId", 10L)));
         assertEquals(relation, service.call(principal, "autowonder.create_repo_relation",
-                Map.of("orgId", ORG_ID, "fromRepoId", 10L, "toRepoId", 11L,
+                Map.of("workspaceId", WORKSPACE_ID, "fromRepoId", 10L, "toRepoId", 11L,
                         "relationType", "DEPENDS_ON")));
         service.call(principal, "autowonder.delete_repo_relation",
-                Map.of("orgId", ORG_ID, "id", 91L));
+                Map.of("workspaceId", WORKSPACE_ID, "id", 91L));
 
-        verify(repoService).get(10L, ORG_ID);
-        verify(repoService).deleteRelation(91L, ORG_ID);
+        verify(repoService).get(10L, WORKSPACE_ID);
+        verify(repoService).deleteRelation(91L, WORKSPACE_ID);
     }
 
     @Test
@@ -231,7 +276,7 @@ class McpToolServiceTest {
         RepoVO created = new RepoVO();
         created.setId(20L);
         created.setName("new-repo");
-        when(repoService.create(any(CreateRepoRequest.class), eq(ORG_ID), eq(USER_ID)))
+        when(repoService.create(any(CreateRepoRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
                 .thenReturn(created);
 
         Object result = call(principal, "autowonder.create_repo",
@@ -244,13 +289,13 @@ class McpToolServiceTest {
                         && "git@github.com:group/new-repo.git".equals(req.getUrl())
                         && "main".equals(req.getDefaultBranch())
                         && "A new repo".equals(req.getDescription())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
     void createRepoSchemaRequiresNameAndUrl() {
         Map<String, Object> schema = schemaFor("autowonder.create_repo");
-        assertEquals(List.of("orgId", "name", "url"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "name", "url"), schema.get("required"));
         assertTrue(properties(schema).keySet().containsAll(
                 List.of("name", "url", "defaultBranch", "description")));
     }
@@ -260,7 +305,7 @@ class McpToolServiceTest {
         RepoVO updated = new RepoVO();
         updated.setId(20L);
         updated.setName("renamed-repo");
-        when(repoService.update(eq(20L), any(UpdateRepoRequest.class), eq(ORG_ID), eq(USER_ID)))
+        when(repoService.update(eq(20L), any(UpdateRepoRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
                 .thenReturn(updated);
 
         Object result = call(principal, "autowonder.update_repo",
@@ -270,13 +315,13 @@ class McpToolServiceTest {
         verify(repoService).update(eq(20L), argThat(req ->
                 "renamed-repo".equals(req.getName())
                         && "Updated description".equals(req.getDescription())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
     void updateRepoSchemaRequiresIdAndMakesOtherFieldsOptional() {
         Map<String, Object> schema = schemaFor("autowonder.update_repo");
-        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "id"), schema.get("required"));
         assertTrue(properties(schema).keySet().containsAll(
                 List.of("id", "name", "url", "defaultBranch", "description")));
     }
@@ -287,13 +332,13 @@ class McpToolServiceTest {
                 Map.of("id", 20L));
 
         assertEquals(Map.of("deleted", true), result);
-        verify(repoService).delete(20L, ORG_ID, USER_ID);
+        verify(repoService).delete(20L, WORKSPACE_ID, USER_ID);
     }
 
     @Test
     void deleteRepoSchemaRequiresOnlyId() {
         Map<String, Object> schema = schemaFor("autowonder.delete_repo");
-        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "id"), schema.get("required"));
         assertTrue(properties(schema).containsKey("id"));
     }
 
@@ -312,14 +357,14 @@ class McpToolServiceTest {
     @Test
     void everyFilteredMutationIsIndependentlyRejectedBeforeDispatch() {
         Set<String> readOnlyNames =
-                service.listTools(scopedPrincipal(OrgAccessLevel.READ_ONLY)).stream()
+                service.listTools(scopedPrincipal(WorkspaceAccessLevel.READ_ONLY)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet());
 
         for (McpToolVO tool : service.listTools()) {
             if (!readOnlyNames.contains(tool.getName())) {
                 BizException exception = assertThrows(BizException.class, () ->
-                        call(principal(OrgAccessLevel.READ_ONLY),
+                        call(principal(WorkspaceAccessLevel.READ_ONLY),
                                 tool.getName(), Map.of()));
                 assertEquals("10403", exception.getCode(), tool.getName());
             }
@@ -346,6 +391,106 @@ class McpToolServiceTest {
                 .anyMatch(tool -> "autowonder.create_skill_from_package".equals(tool.getName())));
         assertTrue(service.listTools().stream()
                 .anyMatch(tool -> "autowonder.update_skill_package".equals(tool.getName())));
+    }
+
+    @Test
+    void workitemCliUploadTokenToolIsRegisteredWithIdRequired() {
+        McpToolVO tool = toolByName("autowonder.workitem_cli_upload_token");
+
+        Map<String, Object> schema = tool.getInputSchema();
+        assertEquals(List.of("workspaceId", "id"), schema.get("required"));
+        assertTrue(properties(schema).containsKey("id"));
+        assertTrue(tool.getDescription().contains(
+                "npx -y autowonder@0.2.130 workitem upload --server-url https://daily.auto-wonder.example.com"));
+        assertTrue(tool.getDescription().contains(
+                "--file <filepath-1> --file <filepath-2> --file <images-1> --json"));
+
+        Map<String, Object> output = outputProperties(tool);
+        assertTrue(output.keySet().containsAll(List.of("token", "tokenType", "expiresInSeconds", "expiresAt",
+                "serverUrl", "runtimeVersion", "tokenEnvName", "command", "powershellCommand",
+                "supportedExtensions", "maxFiles", "maxFileSizeBytes", "maxTotalSizeBytes")));
+        assertEquals("array", ((Map<?, ?>) output.get("supportedExtensions")).get("type"));
+    }
+
+    @Test
+    void uploadWorkitemDocumentDescriptionIsDeprecatedAndPointsToCli() {
+        McpToolVO tool = toolByName("autowonder.upload_workitem_document");
+
+        assertTrue(tool.getDescription().startsWith(
+                "DEPRECATED: Do not send file content or Base64 through MCP."));
+        assertTrue(tool.getDescription().contains("autowonder.workitem_cli_upload_token"));
+        assertTrue(tool.getDescription().contains(
+                "npx -y autowonder@0.2.130 workitem upload --server-url https://daily.auto-wonder.example.com"
+                        + " --workitem-id <workitem-id>"
+                        + " --file <filepath-1> --file <filepath-2> --file <images-1> --json"));
+    }
+
+    @Test
+    void workitemCliUploadTokenInvocationDelegatesForPersonalCredential() {
+        WorkitemCliUploadTokenVO vo = new WorkitemCliUploadTokenVO();
+        vo.setToken("awupload_xyz");
+        when(workitemCliUploadTokenService.mint(
+                McpAccessTokenService.CredentialType.LONG_LIVED, USER_ID, 50063L))
+                .thenReturn(vo);
+
+        Object result = call(principal, "autowonder.workitem_cli_upload_token", Map.of("id", 50063L));
+
+        assertSame(vo, result);
+        verify(workitemCliUploadTokenService).mint(
+                McpAccessTokenService.CredentialType.LONG_LIVED, USER_ID, 50063L);
+    }
+
+    @Test
+    void workitemCliUploadTokenInvocationPropagatesScopedCredentialTypes() {
+        when(workitemCliUploadTokenService.mint(
+                argThat(type -> type != McpAccessTokenService.CredentialType.LONG_LIVED),
+                anyLong(), anyLong()))
+                .thenThrow(new BizException(ErrorCode.NO_PERMISSION,
+                        "仅长期个人 MCP 凭证可以签发上传令牌"));
+
+        for (McpAccessTokenService.Principal caller : new McpAccessTokenService.Principal[]{
+                dispatchPrincipal(5L), scopedPrincipal(WorkspaceAccessLevel.ADMIN)}) {
+            BizException exception = assertThrows(BizException.class, () ->
+                    call(caller, "autowonder.workitem_cli_upload_token", Map.of("id", 50063L)));
+            assertEquals("10403", exception.getCode());
+        }
+        verify(workitemCliUploadTokenService).mint(
+                McpAccessTokenService.CredentialType.DISPATCH, USER_ID, 50063L);
+        verify(workitemCliUploadTokenService).mint(
+                McpAccessTokenService.CredentialType.CONVERSATION, USER_ID, 50063L);
+    }
+
+    @Test
+    void privateDeploymentDescriptionsAndResultsNeverExposeDefaults() {
+        WorkitemCliUploadTokenService realTokenService = realTokenService(
+                "http://autowonder.internal.example.com:8080", "0.9.9-rc.1");
+        McpToolService privateService = new McpToolService(workspaceService, workitemService, guidanceService,
+                skillService, skillPackageService, sdlcService, agentService, statusTemplateService,
+                new PlatformSkillCatalog(), dispatchDao, requirementDocumentService,
+                realTokenService, memoryService, repoService, squadService, dispatchPauseService);
+
+        List<McpToolVO> tools = privateService.listTools();
+        String tokenDescription = tools.stream()
+                .filter(tool -> "autowonder.workitem_cli_upload_token".equals(tool.getName()))
+                .findFirst().orElseThrow().getDescription();
+        String uploadDescription = tools.stream()
+                .filter(tool -> "autowonder.upload_workitem_document".equals(tool.getName()))
+                .findFirst().orElseThrow().getDescription();
+
+        for (String description : new String[]{tokenDescription, uploadDescription}) {
+            assertTrue(description.contains("autowonder@0.9.9-rc.1"), description);
+            assertTrue(description.contains("http://autowonder.internal.example.com:8080"), description);
+            assertFalse(description.contains("autowonder@latest"), description);
+            assertFalse(description.contains("auto-wonder.alibaba.net"), description);
+        }
+
+        WorkitemCliUploadTokenVO vo = (WorkitemCliUploadTokenVO) privateService.call(principal,
+                "autowonder.workitem_cli_upload_token", withWorkspaceId(Map.of("id", 50063L)));
+        assertEquals("http://autowonder.internal.example.com:8080", vo.getServerUrl());
+        assertEquals("0.9.9-rc.1", vo.getRuntimeVersion());
+        assertFalse(vo.getCommand().contains("autowonder@latest"));
+        assertFalse(vo.getCommand().contains("auto-wonder.alibaba.net"));
+        assertFalse(vo.getPowershellCommand().contains("auto-wonder.alibaba.net"));
     }
 
     @Test
@@ -491,7 +636,7 @@ class McpToolServiceTest {
     void listToolCallsReturnPlainLists() {
         WorkitemVO workitem = new WorkitemVO();
         workitem.setId(1L);
-        when(workitemService.list(null, null, null, null, false, null, 100L, 7L, null, 1, 20))
+        when(workitemService.list(null, null, null, null, null, false, null, 100L, 7L, null, 1, 20))
                 .thenReturn(new PageResult<>(List.of(workitem), 1, 1, 20));
 
         SdlcVO sdlc = new SdlcVO();
@@ -522,7 +667,7 @@ class McpToolServiceTest {
                 "instructionMd", "checklistJson", "gatePolicyJson", "required", "timeoutSeconds",
                 "retryBudget", "code", "handlerType", "handlerRoleRef", "statusOnEnterCode",
                 "onSuccess", "onFail")));
-        assertEquals(List.of("orgId", "sdlcId"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "sdlcId"), schema.get("required"));
     }
 
     @Test
@@ -536,7 +681,7 @@ class McpToolServiceTest {
                 "retryBudget", "code", "handlerType", "handlerRoleRef", "statusOnEnterCode",
                 "onSuccess", "onFail")));
         assertFalse(properties.containsKey("stepOrder"));
-        assertEquals(List.of("orgId", "sdlcId", "stepId"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "sdlcId", "stepId"), schema.get("required"));
     }
 
     @Test
@@ -545,6 +690,28 @@ class McpToolServiceTest {
                 "autowonder.update_sdlc_step", "autowonder.delete_sdlc_step",
                 "autowonder.reorder_sdlc_steps")) {
             assertTrue(toolFor(name).getDescription().contains("including enabled"), name);
+        }
+    }
+
+    @Test
+    void updateSdlcStepAdvertisesActiveFlowContentEdits() {
+        String description = toolFor("autowonder.update_sdlc_step").getDescription();
+        assertTrue(description.contains("active flows"), description);
+        assertTrue(description.contains("checklistJson"), description);
+    }
+
+    @Test
+    void sdlcStepToolsDocumentChecklistAndGatePolicyExamples() {
+        for (String name : List.of("autowonder.add_sdlc_step", "autowonder.update_sdlc_step")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> properties =
+                    (Map<String, Object>) schemaFor(name).get("properties");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> checklist = (Map<String, Object>) properties.get("checklistJson");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> gatePolicy = (Map<String, Object>) properties.get("gatePolicyJson");
+            assertTrue(String.valueOf(checklist.get("description")).contains("e.g."), name);
+            assertTrue(String.valueOf(gatePolicy.get("description")).contains("passCriteria"), name);
         }
     }
 
@@ -558,47 +725,47 @@ class McpToolServiceTest {
     }
 
     @Test
-    void listProjectsDiscoversEveryAccessibleOrganizationWithItsAccessLevel() {
-        OrgVO first = new OrgVO();
+    void listProjectsDiscoversEveryAccessibleWorkspaceWithItsAccessLevel() {
+        WorkspaceVO first = new WorkspaceVO();
         first.setId(100L);
-        first.setName("token-org");
-        first.setAccessLevel(OrgAccessLevel.ADMIN);
-        OrgVO second = new OrgVO();
+        first.setName("token-workspace");
+        first.setAccessLevel(WorkspaceAccessLevel.ADMIN);
+        WorkspaceVO second = new WorkspaceVO();
         second.setId(200L);
-        second.setName("other-org");
-        second.setAccessLevel(OrgAccessLevel.READ_ONLY);
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of(first, second));
+        second.setName("other-workspace");
+        second.setAccessLevel(WorkspaceAccessLevel.READ_ONLY);
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of(first, second));
 
         Object result = service.call(
                 McpAccessTokenService.Principal.personal(USER_ID, 1L),
                 "autowonder.list_projects", Map.of());
 
         assertEquals(List.of(first, second), result);
-        verify(orgService).listByUserWithAccess(USER_ID);
-        verify(orgService, never()).getCurrent(anyLong());
+        verify(workspaceService).listByUserWithAccess(USER_ID);
+        verify(workspaceService, never()).getCurrent(anyLong());
     }
 
     @Test
-    void taskScopedTokenListsOnlyItsOwnOrganization() {
-        OrgVO pinned = new OrgVO();
-        pinned.setId(ORG_ID);
-        when(orgService.scopedOrg(ORG_ID, OrgAccessLevel.READ_WRITE)).thenReturn(pinned);
+    void taskScopedTokenListsOnlyItsOwnWorkspace() {
+        WorkspaceVO pinned = new WorkspaceVO();
+        pinned.setId(WORKSPACE_ID);
+        when(workspaceService.scopedWorkspace(WORKSPACE_ID, WorkspaceAccessLevel.READ_WRITE)).thenReturn(pinned);
 
         Object result = service.call(dispatchPrincipal(-321L),
                 "autowonder.list_projects", Map.of());
 
         assertEquals(List.of(pinned), result);
-        verify(orgService, never()).listByUserWithAccess(anyLong());
+        verify(workspaceService, never()).listByUserWithAccess(anyLong());
     }
 
     @Test
-    void listProjectsNeedsNoOrgIdAndNoMembershipResolution() {
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of());
+    void listProjectsNeedsNoWorkspaceIdAndNoMembershipResolution() {
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of());
 
         service.call(McpAccessTokenService.Principal.personal(USER_ID, 1L),
                 "autowonder.list_projects", Map.of());
 
-        verify(orgService, never()).activeAccessLevel(anyLong(), anyLong());
+        verify(workspaceService, never()).activeAccessLevel(anyLong(), anyLong());
     }
 
     @Test
@@ -625,7 +792,7 @@ class McpToolServiceTest {
                 "priority", "assigneeType", "assigneeRef", "sdlcId", "squadId")));
         // Assignee fields are optional so existing callers keep working; only
         // workType and title remain required.
-        assertEquals(List.of("orgId", "workType", "title"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "workType", "title"), schema.get("required"));
     }
 
     @Test
@@ -777,13 +944,13 @@ class McpToolServiceTest {
         DispatchDO paused = new DispatchDO();
         paused.setId(555L);
         paused.setStatus("PAUSING");
-        when(dispatchPauseService.requestPause(ORG_ID, 99L, 555L, USER_ID)).thenReturn(paused);
+        when(dispatchPauseService.requestPause(WORKSPACE_ID, 99L, 555L, USER_ID)).thenReturn(paused);
 
         Object result = call(principal, "autowonder.pause_dispatch",
                 Map.of("workitemId", 99L, "dispatchId", 555L));
 
         assertEquals(Map.of("dispatchId", 555L, "status", "PAUSING"), result);
-        verify(dispatchPauseService).requestPause(ORG_ID, 99L, 555L, USER_ID);
+        verify(dispatchPauseService).requestPause(WORKSPACE_ID, 99L, 555L, USER_ID);
     }
 
     @Test
@@ -797,7 +964,7 @@ class McpToolServiceTest {
     @Test
     void workitemDocumentSchemasExposeExpectedFields() {
         Map<String, Object> uploadSchema = schemaFor("autowonder.upload_workitem_document");
-        assertEquals(List.of("orgId", "id", "filename"), uploadSchema.get("required"));
+        assertEquals(List.of("workspaceId", "id", "filename"), uploadSchema.get("required"));
         assertTrue(properties(uploadSchema).keySet().containsAll(List.of(
                 "id", "filename", "contentMd", "contentBase64", "sourcePath")));
 
@@ -805,6 +972,16 @@ class McpToolServiceTest {
         McpToolVO upload = toolFor("autowonder.upload_workitem_document");
         assertTrue(upload.getDescription().contains("assign_workitem"));
         assertTrue(upload.getDescription().contains("first dispatch"));
+        assertTrue(upload.getDescription().contains("PNG"));
+        assertTrue(upload.getDescription().contains("JPEG"));
+        assertTrue(upload.getDescription().contains("WebP"));
+        assertTrue(upload.getDescription().contains("contentBase64"));
+        assertTrue(upload.getDescription().contains("contentMd"));
+
+        assertTrue(toolFor("autowonder.list_workitem_documents").getDescription()
+                .contains("requirement/design context attachment"));
+        assertTrue(toolFor("autowonder.delete_workitem_document").getDescription()
+                .contains("requirement/design context attachment"));
 
         Map<String, Object> output = outputSchemaFor("autowonder.upload_workitem_document");
         assertTrue(properties(output).keySet().containsAll(List.of("id", "workitemId", "name", "type", "size")));
@@ -831,20 +1008,35 @@ class McpToolServiceTest {
     }
 
     @Test
+    void uploadWorkitemDocumentDelegatesBase64VisualContentToRequirementDocumentService() {
+        byte[] png = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+        ArtifactVO artifact = new ArtifactVO();
+        when(requirementDocumentService.uploadMcp(eq(99L), eq("screen.png"), any(byte[].class),
+                eq(100L), eq(7L), isNull())).thenReturn(artifact);
+
+        call(principal, "autowonder.upload_workitem_document", Map.of(
+                "id", 99L, "filename", "screen.png",
+                "contentBase64", java.util.Base64.getEncoder().encodeToString(png)));
+
+        verify(requirementDocumentService).uploadMcp(eq(99L), eq("screen.png"),
+                argThat(bytes -> java.util.Arrays.equals(png, bytes)), eq(100L), eq(7L), isNull());
+    }
+
+    @Test
     void clarificationConversationCanUploadConfirmedSpecOrPlanDocuments() {
         ArtifactVO artifact = new ArtifactVO();
         artifact.setId(77L);
         when(requirementDocumentService.uploadMcp(eq(99L), eq("draft.md"), any(byte[].class),
-                eq(ORG_ID), eq(USER_ID), isNull())).thenReturn(artifact);
+                eq(WORKSPACE_ID), eq(USER_ID), isNull())).thenReturn(artifact);
         McpAccessTokenService.Principal clarificationPrincipal = new McpAccessTokenService.Principal(
-                ORG_ID, USER_ID, 88L, OrgAccessLevel.READ_WRITE,
+                WORKSPACE_ID, USER_ID, 88L, WorkspaceAccessLevel.READ_WRITE,
                 McpAccessTokenService.CredentialType.CONVERSATION);
 
         assertSame(artifact, call(clarificationPrincipal,
                 "autowonder.upload_workitem_document", Map.of("id", 99L, "filename", "draft.md",
                         "contentMd", "# Confirmed spec")));
         verify(requirementDocumentService).uploadMcp(eq(99L), eq("draft.md"),
-                argThat(bytes -> "# Confirmed spec".equals(new String(bytes))), eq(ORG_ID), eq(USER_ID), isNull());
+                argThat(bytes -> "# Confirmed spec".equals(new String(bytes))), eq(WORKSPACE_ID), eq(USER_ID), isNull());
         assertFalse(service.listTools().stream()
                 .anyMatch(tool -> "autowonder.save_workitem_clarification".equals(tool.getName())));
     }
@@ -867,17 +1059,17 @@ class McpToolServiceTest {
     @Test
     void skillPackageSchemasExposeUploadCreateAndUpdateFlow() {
         Map<String, Object> uploadSchema = schemaFor("autowonder.upload_skill_package");
-        assertEquals(List.of("orgId", "fileName", "contentBase64"), uploadSchema.get("required"));
+        assertEquals(List.of("workspaceId", "fileName", "contentBase64"), uploadSchema.get("required"));
         assertTrue(properties(uploadSchema).keySet().containsAll(List.of(
                 "fileName", "contentBase64", "type", "expectedMd5")));
 
         Map<String, Object> createSchema = schemaFor("autowonder.create_skill_from_package");
-        assertEquals(List.of("orgId", "packageOssRef"), createSchema.get("required"));
+        assertEquals(List.of("workspaceId", "packageOssRef"), createSchema.get("required"));
         assertTrue(properties(createSchema).keySet().containsAll(List.of(
                 "packageOssRef", "idempotencyKey", "expectedMd5")));
 
         Map<String, Object> updateSchema = schemaFor("autowonder.update_skill_package");
-        assertEquals(List.of("orgId", "id", "packageOssRef"), updateSchema.get("required"));
+        assertEquals(List.of("workspaceId", "id", "packageOssRef"), updateSchema.get("required"));
         assertTrue(properties(updateSchema).keySet().containsAll(List.of(
                 "id", "packageOssRef", "expectedMd5", "idempotencyKey")));
 
@@ -985,7 +1177,7 @@ class McpToolServiceTest {
     }
 
     @Test
-    void dispatchCredentialCannotCreateSquadOrOrgScopedMemory() {
+    void dispatchCredentialCannotCreateSquadOrWorkspaceScopedMemory() {
         McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal();
         when(dispatchDao.findById(321L)).thenReturn(dispatch(321L, 100L, 99L, 40014L));
 
@@ -1139,16 +1331,16 @@ class McpToolServiceTest {
     @Test
     void memoryToolSchemasExposeExpectedFields() {
         Map<String, Object> createSchema = schemaFor("autowonder.create_memory");
-        assertEquals(List.of("orgId", "title"), createSchema.get("required"));
+        assertEquals(List.of("workspaceId", "title"), createSchema.get("required"));
         assertTrue(properties(createSchema).keySet().containsAll(List.of(
-                "orgId", "title", "contentMd", "type", "scope", "ownerRef", "idempotencyKey")));
+                "workspaceId", "title", "contentMd", "type", "scope", "ownerRef", "idempotencyKey")));
 
         Map<String, Object> searchSchema = schemaFor("autowonder.search_memories");
-        assertEquals(List.of("orgId"), searchSchema.get("required"));
+        assertEquals(List.of("workspaceId"), searchSchema.get("required"));
         assertTrue(properties(searchSchema).keySet().containsAll(List.of(
-                "orgId", "keyword", "scope", "ownerRef", "type", "status", "page", "size")));
+                "workspaceId", "keyword", "scope", "ownerRef", "type", "status", "page", "size")));
 
-        assertEquals(List.of("orgId", "id"), schemaFor("autowonder.update_memory").get("required"));
+        assertEquals(List.of("workspaceId", "id"), schemaFor("autowonder.update_memory").get("required"));
         assertTrue(properties(schemaFor("autowonder.deprecate_memory")).containsKey("comment"));
 
         assertTrue(properties(outputSchemaFor("autowonder.create_memory")).keySet().containsAll(List.of(
@@ -1180,7 +1372,7 @@ class McpToolServiceTest {
         SquadVO created = new SquadVO();
         created.setId(50L);
         created.setName("新小队");
-        when(squadService.create(any(CreateSquadRequest.class), eq(ORG_ID), eq(USER_ID)))
+        when(squadService.create(any(CreateSquadRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
                 .thenReturn(created);
 
         Object result = call(principal, "autowonder.create_squad",
@@ -1189,19 +1381,19 @@ class McpToolServiceTest {
         assertSame(created, result);
         verify(squadService).create(argThat(req ->
                 "新小队".equals(req.getName()) && "测试小队".equals(req.getDescription())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
     void createSquadSchemaRequiresName() {
         Map<String, Object> schema = schemaFor("autowonder.create_squad");
-        assertEquals(List.of("orgId", "name"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "name"), schema.get("required"));
         assertTrue(properties(schema).keySet().containsAll(List.of("name", "description")));
     }
 
     @Test
     void createSquadWithoutPermissionFails() {
-        McpAccessTokenService.Principal readOnly = principal(OrgAccessLevel.READ_ONLY);
+        McpAccessTokenService.Principal readOnly = principal(WorkspaceAccessLevel.READ_ONLY);
 
         BizException ex = assertThrows(BizException.class,
                 () -> call(readOnly, "autowonder.create_squad",
@@ -1230,7 +1422,7 @@ class McpToolServiceTest {
         versionVO.setId(200L);
         versionVO.setAgentId(10L);
         versionVO.setSdlcId(40103L);
-        when(agentService.editConfig(eq(10L), any(UpdateConfigRequest.class), eq(ORG_ID), eq(USER_ID)))
+        when(agentService.editConfig(eq(10L), any(UpdateConfigRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
                 .thenReturn(versionVO);
 
         Object result = call(principal, "autowonder.set_agent_default_sdlc",
@@ -1247,19 +1439,19 @@ class McpToolServiceTest {
                         && "soul content".equals(req.getBusinessBackground())
                         && "agent content".equals(req.getResponsibilities())
                         && Long.valueOf(40103L).equals(req.getSdlcId())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
     void setAgentDefaultSdlcSchemaRequiresAgentIdAndSdlcId() {
         Map<String, Object> schema = schemaFor("autowonder.set_agent_default_sdlc");
-        assertEquals(List.of("orgId", "agentId", "sdlcId"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "agentId", "sdlcId"), schema.get("required"));
         assertTrue(properties(schema).keySet().containsAll(List.of("agentId", "sdlcId")));
     }
 
     @Test
     void setAgentDefaultSdlcWithoutPermissionFails() {
-        McpAccessTokenService.Principal readOnly = principal(OrgAccessLevel.READ_ONLY);
+        McpAccessTokenService.Principal readOnly = principal(WorkspaceAccessLevel.READ_ONLY);
 
         BizException ex = assertThrows(BizException.class,
                 () -> call(readOnly, "autowonder.set_agent_default_sdlc",
@@ -1294,7 +1486,7 @@ class McpToolServiceTest {
 
     private McpAccessTokenService.Principal dispatchPrincipal() {
         return new McpAccessTokenService.Principal(
-                100L, 7L, -321L, OrgAccessLevel.READ_WRITE,
+                100L, 7L, -321L, WorkspaceAccessLevel.READ_WRITE,
                 McpAccessTokenService.CredentialType.DISPATCH);
     }
 
@@ -1305,27 +1497,27 @@ class McpToolServiceTest {
             call(dispatchPrincipal(), tool, Map.of("id", 55L, "toNodeId", 99L));
         }
 
-        verify(workitemService, times(3)).transition(55L, 99L, ORG_ID, USER_ID);
+        verify(workitemService, times(3)).transition(55L, 99L, WORKSPACE_ID, USER_ID);
     }
 
     @Test
     void personalCredentialKeepsHumanWorkitemTransition() {
         call(principal, "autowonder.transition_workitem", Map.of("id", 55L, "toNodeId", 99L));
 
-        verify(workitemService).transition(55L, 99L, ORG_ID, USER_ID);
+        verify(workitemService).transition(55L, 99L, WORKSPACE_ID, USER_ID);
         verify(workitemService, never()).agentTransition(anyLong(), anyString(), anyLong(), anyLong());
     }
 
     @Test
     void conversationCredentialUsesOriginalGenericTransition() {
         McpAccessTokenService.Principal conversationPrincipal = new McpAccessTokenService.Principal(
-                ORG_ID, USER_ID, 88L, OrgAccessLevel.READ_WRITE,
+                WORKSPACE_ID, USER_ID, 88L, WorkspaceAccessLevel.READ_WRITE,
                 McpAccessTokenService.CredentialType.CONVERSATION);
 
         call(conversationPrincipal, "autowonder.transition_workitem",
                 Map.of("id", 55L, "toNodeId", 99L));
 
-        verify(workitemService).transition(55L, 99L, ORG_ID, USER_ID);
+        verify(workitemService).transition(55L, 99L, WORKSPACE_ID, USER_ID);
     }
 
     private MemoryVO memory(long id, String scope, Long ownerRef) {
@@ -1376,7 +1568,7 @@ class McpToolServiceTest {
     @Test
     void createWorkitemWithoutPermissionFails() {
         McpAccessTokenService.Principal readOnly =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
 
         BizException ex = assertThrows(BizException.class,
                 () -> call(readOnly, "autowonder.create_workitem",
@@ -1414,7 +1606,7 @@ class McpToolServiceTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) schema.get("properties");
         assertTrue(properties.containsKey("id"));
-        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "id"), schema.get("required"));
     }
 
     @Test
@@ -1429,7 +1621,7 @@ class McpToolServiceTest {
     @Test
     void deleteAgentWithoutPermissionFails() {
         McpAccessTokenService.Principal readOnly =
-                principal(OrgAccessLevel.READ_ONLY);
+                principal(WorkspaceAccessLevel.READ_ONLY);
 
         BizException ex = assertThrows(BizException.class,
                 () -> call(readOnly, "autowonder.delete_agent",
@@ -1456,7 +1648,7 @@ class McpToolServiceTest {
     @Test
     void submitAgentForReviewSchemaDeclaresIdAndOptionalComment() {
         Map<String, Object> schema = schemaFor("autowonder.submit_agent_for_review");
-        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "id"), schema.get("required"));
         assertTrue(properties(schema).keySet().containsAll(List.of("id", "comment")));
     }
 
@@ -1477,7 +1669,7 @@ class McpToolServiceTest {
     @Test
     void publishAgentSchemaDeclaresOnlyIdRequired() {
         Map<String, Object> schema = schemaFor("autowonder.publish_agent");
-        assertEquals(List.of("orgId", "id"), schema.get("required"));
+        assertEquals(List.of("workspaceId", "id"), schema.get("required"));
         assertTrue(properties(schema).containsKey("id"));
     }
 
@@ -1503,6 +1695,63 @@ class McpToolServiceTest {
     }
 
     @Test
+    void getAgentVersionReturnsFullEditingVersion() {
+        AgentVersionVO version = new AgentVersionVO();
+        version.setAgentId(10L);
+        version.setVersionNo(6);
+        when(agentService.getVersion(10L, 6, WORKSPACE_ID)).thenReturn(version);
+
+        Object result = call(principal, "autowonder.get_agent_version",
+                Map.of("agentId", 10L, "versionNo", 6));
+
+        assertSame(version, result);
+        verify(agentService).getVersion(10L, 6, WORKSPACE_ID);
+    }
+
+    @Test
+    void updateAgentConfigMapsMarkdownAndSdlcToExistingService() {
+        AgentVersionVO version = new AgentVersionVO();
+        version.setAgentId(10L);
+        when(agentService.editConfig(eq(10L), any(UpdateConfigRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
+                .thenReturn(version);
+
+        Object result = call(principal, "autowonder.update_agent_config", Map.of(
+                "agentId", 10L,
+                "roleName", "Terraform engineer",
+                "roleCode", "jarvis-terraform",
+                "soulMd", "SOUL",
+                "agentMd", "AGENT",
+                "sdlcId", 88L,
+                "evolutionMode", "MANUAL"));
+
+        assertSame(version, result);
+        verify(agentService).editConfig(eq(10L), argThat(request ->
+                        "Terraform engineer".equals(request.getRoleName())
+                                && "jarvis-terraform".equals(request.getRoleCode())
+                                && "SOUL".equals(request.getBusinessBackground())
+                                && "AGENT".equals(request.getResponsibilities())
+                                && Long.valueOf(88L).equals(request.getSdlcId())
+                                && "MANUAL".equals(request.getEvolutionMode())),
+                eq(WORKSPACE_ID), eq(USER_ID));
+    }
+
+    @Test
+    void agentVersionMcpSchemasExposeConfigAndExactBindings() {
+        Map<String, Object> getInput = schemaFor("autowonder.get_agent_version");
+        assertEquals(List.of("workspaceId", "agentId", "versionNo"), getInput.get("required"));
+
+        Map<String, Object> updateInput = properties(schemaFor("autowonder.update_agent_config"));
+        assertTrue(updateInput.keySet().containsAll(List.of(
+                "agentId", "roleName", "roleCode", "soulMd", "agentMd", "sdlcId", "evolutionMode")));
+
+        Map<String, Object> output = properties(outputSchemaFor("autowonder.get_agent_version"));
+        assertTrue(output.keySet().containsAll(List.of(
+                "agentId", "versionNo", "status", "sdlcId", "repoPerms", "skills", "memoryRefs")));
+        assertEquals("array", output.get("repoPerms") instanceof Map<?, ?> repoPerms
+                ? repoPerms.get("type") : null);
+    }
+
+    @Test
     void getAgentVersionStatusOutputSchemaExposesAgentAndVersions() {
         Map<String, Object> output = outputSchemaFor("autowonder.get_agent_version_status");
         assertTrue(properties(output).keySet().containsAll(List.of("agent", "versions")));
@@ -1517,7 +1766,12 @@ class McpToolServiceTest {
                 .collect(java.util.stream.Collectors.toSet());
         assertTrue(names.contains("autowonder.submit_agent_for_review"));
         assertTrue(names.contains("autowonder.publish_agent"));
+        assertTrue(names.contains("autowonder.get_agent_version"));
+        assertTrue(names.contains("autowonder.update_agent_config"));
         assertTrue(names.contains("autowonder.get_agent_version_status"));
+        assertTrue(names.contains("autowonder.unbind_agent_repos"));
+        assertTrue(names.contains("autowonder.unbind_agent_skills"));
+        assertTrue(names.contains("autowonder.unbind_agent_memories"));
     }
 
     @Test
@@ -1544,7 +1798,7 @@ class McpToolServiceTest {
         verify(agentService).create(argThat(request ->
                         "new soul".equals(request.getBusinessBackground())
                                 && "new agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
@@ -1556,7 +1810,7 @@ class McpToolServiceTest {
                         request.getId() == 12L
                                 && "new soul".equals(request.getBusinessBackground())
                                 && "new agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
@@ -1571,11 +1825,11 @@ class McpToolServiceTest {
         verify(agentService).create(argThat(request ->
                         "legacy soul".equals(request.getBusinessBackground())
                                 && "legacy agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
         verify(agentService).updateAgent(argThat(request ->
                         "legacy soul".equals(request.getBusinessBackground())
                                 && "legacy agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
@@ -1590,11 +1844,11 @@ class McpToolServiceTest {
         verify(agentService).create(argThat(request ->
                         "new soul".equals(request.getBusinessBackground())
                                 && "new agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
         verify(agentService).updateAgent(argThat(request ->
                         "new soul".equals(request.getBusinessBackground())
                                 && "new agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
@@ -1618,11 +1872,11 @@ class McpToolServiceTest {
         verify(agentService).create(argThat(request ->
                         request.getBusinessBackground() == null
                                 && "new agent".equals(request.getResponsibilities())),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
         verify(agentService).updateAgent(argThat(request ->
                         "new soul".equals(request.getBusinessBackground())
                                 && request.getResponsibilities() == null),
-                eq(ORG_ID), eq(USER_ID));
+                eq(WORKSPACE_ID), eq(USER_ID));
     }
 
     @Test
@@ -1786,26 +2040,26 @@ class McpToolServiceTest {
     }
 
     @Test
-    void personalTokenReachesEveryOrganizationTheOwnerBelongsTo() {
+    void personalTokenReachesEveryWorkspaceTheOwnerBelongsTo() {
         WorkitemVO first = new WorkitemVO();
         WorkitemVO second = new WorkitemVO();
-        when(orgService.activeAccessLevel(ORG_ID, USER_ID))
-                .thenReturn(OrgAccessLevel.READ_ONLY);
-        when(orgService.activeAccessLevel(200L, USER_ID))
-                .thenReturn(OrgAccessLevel.READ_WRITE);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_ONLY);
+        when(workspaceService.activeAccessLevel(200L, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
         when(workitemService.get(11L)).thenReturn(first);
         when(workitemService.get(22L)).thenReturn(second);
         McpAccessTokenService.Principal personal =
                 McpAccessTokenService.Principal.personal(USER_ID, 1L);
 
         assertSame(first, service.call(personal, "autowonder.get_workitem",
-                Map.of("orgId", ORG_ID, "id", 11L)));
+                Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
         assertSame(second, service.call(personal, "autowonder.get_workitem",
-                Map.of("orgId", 200L, "id", 22L)));
+                Map.of("workspaceId", 200L, "id", 22L)));
     }
 
     @Test
-    void personalTokenMustPassOrgIdForOrganizationScopedTools() {
+    void personalTokenMustPassWorkspaceIdForWorkspaceScopedTools() {
         BizException thrown = assertThrows(BizException.class,
                 () -> service.call(McpAccessTokenService.Principal.personal(USER_ID, 1L),
                         "autowonder.get_workitem", Map.of("id", 11L)));
@@ -1815,115 +2069,115 @@ class McpToolServiceTest {
     }
 
     @Test
-    void personalTokenRejectsNonPositiveOrgId() {
+    void personalTokenRejectsNonPositiveWorkspaceId() {
         McpAccessTokenService.Principal personal =
                 McpAccessTokenService.Principal.personal(USER_ID, 1L);
 
         for (Object invalid : List.of(0L, -1L)) {
             BizException thrown = assertThrows(BizException.class,
                     () -> service.call(personal, "autowonder.get_workitem",
-                            Map.of("orgId", invalid, "id", 11L)));
+                            Map.of("workspaceId", invalid, "id", 11L)));
             assertEquals("10001", thrown.getCode());
         }
         verifyNoInteractions(workitemService);
     }
 
     @Test
-    void personalTokenCannotReachAnOrganizationTheOwnerLeft() {
-        when(orgService.activeAccessLevel(200L, USER_ID))
-                .thenThrow(new BizException(ErrorCode.ORG_NOT_MEMBER));
+    void personalTokenCannotReachAnWorkspaceTheOwnerLeft() {
+        when(workspaceService.activeAccessLevel(200L, USER_ID))
+                .thenThrow(new BizException(ErrorCode.WORKSPACE_NOT_MEMBER));
 
         BizException thrown = assertThrows(BizException.class,
                 () -> service.call(McpAccessTokenService.Principal.personal(USER_ID, 1L),
-                        "autowonder.get_workitem", Map.of("orgId", 200L, "id", 11L)));
+                        "autowonder.get_workitem", Map.of("workspaceId", 200L, "id", 11L)));
 
         assertEquals("11001", thrown.getCode());
         verifyNoInteractions(workitemService);
     }
 
     @Test
-    void readOnlyMembershipReadsButCannotWriteInTheTargetOrganization() {
+    void readOnlyMembershipReadsButCannotWriteInTheTargetWorkspace() {
         WorkitemVO workitem = new WorkitemVO();
-        when(orgService.activeAccessLevel(ORG_ID, USER_ID))
-                .thenReturn(OrgAccessLevel.READ_ONLY);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_ONLY);
         when(workitemService.get(11L)).thenReturn(workitem);
         McpAccessTokenService.Principal personal =
                 McpAccessTokenService.Principal.personal(USER_ID, 1L);
 
         assertSame(workitem, service.call(personal, "autowonder.get_workitem",
-                Map.of("orgId", ORG_ID, "id", 11L)));
+                Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
 
         BizException thrown = assertThrows(BizException.class,
                 () -> service.call(personal, "autowonder.delete_workitem",
-                        Map.of("orgId", ORG_ID, "id", 11L)));
+                        Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
         assertEquals("10403", thrown.getCode());
         verify(workitemService, never()).delete(anyLong(), anyLong(), anyLong());
     }
 
     @Test
     void membershipIsResolvedOnEveryCallSoDowngradesTakeEffectImmediately() {
-        when(orgService.activeAccessLevel(ORG_ID, USER_ID))
-                .thenReturn(OrgAccessLevel.READ_WRITE, OrgAccessLevel.READ_ONLY);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE, WorkspaceAccessLevel.READ_ONLY);
         McpAccessTokenService.Principal personal =
                 McpAccessTokenService.Principal.personal(USER_ID, 1L);
 
-        service.call(personal, "autowonder.delete_workitem", Map.of("orgId", ORG_ID, "id", 11L));
+        service.call(personal, "autowonder.delete_workitem", Map.of("workspaceId", WORKSPACE_ID, "id", 11L));
         assertThrows(BizException.class,
                 () -> service.call(personal, "autowonder.delete_workitem",
-                        Map.of("orgId", ORG_ID, "id", 11L)));
+                        Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
 
-        verify(orgService, times(2)).activeAccessLevel(ORG_ID, USER_ID);
+        verify(workspaceService, times(2)).activeAccessLevel(WORKSPACE_ID, USER_ID);
     }
 
     @Test
-    void taskScopedTokenAcceptsOmittedOrMatchingOrgIdButRejectsAnother() {
+    void taskScopedTokenAcceptsOmittedOrMatchingWorkspaceIdButRejectsAnother() {
         WorkitemVO workitem = new WorkitemVO();
         when(workitemService.get(11L)).thenReturn(workitem);
-        McpAccessTokenService.Principal scoped = scopedPrincipal(OrgAccessLevel.READ_WRITE);
+        McpAccessTokenService.Principal scoped = scopedPrincipal(WorkspaceAccessLevel.READ_WRITE);
 
         assertSame(workitem, service.call(scoped, "autowonder.get_workitem", Map.of("id", 11L)));
         assertSame(workitem, service.call(scoped, "autowonder.get_workitem",
-                Map.of("orgId", ORG_ID, "id", 11L)));
+                Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
 
         BizException thrown = assertThrows(BizException.class,
                 () -> service.call(scoped, "autowonder.get_workitem",
-                        Map.of("orgId", 200L, "id", 11L)));
+                        Map.of("workspaceId", 200L, "id", 11L)));
         assertEquals("10403", thrown.getCode());
-        verifyNoInteractions(orgService);
+        verifyNoInteractions(workspaceService);
     }
 
     @Test
-    void dispatchTokenCannotCrossIntoAnotherOrganization() {
+    void dispatchTokenCannotCrossIntoAnotherWorkspace() {
         McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
 
         BizException thrown = assertThrows(BizException.class,
                 () -> service.call(dispatchPrincipal, "autowonder.get_workitem",
-                        Map.of("orgId", 200L, "id", 11L)));
+                        Map.of("workspaceId", 200L, "id", 11L)));
 
         assertEquals("10403", thrown.getCode());
-        verifyNoInteractions(orgService);
+        verifyNoInteractions(workspaceService);
         verifyNoInteractions(workitemService);
     }
 
     @Test
-    void ambientOrganizationContextIsRestoredAfterEveryCall() {
+    void ambientWorkspaceContextIsRestoredAfterEveryCall() {
         AutoWonderContext ambient = AutoWonderContext.get();
-        ambient.setCurrentOrgId(900L);
-        ambient.setOrgAccessLevel(OrgAccessLevel.READ_ONLY);
-        when(orgService.activeAccessLevel(ORG_ID, USER_ID)).thenReturn(OrgAccessLevel.ADMIN);
+        ambient.setCurrentWorkspaceId(900L);
+        ambient.setWorkspaceAccessLevel(WorkspaceAccessLevel.READ_ONLY);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(WorkspaceAccessLevel.ADMIN);
         try {
             service.call(McpAccessTokenService.Principal.personal(USER_ID, 1L),
-                    "autowonder.delete_workitem", Map.of("orgId", ORG_ID, "id", 11L));
+                    "autowonder.delete_workitem", Map.of("workspaceId", WORKSPACE_ID, "id", 11L));
 
-            assertEquals(900L, ambient.getCurrentOrgId());
-            assertEquals(OrgAccessLevel.READ_ONLY, ambient.getOrgAccessLevel());
+            assertEquals(900L, ambient.getCurrentWorkspaceId());
+            assertEquals(WorkspaceAccessLevel.READ_ONLY, ambient.getWorkspaceAccessLevel());
         } finally {
             AutoWonderContext.destroy();
         }
     }
 
     @Test
-    void organizationScopedToolsAllRequireOrgIdWhileGlobalToolsDoNot() {
+    void workspaceScopedToolsAllRequireWorkspaceIdWhileGlobalToolsDoNot() {
         Set<String> globalTools = Set.of(
                 "autowonder.list_projects",
                 "autowonder.inspect_skill_package",
@@ -1931,93 +2185,93 @@ class McpToolServiceTest {
 
         for (McpToolVO tool : service.listTools()) {
             Object required = tool.getInputSchema().get("required");
-            boolean requiresOrgId = required instanceof List<?> names
-                    && names.contains("orgId");
+            boolean requiresWorkspaceId = required instanceof List<?> names
+                    && names.contains("workspaceId");
             if (globalTools.contains(tool.getName())) {
-                assertFalse(requiresOrgId, tool.getName() + " must not require orgId");
-                assertFalse(properties(tool.getInputSchema()).containsKey("orgId"),
-                        tool.getName() + " must not declare orgId");
+                assertFalse(requiresWorkspaceId, tool.getName() + " must not require workspaceId");
+                assertFalse(properties(tool.getInputSchema()).containsKey("workspaceId"),
+                        tool.getName() + " must not declare workspaceId");
             } else {
-                assertTrue(requiresOrgId, tool.getName() + " must require orgId");
+                assertTrue(requiresWorkspaceId, tool.getName() + " must require workspaceId");
                 assertEquals("integer",
-                        ((Map<?, ?>) properties(tool.getInputSchema()).get("orgId")).get("type"),
-                        tool.getName() + " orgId must be an integer");
+                        ((Map<?, ?>) properties(tool.getInputSchema()).get("workspaceId")).get("type"),
+                        tool.getName() + " workspaceId must be an integer");
             }
         }
     }
 
     @Test
-    void personalTokenQueriesOrgsOnceAndGeneratesDifferentDescriptions() {
-        OrgVO orgA = new OrgVO();
+    void personalTokenQueriesWorkspacesOnceAndGeneratesDifferentDescriptions() {
+        WorkspaceVO orgA = new WorkspaceVO();
         orgA.setId(10002L);
         orgA.setName("AutoWonder自迭代");
-        orgA.setAccessLevel(OrgAccessLevel.READ_ONLY);
+        orgA.setAccessLevel(WorkspaceAccessLevel.READ_ONLY);
 
-        OrgVO orgB = new OrgVO();
+        WorkspaceVO orgB = new WorkspaceVO();
         orgB.setId(10003L);
         orgB.setName("AutoWonder产研项目组");
-        orgB.setAccessLevel(OrgAccessLevel.READ_WRITE);
+        orgB.setAccessLevel(WorkspaceAccessLevel.READ_WRITE);
 
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of(orgA, orgB));
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of(orgA, orgB));
 
         McpAccessTokenService.Principal personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
         List<McpToolVO> tools = service.listTools(personal);
 
-        verify(orgService, times(1)).listByUserWithAccess(USER_ID);
+        verify(workspaceService, times(1)).listByUserWithAccess(USER_ID);
 
-        String expectedRead = "Org: 10002=AutoWonder自迭代;10003=AutoWonder产研项目组";
-        String expectedWrite = "Org: 10003=AutoWonder产研项目组";
+        String expectedRead = "Workspace: 10002=AutoWonder自迭代;10003=AutoWonder产研项目组";
+        String expectedWrite = "Workspace: 10003=AutoWonder产研项目组";
 
         for (McpToolVO tool : tools) {
             Map<String, Object> props = properties(tool.getInputSchema());
-            if (props != null && props.containsKey("orgId")) {
-                Map<String, Object> orgIdProp = (Map<String, Object>) props.get("orgId");
-                String desc = (String) orgIdProp.get("description");
+            if (props != null && props.containsKey("workspaceId")) {
+                Map<String, Object> workspaceIdProp = (Map<String, Object>) props.get("workspaceId");
+                String desc = (String) workspaceIdProp.get("description");
                 String toolName = tool.getName();
                 McpToolService toolServiceSpy = service;
                 // determine if this is a read-only or write tool
                 // read-only tools get the full (read) description, write tools get the write description
-                assertNotNull(desc, toolName + " must have an orgId description");
-                assertTrue(desc.startsWith("Org:"), toolName + " description must start with 'Org:'");
+                assertNotNull(desc, toolName + " must have an workspaceId description");
+                assertTrue(desc.startsWith("Workspace:"), toolName + " description must start with 'Workspace:'");
                 assertTrue(desc.equals(expectedRead) || desc.equals(expectedWrite),
                         toolName + " has unexpected description: " + desc);
             }
         }
 
-        // verify list_projects (global) has no orgId
+        // verify list_projects (global) has no workspaceId
         McpToolVO listProjects = tools.stream()
                 .filter(t -> "autowonder.list_projects".equals(t.getName()))
                 .findFirst().orElseThrow();
-        assertFalse(properties(listProjects.getInputSchema()).containsKey("orgId"),
-                "list_projects must not have orgId");
+        assertFalse(properties(listProjects.getInputSchema()).containsKey("workspaceId"),
+                "list_projects must not have workspaceId");
     }
 
     @Test
-    void taskScopedTokenShowsOnlyBoundOrg() {
-        OrgVO scoped = new OrgVO();
-        scoped.setId(ORG_ID);
-        scoped.setName("TestOrg");
-        when(orgService.getCurrent(ORG_ID)).thenReturn(scoped);
+    void taskScopedTokenShowsOnlyBoundWorkspace() {
+        WorkspaceVO scoped = new WorkspaceVO();
+        scoped.setId(WORKSPACE_ID);
+        scoped.setName("TestWorkspace");
+        when(workspaceService.getCurrent(WORKSPACE_ID)).thenReturn(scoped);
 
-        McpAccessTokenService.Principal conversation = scopedPrincipal(OrgAccessLevel.READ_WRITE);
+        McpAccessTokenService.Principal conversation = scopedPrincipal(WorkspaceAccessLevel.READ_WRITE);
         List<McpToolVO> tools = service.listTools(conversation);
 
-        verify(orgService, never()).listByUserWithAccess(anyLong());
+        verify(workspaceService, never()).listByUserWithAccess(anyLong());
 
-        String expected = "Org: " + ORG_ID + "=TestOrg";
+        String expected = "Workspace: " + WORKSPACE_ID + "=TestWorkspace";
         for (McpToolVO tool : tools) {
             Map<String, Object> props = properties(tool.getInputSchema());
-            if (props != null && props.containsKey("orgId")) {
-                Map<String, Object> orgIdProp = (Map<String, Object>) props.get("orgId");
-                assertEquals(expected, orgIdProp.get("description"),
-                        tool.getName() + " must show only the bound org");
+            if (props != null && props.containsKey("workspaceId")) {
+                Map<String, Object> workspaceIdProp = (Map<String, Object>) props.get("workspaceId");
+                assertEquals(expected, workspaceIdProp.get("description"),
+                        tool.getName() + " must show only the bound workspace");
             }
         }
     }
 
     @Test
     void globalToolsUnchangedAfterDescriptionInjection() {
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of());
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of());
 
         McpAccessTokenService.Principal personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
         List<McpToolVO> tools = service.listTools(personal);
@@ -2030,76 +2284,76 @@ class McpToolServiceTest {
         for (McpToolVO tool : tools) {
             if (globalToolNames.contains(tool.getName())) {
                 Map<String, Object> props = properties(tool.getInputSchema());
-                assertFalse(props.containsKey("orgId"),
-                        tool.getName() + " must not gain orgId after injection");
+                assertFalse(props.containsKey("workspaceId"),
+                        tool.getName() + " must not gain workspaceId after injection");
             }
         }
     }
 
     @Test
-    void orgIdRemainsIntegerAndRequiredOrderUnchanged() {
-        OrgVO org = new OrgVO();
-        org.setId(100L);
-        org.setName("Org");
-        org.setAccessLevel(OrgAccessLevel.READ_WRITE);
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of(org));
+    void workspaceIdRemainsIntegerAndRequiredOrderUnchanged() {
+        WorkspaceVO workspace = new WorkspaceVO();
+        workspace.setId(100L);
+        workspace.setName("Workspace");
+        workspace.setAccessLevel(WorkspaceAccessLevel.READ_WRITE);
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of(workspace));
 
         McpAccessTokenService.Principal personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
         List<McpToolVO> tools = service.listTools(personal);
 
         for (McpToolVO tool : tools) {
             Map<String, Object> props = properties(tool.getInputSchema());
-            if (props != null && props.containsKey("orgId")) {
-                Map<String, Object> orgIdProp = (Map<String, Object>) props.get("orgId");
-                assertEquals("integer", orgIdProp.get("type"),
-                        tool.getName() + " orgId must remain integer type");
+            if (props != null && props.containsKey("workspaceId")) {
+                Map<String, Object> workspaceIdProp = (Map<String, Object>) props.get("workspaceId");
+                assertEquals("integer", workspaceIdProp.get("type"),
+                        tool.getName() + " workspaceId must remain integer type");
 
                 @SuppressWarnings("unchecked")
                 List<String> required = (List<String>) tool.getInputSchema().get("required");
-                assertEquals("orgId", required.get(0),
-                        tool.getName() + " orgId must be first in required list");
+                assertEquals("workspaceId", required.get(0),
+                        tool.getName() + " workspaceId must be first in required list");
             }
         }
     }
 
     @Test
-    void emptyOrgsProducesNoDescriptionChangeForPersonalToken() {
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of());
+    void emptyWorkspacesProducesNoDescriptionChangeForPersonalToken() {
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of());
 
         McpAccessTokenService.Principal personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
         List<McpToolVO> tools = service.listTools(personal);
 
-        // When there are no orgs, the original static description should remain
+        // When there are no workspaces, the original static description should remain
         for (McpToolVO tool : tools) {
             Map<String, Object> props = properties(tool.getInputSchema());
-            if (props != null && props.containsKey("orgId")) {
-                Map<String, Object> orgIdProp = (Map<String, Object>) props.get("orgId");
-                String desc = (String) orgIdProp.get("description");
+            if (props != null && props.containsKey("workspaceId")) {
+                Map<String, Object> workspaceIdProp = (Map<String, Object>) props.get("workspaceId");
+                String desc = (String) workspaceIdProp.get("description");
                 // Should still have the original static description
                 assertTrue(desc.contains("autowonder.list_projects"),
-                        tool.getName() + " should retain original description when no orgs");
+                        tool.getName() + " should retain original description when no workspaces");
             }
         }
     }
 
     @Test
-    void compactDescriptionSortsByOrgIdAscending() {
-        OrgVO org3 = new OrgVO();
+    void compactDescriptionSortsByWorkspaceIdAscending() {
+        WorkspaceVO org3 = new WorkspaceVO();
         org3.setId(300L);
         org3.setName("Zeta");
-        org3.setAccessLevel(OrgAccessLevel.READ_WRITE);
+        org3.setAccessLevel(WorkspaceAccessLevel.READ_WRITE);
 
-        OrgVO org1 = new OrgVO();
+        WorkspaceVO org1 = new WorkspaceVO();
         org1.setId(100L);
         org1.setName("Alpha");
-        org1.setAccessLevel(OrgAccessLevel.READ_WRITE);
+        org1.setAccessLevel(WorkspaceAccessLevel.READ_WRITE);
 
-        OrgVO org2 = new OrgVO();
+        WorkspaceVO org2 = new WorkspaceVO();
         org2.setId(200L);
-        org2.setName("中文组织");
-        org2.setAccessLevel(OrgAccessLevel.READ_ONLY);
+        org2.setName("中文工作空间");
+        org2.setAccessLevel(WorkspaceAccessLevel.READ_ONLY);
 
-        when(orgService.listByUserWithAccess(USER_ID)).thenReturn(List.of(org3, org1, org2));
+        when(workspaceService.listByUserWithAccess(USER_ID)).thenReturn(List.of(org3, org1, org2));
 
         McpAccessTokenService.Principal personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
         List<McpToolVO> tools = service.listTools(personal);
@@ -2109,22 +2363,22 @@ class McpToolServiceTest {
                 .filter(t -> "autowonder.list_workitems".equals(t.getName()))
                 .findFirst().orElseThrow();
         Map<String, Object> props = properties(readTool.getInputSchema());
-        Map<String, Object> orgIdProp = (Map<String, Object>) props.get("orgId");
-        String desc = (String) orgIdProp.get("description");
+        Map<String, Object> workspaceIdProp = (Map<String, Object>) props.get("workspaceId");
+        String desc = (String) workspaceIdProp.get("description");
 
-        // Should be sorted by orgId ascending: 100, 200, 300
-        assertEquals("Org: 100=Alpha;200=中文组织;300=Zeta", desc);
+        // Should be sorted by workspaceId ascending: 100, 200, 300
+        assertEquals("Workspace: 100=Alpha;200=中文工作空间;300=Zeta", desc);
 
         // Find a write tool to check the write-only description
         McpToolVO writeTool = tools.stream()
                 .filter(t -> "autowonder.create_workitem".equals(t.getName()))
                 .findFirst().orElseThrow();
         props = properties(writeTool.getInputSchema());
-        orgIdProp = (Map<String, Object>) props.get("orgId");
-        desc = (String) orgIdProp.get("description");
+        workspaceIdProp = (Map<String, Object>) props.get("workspaceId");
+        desc = (String) workspaceIdProp.get("description");
 
-        // Only READ_WRITE and ADMIN orgs: 100(READ_WRITE) and 300(READ_WRITE)
-        assertEquals("Org: 100=Alpha;300=Zeta", desc);
+        // Only READ_WRITE and ADMIN workspaces: 100(READ_WRITE) and 300(READ_WRITE)
+        assertEquals("Workspace: 100=Alpha;300=Zeta", desc);
     }
 
     private McpToolVO toolByName(String name) {
@@ -2140,34 +2394,60 @@ class McpToolServiceTest {
     }
 
     /** Also stubs the membership lookup, since a personal token resolves its level per call. */
-    private McpAccessTokenService.Principal principal(OrgAccessLevel accessLevel) {
-        when(orgService.activeAccessLevel(ORG_ID, USER_ID)).thenReturn(accessLevel);
+    private McpAccessTokenService.Principal principal(WorkspaceAccessLevel accessLevel) {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(accessLevel);
         return McpAccessTokenService.Principal.personal(USER_ID, 1L);
     }
 
     private McpAccessTokenService.Principal dispatchPrincipal(long tokenId) {
         return new McpAccessTokenService.Principal(
-                ORG_ID, USER_ID, tokenId, OrgAccessLevel.READ_WRITE,
+                WORKSPACE_ID, USER_ID, tokenId, WorkspaceAccessLevel.READ_WRITE,
                 McpAccessTokenService.CredentialType.DISPATCH);
     }
 
-    private McpAccessTokenService.Principal scopedPrincipal(OrgAccessLevel accessLevel) {
+    private McpAccessTokenService.Principal scopedPrincipal(WorkspaceAccessLevel accessLevel) {
         return new McpAccessTokenService.Principal(
-                ORG_ID, USER_ID, 1L, accessLevel,
+                WORKSPACE_ID, USER_ID, 1L, accessLevel,
                 McpAccessTokenService.CredentialType.CONVERSATION);
     }
 
     private Object call(McpAccessTokenService.Principal caller, String tool,
                         Map<String, Object> args) {
-        return service.call(caller, tool, withOrgId(args));
+        return service.call(caller, tool, withWorkspaceId(args));
     }
 
-    private Map<String, Object> withOrgId(Map<String, Object> args) {
-        if (args.containsKey("orgId")) {
+    private Map<String, Object> withWorkspaceId(Map<String, Object> args) {
+        if (args.containsKey("workspaceId")) {
             return args;
         }
         Map<String, Object> merged = new java.util.LinkedHashMap<>(args);
-        merged.put("orgId", ORG_ID);
+        merged.put("workspaceId", WORKSPACE_ID);
         return merged;
+    }
+
+    private WorkitemCliUploadTokenService realTokenService(String baseUrl, String runtimeVersion) {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkspaceMemberDao memberDao = mock(WorkspaceMemberDao.class);
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(50063L);
+        workitem.setTenantId(WORKSPACE_ID);
+        when(workitemDao.findById(50063L)).thenReturn(workitem);
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setTenantId(WORKSPACE_ID);
+        member.setUserId(USER_ID);
+        member.setAccessLevel("READ_WRITE");
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        when(memberDao.findByWorkspaceAndUser(WORKSPACE_ID, USER_ID)).thenReturn(member);
+        Environment env = mock(Environment.class);
+        when(env.getActiveProfiles()).thenReturn(new String[]{"daily"});
+        JwtProperties props = new JwtProperties(env);
+        props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
+        props.setAccessTtlSeconds(3600);
+        props.setRefreshTtlSeconds(7200);
+        PlatformBrandingService branding = new PlatformBrandingService(
+                mock(PlatformBrandingDao.class), new InMemoryObjectStorage(), new OssProperties(),
+                baseUrl, runtimeVersion, "x.x.x");
+        return new WorkitemCliUploadTokenService(new JwtService(props), workitemDao, memberDao, branding);
     }
 }

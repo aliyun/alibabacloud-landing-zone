@@ -30,7 +30,7 @@ describe('OwnerTransferModal', () => {
       />,
     );
 
-    const dialog = screen.getByRole('dialog', { name: '移交组织 Owner' });
+    const dialog = screen.getByRole('dialog', { name: '移交工作空间 Owner' });
     const submit = within(dialog).getByRole('button', { name: '确认移交' });
     expect(submit).toBeDisabled();
     expect(onConfirm).not.toHaveBeenCalled();

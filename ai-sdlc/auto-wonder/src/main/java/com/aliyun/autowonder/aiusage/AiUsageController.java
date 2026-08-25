@@ -7,15 +7,15 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/ai-usage")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看AI用量")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看AI用量")
 public class AiUsageController {
 
     private final AiUsageService aiUsageService;
@@ -27,25 +27,25 @@ public class AiUsageController {
     @GetMapping
     public Result<List<AiUsageVO>> listUsage(
             @RequestParam(value = "period", required = false) String period) {
-        return Result.ok(aiUsageService.listUsage(currentOrgId(), period));
+        return Result.ok(aiUsageService.listUsage(currentWorkspaceId(), period));
     }
 
     @GetMapping("/quota")
-    @RequireOrgAccess(value = OrgAccessLevel.ADMIN, action = "查看AI用量配额")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看AI用量配额")
     public Result<AiQuotaVO> getQuota() {
-        return Result.ok(aiUsageService.getQuota(currentOrgId()));
+        return Result.ok(aiUsageService.getQuota(currentWorkspaceId()));
     }
 
     @PutMapping("/quota")
-    @RequireOrgAccess(value = OrgAccessLevel.ADMIN, action = "更新AI用量配额")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新AI用量配额")
     public Result<Void> updateQuota(@RequestBody UpdateQuotaRequest req) {
-        aiUsageService.updateQuota(req, currentOrgId());
+        aiUsageService.updateQuota(req, currentWorkspaceId());
         return Result.ok(null);
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) { throw new BizException(ErrorCode.ORG_NOT_MEMBER); }
-        return orgId;
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) { throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER); }
+        return workspaceId;
     }
 }

@@ -2,7 +2,7 @@ package com.aliyun.autowonder.agent;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import com.aliyun.autowonder.access.OrgAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
@@ -20,8 +20,8 @@ import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.evolution.EvolutionMode;
-import com.aliyun.autowonder.org.OrgDO;
-import com.aliyun.autowonder.org.OrgDao;
+import com.aliyun.autowonder.workspace.WorkspaceDO;
+import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.memory.MemoryDO;
 import com.aliyun.autowonder.memory.MemoryScopeResolver;
 import com.aliyun.autowonder.skill.SkillDO;
@@ -41,7 +41,7 @@ public class AgentService {
     private final AgentRepoPermDao repoPermDao;
     private final AgentSkillDao skillDao;
     private final AgentMemoryRefDao memoryRefDao;
-    private final OrgDao orgDao;
+    private final WorkspaceDao workspaceDao;
     private final ExecutorDao executorDao;
     private final ExecutorRegistry executorRegistry;
     private final SkillDao capabilityDao;
@@ -55,7 +55,7 @@ public class AgentService {
     @Autowired
     public AgentService(AgentDao agentDao, AgentVersionDao versionDao,
                         AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
-                        AgentMemoryRefDao memoryRefDao, OrgDao orgDao,
+                        AgentMemoryRefDao memoryRefDao, WorkspaceDao workspaceDao,
                         ExecutorDao executorDao, ExecutorRegistry executorRegistry,
                         SkillDao capabilityDao) {
         this.agentDao = agentDao;
@@ -63,7 +63,7 @@ public class AgentService {
         this.repoPermDao = repoPermDao;
         this.skillDao = skillDao;
         this.memoryRefDao = memoryRefDao;
-        this.orgDao = orgDao;
+        this.workspaceDao = workspaceDao;
         this.executorDao = executorDao;
         this.executorRegistry = executorRegistry;
         this.capabilityDao = capabilityDao;
@@ -71,9 +71,9 @@ public class AgentService {
 
     AgentService(AgentDao agentDao, AgentVersionDao versionDao,
                  AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
-                 AgentMemoryRefDao memoryRefDao, OrgDao orgDao,
+                 AgentMemoryRefDao memoryRefDao, WorkspaceDao workspaceDao,
                  ExecutorDao executorDao, ExecutorRegistry executorRegistry) {
-        this(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, orgDao, executorDao, executorRegistry, null);
+        this(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao, executorDao, executorRegistry, null);
     }
 
     @Transactional
@@ -135,10 +135,7 @@ public class AgentService {
 
     @Transactional
     public AgentVersionVO editConfig(long agentId, UpdateConfigRequest req, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+        AgentDO agent = findAgentInTenant(agentId, tenantId);
         AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
         String identityJson = identityJsonWithEvolutionMode(draft.getIdentityJson(), req.getEvolutionMode());
         int rows = versionDao.updateConfig(draft.getId(), tenantId,
@@ -261,8 +258,8 @@ public class AgentService {
     }
 
     private boolean isTenantOwner(long tenantId, long userId) {
-        OrgDO org = orgDao.findById(tenantId);
-        return org != null && org.getOwnerId() != null && org.getOwnerId().equals(userId);
+        WorkspaceDO workspace = workspaceDao.findById(tenantId);
+        return workspace != null && workspace.getOwnerId() != null && workspace.getOwnerId().equals(userId);
     }
 
     private boolean canApproveOwnVersion(long tenantId, long userId) {
@@ -270,9 +267,9 @@ public class AgentService {
             return true;
         }
         AutoWonderContext context = AutoWonderContext.get();
-        return Long.valueOf(tenantId).equals(context.getCurrentOrgId())
+        return Long.valueOf(tenantId).equals(context.getCurrentWorkspaceId())
                 && Long.valueOf(userId).equals(context.getUserId())
-                && context.getOrgAccessLevel() == OrgAccessLevel.ADMIN;
+                && context.getWorkspaceAccessLevel() == WorkspaceAccessLevel.ADMIN;
     }
 
     @Transactional
@@ -411,6 +408,11 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_VERSION_NOT_FOUND);
         }
         return toVersionVO(v);
+    }
+
+    public AgentVersionVO getVersion(long agentId, int versionNo, long tenantId) {
+        findAgentInTenant(agentId, tenantId);
+        return getVersion(agentId, versionNo);
     }
 
     @Transactional
@@ -571,11 +573,16 @@ public class AgentService {
     }
 
     private AgentVersionDO ensureDraftForEdit(long agentId, long tenantId, long userId) {
+        AgentDO agent = findAgentInTenant(agentId, tenantId);
+        return ensureDraft(agent, tenantId, userId);
+    }
+
+    private AgentDO findAgentInTenant(long agentId, long tenantId) {
         AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
+        if (agent == null || agent.getTenantId() == null || agent.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.AGENT_NOT_FOUND);
         }
-        return ensureDraft(agent, tenantId, userId);
+        return agent;
     }
 
     private String buildIdentityJson(AgentDO agent, AgentVersionDO v) {

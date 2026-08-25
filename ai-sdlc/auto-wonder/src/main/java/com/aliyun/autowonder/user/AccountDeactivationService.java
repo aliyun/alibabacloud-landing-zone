@@ -2,7 +2,7 @@ package com.aliyun.autowonder.user;
 
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
-import com.aliyun.autowonder.org.OrgMemberDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.user.dto.DeactivationRequest;
 import com.aliyun.autowonder.user.dto.DeactivationStatusVO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
@@ -22,13 +22,13 @@ public class AccountDeactivationService {
 
     private final UserDao userDao;
     private final WorkitemDao workitemDao;
-    private final OrgMemberDao orgMemberDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
 
     public AccountDeactivationService(UserDao userDao, WorkitemDao workitemDao,
-                                      OrgMemberDao orgMemberDao) {
+                                      WorkspaceMemberDao workspaceMemberDao) {
         this.userDao = userDao;
         this.workitemDao = workitemDao;
-        this.orgMemberDao = orgMemberDao;
+        this.workspaceMemberDao = workspaceMemberDao;
     }
 
     public void initiateDeactivation(Long userId, DeactivationRequest req) {
@@ -59,7 +59,7 @@ public class AccountDeactivationService {
                     "存在 " + activeWorkitems + " 个未完结的工单，请先处理后再申请注销");
         }
 
-        if (orgMemberDao.isSoleAdminOfAnyOrg(userId)) {
+        if (workspaceMemberDao.isSoleAdminOfAnyWorkspace(userId)) {
             throw new BizException(ErrorCode.DEACTIVATION_BLOCKED_BY_SOLE_ADMIN);
         }
 

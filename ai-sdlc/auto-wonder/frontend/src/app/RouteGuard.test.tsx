@@ -9,19 +9,19 @@ describe('RouteGuard', () => {
     useAuthStore.getState().clear();
   });
 
-  it('allows a read-only member to enter organization routes', () => {
+  it('allows a read-only member to enter workspace routes', () => {
     useAuthStore.getState().setTokens('access', 'refresh');
-    useAuthStore.getState().setCurrentOrg({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
 
     render(
       <MemoryRouter>
         <RouteGuard>
-          <div>organization page</div>
+          <div>workspace page</div>
         </RouteGuard>
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('organization page')).toBeInTheDocument();
+    expect(screen.getByText('workspace page')).toBeInTheDocument();
     expect(screen.queryByText('无权限')).not.toBeInTheDocument();
   });
 });

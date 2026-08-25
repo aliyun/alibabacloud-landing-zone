@@ -65,14 +65,93 @@ require_mode_600() {
   mode=$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file")
   [[ "$mode" == "600" ]] || die "secret file must have mode 600"
 }
+validate_env_file_syntax() {
+  local file=$1
+  require_file "$file"
+  grep -Eq '^[A-Z][A-Z0-9_]*=' "$file" || die "environment file is malformed"
+  if grep -Ev '^$|^#[^!].*$|^[A-Z][A-Z0-9_]*=.*$' "$file" | grep -q .; then
+    die "environment file contains an invalid line"
+  fi
+  if grep -Eq '[`;]|\$\(' "$file"; then
+    die "environment file contains executable shell syntax"
+  fi
+  awk -F= '/^[A-Z][A-Z0-9_]*=/{if (++seen[$1] > 1) exit 1}' "$file" ||
+    die "environment file contains duplicate keys"
+}
 json_string() { jq -er "$2 // empty" "$1"; }
 configure_cloud_profile() {
-  local file=$1
+  local file=$1 cli_config_path profile_json
   CLOUD_PROFILE=$(jq -r '.cloudProfile // empty' "$file")
-  if [[ -n "$CLOUD_PROFILE" ]]; then export ALICLOUD_PROFILE="$CLOUD_PROFILE"; fi
+  if [[ -n "$CLOUD_PROFILE" ]]; then
+    export ALICLOUD_PROFILE="$CLOUD_PROFILE"
+    cli_config_path=${ALIBABA_CLOUD_CLI_CONFIG_FILE:-${HOME}/.aliyun/config.json}
+    if [[ -f "$cli_config_path" ]]; then
+      profile_json=$(jq -cer --arg profile "$CLOUD_PROFILE" '
+        (.profiles // []) | map(select(.name == $profile)) | first |
+        select(.access_key_id != null and .access_key_id != "" and
+               .access_key_secret != null and .access_key_secret != "")
+      ' "$cli_config_path" 2>/dev/null || true)
+      if [[ -n "$profile_json" ]]; then
+        export ALICLOUD_ACCESS_KEY ALICLOUD_SECRET_KEY ALICLOUD_SECURITY_TOKEN
+        ALICLOUD_ACCESS_KEY=$(jq -r '.access_key_id' <<<"$profile_json")
+        ALICLOUD_SECRET_KEY=$(jq -r '.access_key_secret' <<<"$profile_json")
+        ALICLOUD_SECURITY_TOKEN=$(jq -r '.sts_token // empty' <<<"$profile_json")
+      fi
+      unset profile_json
+    fi
+  fi
+}
+load_alicloud_profile_credentials() {
+  local region=${1:-} cli_config_path profile_json
+  [[ -n ${CLOUD_PROFILE:-} ]] || return 0
+  aliyun sts GetCallerIdentity --profile "$CLOUD_PROFILE" ${region:+--region "$region"} >/dev/null ||
+    die "Alibaba Cloud profile identity is unavailable"
+  cli_config_path=${ALIBABA_CLOUD_CLI_CONFIG_FILE:-${HOME}/.aliyun/config.json}
+  require_file "$cli_config_path"
+  profile_json=$(jq -cer --arg profile "$CLOUD_PROFILE" '
+    (.profiles // []) | map(select(.name == $profile)) | first |
+    select(.access_key_id != null and .access_key_id != "" and
+           .access_key_secret != null and .access_key_secret != "")
+  ' "$cli_config_path" 2>/dev/null || true)
+  [[ -n "$profile_json" ]] || die "Alibaba Cloud profile did not provide temporary credentials"
+  export ALICLOUD_ACCESS_KEY ALICLOUD_SECRET_KEY ALICLOUD_SECURITY_TOKEN
+  ALICLOUD_ACCESS_KEY=$(jq -r '.access_key_id' <<<"$profile_json")
+  ALICLOUD_SECRET_KEY=$(jq -r '.access_key_secret' <<<"$profile_json")
+  ALICLOUD_SECURITY_TOKEN=$(jq -r '.sts_token // empty' <<<"$profile_json")
+  unset profile_json
 }
 aliyun_cli() {
   if [[ -n ${CLOUD_PROFILE:-} ]]; then aliyun "$@" --profile "$CLOUD_PROFILE"; else aliyun "$@"; fi
+}
+ossutil_cli() {
+  local cli_config_path profile_json access_key_id access_key_secret sts_token temp_config command_status
+  cli_config_path=${ALIBABA_CLOUD_CLI_CONFIG_FILE:-${HOME}/.aliyun/config.json}
+  require_file "$cli_config_path"
+  profile_json=$(jq -cer --arg profile "${CLOUD_PROFILE:-}" '
+    (.current // "default") as $current |
+    (.profiles // []) |
+    map(select(.name == (if $profile == "" then $current else $profile end))) | first |
+    select(.access_key_id != null and .access_key_id != "" and .access_key_secret != null and .access_key_secret != "")
+  ' "$cli_config_path") || die "Alibaba Cloud CLI profile has no ossutil-compatible temporary credentials"
+  access_key_id=$(jq -r '.access_key_id' <<<"$profile_json")
+  access_key_secret=$(jq -r '.access_key_secret' <<<"$profile_json")
+  sts_token=$(jq -r '.sts_token // empty' <<<"$profile_json")
+  if [[ ${OSSUTIL_CONTRACT:-legacy} == v2 ]]; then
+    OSS_ACCESS_KEY_ID=$access_key_id OSS_ACCESS_KEY_SECRET=$access_key_secret OSS_SESSION_TOKEN=$sts_token \
+      "$OSSUTIL_BIN" "$@" || command_status=$?
+  else
+    temp_config=$(mktemp "${TMPDIR:-/tmp}/autowonder-ossutil.XXXXXX")
+    TEMP_FILES+=("$temp_config")
+    chmod 600 "$temp_config"
+    {
+      printf '[Credentials]\naccessKeyID=%s\naccessKeySecret=%s\n' "$access_key_id" "$access_key_secret"
+      [[ -z "$sts_token" ]] || printf 'stsToken=%s\n' "$sts_token"
+    } >"$temp_config"
+    "$OSSUTIL_BIN" -c "$temp_config" "$@" || command_status=$?
+    unlink "$temp_config"
+  fi
+  unset profile_json access_key_id access_key_secret sts_token
+  return "${command_status:-0}"
 }
 cloud_assistant_invocation_id() {
   jq -er '.InvokeId // .InvocationId // .invokeId // .invocationId'
@@ -152,19 +231,19 @@ ossutil_upload() {
   [[ -z "$OSSUTIL_CP_FORCE_FLAG" ]] || args+=("$OSSUTIL_CP_FORCE_FLAG")
   args+=("$source_file" "$target" "$OSSUTIL_CP_ENDPOINT_FLAG" "$endpoint")
   [[ -z "$OSSUTIL_CP_REGION_FLAG" ]] || args+=("$OSSUTIL_CP_REGION_FLAG" "$region")
-  "$OSSUTIL_BIN" "${args[@]}"
+  ossutil_cli "${args[@]}"
 }
 ossutil_remove() {
   local target=$1 endpoint=$2 region=$3
   local -a args=(rm "$OSSUTIL_RM_FORCE_FLAG" "$target" "$OSSUTIL_RM_ENDPOINT_FLAG" "$endpoint")
   [[ -z "$OSSUTIL_RM_REGION_FLAG" ]] || args+=("$OSSUTIL_RM_REGION_FLAG" "$region")
-  "$OSSUTIL_BIN" "${args[@]}"
+  ossutil_cli "${args[@]}"
 }
 ossutil_presign() {
   local target=$1 endpoint=$2 region=$3 result url
   local -a args=("$OSSUTIL_SIGN_COMMAND" "$target" "$OSSUTIL_EXPIRY_FLAG" "$OSSUTIL_EXPIRY_VALUE" "$OSSUTIL_SIGN_ENDPOINT_FLAG" "$endpoint")
   [[ -z "$OSSUTIL_SIGN_REGION_FLAG" ]] || args+=("$OSSUTIL_SIGN_REGION_FLAG" "$region")
-  result=$("$OSSUTIL_BIN" "${args[@]}" 2>/dev/null) || die "failed to create staging URL"
+  result=$(ossutil_cli "${args[@]}" 2>/dev/null) || die "failed to create staging URL"
   url=$(grep -Eo 'https?://[^[:space:]]+' <<<"$result" | head -1)
   [[ "$url" == http://*\?* || "$url" == https://*\?* ]] || die "ossutil returned an invalid staging URL"
   OSSUTIL_PRESIGNED_URL=$url

@@ -9,6 +9,9 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.sdlc.dto.*;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +22,8 @@ import java.util.Set;
 
 @Service
 public class SdlcService {
+
+    private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
     private final SdlcDao sdlcDao;
     private final SdlcStepDao stepDao;
@@ -157,15 +162,21 @@ public class SdlcService {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
         requireEditable(s);
+        String checklistJson = normalizeJson(req.getChecklistJson());
+        String gatePolicyJson = normalizeJson(req.getGatePolicyJson());
+        requireValidJson("checklistJson", checklistJson);
+        requireValidJson("gatePolicyJson", gatePolicyJson);
         SdlcStepDO step = new SdlcStepDO();
         step.setTenantId(tenantId);
         step.setSdlcId(sdlcId);
-        step.setStepOrder(req.getStepOrder() != null ? req.getStepOrder() : nextStepOrder(sdlcId));
+        Integer requestedOrder = req.getStepOrder();
+        step.setStepOrder(requestedOrder != null && requestedOrder > 0
+                ? requestedOrder : nextStepOrder(sdlcId));
         step.setName(req.getName());
         step.setKind(req.getKind());
         step.setInstructionMd(req.getInstructionMd());
-        step.setChecklistJson(req.getChecklistJson());
-        step.setGatePolicyJson(req.getGatePolicyJson());
+        step.setChecklistJson(checklistJson);
+        step.setGatePolicyJson(gatePolicyJson);
         step.setRequired(req.getRequired() == null ? Boolean.TRUE : req.getRequired());
         step.setTimeoutSeconds(req.getTimeoutSeconds());
         step.setRetryBudget(req.getRetryBudget());
@@ -176,8 +187,26 @@ public class SdlcService {
         step.setOnSuccess(req.getOnSuccess());
         step.setOnFail(req.getOnFail());
         step.setCreatorId(userId);
-        stepDao.insert(step);
+        insertStepWithOrderRetry(step, sdlcId);
         return toStepVO(step);
+    }
+
+    /**
+     * 唯一键冲突（并发新增或历史软删除占位）时重新计算序号重试，避免直接暴露系统内部错误。
+     */
+    private void insertStepWithOrderRetry(SdlcStepDO step, long sdlcId) {
+        int maxAttempts = 3;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                stepDao.insert(step);
+                return;
+            } catch (DuplicateKeyException e) {
+                if (attempt >= maxAttempts) {
+                    throw new BizException(ErrorCode.SDLC_STEP_ORDER_DUPLICATE);
+                }
+                step.setStepOrder(nextStepOrder(sdlcId));
+            }
+        }
     }
 
     @Transactional
@@ -186,7 +215,7 @@ public class SdlcService {
         if (s == null) {
             throw new BizException(ErrorCode.SDLC_NOT_FOUND);
         }
-        requireEditable(s);
+        requireContentEditable(s);
         SdlcStepDO step = stepDao.findById(stepId);
         if (step == null || step.getSdlcId() != sdlcId) {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
@@ -194,11 +223,14 @@ public class SdlcService {
         String name = req.getName() != null ? req.getName() : step.getName();
         String kind = req.getKind() != null ? req.getKind() : step.getKind();
         String instructionMd = req.getInstructionMd() != null ? req.getInstructionMd() : step.getInstructionMd();
-        String checklistJson = req.getChecklistJson() != null ? req.getChecklistJson() : step.getChecklistJson();
-        String gatePolicyJson = req.getGatePolicyJson() != null ? req.getGatePolicyJson() : step.getGatePolicyJson();
+        String checklistJson = normalizeJson(req.getChecklistJson() != null ? req.getChecklistJson() : step.getChecklistJson());
+        String gatePolicyJson = normalizeJson(req.getGatePolicyJson() != null ? req.getGatePolicyJson() : step.getGatePolicyJson());
+        requireValidJson("checklistJson", checklistJson);
+        requireValidJson("gatePolicyJson", gatePolicyJson);
         Boolean required = req.getRequired() != null ? req.getRequired() : step.getRequired();
-        Integer timeoutSeconds = req.getTimeoutSeconds() != null ? req.getTimeoutSeconds() : step.getTimeoutSeconds();
-        Integer retryBudget = req.getRetryBudget() != null ? req.getRetryBudget() : step.getRetryBudget();
+        // timeoutSeconds/retryBudget 支持显式 null 恢复未配置，请求体未携带时保持原值
+        Integer timeoutSeconds = req.isTimeoutSecondsPresent() ? req.getTimeoutSeconds() : step.getTimeoutSeconds();
+        Integer retryBudget = req.isRetryBudgetPresent() ? req.getRetryBudget() : step.getRetryBudget();
         String code = req.getCode() != null ? req.getCode() : step.getCode();
         String handlerType = req.getHandlerType() != null ? req.getHandlerType() : step.getHandlerType();
         String handlerRoleRef = req.getHandlerRoleRef();
@@ -244,6 +276,10 @@ public class SdlcService {
         }
         if (!validIds.equals(new HashSet<>(ids))) {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
+        }
+        // 两段式更新：先移到互不冲突的负数临时区，再赋目标序号，避免中间态唯一键冲突
+        for (int i = 0; i < ids.size(); i++) {
+            stepDao.updateOrder(ids.get(i), tenantId, Integer.MIN_VALUE + i, userId);
         }
         for (int i = 0; i < ids.size(); i++) {
             stepDao.updateOrder(ids.get(i), tenantId, i + 1, userId);
@@ -303,6 +339,37 @@ public class SdlcService {
                 && !"DISABLED".equals(sdlc.getStatus())
                 && !"ENABLED".equals(sdlc.getStatus())) {
             throw new BizException(ErrorCode.SDLC_NOT_DRAFT);
+        }
+    }
+
+    // 步骤内容级编辑（instructionMd/checklistJson/gatePolicyJson 等）不改变流程结构，
+    // 相比 requireEditable 额外放行 ACTIVE 流程，与结构变更（增删步骤、调整顺序）区分开。
+    private void requireContentEditable(SdlcDO sdlc) {
+        if (!"DRAFT".equals(sdlc.getStatus())
+                && !"DISABLED".equals(sdlc.getStatus())
+                && !"ENABLED".equals(sdlc.getStatus())
+                && !"ACTIVE".equals(sdlc.getStatus())) {
+            throw new BizException(ErrorCode.SDLC_NOT_DRAFT);
+        }
+    }
+
+    // MySQL JSON 列不接受空串写入（ERROR 3140），空白输入归一化为 null，
+    // 既实现「清空字段」语义，又避免 DataIntegrityViolation 被映射为误导性 409。
+    private String normalizeJson(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    // sdlc_step 的 checklist_json/gate_policy_json 是 MySQL JSON 列，
+    // 非法 JSON 写入会触发 DataIntegrityViolation 并被映射为误导性的 409「数据冲突」，
+    // 因此在写库前做语法校验并以参数错误（400）快速失败。
+    private void requireValidJson(String field, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        try {
+            JSON_MAPPER.readTree(value);
+        } catch (JsonProcessingException e) {
+            throw new BizException(ErrorCode.PARAM_INVALID, field + " 不是合法的 JSON");
         }
     }
 

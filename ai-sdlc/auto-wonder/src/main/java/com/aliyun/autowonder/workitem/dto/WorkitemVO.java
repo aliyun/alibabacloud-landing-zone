@@ -35,8 +35,16 @@ public class WorkitemVO {
     private Boolean pendingDecision;
     /** Workitem source for deletion eligibility: "NATIVE" or "EXTERNAL". */
     private String sourceType;
+    /** Preferred external provider for list/card presentation, for example AONE. */
+    private String sourceProvider;
+    /** Preferred external workitem URL for list/card presentation. */
+    private String sourceUrl;
     /** Whether the current workitem can be deleted by a human user. */
     private Boolean deletable;
     /** Human-readable reason when deletable is false. */
     private String deletableReason;
+    /** External business collaboration snapshot; null for native workitems. */
+    private ExternalCollaborationVO externalCollaboration;
+    /** Source-side creator for imported workitems; the local creatorId remains the import operator. */
+    private ExternalPrincipalVO sourceCreator;
 }

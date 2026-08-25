@@ -1,3 +1,35 @@
+export interface ExternalPrincipal {
+  id: number;
+  provider: string;
+  subjectId: string;
+  subjectType: 'USER' | 'BOT' | 'SERVICE' | string;
+  displayName: string | null;
+  mappedUserId: number | null;
+}
+
+export interface ExternalPrincipalRelation {
+  sourceKey: string;
+  displayName: string;
+  principals: ExternalPrincipal[];
+}
+
+export interface ExternalCollaboration {
+  provider: string;
+  externalProjectId: string;
+  externalWorkitemId: string;
+  externalUrl: string | null;
+  sourceStatusId: string | null;
+  sourceStatusName: string | null;
+  sourceLifecycle: 'ACTIVE' | 'CLOSED' | 'DELETED' | 'UNAVAILABLE' | string;
+  reporter: ExternalPrincipal | null;
+  businessOwner: ExternalPrincipal | null;
+  principalRelations: ExternalPrincipalRelation[];
+  lastSyncAt: string | null;
+  syncStatus: 'HEALTHY' | 'DELAYED' | 'ACTION_REQUIRED' | string;
+  lastErrorCode: string | null;
+  lastError: string | null;
+}
+
 export interface Workitem {
   id: number;
   workType: string;
@@ -23,8 +55,13 @@ export interface Workitem {
   healthReason?: string | null;
   pendingDecision?: boolean | null;
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
+  sourceProvider?: string | null;
+  sourceUrl?: string | null;
   deletable?: boolean | null;
   deletableReason?: string | null;
+  externalCollaboration?: ExternalCollaboration | null;
+  /** Source-side creator for an imported workitem; creatorId remains the local import operator. */
+  sourceCreator?: ExternalPrincipal | null;
 }
 
 export interface TimelineEvent {
@@ -78,6 +115,7 @@ export interface WorkitemDetail {
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
   deletable?: boolean | null;
   deletableReason?: string | null;
+  externalCollaboration?: ExternalCollaboration | null;
 }
 
 export interface Participant {
@@ -138,6 +176,7 @@ export interface DeliveryProgress {
   agents?: AgentDeliveryProgress[] | null;
   workflowPlan?: WorkflowPlan | null;
   processGraph?: ProcessGraph | null;
+  totalDurationMs?: number | null;
 }
 
 export interface ProcessGraphNode {
@@ -323,6 +362,9 @@ export interface TimelineItem {
   isAgent: boolean;
   content: string;
   gmtCreate: string;
+  sourceProvider?: string | null;
+  sourceExternalWorkitemId?: string | null;
+  sourceExternalUrl?: string | null;
   interactions?: Array<{
     guidanceId: number;
     targetAgentId: number;

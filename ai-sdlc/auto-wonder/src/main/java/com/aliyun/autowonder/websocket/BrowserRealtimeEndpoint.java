@@ -72,11 +72,11 @@ public class BrowserRealtimeEndpoint {
         }
         JwtService jwtService = WsSpringContext.getBean(JwtService.class);
         TokenPayload payload = jwtService.parse(token);
-        if (payload.getCurrentOrgId() == null) {
+        if (payload.getCurrentWorkspaceId() == null) {
             closeQuietly(session, "missing tenant");
             return;
         }
-        long tenantId = payload.getCurrentOrgId();
+        long tenantId = payload.getCurrentWorkspaceId();
         long userId = payload.getUserId() != null ? payload.getUserId() : 0L;
         SESSION_TENANTS.put(session, tenantId);
         authenticated = true;

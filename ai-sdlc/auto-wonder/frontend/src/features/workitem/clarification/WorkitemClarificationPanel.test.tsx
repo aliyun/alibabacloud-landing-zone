@@ -59,6 +59,18 @@ function mockSquads() {
     http.get('/api/workitems/:workitemId/clarification-conversations', () =>
       HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
     ),
+    http.post('/api/workitems/:workitemId/clarification-conversations', async ({ request }) => {
+      const body = await request.json() as { agentId?: number };
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          id: 5, agentId: body.agentId ?? 42, agentName: 'Agent-X', channelConversationId: 'ch-5',
+          status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+          cliSessionRef: null, processingStatus: null, processingTurnId: null,
+          lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
+        },
+      });
+    }),
     http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
       HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null }),
     ),
@@ -438,5 +450,103 @@ describe('WorkitemClarificationPanel', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(submitCalled).toBe(false);
     expect(textarea).toHaveValue('候选');
+  });
+
+  it('renders a placeholder and error for AI turns persisted with empty content', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const conversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: '2026-01-01T00:00:03', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 3, direction: 'IN', content: '问题9的答案', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+        { id: 4, direction: 'OUT', content: '', status: 'FAILED', error: 'provider error', gmtCreate: '2026-01-01T00:00:03' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation }),
+      ),
+    );
+
+    renderPanel([]);
+
+    expect(await screen.findByText('问题9的答案')).toBeInTheDocument();
+    expect(screen.getByText('（未返回内容）')).toBeInTheDocument();
+    expect(screen.getByText('provider error')).toBeInTheDocument();
+  });
+
+  it('auto creates a conversation when switching to an agent without history', async () => {
+    let createCalls = 0;
+    const created = {
+      id: 9, agentId: 2, agentName: 'Agent-B', channelConversationId: 'ch-9',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+      ),
+      http.post('/api/workitems/:workitemId/clarification-conversations', async ({ request }) => {
+        createCalls += 1;
+        const body = await request.json() as { agentId?: number };
+        expect(body.agentId).toBe(2);
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created });
+      }),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created }),
+      ),
+    );
+
+    renderPanel([
+      { agentId: 1, agentName: 'Agent-A', status: 'active' },
+      { agentId: 2, agentName: 'Agent-B', status: 'active' },
+    ]);
+
+    fireEvent.click(await screen.findByText('Agent-B'));
+
+    await waitFor(() => expect(createCalls).toBe(1));
+    expect(await screen.findByPlaceholderText('输入消息...')).toBeInTheDocument();
+    expect(screen.queryByText('暂无对话')).not.toBeInTheDocument();
+  });
+
+  it('does not auto-retry a failed conversation creation; manual retry via 新对话 still works', async () => {
+    let createCalls = 0;
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+      ),
+      http.post('/api/workitems/:workitemId/clarification-conversations', () => {
+        createCalls += 1;
+        return HttpResponse.json(
+          { success: false, code: 'CREATE_FAILED', message: '创建失败', traceId: null, data: null },
+          { status: 500 },
+        );
+      }),
+    );
+
+    renderPanel([
+      { agentId: 1, agentName: 'Agent-A', status: 'active' },
+      { agentId: 2, agentName: 'Agent-B', status: 'active' },
+    ]);
+
+    fireEvent.click(await screen.findByText('Agent-B'));
+
+    await waitFor(() => expect(createCalls).toBe(1));
+    expect(await screen.findByText('自动创建会话失败，请点击「新对话」重试')).toBeInTheDocument();
+
+    // Give effects time to re-run; a regression would fire more POSTs here.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(createCalls).toBe(1);
+    expect(screen.getByText('暂无对话')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('新对话'));
+    await waitFor(() => expect(createCalls).toBe(2));
   });
 });

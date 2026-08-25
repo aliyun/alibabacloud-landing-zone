@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.integration.provider.ExternalComment;
 import com.aliyun.autowonder.integration.provider.ExternalIssueType;
+import com.aliyun.autowonder.integration.provider.ExternalPrincipalRef;
 import com.aliyun.autowonder.integration.provider.ExternalStatusOption;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemDetail;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemProvider;
@@ -11,15 +12,19 @@ import com.aliyun.autowonder.integration.provider.ExternalWorkitemSummary;
 import com.aliyun.autowonder.integration.provider.PageResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -33,6 +38,8 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
 
     /** Aone searchV4 caps perPage at 200. */
     private static final int PER_PAGE = 200;
+    /** Aone searchV4 rejects idList larger than 50, so searchByIds must batch requests. */
+    private static final int ID_LIST_MAX = 50;
     /** Aone rejects offset=(page-1)*perPage > 5000, capping a single window at 26 pages of 200. */
     private static final int WINDOW_MAX_ITEMS = 5000;
     private static final int MAX_PAGES = 26;
@@ -40,10 +47,16 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
     private static final long DEFAULT_EPOCH_MILLIS = 946656000000L;
 
     private final AoneOpenApiClient client;
-    private final AoneWorkitemMapper mapper = new AoneWorkitemMapper();
+    private final AoneWorkitemMapper mapper;
 
     public AoneWorkitemProvider(AoneOpenApiClient client) {
+        this(client, null);
+    }
+
+    @Autowired
+    public AoneWorkitemProvider(AoneOpenApiClient client, AoneIntegrationProperties properties) {
         this.client = client;
+        this.mapper = new AoneWorkitemMapper(properties == null ? null : properties.getWebBaseUrl());
     }
 
     @Override
@@ -53,8 +66,22 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
 
     @Override
     public PageResult<ExternalWorkitemSummary> searchByIds(AoneOpenApiConfig config, String externalProjectId, List<String> ids) {
-        JSONObject result = searchPage(config, externalProjectId, ids, null, null, 1, PER_PAGE);
-        return PageResult.of(toWorkitems(result), 1, PER_PAGE, result.getIntValue("totalCount"));
+        if (ids == null || ids.isEmpty()) {
+            return PageResult.of(new ArrayList<>(), 1, PER_PAGE, 0);
+        }
+        Map<String, ExternalWorkitemSummary> collected = new LinkedHashMap<>();
+        int totalCount = 0;
+        for (int start = 0; start < ids.size(); start += ID_LIST_MAX) {
+            List<String> batch = ids.subList(start, Math.min(start + ID_LIST_MAX, ids.size()));
+            JSONObject result = searchPage(config, externalProjectId, batch, null, null, 1, PER_PAGE);
+            totalCount += result.getIntValue("totalCount");
+            for (ExternalWorkitemSummary item : toWorkitems(result)) {
+                if (item.getExternalId() != null) {
+                    collected.putIfAbsent(item.getExternalId(), item);
+                }
+            }
+        }
+        return PageResult.of(new ArrayList<>(collected.values()), 1, PER_PAGE, totalCount);
     }
 
     @Override
@@ -264,12 +291,16 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
                 comments.add(toComment(obj));
             }
         }
+        resolveCommentAuthors(config, comments);
         return comments;
     }
 
     @Override
     public ExternalComment createComment(AoneOpenApiConfig config, String externalWorkitemId, String staffId, String contentMd) {
-        JSONObject result = client.get(config, "/issue/openapi/IssueTopService/createComment",
+        // POST form body: a GET query string exceeds the gateway URL length limit once the
+        // content grows past a few hundred chars (URL-encoded UTF-8 roughly triples CJK),
+        // which previously dead-lettered long comments without any error surfacing.
+        JSONObject result = client.postForm(config, "/issue/openapi/IssueTopService/createComment",
                 Map.of("targetType", "Issue", "targetId", externalWorkitemId, "user", staffId, "content", contentMd));
         ExternalComment comment = toComment(result);
         if (comment.getExternalId() == null) {
@@ -301,12 +332,85 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
         ExternalComment comment = new ExternalComment();
         comment.setExternalId(firstNonBlank(str(obj, "id"), str(obj, "commentId")));
         comment.setExternalWorkitemId(firstNonBlank(str(obj, "targetId"), str(obj, "issueId")));
-        comment.setAuthorStaffId(firstNonBlank(str(obj, "userStaffId"), str(obj, "staffId"), str(obj, "user")));
-        comment.setAuthorName(firstNonBlank(str(obj, "userName"), str(obj, "authorName"), str(obj, "nickName")));
+        JSONObject author = firstObject(obj, "author", "user", "creator");
+        comment.setAuthorStaffId(firstNonBlank(
+                explicitStaffId(obj),
+                explicitStaffId(author),
+                scalarSubjectId(obj, "creator"),
+                scalarSubjectId(author, "creator")));
+        comment.setAuthorInternalUserId(firstNonBlank(
+                internalUserId(obj),
+                internalUserId(author)));
+        comment.setAuthorName(firstNonBlank(
+                explicitPersonName(obj),
+                explicitPersonName(author),
+                scalarDisplayName(obj, "creator"),
+                scalarDisplayName(obj, "user"),
+                scalarDisplayName(obj, "author")));
+        comment.setAuthor(ExternalPrincipalRef.user(comment.getAuthorStaffId(), comment.getAuthorName()));
         comment.setContentMd(firstNonBlank(str(obj, "content"), str(obj, "body")));
         comment.setCreatedAt(date(firstNonBlank(str(obj, "createdAt"), str(obj, "gmtCreate"))));
+        comment.setUpdatedAt(date(firstNonBlank(str(obj, "updatedAt"), str(obj, "gmtModified"))));
+        comment.setSourceStatus(Boolean.TRUE.equals(obj.getBoolean("isDeleted")) ? "DELETED" : "ACTIVE");
         comment.setRawJson(obj.toJSONString());
         return comment;
+    }
+
+    /**
+     * CommentTopService returns its author's Aone internal userId rather than the staff ID used by
+     * the rest of the external identity contract. Resolve every distinct internal ID once so an
+     * individual failed lookup never prevents the batch of comments from being synchronized.
+     */
+    private void resolveCommentAuthors(AoneOpenApiConfig config, List<ExternalComment> comments) {
+        Map<String, ExternalPrincipalRef> resolvedByInternalUserId = new HashMap<>();
+        Set<String> attemptedInternalUserIds = new HashSet<>();
+        for (ExternalComment comment : comments) {
+            if (comment.getAuthorStaffId() != null && !comment.getAuthorStaffId().isBlank()) {
+                comment.setAuthor(ExternalPrincipalRef.user(comment.getAuthorStaffId(), comment.getAuthorName()));
+                continue;
+            }
+            String internalUserId = comment.getAuthorInternalUserId();
+            if (internalUserId == null || internalUserId.isBlank()) {
+                continue;
+            }
+            ExternalPrincipalRef principal = resolvedByInternalUserId.get(internalUserId);
+            if (!attemptedInternalUserIds.contains(internalUserId)) {
+                attemptedInternalUserIds.add(internalUserId);
+                principal = resolveCommentAuthor(config, internalUserId);
+                if (principal != null) {
+                    resolvedByInternalUserId.put(internalUserId, principal);
+                }
+            }
+            if (principal == null) {
+                continue;
+            }
+            comment.setAuthorStaffId(principal.getSubjectId());
+            comment.setAuthorName(firstNonBlank(comment.getAuthorName(), principal.getDisplayName()));
+            comment.setAuthor(ExternalPrincipalRef.user(comment.getAuthorStaffId(), comment.getAuthorName()));
+        }
+    }
+
+    private ExternalPrincipalRef resolveCommentAuthor(AoneOpenApiConfig config, String internalUserId) {
+        try {
+            JSONObject response = client.get(config, "/ak/project/openapi/UserApiFacade/getById",
+                    Map.of("id", internalUserId));
+            JSONObject user = firstObject(response, "result", "data");
+            if (user == null) {
+                user = response;
+            }
+            String staffId = firstNonBlank(str(user, "staffId"), str(user, "userStaffId"), str(user, "employeeId"));
+            if (staffId == null || staffId.isBlank()) {
+                log.warn("Aone comment author lookup returned no staff ID: userId={}", internalUserId);
+                return null;
+            }
+            String displayName = firstNonBlank(str(user, "userName"), str(user, "nickName"), str(user, "nickname"),
+                    str(user, "realName"), str(user, "displayName"), str(user, "name"));
+            return ExternalPrincipalRef.user(staffId, displayName);
+        } catch (RuntimeException e) {
+            log.warn("Aone comment author lookup failed: userId={}, error={}", internalUserId, e.getMessage());
+            log.debug("Aone comment author lookup failure details: userId={}", internalUserId, e);
+            return null;
+        }
     }
 
     private ExternalStatusOption toStatusOption(JSONObject obj) {
@@ -353,8 +457,69 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
     }
 
     private String str(JSONObject object, String key) {
+        if (object == null) {
+            return null;
+        }
         Object value = object.get(key);
-        return value == null ? null : String.valueOf(value);
+        return value == null || value instanceof JSONObject || value instanceof JSONArray ? null : String.valueOf(value);
+    }
+
+    private JSONObject firstObject(JSONObject source, String... keys) {
+        if (source == null) {
+            return null;
+        }
+        for (String key : keys) {
+            Object value = source.get(key);
+            if (value instanceof JSONObject object) {
+                return object;
+            }
+        }
+        return null;
+    }
+
+    private String explicitStaffId(JSONObject person) {
+        return firstNonBlank(
+                str(person, "userStaffId"), str(person, "staffId"), str(person, "authorStaffId"),
+                str(person, "creatorStaffId"), str(person, "operatorStaffId"));
+    }
+
+    private String internalUserId(JSONObject person) {
+        return firstNonBlank(str(person, "userId"), str(person, "authorId"), str(person, "creatorId"));
+    }
+
+    private String explicitPersonName(JSONObject person) {
+        return firstNonBlank(
+                str(person, "userName"), str(person, "authorName"), str(person, "creatorName"),
+                str(person, "nickName"), str(person, "nickname"), str(person, "displayName"), str(person, "name"));
+    }
+
+    private String scalarSubjectId(JSONObject source, String key) {
+        String value = str(source, key);
+        return looksLikeExternalSubjectId(value) ? value : null;
+    }
+
+    private String scalarDisplayName(JSONObject source, String key) {
+        String value = str(source, key);
+        return looksLikeExternalSubjectId(value) ? null : value;
+    }
+
+    private boolean looksLikeExternalSubjectId(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        boolean numeric = true;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch < '0' || ch > '9') {
+                numeric = false;
+                break;
+            }
+        }
+        if (numeric) {
+            return true;
+        }
+        String normalized = value.toUpperCase(java.util.Locale.ROOT);
+        return normalized.startsWith("WB") || normalized.startsWith("WORKER_") || normalized.startsWith("V00_");
     }
 
     private String firstNonBlank(String... values) {

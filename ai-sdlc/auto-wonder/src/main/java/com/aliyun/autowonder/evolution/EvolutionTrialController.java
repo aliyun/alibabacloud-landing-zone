@@ -4,13 +4,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.access.OrgAccessLevel;
-import com.aliyun.autowonder.access.RequireOrgAccess;
+import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/proposals/{id}/trial")
-@RequireOrgAccess(value = OrgAccessLevel.READ_ONLY, action = "查看演进试验")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进试验")
 public class EvolutionTrialController {
 
     private final EvolutionHypothesisTrialLiteService trialService;
@@ -20,24 +20,24 @@ public class EvolutionTrialController {
     }
 
     @PostMapping("/start")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "启动演进试验")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "启动演进试验")
     public Result<EvolutionTrialDecision> start(@PathVariable("id") Long id,
                                                 @RequestBody EvolutionTrialStartRequest req) {
         return Result.ok(trialService.startTrial(id, req == null ? null : req.getTaskPatternKey(),
-                currentOrgId(), currentUserId()));
+                currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/evidence")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "记录演进试验结果")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "记录演进试验结果")
     public Result<EvolutionTrialDecision> recordOutcome(@PathVariable("id") Long id,
                                                         @RequestBody EvolutionTrialEvidenceCommand req) {
-        return Result.ok(trialService.recordOutcome(id, req, currentOrgId(), currentUserId()));
+        return Result.ok(trialService.recordOutcome(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/decide")
-    @RequireOrgAccess(value = OrgAccessLevel.READ_WRITE, action = "决策演进试验")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "决策演进试验")
     public Result<EvolutionTrialDecision> decide(@PathVariable("id") Long id) {
-        return Result.ok(trialService.decide(id, currentOrgId(), currentUserId()));
+        return Result.ok(trialService.decide(id, currentWorkspaceId(), currentUserId()));
     }
 
     private long currentUserId() {
@@ -48,11 +48,11 @@ public class EvolutionTrialController {
         return uid;
     }
 
-    private long currentOrgId() {
-        Long orgId = AutoWonderContext.get().getCurrentOrgId();
-        if (orgId == null) {
-            throw new BizException(ErrorCode.ORG_NOT_MEMBER);
+    private long currentWorkspaceId() {
+        Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
+        if (workspaceId == null) {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
         }
-        return orgId;
+        return workspaceId;
     }
 }

@@ -59,9 +59,9 @@ class ImNotificationWorkerTest {
         verify(fixture.provider).send(command.capture());
         assertEquals("DINGTALK", command.getValue().provider());
         assertEquals("staff-001", command.getValue().externalUserId());
-        assertTrue(command.getValue().markdown().contains("**组织**：真实研发组织"));
+        assertTrue(command.getValue().markdown().contains("**工作空间**：真实研发工作空间"));
         assertTrue(command.getValue().markdown().contains("**状态**：待决策"));
-        assertTrue(command.getValue().markdown().contains("[查看工单](https://auto.example.com/workitems/42?orgId=7)"));
+        assertTrue(command.getValue().markdown().contains("[查看工单](https://auto.example.com/workitems/42?workspaceId=7)"));
         verify(fixture.queue).markDelivered("notification-key-1");
         verify(fixture.queue).ack("1-0");
     }
@@ -406,7 +406,7 @@ class ImNotificationWorkerTest {
             properties.setMaxAttempts(3);
             when(contextResolver.resolve(org.mockito.ArgumentMatchers.any()))
                     .thenReturn(new ImNotificationMessageContext(
-                            "真实研发组织", "待决策", "https://auto.example.com", 7L));
+                            "真实研发工作空间", "待决策", "https://auto.example.com", 7L));
             when(provider.provider()).thenReturn("DINGTALK");
             worker = new ImNotificationWorker(
                     queue,
@@ -433,7 +433,7 @@ class ImNotificationWorkerTest {
             properties.setConsumer("worker-1");
             when(contextResolver.resolve(org.mockito.ArgumentMatchers.any()))
                     .thenReturn(new ImNotificationMessageContext(
-                            "真实研发组织", "待决策", "https://auto.example.com", 7L));
+                            "真实研发工作空间", "待决策", "https://auto.example.com", 7L));
             when(provider.provider()).thenReturn("DINGTALK");
             worker = new ImNotificationWorker(
                     queue,
