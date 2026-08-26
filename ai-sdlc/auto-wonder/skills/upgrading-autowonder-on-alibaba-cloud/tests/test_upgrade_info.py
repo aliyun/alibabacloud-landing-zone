@@ -38,7 +38,7 @@ class UpgradeInfoTest(unittest.TestCase):
             "cloudProfile": "production",
             "repositoryUrl": "https://example.invalid/autowonder.git",
             "repositoryCommit": "a" * 40,
-            "recommendedRuntimeVersion": "0.2.130",
+            "recommendedRuntimeVersion": "0.2.138",
             "tags": tags,
         }
         if secret_metadata:
@@ -180,7 +180,7 @@ esac
         self.assertEqual("local", discovery["terraform"]["backendMode"])
         self.assertEqual(info / "manifest.json", manifest)
         working = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertEqual("0.2.130", working["recommendedRuntimeVersion"])
+        self.assertEqual("0.2.138", working["recommendedRuntimeVersion"])
         self.assertEqual(0o700, (self.project / "upgrade-info").stat().st_mode & 0o777)
         for path in (self.project / "upgrade-info").rglob("*.json"):
             self.assertEqual(0o600, path.stat().st_mode & 0o777, path)
@@ -329,7 +329,7 @@ esac
 
         self.assertEqual(0, result.returncode, result.stderr)
         refreshed = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertEqual("0.2.130", refreshed["recommendedRuntimeVersion"])
+        self.assertEqual("0.2.138", refreshed["recommendedRuntimeVersion"])
 
     def test_oss_backend_with_secrets_uses_private_copy_without_leaking(self):
         deployment = self.create_deployment(secret_metadata=True)
