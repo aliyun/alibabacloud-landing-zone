@@ -60,8 +60,10 @@ Community adaptations:
   contract in `WsDispatchTransport`, `SkillService`,
   `SkillConnectionTestService` and `ConversationCapabilityService`.
   `PlatformKeyCenterClient` and its test are not published because they bind the
-  KeyCenter SDK. Two Javadoc comments that still said "KeyCenter" were reworded
-  so `CommunityDependencyBoundaryTest` passes.
+  KeyCenter SDK; the `KeyCenterClient` interface and the `InMemoryKeyCenterClient`
+  test double are also absent, because community removed that abstraction in
+  favour of `SecretCrypto` before this sync. Two Javadoc comments that still said
+  "KeyCenter" were reworded so `CommunityDependencyBoundaryTest` passes.
 - `com.alibaba.fastjson2:fastjson2:2.0.58` is declared explicitly. The
   scheduled-task code imports it and master resolves it transitively through
   internal SDKs that community removes; without the explicit declaration the
@@ -148,6 +150,14 @@ Verification:
   `pom.xml`, `frontend/package-lock.json`, `frontend/.npmrc`, `APP-META`,
   `src/main` and `src/main/resources` returns nothing.
 - Migration immutability, ancestry and schema parity all pass.
+- Two audit nuances. First, Rule 12's named assertion
+  `test_script_contracts.py::test_runtime_config_replaces_stale_recommended_runtime_version`
+  is itself one of the pre-existing deployment-Skill failures, so the five
+  runtime-version sources of truth were confirmed by hand at `0.2.150` but are
+  not currently guarded by a passing test; fixing that suite would restore
+  enforcement. Second, `docs/community/verification.md` still carried
+  2026-08-04 evidence (1672 backend tests) and was refreshed to this release's
+  measurements, with the Linux image rows marked as not re-run.
 
 Upstream defects found while running the gates. Five frontend assertions and one
 backend suite were already failing on `origin/master` and were reproduced there

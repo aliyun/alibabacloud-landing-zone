@@ -129,7 +129,14 @@ After the merge:
    - review deployment input collection, protected environment generation,
      upgrade planning, operator documentation, and tests for impact;
    - record every intentional Community difference. An unexplained missing key
-     is a blocking sync defect.
+     is a blocking sync defect. "Missing" means a key the runtime reads that
+     neither `docs/community/application.env.example` nor `application*.yml`
+     provides. The deployment environment contract is the union of both sources —
+     `plan-upgrade.sh` collects `${VAR}` placeholders from the yml as well as the
+     `KEY=` lines of the example — so a key that appears only in the yml is
+     already covered by upgrade planning and is not a defect. Do not bulk-add
+     such keys to the example: doing so changes their contract hash and makes the
+     upgrade planner report them as changed env for no functional gain.
 5. Run the gates in [verification.md](verification.md), including backend tests,
    frontend tests/build, deployment Skill tests, and internal-reference scans.
    Run Maven verification and standalone frontend gates serially because both

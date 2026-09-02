@@ -1,21 +1,29 @@
 # Community Verification
 
-Verification date: 2026-08-04
+Verification date: 2026-09-02 (release v0.7.0, master baseline `25371cb1`)
 
 ## Completed Evidence
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Backend package | PASS | Host backend verify: 1672 tests, 0 failures, 0 errors |
-| Frontend install | PASS | Public npm lockfile; 690 packages audited |
-| Frontend tests | PASS | 73 files and 445 tests passed |
-| Frontend lint | PASS | ESLint completed with 0 errors and 2 existing hook warnings |
-| Frontend production build | PASS | Vite 6.4.3 built 4754 modules |
-| Community boundary tests | PASS | 10 focused build, dependency, access, and runtime boundary tests passed |
-| Linux image build | PASS | `docker build --platform linux/amd64`: container Maven build passed all 1671 tests; image `sha256:3f44d9514a0f4e7a7b8add0f373d16c2c04d6bd8a4ffb5a03bd07ef5f3a1b055` |
-| Runtime image identity | PASS | Linux amd64, configured user `autowonder`, JAR present |
-| Runtime base image | PASS | Temurin amd64 manifest digest `sha256:468586c92d39f8cbad76574623db3fe001625ed4d895431c3ff7bd2ec9ce7ae3` |
-| Local startup smoke | PASS | Image started as `autowonder` with fresh MySQL 8 and passwordless Redis; preload and public capabilities returned HTTP 200, with `aoneEnabled: false` |
+| Backend package | PASS | `mvn -DskipGitCommitId=true clean verify`: BUILD SUCCESS, 2652 tests, 0 failures, 0 errors, 1 skipped |
+| Frontend install | PASS | Public npm lockfile; `npm ci --ignore-scripts` clean |
+| Frontend tests | PASS | 116 files, 901 tests passed, 1 skipped |
+| Frontend lint | PASS | ESLint completed with 0 errors and 3 existing hook warnings |
+| Frontend production build | PASS | `tsc -b && vite build` succeeded |
+| Community boundary tests | PASS | `CommunityBuildInputTest` and `CommunityDependencyBoundaryTest` pass; dependency tree free of KeyCenter, Normandy, AkLess, RASS, BUC and `log4j:log4j`; internal-reference scan returns nothing |
+| Database schema | PASS | Fresh MySQL 8 import of `docs/autowonder-schema.sql` produced 64 tables, including `scheduled_task`, `scheduled_task_run`, `workspace_access_request` and the `normalized_idempotency_key` STORED generated column |
+| Local startup smoke | PASS | Jar started against fresh MySQL 8 and Redis; `V037 schema capability: mode=V037_READY, mapper_mode=SOURCE_AWARE, scheduled_available=true`; `/checkpreload.htm` HTTP 200; `aoneEnabled: false`; branding reported `communityEdition: true` and runtime `0.2.150`; register → login → create workspace → switch → `/api/capabilities/scheduled-task` (`available:true`) → `/api/workspaces/all` discovery all succeeded; zero ERROR lines in the log |
+| Deployment Skill tests | PARTIAL | 70 passed, 31 failed. The failures are byte-identical on the previous community tip `51ff353d` and are stale assertions against script content that moved into `scripts/internal/release-transfer.sh`. Open work, not a regression of this release |
+| Upgrade Skill tests | PARTIAL | 66 passed, 6 failed, 1 skipped; same pre-existing status as above |
+| Linux image build | NOT RE-RUN | Last measured 2026-08-04: `docker build --platform linux/amd64` passed 1671 container tests, image `sha256:3f44d9514a0f4e7a7b8add0f373d16c2c04d6bd8a4ffb5a03bd07ef5f3a1b055`. Re-run before publishing a release image |
+| Runtime image identity | NOT RE-RUN | Last measured 2026-08-04: Linux amd64, configured user `autowonder`, JAR present |
+| Runtime base image | NOT RE-RUN | Last measured 2026-08-04: Temurin amd64 manifest digest `sha256:468586c92d39f8cbad76574623db3fe001625ed4d895431c3ff7bd2ec9ce7ae3` |
+
+The startup smoke run supplied syntactically valid placeholder OSS settings to
+exercise application initialization only. It did not claim an OSS network or
+credential check. Its temporary MySQL and Redis containers, data volume and
+generated secrets were removed immediately after verification.
 
 The frontend toolchain and React Router were upgraded after review. The current
 audit reports two high entries for one React Router RSC-mode CSRF advisory

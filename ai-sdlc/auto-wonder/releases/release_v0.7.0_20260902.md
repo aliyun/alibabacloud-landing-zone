@@ -200,9 +200,21 @@ items rather than passed gates.
 ## Risks
 
 - The scheduled-task rollout is the main risk. Applying `V041` is a schema change
-  on hot tables; follow `docs/scheduled-task-operations.md` and keep all three
-  switches off until the whole cluster is upgraded.
+  on hot tables. A fresh install is ready immediately, but an upgrade of an
+  existing deployment must temporarily set the three switches to `false` and
+  follow `docs/scheduled-task-operations.md` until every node is upgraded.
 - `V046` replaces a unique key on `dispatch_ai_usage`. Verify the index swap on a
   shadow database first if that table is large.
 - Community now declares `fastjson2` directly, so it must be reviewed for
   advisories independently of the internal SDKs that used to supply it.
+
+## MR/PR Links
+
+- Internal `community` branch review:
+  https://code.alibaba-inc.com/sdlc-autopilot/auto-wonder/codereview/29020604
+- External GitHub sync branch:
+  https://github.com/caihe-ch/alibabacloud-landing-zone/tree/sync/autowonder-community-v0.7.0-20260902
+- Upstream pull request into `aliyun/alibabacloud-landing-zone`: not opened yet.
+  Open it from
+  https://github.com/caihe-ch/alibabacloud-landing-zone/pull/new/sync/autowonder-community-v0.7.0-20260902
+  and record the resulting link here.
