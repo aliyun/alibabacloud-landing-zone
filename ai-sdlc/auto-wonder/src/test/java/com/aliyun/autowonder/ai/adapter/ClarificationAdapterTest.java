@@ -93,7 +93,7 @@ class ClarificationAdapterTest {
         WorkitemCommentDO comment = new WorkitemCommentDO();
         comment.setAuthorRef(1L);
         comment.setContentMd("还需要考虑第三方登录");
-        when(workitemCommentDao.listByWorkitem(10L)).thenReturn(List.of(comment));
+        when(workitemCommentDao.listByWorkitem(100L, 10L)).thenReturn(List.of(comment));
         when(repoDao.list(100L, 0, 100)).thenReturn(List.of());
 
         String prompt = adapter.buildSystemPrompt(session);

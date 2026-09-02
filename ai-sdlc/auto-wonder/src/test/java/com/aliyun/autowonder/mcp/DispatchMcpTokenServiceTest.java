@@ -93,7 +93,7 @@ class DispatchMcpTokenServiceTest {
             McpAccessTokenService.Principal principal =
                     service.authenticate(service.issue(dispatch));
 
-            assertEquals(TENANT_ID, principal.tenantId(), status);
+            assertEquals(TENANT_ID, principal.workspaceId(), status);
             assertEquals(USER_ID, principal.userId(), status);
             assertEquals(-DISPATCH_ID, principal.tokenId(), status);
             assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel(), status);

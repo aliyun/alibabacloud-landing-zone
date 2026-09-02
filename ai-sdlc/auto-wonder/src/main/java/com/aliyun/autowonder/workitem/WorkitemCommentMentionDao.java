@@ -11,4 +11,8 @@ public interface WorkitemCommentMentionDao {
 
     List<WorkitemCommentMentionDO> listByWorkitem(@Param("tenantId") Long tenantId,
                                                    @Param("workitemId") Long workitemId);
+
+    List<WorkitemCommentMentionDO> listBySource(@Param("tenantId") Long tenantId,
+                                                 @Param("sourceType") String sourceType,
+                                                 @Param("sourceId") Long sourceId);
 }

@@ -4,6 +4,7 @@ import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.storage.ObjectStorage;
 import org.springframework.stereotype.Service;
 
@@ -26,10 +27,15 @@ public class ArtifactService {
         this.storage = storage;
     }
 
-    public Long record(ReportArtifactRequest req, long tenantId) {
+    public Long record(ReportArtifactRequest req, long workspaceId) {
+        return record(req, workspaceId, new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, req.getWorkitemId()));
+    }
+
+    public Long record(ReportArtifactRequest req, long workspaceId, ArtifactOwnerRef owner) {
         ArtifactDO a = new ArtifactDO();
-        a.setTenantId(tenantId);
-        a.setWorkitemId(req.getWorkitemId());
+        a.setTenantId(workspaceId);
+        a.setSourceType(owner.sourceType().name());
+        a.setWorkitemId(owner.sourceId());
         a.setDispatchId(req.getDispatchId());
         a.setName(req.getName());
         a.setType(req.getType());
@@ -40,9 +46,16 @@ public class ArtifactService {
         return a.getId();
     }
 
-    public List<ArtifactVO> listByWorkitem(long workitemId, long tenantId) {
+    public List<ArtifactVO> listByWorkitem(long workitemId, long workspaceId) {
+        return listByOwner(new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, workitemId), workspaceId);
+    }
+
+    public List<ArtifactVO> listByOwner(ArtifactOwnerRef owner, long workspaceId) {
         Map<String, ArtifactDO> latestByLogicalName = new LinkedHashMap<>();
-        for (ArtifactDO a : artifactDao.listByWorkitem(tenantId, workitemId)) {
+        List<ArtifactDO> artifacts = owner.sourceType() == ExecutionSourceType.WORKITEM
+                ? artifactDao.listByWorkitem(workspaceId, owner.sourceId())
+                : artifactDao.listBySource(workspaceId, owner.sourceType().name(), owner.sourceId(), null);
+        for (ArtifactDO a : artifacts) {
             if (!isUserVisible(a)) {
                 continue;
             }
@@ -55,9 +68,9 @@ public class ArtifactService {
         return result;
     }
 
-    public List<ArtifactVO> listByDispatch(long dispatchId, long tenantId) {
+    public List<ArtifactVO> listByDispatch(long dispatchId, long workspaceId) {
         List<ArtifactVO> result = new ArrayList<>();
-        for (ArtifactDO a : artifactDao.listByDispatch(tenantId, dispatchId)) {
+        for (ArtifactDO a : artifactDao.listByDispatch(workspaceId, dispatchId)) {
             if (isUserVisible(a)) {
                 result.add(toVO(a));
             }
@@ -86,19 +99,46 @@ public class ArtifactService {
         return name;
     }
 
-    public String getDownloadUrl(long id, long tenantId) {
-        ArtifactDO a = artifactDao.findById(id);
-        if (a == null || a.getTenantId() == null || !a.getTenantId().equals(tenantId)) {
-            throw new BizException(ErrorCode.ARTIFACT_NOT_FOUND);
-        }
+    public String getDownloadUrl(long id, long workspaceId) {
+        ArtifactDO a = findByTenantAndId(id, workspaceId);
         return forceHttps(storage.presignGet(a.getOssRef(), DOWNLOAD_TTL_SECONDS));
     }
 
-    public PreviewContent getPreviewContent(long id, long tenantId) {
-        ArtifactDO a = artifactDao.findById(id);
-        if (a == null || a.getTenantId() == null || !a.getTenantId().equals(tenantId)) {
+    public String getDownloadUrl(long id, ArtifactOwnerRef owner, long workspaceId) {
+        ArtifactDO artifact = findOwnedArtifact(id, owner, workspaceId);
+        return forceHttps(storage.presignGet(artifact.getOssRef(), DOWNLOAD_TTL_SECONDS));
+    }
+
+    public PreviewContent getPreviewContent(long id, long workspaceId) {
+        ArtifactDO a = findByTenantAndId(id, workspaceId);
+        return preview(a);
+    }
+
+    public PreviewContent getPreviewContent(long id, ArtifactOwnerRef owner, long workspaceId) {
+        return preview(findOwnedArtifact(id, owner, workspaceId));
+    }
+
+    private ArtifactDO findOwnedArtifact(long id, ArtifactOwnerRef owner, long workspaceId) {
+        ArtifactDO artifact = owner.sourceType() == ExecutionSourceType.WORKITEM
+                ? artifactDao.findWorkitemByTenantAndId(workspaceId, id)
+                : artifactDao.findBySourceAndId(workspaceId, owner.sourceType().name(), owner.sourceId(), id);
+        if (artifact == null
+                || artifact.getWorkitemId() == null || artifact.getWorkitemId() != owner.sourceId()
+                || ExecutionSourceType.valueOrWorkitem(artifact.getSourceType()) != owner.sourceType()) {
             throw new BizException(ErrorCode.ARTIFACT_NOT_FOUND);
         }
+        return artifact;
+    }
+
+    private ArtifactDO findByTenantAndId(long id, long workspaceId) {
+        ArtifactDO a = artifactDao.findById(id);
+        if (a == null || a.getTenantId() == null || !a.getTenantId().equals(workspaceId)) {
+            throw new BizException(ErrorCode.ARTIFACT_NOT_FOUND);
+        }
+        return a;
+    }
+
+    private PreviewContent preview(ArtifactDO a) {
         if (!isPreviewable(a.getName()) || a.getSize() == null || a.getSize() > MAX_PREVIEW_BYTES) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }

@@ -7,6 +7,7 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.repo.dto.*;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -48,8 +49,9 @@ public class RepoController {
 
     @PutMapping("/{id}")
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新代码仓库")
-    public Result<RepoVO> update(@PathVariable("id") Long id, @RequestBody UpdateRepoRequest req) {
-        return Result.ok(repoService.update(id, req, currentWorkspaceId(), currentUserId()));
+    public Result<RepoVO> update(@PathVariable("id") Long id, @RequestBody JsonNode body) {
+        return Result.ok(repoService.update(id, UpdateRepoRequest.fromJson(body),
+                currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")

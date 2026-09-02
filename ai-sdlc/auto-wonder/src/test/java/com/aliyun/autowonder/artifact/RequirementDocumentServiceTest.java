@@ -1,13 +1,20 @@
 package com.aliyun.autowonder.artifact;
 
 import com.aliyun.autowonder.audit.AuditLogService;
+import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskDao;
 import com.aliyun.autowonder.storage.InMemoryObjectStorage;
 import com.aliyun.autowonder.storage.OssProperties;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -16,16 +23,23 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RequirementDocumentServiceTest {
@@ -36,6 +50,7 @@ class RequirementDocumentServiceTest {
 
     ArtifactDao artifactDao;
     WorkitemDao workitemDao;
+    ScheduledTaskDao scheduledTaskDao;
     InMemoryObjectStorage storage;
     AuditLogService auditLogService;
     RequirementDocumentService service;
@@ -44,22 +59,208 @@ class RequirementDocumentServiceTest {
     void setUp() {
         artifactDao = mock(ArtifactDao.class);
         workitemDao = mock(WorkitemDao.class);
-        storage = new InMemoryObjectStorage();
+        scheduledTaskDao = mock(ScheduledTaskDao.class);
+        storage = spy(new InMemoryObjectStorage());
         auditLogService = mock(AuditLogService.class);
         OssProperties ossProperties = new OssProperties();
         ossProperties.setArtifactBucket("artifact-bucket");
-        service = new RequirementDocumentService(artifactDao, workitemDao, storage, auditLogService, ossProperties);
+        service = new RequirementDocumentService(artifactDao, workitemDao, scheduledTaskDao,
+                storage, auditLogService, ossProperties);
 
         WorkitemDO workitem = new WorkitemDO();
         workitem.setId(3L);
         workitem.setTenantId(100L);
         when(workitemDao.findById(3L)).thenReturn(workitem);
-        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE)).thenReturn(List.of());
+        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE))
+                .thenReturn(List.of());
         doAnswer(invocation -> {
             ArtifactDO artifact = invocation.getArgument(0);
             artifact.setId(77L);
             return null;
         }).when(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void taskDocumentsUseTaskSourceAndNeverQueryWorkitemOwner() {
+        ScheduledTaskDO task = scheduledTask(10001L, 20001L, "ACTIVE");
+        when(scheduledTaskDao.findById(20001L, 10001L)).thenReturn(task);
+        ArtifactOwnerRef owner = new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 10001L);
+
+        service.list(owner, 20001L);
+
+        verify(artifactDao).listBySource(20001L, "SCHEDULED_TASK", 10001L,
+                RequirementDocumentService.TYPE);
+        verifyNoInteractions(workitemDao);
+    }
+
+    @Test
+    void sameNumericWorkitemAndTaskIdsAreQueriedWithDifferentSources() {
+        ScheduledTaskDO task = scheduledTask(3L, 100L, "ACTIVE");
+        when(scheduledTaskDao.findById(100L, 3L)).thenReturn(task);
+
+        service.list(3L, 100L);
+        service.list(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L), 100L);
+
+        verify(artifactDao).listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE);
+        verify(artifactDao).listBySource(100L, "SCHEDULED_TASK", 3L, RequirementDocumentService.TYPE);
+    }
+
+    @Test
+    void taskUploadUsesTaskSourceAndTaskOssPath() {
+        ScheduledTaskDO task = scheduledTask(5L, 100L, "ACTIVE");
+        when(scheduledTaskDao.findByIdForUpdate(100L, 5L)).thenReturn(task);
+
+        service.uploadMcp(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 5L), "spec.md",
+                "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
+
+        InOrder order = inOrder(scheduledTaskDao, artifactDao, storage);
+        order.verify(scheduledTaskDao).findByIdForUpdate(100L, 5L);
+        order.verify(artifactDao).listBySource(100L, "SCHEDULED_TASK", 5L,
+                RequirementDocumentService.TYPE);
+        order.verify(storage).put(eq("artifact-bucket"),
+                eq("t/100/scheduled-task/5/requirements/spec.md"), any(byte[].class));
+        order.verify(artifactDao).insert(any(ArtifactDO.class));
+        assertEquals("# Spec", new String(storage.get(
+                "artifact-bucket/t/100/scheduled-task/5/requirements/spec.md"), StandardCharsets.UTF_8));
+        verify(artifactDao).insert(argThat(artifact ->
+                "SCHEDULED_TASK".equals(artifact.getSourceType())
+                        && artifact.getWorkitemId() == 5L));
+        ArgumentCaptor<AuditLogRecord> audit = ArgumentCaptor.forClass(AuditLogRecord.class);
+        verify(auditLogService).record(audit.capture());
+        assertEquals("UPLOAD_SCHEDULED_TASK_REQUIREMENT_DOC", audit.getValue().getAction());
+        assertEquals("HUMAN", audit.getValue().getActorType());
+        assertEquals("SCHEDULED_TASK", audit.getValue().getTargetType());
+        assertEquals("SCHEDULED_TASK", audit.getValue().getDetail().get("sourceType"));
+        assertEquals(5L, audit.getValue().getDetail().get("sourceId"));
+        assertFalse(audit.getValue().getDetail().containsValue("# Spec"));
+        verify(scheduledTaskDao, never()).findById(anyLong(), anyLong());
+    }
+
+    @Test
+    void taskDeleteScopesLookupAndDeleteToTaskSource() {
+        ScheduledTaskDO task = scheduledTask(3L, 100L, "ACTIVE");
+        when(scheduledTaskDao.findByIdForUpdate(100L, 3L)).thenReturn(task);
+        ArtifactDO artifact = requirementDocument(77L, 100L, 3L, "SCHEDULED_TASK");
+        when(artifactDao.findBySourceAndId(100L, "SCHEDULED_TASK", 3L, 77L)).thenReturn(artifact);
+        clearInvocations(scheduledTaskDao, artifactDao, storage);
+
+        service.delete(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L), 77L, 100L, 7L);
+
+        InOrder order = inOrder(scheduledTaskDao, artifactDao, storage);
+        order.verify(scheduledTaskDao).findByIdForUpdate(100L, 3L);
+        order.verify(artifactDao).findBySourceAndId(100L, "SCHEDULED_TASK", 3L, 77L);
+        order.verify(storage).delete("artifact-bucket/t/100/scheduled-task/3/requirements/spec.md");
+        order.verify(artifactDao).deleteBySourceAndId(100L, "SCHEDULED_TASK", 3L, 77L);
+        verify(artifactDao).deleteBySourceAndId(100L, "SCHEDULED_TASK", 3L, 77L);
+        verify(artifactDao, never()).deleteById(anyLong(), anyLong());
+        verify(scheduledTaskDao, never()).findById(anyLong(), anyLong());
+    }
+
+    @Test
+    void archivedTaskAllowsListing() {
+        ScheduledTaskDO task = scheduledTask(3L, 100L, "ARCHIVED");
+        when(scheduledTaskDao.findById(100L, 3L)).thenReturn(task);
+        ArtifactOwnerRef owner = new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L);
+
+        service.list(owner, 100L);
+
+        verify(artifactDao).listBySource(100L, "SCHEDULED_TASK", 3L, RequirementDocumentService.TYPE);
+        verify(scheduledTaskDao, never()).findByIdForUpdate(anyLong(), anyLong());
+    }
+
+    @Test
+    void archivedTaskMutationUsesLockedReadAndTouchesNeitherArtifactsNorStorage() {
+        ScheduledTaskDO task = scheduledTask(3L, 100L, "ARCHIVED");
+        when(scheduledTaskDao.findByIdForUpdate(100L, 3L)).thenReturn(task);
+        ArtifactOwnerRef owner = new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L);
+
+        BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(owner, "spec.md",
+                "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+
+        assertEquals("30005", ex.getCode());
+        verify(scheduledTaskDao).findByIdForUpdate(100L, 3L);
+        verify(scheduledTaskDao, never()).findById(anyLong(), anyLong());
+        verifyNoInteractions(artifactDao, storage);
+    }
+
+    @Test
+    void sameOwnerSecondUploadRereadsAfterLockAndConflictsBeforeOverwritingObject() {
+        ScheduledTaskDO task = scheduledTask(5L, 100L, "ACTIVE");
+        when(scheduledTaskDao.findByIdForUpdate(100L, 5L)).thenReturn(task);
+        ArtifactDO existing = requirementDocument(77L, 100L, 5L, "SCHEDULED_TASK");
+        existing.setOssRef("artifact-bucket/t/100/scheduled-task/5/requirements/spec.md");
+        when(artifactDao.listBySource(100L, "SCHEDULED_TASK", 5L, RequirementDocumentService.TYPE))
+                .thenReturn(List.of(), List.of(existing));
+        ArtifactOwnerRef owner = new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 5L);
+
+        service.uploadMcp(owner, "spec.md", "# First".getBytes(StandardCharsets.UTF_8),
+                100L, 7L, null);
+        BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(owner, "spec.md",
+                "# Second".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+
+        assertEquals("10409", ex.getCode());
+        assertEquals("# First", new String(storage.get(
+                "artifact-bucket/t/100/scheduled-task/5/requirements/spec.md"), StandardCharsets.UTF_8));
+        verify(scheduledTaskDao, times(2)).findByIdForUpdate(100L, 5L);
+        verify(artifactDao, times(2)).listBySource(100L, "SCHEDULED_TASK", 5L,
+                RequirementDocumentService.TYPE);
+        verify(artifactDao, times(1)).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void ownerMutationProxyEntriesAreTransactional() throws Exception {
+        assertNotNull(RequirementDocumentService.class.getMethod("uploadWeb",
+                        ArtifactOwnerRef.class, MultipartFile[].class, long.class, long.class)
+                .getAnnotation(Transactional.class));
+        assertNotNull(RequirementDocumentService.class.getMethod("uploadMcp",
+                        ArtifactOwnerRef.class, String.class, byte[].class, long.class, long.class, String.class)
+                .getAnnotation(Transactional.class));
+        assertNotNull(RequirementDocumentService.class.getMethod("delete",
+                        ArtifactOwnerRef.class, long.class, long.class, long.class)
+                .getAnnotation(Transactional.class));
+    }
+
+    @Test
+    void missingOrCrossTenantTaskIsRejected() {
+        ArtifactOwnerRef owner = new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L);
+
+        BizException ex = assertThrows(BizException.class, () -> service.list(owner, 100L));
+
+        assertEquals("30001", ex.getCode());
+        verify(artifactDao, never()).listBySource(anyLong(), any(), anyLong(), any());
+    }
+
+    @Test
+    void taskRunOwnerIsRejectedForRequirementDocuments() {
+        ArtifactOwnerRef owner = new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 3L);
+
+        BizException ex = assertThrows(BizException.class, () -> service.list(owner, 100L));
+
+        assertEquals("10001", ex.getCode());
+        verifyNoInteractions(workitemDao, scheduledTaskDao, artifactDao);
+    }
+
+    private ScheduledTaskDO scheduledTask(long id, long tenantId, String status) {
+        ScheduledTaskDO task = new ScheduledTaskDO();
+        task.setId(id);
+        task.setWorkspaceId(tenantId);
+        task.setStatus(status);
+        return task;
+    }
+
+    private ArtifactDO requirementDocument(long id, long tenantId, long sourceId, String sourceType) {
+        ArtifactDO artifact = new ArtifactDO();
+        artifact.setId(id);
+        artifact.setTenantId(tenantId);
+        artifact.setSourceType(sourceType);
+        artifact.setWorkitemId(sourceId);
+        artifact.setName("requirements/spec.md");
+        artifact.setType(RequirementDocumentService.TYPE);
+        artifact.setOssRef("artifact-bucket/t/100/scheduled-task/3/requirements/spec.md");
+        artifact.setSize(6L);
+        storage.put("artifact-bucket", "t/100/scheduled-task/3/requirements/spec.md",
+                "# Spec".getBytes(StandardCharsets.UTF_8));
+        return artifact;
     }
 
     @Test
@@ -77,7 +278,10 @@ class RequirementDocumentServiceTest {
                         && "requirements/spec.md".equals(artifact.getName())
                         && RequirementDocumentService.TYPE.equals(artifact.getType())
                         && artifact.getMetaJson().contains("\"source\":\"MCP\"")));
-        verify(auditLogService).record(any());
+        ArgumentCaptor<AuditLogRecord> audit = ArgumentCaptor.forClass(AuditLogRecord.class);
+        verify(auditLogService).record(audit.capture());
+        assertEquals("USER", audit.getValue().getActorType());
+        assertEquals("workitem", audit.getValue().getTargetType());
     }
 
     @Test
@@ -102,7 +306,8 @@ class RequirementDocumentServiceTest {
         ArtifactDO existing = new ArtifactDO();
         existing.setName("requirements/spec.md");
         existing.setSize(10L);
-        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE)).thenReturn(List.of(existing));
+        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE))
+                .thenReturn(List.of(existing));
 
         BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, "spec.md",
                 "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
@@ -136,11 +341,62 @@ class RequirementDocumentServiceTest {
     }
 
     @Test
-    void uploadRejectsUnsafeOrNonMarkdownFilenames() {
+    void uploadRejectsUnsafeOrUnsupportedFilenames() {
         assertThrows(BizException.class, () -> service.uploadMcp(3L, "../spec.md",
                 "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
-        assertThrows(BizException.class, () -> service.uploadMcp(3L, "spec.txt",
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "archive.zip",
                 "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadMcpStoresPlainTextContextWithDetectedContentType() {
+        service.uploadMcp(3L, "notes.txt", "plain notes".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
+
+        assertArrayEquals("plain notes".getBytes(StandardCharsets.UTF_8),
+                storage.get("artifact-bucket/t/100/workitem/3/requirements/notes.txt"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"text/plain\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"TEXT\"")));
+    }
+
+    @Test
+    void uploadMcpStoresHtmlContextWithDetectedContentType() {
+        byte[] html = "<html><body>PRD</body></html>".getBytes(StandardCharsets.UTF_8);
+        service.uploadMcp(3L, "prd.html", html, 100L, 7L, null);
+
+        assertArrayEquals(html, storage.get("artifact-bucket/t/100/workitem/3/requirements/prd.html"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"text/html\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"TEXT\"")));
+    }
+
+    @Test
+    void uploadMcpStoresPdfContextWithDetectedContentType() {
+        byte[] pdf = "%PDF-1.4 minimal".getBytes(StandardCharsets.UTF_8);
+        service.uploadMcp(3L, "spec.pdf", pdf, 100L, 7L, null);
+
+        assertArrayEquals(pdf, storage.get("artifact-bucket/t/100/workitem/3/requirements/spec.pdf"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"application/pdf\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"PDF\"")));
+    }
+
+    @Test
+    void uploadRejectsPdfWithMismatchedMagicBytes() {
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "spec.pdf",
+                "not-a-pdf".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "spec.pdf",
+                new byte[]{'%', 'P', 'D'}, 100L, 7L, null));
+
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsTextDocumentWithInvalidUtf8() {
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "notes.txt",
+                new byte[]{(byte) 0xFF, (byte) 0xFE, (byte) 0x00}, 100L, 7L, null));
+
         verify(artifactDao, never()).insert(any());
     }
 
@@ -153,7 +409,8 @@ class RequirementDocumentServiceTest {
                     artifact.setSize(1L);
                     return artifact;
                 }).toList();
-        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE)).thenReturn(existing);
+        when(artifactDao.listByWorkitemAndType(100L, 3L, RequirementDocumentService.TYPE))
+                .thenReturn(existing);
 
         BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, "extra.md",
                 "# Extra".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
@@ -173,7 +430,7 @@ class RequirementDocumentServiceTest {
         artifact.setOssRef("artifact-bucket/t/100/workitem/3/requirements/spec.md");
         artifact.setSize(6L);
         storage.put("artifact-bucket", "t/100/workitem/3/requirements/spec.md", "# Spec".getBytes(StandardCharsets.UTF_8));
-        when(artifactDao.findById(77L)).thenReturn(artifact);
+        when(artifactDao.findWorkitemByTenantAndId(100L, 77L)).thenReturn(artifact);
 
         service.delete(3L, 77L, 100L, 7L);
 
@@ -189,7 +446,7 @@ class RequirementDocumentServiceTest {
         artifact.setTenantId(100L);
         artifact.setWorkitemId(4L);
         artifact.setType(RequirementDocumentService.TYPE);
-        when(artifactDao.findById(77L)).thenReturn(artifact);
+        when(artifactDao.findWorkitemByTenantAndId(100L, 77L)).thenReturn(artifact);
 
         BizException ex = assertThrows(BizException.class, () -> service.delete(3L, 77L, 100L, 7L));
 

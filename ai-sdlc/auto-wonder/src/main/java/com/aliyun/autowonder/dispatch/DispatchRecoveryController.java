@@ -47,7 +47,9 @@ public class DispatchRecoveryController {
             @PathVariable long dispatchId) {
         long tenantId = currentWorkspaceId();
         DispatchDO source = dispatchService.loadForTenant(dispatchId);
-        if (source.getTenantId() != tenantId || source.getWorkitemId() != workitemId) {
+        if (source.getTenantId() != tenantId
+                || source.executionSourceType() != ExecutionSourceType.WORKITEM
+                || source.getWorkitemId() != workitemId) {
             throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
         }
         if (!DispatchStatus.isTerminal(source.getStatus())

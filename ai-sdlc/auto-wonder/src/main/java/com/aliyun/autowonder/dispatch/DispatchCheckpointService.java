@@ -371,6 +371,12 @@ public class DispatchCheckpointService {
         List<DispatchCheckpointDO> checkpoints = source.checkpoints();
         DispatchCheckpointDO checkpoint = checkpoints.isEmpty() ? null : checkpoints.get(0);
         ProviderSession providerSession = source.providerSession();
+        // A continuous Run may continue on a different executor after its
+        // affinity deadline. Checkpoints are portable, provider-native session
+        // ids are not; never leak one to the replacement executor.
+        if ("DEGRADED_CONTINUOUS".equals(dispatch.getResumeMode())) {
+            providerSession = null;
+        }
         if (checkpoint == null) {
             return descriptor(dispatch, source.dispatchId(),
                     providerSession == null ? null : providerSession.provider(),
@@ -378,6 +384,8 @@ public class DispatchCheckpointService {
                     null, null, null, List.of());
         }
         List<ResumeCheckpointCandidate> candidates = ("RECOVERY".equals(dispatch.getResumeMode())
+                || "CONTINUOUS".equals(dispatch.getResumeMode())
+                || "DEGRADED_CONTINUOUS".equals(dispatch.getResumeMode())
                 || "COMMENT_INTERACTION".equals(dispatch.getResumeMode())
                 || "SIDE_INTERACTION".equals(dispatch.getResumeMode())
                 || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode())
@@ -394,7 +402,8 @@ public class DispatchCheckpointService {
         return descriptor(dispatch,
                 source.dispatchId(),
                 providerSession == null ? checkpoint.getProvider() : providerSession.provider(),
-                providerSession == null ? checkpoint.getProviderSessionId() : providerSession.sessionId(),
+                "DEGRADED_CONTINUOUS".equals(dispatch.getResumeMode()) ? null
+                        : (providerSession == null ? checkpoint.getProviderSessionId() : providerSession.sessionId()),
                 downloadUrl,
                 "sha256:" + checkpoint.getSha256(),
                 checkpoint.getCheckpointSeq(),

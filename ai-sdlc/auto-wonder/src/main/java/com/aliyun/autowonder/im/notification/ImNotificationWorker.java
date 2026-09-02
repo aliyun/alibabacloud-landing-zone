@@ -251,8 +251,15 @@ public class ImNotificationWorker implements DisposableBean {
     }
 
     private static String messageTitle(ImNotificationTask task) {
-        if (task != null && ImNotificationTask.TYPE_COMMENT_MENTION.equals(task.notificationType())) {
+        String notificationType = task == null ? null : task.notificationType();
+        if (ImNotificationTask.TYPE_COMMENT_MENTION.equals(notificationType)) {
             return "工单评论提醒";
+        }
+        if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST.equals(notificationType)) {
+            return "权限申请通知";
+        }
+        if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED.equals(notificationType)) {
+            return "权限申请审批结果";
         }
         return "工单指派通知";
     }

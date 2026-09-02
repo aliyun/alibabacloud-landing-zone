@@ -6,10 +6,13 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -26,17 +29,34 @@ public class DispatchMcpTokenService {
     private final DispatchDao dispatchDao;
     private final WorkitemDao workitemDao;
     private final WorkspaceMemberDao workspaceMemberDao;
+    private final ScheduledTaskRunDao scheduledTaskRunDao;
 
     public DispatchMcpTokenService(JwtService jwtService, DispatchDao dispatchDao,
                                    WorkitemDao workitemDao, WorkspaceMemberDao workspaceMemberDao) {
+        this(jwtService, dispatchDao, workitemDao, workspaceMemberDao, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public DispatchMcpTokenService(JwtService jwtService, DispatchDao dispatchDao,
+                                   WorkitemDao workitemDao, WorkspaceMemberDao workspaceMemberDao,
+                                   ScheduledTaskRunDao scheduledTaskRunDao) {
         this.jwtService = jwtService;
         this.dispatchDao = dispatchDao;
         this.workitemDao = workitemDao;
         this.workspaceMemberDao = workspaceMemberDao;
+        this.scheduledTaskRunDao = scheduledTaskRunDao;
     }
 
     public String issue(DispatchDO dispatch) {
         long userId = dispatch.getCreatorId() == null ? 0L : dispatch.getCreatorId();
+        if (dispatch.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                && scheduledTaskRunDao != null) {
+            ScheduledTaskRunDO run = scheduledTaskRunDao.findById(dispatch.getTenantId(), dispatch.getWorkitemId());
+            if (run != null && dispatch.getTenantId().equals(run.getWorkspaceId())
+                    && run.getOwnerId() != null && run.getOwnerId() > 0) {
+                userId = run.getOwnerId();
+            }
+        }
         if (userId <= 0 && workitemDao != null) {
             WorkitemDO workitem = workitemDao.findById(dispatch.getWorkitemId());
             if (workitem != null && dispatch.getTenantId().equals(workitem.getTenantId())) {
@@ -63,30 +83,30 @@ public class DispatchMcpTokenService {
                 throw new IllegalArgumentException("invalid purpose");
             }
             long dispatchId = ((Number) claims.get("subjectId")).longValue();
-            long tenantId = ((Number) claims.get("workspace")).longValue();
+            long workspaceId = ((Number) claims.get("workspace")).longValue();
             DispatchDO dispatch = dispatchDao.findById(dispatchId);
-            if (dispatch == null || !tenantIdEquals(dispatch, tenantId) || !ACTIVE.contains(dispatch.getStatus())) {
+            if (dispatch == null || !workspaceIdEquals(dispatch, workspaceId) || !ACTIVE.contains(dispatch.getStatus())) {
                 throw new IllegalArgumentException("dispatch is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();
-            WorkspaceAccessLevel level = resolveAccessLevel(tenantId, userId);
+            WorkspaceAccessLevel level = resolveAccessLevel(workspaceId, userId);
             return new McpAccessTokenService.Principal(
-                    tenantId, userId, -dispatchId, level,
+                    workspaceId, userId, -dispatchId, level,
                     McpAccessTokenService.CredentialType.DISPATCH);
         } catch (Exception e) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
     }
 
-    private boolean tenantIdEquals(DispatchDO dispatch, long tenantId) {
-        return dispatch.getTenantId() != null && dispatch.getTenantId() == tenantId;
+    private boolean workspaceIdEquals(DispatchDO dispatch, long workspaceId) {
+        return dispatch.getTenantId() != null && dispatch.getTenantId() == workspaceId;
     }
 
-    private WorkspaceAccessLevel resolveAccessLevel(long tenantId, long userId) {
+    private WorkspaceAccessLevel resolveAccessLevel(long workspaceId, long userId) {
         if (workspaceMemberDao == null) {
             return WorkspaceAccessLevel.READ_WRITE;
         }
-        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(tenantId, userId);
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId);
         if (member == null || member.getAccessLevel() == null) {
             return WorkspaceAccessLevel.READ_WRITE;
         }

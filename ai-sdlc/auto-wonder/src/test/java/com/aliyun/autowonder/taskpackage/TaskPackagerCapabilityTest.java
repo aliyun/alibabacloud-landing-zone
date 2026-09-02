@@ -60,6 +60,33 @@ class TaskPackagerCapabilityTest {
     }
 
     @Test
+    void marks_only_tool_hooks_as_requiring_tool_hook_protocol() throws Exception {
+        InMemoryObjectStorage storage = new InMemoryObjectStorage();
+        var lifecycle = storage.put("capability", "lifecycle.zip", zip(Map.of(
+                "hook.yaml", "schemaVersion: autowonder.hook.v1\nname: lifecycle\nversion: 1\ntrigger: beforeStep\ncommand: scripts/run.sh\n",
+                "scripts/run.sh", "exit 0\n")));
+        var tool = storage.put("capability", "tool.zip", zip(Map.of(
+                "hook.yaml", "schemaVersion: autowonder.hook.v1\nname: tool\nversion: 1\ntrigger: beforeTool\ncommand: scripts/run.sh\n",
+                "scripts/run.sh", "exit 0\n")));
+        TaskPackager packager = new TaskPackager(
+                storage, "task-packages", "https://daily.auto-wonder.example.com");
+
+        PackageContext lifecycleContext = baseContext();
+        lifecycleContext.setSkills(List.of(capability(60L, "HOOK", "lifecycle", 1,
+                lifecycle.getOssRef(), lifecycle.getMd5(), null)));
+        TaskPackageResult lifecycleResult = packager.build(lifecycleContext);
+        assertTrue(lifecycleResult.isRequiresHookProtocol());
+        assertFalse(lifecycleResult.isRequiresToolHookProtocol());
+
+        PackageContext toolContext = baseContext();
+        toolContext.setSkills(List.of(capability(61L, "HOOK", "tool", 1,
+                tool.getOssRef(), tool.getMd5(), null)));
+        TaskPackageResult toolResult = packager.build(toolContext);
+        assertTrue(toolResult.isRequiresHookProtocol());
+        assertTrue(toolResult.isRequiresToolHookProtocol());
+    }
+
+    @Test
     void skips_skill_when_its_uploaded_package_has_been_deleted() throws Exception {
         InMemoryObjectStorage storage = new InMemoryObjectStorage();
         PackageContext ctx = baseContext();
@@ -163,7 +190,8 @@ class TaskPackagerCapabilityTest {
         Map<String, Object> skill = capability(46L, "SKILL", "conversation-review", 2,
                 null, null, Map.of("instructions", "Review the conversation request."));
         Map<String, Object> mcp = capability(47L, "MCP", "coop", 1,
-                null, null, Map.of("transport", "http", "url", "https://mcp.example.test/coop"));
+                null, null, Map.of("transport", "http", "url", "https://mcp.example.test/coop",
+                        "headers", Map.of("Authorization", Map.of("kind", "secretRef", "ref", "kc:v1:test"))));
 
         TaskPackageResult result = new TaskPackager(
                 storage, "task-packages", "https://auto-wonder.alibaba.net")
@@ -182,6 +210,7 @@ class TaskPackagerCapabilityTest {
         assertEquals("conversation-review", capabilities.getJSONArray("skills").getJSONObject(0).getString("name"));
         assertTrue(capabilities.getJSONArray("mcpServers").stream().map(JSONObject.class::cast)
                 .anyMatch(item -> "autowonder".equals(item.getString("name"))));
+        assertEquals(Map.of("kc:v1:test", "kc:v1:test"), result.getMcpSecretRefs());
         assertNotNull(entries.get("capabilities/skills/conversation-review/SKILL.md"));
         assertEquals("auto-wonder", JSON.parseArray(
                 new String(entries.get("repos.json"), StandardCharsets.UTF_8))

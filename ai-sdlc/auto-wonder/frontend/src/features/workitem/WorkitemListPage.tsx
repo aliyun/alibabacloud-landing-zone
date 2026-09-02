@@ -6,6 +6,7 @@ import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns } from './
 import { WorkitemKanban } from './components/WorkitemKanban';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
 import { HumanInterventionBadge } from './components/HumanInterventionBadge';
+import { ScheduledExecutionBadge } from './components/ScheduledExecutionBadge';
 import { workTypeMap, STATUS_COLUMNS } from './constants';
 import type { Workitem } from '@/shared/types/workitem';
 import type { WorkitemStatusCategory } from './api';
@@ -121,10 +122,11 @@ export function WorkitemListPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   const [scope, setScope] = useState<Scope>(readScopePreference);
   const [keyword, setKeyword] = useState<string | undefined>();
+  const [tag, setTag] = useState<string | undefined>();
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
 
   const isKanban = viewMode === 'kanban';
-  const baseQuery = { workType, ...scopeToQuery(scope), keyword };
+  const baseQuery = { workType, ...scopeToQuery(scope), keyword, tag };
 
   // 表格视图用全量分页查询；看板视图下只取 total 给页面标题用
   const { data, isLoading } = useWorkitemList(
@@ -154,7 +156,15 @@ export function WorkitemListPage() {
     {
       title: '标题', dataIndex: 'title',
       render: (text: string, record: Workitem) => (
-        <a onClick={() => navigate(`/workitems/${record.id}`)}>{text}</a>
+        <Space size={4}>
+          <a onClick={() => navigate(`/workitems/${record.id}`)}>{text}</a>
+          <ScheduledExecutionBadge
+            scheduledStartAt={record.scheduledStartAt}
+            scheduledStartTriggeredAt={record.scheduledStartTriggeredAt}
+            origin={record.origin}
+            gmtCreate={record.gmtCreate}
+          />
+        </Space>
       ),
     },
     {
@@ -302,6 +312,12 @@ export function WorkitemListPage() {
           placeholder="搜索工单ID或标题"
           onSearch={(v) => { setKeyword(v || undefined); setPage(1); setColumnSizes({}); }}
           style={{ width: 220 }}
+        />
+        <Input.Search
+          allowClear
+          placeholder="按标签筛选"
+          onSearch={(v) => { setTag(v?.trim() || undefined); setPage(1); setColumnSizes({}); }}
+          style={{ width: 160 }}
         />
       </Space>
 

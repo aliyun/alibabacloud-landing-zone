@@ -6,9 +6,13 @@ import com.aliyun.autowonder.agent.AgentSkillDao;
 import com.aliyun.autowonder.dispatch.PackageContextAssembler;
 import com.aliyun.autowonder.mcp.ConversationMcpTokenService;
 import com.aliyun.autowonder.skill.SkillDao;
+import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import org.springframework.stereotype.Service;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 public class ConversationCapabilityService {
@@ -18,16 +22,18 @@ public class ConversationCapabilityService {
     private final PackageContextAssembler contextAssembler;
     private final TaskPackager packager;
     private final ConversationMcpTokenService tokenService;
+    private final SecretCrypto secretCrypto;
 
     public ConversationCapabilityService(AgentSkillDao bindingDao, SkillDao skillDao,
             AgentDao agentDao, PackageContextAssembler contextAssembler,
-            TaskPackager packager, ConversationMcpTokenService tokenService) {
+            TaskPackager packager, ConversationMcpTokenService tokenService, SecretCrypto secretCrypto) {
         this.bindingDao = bindingDao;
         this.skillDao = skillDao;
         this.agentDao = agentDao;
         this.contextAssembler = contextAssembler;
         this.packager = packager;
         this.tokenService = tokenService;
+        this.secretCrypto = secretCrypto;
     }
 
     public ConversationCapabilitySnapshot prepare(AgentConversationDO conversation, Long turnId) {
@@ -56,6 +62,21 @@ public class ConversationCapabilityService {
                 repos, contextAssembler.buildRepoMap(conversation.getTenantId(), repos));
         String token = tokenService.issue(conversation, principalId);
         return new ConversationCapabilitySnapshot(conversation.getAgentVersionId(),
-                bundle.getDownloadUrl(), bundle.getSha256(), bundle.getContentHash(), token);
+                bundle.getDownloadUrl(), bundle.getSha256(), bundle.getContentHash(), token,
+                resolveMcpSecrets(bundle.getMcpSecretRefs()));
+    }
+
+    private Map<String, String> resolveMcpSecrets(Map<String, String> refs) {
+        if (refs == null || refs.isEmpty()) {
+            return Map.of();
+        }
+        if (secretCrypto == null) {
+            throw new IllegalStateException("MCP 私密配置需要密文存储支持");
+        }
+        Map<String, String> values = new LinkedHashMap<>();
+        for (String ref : refs.keySet()) {
+            values.put(ref, secretCrypto.decrypt(ref));
+        }
+        return values;
     }
 }

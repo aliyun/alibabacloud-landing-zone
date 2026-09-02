@@ -43,13 +43,15 @@ public class PlatformBrandingService {
     private final String trustedMcpBaseUrl;
     private final String recommendedRuntimeVersion;
     private final String deploymentVersion;
+    private final boolean communityEdition;
 
     public PlatformBrandingService(PlatformBrandingDao brandingDao,
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.2.138}") String recommendedRuntimeVersion,
-                                   @Value("${autowonder.version:x.x.x}") String deploymentVersion) {
+                                   @Value("${autowonder.runtime.recommended-version:0.2.150}") String recommendedRuntimeVersion,
+                                   @Value("${autowonder.version:x.x.x}") String deploymentVersion,
+                                   @Value("${autowonder.community-edition:false}") boolean communityEdition) {
         this.brandingDao = brandingDao;
         this.objectStorage = objectStorage;
         this.bucket = ossProperties.resolveArtifactBucket();
@@ -57,6 +59,7 @@ public class PlatformBrandingService {
         this.trustedMcpBaseUrl = this.publicBaseUrl + "/api/mcp";
         this.recommendedRuntimeVersion = requireRuntimeVersion(recommendedRuntimeVersion);
         this.deploymentVersion = normalizeDeploymentVersion(deploymentVersion);
+        this.communityEdition = communityEdition;
     }
 
     public PlatformBrandingVO publicConfig() {
@@ -193,6 +196,7 @@ public class PlatformBrandingService {
                 trustedMcpBaseUrl,
                 recommendedRuntimeVersion,
                 deploymentVersion,
+                communityEdition,
                 canManage);
     }
 

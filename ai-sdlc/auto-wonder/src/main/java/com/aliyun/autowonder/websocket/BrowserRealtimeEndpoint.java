@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BrowserRealtimeEndpoint {
 
     private static final Logger log = LoggerFactory.getLogger(BrowserRealtimeEndpoint.class);
-    private static final ConcurrentHashMap<Session, Long> SESSION_TENANTS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Session, Long> SESSION_WORKSPACES = new ConcurrentHashMap<>();
 
     private volatile boolean authenticated = false;
 
@@ -73,20 +73,20 @@ public class BrowserRealtimeEndpoint {
         JwtService jwtService = WsSpringContext.getBean(JwtService.class);
         TokenPayload payload = jwtService.parse(token);
         if (payload.getCurrentWorkspaceId() == null) {
-            closeQuietly(session, "missing tenant");
+            closeQuietly(session, "missing workspace");
             return;
         }
-        long tenantId = payload.getCurrentWorkspaceId();
+        long workspaceId = payload.getCurrentWorkspaceId();
         long userId = payload.getUserId() != null ? payload.getUserId() : 0L;
-        SESSION_TENANTS.put(session, tenantId);
+        SESSION_WORKSPACES.put(session, workspaceId);
         authenticated = true;
 
         BrowserRealtimeSubscriberManager subscriberManager =
                 WsSpringContext.getBean(BrowserRealtimeSubscriberManager.class);
-        subscriberManager.recordPrincipal(session, tenantId, userId);
+        subscriberManager.recordPrincipal(session, workspaceId, userId);
 
-        log.info("browser realtime authenticated sessionId={} tenantId={} userId={}",
-                session.getId(), tenantId, userId);
+        log.info("browser realtime authenticated sessionId={} workspaceId={} userId={}",
+                session.getId(), workspaceId, userId);
     }
 
     private void handleSubscribe(JSONObject frame, Session session) {
@@ -96,15 +96,15 @@ public class BrowserRealtimeEndpoint {
         }
         BrowserRealtimeSubscriberManager subscriberManager =
                 WsSpringContext.getBean(BrowserRealtimeSubscriberManager.class);
-        ConversationRealtimeAuthorizationService authService =
-                WsSpringContext.getBean(ConversationRealtimeAuthorizationService.class);
+        BrowserRealtimeAuthorizationService authService =
+                WsSpringContext.getBean(BrowserRealtimeAuthorizationService.class);
 
         BrowserRealtimeSubscriberManager.PrincipalInfo principal = subscriberManager.getPrincipal(session);
         if (principal == null) {
             return;
         }
         if (!authService.authorize(principal.getTenantId(), principal.getUserId(), channel)) {
-            log.warn("conversation subscription denied sessionId={} tenantId={} userId={} channel={}",
+            log.warn("browser subscription denied sessionId={} workspaceId={} userId={} channel={}",
                     session.getId(), principal.getTenantId(), principal.getUserId(), channel);
             return;
         }
@@ -123,7 +123,7 @@ public class BrowserRealtimeEndpoint {
 
     @OnClose
     public void onClose(Session session) {
-        SESSION_TENANTS.remove(session);
+        SESSION_WORKSPACES.remove(session);
         BrowserRealtimeSubscriberManager subscriberManager =
                 WsSpringContext.safeGetBean(BrowserRealtimeSubscriberManager.class);
         if (subscriberManager != null) {
@@ -135,7 +135,7 @@ public class BrowserRealtimeEndpoint {
     @OnError
     public void onError(Session session, Throwable error) {
         if (session != null) {
-            SESSION_TENANTS.remove(session);
+            SESSION_WORKSPACES.remove(session);
             BrowserRealtimeSubscriberManager subscriberManager =
                     WsSpringContext.safeGetBean(BrowserRealtimeSubscriberManager.class);
             if (subscriberManager != null) {
@@ -147,14 +147,14 @@ public class BrowserRealtimeEndpoint {
         }
     }
 
-    static void broadcast(long tenantId, String frameJson) {
-        for (Session session : SESSION_TENANTS.keySet()) {
+    static void broadcast(long workspaceId, String frameJson) {
+        for (Session session : SESSION_WORKSPACES.keySet()) {
             if (!session.isOpen()) {
-                SESSION_TENANTS.remove(session);
+                SESSION_WORKSPACES.remove(session);
                 continue;
             }
-            Long sessionTenantId = SESSION_TENANTS.get(session);
-            if (sessionTenantId == null || sessionTenantId != tenantId) {
+            Long sessionWorkspaceId = SESSION_WORKSPACES.get(session);
+            if (sessionWorkspaceId == null || sessionWorkspaceId != workspaceId) {
                 continue;
             }
             try {
@@ -162,7 +162,7 @@ public class BrowserRealtimeEndpoint {
                     session.getBasicRemote().sendText(frameJson);
                 }
             } catch (Exception e) {
-                SESSION_TENANTS.remove(session);
+                SESSION_WORKSPACES.remove(session);
                 log.warn("browser realtime send failed sessionId={}", session.getId(), e);
             }
         }
@@ -170,7 +170,7 @@ public class BrowserRealtimeEndpoint {
 
     private static void closeQuietly(Session session, String reason) {
         try {
-            SESSION_TENANTS.remove(session);
+            SESSION_WORKSPACES.remove(session);
             session.close(new CloseReason(CloseReason.CloseCodes.VIOLATED_POLICY, reason));
         } catch (Exception ignore) {}
     }

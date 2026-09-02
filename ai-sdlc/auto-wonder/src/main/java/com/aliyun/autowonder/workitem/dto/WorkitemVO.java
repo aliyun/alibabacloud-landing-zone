@@ -3,6 +3,7 @@ package com.aliyun.autowonder.workitem.dto;
 import lombok.Getter;
 import lombok.Setter;
 import java.util.Date;
+import java.util.List;
 
 @Getter
 @Setter
@@ -43,8 +44,16 @@ public class WorkitemVO {
     private Boolean deletable;
     /** Human-readable reason when deletable is false. */
     private String deletableReason;
+    /** Server-owned backlink when an agent created this item from a Run. */
+    private WorkitemOriginVO origin;
     /** External business collaboration snapshot; null for native workitems. */
     private ExternalCollaborationVO externalCollaboration;
     /** Source-side creator for imported workitems; the local creatorId remains the import operator. */
     private ExternalPrincipalVO sourceCreator;
+    /** Planned agent delivery start time; null means immediate or already started. */
+    private Date scheduledStartAt;
+    /** Actual time the planned scheduled start fired; null when never triggered. */
+    private Date scheduledStartTriggeredAt;
+    /** Workitem tags; empty list when unset. */
+    private List<String> tags;
 }

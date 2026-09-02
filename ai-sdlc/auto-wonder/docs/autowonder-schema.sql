@@ -1,10 +1,14 @@
 -- =============================================================================
 -- AutoWonder 全库 DDL（MySQL 8 / InnoDB / utf8mb4）
 -- 用途：社区版新环境的完整数据库初始化基线
+-- 命名兼容说明：产品概念已由 org（组织）统一更名为 workspace（工作空间）。
+-- 已部署的历史物理表 org / org_member 以及复用表中的 tenant_id 字段保持不变；
+-- 新增数据表及其领域归属字段必须使用 workspace 命名（例如 workspace_id）。
+-- 后续阅读者与 Agent 不得仅因概念更名而重命名历史物理表或 tenant_id 字段。
 -- 说明：
 --   1. 全局约定（详设 01 §1.1）—— 业务表统一含基础字段：
 --        gmt_create / gmt_modified / creator_id / modifier_id / is_deleted / version（并发敏感表）
---   2. 除全局表（user / permission / external_principal）外，所有业务表含 tenant_id（= org.id），行级租户隔离。
+--   2. 历史复用业务表沿用 tenant_id（物理关联 org.id）；新增业务表使用 workspace_id，均表示工作空间级行隔离。
 --   3. 主键为 BIGINT UNSIGNED AUTO_INCREMENT（从 10000 起）。
 --   4. 外键关系以索引表达，不建物理 FK（便于分库与软删）。
 -- =============================================================================
@@ -13,7 +17,7 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- =============================================================================
--- 详设 01 — 身份、租户与组织访问等级
+-- 详设 01 — 身份、工作空间与访问等级
 -- =============================================================================
 
 -- 用户（全局表，无 tenant_id）
@@ -97,13 +101,13 @@ CREATE TABLE IF NOT EXISTS `user_im_identity` (
   UNIQUE KEY `uk_user_im_provider` (`user_id`, `provider`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='用户 IM 身份（全局）';
 
--- 组织（租户）
+-- 工作空间（历史物理表名 org，兼容已部署数据库）
 CREATE TABLE IF NOT EXISTS `org` (
-  `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '组织ID = tenant_id',
-  `name`         VARCHAR(128)    NOT NULL COMMENT '组织名',
+  `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '工作空间 ID；历史复用表以 tenant_id 关联',
+  `name`         VARCHAR(128)    NOT NULL COMMENT '工作空间名称',
   `slug`         VARCHAR(64)     DEFAULT NULL COMMENT '唯一短标识（邀请链接用）',
   `description`  VARCHAR(512)    DEFAULT NULL COMMENT '描述',
-  `background`   TEXT            DEFAULT NULL COMMENT '组织背景',
+  `background`   TEXT            DEFAULT NULL COMMENT '工作空间背景',
   `owner_id`     BIGINT UNSIGNED NOT NULL COMMENT '创建者/负责人 user_id',
   `status`       TINYINT         NOT NULL DEFAULT 0 COMMENT '0 正常 / 1 停用',
   `gmt_create`   DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -115,12 +119,12 @@ CREATE TABLE IF NOT EXISTS `org` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_name` (`name`),
   UNIQUE KEY `uk_slug` (`slug`)
-) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='组织（租户）';
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间（历史物理表 org）';
 
--- 组织成员
+-- 工作空间成员（历史物理表名 org_member）
 CREATE TABLE IF NOT EXISTS `org_member` (
   `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `tenant_id`    BIGINT UNSIGNED NOT NULL COMMENT '= org_id',
+  `tenant_id`    BIGINT UNSIGNED NOT NULL COMMENT '工作空间 ID（历史物理字段 tenant_id）',
   `user_id`      BIGINT UNSIGNED NOT NULL COMMENT '成员',
   `status`       TINYINT         NOT NULL DEFAULT 0 COMMENT '0 正常 / 1 待审批 / 2 已移除',
   `access_level` VARCHAR(16)     NOT NULL DEFAULT 'READ_ONLY' COMMENT 'READ_ONLY/READ_WRITE/ADMIN',
@@ -134,9 +138,9 @@ CREATE TABLE IF NOT EXISTS `org_member` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_org_user` (`tenant_id`, `user_id`),
   KEY `idx_user` (`user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='组织成员';
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间成员（历史物理表 org_member）';
 
--- 组织邀请
+-- 工作空间邀请（历史物理表名 org_invite）
 CREATE TABLE IF NOT EXISTS `org_invite` (
   `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`    BIGINT UNSIGNED NOT NULL,
@@ -151,7 +155,7 @@ CREATE TABLE IF NOT EXISTS `org_invite` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_code` (`code`),
   KEY `idx_tenant` (`tenant_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='组织邀请';
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间邀请（历史物理表 org_invite）';
 
 -- 审计日志（详设 01 §1.7；详设 08 §2 消费查询，只读不可改）
 CREATE TABLE IF NOT EXISTS `audit_log` (
@@ -222,10 +226,83 @@ CREATE TABLE IF NOT EXISTS `status_transition` (
   KEY `idx_tenant_template` (`tenant_id`, `template_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='状态迁移边';
 
+-- 7x24 定时任务定义
+CREATE TABLE IF NOT EXISTS `scheduled_task` (
+  `id`                       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `workspace_id`                BIGINT UNSIGNED NOT NULL,
+  `name`                     VARCHAR(256)    NOT NULL,
+  `instruction_md`           MEDIUMTEXT      NOT NULL,
+  `squad_id`                 BIGINT UNSIGNED NOT NULL,
+  `initial_agent_id`         BIGINT UNSIGNED NOT NULL,
+  `schedule_type`            VARCHAR(16)     NOT NULL COMMENT 'ONCE/CRON',
+  `run_at`                   DATETIME(3)     DEFAULT NULL COMMENT 'ONCE UTC instant',
+  `cron_expression`          VARCHAR(128)    DEFAULT NULL COMMENT 'Canonical six-field Cron',
+  `timezone`                 VARCHAR(64)     NOT NULL COMMENT 'IANA timezone',
+  `session_mode`             VARCHAR(16)     NOT NULL DEFAULT 'ISOLATED' COMMENT 'ISOLATED/CONTINUOUS',
+  `overlap_policy`           VARCHAR(16)     NOT NULL DEFAULT 'SKIP' COMMENT 'SKIP/QUEUE/ALLOW',
+  `misfire_policy`           VARCHAR(16)     NOT NULL DEFAULT 'FIRE_LATEST' COMMENT 'FIRE_LATEST/FIRE_ALL/SKIP_ALL',
+  `start_deadline_seconds`   INT             NOT NULL DEFAULT 21600,
+  `affinity_timeout_seconds` INT             NOT NULL DEFAULT 1800,
+  `status`                   VARCHAR(16)     NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/PAUSED/EXHAUSTED/ARCHIVED',
+  `next_fire_at`             DATETIME(3)     DEFAULT NULL COMMENT 'UTC scheduling cursor',
+  `last_fire_at`             DATETIME(3)     DEFAULT NULL COMMENT 'Last claimed scheduled instant in UTC',
+  `gmt_create`               DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified`             DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `creator_id`               BIGINT UNSIGNED NOT NULL COMMENT 'Task owner',
+  `modifier_id`              BIGINT UNSIGNED DEFAULT NULL,
+  `is_deleted`               TINYINT         NOT NULL DEFAULT 0,
+  `version`                  INT             NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_scheduled_task_due` (`status`, `is_deleted`, `next_fire_at`, `id`),
+  KEY `idx_scheduled_task_owner` (`workspace_id`, `creator_id`, `status`, `id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='7x24 scheduled task definition';
+
+-- 7x24 定时任务执行实例
+CREATE TABLE IF NOT EXISTS `scheduled_task_run` (
+  `id`                      BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `workspace_id`               BIGINT UNSIGNED NOT NULL,
+  `scheduled_task_id`       BIGINT UNSIGNED NOT NULL,
+  `trigger_key`             VARCHAR(256)    NOT NULL,
+  `trigger_type`            VARCHAR(16)     NOT NULL COMMENT 'SCHEDULED/MANUAL/MISFIRE',
+  `scheduled_at`            DATETIME(3)     NOT NULL COMMENT 'Planned UTC instant',
+  `started_at`              DATETIME(3)     DEFAULT NULL,
+  `finished_at`             DATETIME(3)     DEFAULT NULL,
+  `status`                  VARCHAR(32)     NOT NULL COMMENT 'QUEUED/STARTING/WAITING_EXECUTOR/RUNNING/WAITING_HUMAN/PAUSED/SUCCEEDED/FAILED/TIMED_OUT/CANCELED/SKIPPED',
+  `skip_reason`             VARCHAR(32)     DEFAULT NULL COMMENT 'OVERLAP/MISFIRE_POLICY/START_DEADLINE',
+  `squad_id`                BIGINT UNSIGNED NOT NULL,
+  `initial_agent_id`        BIGINT UNSIGNED NOT NULL,
+  `current_agent_id`        BIGINT UNSIGNED DEFAULT NULL,
+  `sdlc_id`                 BIGINT UNSIGNED DEFAULT NULL,
+  `current_step_id`         BIGINT UNSIGNED DEFAULT NULL,
+  `session_mode`            VARCHAR(16)     NOT NULL COMMENT 'ISOLATED/CONTINUOUS',
+  `resume_from_run_id`      BIGINT UNSIGNED DEFAULT NULL,
+  `degraded_resume`         TINYINT         NOT NULL DEFAULT 0,
+  `degraded_reason`         VARCHAR(512)    DEFAULT NULL,
+  `execution_snapshot_json` JSON            NOT NULL,
+  `result_summary`          MEDIUMTEXT      DEFAULT NULL,
+  `error`                   VARCHAR(1024)   DEFAULT NULL,
+  `owner_id`                BIGINT UNSIGNED NOT NULL,
+  `gmt_create`              DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified`            DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `creator_id`              BIGINT UNSIGNED NOT NULL,
+  `modifier_id`             BIGINT UNSIGNED DEFAULT NULL,
+  `version`                 INT             NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_scheduled_task_trigger` (`workspace_id`, `trigger_key`),
+  KEY `idx_scheduled_task_run_task` (`workspace_id`, `scheduled_task_id`, `id`),
+  KEY `idx_scheduled_task_run_status` (`workspace_id`, `status`, `scheduled_at`, `id`),
+  KEY `idx_scheduled_task_run_resume` (`workspace_id`, `resume_from_run_id`),
+  KEY `idx_scheduled_task_run_recovery` (`status`, `gmt_modified`, `id`),
+  KEY `idx_scheduled_task_run_queue` (`workspace_id`, `scheduled_task_id`, `status`, `scheduled_at`, `id`)
+  ,KEY `idx_scheduled_task_run_health` (`workspace_id`, `scheduled_task_id`, `finished_at`, `status`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='7x24 scheduled task execution occurrence';
+
 -- 工单
 CREATE TABLE IF NOT EXISTS `workitem` (
   `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`       BIGINT UNSIGNED NOT NULL,
+  `origin_type`     VARCHAR(32)     DEFAULT NULL,
+  `origin_id`       BIGINT UNSIGNED DEFAULT NULL,
   `work_type`       VARCHAR(16)     NOT NULL COMMENT 'REQ/TASK/BUG',
   `title`           VARCHAR(256)    NOT NULL,
   `content_md`      MEDIUMTEXT      DEFAULT NULL COMMENT '正文（Markdown）',
@@ -243,28 +320,36 @@ CREATE TABLE IF NOT EXISTS `workitem` (
   `modifier_id`     BIGINT UNSIGNED DEFAULT NULL,
   `is_deleted`      TINYINT         NOT NULL DEFAULT 0,
   `version`         INT             NOT NULL DEFAULT 0,
+  `scheduled_start_at` DATETIME(3)  DEFAULT NULL COMMENT '计划执行时间，NULL表示立即执行',
+  `scheduled_start_triggered_at` DATETIME(3) DEFAULT NULL COMMENT '定时执行实际触发时间，NULL表示尚未触发',
+  `tags`            JSON            DEFAULT NULL COMMENT '工单标签数组',
   PRIMARY KEY (`id`),
   KEY `idx_status` (`tenant_id`, `status_node_id`),
-  KEY `idx_assignee` (`tenant_id`, `assignee_type`, `assignee_ref`)
+  KEY `idx_assignee` (`tenant_id`, `assignee_type`, `assignee_ref`),
+  KEY `idx_workitem_origin` (`tenant_id`, `origin_type`, `origin_id`),
+  KEY `idx_workitem_scheduled` (`tenant_id`, `scheduled_start_at`, `assignee_type`, `sdlc_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单';
 
 -- 工单评论
 CREATE TABLE IF NOT EXISTS `workitem_comment` (
   `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`   BIGINT UNSIGNED NOT NULL,
+  `source_type` VARCHAR(32)     NOT NULL DEFAULT 'WORKITEM',
   `workitem_id` BIGINT UNSIGNED NOT NULL,
   `author_type` VARCHAR(16)     NOT NULL COMMENT 'HUMAN/AGENT',
   `author_ref`  BIGINT UNSIGNED NOT NULL,
   `content_md`  MEDIUMTEXT      DEFAULT NULL,
   `gmt_create`  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  KEY `idx_workitem` (`tenant_id`, `workitem_id`)
+  KEY `idx_workitem` (`tenant_id`, `workitem_id`),
+  KEY `idx_comment_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单评论';
 
 -- 工单评论mention明细
 CREATE TABLE IF NOT EXISTS `workitem_comment_mention` (
   `id`                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`             BIGINT UNSIGNED NOT NULL,
+  `source_type`           VARCHAR(32)     NOT NULL DEFAULT 'WORKITEM',
   `workitem_id`           BIGINT UNSIGNED NOT NULL,
   `comment_id`            BIGINT UNSIGNED NOT NULL,
   `target_type`           VARCHAR(16)     NOT NULL COMMENT 'AGENT/HUMAN',
@@ -273,7 +358,8 @@ CREATE TABLE IF NOT EXISTS `workitem_comment_mention` (
   `gmt_create`            DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_comment_mention_target` (`tenant_id`, `comment_id`, `target_type`, `target_ref`),
-  KEY `idx_workitem_mention_target` (`tenant_id`, `workitem_id`, `target_type`, `target_ref`)
+  KEY `idx_workitem_mention_target` (`tenant_id`, `workitem_id`, `target_type`, `target_ref`),
+  KEY `idx_mention_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单评论mention明细';
 
 -- 工单事件（时间线/审计）
@@ -330,6 +416,7 @@ CREATE TABLE IF NOT EXISTS `executor` (
 CREATE TABLE IF NOT EXISTS `dispatch` (
   `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`        BIGINT UNSIGNED NOT NULL,
+  `source_type`      VARCHAR(32)     NOT NULL DEFAULT 'WORKITEM',
   `workitem_id`      BIGINT UNSIGNED NOT NULL,
   `sdlc_step_id`     BIGINT UNSIGNED DEFAULT NULL COMMENT '当前 SDLC 步骤',
   `agent_id`         BIGINT UNSIGNED NOT NULL COMMENT '目标数字员工',
@@ -340,6 +427,14 @@ CREATE TABLE IF NOT EXISTS `dispatch` (
                      COMMENT 'PENDING/PACKAGING/DISPATCHED/ACKED/RUNNING/PAUSING/PAUSED/PAUSE_FAILED/WAITING_FOR_PAUSE/SUCCEEDED/FAILED/TIMEOUT/CANCELED',
   `attempt`          INT             NOT NULL DEFAULT 0 COMMENT '重试次数',
   `idempotency_key`  VARCHAR(128)    NOT NULL COMMENT '幂等键 = workitemId+stepId+attempt',
+  `normalized_idempotency_key` VARCHAR(137) GENERATED ALWAYS AS (
+    CASE
+      WHEN source_type = 'WORKITEM'
+        AND idempotency_key REGEXP '^[0-9]+:[0-9]+:[0-9]+$'
+        THEN CONCAT('WORKITEM:', idempotency_key)
+      ELSE idempotency_key
+    END
+  ) STORED,
   `result_summary`   MEDIUMTEXT      DEFAULT NULL COMMENT '执行结论/总结（无 CONCLUSION 产物时作队友结论）',
   `error`            VARCHAR(512)    DEFAULT NULL COMMENT '失败原因',
   `resume_from_dispatch_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '恢复或返工复用的来源派发',
@@ -353,10 +448,12 @@ CREATE TABLE IF NOT EXISTS `dispatch` (
   `version`          INT             NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_idempotency` (`tenant_id`, `idempotency_key`),
+  UNIQUE KEY `uk_dispatch_normalized_idempotency` (`tenant_id`, `normalized_idempotency_key`),
   KEY `idx_workitem` (`tenant_id`, `workitem_id`),
   KEY `idx_status` (`tenant_id`, `status`),
   KEY `idx_resume_from` (`tenant_id`, `resume_from_dispatch_id`),
-  KEY `idx_delivery_source` (`tenant_id`, `delivery_source_dispatch_id`)
+  KEY `idx_delivery_source` (`tenant_id`, `delivery_source_dispatch_id`),
+  KEY `idx_dispatch_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='调度派发';
 
 CREATE TABLE IF NOT EXISTS `dispatch_recovery_checkpoint` (
@@ -411,6 +508,7 @@ CREATE TABLE IF NOT EXISTS `dispatch_runtime_event` (
 CREATE TABLE IF NOT EXISTS `artifact` (
   `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`   BIGINT UNSIGNED NOT NULL,
+  `source_type` VARCHAR(32)     NOT NULL DEFAULT 'WORKITEM',
   `workitem_id` BIGINT UNSIGNED NOT NULL,
   `dispatch_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '来源派发',
   `name`        VARCHAR(256)    NOT NULL,
@@ -422,7 +520,8 @@ CREATE TABLE IF NOT EXISTS `artifact` (
   PRIMARY KEY (`id`),
   KEY `idx_workitem` (`tenant_id`, `workitem_id`),
   KEY `idx_dispatch` (`tenant_id`, `dispatch_id`),
-  UNIQUE KEY `uk_artifact_dispatch_name` (`tenant_id`, `dispatch_id`, `name`)
+  UNIQUE KEY `uk_artifact_dispatch_name` (`tenant_id`, `dispatch_id`, `name`),
+  KEY `idx_artifact_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='产物';
 
 -- =============================================================================
@@ -695,7 +794,7 @@ CREATE TABLE IF NOT EXISTS `skill` (
   `type`         VARCHAR(16)     NOT NULL COMMENT 'MCP/SKILLS/PLUGIN',
   `name`         VARCHAR(128)    NOT NULL COMMENT '真实名称（执行器据此加载）',
   `install_spec` JSON            DEFAULT NULL COMMENT '安装与下载规格',
-  `description`  VARCHAR(512)    DEFAULT NULL,
+  `description`  VARCHAR(2048)   DEFAULT NULL,
   `source_type`  VARCHAR(32)     NOT NULL DEFAULT 'INSTALL_SPEC' COMMENT 'INSTALL_SPEC/OSS_ZIP',
   `package_oss_ref`   VARCHAR(512) DEFAULT NULL COMMENT '目录上传 skill zip 的 OSS 引用',
   `package_file_name` VARCHAR(255) DEFAULT NULL COMMENT '上传 zip 文件名',
@@ -876,19 +975,22 @@ CREATE TABLE IF NOT EXISTS `dispatch_ai_usage` (
   `agent_id`           BIGINT UNSIGNED DEFAULT NULL,
   `executor_id`        BIGINT UNSIGNED DEFAULT NULL,
   `artifact_id`        BIGINT UNSIGNED DEFAULT NULL,
+  `step_id`            VARCHAR(64)     NOT NULL DEFAULT '',
   `provider`           VARCHAR(64)     NOT NULL,
   `model`              VARCHAR(128)    NOT NULL,
   `input_tokens`       BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `output_tokens`      BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `cache_read_tokens`  BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `cache_write_tokens` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `reasoning_tokens`   BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `credits`            DECIMAL(12,4)   DEFAULT NULL,
   `total_tokens`       BIGINT UNSIGNED NOT NULL DEFAULT 0,
   `raw_json`           JSON            DEFAULT NULL,
   `usage_at`           DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_create`         DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_modified`       DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_dispatch_provider_model` (`tenant_id`, `dispatch_id`, `provider`, `model`),
+  UNIQUE KEY `uk_dispatch_step_provider_model` (`tenant_id`, `dispatch_id`, `step_id`, `provider`, `model`),
   UNIQUE KEY `uk_artifact_provider_model` (`tenant_id`, `artifact_id`, `provider`, `model`),
   KEY `idx_usage_at` (`tenant_id`, `usage_at`),
   KEY `idx_agent_usage_at` (`tenant_id`, `agent_id`, `usage_at`),
@@ -1119,7 +1221,7 @@ CREATE TABLE IF NOT EXISTS `squad_template` (
   KEY `idx_tenant_status` (`tenant_id`, `status`, `is_deleted`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='小队模版间';
 
--- MCP 长效访问 Token（用户个人资产，不归属组织；权限按调用时传入的 orgId 实时解析）
+-- MCP 长效访问 Token（用户个人资产，不归属工作空间；权限按调用时传入的 workspaceId 实时解析）
 CREATE TABLE IF NOT EXISTS `mcp_access_token` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` BIGINT UNSIGNED NOT NULL COMMENT 'token 所属用户',
@@ -1144,6 +1246,7 @@ CREATE TABLE IF NOT EXISTS `mcp_access_token` (
 CREATE TABLE IF NOT EXISTS `workitem_comment_delivery` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '投递记录ID',
   `tenant_id` BIGINT UNSIGNED NOT NULL COMMENT '租户ID',
+  `source_type` VARCHAR(32) NOT NULL DEFAULT 'WORKITEM',
   `workitem_id` BIGINT UNSIGNED NOT NULL COMMENT '工单ID',
   `comment_id` BIGINT UNSIGNED NOT NULL COMMENT '来源评论ID，正文以workitem_comment为准',
   `target_agent_id` BIGINT UNSIGNED NOT NULL COMMENT '被@的目标数字员工ID',
@@ -1160,7 +1263,8 @@ CREATE TABLE IF NOT EXISTS `workitem_comment_delivery` (
   UNIQUE KEY `uk_comment_delivery_agent` (`tenant_id`, `comment_id`, `target_agent_id`),
   KEY `idx_comment_delivery_queue` (`tenant_id`, `workitem_id`, `target_agent_id`, `status`),
   KEY `idx_comment_delivery_dispatch` (`tenant_id`, `dispatch_id`, `status`),
-  KEY `idx_comment_delivery_reply` (`tenant_id`, `reply_comment_id`)
+  KEY `idx_comment_delivery_reply` (`tenant_id`, `reply_comment_id`),
+  KEY `idx_delivery_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单评论定向 Worker 投递状态';
 
 -- 钉钉数字人对话能力（V018__dingtalk_agent_conversation）：机器人绑定 + 工单无关会话 + turn。
@@ -1251,12 +1355,33 @@ CREATE TABLE IF NOT EXISTS `agent_conversation_turn_event` (
   KEY `idx_cleanup` (`gmt_create`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Provider event chunks for conversation turns';
 
+-- 工作空间权限申请（V044__workspace_access_request）：任意登录用户申请加入工作空间，ADMIN 审批。
+-- pending_marker 为生成列（PENDING 时为 1，否则为 NULL），配合唯一键在库层保证
+-- 每个 (tenant_id, requester_id) 最多一条 PENDING 申请，同时允许被拒后重新申请。
+CREATE TABLE IF NOT EXISTS `workspace_access_request` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id`       BIGINT UNSIGNED NOT NULL COMMENT '目标工作空间 ID',
+  `requester_id`    BIGINT UNSIGNED NOT NULL COMMENT '申请人 user ID',
+  `requested_level` VARCHAR(20)     NOT NULL COMMENT 'READ_ONLY / READ_WRITE / ADMIN',
+  `status`          VARCHAR(20)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED / REJECTED',
+  `pending_marker`  TINYINT GENERATED ALWAYS AS (CASE WHEN status = 'PENDING' THEN 1 ELSE NULL END) STORED,
+  `reviewer_id`     BIGINT UNSIGNED NULL     COMMENT '审批人 user ID',
+  `reject_reason`   VARCHAR(512)    NULL     COMMENT '拒绝原因',
+  `gmt_create`      DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified`    DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_tenant_status` (`tenant_id`, `status`),
+  KEY `idx_requester` (`requester_id`, `status`),
+  UNIQUE KEY `uk_workspace_access_request_pending` (`tenant_id`, `requester_id`, `pending_marker`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间权限申请';
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================================
--- 表清单（58 张）
+-- 表清单（64 张）
 -- 详设01: user, platform_branding_config, org, org_member, org_invite, audit_log
--- 详设02: status_template, status_node, status_transition, workitem,
+-- 详设02: status_template, status_node, status_transition, scheduled_task,
+--         scheduled_task_run, workitem,
 --         workitem_comment, workitem_event, clarification, executor, dispatch, artifact,
 --         workitem_comment_delivery, workitem_comment_mention
 -- 详设03: agent, agent_version, agent_repo_perm, agent_skill, agent_memory_ref,
@@ -1271,4 +1396,5 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- MCP: mcp_access_token
 -- 平台 IM: platform_im_channel_config, user_im_identity
 -- 钉钉: dingtalk_robot_binding, agent_conversation, agent_conversation_turn
+-- 工作空间: workspace_access_request
 -- =============================================================================

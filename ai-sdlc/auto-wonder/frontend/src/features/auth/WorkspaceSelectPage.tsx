@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import { Button, Card, Form, Input, Typography, message, Spin } from 'antd';
+import { Button, Card, Form, Input, Typography, message, Spin, Tabs } from 'antd';
 import { ArrowRightOutlined, BgColorsOutlined, PlusOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,6 +7,8 @@ import { apiClient } from '@/shared/api/client';
 import { useAuthStore } from '@/shared/auth/store';
 import type { WorkspaceInfo, SwitchWorkspaceResponse } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
+import { myWorkspacesQueryKey } from './api';
+import { AllWorkspacesTab } from './AllWorkspacesTab';
 import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 import {
   BRANDING_QUERY_KEY,
@@ -30,13 +32,14 @@ export function WorkspaceSelectPage() {
   const setAccessToken = useAuthStore((s) => s.setAccessToken);
   const setCurrentWorkspace = useAuthStore((s) => s.setCurrentWorkspace);
   const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
+  const user = useAuthStore((s) => s.user);
   const [form] = Form.useForm();
   const { data: publicBranding = DEFAULT_BRANDING } = useQuery({
     queryKey: BRANDING_QUERY_KEY,
     queryFn: getPublicBranding,
   });
   const { data: workspaces, isLoading, refetch } = useQuery({
-    queryKey: ['workspaces', 'mine'],
+    queryKey: myWorkspacesQueryKey(user?.id ?? null),
     queryFn: async () => {
       const resp = await apiClient.get<WorkspaceInfo[]>('/api/workspaces/mine');
       return resp.data;
@@ -95,112 +98,130 @@ export function WorkspaceSelectPage() {
           </div>
         </div>
 
-        {isLoading ? (
-          <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>
-        ) : workspaces && workspaces.length > 0 ? (
-          <div data-testid="workspace-select-grid" style={orgGridStyle}>
-            {workspaces.map((workspace) => {
-              const active = currentWorkspace?.id === workspace.id;
-              return (
-                <button
-                  key={workspace.id}
-                  type="button"
-                  data-testid={`workspace-card-${workspace.id}`}
-                  style={getOrgCardStyle(active)}
-                  aria-label={`进入工作空间 ${workspace.name}`}
-                  onMouseEnter={(event) => {
-                    event.currentTarget.style.borderColor = BRAND_ORANGE;
-                    event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
-                    event.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={(event) => {
-                    const nextStyle = getOrgCardStyle(active);
-                    event.currentTarget.style.borderColor = String(nextStyle.borderColor);
-                    event.currentTarget.style.boxShadow = String(nextStyle.boxShadow);
-                    event.currentTarget.style.transform = String(nextStyle.transform || 'none');
-                  }}
-                  onFocus={(event) => {
-                    event.currentTarget.style.borderColor = BRAND_ORANGE;
-                    event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
-                  }}
-                  onBlur={(event) => {
-                    const nextStyle = getOrgCardStyle(active);
-                    event.currentTarget.style.borderColor = String(nextStyle.borderColor);
-                    event.currentTarget.style.boxShadow = String(nextStyle.boxShadow);
-                  }}
-                  onClick={() => handleSwitch(workspace)}
-                >
-                  {active && <span style={currentBadgeStyle}>当前</span>}
-                  <span style={orgMarkStyle}>{getOrgInitial(workspace.name)}</span>
-                  <span style={orgNameStyle}>{workspace.name}</span>
-                  <span style={orgDescStyle}>{workspace.description || '暂无描述'}</span>
-                  <span style={orgActionStyle}>
-                    进入工作空间 <ArrowRightOutlined />
-                  </span>
-                </button>
-              );
-            })}
+        <Tabs
+          defaultActiveKey="mine"
+          items={[
+            {
+              key: 'mine',
+              label: '我的工作空间',
+              children: (
+                <>
+                  {isLoading ? (
+                    <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>
+                  ) : workspaces && workspaces.length > 0 ? (
+                    <div data-testid="workspace-select-grid" style={orgGridStyle}>
+                      {workspaces.map((workspace) => {
+                        const active = currentWorkspace?.id === workspace.id;
+                        return (
+                          <button
+                            key={workspace.id}
+                            type="button"
+                            data-testid={`workspace-card-${workspace.id}`}
+                            style={getOrgCardStyle(active)}
+                            aria-label={`进入工作空间 ${workspace.name}`}
+                            onMouseEnter={(event) => {
+                              event.currentTarget.style.borderColor = BRAND_ORANGE;
+                              event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
+                              event.currentTarget.style.transform = 'translateY(-1px)';
+                            }}
+                            onMouseLeave={(event) => {
+                              const nextStyle = getOrgCardStyle(active);
+                              event.currentTarget.style.borderColor = String(nextStyle.borderColor);
+                              event.currentTarget.style.boxShadow = String(nextStyle.boxShadow);
+                              event.currentTarget.style.transform = String(nextStyle.transform || 'none');
+                            }}
+                            onFocus={(event) => {
+                              event.currentTarget.style.borderColor = BRAND_ORANGE;
+                              event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
+                            }}
+                            onBlur={(event) => {
+                              const nextStyle = getOrgCardStyle(active);
+                              event.currentTarget.style.borderColor = String(nextStyle.borderColor);
+                              event.currentTarget.style.boxShadow = String(nextStyle.boxShadow);
+                            }}
+                            onClick={() => handleSwitch(workspace)}
+                          >
+                            {active && <span style={currentBadgeStyle}>当前</span>}
+                            <span style={orgMarkStyle}>{getOrgInitial(workspace.name)}</span>
+                            <span style={orgNameStyle}>{workspace.name}</span>
+                            <span style={orgDescStyle}>{workspace.description || '暂无描述'}</span>
+                            <span style={orgActionStyle}>
+                              进入工作空间 <ArrowRightOutlined />
+                            </span>
+                          </button>
+                        );
+                      })}
 
-            {!showCreateForm && (
-              <button
-                type="button"
-                data-testid="workspace-create-card"
-                style={createCardStyle}
-                onClick={() => setShowCreateForm(true)}
-              >
-                <span style={plusMarkStyle}><PlusOutlined /></span>
-                <span style={orgNameStyle}>创建新工作空间</span>
-                <span style={{ ...orgDescStyle, textAlign: 'center' }}>初始化新的工作空间</span>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div data-testid="workspace-select-grid" style={orgGridStyle}>
-            <div style={emptyStateStyle}>
-              <Text type="secondary">暂无已加入的工作空间，请创建一个</Text>
-            </div>
-            {!showCreateForm && (
-              <button type="button" data-testid="workspace-create-card" style={createCardStyle} onClick={() => setShowCreateForm(true)}>
-                <span style={plusMarkStyle}><PlusOutlined /></span>
-                <span style={orgNameStyle}>创建新工作空间</span>
-                <span style={{ ...orgDescStyle, textAlign: 'center' }}>初始化新的工作空间</span>
-              </button>
-            )}
-          </div>
-        )}
+                      {!showCreateForm && (
+                        <button
+                          type="button"
+                          data-testid="workspace-create-card"
+                          style={createCardStyle}
+                          onClick={() => setShowCreateForm(true)}
+                        >
+                          <span style={plusMarkStyle}><PlusOutlined /></span>
+                          <span style={orgNameStyle}>创建新工作空间</span>
+                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>初始化新的工作空间</span>
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div data-testid="workspace-select-grid" style={orgGridStyle}>
+                      <div style={emptyStateStyle}>
+                        <Text type="secondary">暂无已加入的工作空间，请创建一个</Text>
+                      </div>
+                      {!showCreateForm && (
+                        <button type="button" data-testid="workspace-create-card" style={createCardStyle} onClick={() => setShowCreateForm(true)}>
+                          <span style={plusMarkStyle}><PlusOutlined /></span>
+                          <span style={orgNameStyle}>创建新工作空间</span>
+                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>初始化新的工作空间</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
 
-        {showCreateForm && (
-          <Card style={createFormCardStyle} styles={{ body: { padding: 18 } }}>
-            <Form form={form} onFinish={handleCreate} layout="vertical">
-              <Form.Item
-                name="name"
-                label="工作空间名称"
-                rules={[{ required: true, message: '工作空间名称不能为空' }]}
-              >
-                <Input placeholder="输入工作空间名称" maxLength={128} />
-              </Form.Item>
-              <Form.Item name="description" label="工作空间描述">
-                <Input placeholder="简要描述工作空间用途" maxLength={512} />
-              </Form.Item>
-              <Form.Item name="background" label="工作空间背景">
-                <TextArea placeholder="工作空间的行业背景、技术栈、团队规模等信息" rows={3} />
-              </Form.Item>
-              <Form.Item>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  loading={creating}
-                  style={{ marginRight: 8, background: BRAND_ORANGE, borderColor: BRAND_ORANGE }}
-                >
-                  创建
-                </Button>
-                <Button onClick={() => { setShowCreateForm(false); form.resetFields(); }}>
-                  取消
-                </Button>
-              </Form.Item>
-            </Form>
-          </Card>
-        )}
+                  {showCreateForm && (
+                    <Card style={createFormCardStyle} styles={{ body: { padding: 18 } }}>
+                      <Form form={form} onFinish={handleCreate} layout="vertical">
+                        <Form.Item
+                          name="name"
+                          label="工作空间名称"
+                          rules={[{ required: true, message: '工作空间名称不能为空' }]}
+                        >
+                          <Input placeholder="输入工作空间名称" maxLength={128} />
+                        </Form.Item>
+                        <Form.Item name="description" label="工作空间描述">
+                          <Input placeholder="简要描述工作空间用途" maxLength={512} />
+                        </Form.Item>
+                        <Form.Item name="background" label="工作空间背景">
+                          <TextArea placeholder="工作空间的行业背景、技术栈、团队规模等信息" rows={3} />
+                        </Form.Item>
+                        <Form.Item>
+                          <Button
+                            type="primary"
+                            htmlType="submit"
+                            loading={creating}
+                            style={{ marginRight: 8, background: BRAND_ORANGE, borderColor: BRAND_ORANGE }}
+                          >
+                            创建
+                          </Button>
+                          <Button onClick={() => { setShowCreateForm(false); form.resetFields(); }}>
+                            取消
+                          </Button>
+                        </Form.Item>
+                      </Form>
+                    </Card>
+                  )}
+                </>
+              ),
+            },
+            {
+              key: 'all',
+              label: '所有工作空间',
+              children: <AllWorkspacesTab />,
+            },
+          ]}
+        />
       </div>
     </div>
   );

@@ -32,6 +32,12 @@ import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
+import com.aliyun.autowonder.dispatch.subject.ExecutionSubject;
+import com.aliyun.autowonder.dispatch.subject.ExecutionSubjectProvider;
+import com.aliyun.autowonder.dispatch.subject.ExecutionSubjectRegistry;
+import com.aliyun.autowonder.dispatch.subject.WorkitemExecutionSubjectProvider;
+import com.aliyun.autowonder.scheduledtask.ScheduledRunExecutionSubjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -72,6 +78,26 @@ public class PackageContextAssembler {
     private final RepoRelationDao repoRelationDao;
     private final StatusNodeDao statusNodeDao;
     private final DispatchCheckpointService checkpointService;
+    private ExecutionSubjectRegistry subjectRegistry;
+
+    @Autowired
+    public PackageContextAssembler(WorkitemDao workitemDao, ClarificationDao clarificationDao,
+            WorkitemCommentDao commentDao, GuidanceDao guidanceDao,
+            SdlcStepDao stepDao, AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
+            SkillDao skillCatalogDao,
+            AgentMemoryRefDao memoryRefDao, MemoryDao memoryDao, DispatchDao dispatchDao,
+            ArtifactDao artifactDao, SquadMemberDao squadMemberDao, AgentDao agentDao,
+            AgentVersionDao agentVersionDao, UserDao userDao, RepoDao repoDao,
+            RepoRelationDao repoRelationDao,
+            StatusNodeDao statusNodeDao, DispatchCheckpointService checkpointService,
+            ScheduledRunExecutionSubjectProvider scheduledRunProvider) {
+        this(workitemDao, clarificationDao, commentDao, guidanceDao, stepDao, repoPermDao,
+                skillDao, skillCatalogDao, memoryRefDao, memoryDao, dispatchDao, artifactDao,
+                squadMemberDao, agentDao, agentVersionDao, userDao, repoDao, repoRelationDao,
+                statusNodeDao, checkpointService);
+        this.subjectRegistry = new ExecutionSubjectRegistry(List.of(
+                new WorkitemExecutionSubjectProvider(workitemDao, this), scheduledRunProvider));
+    }
 
     public PackageContextAssembler(WorkitemDao workitemDao, ClarificationDao clarificationDao,
             WorkitemCommentDao commentDao, GuidanceDao guidanceDao,
@@ -102,9 +128,47 @@ public class PackageContextAssembler {
         this.repoRelationDao = repoRelationDao;
         this.statusNodeDao = statusNodeDao;
         this.checkpointService = checkpointService;
+        this.subjectRegistry = new ExecutionSubjectRegistry(List.of(
+                new WorkitemExecutionSubjectProvider(workitemDao, this)));
+    }
+
+    /** Focused constructor for registry contract tests and non-Spring composition. */
+    public PackageContextAssembler(ExecutionSubjectRegistry subjectRegistry) {
+        this.workitemDao = null;
+        this.clarificationDao = null;
+        this.commentDao = null;
+        this.guidanceDao = null;
+        this.stepDao = null;
+        this.repoPermDao = null;
+        this.skillDao = null;
+        this.skillCatalogDao = null;
+        this.memoryRefDao = null;
+        this.memoryDao = null;
+        this.dispatchDao = null;
+        this.artifactDao = null;
+        this.squadMemberDao = null;
+        this.agentDao = null;
+        this.agentVersionDao = null;
+        this.userDao = null;
+        this.repoDao = null;
+        this.repoRelationDao = null;
+        this.statusNodeDao = null;
+        this.checkpointService = null;
+        this.subjectRegistry = java.util.Objects.requireNonNull(subjectRegistry, "subjectRegistry");
     }
 
     public PackageContext assemble(DispatchDO dispatch, AgentVersionDO version) {
+        ExecutionSubjectProvider provider = subjectRegistry.require(dispatch);
+        ExecutionSubject subject = provider.load(dispatch.getTenantId(), dispatch.getWorkitemId());
+        return provider.assemble(dispatch, subject, version);
+    }
+
+    /** Existing Workitem assembler retained as the adapter's compatibility implementation. */
+    public PackageContext assembleWorkitem(DispatchDO dispatch, AgentVersionDO version) {
+        return assembleWorkitem(dispatch, version, workitemDao.findById(dispatch.getWorkitemId()));
+    }
+
+    public PackageContext assembleWorkitem(DispatchDO dispatch, AgentVersionDO version, WorkitemDO loadedWorkitem) {
         log.info("package assemble dispatchId={} workitemId={} agentId={}", dispatch.getId(), dispatch.getWorkitemId(), dispatch.getAgentId());
         long tenantId = dispatch.getTenantId();
         PackageContext ctx = new PackageContext();
@@ -120,7 +184,7 @@ public class PackageContextAssembler {
         ctx.setRoleCode(version.getRoleCode());
         ctx.setRoleName(version.getRoleName());
 
-        WorkitemDO w = workitemDao.findById(dispatch.getWorkitemId());
+        WorkitemDO w = loadedWorkitem;
         if (w != null && tenantId == w.getTenantId()) {
             ctx.setWorkitemTitle(w.getTitle());
             ctx.setWorkitemContentMd(w.getContentMd());
@@ -167,7 +231,7 @@ public class PackageContextAssembler {
     }
 
     private String buildComments(long tenantId, long workitemId) {
-        List<WorkitemCommentDO> comments = commentDao.listByWorkitem(workitemId);
+        List<WorkitemCommentDO> comments = commentDao.listByWorkitem(tenantId, workitemId);
         if (comments == null || comments.isEmpty()) {
             return null;
         }
@@ -472,6 +536,12 @@ public class PackageContextAssembler {
             m.put("path", repo.getName());
             boolean writable = "WRITE".equalsIgnoreCase(p.getPermLevel());
             m.put("mode", writable ? "eager" : "lazy");
+            m.put("allowCommit", writable);
+            m.put("allowPush", writable);
+            // Bound repositories must remain cloneable on a fresh Runtime. This flag
+            // governs package-declared preparation only; it does not prohibit the
+            // worker from discovering and cloning additional task repositories.
+            m.put("allowNetwork", true);
             repos.add(m);
         }
         return repos;

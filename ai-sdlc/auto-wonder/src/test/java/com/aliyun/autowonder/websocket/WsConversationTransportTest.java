@@ -94,10 +94,30 @@ class WsConversationTransportTest {
         assertTrue(frame.contains("\"capabilitySha256\":\"abc123\""));
         assertTrue(frame.contains("\"capabilityHash\":\"abc123\""));
         assertTrue(frame.contains("\"mcpToken\":\"awconversation_token\""));
+        assertTrue(frame.contains("\"mcpSecrets\":{\"kc:v1:test\":\"secret\"}"));
+    }
+
+    @Test
+    void sendCancelPublishesConversationTurnCancelFrame() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(5L);
+        conv.setExecutorId(9L);
+        conv.setAgentId(3L);
+        when(sessionRegistry.findByExecutorId(9L)).thenReturn(null);
+
+        transport.sendCancel(conv, 11L);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        String frame = payload.getValue();
+        assertTrue(frame.contains("\"type\":\"CONVERSATION_TURN_CANCEL\""));
+        assertTrue(frame.contains("\"conversationId\":5"));
+        assertTrue(frame.contains("\"turnId\":11"));
+        verifyNoInteractions(capabilityService);
     }
 
     private ConversationCapabilitySnapshot snapshot() {
         return new ConversationCapabilitySnapshot(50L, "https://oss/cap.zip", "abc123", "abc123",
-                "awconversation_token");
+                "awconversation_token", java.util.Map.of("kc:v1:test", "secret"));
     }
 }

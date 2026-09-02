@@ -2,12 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Drawer, Empty, Space, Spin, Tag, Typography } from 'antd';
 import type {
   ProcessGraph, ProcessGraphNode, RuntimeTrace, RuntimeTraceBoundary, RuntimeTraceContextFile,
-  RuntimeTraceObservation, RuntimeTraceSession, RuntimeTraceSpan, RuntimeTraceTurn,
+  RuntimeTraceEvent, RuntimeTraceObservation, RuntimeTraceSession, RuntimeTraceSpan, RuntimeTraceTurn,
 } from '@/shared/types/workitem';
 import { getRuntimeTrace, getRuntimeTraceContext, getRuntimeTraceObservation, getRuntimeTraceTurn } from '../api';
 
 const { Text, Title } = Typography;
 const ACTIVE_STATUSES = new Set(['RUNNING', 'ACKED', 'DISPATCHED', 'PAUSING']);
+const FAILURE_EVENT_TYPES = new Set(['step.failed', 'session.failed']);
+
+export function dispatchFailureReason(events?: RuntimeTraceEvent[] | null): string | null {
+  if (!events) return null;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (!FAILURE_EVENT_TYPES.has(event.eventType)) continue;
+    const reason = event.detail?.reason;
+    if (typeof reason === 'string' && reason.trim()) return reason.trim();
+  }
+  return null;
+}
 
 interface RuntimeTraceDrawerProps {
   node: ProcessGraphNode | null;
@@ -29,10 +41,12 @@ function duration(ms?: number | null): string {
   return `${Math.floor(seconds / 60)}分${seconds % 60 ? `${seconds % 60}秒` : ''}`;
 }
 
-function usage(value?: { available?: boolean; availability?: string | null; totalTokens: number; credits?: number | null } | null): string {
-  if (!value || value.available !== true) return 'Usage unavailable';
-  const credit = value.credits == null ? '' : ` · ${value.credits} credits`;
-  return `${value.totalTokens.toLocaleString('en-US')} tokens${credit}`;
+function usage(value?: { available?: boolean; availability?: string | null; totalTokens: number; credits?: number | null; inputTokens?: number; outputTokens?: number } | null, prefix = ' · '): string {
+  if (!value || value.available !== true) return '';
+  const tokens = value.totalTokens > 0 ? `${value.totalTokens.toLocaleString('en-US')} tokens` : '';
+  const credit = value.credits != null && value.credits > 0 ? `💰${value.credits.toFixed(2)}` : '';
+  const result = [tokens, credit].filter(Boolean).join(' · ');
+  return result ? `${prefix}${result}` : '';
 }
 
 function statusColor(status?: string | null): string {
@@ -76,9 +90,13 @@ function TraceTimeline({ trace, onSelect }: { trace: RuntimeTrace; onSelect: (se
   return <div>
     {!!runtimeEvents.length && <div style={{ marginBottom: 14 }}>
       <Text strong style={{ fontSize: 12 }}>Runtime &amp; SDLC</Text>
-      {runtimeEvents.map((event, index) => <button key={event.eventId || index} type="button" onClick={() => onSelect({ kind: 'boundary', boundary: { eventId: event.eventId, kind: event.eventType, label: event.eventType, eventTime: event.eventTime, detail: event.detail } })} style={{ display: 'block', width: '100%', padding: '6px 8px', border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
-        <Text code style={{ fontSize: 11 }}>{event.eventType}</Text>
-      </button>)}
+      {runtimeEvents.map((event, index) => {
+        const failureReason = FAILURE_EVENT_TYPES.has(event.eventType) && typeof event.detail?.reason === 'string' ? event.detail.reason : null;
+        return <button key={event.eventId || index} type="button" onClick={() => onSelect({ kind: 'boundary', boundary: { eventId: event.eventId, kind: event.eventType, label: event.eventType, eventTime: event.eventTime, detail: event.detail } })} style={{ display: 'block', width: '100%', padding: '6px 8px', border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+          <Text code style={{ fontSize: 11 }}>{event.eventType}</Text>
+          {failureReason && <Text type="danger" style={{ marginLeft: 8, fontSize: 11 }}>{failureReason}</Text>}
+        </button>;
+      })}
     </div>}
     {trace.sessions.map((session) => {
       const rows = [
@@ -93,7 +111,7 @@ function TraceTimeline({ trace, onSelect }: { trace: RuntimeTrace; onSelect: (se
               {session.parentSessionId && <Tag color="blue">Fork</Tag>}
               <Tag color={statusColor(session.status)} style={{ margin: 0 }}>{session.status || 'RUNNING'}</Tag>
             </div>
-            <Text type="secondary" style={{ fontSize: 11 }}>{session.provider || trace.provider || 'provider'} · {duration(session.durationMs)} · {usage(session.tokenUsage)}</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>{session.provider || trace.provider || 'provider'} · {duration(session.durationMs)}{usage(session.tokenUsage)}</Text>
           </button>
           <div style={{ marginLeft: 15, borderLeft: '1px solid #dfe4eb', paddingLeft: 10 }}>
             {rows.map((row) => row.kind === 'boundary' ? (
@@ -122,7 +140,7 @@ function SpanDetails({ spans }: { spans: RuntimeTraceSpan[] }) {
   return <section style={{ marginTop: 18 }}><Text strong style={{ fontSize: 12 }}>Live observations</Text>{spans.map((span) => (
     <div key={`${span.kind}:${span.spanId}`} style={{ marginTop: 8, padding: 10, border: '1px solid #eceff3', borderRadius: 8 }}>
       <Space><Tag>{span.kind}</Tag><Text strong>{span.name || span.kind}</Text><Text type="secondary">{duration(span.durationMs)}</Text></Space>
-      <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 11 }}>{usage(span.tokenUsage)}</Text>
+      <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 11 }}>{usage(span.tokenUsage, '')}</Text>
       <Payload title="Input" value={span.input ?? span.inputSummary} />
       <Payload title="Output" value={span.output ?? span.content ?? span.outputSummary} />
     </div>
@@ -137,7 +155,7 @@ function DetailPanel({ dispatchId, selection, loading, onContext }: { dispatchId
     <Payload title="Session ID" value={selection.session.sessionId} />
     <Payload title="Parent / Fork lineage" value={selection.session.parentSessionId} />
     <Payload title="Provider" value={selection.session.provider} />
-    <Payload title="Usage" value={usage(selection.session.tokenUsage)} />
+    <Payload title="Usage" value={usage(selection.session.tokenUsage, '')} />
   </div>;
   if (selection.kind === 'boundary') return <div>
     <Title level={4} style={{ marginTop: 0 }}>{selection.boundary.label || selection.boundary.kind || selection.boundary.type}</Title>
@@ -146,7 +164,7 @@ function DetailPanel({ dispatchId, selection, loading, onContext }: { dispatchId
   </div>;
   if (selection.kind === 'observation') return <div>
     <Space><Tag>{selection.observation.type}</Tag><Title level={4} style={{ margin: 0 }}>{selection.observation.name || selection.observation.type}</Title></Space>
-    <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>{duration(selection.observation.durationMs)} · {usage(selection.observation.usage)}</Text>
+    <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>{duration(selection.observation.durationMs)}{usage(selection.observation.usage)}</Text>
     <Payload title="Input" value={selection.observation.input} />
     <Payload title="Output" value={selection.observation.output} />
     <Payload title="Error" value={selection.observation.error} />
@@ -154,7 +172,7 @@ function DetailPanel({ dispatchId, selection, loading, onContext }: { dispatchId
   const turn = selection.turn;
   return <div>
     <Title level={4} style={{ marginTop: 0 }}>Turn {turn.turnId}</Title>
-    <Text type="secondary">{turn.providerCoverage === 'PARTIAL' ? 'Qoder provider stream · partial coverage' : 'Full provider coverage'} · {duration(turn.durationMs)} · {usage(turn.usage || turn.tokenUsage)}</Text>
+    <Text type="secondary">{turn.providerCoverage === 'PARTIAL' ? 'Qoder provider stream · partial coverage' : 'Full provider coverage'} · {duration(turn.durationMs)}{usage(turn.usage || turn.tokenUsage)}</Text>
     <Payload title="System Prompt" value={turn.systemPrompt} />
     <Payload title="User Prompt" value={turn.prompt} />
     {!!turn.contextFiles?.length && <section style={{ marginTop: 18 }}>
@@ -179,6 +197,10 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
   const [contextPreview, setContextPreview] = useState<{ name: string; content: string } | null>(null);
   const lastSeq = useRef<number | null>(null);
   const active = ACTIVE_STATUSES.has(node?.status?.toUpperCase() || '');
+  const failureReason = useMemo(
+    () => (node?.status?.toUpperCase() === 'FAILED' ? dispatchFailureReason(trace?.events) : null),
+    [node?.status, trace],
+  );
 
   useEffect(() => {
     if (node?.dispatchId == null) return undefined;
@@ -243,8 +265,9 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
         {continuity.previous != null && <Text type="secondary">恢复自 #{continuity.previous}</Text>}
         {continuity.next != null && <Text type="secondary">继续到 #{continuity.next}</Text>}
         <span style={{ flex: 1 }} />
-        {trace && <Text type="secondary">{trace.provider || 'provider'} · {trace.sessions.reduce((sum, item) => sum + item.turns.length, 0)} Turns · {usage(trace.tokenUsage)}</Text>}
+        {trace && <Text type="secondary">{trace.provider || 'provider'} · {trace.sessions.reduce((sum, item) => sum + item.turns.length, 0)} Turns{usage(trace.tokenUsage)}</Text>}
       </div>}
+      {failureReason && <Alert data-testid="dispatch-failure-reason" style={{ marginTop: 12 }} type="error" showIcon message="Dispatch 失败原因" description={failureReason} />}
       {error && <Alert closable onClose={() => setError(null)} style={{ marginTop: 12 }} type="error" showIcon message={error} />}
       {loading && !trace ? <div style={{ textAlign: 'center', padding: 60 }}><Spin /></div> : trace && (
         <div style={{ display: 'grid', gridTemplateColumns: '42% 58%', minHeight: 620, marginTop: 14, border: '1px solid #e5e9ef', borderRadius: 10, overflow: 'hidden' }}>

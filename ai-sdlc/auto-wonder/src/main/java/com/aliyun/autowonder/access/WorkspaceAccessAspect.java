@@ -9,12 +9,14 @@ import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
 
 @Aspect
 @Component
+@Order(0)
 public class WorkspaceAccessAspect {
 
     @Around("@within(com.aliyun.autowonder.access.RequireWorkspaceAccess) || "

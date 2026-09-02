@@ -25,21 +25,28 @@ public class InAppCommentMentionedListener {
     public void onMentioned(WorkitemCommentMentionedEvent event) {
         try {
             String summary = truncate(event.commentContentMd(), MAX_CONTENT_LENGTH);
-            String content = event.actorDisplayName() + " 在「" + event.workitemTitle() + "」@了你：" + summary;
 
             NotifyEvent notifyEvent = new NotifyEvent();
             notifyEvent.setTenantId(event.tenantId());
             notifyEvent.setType("COMMENT_MENTION");
-            notifyEvent.setTitle("有人在评论中@了你");
-            notifyEvent.setContent(content);
-            notifyEvent.setLink("/workitems/" + event.workitemId());
-            notifyEvent.setRefType("WORKITEM");
+            if (event.isScheduledTaskRun()) {
+                notifyEvent.setTitle("有人在定时任务评论中@了你");
+                notifyEvent.setContent(event.actorDisplayName() + " 在定时任务「" + event.workitemTitle()
+                        + "」的执行记录评论中@了你：" + summary);
+                notifyEvent.setLink("/scheduled-task-runs/" + event.workitemId());
+                notifyEvent.setRefType("SCHEDULED_TASK_RUN");
+            } else {
+                notifyEvent.setTitle("有人在评论中@了你");
+                notifyEvent.setContent(event.actorDisplayName() + " 在「" + event.workitemTitle() + "」@了你：" + summary);
+                notifyEvent.setLink("/workitems/" + event.workitemId());
+                notifyEvent.setRefType("WORKITEM");
+            }
             notifyEvent.setRefId(event.workitemId());
             notifyEvent.setRecipientIds(List.of(event.recipientUserId()));
 
             notifyService.notify(notifyEvent);
-            log.info("in-app notification sent for comment mention tenantId={} workitemId={} recipient={}",
-                    event.tenantId(), event.workitemId(), event.recipientUserId());
+            log.info("in-app notification sent for comment mention tenantId={} workitemId={} recipient={} sourceType={}",
+                    event.tenantId(), event.workitemId(), event.recipientUserId(), event.sourceType());
         } catch (Exception e) {
             log.error("failed to send in-app notification for comment mention tenantId={} workitemId={} recipient={}",
                     event.tenantId(), event.workitemId(), event.recipientUserId(), e);

@@ -70,3 +70,13 @@ export async function submitClarificationTurn(
     clientMessageId,
   });
 }
+
+export async function cancelClarificationTurn(
+  workitemId: number | string,
+  conversationId: number,
+  turnId: number,
+): Promise<void> {
+  await apiClient.post(
+    `${base(workitemId)}/${conversationId}/turns/${turnId}/cancel`,
+  );
+}

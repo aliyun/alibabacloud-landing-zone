@@ -28,6 +28,15 @@ export interface WorkspaceInfo {
 
 export type WorkspaceAccessLevel = 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
 
+export interface WorkspaceListItem {
+  id: number;
+  name: string;
+  description: string;
+  membershipStatus: 'MEMBER' | 'NOT_MEMBER' | 'PENDING';
+  accessLevel: WorkspaceAccessLevel | null;
+  pendingRequestId?: number | null;
+}
+
 export interface LoginResponse {
   userId: number;
   accessToken: string;

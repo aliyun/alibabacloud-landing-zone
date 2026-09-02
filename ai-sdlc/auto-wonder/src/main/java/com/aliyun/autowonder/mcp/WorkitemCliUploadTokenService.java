@@ -31,7 +31,7 @@ public class WorkitemCliUploadTokenService {
     public static final String TOKEN_ENV_NAME = "AUTOWONDER_UPLOAD_TOKEN";
     public static final Duration TOKEN_TTL = Duration.ofMinutes(30);
     public static final List<String> SUPPORTED_EXTENSIONS =
-            List.of(".md", ".markdown", ".png", ".jpg", ".jpeg", ".webp");
+            List.of(".md", ".markdown", ".txt", ".html", ".pdf", ".png", ".jpg", ".jpeg", ".webp");
     public static final int MAX_FILES = 10;
     public static final long MAX_FILE_SIZE_BYTES = 5L * 1024L * 1024L;
     public static final long MAX_TOTAL_SIZE_BYTES = 20L * 1024L * 1024L;
@@ -56,7 +56,9 @@ public class WorkitemCliUploadTokenService {
 
     public WorkitemCliUploadTokenVO mint(McpAccessTokenService.CredentialType credentialType,
                                          long userId, long workitemId) {
-        if (credentialType != McpAccessTokenService.CredentialType.LONG_LIVED) {
+        if (credentialType != McpAccessTokenService.CredentialType.LONG_LIVED
+                && credentialType != McpAccessTokenService.CredentialType.DISPATCH
+                && credentialType != McpAccessTokenService.CredentialType.CONVERSATION) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
         WorkitemDO workitem = workitemDao.findById(workitemId);
@@ -110,6 +112,14 @@ public class WorkitemCliUploadTokenService {
         return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
                 + " workitem upload --server-url " + brandingService.trustedPublicBaseUrl()
                 + " --workitem-id <workitem-id>"
+                + " --file <filepath-1> --file <filepath-2> --file <images-1> --json";
+    }
+
+    /** One-line scheduled-task upload command template used in MCP tool descriptions; carries no token. */
+    public String scheduledTaskCommandTemplate() {
+        return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
+                + " scheduled-task upload --server-url " + brandingService.trustedPublicBaseUrl()
+                + " --scheduled-task-id <scheduled-task-id>"
                 + " --file <filepath-1> --file <filepath-2> --file <images-1> --json";
     }
 

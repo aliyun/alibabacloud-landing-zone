@@ -522,4 +522,106 @@ class AgentServiceTest {
         BizException ex = assertThrows(BizException.class, () -> service.updateAgent(req, 100L, 7L));
         assertEquals("14003", ex.getCode());
     }
+
+    @Test
+    void updateAgent_presence_mode_keeps_omitted_fields_and_clears_explicit_null() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(100L);
+        agent.setName("worker");
+        agent.setStatus("DRAFT");
+        agent.setEditingVersionId(10L);
+        agent.setVersion(2);
+        when(agentDao.findById(1L)).thenReturn(agent);
+
+        AgentVersionDO draft = new AgentVersionDO();
+        draft.setId(10L);
+        draft.setStatus("DRAFT");
+        draft.setRoleName("old-role");
+        draft.setRoleCode("OLD");
+        draft.setBusinessBackground("old-bg");
+        draft.setResponsibilities("old-resp");
+        draft.setSdlcId(5L);
+        draft.setVersion(0);
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(1);
+
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(1L);
+        req.setRoleCode("NEW_ROLE");
+        req.setBusinessBackground(null);
+        req.setProvidedFields(java.util.Set.of("roleCode", "businessBackground"));
+
+        service.updateAgent(req, 100L, 7L);
+
+        verify(versionDao).updateConfig(eq(10L), eq(100L), eq("old-role"), eq("NEW_ROLE"),
+                isNull(), eq("old-resp"), eq(5L), any(), eq(0), eq(7L));
+    }
+
+    @Test
+    void editConfig_presence_mode_keeps_omitted_fields_and_clears_explicit_null() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(100L);
+        agent.setName("worker");
+        agent.setStatus("DRAFT");
+        agent.setEditingVersionId(10L);
+        when(agentDao.findById(1L)).thenReturn(agent);
+
+        AgentVersionDO draft = new AgentVersionDO();
+        draft.setId(10L);
+        draft.setStatus("DRAFT");
+        draft.setRoleName("old-role");
+        draft.setRoleCode("OLD");
+        draft.setBusinessBackground("old-bg");
+        draft.setResponsibilities("old-resp");
+        draft.setSdlcId(5L);
+        draft.setIdentityJson("{\"evolutionMode\":\"MANUAL\"}");
+        draft.setVersion(0);
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(1);
+
+        UpdateConfigRequest req = new UpdateConfigRequest();
+        req.setResponsibilities("new-resp");
+        req.setSdlcId(null);
+        req.setProvidedFields(java.util.Set.of("responsibilities", "sdlcId"));
+
+        service.editConfig(1L, req, 100L, 7L);
+
+        verify(versionDao).updateConfig(eq(10L), eq(100L), eq("old-role"), eq("OLD"),
+                eq("old-bg"), eq("new-resp"), isNull(),
+                eq("{\"evolutionMode\":\"MANUAL\"}"), eq(0), eq(7L));
+    }
+
+    @Test
+    void editConfig_legacy_mode_without_provided_fields_still_replaces_with_null() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(100L);
+        agent.setName("worker");
+        agent.setStatus("DRAFT");
+        agent.setEditingVersionId(10L);
+        when(agentDao.findById(1L)).thenReturn(agent);
+
+        AgentVersionDO draft = new AgentVersionDO();
+        draft.setId(10L);
+        draft.setStatus("DRAFT");
+        draft.setRoleName("old-role");
+        draft.setRoleCode("OLD");
+        draft.setSdlcId(5L);
+        draft.setVersion(0);
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(1);
+
+        UpdateConfigRequest req = new UpdateConfigRequest();
+        req.setRoleName("new-role");
+
+        service.editConfig(1L, req, 100L, 7L);
+
+        verify(versionDao).updateConfig(eq(10L), eq(100L), eq("new-role"), isNull(),
+                isNull(), isNull(), isNull(), isNull(), eq(0), eq(7L));
+    }
 }

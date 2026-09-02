@@ -43,6 +43,28 @@ class InAppCommentMentionedListenerTest {
     }
 
     @Test
+    void onMentionedFromScheduledTaskRunLinksToRunDetailPage() {
+        WorkitemCommentMentionedEvent event = new WorkitemCommentMentionedEvent(
+                1L, 10482L, "AutoWonder 功能增量分析报告", 200L, 99L,
+                "AGENT", 40013L, "功能增量分析员", "req-1", "分析完成 @蔡何",
+                WorkitemCommentMentionedEvent.SOURCE_SCHEDULED_TASK_RUN);
+
+        listener.onMentioned(event);
+
+        ArgumentCaptor<NotifyEvent> captor = ArgumentCaptor.forClass(NotifyEvent.class);
+        verify(notifyService).notify(captor.capture());
+
+        NotifyEvent sent = captor.getValue();
+        assertEquals("COMMENT_MENTION", sent.getType());
+        assertEquals("有人在定时任务评论中@了你", sent.getTitle());
+        assertEquals("功能增量分析员 在定时任务「AutoWonder 功能增量分析报告」的执行记录评论中@了你：分析完成 @蔡何",
+                sent.getContent());
+        assertEquals("/scheduled-task-runs/10482", sent.getLink());
+        assertEquals("SCHEDULED_TASK_RUN", sent.getRefType());
+        assertEquals(10482L, sent.getRefId());
+    }
+
+    @Test
     void onMentionedTruncatesLongCommentContent() {
         String longContent = "A".repeat(150);
         WorkitemCommentMentionedEvent event = new WorkitemCommentMentionedEvent(

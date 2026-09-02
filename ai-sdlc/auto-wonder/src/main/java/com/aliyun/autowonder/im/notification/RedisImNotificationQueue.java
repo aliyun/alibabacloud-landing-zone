@@ -2,6 +2,7 @@ package com.aliyun.autowonder.im.notification;
 
 import com.aliyun.autowonder.redis.RedisManager;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 import redis.clients.jedis.StreamEntry;
@@ -12,7 +13,7 @@ import java.util.Map;
 
 @Component
 public class RedisImNotificationQueue implements ImNotificationQueue {
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = createObjectMapper();
     private static final String PAYLOAD_FIELD = "payload";
     private static final String DELIVERED_PREFIX = "autowonder:im-notification:delivered:";
 
@@ -111,5 +112,15 @@ public class RedisImNotificationQueue implements ImNotificationQueue {
 
     private static String deliveredKey(String notificationKey) {
         return DELIVERED_PREFIX + notificationKey;
+    }
+
+    private static ObjectMapper createObjectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        return mapper;
+    }
+
+    static ObjectMapper objectMapper() {
+        return OBJECT_MAPPER;
     }
 }

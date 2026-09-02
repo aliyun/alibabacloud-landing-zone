@@ -1,6 +1,20 @@
 import { http, HttpResponse } from 'msw';
 
 export const handlers = [
+  http.get('/api/capabilities/scheduled-task', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: {
+        available: true,
+        mode: 'V037_READY',
+        clusterReady: true,
+        reason: null,
+      },
+      traceId: 'trace-scheduled-task-capability',
+    });
+  }),
   http.get('/api/platform/branding/public', () => {
     return HttpResponse.json({
       success: true,
@@ -15,6 +29,7 @@ export const handlers = [
         mcpBaseUrl: 'https://community.example/api/mcp',
         recommendedRuntimeVersion: '0.2.125',
         deploymentVersion: 'x.x.x',
+        communityEdition: false,
         canManage: false,
       },
       traceId: 'trace-branding',
@@ -32,6 +47,7 @@ export const handlers = [
         primaryColor: '#f97316',
         domain: 'https://community.example',
         mcpBaseUrl: 'https://community.example/api/mcp',
+        communityEdition: false,
         canManage: false,
       },
       traceId: 'trace-branding-admin',
@@ -78,6 +94,15 @@ export const handlers = [
       message: '',
       data: [],
       traceId: 'trace-workspaces-mine',
+    });
+  }),
+  http.get('/api/agents', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: [],
+      traceId: 'trace-agents-list',
     });
   }),
   http.get('/api/agents/reviews/count', () => {

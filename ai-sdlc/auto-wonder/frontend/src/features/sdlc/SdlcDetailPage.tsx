@@ -1,11 +1,13 @@
 import { useState } from 'react';
+import type { ReactNode, CSSProperties } from 'react';
 import {
   Card, Descriptions, Tag, Spin, Button, Result, Space, Modal, Form, Input, Select,
-  Popconfirm, Table, message, Tooltip, Drawer, Alert, Switch, InputNumber, Empty,
+  Popconfirm, Table, message, Tooltip, Drawer, Alert, Switch, InputNumber, Empty, Popover,
 } from 'antd';
 import {
   ArrowLeftOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   ArrowUpOutlined, ArrowDownOutlined, CheckCircleOutlined, StopOutlined, BulbOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -175,8 +177,22 @@ export function SdlcDetailPage() {
       title: '执行说明', dataIndex: 'instructionMd',
       render: (v: string | null) => v ? <span style={{ whiteSpace: 'pre-wrap' }}>{v}</span> : '-',
     },
-    { title: '检查项', dataIndex: 'checklistJson', width: 100, render: (v: string | null) => v ? '已配置' : '-' },
-    { title: '策略', dataIndex: 'gatePolicyJson', width: 100, render: (v: string | null) => v ? '已配置' : '-' },
+    {
+      title: '检查项', dataIndex: 'checklistJson', width: 110,
+      render: (v: string | null) => v ? (
+        <Popover title="检查项" trigger={['hover', 'click']} content={<ChecklistPreview raw={v} />}>
+          <Tag color="blue" style={{ cursor: 'pointer' }}>已配置</Tag>
+        </Popover>
+      ) : '-',
+    },
+    {
+      title: '策略', dataIndex: 'gatePolicyJson', width: 110,
+      render: (v: string | null) => v ? (
+        <Popover title="策略" trigger={['hover', 'click']} content={<GatePolicyPreview raw={v} />}>
+          <Tag color="blue" style={{ cursor: 'pointer' }}>已配置</Tag>
+        </Popover>
+      ) : '-',
+    },
     {
       title: '操作', width: 160, fixed: 'right',
       render: (_, record, idx) => (
@@ -427,17 +443,20 @@ export function SdlcDetailPage() {
           <Form.Item name="instructionMd" label="执行说明" rules={[{ required: true, message: '请输入执行说明' }]}>
             <Input.TextArea rows={8} placeholder="详细描述本步骤要做什么、输入输出、注意事项、完成标准，以及需要交接时如何调用平台接口。" />
           </Form.Item>
-          <Form.Item name="checklistJson" label="检查项 JSON">
-            <Input.TextArea rows={3} placeholder='如: ["确认需求边界","提交单元测试结果"]' />
+          <Form.Item name="checklistJson" label={<StepFieldHelp text="检查项 JSON" help={<ChecklistFieldHelp />} popover />}>
+            <Input.TextArea rows={3} placeholder='如: [{"id": "tests-pass", "text": "运行相关测试全部通过"}]' />
           </Form.Item>
-          <Form.Item name="gatePolicyJson" label="准入/准出策略 JSON">
-            <Input.TextArea rows={3} placeholder='如: {"coverageThreshold":80,"requiresReview":true}' />
+          <Form.Item name="gatePolicyJson" label={<StepFieldHelp text="准入/准出策略 JSON" help={<GatePolicyFieldHelp />} popover />}>
+            <Input.TextArea rows={3} placeholder='如: { "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }' />
           </Form.Item>
           <Space size="large" align="start">
             <Form.Item name="timeoutSeconds" label="建议超时秒数">
               <InputNumber min={1} precision={0} />
             </Form.Item>
-            <Form.Item name="retryBudget" label="建议重试预算">
+            <Form.Item
+              name="retryBudget"
+              label={<StepFieldHelp text="建议重试预算" help={<RetryBudgetTooltipContent />} popover />}
+            >
               <InputNumber min={0} precision={0} />
             </Form.Item>
           </Space>
@@ -496,6 +515,119 @@ function StepOverviewTooltip({ step }: { step: SdlcStep }) {
       <div>必需：{step.required === false ? '否' : '是'}</div>
       <div>超时：{step.timeoutSeconds ? `${step.timeoutSeconds} 秒` : '未配置'}</div>
       <div>重试：{step.retryBudget ?? '未配置'}</div>
+    </div>
+  );
+}
+
+const previewStyle: CSSProperties = { maxWidth: 360, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 };
+
+function ChecklistPreview({ raw }: { raw: string }) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    return (
+      <div style={{ display: 'grid', gap: 4, maxWidth: 360 }}>
+        {parsed.map((item, idx) => (
+          <div key={idx}>✓ {typeof item === 'string' ? item : JSON.stringify(item)}</div>
+        ))}
+      </div>
+    );
+  }
+  return <pre style={previewStyle}>{raw}</pre>;
+}
+
+function GatePolicyPreview({ raw }: { raw: string }) {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+    return (
+      <div style={{ display: 'grid', gap: 4, maxWidth: 360 }}>
+        {Object.entries(parsed as Record<string, unknown>).map(([key, value]) => (
+          <div key={key}>{key}: {typeof value === 'string' ? value : JSON.stringify(value)}</div>
+        ))}
+      </div>
+    );
+  }
+  return <pre style={previewStyle}>{raw}</pre>;
+}
+
+export function RetryBudgetTooltipContent() {
+  return (
+    <div style={{ display: 'grid', gap: 8, maxWidth: 340 }}>
+      <div style={{ fontWeight: 700 }}>建议重试预算</div>
+      <div>
+        <span style={{ fontWeight: 600 }}>含义：</span>
+        当步骤执行完成后，Runtime 的 Gate 会校验产出是否满足要求（如 evidence 目录非空、checklist
+        全部勾选等）。如果校验不通过，”重试预算”决定了 agent 有几次补救机会。
+      </div>
+      <div>
+        <span style={{ fontWeight: 600 }}>行为：</span>
+        <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>
+          <li>值为 0（或未填写）：gate 失败后直接终止，agent 没有补救机会</li>
+          <li>
+            值为 N：gate 失败后，agent 最多有 N 次额外尝试，每次会收到 gate
+            失败原因作为反馈，引导 agent 修正问题后重新提交
+          </li>
+        </ul>
+      </div>
+      <div>
+        <span style={{ fontWeight: 600 }}>示例：</span>
+        步骤「自测与交付」配置了 gate 策略要求 evidence/ 目录非空。设置重试预算 = 3
+        后，如果 agent 第一次提交时忘了保存测试日志，gate 会告诉它 “evidence required but none
+        provided”，agent 还有 3 次机会补充证据文件并重新提交。
+      </div>
+      <div>
+        <span style={{ fontWeight: 600 }}>建议值：</span>
+        一般建议设置为 2~3。过大可能导致 agent 在无法解决的问题上循环消耗资源。
+      </div>
+    </div>
+  );
+}
+
+function StepFieldHelp({ text, help, popover }: { text: string; help: ReactNode; popover?: boolean }) {
+  const icon = (
+    <QuestionCircleOutlined style={{ marginLeft: 4, color: '#8c8c8c', cursor: 'help' }} />
+  );
+  return (
+    <span>
+      {text}
+      {popover ? (
+        <Popover content={help} overlayInnerStyle={{ maxWidth: 460 }} placement="topLeft">
+          {icon}
+        </Popover>
+      ) : (
+        <Tooltip title={help}>
+          {icon}
+        </Tooltip>
+      )}
+    </span>
+  );
+}
+
+function ChecklistFieldHelp() {
+  return (
+    <div style={{ display: 'grid', gap: 6, maxWidth: 420 }}>
+      <div><b>含义：</b>步骤执行过程中 agent 需要逐项完成的检查清单。Agent 在执行时会看到这些检查项，完成后通过 API 逐个勾选。</div>
+      <div><b>行为：</b>如果策略中配置了 checklistRequired: true，gate 校验时会要求所有检查项都被勾选才能通过。</div>
+      <div>
+        <b>格式：</b>JSON 数组，每项含 id 和 text，如：
+        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{'[{"id": "tests-pass", "text": "运行相关测试全部通过"}]'}</pre>
+      </div>
+    </div>
+  );
+}
+
+function GatePolicyFieldHelp() {
+  return (
+    <div style={{ display: 'grid', gap: 6, maxWidth: 420 }}>
+      <div><b>含义：</b>步骤完成时 Runtime Gate 的校验规则。Agent 提交 completion 后，gate 会根据策略自动校验产出是否满足要求。</div>
+      <div><b>evidenceRequired：</b>是否要求 agent 在提交完成时声明 evidenceRefs（证据文件路径列表）。</div>
+      <div><b>requiredArtifacts：</b>要求产出目录中必须存在的文件/目录前缀。如 ["evidence/"] 表示 evidence/ 目录必须非空。</div>
+      <div><b>checklistRequired：</b>是否要求检查项全部勾选。</div>
+      <div>
+        <b>示例：</b>
+        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{'{ "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }'}</pre>
+      </div>
     </div>
   );
 }

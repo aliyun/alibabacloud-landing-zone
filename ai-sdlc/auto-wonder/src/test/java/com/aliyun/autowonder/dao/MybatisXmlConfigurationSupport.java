@@ -18,6 +18,7 @@ public final class MybatisXmlConfigurationSupport {
     public static Configuration loadConfigurationFromMapperXml() {
         Configuration configuration = new Configuration();
         configuration.setMapUnderscoreToCamelCase(true);
+        configuration.setDatabaseId("autowonder-source-aware");
         PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
         try {
             Resource[] resources = resolver.getResources("classpath*:mapping/*Dao.xml");

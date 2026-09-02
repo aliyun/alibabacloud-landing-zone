@@ -160,8 +160,8 @@ function groupedTools(tools: McpTool[]) {
 }
 
 function mcpUrl(mcpEndpoint: string, token: string) {
-  const tokenParam = token === TOKEN_PLACEHOLDER ? token : encodeURIComponent(token);
-  return `${mcpEndpoint.replace(/\/+$/, '')}?token=${tokenParam}`;
+  const tokenSegment = token === TOKEN_PLACEHOLDER ? token : encodeURIComponent(token);
+  return `${mcpEndpoint.replace(/\/+$/, '')}/${tokenSegment}/`;
 }
 
 function clientSnippets(mcpEndpoint: string, token: string) {
@@ -213,6 +213,7 @@ export function McpTokenSettingsPanel() {
     queryFn: getPublicBranding,
   });
   const mcpEndpoint = brandingQuery.data?.mcpBaseUrl?.trim() || null;
+  const isCommunityEdition = brandingQuery.data?.communityEdition === true;
 
   const createTokenMutation = useMutation({
     mutationFn: createMcpToken,
@@ -347,6 +348,19 @@ export function McpTokenSettingsPanel() {
   const installCards = mcpEndpoint
     ? clientSnippets(mcpEndpoint, issuedToken ?? TOKEN_PLACEHOLDER)
     : [];
+  const issuedSnippets = mcpEndpoint && issuedToken ? clientSnippets(mcpEndpoint, issuedToken) : [];
+  const qoderSnippet = issuedSnippets.find((client) => client.key === 'qoder');
+  const otherClientSnippets = issuedSnippets.filter((client) => client.key !== 'qoder');
+
+  const snippetCollapseItem = (client: { key: string; label: string; command: string }) => ({
+    key: client.key,
+    label: `${client.label} 接入配置`,
+    children: <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12 }}>{client.command}</pre>,
+    extra: <Button size="small" icon={<CopyOutlined />} onClick={(event) => {
+      event.stopPropagation();
+      copyText(client.command);
+    }}>复制</Button>,
+  });
 
   return (
     <div>
@@ -498,16 +512,17 @@ export function McpTokenSettingsPanel() {
             </Space.Compact>
             <Collapse
               size="small"
-              defaultActiveKey={['codex']}
-              items={clientSnippets(mcpEndpoint, issuedToken).map((client) => ({
-                key: client.key,
-                label: `${client.label} 接入配置`,
-                children: <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12 }}>{client.command}</pre>,
-                extra: <Button size="small" icon={<CopyOutlined />} onClick={(event) => {
-                  event.stopPropagation();
-                  copyText(client.command);
-                }}>复制</Button>,
-              }))}
+              defaultActiveKey={['qoder']}
+              items={[
+                ...(qoderSnippet ? [snippetCollapseItem(qoderSnippet)] : []),
+                ...(isCommunityEdition ? [] : [{
+                  key: 'more-clients',
+                  label: '更多客户端接入',
+                  children: (
+                    <Collapse size="small" items={otherClientSnippets.map(snippetCollapseItem)} />
+                  ),
+                }]),
+              ]}
             />
           </Space>
         ) : (

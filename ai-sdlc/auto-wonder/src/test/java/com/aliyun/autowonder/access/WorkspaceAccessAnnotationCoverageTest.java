@@ -40,6 +40,7 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.aiusage.DaemonTaskUsageController",
             "com.aliyun.autowonder.artifact.DaemonArtifactController",
             "com.aliyun.autowonder.artifact.WorkitemCliUploadController",
+            "com.aliyun.autowonder.artifact.ScheduledTaskCliUploadController",
             "com.aliyun.autowonder.controller.HealthCheckController",
             "com.aliyun.autowonder.controller.HelloWorldController",
             "com.aliyun.autowonder.dispatch.DaemonCheckpointController",
@@ -74,6 +75,12 @@ class WorkspaceAccessAnnotationCoverageTest {
                     + "com.aliyun.autowonder.workspace.dto.CreateWorkspaceRequest)",
             "com.aliyun.autowonder.workspace.WorkspaceController#mine()",
             "com.aliyun.autowonder.workspace.WorkspaceController#switchWorkspace(java.lang.Long)",
+            "com.aliyun.autowonder.workspace.WorkspaceController#listAllWorkspaces("
+                    + "java.lang.String, int, int)",
+            "com.aliyun.autowonder.workspace.WorkspaceController#submitAccessRequest("
+                    + "java.lang.Long, com.aliyun.autowonder.workspace.dto.SubmitAccessRequestBody)",
+            "com.aliyun.autowonder.workspace.WorkspaceController#cancelAccessRequest("
+                    + "java.lang.Long, java.lang.Long)",
             "com.aliyun.autowonder.im.UserImIdentityController#list()",
             "com.aliyun.autowonder.im.UserImIdentityController#updateDingTalk("
                     + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",

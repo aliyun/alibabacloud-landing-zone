@@ -6,6 +6,8 @@ export interface ClarificationConversation {
   status: string;
   executorOnline: boolean;
   streamingSupported: boolean;
+  /** runtime 是否支持 CONVERSATION_TURN_CANCEL 协议（不支持时前端隐藏「终止响应」按钮） */
+  cancelSupported: boolean;
   cliSessionRef: string | null;
   processingStatus: string | null;
   processingTurnId: number | null;

@@ -51,8 +51,18 @@ s3:
 autowonder:
   version: ${AUTOWONDER_VERSION:x.x.x}
   public-base-url: ${AUTOWONDER_PUBLIC_BASE_URL:http://localhost:7001}
+  # 社区版本：为 true 时前端隐藏新建 MCP 令牌入口中的「更多客户端接入」。
+  # 支持环境变量 AUTOWONDER_COMMUNITY_EDITION 覆盖。
+  community-edition: ${AUTOWONDER_COMMUNITY_EDITION:true}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.138}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.150}
+  scheduled-task:
+    enabled: ${AUTOWONDER_SCHEDULED_TASK_ENABLED:false}
+    scanner-enabled: ${AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED:false}
+    cluster-ready-attestation: ${AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY:false}
+    scan-fixed-delay-ms: ${AUTOWONDER_SCHEDULED_TASK_SCAN_FIXED_DELAY_MS:10000}
+    scan-batch-size: ${AUTOWONDER_SCHEDULED_TASK_SCAN_BATCH_SIZE:100}
+    lock-ttl-seconds: ${AUTOWONDER_SCHEDULED_TASK_LOCK_TTL_SECONDS:30}
   security:
     secret-crypto:
       master-key: ${AUTOWONDER_SECRET_MASTER_KEY:}

@@ -13,6 +13,7 @@
 | **调度器 (Scheduler)** | 服务端 `auto-wonder` | 打包任务、选执行器、下发、驱动 SDLC 排下一棒 |
 | **执行器 (Executor)** | 客户端 daemon | token 身份接入、拉起本地 CLI agent、按 SDLC 执行、回传 |
 | **工单 (Workitem)** | 服务端 | 需求/Bug/任务的载体，带 SDLC 与当前步 |
+| **定时任务 Run** | 服务端 | 7×24 定时任务的一次实例；使用同一派发协议，但以 `source_type=SCHEDULED_TASK_RUN` 隔离 |
 | **派发 (Dispatch)** | 服务端表 `dispatch` | 一次“把某工单某步交给某 agent 的某执行器”的记录 |
 | **任务包 (Task Package)** | OSS zip | 身份/技能/记忆/sdlc/队友清单/上一轮产物的快照 |
 | **数字员工 (Agent)** | 服务端 | 一个角色化的 AI worker，可有多个在线执行器 |
@@ -62,6 +63,20 @@
 ```
 
 > 一句话：**工单指派 → 打 OSS 包 → 经 WS 把下载地址定向推给 token 对应执行器 → 执行器下载/挂载/执行 → 回传状态与产物与 handoff → 调度器按 SDLC 排下一棒**，循环直至 SDLC 结束或交接真人。
+
+7×24 Run 与工单走完全相同的 `TASK_DISPATCH` / `TASK_ACK` / `TASK_RESULT` 帧，运行时不增加字段、也无需升级。服务端保留历史 `workitem_id=runId` 以兼容存储和客户端，同时在数据库记录 `source_type=SCHEDULED_TASK_RUN`；因此相同数字 ID 的工单与 Run 不会互相读取评论、产物或派发。
+
+### 1.1 双 Schema 滚动发布对执行器的影响
+
+- **线协议不变。** V037 的 `source_type` 和 `normalized_idempotency_key` 只存在于服务端存储与查询边界；`TASK_DISPATCH`、`TASK_ACK`、`TASK_PROGRESS`、`TASK_RESULT`、`TASK_HANDOFF`、`ARTIFACT_UPLOADED` 和 `HEARTBEAT` 不增加来源字段，客户端 Runtime 无需配合升级。
+- **普通工单连续可用。** 兼容二进制在 pre-V037 使用 Legacy Mapper；DDL 完成并重启后使用 Source-aware Mapper。在集群混合 Legacy/Source-aware 节点的滚动窗口，三个 Scheduled 开关必须保持关闭，但普通 Workitem 的下发和回调继续使用原协议。新增列的默认值会把 Legacy 写入归为 `WORKITEM`。
+- **能力与开关在启动时冻结。** 数据库升级不会让运行中节点自动切换 Mapper；Guard 也在 Bean 构造时复制 `ENABLED`、`SCANNER_ENABLED`、`CLUSTER_READY`，不支持热更新。每次 Schema 或开关变化都要滚动重启每个节点并逐节点验证。
+- **Scheduled 边界 fail closed。** 能力不可用时，Daemon HTTP callback、WebSocket inbound、MCP 和 Realtime 等请求/回调边界抛出 `30006`，且不访问 Scheduled Mapper；普通 Workitem 的 ACK/Progress/Result/评论/Artifact 不受影响。Scanner 与 Run compensation 是后台任务，不向客户端返回 `30006`，而是在 Redis/DAO 前 no-op。执行器不能把被拒绝的 Scheduled 回调降级为 Workitem 重试。
+- **外部集群证明。** 发布平台必须用编排平台的完整 serving UID 清单逐节点保存能力响应及 `V037_READY/SOURCE_AWARE` 日志/指标，数量与期望 ready 副本一致；负载均衡抽样和单节点推断都不构成 attestation。采集至启用期间冻结扩缩容/替换，否则重新验证全量清单。
+- **集群原子启用。** 三个环境变量默认均为 `false`。滚动发布 enabled+attestation 前，只冻结可独立路由的 Scheduled UI 和 create/update/enable/run-now HTTP 入口；共享 Daemon、通用 MCP tool、executor WebSocket 不能声称可按来源在网关过滤，它们和 dispatch credential 由服务端按持久化来源解析。写冻结下必须机器验证并归档 Task、Run、Scheduled Dispatch/评论/Artifact/Guidance 等数据全为 0；所有 serving 节点均验证 `available=true` 后，在解除屏障前再次执行零数据门禁。首次 manual Run 前没有 Scheduled dispatch credential/callback；原子解除写入口/UI 屏障后才执行内部 Run。任一节点或零数据门禁失败则保持屏障；若已有数据，禁止混合节点激活和无数据快速回退。Scanner 最后单独发布为 true。
+- **安全关闭。** 先阻止新 Task/Run，发布 Scanner false 并重启/验证所有节点，同时保持 enabled 与 attestation true，也保持共享 callback、通用 MCP 访问和已有 Scheduled dispatch credential 可用，让回调和补偿继续收口。关闭门禁必须分别证明：Scheduled Run 无非终态；`SCHEDULED_TASK_RUN` Dispatch 无非终态（终态仅 `SUCCEEDED/FAILED/TIMEOUT/CANCELED`）；Scheduled Guidance/Delivery 无 `QUEUED/DELIVERED`；发布平台执行器 callback、耐久 outbox 和 transport pending 均为 0。所有 SQL、平台原始响应与计数都要机器断言并归档；仅 Run 终态或应用 gauge 为 0 不充分。全部通过后才撤销已排空 Run 的 Scheduled credential/source-bound 访问并发布 enabled false；attestation false 前必须以新 attempt 再跑全套门禁。共享通用 MCP tool 和 MCP/WS/Daemon transport 始终为 Workitem 开放，不发布或撤销虚构的 Scheduled 专用 MCP tool。每次开关变更都重启/验证所有节点。紧急同时关闭会搁置 Run，必须用 source-aware-compatible 二进制和 `scanner=false, enabled=true, cluster-ready=true` 恢复回调/补偿后对账收口。
+- **二进制回滚边界。** 未产生任何 Scheduled 数据时，只可回退到经验证兼容加法 DDL 的旧版本；一旦出现任意 Scheduled Task/Run/Dispatch/评论/Artifact/Guidance，pre-source-type 二进制永久禁止，只能使用 source-aware-compatible 二进制。
+- **活跃数证据。** 能力关闭后 `scheduled_task_active_runs` 会安全返回 0 且不查 DAO，这不能证明数据库已经排空；必须在 enabled 与 attestation 仍为 true 时完成回调/补偿，并同时以 Run、Dispatch、Guidance 数据库计数及平台 callback/outbox/transport 计数为最终关闭门禁。
 
 ---
 
@@ -405,6 +420,10 @@ Redis 键：`exec:online:{executorId}`、`exec:route:{executorId}`、`agent:exec
 | 服务端优雅停机/ctx 取消 | 客户端 `serveWsConn` 监听 ctx，取消时关连接解除阻塞读循环，退出重连 |
 | WS 与 HTTP 并存 | 客户端 `runWsLoop` 与 `runServerLoop` 互斥（配了 WS 走 WS） |
 | 跨节点会话 | 目标会话在别的服务节点→Redis 广播→持有会话节点 `NodeMailboxListener` 投递 |
+| Scheduled 请求/回调能力未就绪 | 服务端在识别 Scheduled 来源后抛出 `30006`；不访问 Scheduled Mapper，不把回调改投普通 Workitem |
+| Scanner/Run compensation 能力未就绪 | 后台任务在 Redis 锁和 DAO 前 no-op；没有可返回给客户端的 `30006` |
+
+滚动升级期间如果能力端点为 `LEGACY`、`V037_PARTIAL` 或不可访问，执行器仍可处理普通 Workitem。Scheduled UI/API 必须保持关闭；不能仅因为某个节点已看到 V037 就发送 Scheduled 派发。若出现 `INCONSISTENT`，该服务节点不得承载业务流量。
 
 ---
 

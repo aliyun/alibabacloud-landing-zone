@@ -15,12 +15,15 @@ public class DispatchAiUsageDO {
     private Long agentId;
     private Long executorId;
     private Long artifactId;
+    private String stepId = "";
     private String provider;
     private String model;
     private Long inputTokens;
     private Long outputTokens;
     private Long cacheReadTokens;
     private Long cacheWriteTokens;
+    private Long reasoningTokens;
+    private java.math.BigDecimal credits;
     private Long totalTokens;
     private String rawJson;
     private Date usageAt;

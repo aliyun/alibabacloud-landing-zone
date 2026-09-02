@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.workitem.dto;
 
+import com.aliyun.autowonder.aiusage.dto.StepUsageSummaryVO;
 import lombok.Getter;
 import lombok.Setter;
 import java.util.List;
@@ -18,4 +19,5 @@ public class DeliveryStepVO {
     private List<SubStepVO> subSteps;
     private Long durationMs;
     private List<DispatchAttemptVO> attempts;
+    private StepUsageSummaryVO usage;
 }

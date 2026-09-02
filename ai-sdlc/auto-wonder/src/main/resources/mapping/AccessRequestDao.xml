@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workspace.AccessRequestDao">
+
+    <sql id="cols">
+        id, tenant_id, requester_id, requested_level, status, reviewer_id, reject_reason,
+        gmt_create, gmt_modified
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.workspace.AccessRequestDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workspace_access_request (tenant_id, requester_id, requested_level, status)
+        VALUES (#{tenantId}, #{requesterId}, #{requestedLevel}, #{status})
+    </insert>
+
+    <select id="findById" resultType="com.aliyun.autowonder.workspace.AccessRequestDO">
+        SELECT <include refid="cols"/> FROM workspace_access_request
+        WHERE id = #{id}
+    </select>
+
+    <select id="findPendingByTenantAndRequester"
+            resultType="com.aliyun.autowonder.workspace.AccessRequestDO">
+        SELECT <include refid="cols"/> FROM workspace_access_request
+        WHERE tenant_id = #{tenantId} AND requester_id = #{requesterId} AND status = 'PENDING'
+        LIMIT 1
+    </select>
+
+    <select id="listByTenantAndStatus" resultType="com.aliyun.autowonder.workspace.AccessRequestDO">
+        SELECT <include refid="cols"/> FROM workspace_access_request
+        WHERE tenant_id = #{tenantId} AND status = #{status}
+        ORDER BY gmt_create DESC
+    </select>
+
+    <!-- Deliberately spans all workspaces: powers the pending column of the discovery list. -->
+    <select id="listPendingByRequester" resultType="com.aliyun.autowonder.workspace.AccessRequestDO">
+        SELECT <include refid="cols"/> FROM workspace_access_request
+        WHERE requester_id = #{requesterId} AND status = 'PENDING'
+    </select>
+
+    <update id="updateStatus">
+        UPDATE workspace_access_request
+        SET status = #{status}, reviewer_id = #{reviewerId}, reject_reason = #{rejectReason},
+            gmt_modified = NOW(3)
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+    <!-- Physical delete per product requirement (撤销后申请记录删除). The status guard keeps a
+         concurrently approved/rejected request alive and reports the lost race as 0 rows. -->
+    <delete id="deletePendingById">
+        DELETE FROM workspace_access_request
+        WHERE id = #{id} AND status = 'PENDING'
+    </delete>
+</mapper>

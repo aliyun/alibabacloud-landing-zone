@@ -15,6 +15,7 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 
@@ -58,6 +59,15 @@ class DispatchServiceRunPendingTest {
         when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
         when(dispatchDao.updateStatus(anyLong(), anyLong(), anyString(), any(), any(),
                 any(), any(), any(), anyInt(), anyLong())).thenReturn(1);
+        when(dispatchDao.findById(650L)).thenReturn(workitemSource(650L));
+        when(dispatchDao.findById(700L)).thenReturn(workitemSource(700L));
+    }
+
+    private DispatchDO workitemSource(long id) {
+        DispatchDO source = pending();
+        source.setId(id);
+        source.setSourceType(ExecutionSourceType.WORKITEM.name());
+        return source;
     }
 
     private DispatchDO pending() {
@@ -93,22 +103,134 @@ class DispatchServiceRunPendingTest {
     }
 
     @Test
-    void enqueueReturnsExistingWhenIdempotencyKeyPresent() {
+    void scheduledPinAcceptsAnEqualVersionAlreadyWonByRecovery() {
+        DispatchDO initial = scheduledPending(500L, null);
+        DispatchDO recovered = scheduledPending(500L, 410L);
+        recovered.setStatus(DispatchStatus.DISPATCHED);
+        when(dispatchDao.findById(500L)).thenReturn(initial, recovered);
+        when(dispatchDao.pinScheduledAgentVersion(500L, TENANT, 400L, 410L, 0L)).thenReturn(0);
+
+        service.pinScheduledAgentVersion(500L, TENANT, 410L);
+
+        verify(dispatchDao).pinScheduledAgentVersion(500L, TENANT, 400L, 410L, 0L);
+    }
+
+    @Test
+    void scheduledPinRejectsADifferentVersionWonByRecovery() {
+        DispatchDO initial = scheduledPending(500L, null);
+        DispatchDO recovered = scheduledPending(500L, 411L);
+        recovered.setStatus(DispatchStatus.DISPATCHED);
+        when(dispatchDao.findById(500L)).thenReturn(initial, recovered);
+        when(dispatchDao.pinScheduledAgentVersion(500L, TENANT, 400L, 410L, 0L)).thenReturn(0);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.pinScheduledAgentVersion(500L, TENANT, 410L));
+
+        assertEquals(ErrorCode.SCHEDULED_TASK_INVALID_STATE.getCode(), error.getCode());
+        assertTrue(error.getMessage().contains("pin was lost"));
+    }
+
+    private DispatchDO scheduledPending(long id, Long versionId) {
+        DispatchDO dispatch = pending();
+        dispatch.setId(id);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        dispatch.setAgentVersionId(versionId);
+        return dispatch;
+    }
+
+    @Test
+    void enqueueRecognizesPastNamespacedWorkitemKeyWhenRawKeyIsAbsent() {
         DispatchDO existing = pending();
-        when(dispatchDao.findByIdempotencyKey(TENANT, "200:300:1")).thenReturn(existing);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "200:300:1")).thenReturn(null);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "WORKITEM:200:300:1")).thenReturn(existing);
         DispatchDO out = service.enqueue(TENANT, 200L, 300L, 400L, 1, 0L);
         assertSame(existing, out);
         verify(dispatchDao, never()).insert(any());
     }
 
     @Test
+    void enqueueStillRecognizesLegacyUnprefixedWorkitemKeyDuringUpgrade() {
+        DispatchDO existing = pending();
+        when(dispatchDao.findByIdempotencyKey(TENANT, "200:300:1")).thenReturn(existing);
+
+        DispatchDO out = service.enqueue(TENANT, 200L, 300L, 400L, 1, 0L);
+
+        assertSame(existing, out);
+        verify(dispatchDao, never()).insert(any());
+    }
+
+    @Test
     void enqueueInsertsPendingWhenNew() {
-        when(dispatchDao.findByIdempotencyKey(TENANT, "200:300:1")).thenReturn(null);
         DispatchDO out = service.enqueue(TENANT, 200L, 300L, 400L, 1, 7L);
         assertEquals(DispatchStatus.PENDING, out.getStatus());
+        assertEquals(ExecutionSourceType.WORKITEM.name(), out.getSourceType());
         assertEquals("200:300:1", out.getIdempotencyKey());
         assertEquals(1, out.getAttempt());
         verify(dispatchDao).insert(out);
+    }
+
+    @Test
+    void enqueueSubjectSeparatesEqualNumericIdsAndSupportsScheduledRootDispatch() {
+        DispatchDO workitem = service.enqueueSubject(TENANT, ExecutionSourceType.WORKITEM,
+                200L, 300L, 400L, 1, 7L);
+        DispatchDO scheduledRun = service.enqueueSubject(TENANT, ExecutionSourceType.SCHEDULED_TASK_RUN,
+                200L, null, 400L, 1, 7L);
+
+        assertEquals("200:300:1", workitem.getIdempotencyKey());
+        assertEquals("SCHEDULED_TASK_RUN:200:root:1", scheduledRun.getIdempotencyKey());
+        assertEquals(ExecutionSourceType.SCHEDULED_TASK_RUN.name(), scheduledRun.getSourceType());
+        assertEquals(200L, scheduledRun.getWorkitemId());
+        verify(dispatchDao, times(2)).insert(any(DispatchDO.class));
+    }
+
+    @Test
+    void directWorkitemEnqueueRejectsRootStepBeforeAnyDatabaseAccess() {
+        assertThrows(IllegalArgumentException.class,
+                () -> service.enqueueSubject(TENANT, ExecutionSourceType.WORKITEM,
+                        200L, null, 400L, 1, 7L));
+
+        verify(dispatchDao, never()).findByIdempotencyKey(anyLong(), anyString());
+        verify(dispatchDao, never()).insert(any());
+    }
+
+    @Test
+    void workitemRawInsertRaceRecoversPastNamespacedWinner() {
+        DispatchDO namespacedWinner = pending();
+        namespacedWinner.setId(900L);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "200:300:1"))
+                .thenReturn(null, null);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "WORKITEM:200:300:1"))
+                .thenReturn(null, namespacedWinner);
+        doThrow(new DuplicateKeyException("normalized key race"))
+                .when(dispatchDao).insert(any(DispatchDO.class));
+
+        DispatchDO out = service.enqueueSubject(TENANT, ExecutionSourceType.WORKITEM,
+                200L, 300L, 400L, 1, 7L);
+
+        assertSame(namespacedWinner, out);
+        verify(dispatchDao, times(2)).findByIdempotencyKey(TENANT, "WORKITEM:200:300:1");
+    }
+
+    @Test
+    void scheduledRunDuplicateKeyDoesNotFallBackToWorkitemLegacyKey() {
+        when(dispatchDao.findByIdempotencyKey(TENANT, "SCHEDULED_TASK_RUN:200:300:1"))
+                .thenReturn(null, null);
+        doThrow(new DuplicateKeyException("unrelated duplicate"))
+                .when(dispatchDao).insert(any(DispatchDO.class));
+
+        assertThrows(DuplicateKeyException.class,
+                () -> service.enqueueSubject(TENANT, ExecutionSourceType.SCHEDULED_TASK_RUN,
+                        200L, 300L, 400L, 1, 7L));
+
+        verify(dispatchDao, never()).findByIdempotencyKey(TENANT, "200:300:1");
+    }
+
+    @Test
+    void dispatchSafelyInterpretsLegacyNullSourceAsWorkitem() {
+        DispatchDO legacy = new DispatchDO();
+        assertEquals(ExecutionSourceType.WORKITEM, legacy.executionSourceType());
+        legacy.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        assertEquals(ExecutionSourceType.SCHEDULED_TASK_RUN, legacy.executionSourceType());
     }
 
     @Test
@@ -192,6 +314,21 @@ class DispatchServiceRunPendingTest {
     }
 
     @Test
+    void enqueueHandoffRejectsScheduledSourceBeforeAttemptOrIdempotencyChecks() {
+        DispatchDO scheduled = pending();
+        scheduled.setId(700L);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(700L)).thenReturn(scheduled);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.enqueueHandoff(TENANT, 200L, 300L, 400L, 700L, 7L));
+
+        verify(dispatchDao, never()).findByIdempotencyKey(anyLong(), anyString());
+        verify(dispatchDao, never()).findMaxAttempt(anyLong(), anyLong(), anyLong());
+        verify(dispatchDao, never()).insert(any());
+    }
+
+    @Test
     void commentInteractionUsesSideForkOnlyWhileSourceTurnIsActive() {
         when(dispatchDao.findByIdempotencyKey(TENANT, "guidance:701")).thenReturn(null);
         when(dispatchDao.findMaxAttempt(TENANT, 200L, 300L)).thenReturn(2);
@@ -203,6 +340,57 @@ class DispatchServiceRunPendingTest {
         assertEquals(650L, out.getResumeFromDispatchId());
         assertEquals("guidance:701", out.getIdempotencyKey());
         verify(dispatchDao).insert(out);
+    }
+
+    @Test
+    void commentInteractionRejectsScheduledResumeSource() {
+        DispatchDO scheduled = pending();
+        scheduled.setId(650L);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(650L)).thenReturn(scheduled);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.enqueueCommentInteraction(
+                        TENANT, 200L, 400L, 650L, true, 300L, 701L, 7L));
+
+        verify(dispatchDao, never()).insert(any());
+    }
+
+    @Test
+    void interactionReworkValidatesEveryDispatchReference() {
+        for (int invalidIndex = 0; invalidIndex < 3; invalidIndex++) {
+            reset(dispatchDao);
+            DispatchDO workitem = pending();
+            DispatchDO scheduled = pending();
+            scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+            long[] ids = {601L, 602L, 603L};
+            for (int i = 0; i < ids.length; i++) {
+                DispatchDO row = i == invalidIndex ? scheduled : workitem;
+                row.setId(ids[i]);
+                when(dispatchDao.findById(ids[i])).thenReturn(row);
+            }
+
+            assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                    () -> service.enqueueInteractionRework(TENANT, 200L, 400L, 300L,
+                            ids[0], ids[1], ids[2], 7L), "invalid ref index " + invalidIndex);
+            verify(dispatchDao, never()).insert(any());
+        }
+    }
+
+    @Test
+    void workitemOnlyFencedControlsIgnoreScheduledRunDispatches() {
+        DispatchDO scheduled = pending();
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        scheduled.setAgentVersionId(410L);
+        when(dispatchDao.findById(500L)).thenReturn(scheduled);
+
+        assertFalse(service.releaseInteractionRework(TENANT, 500L));
+        assertFalse(service.cancelWaitingInteractionRework(TENANT, 500L));
+        assertFalse(service.cancelPauseFailedIfExecutorReleased(TENANT, 500L));
+        assertFalse(service.cancelUndeliveredForInteraction(TENANT, 500L));
+
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
     }
 
     @Test
@@ -468,6 +656,29 @@ class DispatchServiceRunPendingTest {
     }
 
     @Test
+    void scheduledRunPackagesTheFrozenVersionAfterOnlineVersionAdvances() {
+        DispatchDO d = pending();
+        d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        d.setAgentVersionId(410L);
+        d.setAgentVersionId(401L);
+        AgentVersionDO frozen = onlineVersion(); frozen.setId(401L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent()); // current online version is 410
+        when(agentVersionDao.findById(401L)).thenReturn(frozen);
+        when(executorSelector.select(400L)).thenReturn(9L);
+        when(assembler.assemble(eq(d), same(frozen))).thenReturn(new PackageContext());
+        TaskPackageResult pkg = new TaskPackageResult("oss://b/500.zip", "md5", 10L, "http://dl", "deadbeef");
+        when(taskPackager.build(any())).thenReturn(pkg);
+
+        assertTrue(service.runPending(500L));
+
+        verify(agentVersionDao).findById(401L);
+        verify(agentVersionDao, never()).findById(410L);
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.PACKAGING),
+                eq(401L), eq(9L), isNull(), isNull(), isNull(), anyInt(), anyLong());
+    }
+
+    @Test
     void returningWorkerPrefersExecutorThatOwnsCanonicalSession() {
         DispatchDO d = pending();
         d.setResumeMode("RETURNING_WORKER");
@@ -489,6 +700,81 @@ class DispatchServiceRunPendingTest {
         verify(executorSelector).select(400L, 19L);
         verify(executorSelector, never()).select(400L);
         verify(transport).dispatch(d, pkg);
+    }
+
+    @Test
+    void continuousSessionNeverFallsBackWhenSourceExecutorDropsAfterPlanning() {
+        DispatchDO d = pending();
+        d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        d.setAgentVersionId(410L); d.setResumeMode("CONTINUOUS"); d.setResumeFromDispatchId(750L);
+        DispatchDO source = pending(); source.setId(750L); source.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        source.setWorkitemId(499L); source.setExecutorId(19L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(dispatchDao.findById(750L)).thenReturn(source);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        when(executorSelector.selectStrict(400L, 19L)).thenReturn(null);
+
+        assertFalse(service.runPending(500L));
+
+        verify(executorSelector).selectStrict(400L, 19L);
+        verify(executorSelector, never()).select(400L);
+        verify(executorSelector, never()).select(400L, 19L);
+    }
+
+    @Test
+    void degradedContinuousResumeDoesNotReuseFencedNativeDispatch() {
+        DispatchDO canceledNative = pending(); canceledNative.setStatus(DispatchStatus.CANCELED);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "scheduled-resume:77:900:native"))
+                .thenReturn(canceledNative);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "scheduled-resume:77:900:degraded"))
+                .thenReturn(null);
+
+        DispatchDO created = service.enqueueScheduledResume(TENANT, 77L, 301L, 400L,
+                2, 900L, true, 0L);
+
+        assertEquals("DEGRADED_CONTINUOUS", created.getResumeMode());
+        verify(dispatchDao).insert(argThat(row -> "scheduled-resume:77:900:degraded".equals(row.getIdempotencyKey())
+                && "DEGRADED_CONTINUOUS".equals(row.getResumeMode())
+                && Long.valueOf(900L).equals(row.getResumeFromDispatchId())));
+        verify(dispatchDao, never()).findByIdempotencyKey(TENANT, "scheduled-resume:77:900:native");
+    }
+
+    @Test
+    void continuousFenceRefusesDegradedReplacementWhenNativeDispatchAdvanced() {
+        DispatchDO nativeDispatch = pending(); nativeDispatch.setResumeMode("CONTINUOUS");
+        when(dispatchDao.listBySource(TENANT, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 77L))
+                .thenReturn(java.util.List.of(nativeDispatch));
+        when(dispatchDao.findById(500L)).thenReturn(nativeDispatch);
+        nativeDispatch.setStatus(DispatchStatus.PACKAGING);
+
+        assertFalse(service.fencePendingContinuousResume(TENANT, 77L));
+    }
+
+    @Test
+    void resumeAffinityNeverCrossesExecutionSourcesWithEqualNumericSubjectIds() {
+        DispatchDO scheduled = pending();
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        scheduled.setAgentVersionId(410L);
+        scheduled.setResumeMode("RETURNING_WORKER");
+        scheduled.setResumeFromDispatchId(750L);
+        DispatchDO workitem = pending();
+        workitem.setId(750L);
+        workitem.setSourceType(ExecutionSourceType.WORKITEM.name());
+        workitem.setExecutorId(19L);
+        when(dispatchDao.findById(500L)).thenReturn(scheduled);
+        when(dispatchDao.findById(750L)).thenReturn(workitem);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        when(executorSelector.select(400L)).thenReturn(9L);
+        when(assembler.assemble(eq(scheduled), any(AgentVersionDO.class))).thenReturn(new PackageContext());
+        TaskPackageResult pkg = new TaskPackageResult("oss://b/500.zip", "md5", 10L, "http://dl", "deadbeef");
+        when(taskPackager.build(any())).thenReturn(pkg);
+
+        assertTrue(service.runPending(500L));
+
+        verify(executorSelector).select(400L);
+        verify(executorSelector, never()).select(400L, 19L);
     }
 
     @Test
@@ -656,6 +942,47 @@ class DispatchServiceRunPendingTest {
                 eq(1), eq(0L));
         verify(dispatchDao, never()).returnPackagingToPending(anyLong(), anyLong(), anyInt(), anyLong());
         verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
+    void runPendingFailsPermanentlyWhenScheduledSnapshotIsInvalid() {
+        DispatchDO d = pending();
+        d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        d.setAgentVersionId(410L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        when(executorSelector.select(400L)).thenReturn(9L);
+        when(assembler.assemble(eq(d), any(AgentVersionDO.class))).thenThrow(
+                new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "snapshot agent context missing"));
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(),
+                argThat(error -> error.contains("snapshot agent context missing")),
+                eq(1), eq(0L));
+        verify(dispatchDao, never()).returnPackagingToPending(anyLong(), anyLong(), anyInt(), anyLong());
+        verify(sdlcDriver, never()).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
+    void runPendingRequeuesUnclassifiedBusinessFailure() {
+        DispatchDO d = pending();
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        when(executorSelector.select(400L)).thenReturn(9L);
+        when(assembler.assemble(eq(d), any(AgentVersionDO.class))).thenThrow(
+                new BizException(ErrorCode.NOT_FOUND, "temporary dependent row unavailable"));
+        when(dispatchDao.returnPackagingToPending(500L, TENANT, 1, 0L)).thenReturn(1);
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao).returnPackagingToPending(500L, TENANT, 1, 0L);
+        verify(dispatchDao, never()).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+        verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
     }
 
     @Test

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/shared/api/client';
-import { submitClarificationTurn } from './api';
+import { cancelClarificationTurn, submitClarificationTurn } from './api';
 
 vi.mock('@/shared/api/client', () => ({
   apiClient: {
@@ -40,6 +40,16 @@ describe('clarification api', () => {
         content: '请澄清需求',
         clientMessageId: '00010203-0405-4607-8809-0a0b0c0d0e0f',
       },
+    );
+  });
+
+  it('cancels a turn via the per-turn cancel endpoint', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: null } as never);
+
+    await cancelClarificationTurn(10011, 10010, 77);
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/workitems/10011/clarification-conversations/10010/turns/77/cancel',
     );
   });
 });

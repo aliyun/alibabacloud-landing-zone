@@ -36,7 +36,7 @@ class RuntimeMcpConnectionTestServiceTest {
         doAnswer(invocation -> {
             String payload = invocation.getArgument(1);
             String testId = JSON.parseObject(payload).getString("testId");
-            service.complete(100L, 7L, testId, true, "连接成功", 9L);
+            service.complete(100L, 7L, testId, true, "连接成功", 9L, List.of(Map.of("name", "search")));
             return null;
         }).when(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), anyString());
 
@@ -46,6 +46,7 @@ class RuntimeMcpConnectionTestServiceTest {
         assertTrue(result.success);
         assertEquals("连接成功", result.message);
         assertEquals(9L, result.durationMs);
+        assertEquals("search", result.tools.get(0).get("name"));
         verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), contains("MCP_CONNECTION_TEST"));
         assertFalse(values.isEmpty());
     }
@@ -66,7 +67,7 @@ class RuntimeMcpConnectionTestServiceTest {
         when(sessionRegistry.findByExecutorId(7L)).thenReturn(new ExecutorSession(7L, 1L, 100L, websocket));
         doAnswer(invocation -> {
             String testId = JSON.parseObject(invocation.getArgument(0)).getString("testId");
-            service.complete(100L, 7L, testId, false, "命令不可用", 4L);
+            service.complete(100L, 7L, testId, false, "命令不可用", 4L, List.of());
             return null;
         }).when(remote).sendText(anyString());
 
@@ -90,8 +91,33 @@ class RuntimeMcpConnectionTestServiceTest {
         assertThrows(RuntimeException.class, () -> service.test(100L, 7L, "uvx", List.of()));
 
         redisStore(redisManager);
-        service.complete(100L, 7L, "unknown", true, "不应接收", 1L);
+        service.complete(100L, 7L, "unknown", true, "不应接收", 1L, List.of());
         verify(redisManager, never()).set(startsWith("mcp:connection:test:result:"), any(), anyInt());
+    }
+
+    @Test
+    void returnsRetryableFailureWhenReadingAnIncompatibleLegacyResult() {
+        ExecutorDao executorDao = mock(ExecutorDao.class);
+        SessionRegistry sessionRegistry = mock(SessionRegistry.class);
+        RedisManager redisManager = mock(RedisManager.class);
+        RuntimeMcpConnectionTestService service = new RuntimeMcpConnectionTestService(
+                executorDao, sessionRegistry, redisManager);
+        when(executorDao.findById(7L)).thenReturn(executor(7L, 100L));
+        Map<String, Object> values = redisStore(redisManager);
+        when(redisManager.get(any(Serializable.class))).thenAnswer(invocation -> {
+            Object rawKey = invocation.getArgument(0);
+            String key = String.valueOf(rawKey);
+            if (key.startsWith("mcp:connection:test:result:") && !key.startsWith("mcp:connection:test:result:v2:")) {
+                throw new RuntimeException("deserialize failed");
+            }
+            return values.get(key);
+        });
+
+        RuntimeMcpConnectionTestService.SkillConnectionTestResult result =
+                service.test(100L, 7L, "uvx", List.of("alibabacloud.mcp-proxy@latest"));
+
+        assertFalse(result.success);
+        assertEquals("测试结果与灰度版本不兼容，请稍后重新测试", result.message);
     }
 
     private static ExecutorDO executor(long id, long tenantId) {

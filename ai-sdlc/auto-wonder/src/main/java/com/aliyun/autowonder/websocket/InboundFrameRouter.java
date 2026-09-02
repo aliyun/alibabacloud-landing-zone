@@ -3,6 +3,8 @@ package com.aliyun.autowonder.websocket;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.artifact.ArtifactService;
+import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.conversation.AgentConversationService;
@@ -15,6 +17,7 @@ import com.aliyun.autowonder.executor.ExecutorService;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.guidance.InteractionWorkflowService;
 import com.aliyun.autowonder.skill.RuntimeMcpConnectionTestService;
+import com.aliyun.autowonder.scheduledtask.compat.ScheduledTaskCapabilityGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +27,9 @@ import org.springframework.stereotype.Component;
 public class InboundFrameRouter {
 
     private static final Logger log = LoggerFactory.getLogger(InboundFrameRouter.class);
+    private static final java.util.Set<String> DISPATCH_FRAME_TYPES = java.util.Set.of(
+            "TASK_ACK", "TASK_PROGRESS", "TASK_RESULT", "TASK_BUSY", "TASK_PAUSED",
+            "TASK_PAUSE_FAILED", "TASK_GUIDANCE_ACK", "ARTIFACT_UPLOADED", "TASK_HANDOFF");
 
     private final DispatchService dispatchService;
     private final ArtifactService artifactService;
@@ -37,6 +43,7 @@ public class InboundFrameRouter {
     private final DispatchAiUsageService usageService;
     private final RuntimeMcpConnectionTestService runtimeMcpConnectionTestService;
     private final ExecutorService executorService;
+    private ScheduledTaskCapabilityGuard capabilityGuard;
     private ConversationTurnEventService conversationTurnEventService;
 
     @Autowired(required = false)
@@ -46,6 +53,28 @@ public class InboundFrameRouter {
 
     @Autowired
     public InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
+            PresenceManager presenceManager, HandoffService handoffService,
+            DispatchDrainScheduler drainScheduler, DispatchPauseService pauseService,
+            GuidanceService guidanceService, InteractionWorkflowService interactionWorkflowService,
+            AgentConversationService agentConversationService, DispatchAiUsageService usageService,
+            RuntimeMcpConnectionTestService runtimeMcpConnectionTestService,
+            ExecutorService executorService, ScheduledTaskCapabilityGuard capabilityGuard) {
+        this.dispatchService = dispatchService;
+        this.artifactService = artifactService;
+        this.presenceManager = presenceManager;
+        this.handoffService = handoffService;
+        this.drainScheduler = drainScheduler;
+        this.pauseService = pauseService;
+        this.guidanceService = guidanceService;
+        this.interactionWorkflowService = interactionWorkflowService;
+        this.agentConversationService = agentConversationService;
+        this.usageService = usageService;
+        this.runtimeMcpConnectionTestService = runtimeMcpConnectionTestService;
+        this.executorService = executorService;
+        this.capabilityGuard = capabilityGuard;
+    }
+
+    InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
             PresenceManager presenceManager, HandoffService handoffService,
             DispatchDrainScheduler drainScheduler, DispatchPauseService pauseService,
             GuidanceService guidanceService, InteractionWorkflowService interactionWorkflowService,
@@ -67,7 +96,7 @@ public class InboundFrameRouter {
     }
 
     /** Test/backward-compatible constructor. */
-    public InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
+    InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
             PresenceManager presenceManager, HandoffService handoffService,
             DispatchDrainScheduler drainScheduler, DispatchPauseService pauseService,
             GuidanceService guidanceService, InteractionWorkflowService interactionWorkflowService,
@@ -76,7 +105,7 @@ public class InboundFrameRouter {
                 pauseService, guidanceService, interactionWorkflowService, agentConversationService, usageService, null, null);
     }
 
-    public InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
+    InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
             PresenceManager presenceManager, HandoffService handoffService,
             DispatchDrainScheduler drainScheduler, DispatchPauseService pauseService,
             GuidanceService guidanceService, InteractionWorkflowService interactionWorkflowService,
@@ -87,7 +116,7 @@ public class InboundFrameRouter {
                 runtimeMcpConnectionTestService, null);
     }
 
-    public InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
+    InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
             PresenceManager presenceManager, HandoffService handoffService,
             DispatchDrainScheduler drainScheduler, DispatchPauseService pauseService,
             GuidanceService guidanceService) {
@@ -110,6 +139,8 @@ public class InboundFrameRouter {
         if (type == null) {
             return;
         }
+        DispatchBoundary durableBoundary = resolveDispatchBoundary(es, json, type);
+        ArtifactOwnerRef durableOwner = durableBoundary == null ? null : durableBoundary.owner();
         switch (type) {
             case "HEARTBEAT":
                 log.info("inbound HEARTBEAT executorId={}", es.getExecutorId());
@@ -310,7 +341,7 @@ public class InboundFrameRouter {
                     try {
                         if (interactionWorkflowService == null
                                 || interactionWorkflowService.applyFromExecutor(es.getTenantId(),
-                                es.getExecutorId(), json.getLongValue("dispatchId"), workflowPlan) == null) {
+                                es.getExecutorId(), durableBoundary.dispatchId(), workflowPlan) == null) {
                             guidanceService.acknowledge(es.getTenantId(), es.getExecutorId(),
                                     json.getLongValue("guidanceId"), "FAILED",
                                     "正式工作流程创建失败：无法解析目标员工、SDLC 或入口步骤", null);
@@ -354,7 +385,10 @@ public class InboundFrameRouter {
                 if (runtimeMcpConnectionTestService != null) {
                     runtimeMcpConnectionTestService.complete(es.getTenantId(), es.getExecutorId(),
                             json.getString("testId"), Boolean.TRUE.equals(json.getBoolean("success")),
-                            json.getString("message"), json.getLong("durationMs"));
+                            json.getString("message"), json.getLong("durationMs"),
+                            json.getJSONArray("tools") == null ? java.util.List.of()
+                                    : (java.util.List<java.util.Map<String, Object>>) (java.util.List<?>)
+                                            json.getJSONArray("tools").toJavaList(java.util.Map.class));
                 }
                 break;
             case "ARTIFACT_UPLOADED":
@@ -362,15 +396,23 @@ public class InboundFrameRouter {
                         json.getLong("dispatchId"), json.getString("name"), json.getString("artifactType"));
                 ReportArtifactRequest req = new ReportArtifactRequest();
                 req.setDispatchId(json.getLong("dispatchId"));
-                req.setWorkitemId(json.getLong("workitemId"));
+                ArtifactOwnerRef artifactOwner = durableOwner;
+                if (artifactOwner == null) {
+                    log.warn("rejecting artifact frame for unknown or foreign dispatchId={} executorId={}",
+                            json.getLongValue("dispatchId"), es.getExecutorId());
+                    break;
+                }
+                // The legacy runtime field is informational only. The durable Dispatch is
+                // authoritative for both its source type and its Run/workitem id.
+                req.setWorkitemId(artifactOwner.sourceId());
                 req.setName(json.getString("name"));
                 req.setType(json.getString("artifactType"));
                 req.setOssRef(json.getString("ossRef"));
                 req.setSize(json.getLong("size"));
                 req.setMetaJson(json.getString("metaJson"));
-                Long artifactId = artifactService.record(req, es.getTenantId());
+                Long artifactId = artifactService.record(req, es.getTenantId(), artifactOwner);
                 if (usageService != null) {
-                    usageService.ingestArtifact(es.getTenantId(), json.getLongValue("workitemId"),
+                    usageService.ingestArtifact(es.getTenantId(), artifactOwner.sourceId(),
                             json.getLongValue("dispatchId"), artifactId, json.getString("name"),
                             json.getString("ossRef"), null);
                 }
@@ -386,6 +428,42 @@ public class InboundFrameRouter {
                 log.info("inbound unknown frame type={} executorId={}", type, es.getExecutorId());
                 break;
         }
+    }
+
+    private DispatchBoundary resolveDispatchBoundary(ExecutorSession es, JSONObject json, String type) {
+        if (!DISPATCH_FRAME_TYPES.contains(type)) {
+            return null;
+        }
+        long dispatchId = json.getLongValue("dispatchId");
+        DispatchBoundary boundary;
+        if ("TASK_GUIDANCE_ACK".equals(type)) {
+            GuidanceService.InboundAcknowledgementBinding binding =
+                    guidanceService.bindingForInboundAcknowledgement(
+                            es.getTenantId(), es.getExecutorId(), json.getLongValue("guidanceId"));
+            boundary = binding == null ? null : new DispatchBoundary(binding.dispatchId(), binding.owner());
+        } else if (dispatchId > 0) {
+            boundary = new DispatchBoundary(dispatchId,
+                    dispatchService.artifactOwnerForInbound(es.getTenantId(), dispatchId));
+        } else {
+            boundary = null;
+        }
+        if ("TASK_GUIDANCE_ACK".equals(type) && boundary == null) {
+            throw new com.aliyun.autowonder.common.error.BizException(
+                    com.aliyun.autowonder.common.error.ErrorCode.NO_PERMISSION);
+        }
+        ArtifactOwnerRef owner = boundary == null ? null : boundary.owner();
+        if (owner != null && owner.sourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            capabilityGuard.requireAvailable("daemon");
+        }
+        if ("TASK_GUIDANCE_ACK".equals(type)
+                && dispatchId > 0 && dispatchId != boundary.dispatchId()) {
+            throw new com.aliyun.autowonder.common.error.BizException(
+                    com.aliyun.autowonder.common.error.ErrorCode.NO_PERMISSION);
+        }
+        return boundary;
+    }
+
+    private record DispatchBoundary(long dispatchId, ArtifactOwnerRef owner) {
     }
 
     private java.util.List<Long> runningDispatchIds(JSONObject json) {

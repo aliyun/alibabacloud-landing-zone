@@ -6,6 +6,7 @@
     <resultMap id="dispatchMap" type="com.aliyun.autowonder.dispatch.DispatchDO">
         <id column="id" property="id"/>
         <result column="tenant_id" property="tenantId"/>
+        <result column="source_type" property="sourceType"/>
         <result column="workitem_id" property="workitemId"/>
         <result column="sdlc_step_id" property="sdlcStepId"/>
         <result column="agent_id" property="agentId"/>
@@ -28,14 +29,37 @@
         <result column="version" property="version"/>
     </resultMap>
 
-    <sql id="cols">
-        id, tenant_id, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
+    <sql id="cols" databaseId="autowonder-source-aware">
+        id, tenant_id, source_type, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
         package_oss_ref, status, attempt, idempotency_key, result_summary, error,
         resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode,
         gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
     </sql>
 
-    <insert id="insert" parameterType="com.aliyun.autowonder.dispatch.DispatchDO"
+    <sql id="cols" databaseId="autowonder-legacy">
+        id, tenant_id, 'WORKITEM' AS source_type, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
+        package_oss_ref, status, attempt, idempotency_key, result_summary, error,
+        resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode,
+        gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
+    </sql>
+
+    <insert id="insert" databaseId="autowonder-source-aware"
+            parameterType="com.aliyun.autowonder.dispatch.DispatchDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO dispatch
+            (tenant_id, source_type, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
+             package_oss_ref, status, attempt, idempotency_key, result_summary, error,
+             resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode,
+             creator_id, modifier_id, version)
+        VALUES
+            (#{tenantId}, #{sourceType}, #{workitemId}, #{sdlcStepId}, #{agentId}, #{agentVersionId}, #{executorId},
+             #{packageOssRef}, #{status}, #{attempt}, #{idempotencyKey}, #{resultSummary}, #{error},
+             #{resumeFromDispatchId}, #{deliverySourceDispatchId}, #{resumeMode},
+             #{creatorId}, #{modifierId}, #{version})
+    </insert>
+
+    <insert id="insert" databaseId="autowonder-legacy"
+            parameterType="com.aliyun.autowonder.dispatch.DispatchDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO dispatch
             (tenant_id, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
@@ -60,10 +84,29 @@
         LIMIT 1
     </select>
 
-    <select id="findMaxAttempt" resultType="java.lang.Integer">
+    <select id="findMaxAttempt" databaseId="autowonder-source-aware" resultType="java.lang.Integer">
+        SELECT COALESCE(MAX(attempt), 0) FROM dispatch
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND source_type = 'WORKITEM'
+          AND sdlc_step_id = #{sdlcStepId} AND is_deleted = 0
+    </select>
+
+    <select id="findMaxAttempt" databaseId="autowonder-legacy" resultType="java.lang.Integer">
         SELECT COALESCE(MAX(attempt), 0) FROM dispatch
         WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
           AND sdlc_step_id = #{sdlcStepId} AND is_deleted = 0
+    </select>
+
+    <select id="findMaxAttemptBySource" databaseId="autowonder-source-aware" resultType="java.lang.Integer">
+        SELECT COALESCE(MAX(attempt), 0) FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId}
+          <choose>
+              <when test="sdlcStepId != null">AND sdlc_step_id = #{sdlcStepId}</when>
+              <otherwise>AND sdlc_step_id IS NULL</otherwise>
+          </choose>
+          AND is_deleted = 0
     </select>
 
     <update id="updateStatus">
@@ -80,20 +123,48 @@
           AND version = #{version} AND is_deleted = 0
     </update>
 
-    <select id="listByWorkitem" resultMap="dispatchMap">
+    <update id="pinScheduledAgentVersion" databaseId="autowonder-source-aware">
+        UPDATE dispatch
+        SET agent_version_id = #{agentVersionId}, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId}
+          AND source_type = 'SCHEDULED_TASK_RUN' AND agent_id = #{agentId}
+          AND status = 'PENDING' AND agent_version_id IS NULL AND is_deleted = 0
+    </update>
+
+    <select id="listByWorkitem" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND source_type = 'WORKITEM'
+          AND is_deleted = 0
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listByWorkitem" databaseId="autowonder-legacy" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch
         WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
           AND is_deleted = 0
         ORDER BY gmt_create ASC
     </select>
 
-    <select id="listLatestByWorkitemIds" resultMap="dispatchMap">
+    <select id="listBySource" databaseId="autowonder-source-aware" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch
-        WHERE is_deleted = 0
+        WHERE tenant_id = #{tenantId}
+          AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId}
+          AND is_deleted = 0
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listLatestByWorkitemIds" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND source_type = 'WORKITEM' AND is_deleted = 0
           AND id IN (
               SELECT latest_id FROM (
                   SELECT MAX(id) AS latest_id FROM dispatch
-                  WHERE is_deleted = 0
+                  WHERE tenant_id = #{tenantId}
+                    AND is_deleted = 0
+                    AND source_type = 'WORKITEM'
                     AND workitem_id IN
                     <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
                   GROUP BY workitem_id
@@ -101,15 +172,53 @@
           )
     </select>
 
-    <select id="listByWorkitemIds" resultMap="dispatchMap">
+    <select id="listLatestByWorkitemIds" databaseId="autowonder-legacy" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch
-        WHERE is_deleted = 0
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND id IN (
+              SELECT latest_id FROM (
+                  SELECT MAX(id) AS latest_id FROM dispatch
+                  WHERE tenant_id = #{tenantId}
+                    AND is_deleted = 0
+                    AND workitem_id IN
+                    <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+                  GROUP BY workitem_id
+              ) t
+          )
+    </select>
+
+    <select id="listByWorkitemIds" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND source_type = 'WORKITEM' AND is_deleted = 0
           AND workitem_id IN
           <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
         ORDER BY gmt_create ASC
     </select>
 
-    <select id="listLatestByWorkitemAndAgent" resultMap="dispatchMap">
+    <select id="listByWorkitemIds" databaseId="autowonder-legacy" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND is_deleted = 0
+          AND workitem_id IN
+          <foreach collection="workitemIds" item="wid" open="(" separator="," close=")">#{wid}</foreach>
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listLatestByWorkitemAndAgent" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND source_type = 'WORKITEM'
+          AND workitem_id = #{workitemId}
+          AND agent_id = #{agentId}
+          AND (resume_mode IS NULL OR resume_mode &lt;&gt; 'SIDE_INTERACTION')
+          AND is_deleted = 0
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listLatestByWorkitemAndAgent" databaseId="autowonder-legacy" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch
         WHERE tenant_id = #{tenantId}
           AND workitem_id = #{workitemId}
@@ -120,9 +229,38 @@
         LIMIT #{limit}
     </select>
 
-    <select id="listSucceededByWorkitem" resultMap="dispatchMap">
+    <select id="listLatestBySourceAndAgent" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId}
+          AND agent_id = #{agentId}
+          AND (resume_mode IS NULL OR resume_mode &lt;&gt; 'SIDE_INTERACTION')
+          AND is_deleted = 0
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listSucceededByWorkitem" databaseId="autowonder-source-aware" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch
         WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND source_type = 'WORKITEM'
+          AND status = 'SUCCEEDED' AND is_deleted = 0
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listSucceededByWorkitem" databaseId="autowonder-legacy" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+          AND status = 'SUCCEEDED' AND is_deleted = 0
+        ORDER BY gmt_create ASC
+    </select>
+
+    <select id="listSucceededBySource" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId}
+          AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId}
           AND status = 'SUCCEEDED' AND is_deleted = 0
         ORDER BY gmt_create ASC
     </select>
@@ -137,7 +275,18 @@
         LIMIT #{limit}
     </select>
 
-    <sql id="tenantFilter">
+    <sql id="tenantFilter" databaseId="autowonder-source-aware">
+        tenant_id = #{tenantId} AND is_deleted = 0
+        <if test="status != null and status != ''">AND status = #{status}</if>
+        <if test="agentId != null">AND agent_id = #{agentId}</if>
+        <if test="workitemId != null">
+            AND source_type = 'WORKITEM'
+            AND workitem_id = #{workitemId}
+        </if>
+        <if test="since != null">AND gmt_create &gt;= #{since}</if>
+    </sql>
+
+    <sql id="tenantFilter" databaseId="autowonder-legacy">
         tenant_id = #{tenantId} AND is_deleted = 0
         <if test="status != null and status != ''">AND status = #{status}</if>
         <if test="agentId != null">AND agent_id = #{agentId}</if>

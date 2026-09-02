@@ -26,6 +26,8 @@ public class WebSocketConfig {
     private volatile Thread conversationSubscriberThread;
     private volatile JedisPubSub pubSub;
     private volatile JedisPubSub conversationPubSub;
+    private volatile Thread scheduledRunSubscriberThread;
+    private volatile JedisPubSub scheduledRunPubSub;
 
     public WebSocketConfig(RedisManager redisManager, NodeMailboxListener mailboxListener,
             BrowserRealtimeSubscriberManager subscriberManager) {
@@ -104,6 +106,23 @@ public class WebSocketConfig {
         }, "ws-conversation-subscriber");
         conversationSubscriberThread.setDaemon(true);
         conversationSubscriberThread.start();
+
+        scheduledRunPubSub = new JedisPubSub() {
+            @Override public void onPMessage(String pattern, String channel, String message) {
+                subscriberManager.deliverToChannel(channel, message);
+            }
+        };
+        scheduledRunSubscriberThread = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try (Jedis jedis = redisManager.getJedisPool().getResource()) {
+                    jedis.psubscribe(scheduledRunPubSub, "scheduled-run:*");
+                } catch (Exception e) {
+                    if (!Thread.currentThread().isInterrupted()) { log.warn("Scheduled run Redis subscriber disconnected", e);
+                        try { Thread.sleep(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
+                }
+            }
+        }, "ws-scheduled-run-subscriber");
+        scheduledRunSubscriberThread.setDaemon(true); scheduledRunSubscriberThread.start();
     }
 
     @PreDestroy
@@ -120,11 +139,13 @@ public class WebSocketConfig {
             } catch (Exception ignore) {
             }
         }
+        if (scheduledRunPubSub != null) { try { scheduledRunPubSub.punsubscribe(); } catch (Exception ignore) { } }
         if (subscriberThread != null) {
             subscriberThread.interrupt();
         }
         if (conversationSubscriberThread != null) {
             conversationSubscriberThread.interrupt();
         }
+        if (scheduledRunSubscriberThread != null) scheduledRunSubscriberThread.interrupt();
     }
 }

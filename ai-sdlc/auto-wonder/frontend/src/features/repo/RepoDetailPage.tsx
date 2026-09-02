@@ -8,9 +8,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getRepo, getConclusion, updateConclusion, listRelations, listRepos,
-  createRelation, deleteRelation, deleteRepo, RELATION_TYPES,
+  createRelation, deleteRelation, deleteRepo, updateRepo, RELATION_TYPES,
 } from './api';
-import type { RepoRelation, CreateRelationRequest } from './api';
+import type { RepoRelation, CreateRelationRequest, UpdateRepoRequest } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
@@ -29,11 +29,13 @@ export function RepoDetailPage() {
   const repoId = id ?? '';
   const hasValidRepoId = /^\d+$/.test(repoId);
 
+  const [editingRepo, setEditingRepo] = useState(false);
   const [editingConclusion, setEditingConclusion] = useState(false);
   const [addRelationOpen, setAddRelationOpen] = useState(false);
   const [aiScanOpen, setAiScanOpen] = useState(false);
   const [deleteRepoOpen, setDeleteRepoOpen] = useState(false);
   const [pendingRelationDeleteId, setPendingRelationDeleteId] = useState<string | number | null>(null);
+  const [repoForm] = Form.useForm();
   const [conclusionForm] = Form.useForm();
   const [relationForm] = Form.useForm();
 
@@ -58,6 +60,17 @@ export function RepoDetailPage() {
   const { data: allRepos = [] } = useQuery({
     queryKey: ['repos', 1, 100],
     queryFn: () => listRepos({ page: 1, size: 100 }),
+  });
+
+  const updateRepoMut = useMutation({
+    mutationFn: (data: UpdateRepoRequest) => updateRepo(repoId, data),
+    onSuccess: () => {
+      message.success('仓库信息已保存');
+      setEditingRepo(false);
+      queryClient.invalidateQueries({ queryKey: ['repo', repoId] });
+      queryClient.invalidateQueries({ queryKey: ['repos'] });
+    },
+    onError: (e: Error) => message.error(e.message || '保存失败'),
   });
 
   const updateConclusionMut = useMutation({
@@ -121,6 +134,30 @@ export function RepoDetailPage() {
     await runWithAccess('READ_WRITE', '保存仓库扫描结论', async () => {
       const values = await conclusionForm.validateFields();
       updateConclusionMut.mutate(values);
+    });
+  };
+
+  const handleStartRepoEdit = () => {
+    runWithAccess('READ_WRITE', '编辑仓库信息', () => {
+      repoForm.setFieldsValue({
+        name: repo?.name || '',
+        url: repo?.url || '',
+        defaultBranch: repo?.defaultBranch || '',
+        description: repo?.description || '',
+      });
+      setEditingRepo(true);
+    });
+  };
+
+  const handleSaveRepo = async () => {
+    await runWithAccess('READ_WRITE', '保存仓库信息', async () => {
+      const values = await repoForm.validateFields();
+      updateRepoMut.mutate({
+        name: values.name.trim(),
+        url: values.url.trim(),
+        defaultBranch: values.defaultBranch?.trim() ? values.defaultBranch.trim() : null,
+        description: values.description?.trim() ? values.description.trim() : null,
+      });
     });
   };
 
@@ -199,25 +236,52 @@ export function RepoDetailPage() {
     {
       key: 'info',
       label: '基础信息',
-      children: (
-        <Descriptions column={2}>
-          <Descriptions.Item label="仓库名称">{repo.name}</Descriptions.Item>
-          <Descriptions.Item label="URL" span={2}>{repo.url}</Descriptions.Item>
-          <Descriptions.Item label="默认分支">{repo.defaultBranch || '-'}</Descriptions.Item>
-          {REPO_SCAN_ENABLED && (
-            <Descriptions.Item label="扫描状态">
-              {conclusion
-                ? <Tag color="success">扫描完成</Tag>
-                : <Tag>未扫描</Tag>}
-            </Descriptions.Item>
-          )}
-          {REPO_SCAN_ENABLED && conclusion && (
-            <Descriptions.Item label="上次扫描时间">
-              {new Date(conclusion.gmtCreate).toLocaleString()}
-            </Descriptions.Item>
-          )}
-          <Descriptions.Item label="描述" span={2}>{repo.description || '-'}</Descriptions.Item>
-        </Descriptions>
+      children: editingRepo ? (
+        <Form form={repoForm} layout="vertical" style={{ maxWidth: 800 }}>
+          <Form.Item label="仓库名称" name="name"
+            rules={[{ required: true, message: '请输入仓库名称' }]}>
+            <Input placeholder="仓库名称" />
+          </Form.Item>
+          <Form.Item label="URL" name="url"
+            rules={[{ required: true, message: '请输入仓库地址' }]}>
+            <Input placeholder="Git 仓库地址" />
+          </Form.Item>
+          <Form.Item label="默认分支" name="defaultBranch">
+            <Input placeholder="留空表示清除默认分支" allowClear />
+          </Form.Item>
+          <Form.Item label="描述" name="description">
+            <TextArea rows={3} placeholder="仓库的背景描述，留空表示清除" allowClear />
+          </Form.Item>
+          <Space>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveRepo}
+              loading={updateRepoMut.isPending}>保存</Button>
+            <Button onClick={() => setEditingRepo(false)}>取消</Button>
+          </Space>
+        </Form>
+      ) : (
+        <>
+          <Descriptions column={2}>
+            <Descriptions.Item label="仓库名称">{repo.name}</Descriptions.Item>
+            <Descriptions.Item label="URL" span={2}>{repo.url}</Descriptions.Item>
+            <Descriptions.Item label="默认分支">{repo.defaultBranch || '-'}</Descriptions.Item>
+            {REPO_SCAN_ENABLED && (
+              <Descriptions.Item label="扫描状态">
+                {conclusion
+                  ? <Tag color="success">扫描完成</Tag>
+                  : <Tag>未扫描</Tag>}
+              </Descriptions.Item>
+            )}
+            {REPO_SCAN_ENABLED && conclusion && (
+              <Descriptions.Item label="上次扫描时间">
+                {new Date(conclusion.gmtCreate).toLocaleString()}
+              </Descriptions.Item>
+            )}
+            <Descriptions.Item label="描述" span={2}>{repo.description || '-'}</Descriptions.Item>
+          </Descriptions>
+          <Button icon={<EditOutlined />} onClick={handleStartRepoEdit} style={{ marginTop: 16 }}>
+            编辑
+          </Button>
+        </>
       ),
     },
     ...(REPO_SCAN_ENABLED ? [{

@@ -1,0 +1,3 @@
+import { Button, Input, Space } from 'antd';
+import { useState } from 'react';
+export function RunCommentInput({ onSubmit, loading }: { onSubmit: (value: string) => void; loading?: boolean }) { const [value, setValue] = useState(''); return <Space.Compact style={{ width: '100%' }}><Input aria-label="评论本次运行" placeholder="评论本次运行" value={value} onChange={(event) => setValue(event.target.value)} onPressEnter={() => value.trim() && onSubmit(value.trim())} /><Button aria-label="发送" type="primary" loading={loading} onClick={() => { if (value.trim()) { onSubmit(value.trim()); setValue(''); } }}>发送</Button></Space.Compact>; }

@@ -84,7 +84,7 @@ public class ClarificationAdapter implements SceneAdapter {
                 sb.append("内容:\n").append(workitem.getContentMd()).append("\n");
             }
 
-            List<WorkitemCommentDO> comments = workitemCommentDao.listByWorkitem(workitem.getId());
+            List<WorkitemCommentDO> comments = workitemCommentDao.listByWorkitem(session.getTenantId(), workitem.getId());
             if (comments != null && !comments.isEmpty()) {
                 sb.append("\n评论:\n");
                 for (WorkitemCommentDO c : comments) {

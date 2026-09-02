@@ -72,6 +72,17 @@ public class WorkitemClarificationConversationController {
         return Result.ok(null);
     }
 
+    @PostMapping("/{conversationId}/turns/{turnId}/cancel")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "终止工单澄清回复")
+    public Result<Void> cancelTurn(
+            @PathVariable Long workitemId,
+            @PathVariable Long conversationId,
+            @PathVariable Long turnId) {
+        long tenantId = currentWorkspaceId();
+        service.cancelTurn(tenantId, workitemId, conversationId, turnId);
+        return Result.ok(null);
+    }
+
     private long currentWorkspaceId() {
         Long workspaceId = AutoWonderContext.get().getCurrentWorkspaceId();
         if (workspaceId == null) {

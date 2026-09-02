@@ -8,11 +8,167 @@ long-lived `community` branch. Follow the constraints and procedure in the
 
 ## Current Baseline
 
-- Synchronized `origin/master`: `985998be3c803be1973d0bebc16d009e7a46b122`
-- Community merge commit: `dd8b5c6a5e1991a67a94de58b83d20afcae925e3`
-- Synchronized at: 2026-08-24 (Asia/Shanghai)
+- Synchronized `origin/master`: `25371cb104ac019fb26674f0c495c410c01e5041`
+- Community merge commit: `6db0fad6906e6892258f9ebf4ba8cc0760617f10`
+- Synchronized at: 2026-09-02 (Asia/Shanghai)
 
 ## History
+
+### 2026-09-02: `985998be` to `25371cb1`
+
+| Field | Commit |
+| --- | --- |
+| Previous synchronized baseline | `985998be3c803be1973d0bebc16d009e7a46b122` |
+| Community before merge | `51ff353dee2e5fcfd05e1e186cbeb6e03a5265b0` |
+| Merged `origin/master` | `25371cb104ac019fb26674f0c495c410c01e5041` |
+| Resulting merge commit | `6db0fad6906e6892258f9ebf4ba8cc0760617f10` |
+| Community adaptation commit | `7d97b4007` |
+| Scheduler test fix commit | `0e76ae22f` |
+
+Released as v0.7.0; see [releases/release_v0.7.0_20260902.md](../../releases/release_v0.7.0_20260902.md).
+
+Scope: 405 upstream commits (312 non-merge), 477 upstream changed paths, 463
+final changed paths against the previous community tip. Major features: 7×24
+scheduled digital-worker tasks with source-aware execution, workspace discovery
+with access requests, encrypted-at-rest MCP configuration, path-token MCP
+endpoints, requirement-clarification rework, per-step token/credit usage, and
+work-item scheduled start with tags. Recommended executor runtime advances to
+`0.2.150`.
+
+Twenty-nine textual and modify/delete conflicts were resolved across
+`pom.xml`, `application.yml`, `application-local.yml`, `log4j2.xml`,
+`docs/autowonder-schema.sql`, `docs/openapi-reference.md`,
+`frontend/package.json`, `frontend/src/shared/api/client.ts`,
+`frontend/src/test/mocks/handlers.ts`, four Java test classes, the eight new
+migration files, and eight delete-side conflicts. All automatically merged
+shared files were reviewed.
+
+Conflict decisions: `client.ts` accepted master verbatim; `openapi-reference.md`
+accepted master because master had caught up on the workspace rename, then the
+`{aone-host}` placeholder was restored; `frontend/package.json` kept the
+community public toolchain and dropped the `allowScripts` block;
+`application-local.yml` kept the community env-driven profile rather than
+master's copy, which carries live internal credentials.
+
+Community adaptations:
+
+- BUC excluded entirely — the two pom SDK dependencies, the `spring.buc` block,
+  the BUC `AsyncLogger` entries, and the `disable-pandora-buc-sso-client` marker
+  are all absent. Internal environment profiles remain excluded.
+- Master's new `KeyCenterClient` abstraction, introduced for the encrypted MCP
+  configuration feature, is bound to community's existing `SecretCrypto`
+  contract in `WsDispatchTransport`, `SkillService`,
+  `SkillConnectionTestService` and `ConversationCapabilityService`.
+  `PlatformKeyCenterClient` and its test are not published because they bind the
+  KeyCenter SDK. Two Javadoc comments that still said "KeyCenter" were reworded
+  so `CommunityDependencyBoundaryTest` passes.
+- `com.alibaba.fastjson2:fastjson2:2.0.58` is declared explicitly. The
+  scheduled-task code imports it and master resolves it transitively through
+  internal SDKs that community removes; without the explicit declaration the
+  community build does not compile.
+- `autowonder.community-edition` defaults to `true` here.
+- Upstream migrations renumbered V041–V048; test and runbook references
+  retargeted to `docs/migration/`.
+- `ScheduledTaskWorkspaceVocabularyTest` no longer asserts against the design and
+  plan documents under `docs/superpowers/`, which the documentation policy
+  excludes. Its production-source assertions are unchanged.
+- `ImNotificationMessageContextResolverTest` does not carry master's new
+  seeded-`DEFAULT_DOMAIN` fallback case; community removed that internal domain
+  constant, so the case does not exist here. The blank-domain fallback remains
+  covered.
+- `docs/autowonder-community-templates.sql` now points at `docs/migration/`, and
+  `docs/scheduled-task-operations.md` records that "V037" is the rollout codename
+  while the community migration file is `V041__scheduled_task.sql`.
+- The new `src/test/resources/schema/autowonder-pre-v037.sql` fixture seeds a
+  `NULL` branding domain to match `docs/autowonder-schema.sql`.
+
+Documentation policy: `docs/runtime-usage.md` and
+`docs/scheduled-task-operations.md` were added to the retained list. The six new
+`docs/superpowers/` plans and specs remain excluded.
+
+Deployment review: the recommended runtime version is the only deployment
+contract change. It was propagated to the deployment manifest template and to
+the deployment and upgrade Skill tests per Rule 12, and both Skills' version
+assertions were re-run. No topology, credential, port, endpoint, database or
+environment-template change is required. Because all new switches default to
+off, deployment input collection needs no change.
+
+Configuration-key review: the upstream `application.yml` delta adds
+`autowonder.community-edition` and the six `autowonder.scheduled-task.*` keys,
+and drops nothing. `ScheduledTaskProperties` binds all six with matching
+defaults. All seven new environment variables were added to
+`docs/community/application.env.example`, together with
+`AUTOWONDER_AONE_WEB_BASE_URL`, which the previous sync introduced but never
+recorded there. The only intentional community difference is the
+`community-edition` default. `spring.buc.enabled` is the only intentionally
+omitted upstream key.
+
+Distribution defect found and fixed: the 25 Skill shell scripts were tracked as
+mode `100644` since the Skills were consolidated under `skills/`, leaving them
+unrunnable after a fresh clone. Restoring the executable bit also fixed 21 of the
+52 deployment-Skill test failures. Compiled Python bytecode under
+`__pycache__` was untracked and is now ignored.
+
+Independent review: ancestry proved; all 477 upstream paths accounted for with
+62 community differences, every one mapped to a documented boundary and none
+unexplained; conflict resolutions and automatically merged shared files checked
+for lost master behavior with none found; migrations byte-identical to their
+master counterparts and V036–V040 untouched; configuration keys complete; Rule
+12 consistent; documentation policy clean; and zero newly introduced internal
+references. No critical or important technical finding. Four minor findings were
+addressed in this sync.
+
+Verification:
+
+- Maven `clean verify`: BUILD SUCCESS, 2652 tests, 0 failures, 0 errors, 1
+  skipped.
+- Frontend: 116 files, 901 tests passed, 1 skipped; lint 0 errors with 3
+  pre-existing hook warnings; production build succeeded.
+- Deployment Skill: 70 passed, 31 failed. Upgrade Skill: 66 passed, 6 failed, 1
+  skipped. Both failure sets were measured on the previous community tip
+  `51ff353d` and are byte-for-byte identical there, so this sync changed
+  neither. They are stale assertions against scripts whose content moved into
+  `scripts/internal/release-transfer.sh`, and they remain open work.
+- Dependency tree contains no KeyCenter, Normandy, AkLess, RASS, BUC or
+  `log4j:log4j` artifact. The verification.md internal-reference scan over
+  `pom.xml`, `frontend/package-lock.json`, `frontend/.npmrc`, `APP-META`,
+  `src/main` and `src/main/resources` returns nothing.
+- Migration immutability, ancestry and schema parity all pass.
+
+Upstream defects found while running the gates. Five frontend assertions and one
+backend suite were already failing on `origin/master` and were reproduced there
+on a pristine checkout before being fixed here:
+
+- `Sidebar.test.tsx` still expected `/scheduled-tasks` under `workers-group`
+  labelled "7×24 任务" after master's `e0e5c0d77` moved it to the delivery group
+  as "定时任务".
+- `ScheduledTaskCreatePage.test.tsx` asserted a raw ISO instant after master's
+  `f8f7c667a` changed the cron preview to `toLocaleString('zh-CN')`.
+- `WorkitemCreatePage.test.tsx` typed the literal `2026-09-01 10:00:00`, which
+  has since become the past and is rejected by the picker's `disabledDate`. The
+  instant is now derived from the current clock.
+- `ScheduledTaskSpringMybatisIntegrationTest` seeded `next_fire_at` at absolute
+  August instants while letting `gmt_create` default to `CURRENT_TIMESTAMP(3)`.
+  `ScheduledTaskScheduler.dueOccurrences` treats the creation time as the
+  earliest valid occurrence, so once the wall clock passed the seeded fire times
+  every occurrence was filtered out and `scan()` claimed nothing. Seeding
+  `gmt_create` at `2025-12-31` restores all 25 tests. This is why the suite
+  passed on master's CI in August and fails on any run after the seeded dates.
+
+Two further frontend failures were community-specific: `McpTokenSettingsPanel`
+expected the internal hostname while the community mock serves
+`community.example`.
+
+`RepoConnectionTesterTest` failed three assertions during one full-suite run but
+passes in isolation on both this tree and `51ff353d`; it is load-sensitive rather
+than a regression.
+
+Decisions requiring confirmation: none outstanding. The repository owner decided
+to keep all three upstream Aone-touching commits (`c54701ce6`, `4aae1d47f`,
+`f3e8a23fa`) rather than apply Rule 4's exclusion of Aone iterations. Two are
+defect fixes confined to `AoneInboundSyncService`, which community already ships
+as an optional integration disabled by default; the third only adds the generic
+status word `FIXED` to shared work-item completion classification.
 
 ### 2026-08-24 (incremental): `d77e29bf` to `985998be`
 

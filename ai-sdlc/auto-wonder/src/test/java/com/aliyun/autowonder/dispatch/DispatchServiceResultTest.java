@@ -8,6 +8,7 @@ import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -25,6 +26,7 @@ class DispatchServiceResultTest {
     private RedisManager redisManager;
     private AuditLogService auditLogService;
     private ExecutorRegistry executorRegistry;
+    private ScheduledTaskRunOrchestrator scheduledOrchestrator;
     private DispatchService service;
 
     private static final long TENANT = 100L;
@@ -44,9 +46,11 @@ class DispatchServiceResultTest {
         redisManager = mock(RedisManager.class);
         auditLogService = mock(AuditLogService.class);
         executorRegistry = mock(ExecutorRegistry.class);
+        scheduledOrchestrator = mock(ScheduledTaskRunOrchestrator.class);
         service = new DispatchService(dispatchDao, runtimeEventDao, workitemDao, agentDao, agentVersionDao,
                 executorSelector, assembler, taskPackager, transport, sdlcDriver,
                 redisManager, null, auditLogService, executorRegistry);
+        service.setScheduledTaskRunOrchestrator(scheduledOrchestrator);
         when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
         when(dispatchDao.updateStatus(anyLong(), anyLong(), anyString(), any(), any(),
                 any(), any(), any(), anyInt(), anyLong())).thenReturn(1);
@@ -218,6 +222,31 @@ class DispatchServiceResultTest {
     @Test
     void canonicalInteractionWorkflowPlanCannotAdvanceFormalSdlc() {
         assertDetachedInteractionCannotAdvanceFormalSdlc("CANONICAL_INTERACTION");
+    }
+
+    @Test
+    void scheduledRunInteractionSuccessDoesNotDriveFormalRun() {
+        assertScheduledInteractionDoesNotDriveFormalRun(true);
+    }
+
+    @Test
+    void scheduledRunInteractionFailureDoesNotDriveFormalRun() {
+        assertScheduledInteractionDoesNotDriveFormalRun(false);
+    }
+
+    private void assertScheduledInteractionDoesNotDriveFormalRun(boolean success) {
+        DispatchDO interaction = at(DispatchStatus.RUNNING);
+        interaction.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        interaction.setResumeMode("CANONICAL_INTERACTION"); interaction.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(interaction);
+        when(dispatchDao.listOldestPendingByAgent(400L, 1)).thenReturn(java.util.List.of());
+
+        assertTrue(service.onResult(TENANT, 9L, 500L, success, "reply", "err", false));
+
+        verify(scheduledOrchestrator, never()).onDispatchResult(any(), anyBoolean(), any(), any());
+        verify(sdlcDriver, never()).onSuccess(anyLong(), anyLong(), anyLong());
+        verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
+        verify(dispatchDao).listOldestPendingByAgent(400L, 1);
     }
 
     private void assertDetachedInteractionCannotAdvanceFormalSdlc(String resumeMode) {

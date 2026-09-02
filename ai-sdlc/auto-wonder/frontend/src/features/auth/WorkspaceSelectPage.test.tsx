@@ -162,4 +162,181 @@ describe('WorkspaceSelectPage', () => {
     expect(useAuthStore.getState().currentWorkspace?.id).toBe(2);
     expect(useAuthStore.getState().accessToken).toBe('workspace-2-token');
   });
+
+  it('renders both tabs and keeps 我的工作空间 active with the own-workspaces grid', async () => {
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{ id: 1, name: '星云工坊', description: '多 Agent 研发协作空间' }],
+      })),
+    );
+
+    renderPage();
+
+    expect(screen.getByRole('tab', { name: '我的工作空间' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '所有工作空间' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '我的工作空间' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByTestId('workspace-select-grid')).toBeInTheDocument();
+    expect(await screen.findByText('星云工坊')).toBeInTheDocument();
+  });
+
+  it('does not fetch all workspaces until the discovery tab is opened', async () => {
+    const user = userEvent.setup();
+    let allWorkspacesRequests = 0;
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{ id: 1, name: '星云工坊', description: '多 Agent 研发协作空间' }],
+      })),
+      http.get('/api/workspaces/all', () => {
+        allWorkspacesRequests += 1;
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          traceId: null,
+          data: {
+            list: [{ id: 9, name: '公开空间', description: '', membershipStatus: 'NOT_MEMBER', accessLevel: null }],
+            total: 1,
+            pageNum: 1,
+            pageSize: 20,
+          },
+        });
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('星云工坊')).toBeInTheDocument();
+    expect(allWorkspacesRequests).toBe(0);
+
+    await user.click(screen.getByRole('tab', { name: '所有工作空间' }));
+
+    expect(await screen.findByText('共 1 个工作空间')).toBeInTheDocument();
+    expect(allWorkspacesRequests).toBe(1);
+  });
+
+  it('shows my workspaces again after switching back from the discovery tab', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{ id: 1, name: '星云工坊', description: '多 Agent 研发协作空间' }],
+      })),
+      http.get('/api/workspaces/all', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: {
+          list: [{ id: 9, name: '公开空间', description: '', membershipStatus: 'NOT_MEMBER', accessLevel: null }],
+          total: 1,
+          pageNum: 1,
+          pageSize: 20,
+        },
+      })),
+    );
+
+    renderPage();
+
+    await user.click(await screen.findByRole('tab', { name: '所有工作空间' }));
+    expect(await screen.findByText('共 1 个工作空间')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: '我的工作空间' }));
+
+    expect(await screen.findByTestId('workspace-select-grid')).toBeVisible();
+    expect(screen.getByText('星云工坊')).toBeVisible();
+    expect(screen.getByText('共 1 个工作空间')).not.toBeVisible();
+  });
+
+  it('opens the create-workspace form inside the mine pane', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{ id: 1, name: '星云工坊', description: '多 Agent 研发协作空间' }],
+      })),
+    );
+
+    renderPage();
+
+    await user.click(await screen.findByTestId('workspace-create-card'));
+
+    expect(screen.getByText('工作空间名称')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('输入工作空间名称')).toBeInTheDocument();
+  });
+
+  it('shows the empty state with a create card when the user has no workspaces', async () => {
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [],
+      })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('暂无已加入的工作空间，请创建一个')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-create-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-card-1')).not.toBeInTheDocument();
+  });
+
+  it('refetches the workspace list for the new account without showing the previous account data', async () => {
+    useAuthStore.getState().setUser({
+      id: 1,
+      username: 'alice',
+      nickname: '爱丽丝',
+      email: 'alice@example.com',
+    });
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{ id: 11, name: '账号A的工作空间', description: '账号A的数据' }],
+      })),
+    );
+
+    renderPage();
+    expect(await screen.findByText('账号A的工作空间')).toBeInTheDocument();
+
+    server.use(
+      http.get('/api/workspaces/mine', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: [{ id: 21, name: '账号B的工作空间', description: '账号B的数据' }],
+      })),
+    );
+
+    act(() => {
+      useAuthStore.getState().clear();
+      useAuthStore.getState().setUser({
+        id: 2,
+        username: 'bob',
+        nickname: '鲍勃',
+        email: 'bob@example.com',
+      });
+    });
+
+    expect(screen.queryByText('账号A的工作空间')).not.toBeInTheDocument();
+    expect(await screen.findByText('账号B的工作空间')).toBeInTheDocument();
+  });
 });

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Empty, List, Modal, Spin, Result, Button, Space, Tag, Typography } from 'antd';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import {
 } from './hooks';
 import { WorkitemHeader } from './components/WorkitemHeader';
 import { WorkitemMeta } from './components/WorkitemMeta';
+import { ScheduledStartControl } from './components/ScheduledStartControl';
 import { HumanInterventionAlert } from './components/HumanInterventionBadge';
 import { WorkitemActionBar } from './components/WorkitemActionBar';
 import { StartDeliveryModal } from './components/StartDeliveryModal';
@@ -21,8 +22,11 @@ import { UnifiedTimeline } from './components/UnifiedTimeline';
 import { CommentInput } from './components/CommentInput';
 import { ScrollToEdgeButton } from './components/ScrollToEdgeButton';
 import { RightPanel } from './components/RightPanel';
+import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { AI_CLARIFICATION_ENABLED } from './featureFlags';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+
+const CLARIFY_MIN_WIDTH = 320;
 
 export function WorkitemDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +39,13 @@ export function WorkitemDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
+  const [panelMode, setPanelMode] = useState<'progress' | 'clarify'>('progress');
+  const [clarifyWidth, setClarifyWidth] = useState<number | null>(null);
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setPanelMode('progress');
+    setClarifyWidth(null);
+  }, [id]);
 
   const { data: workitem, isLoading, isError, error } = useWorkitem(id || '');
   const templateId = workitem?.templateId != null ? Number(workitem.templateId) : null;
@@ -64,6 +75,11 @@ export function WorkitemDetailPage() {
   const handleClarifyConfirm = () => {
     queryClient.invalidateQueries({ queryKey: ['workitem', id, 'clarification'] });
   };
+  // 宽度上限保证左栏工单正文区至少保留 480px 可用宽度
+  const clarifyMaxWidth = Math.max(
+    CLARIFY_MIN_WIDTH,
+    Math.min(720, window.innerWidth * 0.65, window.innerWidth - 480),
+  );
   const nodeById = new Map((templateDetail?.nodes ?? []).map((node) => [Number(node.id), node]));
   const availableTransitions = (templateDetail?.transitions ?? []).filter(
     (transition) => Number(transition.fromNodeId) === currentStatusNodeId,
@@ -101,6 +117,10 @@ export function WorkitemDetailPage() {
             title={workitem.title}
             statusName={workitem.statusName ?? null}
             workType={workitem.workType}
+            origin={workitem.origin}
+            scheduledStartAt={workitem.scheduledStartAt}
+            scheduledStartTriggeredAt={workitem.scheduledStartTriggeredAt}
+            gmtCreate={workitem.gmtCreate}
           />
           <HumanInterventionAlert item={workitem} />
           <WorkitemMeta
@@ -110,6 +130,12 @@ export function WorkitemDetailPage() {
             assigneeType={workitem.assigneeType}
             creatorDisplayName={workitem.creatorDisplayName ?? null}
             sdlcName={workitem.sdlcName ?? null}
+            tags={workitem.tags}
+          />
+          <ScheduledStartControl
+            workitemId={workitem.id}
+            assigneeType={workitem.assigneeType}
+            scheduledStartAt={workitem.scheduledStartAt}
           />
           <WorkitemActionBar
             hasSdlc={workitem.sdlcId != null}
@@ -168,17 +194,33 @@ export function WorkitemDetailPage() {
 
       {/* Right Panel */}
       <div
+        ref={rightPanelRef}
         data-testid="workitem-right-panel"
         style={{
-          width: 'clamp(340px, 28vw, 420px)',
+          width: clarifyWidth != null ? `${clarifyWidth}px` : 'clamp(340px, 28vw, 420px)',
           flexShrink: 0,
           padding: 12,
           background: '#fafafa',
           borderLeft: '1px solid #e5e7eb',
           overflowY: 'auto',
+          position: 'relative',
+          display: panelMode === 'clarify' ? 'flex' : 'block',
+          flexDirection: panelMode === 'clarify' ? 'column' : undefined,
         }}
       >
+        {panelMode === 'clarify' ? (
+          <ResizeHandle
+            direction="horizontal"
+            value={clarifyWidth ?? 0}
+            measureValue={() => rightPanelRef.current?.getBoundingClientRect().width ?? 0}
+            min={CLARIFY_MIN_WIDTH}
+            max={clarifyMaxWidth}
+            onChange={setClarifyWidth}
+            aria-label="调整澄清窗口宽度"
+          />
+        ) : null}
         <RightPanel
+          key={id}
           workitemId={id}
           participants={participants}
           participantsLoading={participantsLoading}
@@ -186,9 +228,14 @@ export function WorkitemDetailPage() {
           steps={progress?.steps || []}
           progress={progress}
           stepsLoading={progressLoading}
+          terminalStatus={workitem.statusName}
           artifacts={artifacts}
           artifactsLoading={artifactsLoading}
           onClarifyConfirm={handleClarifyConfirm}
+          onModeChange={(next) => {
+            setPanelMode(next);
+            if (next === 'progress') setClarifyWidth(null);
+          }}
         />
       </div>
 

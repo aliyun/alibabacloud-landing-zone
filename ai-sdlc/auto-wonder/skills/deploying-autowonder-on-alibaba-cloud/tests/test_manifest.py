@@ -107,7 +107,7 @@ class ManifestContractTest(unittest.TestCase):
         self.assertEqual("auto-wonder-prod", self.manifest["tags"]["Environment"])
 
     def test_recommended_runtime_matches_current_server_contract(self):
-        self.assertEqual("0.2.138", self.manifest["recommendedRuntimeVersion"])
+        self.assertEqual("0.2.150", self.manifest["recommendedRuntimeVersion"])
 
 
 if __name__ == "__main__":

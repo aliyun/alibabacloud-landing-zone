@@ -235,4 +235,91 @@ describe('RepoDetailPage', () => {
     expect(successSpy).toHaveBeenCalledWith('仓库已删除');
     successSpy.mockRestore();
   });
+
+  it('edits repo basic info and saves through PUT', async () => {
+    const user = userEvent.setup();
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/repos/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: mockRepo,
+      })),
+      http.get('/api/repos/1/conclusion', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: null,
+      })),
+      http.get('/api/repos/relations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/repos', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockRepo],
+      })),
+      http.put('/api/repos/1', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...mockRepo, description: '新的背景描述' },
+        });
+      }),
+    );
+
+    renderPage('/repos/1');
+    await screen.findByRole('tab', { name: '基础信息' });
+
+    await user.click(await screen.findByRole('button', { name: /编辑/ }));
+    const descInput = await screen.findByLabelText('描述');
+    await user.clear(descInput);
+    await user.type(descInput, '新的背景描述');
+    await user.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(putBody).toEqual({
+        name: 'auto-wonder',
+        url: 'https://github.com/auto-wonder',
+        defaultBranch: 'main',
+        description: '新的背景描述',
+      });
+    });
+  });
+
+  it('sends explicit null when clearing the description during edit', async () => {
+    const user = userEvent.setup();
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/repos/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: mockRepo,
+      })),
+      http.get('/api/repos/1/conclusion', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: null,
+      })),
+      http.get('/api/repos/relations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/repos', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockRepo],
+      })),
+      http.put('/api/repos/1', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...mockRepo, description: null },
+        });
+      }),
+    );
+
+    renderPage('/repos/1');
+    await screen.findByRole('tab', { name: '基础信息' });
+
+    await user.click(await screen.findByRole('button', { name: /编辑/ }));
+    const descInput = await screen.findByLabelText('描述');
+    await user.clear(descInput);
+    await user.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(putBody).toEqual({
+        name: 'auto-wonder',
+        url: 'https://github.com/auto-wonder',
+        defaultBranch: 'main',
+        description: null,
+      });
+    });
+  });
 });

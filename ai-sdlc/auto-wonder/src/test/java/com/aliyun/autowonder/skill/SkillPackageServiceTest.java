@@ -149,6 +149,62 @@ class SkillPackageServiceTest {
     }
 
     @Test
+    void createUploadedHookUsesRootDescriptorIdentity() throws Exception {
+        MockMultipartFile file = hookZip("sample-before-step", "beforeStep");
+        when(skillDao.findByTypeAndName(1L, "HOOK", "sample-before-step")).thenReturn(null);
+        doAnswer(invocation -> { invocation.<SkillDO>getArgument(0).setId(10002L); return null; })
+                .when(skillDao).insert(any(SkillDO.class));
+        when(storage.put(eq("artifact-bucket"), eq("t/1/skills/10002/skill.zip"), any()))
+                .thenReturn(new StoredObject("artifact-bucket/t/1/skills/10002/skill.zip", "md5", file.getSize()));
+        when(skillDao.updatePackage(eq(10002L), eq(1L), eq("HOOK"), contains("OSS_ZIP"),
+                eq("sample-before-step"), eq("Runtime lifecycle hook: beforeStep"), eq("OSS_ZIP"),
+                anyString(), eq("sample-before-step.zip"), eq(file.getSize()), eq("md5"), eq(0), eq(2L)))
+                .thenReturn(1);
+        SkillDO stored = new SkillDO();
+        stored.setId(10002L);
+        stored.setTenantId(1L);
+        stored.setType("HOOK");
+        stored.setName("sample-before-step");
+        stored.setDescription("Runtime lifecycle hook: beforeStep");
+        stored.setSourceType("OSS_ZIP");
+        when(skillDao.findById(10002L)).thenReturn(stored);
+
+        SkillVO vo = service.createFromPackage(file, "HOOK", null, null, null, 1L, 2L);
+
+        assertEquals("HOOK", vo.getType());
+        assertEquals("sample-before-step", vo.getName());
+        verify(skillDao).insert(argThat(row -> "HOOK".equals(row.getType())
+                && "sample-before-step".equals(row.getName())));
+    }
+
+    @Test
+    void uploadHookRejectsMissingRootDescriptor() throws Exception {
+        MockMultipartFile file = zip("bad-hook.zip", "scripts/run.sh", "#!/bin/sh\n");
+
+        BizException ex = assertThrows(BizException.class, () -> service.uploadMcpPackage(
+                file.getOriginalFilename(), file.getBytes(), "HOOK", null, null, null, null, 1L));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+        verify(storage, never()).put(anyString(), anyString(), any());
+    }
+
+    @Test
+    void uploadHookAcceptsToolLifecycleTriggers() throws Exception {
+        for (String trigger : List.of("beforeTool", "afterTool")) {
+            MockMultipartFile file = hookZip("sample-" + trigger, trigger);
+            when(storage.put(anyString(), anyString(), any())).thenReturn(
+                    new StoredObject("artifact-bucket/tool-hook.zip", "md5", file.getSize()));
+
+            SkillPackageService.UploadedPackage uploaded = service.uploadMcpPackage(
+                    file.getOriginalFilename(), file.getBytes(), "HOOK", null, null,
+                    null, null, 1L);
+
+            assertEquals("HOOK", uploaded.type());
+            assertEquals("sample-" + trigger, uploaded.name());
+        }
+    }
+
+    @Test
     void updateUploadedSkillOverwritesExistingOssKey() throws Exception {
         MockMultipartFile file = skillZip("custom-skill-v2", "Updated description");
         SkillDO existing = new SkillDO();
@@ -285,6 +341,18 @@ class SkillPackageServiceTest {
 
     private static MockMultipartFile skillZip(String name, String description) throws Exception {
         return zip(name + ".zip", "SKILL.md", skillMd(name, description));
+    }
+
+    private static MockMultipartFile hookZip(String name, String trigger) throws Exception {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("hook.yaml", ("schemaVersion: autowonder.hook.v1\n"
+                + "name: " + name + "\n"
+                + "version: 1\n"
+                + "trigger: " + trigger + "\n"
+                + "interpreter: bash\n"
+                + "command: scripts/run.sh\n").getBytes(StandardCharsets.UTF_8));
+        entries.put("scripts/run.sh", "#!/bin/sh\nexit 0\n".getBytes(StandardCharsets.UTF_8));
+        return zip(name + ".zip", entries);
     }
 
     private static MockMultipartFile zip(String fileName, String entryName, String content) throws Exception {

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.artifact;
 
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import lombok.Getter;
 import lombok.Setter;
 import java.util.Date;
@@ -9,6 +10,7 @@ import java.util.Date;
 public class ArtifactDO {
     private Long id;
     private Long tenantId;
+    private String sourceType = ExecutionSourceType.WORKITEM.name();
     private Long workitemId;
     private Long dispatchId;
     private String name;

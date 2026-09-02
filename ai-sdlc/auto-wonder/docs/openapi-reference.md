@@ -9,10 +9,10 @@
 | Base URL | `https://{host}:7001` |
 | 认证方式 | Bearer JWT Token (通过 `/api/auth/login` 获取) |
 | 请求头 | `Authorization: Bearer <accessToken>`, `Content-Type: application/json` |
-| 组织上下文 | JWT 中携带当前 org，切换组织需调用 `/api/workspaces/{id}/switch` 获取新 token |
+| 工作空间上下文 | JWT 中携带当前 workspace，切换工作空间需调用 `/api/workspaces/{id}/switch` 获取新 token |
 | 统一响应格式 | `{ "success": true, "code": "OK", "data": <T>, "message": "" }` |
 | 分页约定 | `page` (从 1 开始), `size` (默认 20) |
-| 访问控制 | 组织成员使用 `READ_ONLY < READ_WRITE < ADMIN` 三档访问等级；身份标签不参与鉴权 |
+| 访问控制 | 工作空间成员使用 `READ_ONLY < READ_WRITE < ADMIN` 三档访问等级；身份标签不参与鉴权 |
 
 ---
 
@@ -48,22 +48,22 @@
 
 ---
 
-## 2. 组织管理 (Organization)
+## 2. 工作空间管理 (Workspace)
 
 | 方法 | 路径 | 访问要求 | 说明 |
 |------|------|------|------|
-| POST | `/api/workspaces` | 登录即可 | 创建组织 |
-| GET | `/api/workspaces/mine` | 登录即可 | 我加入的组织列表 |
-| POST | `/api/workspaces/{id}/switch` | 登录即可 | 切换当前组织 (返回新 token) |
-| GET | `/api/workspaces/current` | READ_ONLY | 获取当前组织信息 |
+| POST | `/api/workspaces` | 登录即可 | 创建工作空间 |
+| GET | `/api/workspaces/mine` | 登录即可 | 我加入的工作空间列表 |
+| POST | `/api/workspaces/{id}/switch` | 登录即可 | 切换当前工作空间 (返回新 token) |
+| GET | `/api/workspaces/current` | READ_ONLY | 获取当前工作空间信息 |
 | GET | `/api/workspaces/current/membership` | READ_ONLY | 获取当前成员访问等级和身份标签 |
-| GET | `/api/workspaces/current/members` | ADMIN | 列出组织成员 |
+| GET | `/api/workspaces/current/members` | ADMIN | 列出工作空间成员 |
 | GET | `/api/workspaces/current/member-candidates` | ADMIN | 搜索可添加的全局人员 |
 | POST | `/api/workspaces/current/members` | ADMIN | 添加成员，默认 `READ_ONLY` |
 | DELETE | `/api/workspaces/current/members/{userId}` | ADMIN | 移除成员 |
 | PUT | `/api/workspaces/current/members/{userId}/access-level` | ADMIN | 修改成员访问等级 |
 | PUT | `/api/workspaces/current/members/{userId}/identity-tags` | ADMIN | 修改成员身份标签 |
-| POST | `/api/workspaces/current/owner/transfer` | ADMIN | 移交组织所有者 |
+| POST | `/api/workspaces/current/owner/transfer` | ADMIN | 移交工作空间所有者 |
 
 ### POST /api/workspaces
 ```json
@@ -96,12 +96,12 @@
 
 ---
 
-## 3. 组织访问等级
+## 3. 工作空间访问等级
 
 | 等级 | 能力 |
 |------|------|
-| READ_ONLY | 查看组织业务数据、日志、洞察、评论和产物 |
-| READ_WRITE | 包含只读能力，并可执行组织业务的创建、修改、删除、审核和运行 |
+| READ_ONLY | 查看工作空间业务数据、日志、洞察、评论和产物 |
+| READ_WRITE | 包含只读能力，并可执行工作空间业务的创建、修改、删除、审核和运行 |
 | ADMIN | 包含读写能力，并可管理成员、owner、系统设置、外部集成和执行器 |
 
 身份标签只用于任务协作和人员识别，不授予任何访问能力。长效 MCP Token 是**用户个人资产**，不绑定工作空间、也不保存 per-token 权限上限；调用工作空间域工具时按 `(workspaceId, userId)` 实时解析成员等级作为有效等级。工单 dispatch Token 固定为 `READ_WRITE`，并继续受工单、dispatch 和有效期约束。
@@ -110,11 +110,11 @@
 
 | 方法 | 路径 | 访问要求 | 说明 |
 |------|------|----------|------|
-| POST | `/api/mcp/tokens` | 本人资源（登录即可，不要求当前组织） | 创建自己的长效个人 Token |
-| GET | `/api/mcp/tokens` | 本人资源（登录即可，不要求当前组织） | 列出自己的全部个人 Token |
-| DELETE | `/api/mcp/tokens/{id}` | 本人资源（登录即可，不要求当前组织） | 撤销自己的 Token |
-| GET | `/api/mcp/tokens/tools` | 本人资源（登录即可，不要求当前组织） | 获取 MCP 工具目录 |
-| GET | `/api/mcp/tokens/platform-skills` | 本人资源（登录即可，不要求当前组织） | 获取平台技能目录 |
+| POST | `/api/mcp/tokens` | 本人资源（登录即可，不要求当前工作空间） | 创建自己的长效个人 Token |
+| GET | `/api/mcp/tokens` | 本人资源（登录即可，不要求当前工作空间） | 列出自己的全部个人 Token |
+| DELETE | `/api/mcp/tokens/{id}` | 本人资源（登录即可，不要求当前工作空间） | 撤销自己的 Token |
+| GET | `/api/mcp/tokens/tools` | 本人资源（登录即可，不要求当前工作空间） | 获取 MCP 工具目录 |
+| GET | `/api/mcp/tokens/platform-skills` | 本人资源（登录即可，不要求当前工作空间） | 获取平台技能目录 |
 
 ```json
 // POST /api/mcp/tokens
@@ -127,8 +127,8 @@
 
 #### 接入流程
 
-1. 在「个人设置 -> MCP 令牌」创建个人 Token（不需要先选择组织）。
-2. 调用 `autowonder.list_projects` 发现自己可访问的组织及权限等级。
+1. 在「个人设置 -> MCP 令牌」创建个人 Token（不需要先选择工作空间）。
+2. 调用 `autowonder.list_projects` 发现自己可访问的工作空间及权限等级。
 3. 调用工作空间域工具时传入 `workspaceId`（必填、正整数）。
 4. 权限跟随你在该 `workspaceId` 内的实时成员等级：离开工作空间或被降权后立即生效。
 
@@ -141,7 +141,7 @@
 dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspaceId` 时沿用该工作空间，传入其他工作空间的
 `workspaceId` 返回 `NO_PERMISSION`。
 
-客户端 MCP endpoint 来自部署属性 `autowonder.public-base-url`，组织管理员不能修改该地址；执行器启动命令的 WebSocket 地址也从同一部署地址派生。
+客户端 MCP endpoint 来自部署属性 `autowonder.public-base-url`，工作空间管理员不能修改该地址；执行器启动命令的 WebSocket 地址也从同一部署地址派生。
 
 ### 平台品牌配置
 
@@ -159,7 +159,7 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
   "primaryColor": "#f97316", "domain": "https://auto-wonder.example.com" }
 ```
 
-`mcpBaseUrl` 是只读部署信息，不属于品牌更新请求，不能通过组织 API 修改。
+`mcpBaseUrl` 是只读部署信息，不属于品牌更新请求，不能通过工作空间 API 修改。
 
 ---
 
@@ -427,7 +427,7 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 ### GET /api/repos/relations?repoId=1
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| repoId | long | 否 | 按仓库过滤，不传则返回组织全部 |
+| repoId | long | 否 | 按仓库过滤，不传则返回工作空间全部 |
 
 ---
 
@@ -486,7 +486,7 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
   "scope": "ORG|SQUAD|AGENT", "ownerRef": 1, "comment": "string" }
 ```
 
-`memory_delta` 产生的待审核记忆默认是 `scope=AGENT, ownerRef=<reportingAgentId>`。审核时可通过 `scope/ownerRef` 保持员工记忆，或提升为小队/组织全局记忆。若该数字员工的 `evolutionMode=MANUAL`，`memory_delta` 只作为 artifact 留存，不进入待审核记忆池。
+`memory_delta` 产生的待审核记忆默认是 `scope=AGENT, ownerRef=<reportingAgentId>`。审核时可通过 `scope/ownerRef` 保持员工记忆，或提升为小队/工作空间全局记忆。若该数字员工的 `evolutionMode=MANUAL`，`memory_delta` 只作为 artifact 留存，不进入待审核记忆池。
 
 ### POST /api/memories/from-artifact
 ```json
@@ -718,9 +718,6 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 
 ## 22. 外部集成 — Aone (Integration)
 
-Aone 是可选集成，社区版默认关闭。只有部署环境显式启用并提供可访问的
-Aone 服务地址后，以下接口才可用。
-
 | 方法 | 路径 | 访问要求 | 说明 |
 |------|------|------|------|
 | POST | `/api/integrations/aone/bindings/test` | ADMIN | 测试 Aone 连接 |
@@ -841,8 +838,8 @@ Trial decision 返回中包含：
 | 访问要求 | 说明 |
 |----------|------|
 | 公开 | 不要求登录 |
-| 登录即可 | 要求有效用户会话，不依赖当前组织访问等级 |
-| READ_ONLY | 要求当前用户是组织有效成员 |
+| 登录即可 | 要求有效用户会话，不依赖当前工作空间访问等级 |
+| READ_ONLY | 要求当前用户是工作空间有效成员 |
 | READ_WRITE | 要求当前成员至少为读写 |
 | ADMIN | 要求当前成员为管理员 |
-| 本人资源 | 通知已读、创建/列出/撤销自己的 MCP Token，不受组织等级阶梯限制 |
+| 本人资源 | 通知已读、创建/列出/撤销自己的 MCP Token，不受工作空间等级阶梯限制 |

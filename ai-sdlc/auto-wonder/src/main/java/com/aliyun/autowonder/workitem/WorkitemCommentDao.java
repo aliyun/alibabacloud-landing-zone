@@ -13,5 +13,18 @@ public interface WorkitemCommentDao {
                               @Param("authorRef") Long authorRef,
                               @Param("contentMd") String contentMd);
     WorkitemCommentDO findById(@Param("tenantId") Long tenantId, @Param("id") Long id);
-    List<WorkitemCommentDO> listByWorkitem(@Param("workitemId") Long workitemId);
+    List<WorkitemCommentDO> listByWorkitem(@Param("tenantId") Long tenantId,
+                                           @Param("workitemId") Long workitemId);
+    /** Compatibility shim for tests/old binary callers; never performs an unscoped read. */
+    @Deprecated
+    default List<WorkitemCommentDO> listByWorkitem(Long workitemId) {
+        throw new UnsupportedOperationException("workspace-scoped comment owner is required");
+    }
+    WorkitemCommentDO findBySourceAndId(@Param("tenantId") Long tenantId,
+                                        @Param("sourceType") String sourceType,
+                                        @Param("sourceId") Long sourceId,
+                                        @Param("id") Long id);
+    List<WorkitemCommentDO> listBySource(@Param("tenantId") Long tenantId,
+                                         @Param("sourceType") String sourceType,
+                                         @Param("sourceId") Long sourceId);
 }

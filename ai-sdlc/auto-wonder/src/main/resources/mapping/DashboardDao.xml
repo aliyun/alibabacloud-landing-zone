@@ -2,6 +2,12 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.dashboard.DashboardDao">
 
+    <sql id="workitemDispatchFence" databaseId="autowonder-source-aware">
+        AND d.source_type = 'WORKITEM'
+    </sql>
+    <sql id="workitemDispatchFence" databaseId="autowonder-legacy">
+    </sql>
+
     <select id="countRunningDispatches" resultType="int">
         SELECT COUNT(*) FROM dispatch
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 'RUNNING'
@@ -22,6 +28,7 @@
             SELECT MAX(d.id)
             FROM dispatch d
             WHERE d.tenant_id = w.tenant_id
+              <include refid="workitemDispatchFence"/>
               AND d.workitem_id = w.id
               AND d.is_deleted = 0
         )
@@ -128,7 +135,9 @@
         JOIN dispatch d ON d.agent_id = sm.agent_id AND d.tenant_id = sm.tenant_id AND d.is_deleted = 0
         JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = sm.tenant_id AND w.is_deleted = 0
         JOIN status_node sn ON w.status_node_id = sn.id
-        WHERE sm.tenant_id = #{tenantId} AND sn.category = 'IN_PROGRESS'
+        WHERE sm.tenant_id = #{tenantId}
+          <include refid="workitemDispatchFence"/>
+          AND sn.category = 'IN_PROGRESS'
         GROUP BY sm.squad_id
     </select>
 
@@ -183,7 +192,9 @@
         LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
         LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
         LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
-        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0 AND d.status = 'RUNNING'
+        WHERE d.tenant_id = #{tenantId}
+          <include refid="workitemDispatchFence"/>
+          AND d.is_deleted = 0 AND d.status = 'RUNNING'
         ORDER BY d.gmt_modified ASC
         LIMIT #{limit}
     </select>
@@ -200,6 +211,7 @@
         LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
         LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
         WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0
+          <include refid="workitemDispatchFence"/>
           AND d.status IN ('SUCCEEDED','FAILED','TIMEOUT','CANCELED')
         ORDER BY d.gmt_modified DESC
         LIMIT #{limit}
@@ -242,7 +254,9 @@
         LEFT JOIN agent a ON a.id = d.agent_id AND a.tenant_id = d.tenant_id
         LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
         LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
-        WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0 AND d.status = 'RUNNING'
+        WHERE d.tenant_id = #{tenantId}
+          <include refid="workitemDispatchFence"/>
+          AND d.is_deleted = 0 AND d.status = 'RUNNING'
         ORDER BY d.gmt_modified ASC
     </select>
 
@@ -260,6 +274,7 @@
         LEFT JOIN workitem w ON w.id = d.workitem_id AND w.tenant_id = d.tenant_id
         LEFT JOIN sdlc_step st ON st.id = d.sdlc_step_id
         WHERE d.tenant_id = #{tenantId} AND d.is_deleted = 0
+          <include refid="workitemDispatchFence"/>
           AND d.status = 'RUNNING' AND d.agent_id = #{agentId}
         ORDER BY d.gmt_modified ASC
     </select>

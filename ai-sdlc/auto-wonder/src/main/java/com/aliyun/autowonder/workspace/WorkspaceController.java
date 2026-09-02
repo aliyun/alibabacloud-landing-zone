@@ -4,13 +4,18 @@ import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.workspace.dto.AccessRequestVO;
 import com.aliyun.autowonder.workspace.dto.AddMemberRequest;
 import com.aliyun.autowonder.workspace.dto.CreateWorkspaceRequest;
 import com.aliyun.autowonder.workspace.dto.CurrentMembershipVO;
 import com.aliyun.autowonder.workspace.dto.MemberCandidateVO;
 import com.aliyun.autowonder.workspace.dto.MemberVO;
+import com.aliyun.autowonder.workspace.dto.RejectAccessRequestBody;
+import com.aliyun.autowonder.workspace.dto.SubmitAccessRequestBody;
+import com.aliyun.autowonder.workspace.dto.WorkspaceListItemVO;
 import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
 import com.aliyun.autowonder.workspace.dto.TransferOwnerRequest;
@@ -33,9 +38,12 @@ import java.util.List;
 public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
+    private final AccessRequestService accessRequestService;
 
-    public WorkspaceController(WorkspaceService workspaceService) {
+    public WorkspaceController(WorkspaceService workspaceService,
+                               AccessRequestService accessRequestService) {
         this.workspaceService = workspaceService;
+        this.accessRequestService = accessRequestService;
     }
 
     @PostMapping
@@ -51,6 +59,36 @@ public class WorkspaceController {
     @PostMapping("/{id}/switch")
     public Result<SwitchWorkspaceResponse> switchWorkspace(@PathVariable("id") Long id) {
         return Result.ok(workspaceService.switchWorkspace(id, currentUserId()));
+    }
+
+    @GetMapping("/all")
+    public Result<PageResult<WorkspaceListItemVO>> listAllWorkspaces(
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        int p = Math.max(page, 1);
+        int sz = Math.min(Math.max(size, 1), 100);
+        return Result.ok(accessRequestService.listAll(keyword, p, sz, currentUserId()));
+    }
+
+    @PostMapping("/{id}/access-requests")
+    public Result<Void> submitAccessRequest(
+            @PathVariable("id") Long id,
+            @RequestBody(required = false) SubmitAccessRequestBody req) {
+        accessRequestService.submitRequest(
+                id, req == null ? null : req.getRequestedLevel(), currentUserId());
+        return Result.ok(null);
+    }
+
+    // No @RequireWorkspaceAccess: the requester is not a member yet, so workspace-scoped
+    // access would block the very person allowed to cancel. Ownership is enforced by the
+    // service (operator must be the requester).
+    @PostMapping("/{id}/access-requests/{requestId}/cancel")
+    public Result<Void> cancelAccessRequest(
+            @PathVariable("id") Long id,
+            @PathVariable("requestId") Long requestId) {
+        accessRequestService.cancelRequest(id, requestId, currentUserId());
+        return Result.ok(null);
     }
 
     @GetMapping("/current")
@@ -120,6 +158,30 @@ public class WorkspaceController {
             throw new BizException(ErrorCode.WORKSPACE_OWNER_TRANSFER_INVALID);
         }
         workspaceService.transferOwner(currentWorkspaceId(), req.getTargetUserId(), currentUserId());
+        return Result.ok(null);
+    }
+
+    @GetMapping("/current/access-requests")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看工作空间权限申请")
+    public Result<List<AccessRequestVO>> listAccessRequests(
+            @RequestParam(value = "status", defaultValue = "PENDING") String status) {
+        return Result.ok(accessRequestService.listForWorkspace(currentWorkspaceId(), status));
+    }
+
+    @PostMapping("/current/access-requests/{requestId}/approve")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "通过工作空间权限申请")
+    public Result<Void> approveAccessRequest(@PathVariable("requestId") Long requestId) {
+        accessRequestService.approve(currentWorkspaceId(), requestId, currentUserId());
+        return Result.ok(null);
+    }
+
+    @PostMapping("/current/access-requests/{requestId}/reject")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "拒绝工作空间权限申请")
+    public Result<Void> rejectAccessRequest(
+            @PathVariable("requestId") Long requestId,
+            @RequestBody(required = false) RejectAccessRequestBody req) {
+        accessRequestService.reject(
+                currentWorkspaceId(), requestId, currentUserId(), req == null ? null : req.getReason());
         return Result.ok(null);
     }
 

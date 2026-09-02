@@ -41,7 +41,13 @@ public class PlatformSkillCatalog {
                             "autowonder.create_skill", "autowonder.list_skills", "autowonder.get_skill",
                             "autowonder.update_skill", "autowonder.delete_skill",
                             "autowonder.inspect_skill_package", "autowonder.upload_skill_package",
-                            "autowonder.create_skill_from_package", "autowonder.update_skill_package"))
+                            "autowonder.create_skill_from_package", "autowonder.update_skill_package")),
+            skill("autowonder-scheduled-task-operator", "CODEX_SKILL", "AutoWonder Scheduled Task Operator",
+                    "Create, inspect, update and transition 7x24 scheduled tasks and their runs through MCP tools.",
+                    List.of("autowonder.create_scheduled_task", "autowonder.list_scheduled_tasks",
+                            "autowonder.get_scheduled_task", "autowonder.update_scheduled_task",
+                            "autowonder.transition_scheduled_task", "autowonder.get_scheduled_task_run",
+                            "autowonder.add_scheduled_task_run_comment"))
     );
 
     public List<PlatformSkillVO> list() {

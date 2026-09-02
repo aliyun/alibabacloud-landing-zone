@@ -19,4 +19,10 @@ public interface WorkspaceDao {
                     @Param("modifierId") Long modifierId);
 
     List<WorkspaceDO> listActive();
+
+    List<WorkspaceDO> listAllPaged(@Param("keyword") String keyword,
+                                   @Param("offset") int offset,
+                                   @Param("limit") int limit);
+
+    long countAll(@Param("keyword") String keyword);
 }

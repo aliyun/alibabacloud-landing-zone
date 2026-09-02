@@ -497,4 +497,119 @@ describe('MemoryListPage', () => {
     const dialog = await screen.findByRole('dialog', { name: '编辑记忆' });
     expect(within(dialog).queryByRole('combobox', { name: '范围' })).not.toBeInTheDocument();
   });
+
+  const orgAgentsFixture = [
+    { id: 400130, name: 'AW全栈开发' },
+    { id: 400131, name: 'AW测试工程师' },
+  ];
+
+  const agentListHandler = http.get('/api/agents', () => HttpResponse.json({
+    success: true, code: '0', message: '', traceId: null, data: orgAgentsFixture,
+  }));
+
+  const isCheckedTag = (el: HTMLElement) =>
+    el.closest('.ant-tag')?.classList.contains('ant-tag-checkable-checked') ?? false;
+
+  it('shows agent filter tags only in the by-agent view', async () => {
+    server.use(
+      agentListHandler,
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/memories/grouped', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+      })),
+    );
+    renderPage();
+
+    expect(screen.queryByTestId('memory-agent-filter-tags')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+
+    const tagRow = await screen.findByTestId('memory-agent-filter-tags');
+    await vi.waitFor(() => {
+      expect(within(tagRow).getByText('AW全栈开发 (400130)')).toBeInTheDocument();
+    });
+    expect(within(tagRow).getByText('全部')).toBeInTheDocument();
+    expect(within(tagRow).getByText('AW测试工程师 (400131)')).toBeInTheDocument();
+    expect(isCheckedTag(within(tagRow).getByText('全部'))).toBe(true);
+    expect(isCheckedTag(within(tagRow).getByText('AW全栈开发 (400130)'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('radio', { name: '时间线' }));
+    expect(screen.queryByTestId('memory-agent-filter-tags')).not.toBeInTheDocument();
+  });
+
+  it('filters groups by agent tag and clears the filter with the all tag', async () => {
+    const seenUrls: string[] = [];
+    server.use(
+      agentListHandler,
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/memories/grouped', ({ request }) => {
+        seenUrls.push(new URL(request.url).search);
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+        });
+      }),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+    const tagRow = await screen.findByTestId('memory-agent-filter-tags');
+    await vi.waitFor(() => {
+      expect(within(tagRow).getByText('AW全栈开发 (400130)')).toBeInTheDocument();
+    });
+
+    fireEvent.click(within(tagRow).getByText('AW全栈开发 (400130)'));
+
+    await vi.waitFor(() => {
+      expect(seenUrls.some((q) => q.includes('ownerRef=400130'))).toBe(true);
+    });
+    expect(isCheckedTag(within(tagRow).getByText('AW全栈开发 (400130)'))).toBe(true);
+    expect(isCheckedTag(within(tagRow).getByText('全部'))).toBe(false);
+
+    fireEvent.click(within(tagRow).getByText('全部'));
+
+    await vi.waitFor(() => {
+      expect(seenUrls[seenUrls.length - 1].includes('ownerRef')).toBe(false);
+    });
+    expect(isCheckedTag(within(tagRow).getByText('全部'))).toBe(true);
+    expect(isCheckedTag(within(tagRow).getByText('AW全栈开发 (400130)'))).toBe(false);
+  });
+
+  it('syncs the owner ID input and the agent filter tags in both directions', async () => {
+    server.use(
+      agentListHandler,
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/memories/grouped', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+      })),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+    const tagRow = await screen.findByTestId('memory-agent-filter-tags');
+    await vi.waitFor(() => {
+      expect(within(tagRow).getByText('AW测试工程师 (400131)')).toBeInTheDocument();
+    });
+
+    const ownerInput = screen.getByPlaceholderText('归属员工 ID');
+    await userEvent.type(ownerInput, '400131');
+
+    await vi.waitFor(() => {
+      expect(isCheckedTag(within(tagRow).getByText('AW测试工程师 (400131)'))).toBe(true);
+    });
+    expect(isCheckedTag(within(tagRow).getByText('全部'))).toBe(false);
+
+    fireEvent.click(within(tagRow).getByText('AW全栈开发 (400130)'));
+
+    await vi.waitFor(() => {
+      expect((ownerInput as HTMLInputElement).value).toBe('400130');
+    });
+    expect(isCheckedTag(within(tagRow).getByText('AW全栈开发 (400130)'))).toBe(true);
+  });
 });

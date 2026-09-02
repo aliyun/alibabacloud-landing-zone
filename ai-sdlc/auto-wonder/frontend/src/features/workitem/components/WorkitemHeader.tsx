@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Typography, Tag, Space } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
+import { ScheduledExecutionBadge } from './ScheduledExecutionBadge';
 
 const { Title } = Typography;
 
@@ -14,9 +15,13 @@ interface WorkitemHeaderProps {
   title: string;
   statusName: string | null;
   workType: string;
+  origin?: { type: string; id: number; scheduledTaskId?: number | null; scheduledTaskName?: string | null } | null;
+  scheduledStartAt?: string | null;
+  scheduledStartTriggeredAt?: string | null;
+  gmtCreate?: string | null;
 }
 
-export function WorkitemHeader({ title, statusName, workType }: WorkitemHeaderProps) {
+export function WorkitemHeader({ title, statusName, workType, origin, scheduledStartAt, scheduledStartTriggeredAt, gmtCreate }: WorkitemHeaderProps) {
   const navigate = useNavigate();
 
   return (
@@ -40,7 +45,18 @@ export function WorkitemHeader({ title, statusName, workType }: WorkitemHeaderPr
         >
           {TYPE_MAP[workType] || workType}
         </Tag>
+        <ScheduledExecutionBadge
+          scheduledStartAt={scheduledStartAt}
+          scheduledStartTriggeredAt={scheduledStartTriggeredAt}
+          origin={origin}
+          gmtCreate={gmtCreate}
+        />
       </Space>
+      {origin?.type === 'SCHEDULED_TASK_RUN' && origin.id ? (
+        <Typography.Link href={`/scheduled-task-runs/${origin.id}`} style={{ display: 'inline-block', marginTop: 8 }}>
+          来自 7×24 Task {origin.scheduledTaskName || origin.scheduledTaskId || ''} / Run #{origin.id}
+        </Typography.Link>
+      ) : null}
     </div>
   );
 }

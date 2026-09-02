@@ -26,4 +26,9 @@ public class WorkitemDO {
     private Long modifierId;
     private Integer isDeleted;
     private Integer version;
+    private String originType;
+    private Long originId;
+    private Date scheduledStartAt;
+    private Date scheduledStartTriggeredAt;
+    private String tags;
 }

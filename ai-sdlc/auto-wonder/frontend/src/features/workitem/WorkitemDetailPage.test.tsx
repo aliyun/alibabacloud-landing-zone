@@ -147,6 +147,11 @@ function renderPage(id = '1') {
   );
 }
 
+// jsdom 没有 PointerEvent 构造器，fireEvent.pointer* 会丢失坐标，用 MouseEvent 派生 pointer 事件
+function firePointer(type: 'pointerdown' | 'pointermove' | 'pointerup', target: HTMLElement, coords: { clientX?: number; clientY?: number } = {}) {
+  fireEvent(target, new MouseEvent(type, { bubbles: true, cancelable: true, ...coords }));
+}
+
 describe('WorkitemDetailPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
@@ -286,7 +291,7 @@ describe('WorkitemDetailPage', () => {
     expect(result[0].name).toBe('requirements/plan.md');
   });
 
-  it('rejects non-markdown requirement documents before upload', async () => {
+  it('rejects unsupported requirement documents before upload', async () => {
     let uploadRequested = false;
     server.use(
       http.post('/api/workitems/1/requirement-documents', () => {
@@ -298,10 +303,47 @@ describe('WorkitemDetailPage', () => {
     renderPage();
 
     const input = await screen.findByLabelText('选择需求/设计上下文文件');
-    fireEvent.change(input, { target: { files: [new File(['plain'], 'notes.txt', { type: 'text/plain' })] } });
+    fireEvent.change(input, { target: { files: [new File(['archive'], 'notes.docx', { type: 'application/vnd.word' })] } });
 
-    expect(await screen.findByText('仅支持上传 .md、.markdown、.png、.jpg、.jpeg、.webp 文件')).toBeInTheDocument();
+    expect(await screen.findByText('仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp 文件')).toBeInTheDocument();
     expect(uploadRequested).toBe(false);
+  });
+
+  it('accepts txt, html and pdf requirement documents and uploads them', async () => {
+    let uploadRequested = false;
+    const uploadedDocument = {
+      id: '23', workitemId: '1', dispatchId: null, name: 'requirements/notes.txt',
+      type: 'REQUIREMENT_DOC', size: 5, gmtCreate: '2026-08-28T12:30:00Z',
+    };
+    server.use(
+      http.get('/api/workitems/1/requirement-documents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: uploadRequested ? [uploadedDocument] : [],
+      })),
+      http.post('/api/workitems/1/requirement-documents', () => {
+        uploadRequested = true;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: [uploadedDocument],
+        });
+      }),
+      ...setupHandlers(),
+    );
+    renderPage();
+
+    const input = await screen.findByLabelText('选择需求/设计上下文文件');
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['plain'], 'notes.txt', { type: 'text/plain' }),
+          new File(['<html></html>'], 'prd.html', { type: 'text/html' }),
+          new File(['%PDF-1.4'], 'spec.pdf', { type: 'application/pdf' }),
+        ],
+      },
+    });
+
+    expect(await screen.findByText('notes.txt')).toBeInTheDocument();
+    expect(uploadRequested).toBe(true);
   });
 
   it('keeps requirement document commands visible but blocks a read-only member', async () => {
@@ -629,6 +671,58 @@ describe('WorkitemDetailPage', () => {
     expect(await screen.findByTestId('workitem-content-section')).toHaveStyle('border: 1px solid #e5e7eb');
     expect(screen.getByTestId('workitem-timeline-section')).toHaveStyle('border: 1px solid #e5e7eb');
     expect(screen.getByTestId('workitem-right-panel')).toHaveStyle('width: clamp(340px, 28vw, 420px)');
+  });
+
+  it('applies clarify width on the right panel container and bottom-anchors the clarify box', async () => {
+    server.use(
+      http.get('/api/workitems/1/clarification-conversations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/squads', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list: [], total: 0, pageNum: 1, pageSize: 100 },
+      })),
+      http.get('/api/squads/:squadId/members', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      ...setupHandlers(),
+    );
+    if (!Element.prototype.setPointerCapture) {
+      Element.prototype.setPointerCapture = vi.fn();
+    }
+    renderPage();
+    await screen.findByRole('heading', { name: '跨境支付重构' });
+
+    await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
+    const panel = await screen.findByTestId('workitem-right-panel');
+    // clarify 模式：右栏容器 flex column，box 底部锚定
+    expect(panel).toHaveStyle({ display: 'flex', flexDirection: 'column' });
+    const box = await screen.findByTestId('clarify-resize-box');
+    expect(box.style.marginTop).toBe('auto');
+
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 400 } as DOMRect);
+    const handle = await screen.findByTestId('resize-handle-horizontal');
+    firePointer('pointerdown', handle, { clientX: 500, clientY: 200 });
+    firePointer('pointermove', handle, { clientX: 440, clientY: 200 });
+    // 宽度作用在右栏容器层：400 + 60
+    expect(panel.style.width).toBe('460px');
+    firePointer('pointermove', handle, { clientX: 1200, clientY: 200 });
+    // 拖出范围钳制到下限 320px
+    expect(panel.style.width).toBe('320px');
+    firePointer('pointerup', handle, { clientX: 1200, clientY: 200 });
+
+    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    expect(screen.queryByTestId('resize-handle-horizontal')).not.toBeInTheDocument();
+    // jsdom 的 CSSOM 不接受 clamp() 赋值，默认宽度的恢复改为行为断言：
+    // 重新进入 clarify 后拖拽从默认测量宽度重新生效（宽度状态已重置）
+    expect(panel).toHaveStyle('display: block');
+
+    await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
+    const rehandle = await screen.findByTestId('resize-handle-horizontal');
+    firePointer('pointerdown', rehandle, { clientX: 500, clientY: 200 });
+    firePointer('pointermove', rehandle, { clientX: 440, clientY: 200 });
+    expect(panel.style.width).toBe('460px');
+    firePointer('pointerup', rehandle, { clientX: 440, clientY: 200 });
   });
 
   it('keeps the header, subtitle metadata, timeline, and comment composer comfortably spaced', async () => {
@@ -1320,6 +1414,18 @@ describe('WorkitemDetailPage', () => {
 
     await user.click(composer);
     expect(composer).toHaveAttribute('rows', '3');
+  });
+
+  it('links a derived workitem back to its scheduled run', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, origin: { type: 'SCHEDULED_TASK_RUN', id: 10482, scheduledTaskId: 901, scheduledTaskName: '主干夜间回归' } },
+      })),
+      ...setupHandlers(),
+    );
+    renderPage();
+    expect(await screen.findByRole('link', { name: /主干夜间回归.*Run #10482/ })).toHaveAttribute('href', '/scheduled-task-runs/10482');
   });
 
   it('assigns the workitem to a human user via the assign-to-human modal', async () => {

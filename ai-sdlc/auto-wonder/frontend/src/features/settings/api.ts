@@ -146,3 +146,33 @@ export async function updateMemberIdentityTags(
 export async function transferOwner(targetUserId: number): Promise<void> {
   await apiClient.post('/api/workspaces/current/owner/transfer', { targetUserId });
 }
+
+// --- Workspace Access Requests ---
+
+export interface AccessRequestVO {
+  id: number;
+  tenantId: number;
+  requesterId: number;
+  requesterName: string | null;
+  requestedLevel: WorkspaceAccessLevel;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewerId: number | null;
+  reviewerName: string | null;
+  rejectReason: string | null;
+  gmtCreate: string;
+}
+
+export async function listAccessRequests(status: string): Promise<AccessRequestVO[]> {
+  const resp = await apiClient.get<AccessRequestVO[]>('/api/workspaces/current/access-requests', {
+    params: { status },
+  });
+  return resp.data;
+}
+
+export async function approveAccessRequest(requestId: number): Promise<void> {
+  await apiClient.post(`/api/workspaces/current/access-requests/${requestId}/approve`);
+}
+
+export async function rejectAccessRequest(requestId: number, reason?: string): Promise<void> {
+  await apiClient.post(`/api/workspaces/current/access-requests/${requestId}/reject`, { reason });
+}

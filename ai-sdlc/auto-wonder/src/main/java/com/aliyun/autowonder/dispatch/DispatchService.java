@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
+import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDO;
@@ -20,6 +21,10 @@ import com.aliyun.autowonder.taskpackage.PackageContext;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskNotificationService;
+import org.springframework.context.annotation.Lazy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
@@ -63,6 +68,20 @@ public class DispatchService {
     private final ExecutorRegistry executorRegistry;
     private final EvolutionTelemetryEvidenceLiteService telemetryEvidenceService;
 	private final EvolutionTrialAssignmentLiteService trialAssignmentService;
+    private ScheduledTaskRunService scheduledTaskRunService;
+    private ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator;
+    private ScheduledTaskNotificationService scheduledTaskNotificationService;
+
+    @Autowired
+    public void setScheduledTaskRunService(ScheduledTaskRunService scheduledTaskRunService) {
+        this.scheduledTaskRunService = scheduledTaskRunService;
+    }
+    @Autowired
+    public void setScheduledTaskRunOrchestrator(@Lazy ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator) {
+        this.scheduledTaskRunOrchestrator = scheduledTaskRunOrchestrator;
+    }
+    @Autowired(required = false)
+    public void setScheduledTaskNotificationService(ScheduledTaskNotificationService service) { this.scheduledTaskNotificationService = service; }
 
     private static final Set<String> EXECUTOR_FAILURE_CATEGORIES = Set.of(
             "agent_error.provider_auth_or_access",
@@ -146,14 +165,14 @@ public class DispatchService {
 				redisManager, checkpointService, null, null, null, null);
     }
 
-    public boolean hasDurableCheckpoint(long tenantId, long dispatchId,
+    public boolean hasDurableCheckpoint(long workspaceId, long dispatchId,
             long checkpointSeq, String checkpointSha256) {
         return checkpointService != null && checkpointService.matchesDurableReceipt(
-                tenantId, dispatchId, checkpointSeq, checkpointSha256);
+                workspaceId, dispatchId, checkpointSeq, checkpointSha256);
     }
 
-    public boolean hasResumableSession(long tenantId, long dispatchId) {
-        return checkpointService != null && checkpointService.hasResumableSession(tenantId, dispatchId);
+    public boolean hasResumableSession(long workspaceId, long dispatchId) {
+        return checkpointService != null && checkpointService.hasResumableSession(workspaceId, dispatchId);
     }
 
     DispatchService(DispatchDao dispatchDao, DispatchRuntimeEventDao runtimeEventDao,
@@ -167,32 +186,55 @@ public class DispatchService {
     }
 
     /** Idempotent on (workitemId, sdlcStepId, attempt). Returns existing or a new PENDING row. */
-    public DispatchDO enqueue(long tenantId, long workitemId, long sdlcStepId, long agentId,
+    public DispatchDO enqueue(long workspaceId, long workitemId, long sdlcStepId, long agentId,
             int attempt, long userId) {
-        String idem = idempotencyKey(workitemId, sdlcStepId, attempt);
-        DispatchDO existing = dispatchDao.findByIdempotencyKey(tenantId, idem);
+        return enqueueSubject(workspaceId, ExecutionSourceType.WORKITEM, workitemId,
+                sdlcStepId, agentId, attempt, userId);
+    }
+
+    /** Idempotent on the complete execution subject, step (or root), and attempt. */
+    public DispatchDO enqueueSubject(long workspaceId, ExecutionSourceType sourceType,
+            long sourceId, Long sdlcStepId, long agentId, int attempt, long creatorId) {
+        Objects.requireNonNull(sourceType, "sourceType");
+        if (sourceType == ExecutionSourceType.SCHEDULED_TASK) {
+            throw new IllegalArgumentException("scheduled task definitions are not executable subjects");
+        }
+        if (sourceType == ExecutionSourceType.WORKITEM && sdlcStepId == null) {
+            throw new IllegalArgumentException("workitem dispatch requires an SDLC step");
+        }
+        String idem = idempotencyKey(sourceType, sourceId, sdlcStepId, attempt);
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+        String alternateWorkitemKey = sourceType == ExecutionSourceType.WORKITEM
+                ? ExecutionSourceType.WORKITEM.name() + ":" + idem : null;
+        if (existing == null && alternateWorkitemKey != null) {
+            existing = dispatchDao.findByIdempotencyKey(workspaceId, alternateWorkitemKey);
+        }
         if (existing != null) {
             log.info("dispatch enqueue idempotent hit key={}", idem);
             return existing;
         }
         DispatchDO d = new DispatchDO();
-        d.setTenantId(tenantId);
-        d.setWorkitemId(workitemId);
+        d.setTenantId(workspaceId);
+        d.setSourceType(sourceType.name());
+        d.setWorkitemId(sourceId);
         d.setSdlcStepId(sdlcStepId);
         d.setAgentId(agentId);
         d.setStatus(DispatchStatus.PENDING);
         d.setAttempt(attempt);
         d.setIdempotencyKey(idem);
-        d.setCreatorId(userId);
-        d.setModifierId(userId);
+        d.setCreatorId(creatorId);
+        d.setModifierId(creatorId);
         d.setVersion(0);
         try {
             dispatchDao.insert(d);
             log.info("dispatch enqueued dispatchId={} workitemId={} stepId={} agentId={} attempt={}",
-                    d.getId(), workitemId, sdlcStepId, agentId, attempt);
+                    d.getId(), sourceId, sdlcStepId, agentId, attempt);
             return d;
         } catch (DuplicateKeyException race) {
-            DispatchDO winner = dispatchDao.findByIdempotencyKey(tenantId, idem);
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+            if (winner == null && alternateWorkitemKey != null) {
+                winner = dispatchDao.findByIdempotencyKey(workspaceId, alternateWorkitemKey);
+            }
             if (winner == null) {
                 throw race;
             }
@@ -200,27 +242,71 @@ public class DispatchService {
         }
     }
 
+    /**
+     * Persists the immutable version selected by a Scheduled Run snapshot before the row can be driven.
+     * A scheduled dispatch is never allowed to silently fall back to an Agent's current online version.
+     */
+    public void pinScheduledAgentVersion(long dispatchId, long workspaceId, long agentVersionId) {
+        DispatchDO dispatch = dispatchDao.findById(dispatchId);
+        if (dispatch == null || !Objects.equals(dispatch.getTenantId(), workspaceId)
+                || dispatch.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN
+                || dispatch.getAgentId() == null || agentVersionId <= 0) {
+            throw new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+                    "scheduled dispatch cannot be pinned to its frozen agent version");
+        }
+        // A recovery can encounter an already-delivered row after a process crash.
+        // That is safe only when its immutable pin is exactly the requested one;
+        // accepting a different existing pin would silently execute the wrong Run ledger.
+        if (Objects.equals(dispatch.getAgentVersionId(), agentVersionId)) {
+            return;
+        }
+        if (dispatch.getAgentVersionId() != null) {
+            throw pinLost(dispatchId);
+        }
+        int rows = dispatchDao.pinScheduledAgentVersion(dispatchId, workspaceId, dispatch.getAgentId(),
+                agentVersionId, SYSTEM_USER_ID);
+        if (rows == 1) {
+            dispatch.setAgentVersionId(agentVersionId);
+            return;
+        }
+        // The NULL-only PENDING update deliberately loses races with delivery and
+        // other schedulers. Re-read to separate an equal winner from a true loss.
+        DispatchDO current = dispatchDao.findById(dispatchId);
+        if (current != null && Objects.equals(current.getTenantId(), workspaceId)
+                && current.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                && Objects.equals(current.getAgentVersionId(), agentVersionId)) {
+            return;
+        }
+        throw pinLost(dispatchId);
+    }
+
+    private static BizException pinLost(long dispatchId) {
+        return new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+                "scheduled dispatch version pin was lost: dispatchId=" + dispatchId);
+    }
+
     /** Starts an assignment with a fresh attempt while remaining idempotent for the assignment write. */
-    public DispatchDO enqueueAssignment(long tenantId, long workitemId, long sdlcStepId, long agentId,
+    public DispatchDO enqueueAssignment(long workspaceId, long workitemId, long sdlcStepId, long agentId,
             int assignmentVersion, long userId) {
         String idem = "assignment:" + workitemId + ":" + sdlcStepId + ":" + agentId
                 + ":" + assignmentVersion;
-        DispatchDO existing = dispatchDao.findByIdempotencyKey(tenantId, idem);
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) {
             log.info("assignment enqueue idempotent hit key={}", idem);
             return existing;
         }
-        Integer maxAttempt = dispatchDao.findMaxAttempt(tenantId, workitemId, sdlcStepId);
+        Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId, sdlcStepId);
         int attempt = (maxAttempt == null ? 0 : maxAttempt) + 1;
         DispatchDO d = new DispatchDO();
-        d.setTenantId(tenantId);
+        d.setTenantId(workspaceId);
+        d.setSourceType(ExecutionSourceType.WORKITEM.name());
         d.setWorkitemId(workitemId);
         d.setSdlcStepId(sdlcStepId);
         d.setAgentId(agentId);
         d.setStatus(DispatchStatus.PENDING);
         d.setAttempt(attempt);
         d.setIdempotencyKey(idem);
-        DispatchDO previousFormal = latestFormalDispatch(tenantId, workitemId);
+        DispatchDO previousFormal = latestFormalDispatch(workspaceId, workitemId);
         if (previousFormal != null) {
             d.setDeliverySourceDispatchId(effectiveDeliverySource(previousFormal));
         }
@@ -233,7 +319,7 @@ public class DispatchService {
                     d.getId(), workitemId, sdlcStepId, agentId, attempt);
             return d;
         } catch (DuplicateKeyException race) {
-            DispatchDO winner = dispatchDao.findByIdempotencyKey(tenantId, idem);
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) {
                 throw race;
             }
@@ -242,18 +328,20 @@ public class DispatchService {
     }
 
     /** Idempotent on the source dispatch and allocates a fresh attempt for a worker handoff. */
-    public DispatchDO enqueueHandoff(long tenantId, long workitemId, long sdlcStepId, long agentId,
+    public DispatchDO enqueueHandoff(long workspaceId, long workitemId, long sdlcStepId, long agentId,
             long sourceDispatchId, long userId) {
+        requireWorkitemDispatch(workspaceId, workitemId, sourceDispatchId);
         String idem = handoffIdempotencyKey(sourceDispatchId);
-        DispatchDO existing = dispatchDao.findByIdempotencyKey(tenantId, idem);
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) {
             log.info("handoff enqueue idempotent hit key={}", idem);
             return existing;
         }
-        Integer maxAttempt = dispatchDao.findMaxAttempt(tenantId, workitemId, sdlcStepId);
+        Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId, sdlcStepId);
         int attempt = (maxAttempt == null ? 0 : maxAttempt) + 1;
         DispatchDO d = new DispatchDO();
-        d.setTenantId(tenantId);
+        d.setTenantId(workspaceId);
+        d.setSourceType(ExecutionSourceType.WORKITEM.name());
         d.setWorkitemId(workitemId);
         d.setSdlcStepId(sdlcStepId);
         d.setAgentId(agentId);
@@ -261,7 +349,7 @@ public class DispatchService {
         d.setAttempt(attempt);
         d.setIdempotencyKey(idem);
         d.setDeliverySourceDispatchId(sourceDispatchId);
-        DispatchDO priorWorkerDispatch = latestResumableWorkerDispatch(tenantId, workitemId, agentId);
+        DispatchDO priorWorkerDispatch = latestResumableWorkerDispatch(workspaceId, workitemId, agentId);
         if (priorWorkerDispatch != null) {
             d.setResumeFromDispatchId(priorWorkerDispatch.getId());
             d.setResumeMode("RETURNING_WORKER");
@@ -275,7 +363,7 @@ public class DispatchService {
                     d.getId(), sourceDispatchId, attempt);
             return d;
         } catch (DuplicateKeyException race) {
-            DispatchDO winner = dispatchDao.findByIdempotencyKey(tenantId, idem);
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) {
                 throw race;
             }
@@ -283,26 +371,99 @@ public class DispatchService {
         }
     }
 
-    private DispatchDO latestResumableWorkerDispatch(long tenantId, long workitemId, long agentId) {
+    private DispatchDO latestResumableWorkerDispatch(long workspaceId, long workitemId, long agentId) {
         if (checkpointService == null) {
             return null;
         }
         List<DispatchDO> candidates = dispatchDao.listLatestByWorkitemAndAgent(
-                tenantId, workitemId, agentId, MAX_SESSION_CANDIDATES);
+                workspaceId, workitemId, agentId, MAX_SESSION_CANDIDATES);
         if (candidates == null) {
             return null;
         }
         for (DispatchDO candidate : candidates) {
             if (candidate != null && candidate.getId() != null
-                    && checkpointService.hasResumableSession(tenantId, candidate.getId())) {
+                    && checkpointService.hasResumableSession(workspaceId, candidate.getId())) {
                 return candidate;
             }
         }
         return null;
     }
 
-    public DispatchDO findHandoffBySource(long tenantId, long sourceDispatchId) {
-        return dispatchDao.findByIdempotencyKey(tenantId, handoffIdempotencyKey(sourceDispatchId));
+    public DispatchDO findHandoffBySource(long workspaceId, long sourceDispatchId) {
+        return dispatchDao.findByIdempotencyKey(workspaceId, handoffIdempotencyKey(sourceDispatchId));
+    }
+
+    /** Durable source-keyed handoff for a Scheduled Run. */
+    public DispatchDO enqueueScheduledHandoff(long workspaceId, long runId, Long stepId, long agentId,
+            long sourceDispatchId, int attempt, long userId) {
+        String idem = handoffIdempotencyKey(sourceDispatchId);
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+        if (existing != null) return existing;
+        DispatchDO d = new DispatchDO();
+        d.setTenantId(workspaceId); d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        d.setWorkitemId(runId); d.setSdlcStepId(stepId); d.setAgentId(agentId); d.setStatus(DispatchStatus.PENDING);
+        d.setAttempt(attempt); d.setIdempotencyKey(idem); d.setDeliverySourceDispatchId(sourceDispatchId);
+        d.setCreatorId(userId); d.setModifierId(userId); d.setVersion(0);
+        try { dispatchDao.insert(d); return d; }
+        catch (DuplicateKeyException race) { DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem); if (winner == null) throw race; return winner; }
+    }
+
+    /**
+     * Builds a new immutable scheduled-run Dispatch from a previous Run's
+     * checkpoint lineage. CONTINUOUS preserves native-session affinity; the
+     * degraded form deliberately carries checkpoints only.
+     */
+    public DispatchDO enqueueScheduledResume(long workspaceId, long runId, Long stepId, long agentId,
+            int attempt, long sourceDispatchId, boolean degraded, long userId) {
+        // A degraded checkpoint recovery replaces a fenced native-session row;
+        // it must never idempotently return that canceled row.
+        String idem = "scheduled-resume:" + runId + ":" + sourceDispatchId
+                + (degraded ? ":degraded" : ":native");
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+        if (existing != null) return existing;
+        DispatchDO d = new DispatchDO();
+        d.setTenantId(workspaceId); d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        d.setWorkitemId(runId); d.setSdlcStepId(stepId); d.setAgentId(agentId);
+        d.setStatus(DispatchStatus.PENDING); d.setAttempt(attempt); d.setIdempotencyKey(idem);
+        d.setResumeFromDispatchId(sourceDispatchId);
+        d.setResumeMode(degraded ? "DEGRADED_CONTINUOUS" : "CONTINUOUS");
+        d.setCreatorId(userId); d.setModifierId(userId); d.setVersion(0);
+        try { dispatchDao.insert(d); return d; }
+        catch (DuplicateKeyException race) {
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+            if (winner == null) throw race;
+            return winner;
+        }
+    }
+
+    public List<DispatchDO> listBySource(long workspaceId, ExecutionSourceType sourceType, long sourceId) {
+        return dispatchDao.listBySource(workspaceId, sourceType.name(), sourceId);
+    }
+
+    /** Visible recovery seam: compensation records a source-executor timeout before fallback. */
+    public void degradeResume(long runId, long sourceDispatchId, String reason, long workspaceId) {
+        log.info("scheduled resume degraded runId={} sourceDispatchId={} reason={} workspaceId={}",
+                runId, sourceDispatchId, reason, workspaceId);
+    }
+
+    /** Fence an undelivered native-session resume before a checkpoint-only fallback is created. */
+    public boolean fencePendingContinuousResume(long workspaceId, long runId) {
+        List<DispatchDO> rows = dispatchDao.listBySource(workspaceId,
+                ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId);
+        if (rows == null) return true;
+        for (DispatchDO row : rows) {
+            if (row == null || !"CONTINUOUS".equals(row.getResumeMode())) continue;
+            if (DispatchStatus.CANCELED.equals(row.getStatus())) continue;
+            if (!DispatchStatus.PENDING.equals(row.getStatus())
+                    || !transition(row, DispatchStatus.CANCELED, null, null, null, null,
+                    "SOURCE_EXECUTOR_TIMEOUT")) {
+                // A concurrent delivery may have won the CAS. Re-read it before
+                // allowing a replacement; concurrent native and degraded Runs are unsafe.
+                DispatchDO current = row.getId() == null ? null : dispatchDao.findById(row.getId());
+                if (current == null || !DispatchStatus.CANCELED.equals(current.getStatus())) return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -310,12 +471,12 @@ public class DispatchService {
      * repetitions for the same directed worker edge. A user-triggered COMMENT_REWORK
      * starts a new delivery segment and resets the counter.
      */
-    public boolean hasReachedAutomaticHandoffLimit(long tenantId, long workitemId,
+    public boolean hasReachedAutomaticHandoffLimit(long workspaceId, long workitemId,
             long sourceDispatchId, long targetAgentId, int maxRepeats) {
         if (maxRepeats <= 0) {
             return true;
         }
-        List<DispatchDO> rows = dispatchDao.listByWorkitem(tenantId, workitemId);
+        List<DispatchDO> rows = dispatchDao.listByWorkitem(workspaceId, workitemId);
         if (rows == null || rows.isEmpty()) {
             return false;
         }
@@ -364,17 +525,20 @@ public class DispatchService {
     }
 
     /** Starts one comment turn, either as an isolated active-turn fork or on the worker's canonical session. */
-    public DispatchDO enqueueCommentInteraction(long tenantId, long workitemId, long agentId,
+    public DispatchDO enqueueCommentInteraction(long workspaceId, long workitemId, long agentId,
             Long sourceDispatchId, boolean forkSourceSession, Long sdlcStepId,
             long guidanceId, long userId) {
+        DispatchDO validatedSource = sourceDispatchId == null ? null
+                : requireWorkitemDispatch(workspaceId, workitemId, sourceDispatchId);
         String idem = "guidance:" + guidanceId;
-        DispatchDO existing = dispatchDao.findByIdempotencyKey(tenantId, idem);
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) {
             return existing;
         }
-        Integer maxAttempt = dispatchDao.findMaxAttempt(tenantId, workitemId, sdlcStepId);
+        Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId, sdlcStepId);
         DispatchDO interaction = new DispatchDO();
-        interaction.setTenantId(tenantId);
+        interaction.setTenantId(workspaceId);
+        interaction.setSourceType(ExecutionSourceType.WORKITEM.name());
         interaction.setWorkitemId(workitemId);
         interaction.setSdlcStepId(sdlcStepId);
         interaction.setAgentId(agentId);
@@ -382,9 +546,9 @@ public class DispatchService {
         interaction.setAttempt((maxAttempt == null ? 0 : maxAttempt) + 1);
         interaction.setIdempotencyKey(idem);
         interaction.setResumeFromDispatchId(sourceDispatchId);
-        DispatchDO deliverySource = sourceDispatchId == null
-                ? latestFormalDispatch(tenantId, workitemId)
-                : dispatchDao.findById(sourceDispatchId);
+        DispatchDO deliverySource = validatedSource == null
+                ? latestFormalDispatch(workspaceId, workitemId)
+                : validatedSource;
         if (deliverySource != null) {
             interaction.setDeliverySourceDispatchId(effectiveDeliverySource(deliverySource));
         }
@@ -395,7 +559,7 @@ public class DispatchService {
         try {
             dispatchDao.insert(interaction);
         } catch (DuplicateKeyException race) {
-            DispatchDO winner = dispatchDao.findByIdempotencyKey(tenantId, idem);
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) {
                 throw race;
             }
@@ -404,18 +568,56 @@ public class DispatchService {
         return interaction;
     }
 
+    /** Source-safe counterpart for a scheduled Run; Runtime wire remains unchanged. */
+    public DispatchDO enqueueScheduledRunCommentInteraction(long workspaceId, long runId, long agentId,
+            Long sourceDispatchId, long guidanceId, long userId) {
+        String idem = "scheduled-run-guidance:" + guidanceId;
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+        if (existing != null) return existing;
+        Integer maxAttempt = dispatchDao.findMaxAttemptBySource(workspaceId,
+                ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId, null);
+        DispatchDO interaction = new DispatchDO();
+        interaction.setTenantId(workspaceId);
+        interaction.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        interaction.setWorkitemId(runId);
+        interaction.setAgentId(agentId);
+        interaction.setStatus(DispatchStatus.PENDING);
+        interaction.setAttempt((maxAttempt == null ? 0 : maxAttempt) + 1);
+        interaction.setIdempotencyKey(idem);
+        interaction.setResumeFromDispatchId(sourceDispatchId);
+        interaction.setResumeMode("CANONICAL_INTERACTION");
+        interaction.setCreatorId(userId);
+        interaction.setModifierId(userId);
+        interaction.setVersion(0);
+        try {
+            dispatchDao.insert(interaction);
+        } catch (DuplicateKeyException race) {
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
+            if (winner == null) throw race;
+            return winner;
+        }
+        return interaction;
+    }
+
     /** Queue a comment-triggered rework. It remains fenced until the active main dispatch is durably paused. */
-    public DispatchDO enqueueInteractionRework(long tenantId, long workitemId, long agentId,
+    public DispatchDO enqueueInteractionRework(long workspaceId, long workitemId, long agentId,
             long sdlcStepId, Long resumeFromDispatchId, long sourceInteractionDispatchId,
             Long waitForDispatchId, long userId) {
+        DispatchDO resumeSource = resumeFromDispatchId == null ? null
+                : requireWorkitemDispatch(workspaceId, workitemId, resumeFromDispatchId);
+        requireWorkitemDispatch(workspaceId, workitemId, sourceInteractionDispatchId);
+        if (waitForDispatchId != null) {
+            requireWorkitemDispatch(workspaceId, workitemId, waitForDispatchId);
+        }
         String idem = "interaction-rework:" + sourceInteractionDispatchId;
-        DispatchDO existing = dispatchDao.findByIdempotencyKey(tenantId, idem);
+        DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) {
             return existing;
         }
-        Integer maxAttempt = dispatchDao.findMaxAttempt(tenantId, workitemId, sdlcStepId);
+        Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId, sdlcStepId);
         DispatchDO rework = new DispatchDO();
-        rework.setTenantId(tenantId);
+        rework.setTenantId(workspaceId);
+        rework.setSourceType(ExecutionSourceType.WORKITEM.name());
         rework.setWorkitemId(workitemId);
         rework.setSdlcStepId(sdlcStepId);
         rework.setAgentId(agentId);
@@ -425,8 +627,7 @@ public class DispatchService {
         rework.setAttempt((maxAttempt == null ? 0 : maxAttempt) + 1);
         rework.setIdempotencyKey(idem);
         rework.setResumeFromDispatchId(resumeFromDispatchId);
-        DispatchDO deliverySource = resumeFromDispatchId == null
-                ? null : dispatchDao.findById(resumeFromDispatchId);
+        DispatchDO deliverySource = resumeSource;
         if (deliverySource != null) {
             rework.setDeliverySourceDispatchId(effectiveDeliverySource(deliverySource));
         }
@@ -438,7 +639,7 @@ public class DispatchService {
         try {
             dispatchDao.insert(rework);
         } catch (DuplicateKeyException race) {
-            DispatchDO winner = dispatchDao.findByIdempotencyKey(tenantId, idem);
+            DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) {
                 throw race;
             }
@@ -447,8 +648,8 @@ public class DispatchService {
         return rework;
     }
 
-    private DispatchDO latestFormalDispatch(long tenantId, long workitemId) {
-        List<DispatchDO> rows = dispatchDao.listByWorkitem(tenantId, workitemId);
+    private DispatchDO latestFormalDispatch(long workspaceId, long workitemId) {
+        List<DispatchDO> rows = dispatchDao.listByWorkitem(workspaceId, workitemId);
         if (rows == null) {
             return null;
         }
@@ -479,28 +680,31 @@ public class DispatchService {
     }
 
     /** Release one fenced comment rework. External dispatch starts only after its caller commits. */
-    public boolean releaseInteractionRework(long tenantId, long dispatchId) {
+    public boolean releaseInteractionRework(long workspaceId, long dispatchId) {
         DispatchDO candidate = dispatchDao.findById(dispatchId);
-        return candidate != null && candidate.getTenantId() == tenantId
+        return candidate != null && candidate.getTenantId() == workspaceId
+                && candidate.executionSourceType() == ExecutionSourceType.WORKITEM
                 && DispatchStatus.WAITING_FOR_PAUSE.equals(candidate.getStatus())
-                && dispatchDao.updateStatus(candidate.getId(), tenantId, DispatchStatus.PENDING,
+                && dispatchDao.updateStatus(candidate.getId(), workspaceId, DispatchStatus.PENDING,
                 null, null, null, null, null, candidate.getVersion(), 0L) == 1;
     }
 
     /** Supersede a fenced rework that lost to a newer user comment or whose pause request failed. */
-    public boolean cancelWaitingInteractionRework(long tenantId, long dispatchId) {
+    public boolean cancelWaitingInteractionRework(long workspaceId, long dispatchId) {
         DispatchDO candidate = dispatchDao.findById(dispatchId);
-        return candidate != null && candidate.getTenantId() == tenantId
+        return candidate != null && candidate.getTenantId() == workspaceId
+                && candidate.executionSourceType() == ExecutionSourceType.WORKITEM
                 && DispatchStatus.WAITING_FOR_PAUSE.equals(candidate.getStatus())
-                && dispatchDao.updateStatus(candidate.getId(), tenantId, DispatchStatus.CANCELED,
+                && dispatchDao.updateStatus(candidate.getId(), workspaceId, DispatchStatus.CANCELED,
                 null, null, null, null, DispatchFailureReason.COMMENT_REWORK,
                 candidate.getVersion(), 0L) == 1;
     }
 
     /** Fence a lost pause once the executor heartbeat no longer reports this dispatch. */
-    public boolean cancelPauseFailedIfExecutorReleased(long tenantId, long dispatchId) {
+    public boolean cancelPauseFailedIfExecutorReleased(long workspaceId, long dispatchId) {
         DispatchDO current = dispatchDao.findById(dispatchId);
-        if (current == null || current.getTenantId() != tenantId
+        if (current == null || current.getTenantId() != workspaceId
+                || current.executionSourceType() != ExecutionSourceType.WORKITEM
                 || !DispatchStatus.PAUSE_FAILED.equals(current.getStatus())
                 || current.getExecutorId() == null
                 || executorRegistry.isDispatchActive(current.getExecutorId(), dispatchId)) {
@@ -511,10 +715,13 @@ public class DispatchService {
     }
 
     /** Cancel a not-yet-delivered main dispatch before a comment rework replaces it. */
-    public boolean cancelUndeliveredForInteraction(long tenantId, long dispatchId) {
+    public boolean cancelUndeliveredForInteraction(long workspaceId, long dispatchId) {
         for (int retry = 0; retry < 3; retry++) {
             DispatchDO current = dispatchDao.findById(dispatchId);
-            if (current == null || current.getTenantId() != tenantId) {
+            if (current == null || current.getTenantId() != workspaceId) {
+                return false;
+            }
+            if (current.executionSourceType() != ExecutionSourceType.WORKITEM) {
                 return false;
             }
             if (DispatchStatus.isTerminal(current.getStatus()) || DispatchStatus.PAUSED.equals(current.getStatus())) {
@@ -537,7 +744,7 @@ public class DispatchService {
      * is never reused, so delayed frames from the old executor cannot complete
      * the recovered run.
      */
-    public DispatchDO continueDispatch(long tenantId, long workitemId, long sourceDispatchId,
+    public DispatchDO continueDispatch(long workspaceId, long workitemId, long sourceDispatchId,
             long userId) {
         String lockKey = "dispatch:continue:" + sourceDispatchId;
         String lockOwner = UUID.randomUUID().toString();
@@ -546,11 +753,12 @@ public class DispatchService {
         }
         try {
             DispatchDO source = dispatchDao.findById(sourceDispatchId);
-            if (source == null || source.getTenantId() != tenantId
+            if (source == null || source.getTenantId() != workspaceId
+                    || source.executionSourceType() != ExecutionSourceType.WORKITEM
                     || source.getWorkitemId() != workitemId) {
                 throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
             }
-            DispatchDO latestForWorker = dispatchDao.listByWorkitem(tenantId, workitemId).stream()
+            DispatchDO latestForWorker = dispatchDao.listByWorkitem(workspaceId, workitemId).stream()
                     .filter(item -> java.util.Objects.equals(item.getAgentId(), source.getAgentId()))
                     .reduce((left, right) -> right)
                     .orElse(null);
@@ -558,7 +766,7 @@ public class DispatchService {
                 throw new BizException(ErrorCode.CONFLICT, "只能继续该 Worker 的最新一次执行");
             }
             String idem = "continue:" + sourceDispatchId;
-            DispatchDO existing = dispatchDao.findByIdempotencyKey(tenantId, idem);
+            DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (existing != null) {
                 return existing;
             }
@@ -570,10 +778,11 @@ public class DispatchService {
                             DispatchFailureReason.MANUAL_CONTINUE)) {
                 throw new BizException(ErrorCode.CONFLICT, "执行状态已变化，请刷新后重试");
             }
-            Integer maxAttempt = dispatchDao.findMaxAttempt(tenantId, workitemId,
+            Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId,
                     source.getSdlcStepId());
             DispatchDO recovery = new DispatchDO();
-            recovery.setTenantId(tenantId);
+            recovery.setTenantId(workspaceId);
+            recovery.setSourceType(ExecutionSourceType.WORKITEM.name());
             recovery.setWorkitemId(workitemId);
             recovery.setSdlcStepId(source.getSdlcStepId());
             recovery.setAgentId(source.getAgentId());
@@ -588,7 +797,7 @@ public class DispatchService {
             try {
                 dispatchDao.insert(recovery);
             } catch (DuplicateKeyException race) {
-                DispatchDO winner = dispatchDao.findByIdempotencyKey(tenantId, idem);
+                DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
                 if (winner == null) {
                     throw race;
                 }
@@ -625,19 +834,19 @@ public class DispatchService {
                 && dispatch.getGmtModified().getTime() < nowMillis - 120_000L;
     }
 
-    public DispatchCheckpointDO latestCheckpoint(long tenantId, long dispatchId) {
-        return checkpointService != null ? checkpointService.latest(tenantId, dispatchId) : null;
+    public DispatchCheckpointDO latestCheckpoint(long workspaceId, long dispatchId) {
+        return checkpointService != null ? checkpointService.latest(workspaceId, dispatchId) : null;
     }
 
-    public boolean mayRouteHandoff(long tenantId, long executorId, long dispatchId) {
-        DispatchDO dispatch = loadInboundRow(tenantId, executorId, dispatchId);
+    public boolean mayRouteHandoff(long workspaceId, long executorId, long dispatchId) {
+        DispatchDO dispatch = loadInboundRow(workspaceId, executorId, dispatchId);
         return dispatch != null && DispatchStatus.SUCCEEDED.equals(dispatch.getStatus())
                 && !isInteractionDispatch(dispatch);
     }
 
     /** A comment-triggered rework is a newer authoritative delivery revision. */
-    public boolean isSupersededByInteractionRework(long tenantId, long workitemId, long sourceDispatchId) {
-        return dispatchDao.listByWorkitem(tenantId, workitemId).stream()
+    public boolean isSupersededByInteractionRework(long workspaceId, long workitemId, long sourceDispatchId) {
+        return dispatchDao.listByWorkitem(workspaceId, workitemId).stream()
                 .filter(Objects::nonNull)
                 .anyMatch(row -> row.getId() != null && row.getId() > sourceDispatchId
                         && "COMMENT_REWORK".equals(row.getResumeMode())
@@ -659,15 +868,29 @@ public class DispatchService {
             if (d == null || !DispatchStatus.PENDING.equals(d.getStatus())) {
                 return false;
             }
-            long tenantId = d.getTenantId();
+            long workspaceId = d.getTenantId();
 
             AgentDO agent = agentDao.findById(d.getAgentId());
-            if (agent == null || tenantId != agent.getTenantId() || agent.getOnlineVersionId() == null) {
+            if (agent == null || workspaceId != agent.getTenantId()) {
                 log.info("dispatch pending dispatchId={} reason=AGENT_NOT_PUBLISHED", d.getId());
                 return false;
             }
-            AgentVersionDO version = agentVersionDao.findById(agent.getOnlineVersionId());
-            if (version == null || tenantId != version.getTenantId()) {
+            boolean scheduledRun = d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN;
+            Long selectedVersionId = scheduledRun ? d.getAgentVersionId() : agent.getOnlineVersionId();
+            if (selectedVersionId == null || selectedVersionId <= 0) {
+                if (scheduledRun) {
+                    failAndDrive(d, "SCHEDULED_TASK_INVALID_STATE(30005): frozen agent version is missing");
+                } else {
+                    log.info("dispatch pending dispatchId={} reason=AGENT_NOT_PUBLISHED", d.getId());
+                }
+                return false;
+            }
+            AgentVersionDO version = agentVersionDao.findById(selectedVersionId);
+            if (version == null || workspaceId != version.getTenantId()
+                    || !Objects.equals(version.getAgentId(), d.getAgentId())) {
+                if (scheduledRun) {
+                    failAndDrive(d, "SCHEDULED_TASK_INVALID_STATE(30005): frozen agent version is invalid");
+                }
                 log.info("dispatch pending dispatchId={} reason=AGENT_VERSION_NOT_FOUND", d.getId());
                 return false;
             }
@@ -681,7 +904,10 @@ public class DispatchService {
             Long executorId;
             try {
                 Long preferredExecutorId = preferredResumeExecutor(d);
-                if (isInteractionDispatch(d)) {
+                if ("CONTINUOUS".equals(d.getResumeMode()) && preferredExecutorId != null) {
+                    // Do not fall through to a different executor: its local provider session is invalid.
+                    executorId = executorSelector.selectStrict(d.getAgentId(), preferredExecutorId);
+                } else if (isInteractionDispatch(d)) {
                     executorId = executorSelector.selectForInteraction(d.getAgentId(), preferredExecutorId);
                 } else {
                     executorId = preferredExecutorId == null
@@ -757,6 +983,7 @@ public class DispatchService {
     private Long preferredResumeExecutor(DispatchDO dispatch) {
         if (dispatch == null || dispatch.getResumeFromDispatchId() == null
                 || !("RETURNING_WORKER".equals(dispatch.getResumeMode())
+                    || "CONTINUOUS".equals(dispatch.getResumeMode())
                     || "SIDE_INTERACTION".equals(dispatch.getResumeMode())
                     || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode()))) {
             return null;
@@ -764,11 +991,28 @@ public class DispatchService {
         DispatchDO source = dispatchDao.findById(dispatch.getResumeFromDispatchId());
         if (source == null
                 || !Objects.equals(dispatch.getTenantId(), source.getTenantId())
-                || !Objects.equals(dispatch.getWorkitemId(), source.getWorkitemId())
+                || dispatch.executionSourceType() != source.executionSourceType()
+                || (!"CONTINUOUS".equals(dispatch.getResumeMode())
+                    && !Objects.equals(dispatch.getWorkitemId(), source.getWorkitemId()))
                 || !Objects.equals(dispatch.getAgentId(), source.getAgentId())) {
             return null;
         }
         return source.getExecutorId();
+    }
+
+    private DispatchDO requireWorkitemDispatch(long workspaceId, long workitemId, long dispatchId) {
+        DispatchDO dispatch = dispatchDao.findById(dispatchId);
+        if (dispatch == null
+                || !Long.valueOf(workspaceId).equals(dispatch.getTenantId())
+                || dispatch.executionSourceType() != ExecutionSourceType.WORKITEM
+                || !Long.valueOf(workitemId).equals(dispatch.getWorkitemId())) {
+            throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
+        }
+        return dispatch;
+    }
+
+    void requireWorkitemDispatchBoundary(long workspaceId, long workitemId, long dispatchId) {
+        requireWorkitemDispatch(workspaceId, workitemId, dispatchId);
     }
 
     /** Fill currently available capacity from the durable oldest-first PENDING queue. */
@@ -786,8 +1030,12 @@ public class DispatchService {
 
     // ---- shared helpers (used by Tasks 11/12 as well) ----
 
-    static String idempotencyKey(long workitemId, long sdlcStepId, int attempt) {
-        return workitemId + ":" + sdlcStepId + ":" + attempt;
+    static String idempotencyKey(ExecutionSourceType sourceType, long sourceId,
+            Long sdlcStepId, int attempt) {
+        String subject = sourceId + ":"
+                + (sdlcStepId == null ? "root" : sdlcStepId) + ":" + attempt;
+        return sourceType == ExecutionSourceType.WORKITEM
+                ? subject : sourceType.name() + ":" + subject;
     }
 
     static String handoffIdempotencyKey(long sourceDispatchId) {
@@ -815,7 +1063,17 @@ public class DispatchService {
         if (!transition(d, DispatchStatus.FAILED, null, null, null, null, reason)) {
             return; // lost optimistic race; the winner drives
         }
-        sdlcDriver.onFail(d.getTenantId(), d.getWorkitemId(), d.getSdlcStepId());
+        if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            completeScheduledRun(d, false, null, reason);
+        } else {
+            sdlcDriver.onFail(d.getTenantId(), d.getWorkitemId(), d.getSdlcStepId());
+        }
+    }
+
+    private void completeScheduledRun(DispatchDO dispatch, boolean success, String summary, String error) {
+        if (scheduledTaskRunService != null) {
+            scheduledTaskRunService.completeFromDispatch(dispatch, success, summary, error);
+        }
     }
 
     private static <T extends Throwable> T findCause(Throwable failure, Class<T> type) {
@@ -830,6 +1088,11 @@ public class DispatchService {
     }
 
     private static boolean isPermanentPackageInputFailure(Throwable failure) {
+        BizException businessFailure = findCause(failure, BizException.class);
+        if (businessFailure != null
+                && ErrorCode.SCHEDULED_TASK_INVALID_STATE.getCode().equals(businessFailure.getCode())) {
+            return true;
+        }
         if (findCause(failure, IllegalArgumentException.class) != null) {
             return true;
         }
@@ -860,10 +1123,23 @@ public class DispatchService {
         return d;
     }
 
+    /**
+     * Resolves the durable execution subject for an inbound runtime artifact.
+     * Runtime frames still contain the historical {@code workitemId} field, so
+     * that value must never choose the persistence owner for a scheduled Run.
+     */
+    public ArtifactOwnerRef artifactOwnerForInbound(long workspaceId, long dispatchId) {
+        DispatchDO dispatch = loadInboundRow(workspaceId, dispatchId);
+        if (dispatch == null || dispatch.getWorkitemId() == null || dispatch.getWorkitemId() <= 0) {
+            return null;
+        }
+        return new ArtifactOwnerRef(dispatch.executionSourceType(), dispatch.getWorkitemId());
+    }
+
     /** DISPATCHED -> ACKED. Idempotent; ignores terminal/foreign-tenant rows. */
-    public void onAck(long tenantId, long dispatchId) {
+    public void onAck(long workspaceId, long dispatchId) {
         log.info("dispatch onAck dispatchId={}", dispatchId);
-        DispatchDO d = loadInboundRow(tenantId, dispatchId);
+        DispatchDO d = loadInboundRow(workspaceId, dispatchId);
         if (d == null || DispatchStatus.isTerminal(d.getStatus())) {
             return;
         }
@@ -873,15 +1149,15 @@ public class DispatchService {
     }
 
     /** ACKED -> RUNNING. Idempotent; no-op once RUNNING. */
-    public void onProgress(long tenantId, long dispatchId) {
-        onProgress(tenantId, dispatchId, null);
+    public void onProgress(long workspaceId, long dispatchId) {
+        onProgress(workspaceId, dispatchId, null);
     }
 
     /** ACKED -> RUNNING and persist runtime step/progress signals when provided. */
-    public void onProgress(long tenantId, long dispatchId, JSONObject frame) {
-        log.info("dispatch onProgress dispatchId={} tenantId={} frameKeys={}",
-                dispatchId, tenantId, frame != null ? frame.keySet() : "null");
-        DispatchDO d = loadInboundRow(tenantId, dispatchId);
+    public void onProgress(long workspaceId, long dispatchId, JSONObject frame) {
+        log.info("dispatch onProgress dispatchId={} workspaceId={} frameKeys={}",
+                dispatchId, workspaceId, frame != null ? frame.keySet() : "null");
+        DispatchDO d = loadInboundRow(workspaceId, dispatchId);
         if (d == null || DispatchStatus.isTerminal(d.getStatus())) {
             log.info("dispatch onProgress skip dispatchId={} reason={}", dispatchId,
                     d == null ? "NOT_FOUND" : "TERMINAL_" + d.getStatus());
@@ -889,7 +1165,10 @@ public class DispatchService {
         }
         recordRuntimeEvent(d, frame);
         if (DispatchStatus.ACKED.equals(d.getStatus()) || DispatchStatus.DISPATCHED.equals(d.getStatus())) {
-            transition(d, DispatchStatus.RUNNING, null, null, null, null, null);
+            if (transition(d, DispatchStatus.RUNNING, null, null, null, null, null)
+                    && scheduledTaskRunService != null) {
+                scheduledTaskRunService.markRunningFromDispatch(d);
+            }
         }
     }
 
@@ -931,6 +1210,9 @@ public class DispatchService {
         }
         event.setEventTime(detail.getDate("eventTime"));
         runtimeEventDao.insert(event);
+        if (scheduledTaskNotificationService != null && d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            scheduledTaskNotificationService.runtime(d.getTenantId(), d.getWorkitemId());
+        }
         recordAgentAudit(d, "RUNTIME_EVENT", eventType, "runtime.progress",
                 new JSONObject()
                         .fluentPut("stepId", event.getStepId())
@@ -1043,27 +1325,27 @@ public class DispatchService {
     }
 
     /** Terminal result. Idempotent; returns true when the authenticated owner may be ACKed. */
-    public boolean onResult(long tenantId, long dispatchId, boolean success,
+    public boolean onResult(long workspaceId, long dispatchId, boolean success,
             String resultSummary, String error) {
-        return onResult(tenantId, null, dispatchId, success, resultSummary, error);
+        return onResult(workspaceId, null, dispatchId, success, resultSummary, error);
     }
 
-    public boolean onResult(long tenantId, Long executorId, long dispatchId, boolean success,
+    public boolean onResult(long workspaceId, Long executorId, long dispatchId, boolean success,
             String resultSummary, String error) {
-        return onResult(tenantId, executorId, dispatchId, success, resultSummary, error, false);
+        return onResult(workspaceId, executorId, dispatchId, success, resultSummary, error, false);
     }
 
-    public boolean onResult(long tenantId, Long executorId, long dispatchId, boolean success,
+    public boolean onResult(long workspaceId, Long executorId, long dispatchId, boolean success,
             String resultSummary, String error, boolean workflowChanged) {
-        return onResult(tenantId, executorId, dispatchId, success, resultSummary, error,
+        return onResult(workspaceId, executorId, dispatchId, success, resultSummary, error,
                 workflowChanged, false);
     }
 
-    public boolean onResult(long tenantId, Long executorId, long dispatchId, boolean success,
+    public boolean onResult(long workspaceId, Long executorId, long dispatchId, boolean success,
             String resultSummary, String error, boolean workflowChanged,
             boolean explicitHandoff) {
         log.info("dispatch onResult dispatchId={} success={}", dispatchId, success);
-        DispatchDO d = loadInboundRow(tenantId, executorId, dispatchId);
+        DispatchDO d = loadInboundRow(workspaceId, executorId, dispatchId);
         if (d == null) {
             return false;
         }
@@ -1077,7 +1359,7 @@ public class DispatchService {
         }
         String terminal = success ? DispatchStatus.SUCCEEDED : DispatchStatus.FAILED;
         if (!transition(d, terminal, null, null, null, resultSummary, error)) {
-            DispatchDO winner = loadInboundRow(tenantId, executorId, dispatchId);
+            DispatchDO winner = loadInboundRow(workspaceId, executorId, dispatchId);
             return winner != null && DispatchStatus.isTerminal(winner.getStatus());
         }
 		if (success && executorId != null && executorRegistry != null) {
@@ -1090,6 +1372,26 @@ public class DispatchService {
                         .fluentPut("resultSummary", resultSummary)
                         .fluentPut("error", error));
         recordEvolutionTelemetryEvidence(d, success, resultSummary, error);
+        // Run guidance is a detached conversational turn.  It shares the Run
+        // owner solely for packaging/audit; it must not advance or terminalize
+        // the formal Run state machine.
+        if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                && isInteractionDispatch(d)) {
+            if (d.getAgentId() != null) drainPending(d.getAgentId());
+            return true;
+        }
+        if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                && !(success && explicitHandoff)) {
+            if (scheduledTaskRunOrchestrator != null) {
+                scheduledTaskRunOrchestrator.onDispatchResult(d, success, resultSummary, error);
+            } else {
+                completeScheduledRun(d, success, resultSummary, error);
+            }
+            if (d.getAgentId() != null) {
+                drainPending(d.getAgentId());
+            }
+            return true;
+        }
         // Detached comment turns report workflow effects through InteractionWorkflowService.
         // They must never drive the formal SDLC directly, otherwise the stale formal step can
         // hand off while a rework plan is pausing it and routing work back to an earlier worker.
@@ -1110,8 +1412,8 @@ public class DispatchService {
             return true;
         }
         DriveResult next = success
-                ? sdlcDriver.onSuccess(tenantId, d.getWorkitemId(), d.getSdlcStepId())
-                : sdlcDriver.onFail(tenantId, d.getWorkitemId(), d.getSdlcStepId());
+                ? sdlcDriver.onSuccess(workspaceId, d.getWorkitemId(), d.getSdlcStepId())
+                : sdlcDriver.onFail(workspaceId, d.getWorkitemId(), d.getSdlcStepId());
         act(d, next);
         if (d.getAgentId() != null) {
             drainPending(d.getAgentId());
@@ -1141,12 +1443,12 @@ public class DispatchService {
      * Treat a provider/account failure as executor infrastructure failover, not as an SDLC failure.
      * The same dispatch and step attempt are returned to PENDING so business retry budgets are untouched.
      */
-    public boolean onExecutorUnavailableResult(long tenantId, long executorId, long dispatchId,
+    public boolean onExecutorUnavailableResult(long workspaceId, long executorId, long dispatchId,
             String failureCategory, String error) {
         if (!isExecutorFailureCategory(failureCategory) || executorRegistry == null) {
             return false;
         }
-        DispatchDO current = loadInboundRow(tenantId, executorId, dispatchId);
+        DispatchDO current = loadInboundRow(workspaceId, executorId, dispatchId);
         if (current == null) {
             return false;
         }
@@ -1171,7 +1473,7 @@ public class DispatchService {
                     || DispatchStatus.PAUSE_FAILED.equals(current.getStatus())) {
                 return false;
             }
-            int rows = dispatchDao.returnOwnedActiveToPending(current.getId(), tenantId, executorId,
+            int rows = dispatchDao.returnOwnedActiveToPending(current.getId(), workspaceId, executorId,
                     current.getVersion(), SYSTEM_USER_ID);
             if (rows == 1) {
                 recordExecutorFailoverEvent(current, executorId, failureCategory, error);
@@ -1185,7 +1487,7 @@ public class DispatchService {
                 return true;
             }
             current = dispatchDao.findById(dispatchId);
-            if (current == null || current.getTenantId() != tenantId) {
+            if (current == null || current.getTenantId() != workspaceId) {
                 return false;
             }
         }
@@ -1215,6 +1517,9 @@ public class DispatchService {
         event.setDetailJson(detail.toJSONString());
         event.setEventTime(new java.util.Date());
         runtimeEventDao.insert(event);
+        if (scheduledTaskNotificationService != null && dispatch.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            scheduledTaskNotificationService.runtime(dispatch.getTenantId(), dispatch.getWorkitemId());
+        }
     }
 
     private long incrementSessionRecoveryFailures(long dispatchId) {
@@ -1289,25 +1594,25 @@ public class DispatchService {
         }
     }
 
-    private DispatchDO loadInboundRow(long tenantId, long dispatchId) {
-        return loadInboundRow(tenantId, null, dispatchId);
+    private DispatchDO loadInboundRow(long workspaceId, long dispatchId) {
+        return loadInboundRow(workspaceId, null, dispatchId);
     }
 
-    private DispatchDO loadInboundRow(long tenantId, Long executorId, long dispatchId) {
+    private DispatchDO loadInboundRow(long workspaceId, Long executorId, long dispatchId) {
         DispatchDO d = dispatchDao.findById(dispatchId);
-        if (d == null || tenantId != d.getTenantId()
+        if (d == null || workspaceId != d.getTenantId()
                 || (executorId != null && !executorId.equals(d.getExecutorId()))) {
             return null;
         }
         return d;
     }
 
-    public boolean onBusy(long tenantId, long executorId, long dispatchId) {
-        DispatchDO d = loadInboundRow(tenantId, executorId, dispatchId);
+    public boolean onBusy(long workspaceId, long executorId, long dispatchId) {
+        DispatchDO d = loadInboundRow(workspaceId, executorId, dispatchId);
         if (d == null || !DispatchStatus.DISPATCHED.equals(d.getStatus())) {
             return false;
         }
-        int rows = dispatchDao.returnDispatchedToPending(d.getId(), tenantId, executorId,
+        int rows = dispatchDao.returnDispatchedToPending(d.getId(), workspaceId, executorId,
                 d.getVersion(), SYSTEM_USER_ID);
         if (rows == 1) {
             log.info("dispatch returned to pending dispatchId={} executorId={} reason=AT_CAPACITY",
@@ -1317,13 +1622,13 @@ public class DispatchService {
         return false;
     }
 
-    public boolean returnPackagingToPending(long tenantId, long dispatchId) {
-        DispatchDO d = loadInboundRow(tenantId, dispatchId);
+    public boolean returnPackagingToPending(long workspaceId, long dispatchId) {
+        DispatchDO d = loadInboundRow(workspaceId, dispatchId);
         if (d == null || !DispatchStatus.PACKAGING.equals(d.getStatus())) {
             return false;
         }
         int rows = dispatchDao.returnPackagingToPending(
-                d.getId(), tenantId, d.getVersion(), SYSTEM_USER_ID);
+                d.getId(), workspaceId, d.getVersion(), SYSTEM_USER_ID);
         if (rows == 1) {
             log.info("dispatch packaging returned to pending dispatchId={}", dispatchId);
             return true;
@@ -1331,7 +1636,7 @@ public class DispatchService {
         return false;
     }
 
-    public void renewActiveLeases(long tenantId, long executorId, java.util.List<Long> dispatchIds) {
+    public void renewActiveLeases(long workspaceId, long executorId, java.util.List<Long> dispatchIds) {
         if (executorRegistry != null) {
             executorRegistry.updateRunningDispatches(executorId, dispatchIds);
         }
@@ -1343,7 +1648,7 @@ public class DispatchService {
         if (owned.size() > 50) {
             owned = owned.subList(0, 50);
         }
-        dispatchDao.touchOwnedActive(tenantId, executorId, owned);
+        dispatchDao.touchOwnedActive(workspaceId, executorId, owned);
     }
 
     /** Re-enqueue the same (workitem, step) at attempt+1 while budget remains; else hand to human. */
@@ -1361,9 +1666,9 @@ public class DispatchService {
     }
 
     /** Executor deadline exceeded: terminate as TIMEOUT and drive the fail branch. */
-    public void onTimeout(long tenantId, long dispatchId) {
+    public void onTimeout(long workspaceId, long dispatchId) {
         log.info("dispatch onTimeout dispatchId={}", dispatchId);
-        DispatchDO d = loadInboundRow(tenantId, dispatchId);
+        DispatchDO d = loadInboundRow(workspaceId, dispatchId);
         if (d == null || DispatchStatus.isTerminal(d.getStatus())) {
             return;
         }
@@ -1376,7 +1681,7 @@ public class DispatchService {
         if (!transition(d, DispatchStatus.TIMEOUT, null, null, null, null, DispatchFailureReason.TIMEOUT)) {
             return;
         }
-        sdlcDriver.onFail(tenantId, d.getWorkitemId(), d.getSdlcStepId());
+        sdlcDriver.onFail(workspaceId, d.getWorkitemId(), d.getSdlcStepId());
         if (d.getAgentId() != null) {
             drainPending(d.getAgentId());
         }

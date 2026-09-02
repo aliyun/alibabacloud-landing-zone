@@ -43,6 +43,22 @@ describe('MarkdownView', () => {
     });
   });
 
+  it('forces normal white-space so an inherited pre-wrap parent cannot create blank line gaps', () => {
+    const { container } = render(
+      <div style={{ whiteSpace: 'pre-wrap' }}>
+        <MarkdownView content={'段落一：目标明确。\n\n段落二：范围收敛。'} />
+      </div>,
+    );
+
+    // container 本身是 div，需多下钻一层才是 MarkdownView 根节点
+    const mdRoot = container.querySelector('div > div > div');
+    expect(mdRoot).not.toBeNull();
+    // jsdom 的 computed style 会省略默认值，直接断言内联声明
+    expect((mdRoot as HTMLElement).style.whiteSpace).toBe('normal');
+    expect(screen.getByText(/段落一：目标明确。/)).toBeInTheDocument();
+    expect(screen.getByText(/段落二：范围收敛。/)).toBeInTheDocument();
+  });
+
   it('renders a matched artifact path as a clickable link', async () => {
     const onArtifactClick = vi.fn();
     render(

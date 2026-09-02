@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -55,6 +56,32 @@ class WorkitemCommentMentionedListenerTest {
         assertEquals("AW项目管理员", task.getValue().actorDisplayName());
         assertEquals("COMMENT_MENTION", task.getValue().notificationType());
         assertEquals("@李四 请确认", task.getValue().commentContentMd());
+        assertFalse(task.getValue().isScheduledTaskRun());
+    }
+
+    @Test
+    void scheduledTaskRunMentionQueuesTaskWithScheduledTaskRunSourceType() {
+        Fixture fixture = new Fixture();
+        when(fixture.identityService.find(99L, "DINGTALK")).thenReturn(identity());
+        when(fixture.channelConfigService.isReady("DINGTALK")).thenReturn(true);
+
+        fixture.listener.onWorkitemCommentMentioned(new WorkitemCommentMentionedEvent(
+                100L,
+                500L,
+                "每日增量分析",
+                7001L,
+                99L,
+                "AGENT",
+                40014L,
+                "功能增量分析员",
+                "rid-1",
+                "@蔡何 分析完成",
+                WorkitemCommentMentionedEvent.SOURCE_SCHEDULED_TASK_RUN));
+
+        ArgumentCaptor<ImNotificationTask> task = ArgumentCaptor.forClass(ImNotificationTask.class);
+        verify(fixture.queue).enqueue(task.capture());
+        assertEquals(WorkitemCommentMentionedEvent.SOURCE_SCHEDULED_TASK_RUN, task.getValue().sourceType());
+        assertTrue(task.getValue().isScheduledTaskRun());
     }
 
     @Test

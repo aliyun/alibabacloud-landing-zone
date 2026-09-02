@@ -37,6 +37,8 @@ public class PackageContext {
 
     /** sdlc.json: agent-internal workflow steps and currentStepId */
     private Map<String, Object> sdlc;
+    /** Internal serialization policy; false preserves the legacy always-present sdlc.json. */
+    private boolean omitSdlcFileWhenAbsent;
 
     /** direct successful handoff predecessor only (nullable/empty) */
     private List<TeammateOutput> teammates;

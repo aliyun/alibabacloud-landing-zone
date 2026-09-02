@@ -190,13 +190,13 @@ public class McpAccessTokenService {
      * resolved per tool call from the caller's live membership in the requested workspace.
      * Task-scoped credentials stay pinned to the workspace they were issued for.
      */
-    public record Principal(Long tenantId, long userId, long tokenId,
+    public record Principal(Long workspaceId, long userId, long tokenId,
                             WorkspaceAccessLevel accessLevel,
                             CredentialType credentialType) {
 
         public Principal {
             boolean personal = credentialType == CredentialType.LONG_LIVED;
-            if (personal != (tenantId == null) || personal != (accessLevel == null)) {
+            if (personal != (workspaceId == null) || personal != (accessLevel == null)) {
                 throw new IllegalArgumentException(
                         "personal credentials carry no workspace, task-scoped ones must");
             }

@@ -72,6 +72,12 @@ class TaskPackagerTest {
         assertTrue(r.getSize() > 0);
         assertNotNull(r.getMd5());
         assertTrue(r.getDownloadUrl().contains("9001.zip"));
+        assertNull(r.getIssuer());
+        assertNull(r.getSignatureRef());
+        assertNull(r.getSignature());
+        assertNull(r.getSignatureAlgorithm());
+        assertNull(r.getSignaturePublicKey());
+        assertNull(r.getExpiresAt());
 
         Map<String, byte[]> entries = unzip(storage.get(r.getOssRef()));
         assertTrue(entries.containsKey("manifest.json"));
@@ -87,6 +93,9 @@ class TaskPackagerTest {
         assertEquals("9001", manifest.getString("dispatchId"));
         assertEquals("3", manifest.getString("workitemId"));
         assertEquals("8000", manifest.getString("sourceDispatchId"));
+        assertFalse(manifest.containsKey("issuer"));
+        assertFalse(manifest.containsKey("signatureRef"));
+        assertFalse(manifest.containsKey("expiresAt"));
     }
 
     @Test
@@ -94,6 +103,69 @@ class TaskPackagerTest {
         TaskPackageResult r = packager.build(baseCtx());
         Map<String, byte[]> entries = unzip(storage.get(r.getOssRef()));
         assertFalse(entries.containsKey("clarification.md"));
+    }
+
+    @Test
+    void legacyNullSdlcStillWritesEmptySdlcFile() throws Exception {
+        PackageContext context = baseCtx();
+        context.setSdlc(null);
+        context.setSdlcId(null);
+        context.setSdlcStepId(null);
+
+        TaskPackageResult result = packager.build(context);
+        Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
+
+        assertEquals("{}", new String(entries.get("sdlc.json"), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void explicitlyMarkedScheduledRootOmitsSdlcFile() throws Exception {
+        PackageContext context = baseCtx();
+        context.setSdlc(null);
+        context.setSdlcId(null);
+        context.setSdlcStepId(null);
+        context.setOmitSdlcFileWhenAbsent(true);
+
+        TaskPackageResult result = packager.build(context);
+        Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
+
+        assertFalse(entries.containsKey("sdlc.json"));
+    }
+
+    @Test
+    void interactionOnlySdlcStillWritesSdlcFile() throws Exception {
+        PackageContext context = baseCtx();
+        context.setSdlc(Map.of("workflow", "interaction-only", "currentStepId", "interaction"));
+        context.setOmitSdlcFileWhenAbsent(false);
+
+        TaskPackageResult result = packager.build(context);
+        Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
+
+        assertTrue(entries.containsKey("sdlc.json"));
+    }
+
+    @Test
+    void scheduledRootContextKeepsLegacyManifestAndFileNames() throws Exception {
+        PackageContext context = baseCtx();
+        context.setWorkitemId(50001L);
+        context.setWorkType("TASK");
+        context.setWorkitemTitle("夜间全量回归");
+        context.setWorkitemContentMd("执行全量回归并分析失败原因");
+        context.setSdlc(null);
+        context.setSdlcId(null);
+        context.setSdlcStepId(null);
+        context.setOmitSdlcFileWhenAbsent(true);
+
+        TaskPackageResult result = packager.build(context);
+        Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
+        JSONObject manifest = JSON.parseObject(
+                new String(entries.get("manifest.json"), StandardCharsets.UTF_8));
+
+        assertTrue(entries.containsKey("workitem.md"));
+        assertFalse(entries.containsKey("sdlc.json"));
+        assertEquals("50001", manifest.getString("workitemId"));
+        assertEquals("TASK", manifest.getString("workType"));
+        assertFalse(manifest.containsKey("sourceType"));
     }
 
     @Test
@@ -214,6 +286,22 @@ class TaskPackagerTest {
         c.setRequirementDocuments(List.of(ref));
 
         BizException ex = assertThrows(BizException.class, () -> packager.build(c));
+
+        assertEquals("17020", ex.getCode());
+    }
+
+    @Test
+    void frozenRequirementHashMismatchFailsPackageBuild() {
+        var stored = storage.put("autowonder-artifacts-daily", "frozen/spec.md",
+                "changed".getBytes(StandardCharsets.UTF_8));
+        TaskArtifactRef ref = new TaskArtifactRef();
+        ref.setName("spec.md");
+        ref.setOssRef(stored.getOssRef());
+        ref.setExpectedSha256("sha256:" + "a".repeat(64));
+        PackageContext context = baseCtx();
+        context.setRequirementDocuments(List.of(ref));
+
+        BizException ex = assertThrows(BizException.class, () -> packager.build(context));
 
         assertEquals("17020", ex.getCode());
     }

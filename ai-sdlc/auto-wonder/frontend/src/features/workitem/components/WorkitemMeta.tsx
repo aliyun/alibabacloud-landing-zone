@@ -1,3 +1,5 @@
+import { Tag } from 'antd';
+
 interface WorkitemMetaProps {
   priority: number;
   assigneeName: string | null;
@@ -5,9 +7,10 @@ interface WorkitemMetaProps {
   assigneeType: string;
   creatorDisplayName?: string | null;
   sdlcName: string | null;
+  tags?: string[];
 }
 
-export function WorkitemMeta({ priority, assigneeName, assigneeDisplayName, assigneeType, creatorDisplayName, sdlcName }: WorkitemMetaProps) {
+export function WorkitemMeta({ priority, assigneeName, assigneeDisplayName, assigneeType, creatorDisplayName, sdlcName, tags }: WorkitemMetaProps) {
   const assigneeLabel = assigneeType === 'AGENT' ? '数字员工' : '人工';
   const assigneeText = assigneeDisplayName || assigneeName;
 
@@ -22,6 +25,11 @@ export function WorkitemMeta({ priority, assigneeName, assigneeDisplayName, assi
       )}
       {sdlcName && (
         <span>SDLC: {sdlcName}</span>
+      )}
+      {tags && tags.length > 0 && (
+        <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+          标签: {tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
+        </span>
       )}
     </div>
   );

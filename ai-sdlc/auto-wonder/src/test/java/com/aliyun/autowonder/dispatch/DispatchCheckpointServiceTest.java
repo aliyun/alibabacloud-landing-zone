@@ -136,6 +136,26 @@ class DispatchCheckpointServiceTest {
     }
 
     @Test
+    void degradedContinuousDescriptorNeverExposesCheckpointNativeSession() {
+        DispatchCheckpointDao dao = mock(DispatchCheckpointDao.class);
+        ObjectStorage storage = mock(ObjectStorage.class);
+        DispatchCheckpointService service = new DispatchCheckpointService(dao,
+                mock(DispatchRuntimeEventDao.class), mock(DispatchDao.class), storage, new OssProperties());
+        DispatchDO dispatch = new DispatchDO(); dispatch.setTenantId(100L);
+        dispatch.setResumeMode("DEGRADED_CONTINUOUS"); dispatch.setResumeFromDispatchId(55L);
+        DispatchCheckpointDO checkpoint = checkpoint(1L, "bucket/checkpoint", "abc");
+        checkpoint.setProvider("codex"); checkpoint.setProviderSessionId("native-session");
+        when(dao.listLatestByDispatch(100L, 55L, 2)).thenReturn(List.of(checkpoint));
+        when(storage.exists("bucket/checkpoint")).thenReturn(true);
+        when(storage.presignGet("bucket/checkpoint", 600)).thenReturn("https://oss/checkpoint");
+
+        ResumeDescriptor descriptor = service.descriptor(dispatch);
+
+        assertNull(descriptor.providerSessionId());
+        assertEquals("https://oss/checkpoint", descriptor.checkpointDownloadUrl());
+    }
+
+    @Test
     void recoveryDescriptorIncludesLatestAndPreviousCheckpointCandidates() {
         DispatchCheckpointDao dao = mock(DispatchCheckpointDao.class);
         DispatchDao dispatchDao = mock(DispatchDao.class);

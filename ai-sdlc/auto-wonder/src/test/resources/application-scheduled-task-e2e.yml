@@ -1,0 +1,7 @@
+spring:
+  task:
+    scheduling:
+      enabled: false
+
+# The real-MySQL gates own their Testcontainers DataSource explicitly.  Keeping
+# background scheduling disabled makes every scanner/transaction test deterministic.

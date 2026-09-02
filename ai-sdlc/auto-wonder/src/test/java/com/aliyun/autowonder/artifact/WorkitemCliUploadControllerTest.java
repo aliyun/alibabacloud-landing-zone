@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
@@ -60,7 +61,7 @@ class WorkitemCliUploadControllerTest {
         ossProperties.setArtifactBucket("artifact-bucket");
         PlatformBrandingService branding = new PlatformBrandingService(
                 mock(PlatformBrandingDao.class), new InMemoryObjectStorage(), new OssProperties(),
-                "https://daily.auto-wonder.example.com", "0.2.130", "x.x.x");
+                "https://daily.auto-wonder.example.com", "0.2.130", "x.x.x", false);
         tokenService = new WorkitemCliUploadTokenService(
                 jwtService, workitemDao, workspaceMemberDao, branding);
         RequirementDocumentService documentService = new RequirementDocumentService(
@@ -193,17 +194,62 @@ class WorkitemCliUploadControllerTest {
     void unsupportedExtensionAndBadMagicBytesReturn400() throws Exception {
         String token = mintToken();
 
-        mvc.perform(multipart(uploadPath)
-                        .file(new MockMultipartFile("files", "a.txt", "text/plain",
-                                "plain".getBytes(StandardCharsets.UTF_8)))
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isBadRequest());
+        for (String filename : new String[]{"a.exe", "fake.png", "fake.jpg", "fake.jpeg",
+                "fake.webp", "fake.pdf"}) {
+            mvc.perform(multipart(uploadPath)
+                            .file(new MockMultipartFile("files", filename, "application/octet-stream",
+                                    "not-a-real-file".getBytes(StandardCharsets.UTF_8)))
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void invalidUtf8TextReturns400() throws Exception {
+        String token = mintToken();
 
         mvc.perform(multipart(uploadPath)
-                        .file(new MockMultipartFile("files", "fake.png", "image/png",
-                                "not-a-png".getBytes(StandardCharsets.UTF_8)))
+                        .file(new MockMultipartFile("files", "broken.txt", "text/plain",
+                                new byte[]{(byte) 0xFF, (byte) 0xFE, 0x00, 0x01}))
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void allSupportedFormatsUploadSuccessfully() throws Exception {
+        String token = mintToken();
+        byte[] jpeg = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0x00, 0x10,
+                'J', 'F', 'I', 'F', 0x00};
+        byte[] webp = {'R', 'I', 'F', 'F', 0x24, 0x00, 0x00, 0x00, 'W', 'E', 'B', 'P',
+                'V', 'P', '8', ' '};
+        byte[] pdf = "%PDF-1.4 minimal spec".getBytes(StandardCharsets.UTF_8);
+
+        mvc.perform(multipart(uploadPath)
+                        .file(new MockMultipartFile("files", "notes.txt", "text/plain",
+                                "plain notes".getBytes(StandardCharsets.UTF_8)))
+                        .file(new MockMultipartFile("files", "prd.html", "text/html",
+                                "<html><body>PRD</body></html>".getBytes(StandardCharsets.UTF_8)))
+                        .file(new MockMultipartFile("files", "spec.pdf", "application/pdf", pdf))
+                        .file(new MockMultipartFile("files", "photo.jpg", "image/jpeg", jpeg))
+                        .file(new MockMultipartFile("files", "icon.webp", "image/webp", webp))
+                        .file(new MockMultipartFile("files", "legacy.markdown", "text/markdown",
+                                "# Legacy".getBytes(StandardCharsets.UTF_8)))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(6))
+                .andExpect(jsonPath("$.data[0].name").value("requirements/notes.txt"))
+                .andExpect(jsonPath("$.data[1].name").value("requirements/prd.html"))
+                .andExpect(jsonPath("$.data[2].name").value("requirements/spec.pdf"))
+                .andExpect(jsonPath("$.data[3].name").value("requirements/photo.jpg"))
+                .andExpect(jsonPath("$.data[4].name").value("requirements/icon.webp"))
+                .andExpect(jsonPath("$.data[5].name").value("requirements/legacy.markdown"));
+
+        assertEquals("plain notes", new String(
+                storage.get("artifact-bucket/t/100/workitem/50063/requirements/notes.txt"),
+                StandardCharsets.UTF_8));
+        assertArrayEquals(pdf, storage.get(
+                "artifact-bucket/t/100/workitem/50063/requirements/spec.pdf"));
     }
 
     @Test

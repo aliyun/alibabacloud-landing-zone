@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { SdlcDetailPage } from './SdlcDetailPage';
+import { SdlcDetailPage, RetryBudgetTooltipContent } from './SdlcDetailPage';
 import { useAuthStore } from '@/shared/auth/store';
 
 function renderPage(initialPath = '/sdlcs/1') {
@@ -214,5 +214,180 @@ describe('SdlcDetailPage', () => {
     fireEvent.click(okButton);
 
     expect(await screen.findByText('checklistJson 不是合法的 JSON')).toBeInTheDocument();
+  });
+
+  it('lets users view checklist and gate policy content via popovers on an ENABLED SDLC', async () => {
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '可查看配置流程', description: '', status: 'ENABLED',
+            workType: null, isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01',
+            steps: [
+              {
+                id: '10', sdlcId: '1', stepOrder: 1, name: '自测交付', kind: 'test', instructionMd: '运行测试并交付',
+                checklistJson: '["运行相关测试全部通过","测试日志已保存到 artifacts/output/evidence/"]',
+                gatePolicyJson: '{"evidenceRequired":true,"requiredArtifacts":"evidence/"}',
+                required: true, timeoutSeconds: null, retryBudget: null,
+              },
+            ],
+          },
+        });
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText('可查看配置流程')).toBeInTheDocument();
+
+    const tags = screen.getAllByText('已配置');
+    expect(tags).toHaveLength(2);
+
+    fireEvent.click(tags[0]);
+    expect(await screen.findByText('✓ 运行相关测试全部通过')).toBeInTheDocument();
+    expect(screen.getByText('✓ 测试日志已保存到 artifacts/output/evidence/')).toBeInTheDocument();
+
+    fireEvent.click(tags[1]);
+    expect(await screen.findByText('evidenceRequired: true')).toBeInTheDocument();
+    expect(screen.getByText('requiredArtifacts: evidence/')).toBeInTheDocument();
+  });
+
+  it('falls back to raw text in popovers when checklist or policy JSON is invalid', async () => {
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '非法配置流程', description: '', status: 'DISABLED',
+            workType: null, isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01',
+            steps: [
+              {
+                id: '10', sdlcId: '1', stepOrder: 1, name: '异常配置步骤', kind: 'analysis', instructionMd: '查看配置',
+                checklistJson: '不是合法JSON',
+                gatePolicyJson: '{bad json',
+                required: true, timeoutSeconds: null, retryBudget: null,
+              },
+            ],
+          },
+        });
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText('非法配置流程')).toBeInTheDocument();
+
+    const tags = screen.getAllByText('已配置');
+    fireEvent.click(tags[0]);
+    expect(await screen.findByText('不是合法JSON')).toBeInTheDocument();
+
+    fireEvent.click(tags[1]);
+    expect(await screen.findByText('{bad json')).toBeInTheDocument();
+  });
+
+  it('shows a help tooltip icon next to the retry budget field in the step edit modal', async () => {
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '提示流程', description: '', status: 'DRAFT',
+            workType: 'BUG', isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01',
+            steps: [
+              { id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析', kind: 'analysis', instructionMd: '理解需求', checklistJson: null, gatePolicyJson: null, required: true, timeoutSeconds: null, retryBudget: null },
+            ],
+          },
+        });
+      }),
+    );
+
+    const { container } = renderPage();
+    expect(await screen.findByText('提示流程')).toBeInTheDocument();
+
+    const editButton = container.querySelector('.ant-table-row .anticon-edit')?.closest('button');
+    fireEvent.click(editButton!);
+
+    const label = await screen.findByText('建议重试预算');
+    const helpSpan = label.closest('span');
+    expect(helpSpan).toBeTruthy();
+    expect(helpSpan!.querySelector('.anticon-question-circle')).toBeTruthy();
+  });
+
+  it('shows help explanations for checklist, policy and retry budget fields in the step modal', async () => {
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '帮助说明流程', description: '', status: 'DRAFT',
+            workType: 'TASK', isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01', steps: [],
+          },
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('帮助说明流程')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /添加步骤/ }));
+    await screen.findAllByText('检查项 JSON');
+
+    const helpIconOf = (labelText: string) => {
+      const icon = screen.getAllByText(labelText)
+        .map((el) => el.querySelector('.anticon-question-circle'))
+        .find(Boolean);
+      expect(icon).toBeTruthy();
+      return icon!;
+    };
+
+    fireEvent.mouseEnter(helpIconOf('检查项 JSON'));
+    expect(await screen.findByText(/checklistRequired: true/)).toBeInTheDocument();
+
+    fireEvent.mouseEnter(helpIconOf('准入/准出策略 JSON'));
+    expect((await screen.findAllByText(/requiredArtifacts/)).length).toBeGreaterThan(0);
+
+    fireEvent.mouseEnter(helpIconOf('建议重试预算'));
+    expect(await screen.findByText(/Gate 会校验产出是否满足要求/)).toBeInTheDocument();
+  });
+
+  it('shows checklist and policy placeholders consistent with their tooltip examples', async () => {
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '占位提示流程', description: '', status: 'DRAFT',
+            workType: 'TASK', isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01', steps: [],
+          },
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('占位提示流程')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /添加步骤/ }));
+    await screen.findAllByText('检查项 JSON');
+
+    const checklistTextarea = screen.getByPlaceholderText(/"id": "tests-pass"/);
+    expect(checklistTextarea).toHaveAttribute('placeholder', '如: [{"id": "tests-pass", "text": "运行相关测试全部通过"}]');
+
+    const policyTextarea = screen.getByPlaceholderText(/"evidenceRequired": true/);
+    expect(policyTextarea).toHaveAttribute('placeholder', '如: { "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }');
+  });
+});
+
+describe('RetryBudgetTooltipContent', () => {
+  it('explains meaning, behavior, example, and recommended value', () => {
+    render(<RetryBudgetTooltipContent />);
+    expect(screen.getByText(/含义：/)).toBeInTheDocument();
+    expect(screen.getByText(/Gate 会校验产出是否满足要求/)).toBeInTheDocument();
+    expect(screen.getByText(/值为 0（或未填写）：gate 失败后直接终止/)).toBeInTheDocument();
+    expect(screen.getByText(/最多有 N 次额外尝试/)).toBeInTheDocument();
+    expect(screen.getByText(/示例：/)).toBeInTheDocument();
+    expect(screen.getByText(/建议值：/)).toBeInTheDocument();
+    expect(screen.getByText(/一般建议设置为 2~3/)).toBeInTheDocument();
   });
 });

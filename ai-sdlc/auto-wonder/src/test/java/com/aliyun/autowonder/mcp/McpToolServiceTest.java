@@ -56,6 +56,21 @@ import com.aliyun.autowonder.workitem.dto.CommentVO;
 import com.aliyun.autowonder.workitem.dto.CreateWorkitemRequest;
 import com.aliyun.autowonder.configuration.JacksonConfig;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunCommentService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskTriggerService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDispatchControlService;
+import com.aliyun.autowonder.scheduledtask.dto.CreateScheduledTaskRequest;
+import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskVO;
+import com.aliyun.autowonder.artifact.ArtifactService;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.scheduledtask.compat.ScheduledTaskCapabilityGuard;
+import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,7 +80,9 @@ import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.env.Environment;
 
+import java.time.Instant;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -95,6 +112,7 @@ class McpToolServiceTest {
     DispatchPauseService dispatchPauseService;
     McpToolService service;
     McpAccessTokenService.Principal principal;
+    ScheduledTaskCapabilityGuard capabilityGuard;
 
     @BeforeEach
     void setUp() {
@@ -115,15 +133,21 @@ class McpToolServiceTest {
                         + " --file <filepath-1> --file <filepath-2> --file <images-1> --json");
         when(workitemCliUploadTokenService.tokenEnvHint()).thenReturn(
                 "export AUTOWONDER_UPLOAD_TOKEN='<token returned by autowonder.workitem_cli_upload_token>'");
+        when(workitemCliUploadTokenService.scheduledTaskCommandTemplate()).thenReturn(
+                "npx -y autowonder@0.2.130 scheduled-task upload --server-url https://daily.auto-wonder.example.com"
+                        + " --scheduled-task-id <scheduled-task-id>"
+                        + " --file <filepath-1> --file <filepath-2> --file <images-1> --json");
         memoryService = mock(MemoryService.class);
         repoService = mock(RepoService.class);
         squadService = mock(SquadService.class);
         dispatchPauseService = mock(DispatchPauseService.class);
+        capabilityGuard = mock(ScheduledTaskCapabilityGuard.class);
         service = new McpToolService(workspaceService, workitemService, guidanceService, skillService,
                 skillPackageService, sdlcService, agentService, statusTemplateService,
                 new PlatformSkillCatalog(), dispatchDao, requirementDocumentService,
                 workitemCliUploadTokenService, memoryService, repoService,
                 squadService, dispatchPauseService);
+        ReflectionTestUtils.setField(service, "capabilityGuard", capabilityGuard);
         principal = principal(WorkspaceAccessLevel.READ_WRITE);
     }
 
@@ -153,7 +177,10 @@ class McpToolServiceTest {
                 "autowonder.get_repo",
                 "autowonder.list_repo_relations",
                 "autowonder.list_squads",
-                "autowonder.get_squad");
+                "autowonder.get_squad",
+                "autowonder.list_scheduled_tasks",
+                "autowonder.get_scheduled_task",
+                "autowonder.get_scheduled_task_run");
         Set<String> fullCatalog = service.listTools().stream()
                 .map(McpToolVO::getName)
                 .collect(java.util.stream.Collectors.toSet());
@@ -171,7 +198,7 @@ class McpToolServiceTest {
                 service.listTools(scopedPrincipal(WorkspaceAccessLevel.ADMIN)).stream()
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet()));
-        assertEquals(77, fullCatalog.size());
+        assertEquals(84, fullCatalog.size());
     }
 
     @Test
@@ -314,7 +341,33 @@ class McpToolServiceTest {
         assertSame(updated, result);
         verify(repoService).update(eq(20L), argThat(req ->
                 "renamed-repo".equals(req.getName())
-                        && "Updated description".equals(req.getDescription())),
+                        && req.isNamePresent()
+                        && "Updated description".equals(req.getDescription())
+                        && req.isDescriptionPresent()
+                        && !req.isUrlPresent()
+                        && !req.isDefaultBranchPresent()),
+                eq(WORKSPACE_ID), eq(USER_ID));
+    }
+
+    @Test
+    void updateRepoTreatsExplicitNullAsClearWhileOmittedFieldsStayAbsent() {
+        RepoVO updated = new RepoVO();
+        updated.setId(20L);
+        when(repoService.update(eq(20L), any(UpdateRepoRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
+                .thenReturn(updated);
+
+        Map<String, Object> args = new HashMap<>();
+        args.put("id", 20L);
+        args.put("description", null);
+
+        call(principal, "autowonder.update_repo", args);
+
+        verify(repoService).update(eq(20L), argThat(req ->
+                req.isDescriptionPresent()
+                        && req.getDescription() == null
+                        && !req.isNamePresent()
+                        && !req.isUrlPresent()
+                        && !req.isDefaultBranchPresent()),
                 eq(WORKSPACE_ID), eq(USER_ID));
     }
 
@@ -404,6 +457,8 @@ class McpToolServiceTest {
                 "npx -y autowonder@0.2.130 workitem upload --server-url https://daily.auto-wonder.example.com"));
         assertTrue(tool.getDescription().contains(
                 "--file <filepath-1> --file <filepath-2> --file <images-1> --json"));
+        assertTrue(tool.getDescription().contains(
+                "Long-lived personal, dispatch, and conversation credentials can mint it"));
 
         Map<String, Object> output = outputProperties(tool);
         assertTrue(output.keySet().containsAll(List.of("token", "tokenType", "expiresInSeconds", "expiresAt",
@@ -441,21 +496,32 @@ class McpToolServiceTest {
     }
 
     @Test
-    void workitemCliUploadTokenInvocationPropagatesScopedCredentialTypes() {
+    void workitemCliUploadTokenInvocationDelegatesForDispatchCredential() {
+        WorkitemCliUploadTokenVO vo = new WorkitemCliUploadTokenVO();
+        vo.setToken("awupload_dispatch");
         when(workitemCliUploadTokenService.mint(
-                argThat(type -> type != McpAccessTokenService.CredentialType.LONG_LIVED),
-                anyLong(), anyLong()))
-                .thenThrow(new BizException(ErrorCode.NO_PERMISSION,
-                        "仅长期个人 MCP 凭证可以签发上传令牌"));
+                McpAccessTokenService.CredentialType.DISPATCH, USER_ID, 50063L))
+                .thenReturn(vo);
 
-        for (McpAccessTokenService.Principal caller : new McpAccessTokenService.Principal[]{
-                dispatchPrincipal(5L), scopedPrincipal(WorkspaceAccessLevel.ADMIN)}) {
-            BizException exception = assertThrows(BizException.class, () ->
-                    call(caller, "autowonder.workitem_cli_upload_token", Map.of("id", 50063L)));
-            assertEquals("10403", exception.getCode());
-        }
+        Object result = call(dispatchPrincipal(5L), "autowonder.workitem_cli_upload_token", Map.of("id", 50063L));
+
+        assertSame(vo, result);
         verify(workitemCliUploadTokenService).mint(
                 McpAccessTokenService.CredentialType.DISPATCH, USER_ID, 50063L);
+    }
+
+    @Test
+    void workitemCliUploadTokenInvocationDelegatesForConversationCredential() {
+        WorkitemCliUploadTokenVO vo = new WorkitemCliUploadTokenVO();
+        vo.setToken("awupload_conversation");
+        when(workitemCliUploadTokenService.mint(
+                McpAccessTokenService.CredentialType.CONVERSATION, USER_ID, 50063L))
+                .thenReturn(vo);
+
+        Object result = call(scopedPrincipal(WorkspaceAccessLevel.ADMIN),
+                "autowonder.workitem_cli_upload_token", Map.of("id", 50063L));
+
+        assertSame(vo, result);
         verify(workitemCliUploadTokenService).mint(
                 McpAccessTokenService.CredentialType.CONVERSATION, USER_ID, 50063L);
     }
@@ -636,7 +702,7 @@ class McpToolServiceTest {
     void listToolCallsReturnPlainLists() {
         WorkitemVO workitem = new WorkitemVO();
         workitem.setId(1L);
-        when(workitemService.list(null, null, null, null, null, false, null, 100L, 7L, null, 1, 20))
+        when(workitemService.list(null, null, null, null, null, false, null, 100L, 7L, null, null, 1, 20))
                 .thenReturn(new PageResult<>(List.of(workitem), 1, 1, 20));
 
         SdlcVO sdlc = new SdlcVO();
@@ -789,7 +855,7 @@ class McpToolServiceTest {
         Map<String, Object> properties = (Map<String, Object>) schema.get("properties");
 
         assertTrue(properties.keySet().containsAll(List.of("workType", "title", "contentMd",
-                "priority", "assigneeType", "assigneeRef", "sdlcId", "squadId")));
+                "priority", "assigneeType", "assigneeRef", "sdlcId", "squadId", "scheduledStartAt")));
         // Assignee fields are optional so existing callers keep working; only
         // workType and title remain required.
         assertEquals(List.of("workspaceId", "workType", "title"), schema.get("required"));
@@ -817,12 +883,60 @@ class McpToolServiceTest {
     void assignWorkitemDelegatesWithDeliveryOptions() {
         WorkitemVO assigned = new WorkitemVO();
         assigned.setId(99L);
-        when(workitemService.assign(99L, "AGENT", 12L, 8L, 4L, 100L, 7L)).thenReturn(assigned);
+        when(workitemService.assign(99L, "AGENT", 12L, 8L, 4L, null, 100L, 7L)).thenReturn(assigned);
 
         Object result = call(principal, "autowonder.assign_workitem",
                 Map.of("id", 99L, "assigneeType", "AGENT", "assigneeRef", 12L, "sdlcId", 8L, "squadId", 4L));
 
         assertSame(assigned, result);
+    }
+
+    @Test
+    void assignWorkitemParsesScheduledStartAtIsoInstant() {
+        WorkitemVO assigned = new WorkitemVO();
+        assigned.setId(99L);
+        java.util.Date scheduled = java.util.Date.from(java.time.Instant.parse("2026-09-01T02:00:00Z"));
+        when(workitemService.assign(99L, "AGENT", 12L, null, null, scheduled, 100L, 7L)).thenReturn(assigned);
+
+        Object result = call(principal, "autowonder.assign_workitem",
+                Map.of("id", 99L, "assigneeType", "AGENT", "assigneeRef", 12L,
+                        "scheduledStartAt", "2026-09-01T02:00:00Z"));
+
+        assertSame(assigned, result);
+    }
+
+    @Test
+    void assignWorkitemRejectsInvalidScheduledStartAt() {
+        assertThrows(BizException.class, () -> call(principal, "autowonder.assign_workitem",
+                Map.of("id", 99L, "assigneeType", "AGENT", "assigneeRef", 12L,
+                        "scheduledStartAt", "not-a-time")));
+
+        verify(workitemService, never()).assign(anyLong(), anyString(), any(), any(), any(),
+                any(java.util.Date.class), anyLong(), anyLong());
+    }
+
+    @Test
+    void assignWorkitemSchemaExposesScheduledStartAt() {
+        Map<String, Object> assignProperties = property(schemaFor("autowonder.assign_workitem"), "scheduledStartAt");
+        assertEquals("string", assignProperties.get("type"));
+        Map<String, Object> createProperties = property(schemaFor("autowonder.create_workitem"), "scheduledStartAt");
+        assertEquals("string", createProperties.get("type"));
+        Map<String, Object> tagProperties = property(schemaFor("autowonder.list_workitems"), "tag");
+        assertEquals("string", tagProperties.get("type"));
+    }
+
+    @Test
+    void scheduledStartAtDescriptionWarnsNotToFillWithoutExplicitUserRequest() {
+        for (String toolName : new String[] { "autowonder.create_workitem", "autowonder.assign_workitem" }) {
+            Map<String, Object> props = property(schemaFor(toolName), "scheduledStartAt");
+            String description = (String) props.get("description");
+            assertNotNull(description, toolName + " scheduledStartAt description missing");
+            assertTrue(description.startsWith("Optional."), toolName + " must state the parameter is optional");
+            assertTrue(description.contains("ISO-8601 instant"), toolName + " must state the time format");
+            assertTrue(description.contains("Do not fill this parameter unless the user explicitly "
+                    + "requests scheduled execution"),
+                    toolName + " must instruct not to fill without an explicit user request");
+        }
     }
 
     @Test
@@ -836,16 +950,16 @@ class McpToolServiceTest {
         assigned.setId(99L);
         when(dispatchDao.findById(321L)).thenReturn(dispatch);
         when(agentService.get(40014L)).thenReturn(agent);
-        when(workitemService.assignAs(99L, "HUMAN", 77L, null, 4L, 100L, 7L,
+        when(workitemService.assignAs(99L, "HUMAN", 77L, null, 4L, null, 100L, 7L,
                 AssignmentActor.agent(40014L, "AW开发数字人"))).thenReturn(assigned);
 
         Object result = call(dispatchPrincipal, "autowonder.assign_workitem",
                 Map.of("id", 99L, "assigneeType", "HUMAN", "assigneeRef", 77L, "squadId", 4L));
 
         assertSame(assigned, result);
-        verify(workitemService).assignAs(99L, "HUMAN", 77L, null, 4L, 100L, 7L,
+        verify(workitemService).assignAs(99L, "HUMAN", 77L, null, 4L, null, 100L, 7L,
                 AssignmentActor.agent(40014L, "AW开发数字人"));
-        verify(workitemService, never()).assign(anyLong(), anyString(), any(), any(), any(), anyLong(), anyLong());
+        verify(workitemService, never()).assign(anyLong(), anyString(), any(), any(), any(), any(), anyLong(), anyLong());
     }
 
     @Test
@@ -857,8 +971,8 @@ class McpToolServiceTest {
                 "autowonder.assign_workitem",
                 Map.of("id", 99L, "assigneeType", "HUMAN", "assigneeRef", 77L)));
 
-        verify(workitemService, never()).assignAs(anyLong(), anyString(), any(), any(), any(), anyLong(), anyLong(), any());
-        verify(workitemService, never()).assign(anyLong(), anyString(), any(), any(), any(), anyLong(), anyLong());
+        verify(workitemService, never()).assignAs(anyLong(), anyString(), any(), any(), any(), any(), anyLong(), anyLong(), any());
+        verify(workitemService, never()).assign(anyLong(), anyString(), any(), any(), any(), any(), anyLong(), anyLong());
     }
 
     @Test
@@ -910,6 +1024,7 @@ class McpToolServiceTest {
         assertSame(comment, result);
         verify(workitemService).addAgentComment(99L, "review finished", List.of(77L), 100L, 40014L, 7L);
         verify(workitemService, never()).addComment(anyLong(), anyString(), anyList(), anyLong(), anyLong());
+        verifyNoInteractions(capabilityGuard);
     }
 
     @Test
@@ -925,7 +1040,95 @@ class McpToolServiceTest {
     }
 
     @Test
-    void dispatchTokenDoesNotImposeUniversalWorkitemScopeOnOtherTools() {
+    void scheduledRunDispatchCommentNeverFallsThroughToEqualNumberedWorkitem() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, 100L, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        ScheduledTaskRunCommentService runComments = mock(ScheduledTaskRunCommentService.class);
+        CommentVO comment = new CommentVO(); comment.setId(56L);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunCommentService", runComments);
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        when(runComments.addAgentComment(100L, 99L, 40014L, "run-only", List.of(), List.of())).thenReturn(comment);
+
+        assertSame(comment, call(dispatchPrincipal, "autowonder.add_workitem_comment",
+                Map.of("id", 99L, "contentMd", "run-only")));
+
+        verify(runComments).addAgentComment(100L, 99L, 40014L, "run-only", List.of(), List.of());
+        verifyNoInteractions(workitemService, guidanceService);
+    }
+
+    @Test
+    void unavailableScheduledDispatchFailsBeforeRunCommentOrEqualNumberedWorkitem() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, 100L, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        ScheduledTaskRunCommentService runComments = mock(ScheduledTaskRunCommentService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunCommentService", runComments);
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("mcp");
+
+        BizException failure = assertThrows(BizException.class, () -> call(dispatchPrincipal,
+                "autowonder.add_workitem_comment", Map.of("id", 99L, "contentMd", "run-only")));
+
+        assertEquals("30006", failure.getCode());
+        verifyNoInteractions(runComments, workitemService, guidanceService);
+    }
+
+    @Test
+    void unavailableScheduledDispatchRejectsGenericMutationBeforeWorkitemService() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, 100L, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("mcp");
+
+        BizException failure = assertThrows(BizException.class, () -> call(dispatchPrincipal,
+                "autowonder.update_workitem", Map.of("id", 99L, "title", "must-not-mutate")));
+
+        assertEquals("30006", failure.getCode());
+        verifyNoInteractions(workitemService);
+    }
+
+    @Test
+    void scheduledRunDispatchCommentForwardsExplicitGuidanceTargets() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, 100L, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        ScheduledTaskRunCommentService runComments = mock(ScheduledTaskRunCommentService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunCommentService", runComments);
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        when(runComments.addAgentComment(100L, 99L, 40014L, "@tester", List.of(40015L), List.of()))
+                .thenReturn(new CommentVO());
+
+        service.call(dispatchPrincipal, "autowonder.add_workitem_comment",
+                Map.of("id", 99L, "contentMd", "@tester", "targetAgentIds", List.of(40015L)));
+
+        verify(runComments).addAgentComment(100L, 99L, 40014L, "@tester", List.of(40015L), List.of());
+        verifyNoInteractions(workitemService, guidanceService);
+    }
+
+    @Test
+    void scheduledRunDispatchCommentForwardsExplicitHumanTargets() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, 100L, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        ScheduledTaskRunCommentService runComments = mock(ScheduledTaskRunCommentService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunCommentService", runComments);
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        when(runComments.addAgentComment(100L, 99L, 40014L, "分析完成 @蔡何", List.of(), List.of(10000L)))
+                .thenReturn(new CommentVO());
+
+        service.call(dispatchPrincipal, "autowonder.add_workitem_comment",
+                Map.of("id", 99L, "contentMd", "分析完成 @蔡何", "targetHumanIds", List.of(10000L)));
+
+        verify(runComments).addAgentComment(100L, 99L, 40014L, "分析完成 @蔡何", List.of(), List.of(10000L));
+        verifyNoInteractions(workitemService, guidanceService);
+    }
+
+    @Test
+    void workitemDispatchTokenDoesNotImposeUniversalWorkitemScopeOnOtherTools() {
         McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
         WorkitemVO workitem = new WorkitemVO();
         workitem.setId(123L);
@@ -936,7 +1139,395 @@ class McpToolServiceTest {
 
         assertSame(workitem, result);
         verify(workitemService).get(123L);
-        verifyNoInteractions(dispatchDao);
+        verify(dispatchDao).findById(321L);
+        verifyNoInteractions(capabilityGuard);
+    }
+
+    @Test
+    void scheduledTaskToolsAreRegisteredWithRequiredArgumentsAndEnums() {
+        Map<String, Object> create = toolByName("autowonder.create_scheduled_task").getInputSchema();
+        assertEquals(List.of("workspaceId", "name", "instructionMd", "squadId", "initialAgentId",
+                "scheduleType", "timezone"), create.get("required"));
+        assertEquals(List.of("CRON", "ONCE"),
+                ((Map<?, ?>) properties(create).get("scheduleType")).get("enum"));
+
+        Map<String, Object> update = toolByName("autowonder.update_scheduled_task").getInputSchema();
+        assertEquals(List.of("workspaceId", "id", "version"), update.get("required"));
+
+        Map<String, Object> transition = toolByName("autowonder.transition_scheduled_task").getInputSchema();
+        assertEquals(List.of("workspaceId", "id", "action", "version"), transition.get("required"));
+        assertEquals(List.of("enable", "pause", "archive", "run-now", "pause-run", "resume-run", "cancel-run"),
+                ((Map<?, ?>) properties(transition).get("action")).get("enum"));
+
+        assertEquals(List.of("ACTIVE", "PAUSED", "EXHAUSTED", "ARCHIVED"),
+                ((Map<?, ?>) properties(toolByName("autowonder.list_scheduled_tasks").getInputSchema())
+                        .get("status")).get("enum"));
+        assertEquals(List.of("workspaceId", "runId"),
+                toolByName("autowonder.get_scheduled_task_run").getInputSchema().get("required"));
+        assertEquals(List.of("workspaceId", "runId", "contentMd"),
+                toolByName("autowonder.add_scheduled_task_run_comment").getInputSchema().get("required"));
+
+        assertNotNull(toolByName("autowonder.get_scheduled_task").getOutputSchema());
+        assertTrue(outputProperties(toolByName("autowonder.list_scheduled_tasks")).containsKey("list"));
+        assertTrue(outputProperties(toolByName("autowonder.list_scheduled_tasks")).containsKey("total"));
+        assertNotNull(toolByName("autowonder.transition_scheduled_task").getOutputSchema().get("anyOf"));
+    }
+
+    @Test
+    void scheduledTaskToolDescriptionsGuideDocumentUploadThroughCli() {
+        String getDescription = toolByName("autowonder.get_scheduled_task").getDescription();
+        assertTrue(getDescription.contains("autowonder.workitem_cli_upload_token"));
+        assertTrue(getDescription.contains("scheduled-task upload"));
+        assertTrue(getDescription.contains("--scheduled-task-id"));
+        assertTrue(getDescription.contains("AUTOWONDER_UPLOAD_TOKEN"));
+
+        String createDescription = toolByName("autowonder.create_scheduled_task").getDescription();
+        assertTrue(createDescription.contains("scheduled-task upload")
+                || createDescription.contains("get_scheduled_task"));
+    }
+
+    @Test
+    void dispatchCredentialCannotCallScheduledTaskManagementTools() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        for (String tool : List.of("autowonder.create_scheduled_task", "autowonder.list_scheduled_tasks",
+                "autowonder.update_scheduled_task", "autowonder.transition_scheduled_task")) {
+            BizException exception = assertThrows(BizException.class,
+                    () -> call(dispatchPrincipal, tool, Map.of()));
+            assertEquals("10403", exception.getCode(), tool);
+        }
+    }
+
+    @Test
+    void scheduledTaskToolsFailClosedWhenCapabilityUnavailable() {
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("mcp");
+
+        BizException exception = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.list_scheduled_tasks", Map.of()));
+        assertEquals("30006", exception.getCode());
+    }
+
+    @Test
+    void scheduledTaskToolsFailClosedWhenDependencyMissing() {
+        BizException exception = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.list_scheduled_tasks", Map.of()));
+        assertEquals("30006", exception.getCode());
+    }
+
+    @Test
+    void listScheduledTasksDelegatesAndReturnsPagedEnvelope() {
+        ScheduledTaskService taskService = mock(ScheduledTaskService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskService", taskService);
+        ScheduledTaskVO task = new ScheduledTaskVO();
+        task.setId(11L);
+        task.setName("nightly");
+        task.setStatus("ACTIVE");
+        task.setVersion(3);
+        when(taskService.list(WORKSPACE_ID, "ACTIVE", null, null, null, 20, 0))
+                .thenReturn(new PageResult<>(List.of(task), 1L, 1, 20));
+
+        Map<?, ?> result = (Map<?, ?>) call(principal, "autowonder.list_scheduled_tasks",
+                Map.of("status", "active"));
+
+        assertEquals(1L, ((Number) result.get("total")).longValue());
+        assertEquals(0, ((Number) result.get("offset")).intValue());
+        assertEquals(20, ((Number) result.get("size")).intValue());
+        assertEquals(11L, ((Number) ((Map<?, ?>) ((List<?>) result.get("list")).get(0)).get("id")).longValue());
+
+        BizException badStatus = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.list_scheduled_tasks", Map.of("status", "RUNNING")));
+        assertEquals("27003", badStatus.getCode());
+        BizException badSize = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.list_scheduled_tasks", Map.of("size", 101)));
+        assertEquals("27003", badSize.getCode());
+    }
+
+    @Test
+    void createScheduledTaskDelegatesWithParsedArgumentsAndFirePreviews() {
+        ScheduledTaskService taskService = mock(ScheduledTaskService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskService", taskService);
+        ScheduledTaskVO created = new ScheduledTaskVO();
+        created.setId(77L);
+        created.setScheduleType("CRON");
+        created.setCronExpression("0 0 2 * * *");
+        created.setTimezone("Asia/Shanghai");
+        when(taskService.create(any(CreateScheduledTaskRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
+                .thenReturn(created);
+        when(taskService.preview("0 0 2 * * *", "Asia/Shanghai", 5))
+                .thenReturn(List.of(Instant.parse("2026-08-26T18:00:00Z")));
+
+        Map<?, ?> result = (Map<?, ?>) call(principal, "autowonder.create_scheduled_task", Map.of(
+                "name", "nightly", "instructionMd", "run it", "squadId", 42L, "initialAgentId", 9L,
+                "scheduleType", "CRON", "cronExpression", "0 0 2 * * *", "timezone", "Asia/Shanghai"));
+
+        ArgumentCaptor<CreateScheduledTaskRequest> captor =
+                ArgumentCaptor.forClass(CreateScheduledTaskRequest.class);
+        verify(taskService).create(captor.capture(), eq(WORKSPACE_ID), eq(USER_ID));
+        assertEquals("nightly", captor.getValue().getName());
+        assertEquals(42L, captor.getValue().getSquadId());
+        assertEquals("0 0 2 * * *", captor.getValue().getCronExpression());
+        assertEquals(List.of("2026-08-26T18:00:00Z"), result.get("nextFirePreviews"));
+
+        BizException badRunAt = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.create_scheduled_task", Map.of(
+                        "name", "once", "instructionMd", "run", "squadId", 42L, "initialAgentId", 9L,
+                        "scheduleType", "ONCE", "timezone", "Asia/Shanghai", "runAt", "not-a-time")));
+        assertEquals("27003", badRunAt.getCode());
+    }
+
+    @Test
+    void updateScheduledTaskRequiresOwnerOrAdminAndValidVersion() {
+        ScheduledTaskService taskService = mock(ScheduledTaskService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskService", taskService);
+        ScheduledTaskVO existing = new ScheduledTaskVO();
+        existing.setId(11L);
+        existing.setCreatorId(8L);
+        existing.setVersion(3);
+        when(taskService.get(11L, WORKSPACE_ID)).thenReturn(existing);
+
+        BizException notOwner = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.update_scheduled_task",
+                        Map.of("id", 11L, "version", 3L, "name", "renamed")));
+        assertEquals("10403", notOwner.getCode());
+
+        BizException missingVersion = assertThrows(BizException.class,
+                () -> call(principal(WorkspaceAccessLevel.ADMIN), "autowonder.update_scheduled_task",
+                        Map.of("id", 11L, "name", "renamed")));
+        assertEquals("27003", missingVersion.getCode());
+
+        ScheduledTaskVO updated = new ScheduledTaskVO();
+        updated.setId(11L);
+        updated.setName("renamed");
+        updated.setVersion(4);
+        when(taskService.update(eq(11L), any(), eq(WORKSPACE_ID), eq(USER_ID))).thenReturn(updated);
+
+        Map<?, ?> result = (Map<?, ?>) call(principal(WorkspaceAccessLevel.ADMIN),
+                "autowonder.update_scheduled_task", Map.of("id", 11L, "version", 3L, "name", "renamed"));
+        assertEquals("renamed", result.get("name"));
+        assertEquals(4L, ((Number) result.get("version")).longValue());
+    }
+
+    @Test
+    void transitionScheduledTaskTaskLevelActionsAndRunNowDelegate() {
+        ScheduledTaskService taskService = mock(ScheduledTaskService.class);
+        ScheduledTaskTriggerService triggerService = mock(ScheduledTaskTriggerService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskService", taskService);
+        ReflectionTestUtils.setField(service, "scheduledTaskTriggerService", triggerService);
+        ScheduledTaskVO existing = new ScheduledTaskVO();
+        existing.setId(11L);
+        existing.setCreatorId(USER_ID);
+        existing.setStatus("PAUSED");
+        existing.setVersion(3);
+        when(taskService.get(11L, WORKSPACE_ID)).thenReturn(existing);
+
+        ScheduledTaskVO enabled = new ScheduledTaskVO();
+        enabled.setId(11L);
+        enabled.setStatus("ACTIVE");
+        enabled.setVersion(4);
+        when(taskService.enable(11L, 3, WORKSPACE_ID, USER_ID)).thenReturn(enabled);
+        Map<?, ?> result = (Map<?, ?>) call(principal, "autowonder.transition_scheduled_task",
+                Map.of("id", 11L, "action", "enable", "version", 3L));
+        assertEquals("ACTIVE", result.get("status"));
+
+        BizException badAction = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.transition_scheduled_task",
+                        Map.of("id", 11L, "action", "delete", "version", 3L)));
+        assertEquals("27003", badAction.getCode());
+
+        BizException missingRequestId = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.transition_scheduled_task",
+                        Map.of("id", 11L, "action", "run-now", "version", 3L)));
+        assertEquals("27003", missingRequestId.getCode());
+
+        existing.setVersion(4);
+        BizException staleVersion = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.transition_scheduled_task",
+                        Map.of("id", 11L, "action", "run-now", "version", 3L, "requestId", "req-1")));
+        assertEquals("30002", staleVersion.getCode());
+
+        ScheduledTaskRunDO fired = new ScheduledTaskRunDO();
+        fired.setId(99L);
+        fired.setWorkspaceId(WORKSPACE_ID);
+        fired.setScheduledTaskId(11L);
+        fired.setStatus("QUEUED");
+        fired.setVersion(0);
+        when(triggerService.fireManual(WORKSPACE_ID, 11L, "req-1")).thenReturn(fired);
+        Map<?, ?> runResult = (Map<?, ?>) call(principal, "autowonder.transition_scheduled_task",
+                Map.of("id", 11L, "action", "run-now", "version", 4L, "requestId", "req-1"));
+        assertEquals(99L, ((Number) runResult.get("id")).longValue());
+        assertEquals("QUEUED", runResult.get("status"));
+    }
+
+    @Test
+    void transitionScheduledTaskRunActionsReplicateRestControllerSemantics() {
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        ScheduledTaskRunService runService = mock(ScheduledTaskRunService.class);
+        ScheduledTaskRunDispatchControlService control = mock(ScheduledTaskRunDispatchControlService.class);
+        ScheduledTaskRunOrchestrator orchestrator = mock(ScheduledTaskRunOrchestrator.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDao", runDao);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunService", runService);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDispatchControlService", control);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunOrchestrator", orchestrator);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(99L);
+        run.setWorkspaceId(WORKSPACE_ID);
+        run.setScheduledTaskId(11L);
+        run.setOwnerId(USER_ID);
+        run.setStatus("RUNNING");
+        run.setVersion(5);
+        when(runDao.findById(WORKSPACE_ID, 99L)).thenReturn(run);
+
+        ScheduledTaskRunDO paused = new ScheduledTaskRunDO();
+        paused.setId(99L);
+        paused.setWorkspaceId(WORKSPACE_ID);
+        paused.setStatus("PAUSED");
+        paused.setVersion(6);
+        when(runService.transition(WORKSPACE_ID, 99L, 5, "PAUSED", USER_ID)).thenReturn(paused);
+        Map<?, ?> pauseResult = (Map<?, ?>) call(principal, "autowonder.transition_scheduled_task",
+                Map.of("id", 11L, "action", "pause-run", "version", 5L, "runId", 99L));
+        assertEquals("PAUSED", pauseResult.get("status"));
+        verify(control).pauseActive(WORKSPACE_ID, 99L, USER_ID, false);
+
+        when(runService.transition(WORKSPACE_ID, 99L, 6, "QUEUED", USER_ID)).thenReturn(run);
+        when(orchestrator.resumePaused(WORKSPACE_ID, 99L, USER_ID)).thenReturn(true);
+        ScheduledTaskRunDO resumed = new ScheduledTaskRunDO();
+        resumed.setId(99L);
+        resumed.setWorkspaceId(WORKSPACE_ID);
+        resumed.setStatus("RUNNING");
+        resumed.setVersion(7);
+        when(runDao.findById(WORKSPACE_ID, 99L)).thenReturn(run, resumed);
+        Map<?, ?> resumeResult = (Map<?, ?>) call(principal, "autowonder.transition_scheduled_task",
+                Map.of("id", 11L, "action", "resume-run", "version", 6L, "runId", 99L));
+        assertEquals("RUNNING", resumeResult.get("status"));
+
+        ScheduledTaskRunDO ownedBySomeoneElse = new ScheduledTaskRunDO();
+        ownedBySomeoneElse.setId(100L);
+        ownedBySomeoneElse.setWorkspaceId(WORKSPACE_ID);
+        ownedBySomeoneElse.setOwnerId(8L);
+        ownedBySomeoneElse.setVersion(1);
+        when(runDao.findById(WORKSPACE_ID, 100L)).thenReturn(ownedBySomeoneElse);
+        BizException notOwner = assertThrows(BizException.class,
+                () -> call(principal, "autowonder.transition_scheduled_task",
+                        Map.of("id", 11L, "action", "cancel-run", "version", 1L, "runId", 100L)));
+        assertEquals("10403", notOwner.getCode());
+
+        when(runDao.findById(WORKSPACE_ID, 99L)).thenReturn(run);
+        when(runService.markCancelIntent(run, USER_ID)).thenReturn(true);
+        ScheduledTaskRunDO canceled = new ScheduledTaskRunDO();
+        canceled.setId(99L);
+        canceled.setWorkspaceId(WORKSPACE_ID);
+        canceled.setStatus("CANCELED");
+        canceled.setVersion(8);
+        when(runDao.findById(WORKSPACE_ID, 99L)).thenReturn(run, canceled);
+        Map<?, ?> cancelResult = (Map<?, ?>) call(principal, "autowonder.transition_scheduled_task",
+                Map.of("id", 11L, "action", "cancel-run", "version", 5L, "runId", 99L));
+        assertEquals("CANCELED", cancelResult.get("status"));
+        verify(control).pauseActive(WORKSPACE_ID, 99L, USER_ID, true);
+    }
+
+    @Test
+    void dispatchTokenScheduledTaskReadsAreLimitedToItsOwnRun() {
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, WORKSPACE_ID, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        ScheduledTaskService taskService = mock(ScheduledTaskService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDao", runDao);
+        ReflectionTestUtils.setField(service, "scheduledTaskService", taskService);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(99L);
+        run.setWorkspaceId(WORKSPACE_ID);
+        run.setScheduledTaskId(11L);
+        run.setOwnerId(40014L);
+        run.setStatus("RUNNING");
+        run.setVersion(2);
+        when(runDao.findById(WORKSPACE_ID, 99L)).thenReturn(run);
+
+        ScheduledTaskVO task = new ScheduledTaskVO();
+        task.setId(11L);
+        task.setCreatorId(40014L);
+        task.setVersion(1);
+        when(taskService.get(11L, WORKSPACE_ID)).thenReturn(task);
+        Map<?, ?> taskResult = (Map<?, ?>) call(dispatchPrincipal,
+                "autowonder.get_scheduled_task", Map.of("id", 11L, "includeRuns", false));
+        assertEquals(11L, ((Number) taskResult.get("id")).longValue());
+
+        BizException otherTask = assertThrows(BizException.class,
+                () -> call(dispatchPrincipal, "autowonder.get_scheduled_task", Map.of("id", 12L)));
+        assertEquals("10403", otherTask.getCode());
+
+        Map<?, ?> runResult = (Map<?, ?>) call(dispatchPrincipal, "autowonder.get_scheduled_task_run",
+                Map.of("runId", 99L, "includeEvents", false, "includeArtifacts", false,
+                        "includeComments", false));
+        assertEquals(99L, ((Number) runResult.get("id")).longValue());
+
+        BizException otherRun = assertThrows(BizException.class,
+                () -> call(dispatchPrincipal, "autowonder.get_scheduled_task_run", Map.of("runId", 100L)));
+        assertEquals("10403", otherRun.getCode());
+    }
+
+    @Test
+    void scheduledTaskRunCommentRoutesDispatchAndHumanPathsDifferently() {
+        ScheduledTaskRunCommentService runComments = mock(ScheduledTaskRunCommentService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunCommentService", runComments);
+        CommentVO comment = new CommentVO();
+        comment.setId(56L);
+        when(runComments.addHumanComment(WORKSPACE_ID, 99L, USER_ID, "check logs")).thenReturn(comment);
+        assertSame(comment, call(principal, "autowonder.add_scheduled_task_run_comment",
+                Map.of("runId", 99L, "contentMd", "check logs")));
+
+        McpAccessTokenService.Principal dispatchPrincipal = dispatchPrincipal(-321L);
+        DispatchDO dispatch = dispatch(321L, WORKSPACE_ID, 99L, 40014L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(321L)).thenReturn(dispatch);
+        CommentVO agentComment = new CommentVO();
+        agentComment.setId(57L);
+        when(runComments.addAgentComment(WORKSPACE_ID, 99L, 40014L, "need guidance", List.of(), List.of()))
+                .thenReturn(agentComment);
+        assertSame(agentComment, call(dispatchPrincipal, "autowonder.add_scheduled_task_run_comment",
+                Map.of("runId", 99L, "contentMd", "need guidance")));
+
+        BizException otherRun = assertThrows(BizException.class,
+                () -> call(dispatchPrincipal, "autowonder.add_scheduled_task_run_comment",
+                        Map.of("runId", 100L, "contentMd", "not mine")));
+        assertEquals("10403", otherRun.getCode());
+    }
+
+    @Test
+    void getScheduledTaskAggregatesRunsHealthAndDocuments() {
+        ScheduledTaskService taskService = mock(ScheduledTaskService.class);
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        ArtifactService artifactService = mock(ArtifactService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskService", taskService);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDao", runDao);
+        ReflectionTestUtils.setField(service, "artifactService", artifactService);
+        ScheduledTaskVO task = new ScheduledTaskVO();
+        task.setId(11L);
+        task.setCreatorId(USER_ID);
+        task.setVersion(1);
+        when(taskService.get(11L, WORKSPACE_ID)).thenReturn(task);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(99L);
+        run.setWorkspaceId(WORKSPACE_ID);
+        run.setScheduledTaskId(11L);
+        run.setStatus("SUCCEEDED");
+        run.setVersion(3);
+        when(runDao.listByTask(WORKSPACE_ID, 11L, 10, 0)).thenReturn(List.of(run));
+        when(runDao.countCompletedByTaskSince(eq(WORKSPACE_ID), eq(11L), any(Date.class))).thenReturn(4L);
+        when(runDao.countSucceededByTaskSince(eq(WORKSPACE_ID), eq(11L), any(Date.class))).thenReturn(3L);
+        when(requirementDocumentService.list(any(com.aliyun.autowonder.artifact.ArtifactOwnerRef.class),
+                eq(WORKSPACE_ID))).thenReturn(List.of());
+
+        Map<?, ?> result = (Map<?, ?>) call(principal, "autowonder.get_scheduled_task",
+                Map.of("id", 11L, "includeDocuments", true));
+
+        assertEquals(1, ((List<?>) result.get("recentRuns")).size());
+        assertEquals(4L, ((Number) ((Map<?, ?>) result.get("health")).get("completed30d")).longValue());
+        assertEquals(3L, ((Number) ((Map<?, ?>) result.get("health")).get("success30d")).longValue());
+        assertNotNull(result.get("documents"));
+        assertFalse(result.containsKey("nextFirePreviews"));
+        verify(artifactService, never()).listByOwner(any(), anyLong());
     }
 
     @Test
@@ -975,6 +1566,9 @@ class McpToolServiceTest {
         assertTrue(upload.getDescription().contains("PNG"));
         assertTrue(upload.getDescription().contains("JPEG"));
         assertTrue(upload.getDescription().contains("WebP"));
+        assertTrue(upload.getDescription().contains(".txt"));
+        assertTrue(upload.getDescription().contains(".html"));
+        assertTrue(upload.getDescription().contains(".pdf"));
         assertTrue(upload.getDescription().contains("contentBase64"));
         assertTrue(upload.getDescription().contains("contentMd"));
 
@@ -1485,9 +2079,7 @@ class McpToolServiceTest {
     }
 
     private McpAccessTokenService.Principal dispatchPrincipal() {
-        return new McpAccessTokenService.Principal(
-                100L, 7L, -321L, WorkspaceAccessLevel.READ_WRITE,
-                McpAccessTokenService.CredentialType.DISPATCH);
+        return dispatchPrincipal(-321L);
     }
 
     @Test
@@ -1731,7 +2323,11 @@ class McpToolServiceTest {
                                 && "SOUL".equals(request.getBusinessBackground())
                                 && "AGENT".equals(request.getResponsibilities())
                                 && Long.valueOf(88L).equals(request.getSdlcId())
-                                && "MANUAL".equals(request.getEvolutionMode())),
+                                && "MANUAL".equals(request.getEvolutionMode())
+                                && request.getProvidedFields() != null
+                                && request.getProvidedFields().containsAll(java.util.Set.of(
+                                        "roleName", "roleCode", "businessBackground",
+                                        "responsibilities", "sdlcId", "evolutionMode"))),
                 eq(WORKSPACE_ID), eq(USER_ID));
     }
 
@@ -1877,6 +2473,45 @@ class McpToolServiceTest {
                         "new soul".equals(request.getBusinessBackground())
                                 && request.getResponsibilities() == null),
                 eq(WORKSPACE_ID), eq(USER_ID));
+    }
+
+    @Test
+    void updateAgentConfigOnlyMarksProvidedFieldsForPartialUpdates() {
+        call(principal, "autowonder.update_agent_config", Map.of(
+                "agentId", 10L,
+                "agentMd", "AGENT only"));
+
+        verify(agentService).editConfig(eq(10L), argThat(request ->
+                        "AGENT only".equals(request.getResponsibilities())
+                                && request.getProvidedFields() != null
+                                && request.getProvidedFields().equals(java.util.Set.of("responsibilities"))),
+                eq(WORKSPACE_ID), eq(USER_ID));
+    }
+
+    @Test
+    void updateAgentMarksExplicitNullFieldsAsProvidedAndSkipsOmittedOnes() {
+        Map<String, Object> args = new java.util.LinkedHashMap<>();
+        args.put("id", 12L);
+        args.put("soulMd", null);
+        call(principal, "autowonder.update_agent", args);
+
+        verify(agentService).updateAgent(argThat(request ->
+                        request.getBusinessBackground() == null
+                                && request.getProvidedFields() != null
+                                && request.getProvidedFields().contains("businessBackground")
+                                && !request.getProvidedFields().contains("responsibilities")
+                                && !request.getProvidedFields().contains("roleCode")),
+                eq(WORKSPACE_ID), eq(USER_ID));
+    }
+
+    @Test
+    void agentUpdateToolDescriptionsExplainPartialUpdateSemantics() {
+        for (String toolName : List.of("autowonder.update_agent", "autowonder.update_agent_config")) {
+            String description = toolFor(toolName).getDescription();
+            assertTrue(description.contains("omit"), toolName);
+            assertTrue(description.contains("keep its current value"), toolName);
+            assertTrue(description.contains("pass null to clear"), toolName);
+        }
     }
 
     @Test
@@ -2400,6 +3035,7 @@ class McpToolServiceTest {
     }
 
     private McpAccessTokenService.Principal dispatchPrincipal(long tokenId) {
+        when(dispatchDao.findById(-tokenId)).thenReturn(dispatch(-tokenId, WORKSPACE_ID, 99L, 40014L));
         return new McpAccessTokenService.Principal(
                 WORKSPACE_ID, USER_ID, tokenId, WorkspaceAccessLevel.READ_WRITE,
                 McpAccessTokenService.CredentialType.DISPATCH);
@@ -2447,7 +3083,7 @@ class McpToolServiceTest {
         props.setRefreshTtlSeconds(7200);
         PlatformBrandingService branding = new PlatformBrandingService(
                 mock(PlatformBrandingDao.class), new InMemoryObjectStorage(), new OssProperties(),
-                baseUrl, runtimeVersion, "x.x.x");
+                baseUrl, runtimeVersion, "x.x.x", false);
         return new WorkitemCliUploadTokenService(new JwtService(props), workitemDao, memberDao, branding);
     }
 }

@@ -19,6 +19,11 @@ public interface DispatchDao {
                            @Param("workitemId") Long workitemId,
                            @Param("sdlcStepId") Long sdlcStepId);
 
+    Integer findMaxAttemptBySource(@Param("tenantId") Long tenantId,
+                                   @Param("sourceType") String sourceType,
+                                   @Param("sourceId") Long sourceId,
+                                   @Param("sdlcStepId") Long sdlcStepId);
+
     /** Optimistic status transition; also sets agentVersionId/executorId/packageOssRef/error/resultSummary when provided. */
     int updateStatus(@Param("id") Long id, @Param("tenantId") Long tenantId,
                      @Param("status") String status,
@@ -30,24 +35,46 @@ public interface DispatchDao {
                      @Param("version") Integer version,
                      @Param("modifierId") Long modifierId);
 
+    /** Pins a scheduled-run dispatch to the version recorded in its immutable Run snapshot. */
+    int pinScheduledAgentVersion(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                                 @Param("agentId") Long agentId,
+                                 @Param("agentVersionId") Long agentVersionId,
+                                 @Param("modifierId") Long modifierId);
+
     /** All dispatches on the same workitem, oldest first. */
     List<DispatchDO> listByWorkitem(@Param("tenantId") Long tenantId,
                                     @Param("workitemId") Long workitemId);
 
-    /** Latest dispatch (highest id) per workitem for the given ids. Tenant scoping is applied automatically. */
-    List<DispatchDO> listLatestByWorkitemIds(@Param("workitemIds") List<Long> workitemIds);
+    List<DispatchDO> listBySource(@Param("tenantId") Long tenantId,
+                                  @Param("sourceType") String sourceType,
+                                  @Param("sourceId") Long sourceId);
+
+    /** Latest dispatch (highest id) per workitem for the given ids in one explicit tenant. */
+    List<DispatchDO> listLatestByWorkitemIds(@Param("tenantId") Long tenantId,
+                                              @Param("workitemIds") List<Long> workitemIds);
 
     /** All dispatches for the given workitem ids, for batch enrichment (e.g. active-status checks). */
-    List<DispatchDO> listByWorkitemIds(@Param("workitemIds") Collection<Long> workitemIds);
+    List<DispatchDO> listByWorkitemIds(@Param("tenantId") Long tenantId,
+                                        @Param("workitemIds") Collection<Long> workitemIds);
 
     List<DispatchDO> listLatestByWorkitemAndAgent(@Param("tenantId") Long tenantId,
                                                    @Param("workitemId") Long workitemId,
                                                    @Param("agentId") Long agentId,
                                                    @Param("limit") int limit);
 
+    List<DispatchDO> listLatestBySourceAndAgent(@Param("tenantId") Long tenantId,
+                                                 @Param("sourceType") String sourceType,
+                                                 @Param("sourceId") Long sourceId,
+                                                 @Param("agentId") Long agentId,
+                                                 @Param("limit") int limit);
+
     /** SUCCEEDED dispatches on the same workitem, oldest first — teammate outputs. */
     List<DispatchDO> listSucceededByWorkitem(@Param("tenantId") Long tenantId,
                                              @Param("workitemId") Long workitemId);
+
+    List<DispatchDO> listSucceededBySource(@Param("tenantId") Long tenantId,
+                                           @Param("sourceType") String sourceType,
+                                           @Param("sourceId") Long sourceId);
 
     /** Stuck rows for compensation: status in the given set, older than the cutoff. */
     List<DispatchDO> listStuck(@Param("statuses") List<String> statuses,

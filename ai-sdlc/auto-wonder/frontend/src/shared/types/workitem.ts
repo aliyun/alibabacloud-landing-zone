@@ -51,6 +51,9 @@ export interface Workitem {
   version: number;
   gmtCreate: string;
   gmtModified: string;
+  scheduledStartAt?: string | null;
+  scheduledStartTriggeredAt?: string | null;
+  tags?: string[];
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
   pendingDecision?: boolean | null;
@@ -59,9 +62,17 @@ export interface Workitem {
   sourceUrl?: string | null;
   deletable?: boolean | null;
   deletableReason?: string | null;
+  origin?: WorkitemOrigin | null;
   externalCollaboration?: ExternalCollaboration | null;
   /** Source-side creator for an imported workitem; creatorId remains the local import operator. */
   sourceCreator?: ExternalPrincipal | null;
+}
+
+export interface WorkitemOrigin {
+  type: string;
+  id: number;
+  scheduledTaskId?: number | null;
+  scheduledTaskName?: string | null;
 }
 
 export interface TimelineEvent {
@@ -109,12 +120,16 @@ export interface WorkitemDetail {
   version: number;
   gmtCreate: string;
   gmtModified: string;
+  scheduledStartAt?: string | null;
+  scheduledStartTriggeredAt?: string | null;
+  tags?: string[];
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
   pendingDecision?: boolean | null;
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
   deletable?: boolean | null;
   deletableReason?: string | null;
+  origin?: WorkitemOrigin | null;
   externalCollaboration?: ExternalCollaboration | null;
 }
 
@@ -143,6 +158,7 @@ export interface DeliveryStep {
   subSteps: SubStep[] | null;
   durationMs: number | null;
   attempts: DispatchAttempt[] | null;
+  usage?: UsageSummary | null;
 }
 
 export interface DispatchAttempt {
@@ -162,6 +178,15 @@ export interface SubStep {
   status: 'done' | 'active' | 'pending' | 'failed';
 }
 
+export interface UsageSummary {
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  reasoningTokens?: number | null;
+  credits?: number | null;
+}
+
 export interface AgentDeliveryProgress {
   agentId: number;
   agentName: string;
@@ -169,6 +194,7 @@ export interface AgentDeliveryProgress {
   durationMs: number | null;
   currentActivity?: string | null;
   steps: DeliveryStep[];
+  usage?: UsageSummary | null;
 }
 
 export interface DeliveryProgress {

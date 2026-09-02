@@ -2,19 +2,48 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.workitem.WorkitemCommentMentionDao">
+    <sql id="cols" databaseId="autowonder-source-aware">
+        id, tenant_id, source_type, workitem_id, comment_id, target_type, target_ref, display_name_snapshot, gmt_create
+    </sql>
+    <sql id="cols" databaseId="autowonder-legacy">
+        id, tenant_id, 'WORKITEM' AS source_type, workitem_id, comment_id, target_type, target_ref,
+        display_name_snapshot, gmt_create
+    </sql>
+
     <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO"
+            databaseId="autowonder-source-aware"
             useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_comment_mention
+            (tenant_id, source_type, workitem_id, comment_id, target_type, target_ref, display_name_snapshot)
+        VALUES
+            (#{tenantId}, #{sourceType}, #{workitemId}, #{commentId}, #{targetType}, #{targetRef}, #{displayNameSnapshot})
+    </insert>
+    <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO"
+            databaseId="autowonder-legacy" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO workitem_comment_mention
             (tenant_id, workitem_id, comment_id, target_type, target_ref, display_name_snapshot)
         VALUES
             (#{tenantId}, #{workitemId}, #{commentId}, #{targetType}, #{targetRef}, #{displayNameSnapshot})
     </insert>
 
-    <select id="listByWorkitem" resultType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO">
-        SELECT *
+    <select id="listByWorkitem" databaseId="autowonder-source-aware"
+            resultType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO">
+        SELECT <include refid="cols"/>
         FROM workitem_comment_mention
         WHERE tenant_id = #{tenantId}
-          AND workitem_id = #{workitemId}
+          AND source_type = 'WORKITEM' AND workitem_id = #{workitemId}
         ORDER BY id ASC
+    </select>
+    <select id="listByWorkitem" databaseId="autowonder-legacy"
+            resultType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO">
+        SELECT <include refid="cols"/>
+        FROM workitem_comment_mention
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY id ASC
+    </select>
+    <select id="listBySource" databaseId="autowonder-source-aware"
+            resultType="com.aliyun.autowonder.workitem.WorkitemCommentMentionDO">
+        SELECT <include refid="cols"/> FROM workitem_comment_mention WHERE tenant_id = #{tenantId}
+          AND source_type = #{sourceType} AND workitem_id = #{sourceId} ORDER BY id ASC
     </select>
 </mapper>

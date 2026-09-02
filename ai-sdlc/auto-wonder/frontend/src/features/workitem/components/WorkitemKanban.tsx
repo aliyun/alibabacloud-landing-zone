@@ -6,6 +6,7 @@ import { workTypeMap, priorityMap, STATUS_COLUMNS, classifyWorkitemStatus } from
 import { groupPendingDecisionsByAssignee, isMyPendingDecision } from '../decisionGrouping';
 import { WorkitemHealthBadge } from './WorkitemHealthBadge';
 import { HumanInterventionBadge } from './HumanInterventionBadge';
+import { ScheduledExecutionBadge } from './ScheduledExecutionBadge';
 import type { Workitem } from '@/shared/types/workitem';
 
 const { Text, Paragraph } = Typography;
@@ -53,7 +54,13 @@ function WorkitemCard({ item }: { item: Workitem }) {
         </span>
       </div>
       <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8, fontWeight: 500 }}>
-        {item.title}
+        {item.title}{' '}
+        <ScheduledExecutionBadge
+          scheduledStartAt={item.scheduledStartAt}
+          scheduledStartTriggeredAt={item.scheduledStartTriggeredAt}
+          origin={item.origin}
+          gmtCreate={item.gmtCreate}
+        />
       </Paragraph>
       {item.sourceType === 'EXTERNAL' && (
         <div style={{ marginBottom: 6, fontSize: 12 }} onClick={(event) => event.stopPropagation()}>
