@@ -24,6 +24,14 @@ required for a community build and runtime.
      but new Aone-specific feature development on master need not be synced —
      only sync Aone changes when they are inseparable from a broader product
      feature that community requires;
+   - Aone-specific configuration keys beyond `AUTOWONDER_AONE_ENABLED` — for
+     example `AUTOWONDER_AONE_WEB_BASE_URL` — must never be listed in
+     `docs/community/application.env.example`. External community users have no
+     Aone instance, and these keys are optional with empty defaults that do not
+     affect startup or runtime while Aone is disabled. Their absence from the
+     environment inventory is intentional and permanent; the configuration-key
+     audit in step 4 must not report it as a missing key. Do not reintroduce them
+     in a later sync;
    - the community frontend supports creating Qoder CLI executors only; preserve
      this restriction when syncing executor UI changes from master;
    - the supported release target remains Linux x86_64 until expanded explicitly.

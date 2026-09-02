@@ -99,18 +99,23 @@ Configuration-key review: the upstream `application.yml` delta adds
 `autowonder.community-edition` and the six `autowonder.scheduled-task.*` keys,
 and drops nothing. `ScheduledTaskProperties` binds all six with matching
 defaults. All seven new environment variables were added to
-`docs/community/application.env.example`, together with
-`AUTOWONDER_AONE_WEB_BASE_URL`, which the previous sync introduced but never
-recorded there. Intentional community differences: `community-edition` defaults
-to `true`, and `scheduled-task.enabled`, `scheduled-task.scanner-enabled` and
+`docs/community/application.env.example`. This sync initially also re-added
+`AUTOWONDER_AONE_WEB_BASE_URL` there, which reversed the deliberate removal in
+`13bb8a9c1`; it has been removed again, and the sync guide now records that
+Aone-specific keys beyond `AUTOWONDER_AONE_ENABLED` must never appear in the
+environment inventory. External community users have no Aone instance and the key
+is optional with an empty default, so its absence is an intentional permanent
+omission, not a missing key. Intentional community differences:
+`community-edition` defaults to `true`, and `scheduled-task.enabled`,
+`scheduled-task.scanner-enabled` and
 `scheduled-task.cluster-ready-attestation` default to `true` where upstream
 defaults them to `false`, so a fresh community install has 7×24 tasks working on
 first boot. That is safe for a fresh install because it imports the complete
 `docs/autowonder-schema.sql`; an upgrade of an existing deployment must set all
 three to `false` first, which is now the documented requirement in the release
 notes, `application.env.example`, `application.yml` and
-`docs/scheduled-task-operations.md`. `spring.buc.enabled` is the only
-intentionally omitted upstream key.
+`docs/scheduled-task-operations.md`. `spring.buc.enabled` and the Aone
+web-base-url key are the intentionally omitted upstream keys.
 
 Distribution defect found and fixed: the 25 Skill shell scripts were tracked as
 mode `100644` since the Skills were consolidated under `skills/`, leaving them

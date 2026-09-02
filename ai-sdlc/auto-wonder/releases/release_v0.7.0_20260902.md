@@ -155,9 +155,11 @@ installation imports the complete `docs/autowonder-schema.sql`, so the module is
 ready on first boot and 7×24 tasks work without extra configuration. All three
 values are frozen at bean construction and are not hot-reloadable.
 
-`AUTOWONDER_AONE_WEB_BASE_URL` was introduced by the previous sync but had never
-been listed in the environment inventory; it is now recorded with an empty
-default.
+`AUTOWONDER_AONE_WEB_BASE_URL` is deliberately absent from the environment
+inventory. External community users have no Aone instance and the key is optional
+with an empty default that does not affect startup or runtime while Aone is
+disabled. The sync guide now records that Aone-specific keys beyond
+`AUTOWONDER_AONE_ENABLED` must never be listed there.
 
 The recommended runtime version is a deployment contract, so `0.2.150` was
 propagated to the deployment manifest template and to the deployment and upgrade
