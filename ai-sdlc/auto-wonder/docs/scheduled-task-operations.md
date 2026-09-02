@@ -4,11 +4,18 @@
 
 ## 三个启动时开关
 
-| 配置项 | 环境变量 | 默认值 | 作用 |
+| 配置项 | 环境变量 | 社区版默认值 | 作用 |
 |---|---|---:|---|
-| `autowonder.scheduled-task.enabled` | `AUTOWONDER_SCHEDULED_TASK_ENABLED` | `false` | 开放 Scheduled API、回调和 manual Run |
-| `autowonder.scheduled-task.scanner-enabled` | `AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED` | `false` | 允许 Cron Scanner 认领到期任务；只有模块可用时才生效 |
-| `autowonder.scheduled-task.cluster-ready-attestation` | `AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY` | `false` | 发布平台对整个集群已升级完成的外部证明 |
+| `autowonder.scheduled-task.enabled` | `AUTOWONDER_SCHEDULED_TASK_ENABLED` | `true` | 开放 Scheduled API、回调和 manual Run |
+| `autowonder.scheduled-task.scanner-enabled` | `AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED` | `true` | 允许 Cron Scanner 认领到期任务；只有模块可用时才生效 |
+| `autowonder.scheduled-task.cluster-ready-attestation` | `AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY` | `true` | 发布平台对整个集群已升级完成的外部证明 |
+
+社区版三个开关默认为 `true`。**全新安装**导入完整的 `docs/autowonder-schema.sql`，
+首次启动即处于就绪状态，无需额外配置。
+
+**升级已在承载流量的部署**时，必须先在 `/etc/autowonder/autowonder.env` 中把三个开关
+显式设为 `false`，再执行数据库变更并按本文流程滚动升级；确认每个节点都报告新 Schema
+模式后，才移除这些覆盖值、让默认的 `true` 生效。单节点部署可以直接执行变更并重启一次。
 
 三个值都由 `ScheduledTaskCapabilityGuard` 在 Bean 构造时复制并冻结，**不支持热更新**。每一次开关变化都必须发布配置、滚动重启每一个服务节点，并按节点验证新配置版本和能力结果；只改环境变量、配置中心值或部分节点不生效也不安全。
 

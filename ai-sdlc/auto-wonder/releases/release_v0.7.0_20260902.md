@@ -95,12 +95,20 @@ The scheduled-task schema change is the only sensitive part. `V041` adds a
 Ordinary work items keep working before, during and after the change because
 every added column carries a compatible default.
 
-`AUTOWONDER_SCHEDULED_TASK_ENABLED`, `AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED`
-and `AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY` all default to `false` and are
-frozen at bean construction, so they are not hot-reloadable. Do not set
-`AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY=true` until every node serving traffic
-reports the new schema mode. An upgrade that applies the migrations and leaves
-all three switches at `false` changes no existing behavior.
+`AUTOWONDER_SCHEDULED_TASK_ENABLED`,
+`AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED` and
+`AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY` all default to `true` in this release,
+which is correct for a fresh install but **requires an explicit action when
+upgrading an existing deployment**. Before rolling out v0.7.0 to a deployment
+that is already serving traffic, set all three to `false` in
+`/etc/autowonder/autowonder.env`, apply the migrations, roll every node, confirm
+each node reports the new schema mode, and only then remove the overrides so the
+enabled defaults take effect. The three values are copied and frozen at bean
+construction, so they are not hot-reloadable: every change needs a rolling
+restart. Never let a single node infer cluster readiness on its own.
+
+A single-node community deployment can apply the migrations and restart once
+without overriding anything.
 
 `V046` drops the `uk_dispatch_provider_model` unique key on
 `dispatch_ai_usage` and replaces it with `uk_dispatch_step_provider_model`,
@@ -134,12 +142,18 @@ New keys, all recorded in `docs/community/application.env.example`:
 | Key | Environment variable | Default |
 | --- | --- | --- |
 | `autowonder.community-edition` | `AUTOWONDER_COMMUNITY_EDITION` | `true` (community) |
-| `autowonder.scheduled-task.enabled` | `AUTOWONDER_SCHEDULED_TASK_ENABLED` | `false` |
-| `autowonder.scheduled-task.scanner-enabled` | `AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED` | `false` |
-| `autowonder.scheduled-task.cluster-ready-attestation` | `AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY` | `false` |
+| `autowonder.scheduled-task.enabled` | `AUTOWONDER_SCHEDULED_TASK_ENABLED` | `true` (community) |
+| `autowonder.scheduled-task.scanner-enabled` | `AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED` | `true` (community) |
+| `autowonder.scheduled-task.cluster-ready-attestation` | `AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY` | `true` (community) |
 | `autowonder.scheduled-task.scan-fixed-delay-ms` | `AUTOWONDER_SCHEDULED_TASK_SCAN_FIXED_DELAY_MS` | `10000` |
 | `autowonder.scheduled-task.scan-batch-size` | `AUTOWONDER_SCHEDULED_TASK_SCAN_BATCH_SIZE` | `100` |
 | `autowonder.scheduled-task.lock-ttl-seconds` | `AUTOWONDER_SCHEDULED_TASK_LOCK_TTL_SECONDS` | `30` |
+
+The three scheduled-task switches default to `true` here while upstream defaults
+them to `false`. This is a deliberate community difference: a fresh community
+installation imports the complete `docs/autowonder-schema.sql`, so the module is
+ready on first boot and 7×24 tasks work without extra configuration. All three
+values are frozen at bean construction and are not hot-reloadable.
 
 `AUTOWONDER_AONE_WEB_BASE_URL` was introduced by the previous sync but had never
 been listed in the environment inventory; it is now recorded with an empty
@@ -148,8 +162,9 @@ default.
 The recommended runtime version is a deployment contract, so `0.2.150` was
 propagated to the deployment manifest template and to the deployment and upgrade
 Skill tests. No topology, credential, port, endpoint, database or
-environment-template change is required. Because every new switch defaults to
-off, no deployment input collection change is required.
+environment-template change is required. Deployment input collection needs no
+new prompt, because a fresh install is ready for the enabled defaults; the
+upgrade path is covered under Upgrade And Data Impact below.
 
 The executable bit was restored on the 25 Skill shell scripts. They had been
 committed as `100644` when the Skills were consolidated under `skills/`, which

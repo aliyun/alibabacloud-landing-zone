@@ -90,8 +90,10 @@ Deployment review: the recommended runtime version is the only deployment
 contract change. It was propagated to the deployment manifest template and to
 the deployment and upgrade Skill tests per Rule 12, and both Skills' version
 assertions were re-run. No topology, credential, port, endpoint, database or
-environment-template change is required. Because all new switches default to
-off, deployment input collection needs no change.
+environment-template change is required. Deployment input collection needs no new
+prompt: a fresh install is ready for the enabled scheduled-task defaults, and the
+upgrade override requirement is documented in the release notes and the
+scheduled-task runbook.
 
 Configuration-key review: the upstream `application.yml` delta adds
 `autowonder.community-edition` and the six `autowonder.scheduled-task.*` keys,
@@ -99,9 +101,16 @@ and drops nothing. `ScheduledTaskProperties` binds all six with matching
 defaults. All seven new environment variables were added to
 `docs/community/application.env.example`, together with
 `AUTOWONDER_AONE_WEB_BASE_URL`, which the previous sync introduced but never
-recorded there. The only intentional community difference is the
-`community-edition` default. `spring.buc.enabled` is the only intentionally
-omitted upstream key.
+recorded there. Intentional community differences: `community-edition` defaults
+to `true`, and `scheduled-task.enabled`, `scheduled-task.scanner-enabled` and
+`scheduled-task.cluster-ready-attestation` default to `true` where upstream
+defaults them to `false`, so a fresh community install has 7×24 tasks working on
+first boot. That is safe for a fresh install because it imports the complete
+`docs/autowonder-schema.sql`; an upgrade of an existing deployment must set all
+three to `false` first, which is now the documented requirement in the release
+notes, `application.env.example`, `application.yml` and
+`docs/scheduled-task-operations.md`. `spring.buc.enabled` is the only
+intentionally omitted upstream key.
 
 Distribution defect found and fixed: the 25 Skill shell scripts were tracked as
 mode `100644` since the Skills were consolidated under `skills/`, leaving them

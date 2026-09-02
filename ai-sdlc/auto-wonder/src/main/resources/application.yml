@@ -57,9 +57,13 @@ autowonder:
   runtime:
     recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.150}
   scheduled-task:
-    enabled: ${AUTOWONDER_SCHEDULED_TASK_ENABLED:false}
-    scanner-enabled: ${AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED:false}
-    cluster-ready-attestation: ${AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY:false}
+    # Enabled by default: a fresh community install imports the complete
+    # docs/autowonder-schema.sql, so the module is ready immediately. When
+    # upgrading an existing multi-node deployment, set all three to false until
+    # every node runs the new schema — see docs/scheduled-task-operations.md.
+    enabled: ${AUTOWONDER_SCHEDULED_TASK_ENABLED:true}
+    scanner-enabled: ${AUTOWONDER_SCHEDULED_TASK_SCANNER_ENABLED:true}
+    cluster-ready-attestation: ${AUTOWONDER_SCHEDULED_TASK_CLUSTER_READY:true}
     scan-fixed-delay-ms: ${AUTOWONDER_SCHEDULED_TASK_SCAN_FIXED_DELAY_MS:10000}
     scan-batch-size: ${AUTOWONDER_SCHEDULED_TASK_SCAN_BATCH_SIZE:100}
     lock-ttl-seconds: ${AUTOWONDER_SCHEDULED_TASK_LOCK_TTL_SECONDS:30}
