@@ -82,6 +82,7 @@ class DispatchQueryServiceTest {
         assertEquals(50, page.getPageSize());
         assertEquals(1, page.getList().size());
         DispatchVO vo = page.getList().get(0);
+        assertEquals(ExecutionSourceType.WORKITEM.name(), vo.getSourceType());
         assertEquals("登录页重构", vo.getWorkitemTitle());
         assertEquals("前端开发", vo.getAgentName());
         assertEquals(7, vo.getAgentVersionNo());
@@ -162,5 +163,23 @@ class DispatchQueryServiceTest {
         other.setTenantId(200L); // different tenant
         when(dispatchDao.findById(1L)).thenReturn(other);
         assertThrows(BizException.class, () -> service.get(TENANT, 1L));
+    }
+
+    @Test
+    void scheduledRunDispatchNeverUsesRunIdToLoadAWorkitemTitle() {
+        DispatchDO scheduled = row(1L, 10L, 20L, 30L, 40L);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.listByTenant(eq(TENANT), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of(scheduled));
+        when(dispatchDao.countByTenant(eq(TENANT), any(), any(), any(), any())).thenReturn(1L);
+        when(agentDao.listByIds(eq(TENANT), anyCollection())).thenReturn(List.of());
+        when(agentVersionDao.listByIds(eq(TENANT), anyCollection())).thenReturn(List.of());
+        when(executorDao.listByIds(eq(TENANT), anyCollection())).thenReturn(List.of());
+
+        DispatchVO vo = service.list(TENANT, null, null, null, "30d", 1, 50).getList().get(0);
+
+        assertEquals(ExecutionSourceType.SCHEDULED_TASK_RUN.name(), vo.getSourceType());
+        assertNull(vo.getWorkitemTitle());
+        verify(workitemDao, never()).listByIds(anyLong(), anyCollection());
     }
 }

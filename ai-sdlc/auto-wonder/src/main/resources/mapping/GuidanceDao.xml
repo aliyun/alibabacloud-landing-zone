@@ -5,6 +5,7 @@
     <resultMap id="guidanceMap" type="com.aliyun.autowonder.guidance.GuidanceDO">
         <id column="id" property="id"/>
         <result column="tenant_id" property="tenantId"/>
+        <result column="source_type" property="sourceType"/>
         <result column="workitem_id" property="workitemId"/>
         <result column="comment_id" property="commentId"/>
         <result column="target_agent_id" property="targetAgentId"/>
@@ -18,30 +19,59 @@
         <result column="gmt_create" property="gmtCreate"/>
         <result column="gmt_modified" property="gmtModified"/>
     </resultMap>
-    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+    <sql id="cols" databaseId="autowonder-source-aware">
+        id, tenant_id, source_type, workitem_id, comment_id, target_agent_id, dispatch_id, executor_id,
+        reply_comment_id, status, error, delivered_at, applied_at, gmt_create, gmt_modified
+    </sql>
+    <sql id="cols" databaseId="autowonder-legacy">
+        id, tenant_id, 'WORKITEM' AS source_type, workitem_id, comment_id, target_agent_id, dispatch_id, executor_id,
+        reply_comment_id, status, error, delivered_at, applied_at, gmt_create, gmt_modified
+    </sql>
+    <sql id="joinedCols" databaseId="autowonder-source-aware">
+        g.id, g.tenant_id, g.source_type, g.workitem_id, g.comment_id, g.target_agent_id, g.dispatch_id, g.executor_id,
+        g.reply_comment_id, g.status, g.error, g.delivered_at, g.applied_at, g.gmt_create, g.gmt_modified
+    </sql>
+    <sql id="joinedCols" databaseId="autowonder-legacy">
+        g.id, g.tenant_id, 'WORKITEM' AS source_type, g.workitem_id, g.comment_id, g.target_agent_id, g.dispatch_id,
+        g.executor_id, g.reply_comment_id, g.status, g.error, g.delivered_at, g.applied_at, g.gmt_create, g.gmt_modified
+    </sql>
+
+    <insert id="insert" databaseId="autowonder-source-aware" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO workitem_comment_delivery
-          (tenant_id, workitem_id, comment_id, target_agent_id, dispatch_id, executor_id,
+          (tenant_id, source_type, workitem_id, comment_id, target_agent_id, dispatch_id, executor_id,
            status, error)
+        VALUES
+          (#{tenantId}, #{sourceType}, #{workitemId}, #{commentId}, #{targetAgentId}, #{dispatchId}, #{executorId},
+           #{status}, #{error})
+    </insert>
+    <insert id="insert" databaseId="autowonder-legacy" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_comment_delivery
+          (tenant_id, workitem_id, comment_id, target_agent_id, dispatch_id, executor_id, status, error)
         VALUES
           (#{tenantId}, #{workitemId}, #{commentId}, #{targetAgentId}, #{dispatchId}, #{executorId},
            #{status}, #{error})
     </insert>
     <select id="findById" resultMap="guidanceMap">
-        SELECT * FROM workitem_comment_delivery WHERE id = #{id}
+        SELECT <include refid="cols"/> FROM workitem_comment_delivery WHERE id = #{id}
     </select>
-    <select id="listByWorkitem" resultMap="guidanceMap">
-        SELECT * FROM workitem_comment_delivery
+    <select id="listByWorkitem" databaseId="autowonder-source-aware" resultMap="guidanceMap">
+        SELECT <include refid="cols"/> FROM workitem_comment_delivery
+        WHERE tenant_id = #{tenantId} AND source_type = 'WORKITEM' AND workitem_id = #{workitemId}
+        ORDER BY id ASC
+    </select>
+    <select id="listByWorkitem" databaseId="autowonder-legacy" resultMap="guidanceMap">
+        SELECT <include refid="cols"/> FROM workitem_comment_delivery
         WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
         ORDER BY id ASC
     </select>
     <select id="listQueuedForDispatch" resultMap="guidanceMap">
-        SELECT * FROM workitem_comment_delivery
+        SELECT <include refid="cols"/> FROM workitem_comment_delivery
         WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
           AND status = 'QUEUED'
         ORDER BY id ASC
     </select>
     <select id="listDeliveredForExecutor" resultMap="guidanceMap">
-        SELECT g.*
+        SELECT <include refid="joinedCols"/>
         FROM workitem_comment_delivery g
         JOIN dispatch d ON d.id = g.dispatch_id AND d.tenant_id = g.tenant_id AND d.is_deleted = 0
         WHERE g.tenant_id = #{tenantId} AND g.executor_id = #{executorId}

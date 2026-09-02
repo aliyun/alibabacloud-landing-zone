@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.scheduledtask.ScheduledTaskDao">
+
+    <resultMap id="scheduledTaskMap" type="com.aliyun.autowonder.scheduledtask.ScheduledTaskDO">
+        <id column="id" property="id"/>
+        <result column="workspace_id" property="workspaceId"/>
+        <result column="name" property="name"/>
+        <result column="instruction_md" property="instructionMd"/>
+        <result column="squad_id" property="squadId"/>
+        <result column="initial_agent_id" property="initialAgentId"/>
+        <result column="schedule_type" property="scheduleType"/>
+        <result column="run_at" property="runAt"/>
+        <result column="cron_expression" property="cronExpression"/>
+        <result column="timezone" property="timezone"/>
+        <result column="session_mode" property="sessionMode"/>
+        <result column="overlap_policy" property="overlapPolicy"/>
+        <result column="misfire_policy" property="misfirePolicy"/>
+        <result column="start_deadline_seconds" property="startDeadlineSeconds"/>
+        <result column="affinity_timeout_seconds" property="affinityTimeoutSeconds"/>
+        <result column="status" property="status"/>
+        <result column="next_fire_at" property="nextFireAt"/>
+        <result column="last_fire_at" property="lastFireAt"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+        <result column="is_deleted" property="isDeleted"/>
+        <result column="version" property="version"/>
+    </resultMap>
+
+    <sql id="cols" databaseId="autowonder-source-aware">
+        id, workspace_id, name, instruction_md, squad_id, initial_agent_id, schedule_type,
+        run_at, cron_expression, timezone, session_mode, overlap_policy, misfire_policy,
+        start_deadline_seconds, affinity_timeout_seconds, status, next_fire_at, last_fire_at,
+        gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
+    </sql>
+
+    <insert id="insert" databaseId="autowonder-source-aware" parameterType="com.aliyun.autowonder.scheduledtask.ScheduledTaskDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO scheduled_task
+            (workspace_id, name, instruction_md, squad_id, initial_agent_id, schedule_type,
+             run_at, cron_expression, timezone, session_mode, overlap_policy, misfire_policy,
+             start_deadline_seconds, affinity_timeout_seconds, status, next_fire_at, last_fire_at,
+             creator_id, modifier_id, is_deleted, version)
+        VALUES
+            (#{workspaceId}, #{name}, #{instructionMd}, #{squadId}, #{initialAgentId}, #{scheduleType},
+             #{runAt}, #{cronExpression}, #{timezone}, #{sessionMode}, #{overlapPolicy}, #{misfirePolicy},
+             #{startDeadlineSeconds}, #{affinityTimeoutSeconds}, #{status}, #{nextFireAt}, #{lastFireAt},
+             #{creatorId}, #{modifierId}, 0, 0)
+    </insert>
+
+    <select id="findById" databaseId="autowonder-source-aware" resultMap="scheduledTaskMap">
+        SELECT <include refid="cols"/> FROM scheduled_task
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findAnyById" databaseId="autowonder-source-aware" resultMap="scheduledTaskMap">
+        SELECT <include refid="cols"/> FROM scheduled_task
+        WHERE id = #{id} AND is_deleted = 0
+    </select>
+
+    <select id="findByIdForUpdate" databaseId="autowonder-source-aware" resultMap="scheduledTaskMap">
+        SELECT <include refid="cols"/> FROM scheduled_task
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND is_deleted = 0
+        FOR UPDATE
+    </select>
+
+    <select id="listByWorkspace" databaseId="autowonder-source-aware" resultMap="scheduledTaskMap">
+        SELECT <include refid="cols"/> FROM scheduled_task
+        WHERE workspace_id = #{workspaceId} AND is_deleted = 0
+        <if test="status != null and status != ''">AND status = #{status}</if>
+        <if test="creatorId != null">AND creator_id = #{creatorId}</if>
+        <if test="squadId != null">AND squad_id = #{squadId}</if>
+        <if test="keyword != null and keyword != ''">AND name LIKE CONCAT('%', #{keyword}, '%')</if>
+        ORDER BY id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="countByWorkspace" databaseId="autowonder-source-aware" resultType="long">
+        SELECT COUNT(*) FROM scheduled_task WHERE workspace_id = #{workspaceId} AND is_deleted = 0
+        <if test="status != null and status != ''">AND status = #{status}</if>
+        <if test="creatorId != null">AND creator_id = #{creatorId}</if>
+        <if test="squadId != null">AND squad_id = #{squadId}</if>
+        <if test="keyword != null and keyword != ''">AND name LIKE CONCAT('%', #{keyword}, '%')</if>
+    </select>
+    <select id="summarizeRuns" databaseId="autowonder-source-aware" resultType="com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskSummaryVO">
+        SELECT
+          COUNT(DISTINCT CASE WHEN r.status = 'RUNNING' THEN t.id END) AS running,
+          SUM(CASE WHEN r.scheduled_at &gt;= DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR) - INTERVAL 8 HOUR AND r.scheduled_at &lt; DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR) + INTERVAL 16 HOUR THEN 1 ELSE 0 END) AS today,
+          SUM(CASE WHEN r.status = 'SUCCEEDED' AND r.scheduled_at &gt;= UTC_TIMESTAMP() - INTERVAL 30 DAY THEN 1 ELSE 0 END) AS success30d,
+          <!-- SKIPPED is not an execution outcome and is intentionally excluded from the success-rate denominator. -->
+          SUM(CASE WHEN r.status IN ('SUCCEEDED','FAILED','CANCELED','TIMED_OUT') AND r.scheduled_at &gt;= UTC_TIMESTAMP() - INTERVAL 30 DAY THEN 1 ELSE 0 END) AS completed30d,
+          COUNT(DISTINCT CASE WHEN r.status IN ('FAILED','PAUSED') THEN t.id END) AS attention
+        FROM scheduled_task t LEFT JOIN scheduled_task_run r ON r.scheduled_task_id = t.id AND r.workspace_id = t.workspace_id
+        WHERE t.workspace_id = #{workspaceId} AND t.is_deleted = 0
+        <if test="status != null and status != ''">AND t.status = #{status}</if>
+        <if test="squadId != null">AND t.squad_id = #{squadId}</if>
+        <if test="keyword != null and keyword != ''">AND t.name LIKE CONCAT('%', #{keyword}, '%')</if>
+    </select>
+
+    <select id="findDue" databaseId="autowonder-source-aware" resultMap="scheduledTaskMap">
+        SELECT <include refid="cols"/> FROM scheduled_task
+        WHERE status = 'ACTIVE' AND is_deleted = 0 AND next_fire_at &lt;= #{now}
+        ORDER BY next_fire_at ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="claimNextFire" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task
+        SET next_fire_at = #{nextFireAt}, last_fire_at = #{lastFireAt}, status = #{status},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status = 'ACTIVE'
+          AND version = #{expectedVersion} AND is_deleted = 0
+          AND (next_fire_at = #{expectedNextFireAt}
+               OR (next_fire_at IS NULL AND #{expectedNextFireAt} IS NULL))
+          AND #{status} IN ('ACTIVE', 'EXHAUSTED')
+    </update>
+
+    <update id="update" databaseId="autowonder-source-aware" parameterType="com.aliyun.autowonder.scheduledtask.ScheduledTaskDO">
+        UPDATE scheduled_task
+        SET name = #{name}, instruction_md = #{instructionMd}, squad_id = #{squadId},
+            initial_agent_id = #{initialAgentId}, schedule_type = #{scheduleType}, run_at = #{runAt},
+            cron_expression = #{cronExpression}, timezone = #{timezone}, session_mode = #{sessionMode},
+            overlap_policy = #{overlapPolicy}, misfire_policy = #{misfirePolicy},
+            start_deadline_seconds = #{startDeadlineSeconds},
+            affinity_timeout_seconds = #{affinityTimeoutSeconds}, next_fire_at = #{nextFireAt},
+            modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id}
+          AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <update id="updateStatus" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task
+        SET status = #{targetStatus}, modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status = #{expectedStatus}
+          AND #{targetStatus} IN ('ACTIVE', 'PAUSED', 'EXHAUSTED', 'ARCHIVED')
+          AND version = #{version} AND is_deleted = 0
+    </update>
+</mapper>

@@ -8,18 +8,19 @@ export type QoderModelOptions = {
 };
 
 export const QODER_MODELS: QoderSelectOption[] = [
-  { value: 'auto', label: 'Auto' },
+  { value: 'auto', label: 'Auto (default)' },
   { value: 'ultimate', label: 'Ultimate' },
   { value: 'performance', label: 'Performance' },
   { value: 'efficient', label: 'Efficient' },
   { value: 'lite', label: 'Lite' },
-  { value: 'cmodel', label: 'Cantus' },
   { value: 'qmodel_38max', label: 'Qwen3.8-Max' },
+  { value: 'qfmodel', label: 'Qwen3.8-Flash' },
   { value: 'qmodel_latest', label: 'Qwen3.7-Max' },
   { value: 'qmodel', label: 'Qwen3.7-Plus' },
   { value: 'kmodel_latest', label: 'Kimi-K3' },
   { value: 'kmodel', label: 'Kimi-K2.7-Code' },
-  { value: 'gm51model', label: 'GLM-5.2' },
+  { value: 'gmodel', label: 'GLM-5.3' },
+  { value: 'gfmodel', label: 'GLM-5.3-Flash' },
   { value: 'dmodel', label: 'DeepSeek-V4-Pro' },
   { value: 'dfmodel', label: 'DeepSeek-V4-Flash' },
   { value: 'mmodel', label: 'MiniMax-M3' },

@@ -5,6 +5,16 @@ import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchService;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunCommentService;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.dispatch.AgentSdlcResolver;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
@@ -43,6 +53,11 @@ public class GuidanceService {
     private final DispatchService dispatchService;
     private final AgentSdlcResolver sdlcResolver;
     private final ApplicationEventPublisher eventPublisher;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunDao scheduledTaskRunDao;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private ScheduledTaskRunCommentService scheduledTaskRunCommentService;
 
     public GuidanceService(GuidanceDao guidanceDao, WorkitemDao workitemDao, WorkitemCommentDao commentDao,
             AgentDao agentDao,
@@ -62,19 +77,55 @@ public class GuidanceService {
     }
 
     @Transactional
-    public void createForComment(long tenantId, long workitemId, long commentId, String contentMd,
+    public void createForComment(long workspaceId, long workitemId, long commentId, String contentMd,
             List<Long> explicitTargetAgentIds, long creatorId) {
         List<Long> targetAgentIds = explicitTargetAgentIds == null ? List.of()
                 : explicitTargetAgentIds.stream().filter(Objects::nonNull).distinct().toList();
         if (targetAgentIds.isEmpty()) {
-            targetAgentIds = resolveLeadingMention(tenantId, workitemId, contentMd);
+            targetAgentIds = resolveLeadingMention(workspaceId, workitemId, contentMd);
         }
         for (Long targetAgentId : targetAgentIds) {
-            create(tenantId, workitemId, commentId, targetAgentId, creatorId, contentMd);
+            create(workspaceId, workitemId, commentId, targetAgentId, creatorId, contentMd);
         }
     }
 
-    private List<Long> resolveLeadingMention(long tenantId, long workitemId, String contentMd) {
+    /** Creates a guidance delivery bound to a Run, never the similarly numbered Workitem. */
+    @Transactional
+    public GuidanceDO createForScheduledRunComment(long workspaceId, long runId, long commentId,
+            long targetAgentId, long creatorId) {
+        if (scheduledTaskRunDao == null) throw new IllegalStateException("scheduled run guidance unavailable");
+        ScheduledTaskRunDO run = scheduledTaskRunDao.findById(workspaceId, runId);
+        if (run == null || !Objects.equals(run.getWorkspaceId(), workspaceId)) {
+            throw new IllegalArgumentException("scheduled run does not belong to tenant");
+        }
+        AgentDO agent = agentDao.findById(targetAgentId);
+        if (agent == null || !Objects.equals(agent.getTenantId(), workspaceId)) {
+            throw new IllegalArgumentException("target agent does not belong to tenant");
+        }
+        WorkitemCommentDO comment = commentDao.findBySourceAndId(workspaceId,
+                ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId, commentId);
+        if (comment == null) throw new IllegalArgumentException("guidance comment does not belong to scheduled run");
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setTenantId(workspaceId);
+        guidance.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        guidance.setWorkitemId(runId);
+        guidance.setCommentId(commentId);
+        guidance.setTargetAgentId(targetAgentId);
+        guidance.setStatus(GuidanceStatus.QUEUED);
+        guidanceDao.insert(guidance);
+        DispatchDO interaction = dispatchService.enqueueScheduledRunCommentInteraction(workspaceId, runId,
+                targetAgentId, null, guidance.getId(), creatorId);
+        dispatchService.pinScheduledAgentVersion(interaction.getId(), workspaceId,
+                frozenAgentVersion(run, targetAgentId));
+        guidance.setDispatchId(interaction.getId());
+        if (guidanceDao.bindPendingDispatch(guidance.getId(), workspaceId, interaction.getId()) != 1) {
+            throw new IllegalStateException("failed to bind scheduled-run guidance dispatch");
+        }
+        eventPublisher.publishEvent(new GuidanceDispatchQueuedEvent(workspaceId, interaction.getId()));
+        return guidance;
+    }
+
+    private List<Long> resolveLeadingMention(long workspaceId, long workitemId, String contentMd) {
         if (contentMd == null) {
             return List.of();
         }
@@ -86,7 +137,7 @@ public class GuidanceService {
         if (mentionName == null || mentionName.isBlank()) {
             return List.of();
         }
-        List<Long> matches = workitemService.getParticipants(workitemId, tenantId).stream()
+        List<Long> matches = workitemService.getParticipants(workitemId, workspaceId).stream()
                 .filter(Objects::nonNull)
                 .filter(ParticipantVO::isAgent)
                 .filter(participant -> participant.getUserId() != null && participant.getName() != null)
@@ -97,8 +148,8 @@ public class GuidanceService {
         if (matches.size() == 1) {
             return matches;
         }
-        List<AgentDO> tenantMatches = safeList(agentDao.findByExactName(tenantId, mentionName)).stream()
-                .filter(agent -> agent != null && Objects.equals(agent.getTenantId(), tenantId)
+        List<AgentDO> tenantMatches = safeList(agentDao.findByExactName(workspaceId, mentionName)).stream()
+                .filter(agent -> agent != null && Objects.equals(agent.getTenantId(), workspaceId)
                         && agent.getId() != null)
                 .toList();
         return tenantMatches.size() == 1 ? List.of(tenantMatches.get(0).getId()) : List.of();
@@ -125,25 +176,25 @@ public class GuidanceService {
     }
 
     @Transactional
-    public GuidanceDO create(long tenantId, long workitemId, long commentId, long targetAgentId,
+    public GuidanceDO create(long workspaceId, long workitemId, long commentId, long targetAgentId,
             long creatorId) {
-        return create(tenantId, workitemId, commentId, targetAgentId, creatorId, null);
+        return create(workspaceId, workitemId, commentId, targetAgentId, creatorId, null);
     }
 
-    private GuidanceDO create(long tenantId, long workitemId, long commentId, long targetAgentId,
+    private GuidanceDO create(long workspaceId, long workitemId, long commentId, long targetAgentId,
             long creatorId, String commentContentMd) {
         WorkitemDO workitem = workitemDao.findById(workitemId);
-        if (workitem == null || !Objects.equals(workitem.getTenantId(), tenantId)) {
+        if (workitem == null || !Objects.equals(workitem.getTenantId(), workspaceId)) {
             throw new IllegalArgumentException("workitem does not belong to tenant");
         }
         AgentDO agent = agentDao.findById(targetAgentId);
-        if (agent == null || !Objects.equals(agent.getTenantId(), tenantId)) {
+        if (agent == null || !Objects.equals(agent.getTenantId(), workspaceId)) {
             throw new IllegalArgumentException("target agent does not belong to tenant");
         }
-        requireComment(tenantId, workitemId, commentId);
+        requireComment(workspaceId, ExecutionSourceType.WORKITEM, workitemId, commentId);
 
         GuidanceDO guidance = new GuidanceDO();
-        guidance.setTenantId(tenantId);
+        guidance.setTenantId(workspaceId);
         guidance.setWorkitemId(workitemId);
         guidance.setCommentId(commentId);
         guidance.setTargetAgentId(targetAgentId);
@@ -155,47 +206,47 @@ public class GuidanceService {
         }
         guidance.setStatus(GuidanceStatus.QUEUED);
         guidanceDao.insert(guidance);
-        List<DispatchDO> dispatches = dispatchDao.listByWorkitem(tenantId, workitemId);
+        List<DispatchDO> dispatches = dispatchDao.listByWorkitem(workspaceId, workitemId);
         DispatchDO prior = latestForAgent(dispatches, targetAgentId);
-        Long sdlcId = sdlcResolver.resolveSdlcId(tenantId, targetAgentId);
-        SdlcStepDO firstStep = sdlcId == null ? null : sdlcResolver.firstStep(tenantId, sdlcId);
+        Long sdlcId = sdlcResolver.resolveSdlcId(workspaceId, targetAgentId);
+        SdlcStepDO firstStep = sdlcId == null ? null : sdlcResolver.firstStep(workspaceId, sdlcId);
         if (prior == null && !hasWorkerHistory(dispatches, targetAgentId)
                 && isMentionOnly(commentContentMd, agent.getName())
                 && sdlcId != null && firstStep != null && firstStep.getId() != null) {
             // A worker with no delivery history on this workitem cannot resume a
             // conversation. Treat its first @ mention as a formal SDLC start.
-            workitemService.rebindForInteractionRework(tenantId, workitemId, targetAgentId,
+            workitemService.rebindForInteractionRework(workspaceId, workitemId, targetAgentId,
                     sdlcId, firstStep.getId(), creatorId);
             var acknowledgement = workitemService.addAgentComment(workitemId,
-                    FORMAL_WORKFLOW_ACKNOWLEDGEMENT, tenantId, targetAgentId);
+                    FORMAL_WORKFLOW_ACKNOWLEDGEMENT, workspaceId, targetAgentId);
             if (acknowledgement == null || acknowledgement.getId() == null
-                    || guidanceDao.bindReplyComment(guidance.getId(), tenantId,
+                    || guidanceDao.bindReplyComment(guidance.getId(), workspaceId,
                     acknowledgement.getId()) != 1) {
                 throw new IllegalStateException("failed to record formal workflow acknowledgement");
             }
-            DispatchDO formal = dispatchService.enqueue(tenantId, workitemId, firstStep.getId(),
+            DispatchDO formal = dispatchService.enqueue(workspaceId, workitemId, firstStep.getId(),
                     targetAgentId, 1, creatorId);
             guidance.setDispatchId(formal.getId());
-            if (guidanceDao.bindPendingDispatch(guidance.getId(), tenantId, formal.getId()) != 1) {
+            if (guidanceDao.bindPendingDispatch(guidance.getId(), workspaceId, formal.getId()) != 1) {
                 throw new IllegalStateException("failed to bind formal worker dispatch");
             }
             guidance.setStatus(GuidanceStatus.APPLIED);
-            guidanceDao.updateStatus(guidance.getId(), tenantId, GuidanceStatus.APPLIED, null);
-            eventPublisher.publishEvent(new GuidanceDispatchQueuedEvent(tenantId, formal.getId()));
+            guidanceDao.updateStatus(guidance.getId(), workspaceId, GuidanceStatus.APPLIED, null);
+            eventPublisher.publishEvent(new GuidanceDispatchQueuedEvent(workspaceId, formal.getId()));
             return guidance;
         }
         boolean forkSourceSession = prior != null
                 && ACTIVE_TURN_STATUSES.contains(prior.getStatus())
-                && dispatchService.hasResumableSession(tenantId, prior.getId());
+                && dispatchService.hasResumableSession(workspaceId, prior.getId());
         DispatchDO interaction = dispatchService.enqueueCommentInteraction(
-                tenantId, workitemId, targetAgentId, prior == null ? null : prior.getId(),
+                workspaceId, workitemId, targetAgentId, prior == null ? null : prior.getId(),
                 forkSourceSession, firstStep == null ? null : firstStep.getId(), guidance.getId(), creatorId);
         if (interaction != null) {
             guidance.setDispatchId(interaction.getId());
-            if (guidanceDao.bindPendingDispatch(guidance.getId(), tenantId, interaction.getId()) != 1) {
+            if (guidanceDao.bindPendingDispatch(guidance.getId(), workspaceId, interaction.getId()) != 1) {
                 throw new IllegalStateException("failed to bind comment interaction dispatch");
             }
-            eventPublisher.publishEvent(new GuidanceDispatchQueuedEvent(tenantId, interaction.getId()));
+            eventPublisher.publishEvent(new GuidanceDispatchQueuedEvent(workspaceId, interaction.getId()));
         }
         return guidance;
     }
@@ -214,9 +265,9 @@ public class GuidanceService {
     }
 
     @Transactional
-    public void deliverQueuedForDispatch(long tenantId, long dispatchId) {
+    public void deliverQueuedForDispatch(long workspaceId, long dispatchId) {
         DispatchDO dispatch = dispatchDao.findById(dispatchId);
-        if (dispatch != null && Objects.equals(dispatch.getTenantId(), tenantId)) {
+        if (dispatch != null && Objects.equals(dispatch.getTenantId(), workspaceId)) {
             deliverQueued(dispatch);
         }
     }
@@ -241,81 +292,122 @@ public class GuidanceService {
             guidance.setExecutorId(dispatch.getExecutorId());
             guidance.setStatus(GuidanceStatus.DELIVERED);
             guidanceDao.updateStatus(guidance.getId(), dispatch.getTenantId(), GuidanceStatus.DELIVERED, null);
-            WorkitemCommentDO comment = requireComment(dispatch.getTenantId(), dispatch.getWorkitemId(),
-                    guidance.getCommentId());
+            WorkitemCommentDO comment = requireComment(dispatch.getTenantId(), sourceType(guidance),
+                    guidance.getWorkitemId(), guidance.getCommentId());
             transport.send(guidance, comment.getContentMd());
         }
     }
 
-    public void redeliverUnacknowledged(long tenantId, long executorId) {
-        for (GuidanceDO guidance : safeList(guidanceDao.listDeliveredForExecutor(tenantId, executorId))) {
-            WorkitemCommentDO comment = requireComment(tenantId, guidance.getWorkitemId(),
-                    guidance.getCommentId());
+    public void redeliverUnacknowledged(long workspaceId, long executorId) {
+        for (GuidanceDO guidance : safeList(guidanceDao.listDeliveredForExecutor(workspaceId, executorId))) {
+            WorkitemCommentDO comment = requireComment(workspaceId, sourceType(guidance),
+                    guidance.getWorkitemId(), guidance.getCommentId());
             transport.send(guidance, comment.getContentMd());
         }
     }
 
     @Transactional
-    public void acknowledge(long tenantId, long executorId, long guidanceId, String status, String error,
+    public void acknowledge(long workspaceId, long executorId, long guidanceId, String status, String error,
             String replyMarkdown) {
         if (!Set.of(GuidanceStatus.APPLIED, GuidanceStatus.FAILED).contains(status)) {
             throw new IllegalArgumentException("invalid guidance status");
         }
-        int updated = guidanceDao.acknowledge(guidanceId, tenantId, executorId, status, error);
+        int updated = guidanceDao.acknowledge(guidanceId, workspaceId, executorId, status, error);
         if (updated != 1) {
             return;
         }
         GuidanceDO guidance = guidanceDao.findById(guidanceId);
-        if (guidance == null || !Objects.equals(guidance.getTenantId(), tenantId)) {
+        if (guidance == null || !Objects.equals(guidance.getTenantId(), workspaceId)) {
             throw new IllegalStateException("acknowledged guidance is missing");
         }
         if (GuidanceStatus.FAILED.equals(status)) {
             DispatchDO dispatch = guidance.getDispatchId() == null
                     ? null : dispatchDao.findById(guidance.getDispatchId());
             if (dispatch == null
-                    || !Objects.equals(dispatch.getTenantId(), tenantId)
+                    || !Objects.equals(dispatch.getTenantId(), workspaceId)
                     || !Set.of("SIDE_INTERACTION", "CANONICAL_INTERACTION").contains(dispatch.getResumeMode())) {
                 throw new IllegalStateException("guidance interaction dispatch is missing");
             }
-            if (!dispatchService.onResult(tenantId, executorId, dispatch.getId(), false,
+            if (!dispatchService.onResult(workspaceId, executorId, dispatch.getId(), false,
                     null, error, false)) {
                 throw new IllegalStateException("failed to terminate guidance interaction dispatch");
             }
             return;
         }
         if (replyMarkdown != null && !replyMarkdown.isBlank()) {
-            var reply = workitemService.addAgentComment(guidance.getWorkitemId(), replyMarkdown, tenantId,
-                    guidance.getTargetAgentId());
-            if (reply == null || reply.getId() == null
-                    || guidanceDao.bindReplyComment(guidanceId, tenantId, reply.getId()) != 1) {
+            Long replyId;
+            if (sourceType(guidance) == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+                if (scheduledTaskRunCommentService == null) {
+                    throw new IllegalStateException("scheduled run comment service unavailable");
+                }
+                replyId = scheduledTaskRunCommentService.addAgentComment(workspaceId,
+                        guidance.getWorkitemId(), guidance.getTargetAgentId(), replyMarkdown).getId();
+            } else {
+                var reply = workitemService.addAgentComment(guidance.getWorkitemId(), replyMarkdown, workspaceId,
+                        guidance.getTargetAgentId());
+                replyId = reply == null ? null : reply.getId();
+            }
+            if (replyId == null || guidanceDao.bindReplyComment(guidanceId, workspaceId, replyId) != 1) {
                 throw new IllegalStateException("failed to bind side interaction reply comment");
             }
         }
     }
 
-    @Transactional
-    public void requeueDeliveredForDispatch(long tenantId, long dispatchId) {
-        guidanceDao.requeueDeliveredForDispatch(tenantId, dispatchId);
+    /** Resolves the durable dispatch binding of a daemon guidance acknowledgement without mutating it. */
+    public InboundAcknowledgementBinding bindingForInboundAcknowledgement(
+            long workspaceId, long executorId, long guidanceId) {
+        GuidanceDO guidance = guidanceDao.findById(guidanceId);
+        if (guidance == null
+                || !Objects.equals(guidance.getTenantId(), workspaceId)
+                || !Objects.equals(guidance.getExecutorId(), executorId)
+                || guidance.getWorkitemId() == null
+                || guidance.getWorkitemId() <= 0
+                || guidance.getDispatchId() == null
+                || guidance.getDispatchId() <= 0) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+        DispatchDO dispatch = dispatchDao.findById(guidance.getDispatchId());
+        if (dispatch == null
+                || !Objects.equals(dispatch.getTenantId(), workspaceId)
+                || !Objects.equals(dispatch.getExecutorId(), executorId)
+                || !Objects.equals(dispatch.getExecutorId(), guidance.getExecutorId())
+                || dispatch.getWorkitemId() == null
+                || dispatch.getWorkitemId() <= 0
+                || !Objects.equals(dispatch.getWorkitemId(), guidance.getWorkitemId())
+                || (guidance.getTargetAgentId() != null
+                && !Objects.equals(dispatch.getAgentId(), guidance.getTargetAgentId()))) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+        return new InboundAcknowledgementBinding(dispatch.getId(),
+                new ArtifactOwnerRef(dispatch.executionSourceType(), dispatch.getWorkitemId()));
+    }
+
+    public record InboundAcknowledgementBinding(long dispatchId, ArtifactOwnerRef owner) {
     }
 
     @Transactional
-    public void requeueForExecutorFailover(long tenantId, long dispatchId) {
-        guidanceDao.requeueForExecutorFailover(tenantId, dispatchId);
+    public void requeueDeliveredForDispatch(long workspaceId, long dispatchId) {
+        guidanceDao.requeueDeliveredForDispatch(workspaceId, dispatchId);
     }
 
     @Transactional
-    public void failForDispatch(long tenantId, long dispatchId, String error) {
-        guidanceDao.failForDispatch(tenantId, dispatchId, error);
+    public void requeueForExecutorFailover(long workspaceId, long dispatchId) {
+        guidanceDao.requeueForExecutorFailover(workspaceId, dispatchId);
     }
 
-    public void attachInteractionStatuses(long tenantId, long workitemId, List<TimelineItemVO> timeline) {
+    @Transactional
+    public void failForDispatch(long workspaceId, long dispatchId, String error) {
+        guidanceDao.failForDispatch(workspaceId, dispatchId, error);
+    }
+
+    public void attachInteractionStatuses(long workspaceId, long workitemId, List<TimelineItemVO> timeline) {
         Map<Long, TimelineItemVO> comments = new LinkedHashMap<>();
         for (TimelineItemVO item : timeline) {
             if (item != null && "comment".equals(item.getType())) {
                 comments.put(item.getId(), item);
             }
         }
-        List<GuidanceDO> rows = guidanceDao.listByWorkitem(tenantId, workitemId);
+        List<GuidanceDO> rows = guidanceDao.listByWorkitem(workspaceId, workitemId);
         if (rows == null) {
             return;
         }
@@ -355,12 +447,41 @@ public class GuidanceService {
         }
     }
 
-    private WorkitemCommentDO requireComment(long tenantId, long workitemId, long commentId) {
-        WorkitemCommentDO comment = commentDao.findById(tenantId, commentId);
+    private WorkitemCommentDO requireComment(long workspaceId, ExecutionSourceType sourceType,
+            long workitemId, long commentId) {
+        // The legacy DAO is now explicitly source-filtered to WORKITEM in XML,
+        // retaining compatibility for existing callers/tests while the Run path
+        // always supplies the complete three-part owner key.
+        WorkitemCommentDO comment = sourceType == ExecutionSourceType.WORKITEM
+                ? commentDao.findById(workspaceId, commentId)
+                : commentDao.findBySourceAndId(workspaceId, sourceType.name(), workitemId, commentId);
         if (comment == null || !Objects.equals(comment.getWorkitemId(), workitemId)) {
-            throw new IllegalArgumentException("guidance comment does not belong to workitem");
+            throw new IllegalArgumentException("guidance comment does not belong to source");
         }
         return comment;
+    }
+
+    private ExecutionSourceType sourceType(GuidanceDO guidance) {
+        return ExecutionSourceType.valueOrWorkitem(guidance == null ? null : guidance.getSourceType());
+    }
+
+    private long frozenAgentVersion(ScheduledTaskRunDO run, long agentId) {
+        try {
+            JSONObject root = JSON.parseObject(run.getExecutionSnapshotJson());
+            JSONArray contexts = root == null ? null : root.getJSONArray("agentContexts");
+            Long match = null;
+            for (int i = 0; contexts != null && i < contexts.size(); i++) {
+                JSONObject context = contexts.getJSONObject(i);
+                if (context != null && context.getLongValue("agentId") == agentId) {
+                    if (match != null || context.getLongValue("agentVersionId") <= 0) break;
+                    match = context.getLong("agentVersionId");
+                }
+            }
+            if (match == null || match <= 0) throw new IllegalArgumentException("frozen target agent context is missing");
+            return match;
+        } catch (RuntimeException invalid) {
+            throw new IllegalArgumentException("scheduled run snapshot is invalid for guidance", invalid);
+        }
     }
 
     private DispatchDO latestForAgent(List<DispatchDO> dispatches, long targetAgentId) {

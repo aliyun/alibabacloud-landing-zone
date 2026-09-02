@@ -8,11 +8,13 @@ import com.aliyun.autowonder.storage.StoredObject;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.*;
 import java.util.function.Supplier;
 import java.util.zip.ZipEntry;
@@ -33,18 +35,27 @@ public class TaskPackager {
     private final ObjectStorage storage;
     private final String taskPkgBucket;
     private final Supplier<String> autowonderMcpUrlSupplier;
+    private final TaskPackageSigner signer;
+    private final Clock clock;
 
     public TaskPackager(ObjectStorage storage, String taskPkgBucket, String publicBaseUrl) {
         this(storage, taskPkgBucket, configuredMcpUrlSupplier(publicBaseUrl));
     }
 
     public TaskPackager(ObjectStorage storage, String taskPkgBucket, Supplier<String> autowonderMcpUrlSupplier) {
+        this(storage, taskPkgBucket, autowonderMcpUrlSupplier, null, Clock.systemUTC());
+    }
+
+    TaskPackager(ObjectStorage storage, String taskPkgBucket, Supplier<String> autowonderMcpUrlSupplier,
+            TaskPackageSigner signer, Clock clock) {
         this.storage = storage;
         this.taskPkgBucket = taskPkgBucket;
         if (autowonderMcpUrlSupplier == null) {
             throw new IllegalStateException("autowonder.public-base-url must be configured");
         }
         this.autowonderMcpUrlSupplier = autowonderMcpUrlSupplier;
+        this.signer = signer;
+        this.clock = Objects.requireNonNull(clock, "task package clock");
     }
 
     private static Supplier<String> configuredMcpUrlSupplier(String publicBaseUrl) {
@@ -54,7 +65,11 @@ public class TaskPackager {
 
     public TaskPackageResult build(PackageContext ctx) {
         log.info("taskpackage build start dispatchId={}", ctx.getDispatchId());
-        byte[] zip = assembleZip(ctx);
+        String packageId = "pkg_" + ctx.getDispatchId();
+        TaskPackageSigner.Envelope envelope = signer == null
+                ? null
+                : signer.envelope(clock.instant().plus(Duration.ofHours(24)));
+        byte[] zip = assembleZip(ctx, envelope);
         String sha256 = sha256Hex(zip);
         log.info("taskpackage zip created dispatchId={} size={} sha256={}", ctx.getDispatchId(), zip.length, sha256);
         String key = ctx.getTenantId() + "/" + ctx.getWorkitemId() + "/" + ctx.getDispatchId() + ".zip";
@@ -63,7 +78,72 @@ public class TaskPackager {
         String url = storage.presignGet(stored.getOssRef(), DOWNLOAD_TTL_SECONDS);
         log.info("taskpackage download url ready dispatchId={} ossRef={} ttlSeconds={} downloadUrl={}",
                 ctx.getDispatchId(), stored.getOssRef(), DOWNLOAD_TTL_SECONDS, url);
-        return new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256);
+        TaskPackageResult result = new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256,
+                sha256,
+                envelope == null ? null : envelope.issuer(),
+                envelope == null ? null : envelope.signatureRef(),
+                envelope == null ? null : signer.sign(envelope, packageId, sha256),
+                envelope == null ? null : TaskPackageSigner.ALGORITHM,
+                envelope == null ? null : signer.publicKeyBase64(),
+                envelope == null ? null : envelope.expiresAt(),
+                aggregateRepoPolicy(ctx, "allowCommit"), aggregateRepoPolicy(ctx, "allowPush"),
+                aggregateRepoPolicy(ctx, "allowNetwork"), hasCapabilityType(ctx, "HOOK"),
+                hasToolHookCapability(ctx));
+        result.setMcpSecretRefs(collectMcpSecretRefs(ctx));
+        return result;
+    }
+
+    private boolean hasToolHookCapability(PackageContext ctx) {
+        for (Map<String, Object> capability : ctx.getSkills() == null
+                ? List.<Map<String, Object>>of() : ctx.getSkills()) {
+            if (!"HOOK".equalsIgnoreCase(stringValue(capability.get("type")))) {
+                continue;
+            }
+            String ossRef = stringValue(capability.get("packageOssRef"));
+            byte[] archive = ossRef.isEmpty() ? null : storage.get(ossRef);
+            if (archive == null) {
+                throw new IllegalArgumentException("hook package is unavailable: "
+                        + requiredCapabilityName(capability));
+            }
+            String yaml = rootHookDescriptor(archive);
+            Object parsed = new Yaml().load(yaml);
+            if (!(parsed instanceof Map)) {
+                throw new IllegalArgumentException("hook descriptor is invalid");
+            }
+            String trigger = stringValue(((Map<?, ?>) parsed).get("trigger"));
+            if ("beforeTool".equals(trigger) || "afterTool".equals(trigger)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String rootHookDescriptor(byte[] archive) {
+        long expanded = 0;
+        try (ZipInputStream input = new ZipInputStream(new java.io.ByteArrayInputStream(archive))) {
+            ZipEntry entry;
+            while ((entry = input.getNextEntry()) != null) {
+                String name = safeArchivePath(entry.getName());
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    expanded += read;
+                    if (expanded > 50L * 1024L * 1024L) {
+                        throw new IllegalArgumentException("hook package is too large");
+                    }
+                    if ("hook.yaml".equals(name)) {
+                        bytes.write(buffer, 0, read);
+                    }
+                }
+                if ("hook.yaml".equals(name)) {
+                    return bytes.toString(StandardCharsets.UTF_8);
+                }
+            }
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("hook package is invalid", e);
+        }
+        throw new IllegalArgumentException("hook package must contain root hook.yaml");
     }
 
     /** Build the capability-only package used by a workitem-independent conversation turn. */
@@ -92,8 +172,10 @@ public class TaskPackager {
                 + agentVersionId + ".zip";
         StoredObject stored = storage.put(taskPkgBucket, key, zip);
         String url = storage.presignGet(stored.getOssRef(), DOWNLOAD_TTL_SECONDS);
-        return new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256,
+        TaskPackageResult result = new TaskPackageResult(stored.getOssRef(), stored.getMd5(), stored.getSize(), url, sha256,
                 archive.contentHash());
+        result.setMcpSecretRefs(collectMcpSecretRefs(ctx));
+        return result;
     }
 
     private ConversationCapabilityArchive assembleConversationCapabilityZip(PackageContext ctx,
@@ -120,7 +202,7 @@ public class TaskPackager {
             manifest.put("attempt", 1);
             manifest.put("agentId", str(ctx.getAgentId()));
             manifest.put("agentVersionId", str(ctx.getAgentVersionId()));
-            manifest.put("createdAt", Instant.now().toString());
+            manifest.put("createdAt", clock.instant().toString());
             manifest.put("fileDigests", fileDigests);
             putEntry(zos, "manifest.json", JSON.toJSONString(manifest), fileDigests);
         } catch (Exception e) {
@@ -132,7 +214,7 @@ public class TaskPackager {
     private record ConversationCapabilityArchive(byte[] zip, String contentHash) {
     }
 
-    private byte[] assembleZip(PackageContext ctx) {
+    private byte[] assembleZip(PackageContext ctx, TaskPackageSigner.Envelope envelope) {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         Map<String, String> fileDigests = new LinkedHashMap<>();
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
@@ -152,11 +234,25 @@ public class TaskPackager {
             }
             putEntry(zos, "identity.json", JSON.toJSONString(orEmptyMap(ctx.getIdentity())), fileDigests);
             putEntry(zos, "repos.json", JSON.toJSONString(Map.of("repos", resolveRepos(ctx))), fileDigests);
+            Map<String, Object> policy = new LinkedHashMap<>();
+            policy.put("allowCommit", aggregateRepoPolicy(ctx, "allowCommit"));
+            policy.put("allowPush", aggregateRepoPolicy(ctx, "allowPush"));
+            policy.put("allowNetwork", aggregateRepoPolicy(ctx, "allowNetwork"));
+            putEntry(zos, "policy.json", JSON.toJSONString(policy), fileDigests);
             if (ctx.getRepoMap() != null) {
                 putEntry(zos, "repo-map.json", JSON.toJSONString(ctx.getRepoMap()), fileDigests);
             }
-            putEntry(zos, "skills.json", JSON.toJSONString(writeCapabilities(zos, ctx, fileDigests)), fileDigests);
-            putEntry(zos, "sdlc.json", JSON.toJSONString(orEmptyMap(ctx.getSdlc())), fileDigests);
+            List<Map<String, Object>> hooks = new ArrayList<>();
+            putEntry(zos, "skills.json", JSON.toJSONString(writeCapabilities(zos, ctx, fileDigests, hooks)), fileDigests);
+            if (!hooks.isEmpty()) {
+                Map<String, Object> hookDocument = new LinkedHashMap<>();
+                hookDocument.put("schemaVersion", "autowonder.hooks.v1");
+                hookDocument.put("hooks", hooks);
+                putEntry(zos, "hooks.json", JSON.toJSONString(hookDocument), fileDigests);
+            }
+            if (ctx.getSdlc() != null || !ctx.isOmitSdlcFileWhenAbsent()) {
+                putEntry(zos, "sdlc.json", JSON.toJSONString(orEmptyMap(ctx.getSdlc())), fileDigests);
+            }
             if (ctx.getRoster() != null) {
                 putEntry(zos, "roster.json", JSON.toJSONString(ctx.getRoster()), fileDigests);
             }
@@ -172,6 +268,12 @@ public class TaskPackager {
             Map<String, Object> manifest = new LinkedHashMap<>();
             manifest.put("schemaVersion", "autoWonder.taskPackage.v1");
             manifest.put("packageId", "pkg_" + ctx.getDispatchId());
+            if (envelope != null) {
+                manifest.put("issuer", envelope.issuer());
+                manifest.put("signatureRef", envelope.signatureRef());
+                manifest.put("expiresAt", envelope.expiresAt());
+            }
+            manifest.put("capabilityTreeDigest", capabilityTreeDigest(fileDigests));
             manifest.put("tenantId", str(ctx.getTenantId()));
             manifest.put("workitemId", str(ctx.getWorkitemId()));
             manifest.put("workType", nz(ctx.getWorkType()));
@@ -190,7 +292,7 @@ public class TaskPackager {
             manifest.put("executorId", str(ctx.getExecutorId()));
             manifest.put("roleCode", nz(ctx.getRoleCode()));
             manifest.put("roleName", nz(ctx.getRoleName()));
-            manifest.put("createdAt", Instant.now().toString());
+            manifest.put("createdAt", clock.instant().toString());
             manifest.put("fileDigests", fileDigests);
             manifest.put("teammates", teammatesManifest);
             manifest.put("requirementDocuments", requirementDocumentsManifest);
@@ -203,6 +305,12 @@ public class TaskPackager {
 
     private Map<String, Object> writeCapabilities(ZipOutputStream zos, PackageContext ctx,
                                                    Map<String, String> fileDigests) throws Exception {
+        return writeCapabilities(zos, ctx, fileDigests, new ArrayList<>());
+    }
+
+    private Map<String, Object> writeCapabilities(ZipOutputStream zos, PackageContext ctx,
+                                                   Map<String, String> fileDigests,
+                                                   List<Map<String, Object>> hooks) throws Exception {
         List<Map<String, Object>> skills = new ArrayList<>();
         List<Map<String, Object>> plugins = new ArrayList<>();
         List<Map<String, Object>> mcpServers = new ArrayList<>();
@@ -223,6 +331,25 @@ public class TaskPackager {
             }
             if ("MCP".equals(type)) {
                 mcpServers.add(mcpDescriptor(capability, name));
+                continue;
+            }
+            if ("HOOK".equals(type)) {
+                String ossRef = stringValue(capability.get("packageOssRef"));
+                if (ossRef.isEmpty()) {
+                    throw new IllegalArgumentException("hook package is required: " + name);
+                }
+                byte[] archive = storage.get(ossRef);
+                if (archive == null) {
+                    throw new IllegalArgumentException("hook package is unavailable: " + name);
+                }
+                String version = String.valueOf(capability.getOrDefault("version", 0));
+                String digest = extractHook(zos, archive, "capabilities/hooks/" + name, fileDigests);
+                Map<String, Object> descriptor = new LinkedHashMap<>();
+                descriptor.put("name", name);
+                descriptor.put("version", version);
+                descriptor.put("sha256", digest);
+                descriptor.put("enabled", !Boolean.FALSE.equals(capability.get("required")));
+                hooks.add(descriptor);
                 continue;
             }
             if (!"SKILL".equals(type) && !"PLUGIN".equals(type)) {
@@ -316,9 +443,55 @@ public class TaskPackager {
 
     private static Map<String, Object> mcpDescriptor(Map<String, Object> capability, String name) {
         Map<String, Object> descriptor = new LinkedHashMap<>(config(capability));
+        splitSecretReferences(descriptor, "headers", "headerSecretRefs");
+        splitSecretReferences(descriptor, "env", "envSecretRefs");
         descriptor.put("name", name);
         descriptor.put("required", !Boolean.FALSE.equals(capability.get("required")));
         return descriptor;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void splitSecretReferences(Map<String, Object> descriptor, String key, String refsKey) {
+        Object raw = descriptor.get(key);
+        if (!(raw instanceof Map)) return;
+        Map<String, Object> literals = new LinkedHashMap<>();
+        Map<String, String> refs = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : ((Map<?, ?>) raw).entrySet()) {
+            String name = String.valueOf(entry.getKey());
+            Object value = entry.getValue();
+            if (value instanceof Map && "secretRef".equals(String.valueOf(((Map<?, ?>) value).get("kind")))) {
+                Object ref = ((Map<?, ?>) value).get("ref");
+                if (ref == null || String.valueOf(ref).isBlank()) {
+                    throw new IllegalArgumentException("MCP " + key + " secret reference is missing: " + name);
+                }
+                refs.put(name, String.valueOf(ref));
+            } else {
+                literals.put(name, value);
+            }
+        }
+        descriptor.put(key, literals);
+        if (!refs.isEmpty()) descriptor.put(refsKey, refs);
+    }
+
+    private static Map<String, String> collectMcpSecretRefs(PackageContext ctx) {
+        Map<String, String> refs = new LinkedHashMap<>();
+        for (Map<String, Object> capability : ctx.getSkills() == null ? List.<Map<String, Object>>of() : ctx.getSkills()) {
+            if (!"MCP".equalsIgnoreCase(String.valueOf(capability.get("type")))) continue;
+            Map<String, Object> config = config(capability);
+            collectSecretRefs(config.get("headers"), refs);
+            collectSecretRefs(config.get("env"), refs);
+        }
+        return refs;
+    }
+
+    private static void collectSecretRefs(Object raw, Map<String, String> refs) {
+        if (!(raw instanceof Map)) return;
+        for (Object value : ((Map<?, ?>) raw).values()) {
+            if (value instanceof Map && "secretRef".equals(String.valueOf(((Map<?, ?>) value).get("kind")))) {
+                Object ref = ((Map<?, ?>) value).get("ref");
+                if (ref != null && !String.valueOf(ref).isBlank()) refs.put(String.valueOf(ref), String.valueOf(ref));
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -370,6 +543,73 @@ public class TaskPackager {
             throw new IllegalArgumentException(requireSkillMd
                     ? "skill package must contain root SKILL.md" : "plugin package is empty");
         }
+    }
+
+    private String extractHook(ZipOutputStream output, byte[] archive, String base,
+                               Map<String, String> fileDigests) throws Exception {
+        int entries = 0;
+        int files = 0;
+        long expanded = 0;
+        boolean hasDescriptor = false;
+        Map<String, String> hookDigests = new TreeMap<>();
+        try (ZipInputStream input = new ZipInputStream(new java.io.ByteArrayInputStream(archive))) {
+            ZipEntry entry;
+            while ((entry = input.getNextEntry()) != null) {
+                if (++entries > 500) {
+                    throw new IllegalArgumentException("hook package has too many entries");
+                }
+                String rawName = entry.isDirectory() && entry.getName().endsWith("/")
+                        ? entry.getName().substring(0, entry.getName().length() - 1) : entry.getName();
+                String name = safeArchivePath(rawName);
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                files++;
+                ByteArrayOutputStream entryBytes = new ByteArrayOutputStream();
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    expanded += read;
+                    if (expanded > 50L * 1024L * 1024L) {
+                        throw new IllegalArgumentException("hook package is too large");
+                    }
+                    entryBytes.write(buffer, 0, read);
+                }
+                byte[] bytes = entryBytes.toByteArray();
+                if ("hook.yaml".equals(name)) {
+                    hasDescriptor = true;
+                }
+                hookDigests.put(name, sha256(bytes));
+                putEntryBytes(output, base + "/" + name, bytes, fileDigests);
+            }
+        }
+        if (files == 0 || !hasDescriptor) {
+            throw new IllegalArgumentException("hook package must contain root hook.yaml");
+        }
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        for (Map.Entry<String, String> entry : hookDigests.entrySet()) {
+            digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(entry.getValue().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) '\n');
+        }
+        return "sha256:" + hex(digest.digest());
+    }
+
+    private static String capabilityTreeDigest(Map<String, String> fileDigests) throws Exception {
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        for (Map.Entry<String, String> entry : new TreeMap<>(fileDigests).entrySet()) {
+            String name = entry.getKey();
+            if (!"skills.json".equals(name) && !"hooks.json".equals(name)
+                    && !name.startsWith("capabilities/")) {
+                continue;
+            }
+            digest.update(name.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(entry.getValue().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) '\n');
+        }
+        return "sha256:" + hex(digest.digest());
     }
 
     private static String safeArchivePath(String raw) {
@@ -481,11 +721,16 @@ public class TaskPackager {
                         ctx.getDispatchId(), ctx.getWorkitemId(), ref.getName(), ref.getOssRef());
                 throw new IllegalArgumentException("requirement document is unavailable: " + ref.getName());
             }
+            String actualSha256 = sha256(bytes);
+            if (ref.getExpectedSha256() != null
+                    && !ref.getExpectedSha256().equalsIgnoreCase(actualSha256)) {
+                throw new IllegalArgumentException("requirement document digest mismatch: " + ref.getName());
+            }
             putEntryBytes(zos, entryName, bytes, digests);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("name", entryName);
             item.put("size", bytes.length);
-            item.put("sha256", sha256(bytes));
+            item.put("sha256", actualSha256);
             manifest.add(item);
         }
         return manifest;
@@ -524,6 +769,21 @@ public class TaskPackager {
             }
         }
         return repos;
+    }
+
+    private static boolean aggregateRepoPolicy(PackageContext ctx, String field) {
+        if (ctx.getRepos() == null) {
+            return false;
+        }
+        return ctx.getRepos().stream().anyMatch(repo -> Boolean.TRUE.equals(repo.get(field)));
+    }
+
+    private static boolean hasCapabilityType(PackageContext ctx, String expectedType) {
+        if (ctx.getSkills() == null) {
+            return false;
+        }
+        return ctx.getSkills().stream().anyMatch(capability ->
+                expectedType.equalsIgnoreCase(stringValue(capability.get("type"))));
     }
 
     private Map<String, Map<String, String>> loadSourceRevisions(PackageContext ctx) {
@@ -625,7 +885,9 @@ public class TaskPackager {
 
     private void putEntryBytes(ZipOutputStream zos, String name, byte[] bytes,
                                Map<String, String> digests) throws Exception {
-        zos.putNextEntry(new ZipEntry(name));
+        ZipEntry entry = new ZipEntry(name);
+        entry.setTime(0L);
+        zos.putNextEntry(entry);
         zos.write(bytes);
         zos.closeEntry();
         if (digests != null && !name.equals("manifest.json")) {
@@ -653,6 +915,14 @@ public class TaskPackager {
         } catch (Exception e) {
             throw new BizException(ErrorCode.PACKAGE_BUILD_FAILED);
         }
+    }
+
+    private static String hex(byte[] bytes) {
+        StringBuilder out = new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) {
+            out.append(String.format("%02x", value));
+        }
+        return out.toString();
     }
 
     private static String nz(String s) {

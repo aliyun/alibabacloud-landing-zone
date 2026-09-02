@@ -35,6 +35,11 @@ public class AuthFilter extends OncePerRequestFilter {
             Pattern.compile("^/api/workspaces/[0-9]+/switch$");
     private static final Pattern CLI_WORKITEM_UPLOAD_PATH =
             Pattern.compile("^/api/cli/workitems/[0-9]+/requirement-documents$");
+    private static final Pattern CLI_SCHEDULED_TASK_UPLOAD_PATH =
+            Pattern.compile("^/api/cli/scheduled-tasks/[0-9]+/documents$");
+    // path 模式 MCP 入口：/api/mcp/<个人令牌>[/(rpc)[/]]，放行后由 McpController 做令牌鉴权
+    private static final Pattern PERSONAL_MCP_PATH_TOKEN_PATH =
+            Pattern.compile("^/api/mcp/awmcp_[A-Za-z0-9_-]{43}(?:/(?:rpc/?)?)?$");
     private static final String PERSONAL_MCP_TOKEN_PREFIX = "/api/mcp/tokens";
     private static final String PERSONAL_USER_API_PREFIX = "/api/users/me/";
     private static final List<String> WHITELIST_PREFIXES = List.of(
@@ -135,7 +140,11 @@ public class AuthFilter extends OncePerRequestFilter {
             return true;
         }
         if ("POST".equalsIgnoreCase(request.getMethod())
-                && CLI_WORKITEM_UPLOAD_PATH.matcher(path).matches()) {
+                && (CLI_WORKITEM_UPLOAD_PATH.matcher(path).matches()
+                    || CLI_SCHEDULED_TASK_UPLOAD_PATH.matcher(path).matches())) {
+            return true;
+        }
+        if (PERSONAL_MCP_PATH_TOKEN_PATH.matcher(path).matches()) {
             return true;
         }
         for (String prefix : WHITELIST_PREFIXES) {

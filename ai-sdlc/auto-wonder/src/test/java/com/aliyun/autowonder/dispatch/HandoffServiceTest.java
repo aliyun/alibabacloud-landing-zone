@@ -31,6 +31,24 @@ class HandoffServiceTest {
     }
 
     @Test
+    void scheduledRunHandoffIsRejectedBeforeWorkitemRowLock() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        doThrow(new BizException(ErrorCode.DISPATCH_NOT_FOUND)).when(dispatchService)
+                .requireWorkitemDispatchBoundary(100L, 500L, 300L);
+        HandoffService service = new HandoffService(workitemDao, dispatchService,
+                mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class),
+                mock(WorkspaceDao.class), mock(WorkitemEventDao.class));
+
+        HandoffResult result = service.handle(100L, 500L, 300L, "QA", "AGENT");
+
+        assertEquals(HandoffResult.Status.REJECTED, result.status());
+        assertEquals("DISPATCH_NOT_FOUND", result.reasonCode());
+        verify(dispatchService).requireWorkitemDispatchBoundary(100L, 500L, 300L);
+        verify(workitemDao, never()).findByIdForUpdate(anyLong(), anyLong());
+    }
+
+    @Test
     void staleHandoffIsRejectedAfterCommentReworkBecomesAuthoritative() {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         DispatchService dispatchService = mock(DispatchService.class);
@@ -57,6 +75,15 @@ class HandoffServiceTest {
         w.setTenantId(tenantId);
         w.setVersion(version);
         return w;
+    }
+
+    private DispatchDO workitemDispatch(long id, long tenantId, long workitemId) {
+        DispatchDO dispatch = new DispatchDO();
+        dispatch.setId(id);
+        dispatch.setTenantId(tenantId);
+        dispatch.setSourceType(ExecutionSourceType.WORKITEM.name());
+        dispatch.setWorkitemId(workitemId);
+        return dispatch;
     }
 
     private WorkspaceDO workspace(long id, Long ownerId) {
@@ -469,8 +496,10 @@ class HandoffServiceTest {
         when(roleResolver.resolveOnlineAgentId(100L, "77")).thenReturn(null);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 77L, 3, 0L)).thenReturn(0);
 
+        DispatchDao dispatchDao = mock(DispatchDao.class);
+        when(dispatchDao.findById(300L)).thenReturn(workitemDispatch(300L, 100L, 500L));
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, mock(DispatchDao.class), mock(AgentDao.class), publisher);
+                workspaceDao, eventDao, dispatchDao, mock(AgentDao.class), publisher);
 
         BizException ex = assertThrows(BizException.class,
                 () -> svc.handle(100L, 500L, 300L, "77", "HUMAN"));
@@ -500,6 +529,7 @@ class HandoffServiceTest {
             inv.<com.aliyun.autowonder.workitem.WorkitemEventDO>getArgument(0).setId(8002L);
             return null;
         }).when(eventDao).insert(any());
+        when(dispatchDao.findById(300L)).thenReturn(workitemDispatch(300L, 100L, 500L));
 
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
                 workspaceDao, eventDao, dispatchDao, agentDao, publisher);
@@ -535,8 +565,10 @@ class HandoffServiceTest {
         newDispatch.setId(9001L);
         when(dispatchService.enqueueHandoff(10000L, 500L, 300031L, 10002L, 300L, 0L)).thenReturn(newDispatch);
 
+        DispatchDao dispatchDao = mock(DispatchDao.class);
+        when(dispatchDao.findById(300L)).thenReturn(workitemDispatch(300L, 10000L, 500L));
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, mock(DispatchDao.class), mock(AgentDao.class), publisher);
+                workspaceDao, eventDao, dispatchDao, mock(AgentDao.class), publisher);
         svc.handle(10000L, 500L, 300L, "QA", "AGENT");
 
         verify(publisher, never()).publishEvent(isA(WorkitemHumanAssignedEvent.class));

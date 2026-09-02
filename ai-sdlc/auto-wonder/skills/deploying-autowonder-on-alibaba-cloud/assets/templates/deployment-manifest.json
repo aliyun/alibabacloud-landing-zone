@@ -54,7 +54,7 @@
   "repositoryUrl": "",
   "repositoryRef": "community",
   "repositoryCommit": "",
-  "recommendedRuntimeVersion": "0.2.138",
+  "recommendedRuntimeVersion": "0.2.150",
   "executionMode": "unattended",
   "tags": {
     "Project": "AutoWonder",

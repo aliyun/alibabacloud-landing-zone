@@ -6,6 +6,7 @@ import { basename } from '@/shared/lib/artifactLinking';
 import { getArtifactDownloadUrl } from '../api';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { RuntimeTraceDrawer } from './RuntimeTraceDrawer';
+import { TokenUsageBadge, StepTokenBadge } from './TokenUsageBadge';
 
 const { Text } = Typography;
 
@@ -26,6 +27,7 @@ interface DeliveryProgressProps {
   artifacts?: Artifact[];
   artifactsLoading?: boolean;
   loading?: boolean;
+  terminalStatus?: string | null;
   onContinue?: (dispatchId: number) => void;
   continuingDispatchId?: number | null;
   onPause?: (dispatchId: number) => void;
@@ -50,7 +52,62 @@ export function formatDuration(ms: number | null | undefined): string {
   return remMinutes > 0 ? `${hours}时${remMinutes}分` : `${hours}时`;
 }
 
-function StepIcon({ step, index, pausing = false }: { step: DeliveryStep; index: number; pausing?: boolean }) {
+export type StepDisplayStatus = DeliveryStep['status'] | 'cancelled';
+
+export type ConvergedDeliveryStep = Omit<DeliveryStep, 'status' | 'subSteps'> & {
+  status: StepDisplayStatus;
+  subSteps: (Omit<SubStep, 'status'> & { status: SubStep['status'] | 'cancelled' })[] | null;
+};
+
+type TerminalKind = 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+
+function normalizeTerminalStatus(terminalStatus?: string | null): TerminalKind | null {
+  if (!terminalStatus) return null;
+  const value = terminalStatus.trim().toUpperCase();
+  if (value === 'SUCCEEDED' || value === 'FAILED' || value === 'CANCELLED') return value;
+  if (value === 'CLOSED' || terminalStatus.trim() === '已关闭') return 'SUCCEEDED';
+  return null;
+}
+
+function convergedSubStepStatus(status: SubStep['status'], terminal: TerminalKind, isFailurePoint: boolean): SubStep['status'] | 'cancelled' {
+  if (status !== 'active') return status;
+  if (terminal === 'SUCCEEDED') return 'done';
+  if (terminal === 'CANCELLED') return 'cancelled';
+  return isFailurePoint ? 'failed' : 'done';
+}
+
+// 终态收敛：run/工单已终态但步骤事件流不完整（缺 completed 事件）时，把仍为 active 的步骤映射到与终态一致的展示状态。
+export function convergeStepsForTerminalStatus(steps: DeliveryStep[], terminalStatus?: string | null): ConvergedDeliveryStep[] {
+  const terminal = normalizeTerminalStatus(terminalStatus);
+  if (!terminal) return steps.map((step) => ({ ...step }));
+
+  let lastActiveIndex = -1;
+  if (terminal === 'FAILED') {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].status === 'active') {
+        lastActiveIndex = i;
+        break;
+      }
+    }
+  }
+
+  return steps.map((step, index) => {
+    if (step.status !== 'active') return { ...step };
+    const isFailurePoint = index === lastActiveIndex;
+    const status: StepDisplayStatus = terminal === 'SUCCEEDED'
+      ? 'done'
+      : terminal === 'CANCELLED'
+        ? 'cancelled'
+        : isFailurePoint ? 'failed' : 'done';
+    return {
+      ...step,
+      status,
+      subSteps: step.subSteps?.map((sub) => ({ ...sub, status: convergedSubStepStatus(sub.status, terminal, isFailurePoint) })) ?? null,
+    };
+  });
+}
+
+function StepIcon({ step, index, pausing = false }: { step: ConvergedDeliveryStep; index: number; pausing?: boolean }) {
   if (step.status === 'done' || step.status === 'reused' || step.planStatus === 'REUSED') {
     return <CheckCircleFilled style={{ color: '#52c41a', fontSize: 16 }} />;
   }
@@ -59,6 +116,9 @@ function StepIcon({ step, index, pausing = false }: { step: DeliveryStep; index:
   }
   if (step.status === 'active') {
     return <LoadingOutlined style={{ color: '#ff6a00', fontSize: 16 }} />;
+  }
+  if (step.status === 'cancelled') {
+    return <PauseCircleOutlined style={{ color: '#8c8c8c', fontSize: 16 }} />;
   }
   if (step.status === 'failed') {
     return <CloseCircleFilled style={{ color: '#ff4d4f', fontSize: 16 }} />;
@@ -90,12 +150,13 @@ function StepIcon({ step, index, pausing = false }: { step: DeliveryStep; index:
   );
 }
 
-function SubStepDot({ status }: { status: SubStep['status'] }) {
-  const colorMap: Record<SubStep['status'], string> = {
+function SubStepDot({ status }: { status: SubStep['status'] | 'cancelled' }) {
+  const colorMap: Record<SubStep['status'] | 'cancelled', string> = {
     done: '#52c41a',
     active: '#ff6a00',
     pending: '#d9d9d9',
     failed: '#ff4d4f',
+    cancelled: '#8c8c8c',
   };
   return (
     <span
@@ -112,7 +173,7 @@ function SubStepDot({ status }: { status: SubStep['status'] }) {
   );
 }
 
-function findActionTargetStep(steps: DeliveryStep[], ownerStep: DeliveryStep, attempt: DispatchAttempt): DeliveryStep | null {
+function findActionTargetStep(steps: ConvergedDeliveryStep[], ownerStep: ConvergedDeliveryStep, attempt: DispatchAttempt): ConvergedDeliveryStep | null {
   if (attempt.resumeMode === 'COMMENT_INTERACTION'
     || attempt.resumeMode === 'SIDE_INTERACTION'
     || attempt.resumeMode === 'CANONICAL_INTERACTION') {
@@ -133,7 +194,7 @@ function findActionTargetStep(steps: DeliveryStep[], ownerStep: DeliveryStep, at
   return null;
 }
 
-function buildAttemptViews(steps: DeliveryStep[]): Map<number, DisplayAttempt[]> {
+function buildAttemptViews(steps: ConvergedDeliveryStep[]): Map<number, DisplayAttempt[]> {
   const byStep = new Map<number, DisplayAttempt[]>();
   const relocatedActions = new Map<number, Set<number>>();
 
@@ -173,7 +234,7 @@ function pauseLabel(status: string | null | undefined): string {
   return '暂停';
 }
 
-function stepIsPausing(step: DeliveryStep): boolean {
+function stepIsPausing(step: ConvergedDeliveryStep): boolean {
   return step.attempts?.some((attempt) => attempt.status === 'PAUSING') ?? false;
 }
 
@@ -226,7 +287,7 @@ function AttemptActionButton({
 }
 
 function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onPause, pausingDispatchId }: {
-  step: DeliveryStep;
+  step: ConvergedDeliveryStep;
   index: number;
   attempts: DisplayAttempt[];
   onContinue?: (dispatchId: number) => void;
@@ -237,10 +298,11 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
   const isPausing = attempts.some((attempt) => attempt.status === 'PAUSING');
   const isActive = step.status === 'active';
   const isPaused = step.status === 'paused';
+  const isCancelled = step.status === 'cancelled';
   const isDone = step.status === 'done' || step.status === 'reused' || step.status === 'skipped'
     || step.planStatus === 'REUSED' || step.planStatus === 'SKIPPED';
   const isFailed = step.status === 'failed';
-  const executionLabel = step.planStatus === 'SKIPPED' ? '不执行' : isDone ? '已完成' : isPausing ? '暂停中' : isActive ? '执行中' : isPaused ? '已暂停' : isFailed ? '失败' : '待执行';
+  const executionLabel = step.planStatus === 'SKIPPED' ? '不执行' : isDone ? '已完成' : isPausing ? '暂停中' : isActive ? '执行中' : isPaused ? '已暂停' : isCancelled ? '已取消' : isFailed ? '失败' : '待执行';
   const planLabel = step.planStatus === 'RUN'
     ? '本轮重跑'
     : step.planStatus === 'REUSED'
@@ -290,6 +352,7 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
           {planLabel ? `${planLabel} · ${executionLabel}` : step.status === 'reused' ? '复用上一轮' : step.status === 'skipped' ? '本轮跳过' : step.status === 'stale' ? '旧结果失效' : executionLabel}
           {step.durationMs != null && `  ${formatDuration(step.durationMs)}`}
         </Text>
+        {step.usage && <StepTokenBadge usage={step.usage} />}
         {primaryActionAttempt && (
           <AttemptActionButton
             attempt={primaryActionAttempt}
@@ -366,7 +429,7 @@ function StepList({
   onPause,
   pausingDispatchId,
 }: {
-  steps: DeliveryStep[];
+  steps: ConvergedDeliveryStep[];
   onContinue?: (dispatchId: number) => void;
   continuingDispatchId?: number | null;
   onPause?: (dispatchId: number) => void;
@@ -438,7 +501,11 @@ function statusLabel(status: AgentDeliveryProgress['status']) {
   return { text: '未执行', color: 'default' };
 }
 
-function artifactDispatchIds(agent: AgentDeliveryProgress): Set<number> {
+export type ConvergedAgentProgress = Omit<AgentDeliveryProgress, 'steps'> & {
+  steps: ConvergedDeliveryStep[];
+};
+
+function artifactDispatchIds(agent: ConvergedAgentProgress): Set<number> {
   const ids = new Set<number>();
   agent.steps.forEach((step) => {
     step.attempts?.forEach((attempt) => {
@@ -450,16 +517,16 @@ function artifactDispatchIds(agent: AgentDeliveryProgress): Set<number> {
   return ids;
 }
 
-function artifactsForAgent(agent: AgentDeliveryProgress, artifacts: Artifact[]): Artifact[] {
+function artifactsForAgent(agent: ConvergedAgentProgress, artifacts: Artifact[]): Artifact[] {
   const dispatchIds = artifactDispatchIds(agent);
   return artifacts.filter((artifact) => artifact.dispatchId != null && dispatchIds.has(Number(artifact.dispatchId)));
 }
 
-function agentPanelKey(agent: AgentDeliveryProgress, index: number): string {
+function agentPanelKey(agent: ConvergedAgentProgress, index: number): string {
   return String(agent.agentId ?? index);
 }
 
-function defaultAgentActiveKeys(agents: AgentDeliveryProgress[]): string[] {
+function defaultAgentActiveKeys(agents: ConvergedAgentProgress[]): string[] {
   const runningKeys = agents
     .map((agent, index) => ({ agent, index }))
     .filter(({ agent }) => agent.status === 'active' || agent.status === 'paused' || agent.status === 'failed')
@@ -698,7 +765,7 @@ function AgentPanel({
   pausingDispatchId,
   onArtifactPreview,
 }: {
-  agent: AgentDeliveryProgress;
+  agent: ConvergedAgentProgress;
   index: number;
   artifacts: Artifact[];
   artifactsLoading?: boolean;
@@ -742,9 +809,7 @@ function AgentPanel({
             {formatDuration(agent.durationMs)}
           </Text>
         )}
-        <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
-          {agentArtifacts.length > 0 ? `${agentArtifacts.length} artifacts` : '无产物'}
-        </Text>
+        {agent.usage && <TokenUsageBadge usage={agent.usage} />}
       </div>
     ),
     style: {
@@ -783,7 +848,7 @@ function AgentPanel({
   };
 }
 
-export function DeliveryProgress({ steps = [], progress, artifacts = [], artifactsLoading, loading, onContinue, continuingDispatchId, onPause, pausingDispatchId }: DeliveryProgressProps) {
+export function DeliveryProgress({ steps = [], progress, artifacts = [], artifactsLoading, loading, terminalStatus, onContinue, continuingDispatchId, onPause, pausingDispatchId }: DeliveryProgressProps) {
   const [previewArtifact, setPreviewArtifact] = useState<Artifact | null>(null);
 
   if (loading) {
@@ -796,16 +861,19 @@ export function DeliveryProgress({ steps = [], progress, artifacts = [], artifac
     );
   }
 
-  const agents = progress?.agents ?? [];
-  const displaySteps = agents.length > 0 ? [] : (progress?.steps ?? steps);
+  const agents: ConvergedAgentProgress[] = (progress?.agents ?? []).map((agent) => ({
+    ...agent,
+    steps: convergeStepsForTerminalStatus(agent.steps, terminalStatus),
+  }));
+  const displaySteps = agents.length > 0 ? [] : convergeStepsForTerminalStatus(progress?.steps ?? steps, terminalStatus);
   const activeKeys = defaultAgentActiveKeys(agents);
   const cardTitle = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ flex: 1 }}>交付进度跟踪</span>
       {progress?.totalDurationMs != null && (
-        <Tooltip title="总耗时为从首次派发到当前/结束的实际墙钟时间，包含数字人之间的交接与排队间隔，因此大于各步骤耗时之和。">
+        <Tooltip title="总耗时为纯 Agent 执行时长之和，不包含数字人之间的交接、排队与人工处理间隔。">
           <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
-            总耗时 {formatDuration(progress.totalDurationMs)}
+            总耗时 {formatDuration(progress.totalDurationMs)} (Agents耗时)
           </Text>
         </Tooltip>
       )}

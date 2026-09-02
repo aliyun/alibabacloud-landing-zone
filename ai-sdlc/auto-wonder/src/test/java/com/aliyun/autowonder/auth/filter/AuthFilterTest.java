@@ -103,6 +103,52 @@ class AuthFilterTest {
     }
 
     @Test
+    void mcp_path_token_urls_pass_without_platform_jwt() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+        String token = "awmcp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0UvW";
+
+        for (String[] probe : new String[][]{
+                {"GET", "/api/mcp/" + token},
+                {"GET", "/api/mcp/" + token + "/"},
+                {"POST", "/api/mcp/" + token},
+                {"POST", "/api/mcp/" + token + "/"},
+                {"POST", "/api/mcp/" + token + "/rpc"},
+                {"POST", "/api/mcp/" + token + "/rpc/"}}) {
+            MockHttpServletRequest req = new MockHttpServletRequest(probe[0], probe[1]);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(200, resp.getStatus(), probe[0] + " " + probe[1]);
+            assertNotNull(chain.getRequest(), probe[0] + " " + probe[1]);
+        }
+    }
+
+    @Test
+    void mcp_urls_without_valid_personal_token_shape_still_require_platform_jwt() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+        String token = "awmcp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0UvW";
+
+        for (String path : new String[]{
+                "/api/mcp/awmcp_tooshort",
+                "/api/mcp/not-a-token",
+                "/api/mcp/" + token + "/unknown",
+                "/api/mcp/" + token + "/rpc/extra"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", path);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(401, resp.getStatus(), path);
+            assertNull(chain.getRequest(), path);
+        }
+    }
+
+    @Test
     void dingtalk_callback_passes_without_token() throws Exception {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
@@ -215,6 +261,40 @@ class AuthFilterTest {
     }
 
     @Test
+    void cli_scheduled_task_upload_post_passes_without_session_token() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+
+        MockHttpServletRequest req = new MockHttpServletRequest("POST",
+                "/api/cli/scheduled-tasks/321/documents");
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(req, resp, chain);
+
+        assertEquals(200, resp.getStatus());
+        assertNotNull(chain.getRequest());
+    }
+
+    @Test
+    void cli_scheduled_task_upload_non_post_methods_still_require_session_token() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), mock(UserDao.class));
+
+        for (String method : new String[]{"GET", "PUT", "DELETE"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest(method,
+                    "/api/cli/scheduled-tasks/321/documents");
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            filter.doFilter(req, resp, chain);
+
+            assertEquals(401, resp.getStatus(), method);
+            assertNull(chain.getRequest(), method);
+        }
+    }
+
+    @Test
     void unrelated_cli_routes_are_not_whitelisted() throws Exception {
         AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
                 mock(WorkspaceMemberDao.class), mock(UserDao.class));
@@ -223,6 +303,9 @@ class AuthFilterTest {
                 "/api/cli/workitems/50063",
                 "/api/cli/workitems/50063/requirement-documents/9",
                 "/api/cli/workitems/abc/requirement-documents",
+                "/api/cli/scheduled-tasks/abc/documents",
+                "/api/cli/scheduled-tasks/321",
+                "/api/cli/scheduled-tasks/321/documents/9",
                 "/api/cli/other"}) {
             MockHttpServletRequest req = new MockHttpServletRequest("POST", path);
             MockHttpServletResponse resp = new MockHttpServletResponse();

@@ -3,6 +3,7 @@ package com.aliyun.autowonder.artifact;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.storage.ObjectStorage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,8 +46,47 @@ class ArtifactServiceTest {
         assertNotNull(id);
         verify(artifactDao).insert(argThat((ArtifactDO a) ->
                 a.getTenantId() == 100L && a.getWorkitemId() == 3L
+                        && "WORKITEM".equals(a.getSourceType())
                         && "PATCH".equals(a.getType())
                         && "autowonder-artifacts-daily/3/out.patch".equals(a.getOssRef())));
+    }
+
+    @Test
+    void sameNumericOwnersAreListedWithDifferentSources() {
+        ArtifactDO workitemArtifact = artifact(1L, "WORKITEM", 3L);
+        ArtifactDO taskArtifact = artifact(2L, "SCHEDULED_TASK", 3L);
+        when(artifactDao.listByWorkitem(100L, 3L)).thenReturn(List.of(workitemArtifact));
+        when(artifactDao.listBySource(100L, "SCHEDULED_TASK", 3L, null)).thenReturn(List.of(taskArtifact));
+
+        List<ArtifactVO> workitem = service.listByWorkitem(3L, 100L);
+        List<ArtifactVO> task = service.listByOwner(
+                new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L), 100L);
+
+        assertEquals(List.of(1L), workitem.stream().map(ArtifactVO::getId).toList());
+        assertEquals(List.of(2L), task.stream().map(ArtifactVO::getId).toList());
+        verify(artifactDao).listByWorkitem(100L, 3L);
+        verify(artifactDao).listBySource(100L, "SCHEDULED_TASK", 3L, null);
+    }
+
+    @Test
+    void ownerAwareDownloadRejectsArtifactOwnedByDifferentSource() {
+        when(artifactDao.findBySourceAndId(100L, "SCHEDULED_TASK", 3L, 1L)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class, () -> service.getDownloadUrl(1L,
+                new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, 3L), 100L));
+
+        assertEquals("17010", ex.getCode());
+        verify(storage, never()).presignGet(anyString(), anyInt());
+    }
+
+    private ArtifactDO artifact(long id, String sourceType, long sourceId) {
+        ArtifactDO artifact = new ArtifactDO();
+        artifact.setId(id);
+        artifact.setTenantId(100L);
+        artifact.setSourceType(sourceType);
+        artifact.setWorkitemId(sourceId);
+        artifact.setName("report.md");
+        return artifact;
     }
 
     @Test
@@ -69,7 +109,8 @@ class ArtifactServiceTest {
         different.setId(2L); different.setWorkitemId(3L); different.setName("artifacts/output/evidence/test.log");
         ArtifactDO superseded = new ArtifactDO();
         superseded.setId(1L); superseded.setWorkitemId(3L); superseded.setName("artifacts/output/deliverables/report.md");
-        when(artifactDao.listByWorkitem(100L, 3L)).thenReturn(List.of(telemetry, latest, different, superseded));
+        when(artifactDao.listByWorkitem(100L, 3L))
+                .thenReturn(List.of(telemetry, latest, different, superseded));
 
         List<ArtifactVO> artifacts = service.listByWorkitem(3L, 100L);
 
@@ -129,8 +170,6 @@ class ArtifactServiceTest {
     void preview_wrong_tenant_throws_without_reading_storage() {
         ArtifactDO a = new ArtifactDO();
         a.setId(1L); a.setTenantId(100L); a.setOssRef("b/k");
-        when(artifactDao.findById(1L)).thenReturn(a);
-
         BizException ex = assertThrows(BizException.class, () -> service.getPreviewContent(1L, 999L));
 
         assertEquals("17010", ex.getCode());
@@ -177,7 +216,6 @@ class ArtifactServiceTest {
 
     @Test
     void download_not_found_throws() {
-        when(artifactDao.findById(9L)).thenReturn(null);
         BizException ex = assertThrows(BizException.class, () -> service.getDownloadUrl(9L, 100L));
         assertEquals("17010", ex.getCode());
     }
@@ -186,9 +224,28 @@ class ArtifactServiceTest {
     void download_wrong_tenant_throws() {
         ArtifactDO a = new ArtifactDO();
         a.setId(1L); a.setTenantId(100L); a.setOssRef("b/k");
-        when(artifactDao.findById(1L)).thenReturn(a);
         BizException ex = assertThrows(BizException.class, () -> service.getDownloadUrl(1L, 999L));
         assertEquals("17010", ex.getCode());
         verify(storage, never()).presignGet(anyString(), anyInt());
+    }
+
+    @Test
+    void downloadRejectsWhenArtifactNotFound() {
+        when(artifactDao.findById(1L)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class, () -> service.getDownloadUrl(1L, 100L));
+
+        assertEquals("17010", ex.getCode());
+        verify(storage, never()).presignGet(anyString(), anyInt());
+    }
+
+    @Test
+    void previewRejectsWhenArtifactNotFound() {
+        when(artifactDao.findById(1L)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class, () -> service.getPreviewContent(1L, 100L));
+
+        assertEquals("17010", ex.getCode());
+        verify(storage, never()).get(anyString());
     }
 }

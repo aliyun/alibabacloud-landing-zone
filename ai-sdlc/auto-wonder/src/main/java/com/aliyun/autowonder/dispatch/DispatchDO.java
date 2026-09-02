@@ -9,6 +9,7 @@ import java.util.Date;
 public class DispatchDO {
     private Long id;
     private Long tenantId;
+    private String sourceType;
     private Long workitemId;
     private Long sdlcStepId;
     private Long agentId;
@@ -29,4 +30,8 @@ public class DispatchDO {
     private Long modifierId;
     private Integer isDeleted;
     private Integer version;
+
+    public ExecutionSourceType executionSourceType() {
+        return ExecutionSourceType.valueOrWorkitem(sourceType);
+    }
 }

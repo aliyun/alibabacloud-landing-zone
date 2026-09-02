@@ -163,3 +163,24 @@ describe('WorkitemKanban 需人工标记', () => {
     expect(screen.getByText('异常')).toBeInTheDocument();
   });
 });
+
+describe('WorkitemKanban 定时执行标识', () => {
+  it('shows 定时执行 icon only for scheduled workitems', () => {
+    const items = [
+      mk({ id: 1, statusName: '待处理', assigneeType: 'AGENT', assigneeRef: 5, title: '定时工单', scheduledStartAt: '2026-09-01T02:00:00Z' }),
+      mk({ id: 2, statusName: '待处理', assigneeType: 'HUMAN', assigneeRef: null, title: '普通工单' }),
+    ];
+    renderKanban({ items });
+
+    expect(screen.getByText('定时工单')).toBeInTheDocument();
+    expect(screen.getByText('普通工单')).toBeInTheDocument();
+    expect(screen.getByLabelText('定时执行')).toBeInTheDocument();
+  });
+
+  it('renders no 定时执行 icon when no workitem is scheduled', () => {
+    renderKanban({ items: [mk({ id: 1, statusName: '待处理', title: '普通工单' })] });
+
+    expect(screen.getByText('普通工单')).toBeInTheDocument();
+    expect(screen.queryByLabelText('定时执行')).not.toBeInTheDocument();
+  });
+});

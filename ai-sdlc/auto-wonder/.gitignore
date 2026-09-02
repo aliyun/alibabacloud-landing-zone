@@ -61,3 +61,7 @@ src/main/resources/static/
 
 # superpowers brainstorm scratch
 .superpowers/
+
+# Python bytecode from Skill test runs
+__pycache__/
+*.py[cod]

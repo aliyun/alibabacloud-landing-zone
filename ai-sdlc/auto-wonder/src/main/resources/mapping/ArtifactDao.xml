@@ -2,7 +2,46 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.artifact.ArtifactDao">
+    <resultMap id="artifactMap" type="com.aliyun.autowonder.artifact.ArtifactDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="source_type" property="sourceType"/>
+        <result column="workitem_id" property="workitemId"/>
+        <result column="dispatch_id" property="dispatchId"/>
+        <result column="name" property="name"/>
+        <result column="type" property="type"/>
+        <result column="oss_ref" property="ossRef"/>
+        <result column="size" property="size"/>
+        <result column="meta_json" property="metaJson"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <sql id="cols" databaseId="autowonder-source-aware">
+        id, tenant_id, source_type, workitem_id, dispatch_id, name, type, oss_ref, size, meta_json, gmt_create
+    </sql>
+    <sql id="cols" databaseId="autowonder-legacy">
+        id, tenant_id, 'WORKITEM' AS source_type, workitem_id, dispatch_id, name, type, oss_ref, size, meta_json,
+        gmt_create
+    </sql>
+
     <insert id="insert" parameterType="com.aliyun.autowonder.artifact.ArtifactDO"
+            databaseId="autowonder-source-aware"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO artifact (tenant_id, source_type, workitem_id, dispatch_id, name, type,
+            oss_ref, size, meta_json)
+        VALUES (#{tenantId}, #{sourceType}, #{workitemId}, #{dispatchId}, #{name}, #{type},
+            #{ossRef}, #{size}, #{metaJson})
+        ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            source_type = VALUES(source_type),
+            workitem_id = VALUES(workitem_id),
+            type = VALUES(type),
+            oss_ref = VALUES(oss_ref),
+            size = VALUES(size),
+            meta_json = VALUES(meta_json)
+    </insert>
+    <insert id="insert" parameterType="com.aliyun.autowonder.artifact.ArtifactDO"
+            databaseId="autowonder-legacy"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO artifact (tenant_id, workitem_id, dispatch_id, name, type,
             oss_ref, size, meta_json)
@@ -16,30 +55,78 @@
             size = VALUES(size),
             meta_json = VALUES(meta_json)
     </insert>
-    <select id="findById" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
-        SELECT * FROM artifact WHERE id = #{id} LIMIT 1
+    <select id="findById" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact WHERE id = #{id} LIMIT 1
     </select>
-    <select id="listByWorkitem" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
-        SELECT * FROM artifact
+    <select id="findWorkitemByTenantAndId" databaseId="autowonder-source-aware" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = 'WORKITEM' AND id = #{id}
+        LIMIT 1
+    </select>
+    <select id="findWorkitemByTenantAndId" databaseId="autowonder-legacy" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+        LIMIT 1
+    </select>
+    <select id="findBySourceAndId" databaseId="autowonder-source-aware" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId} AND id = #{id}
+        LIMIT 1
+    </select>
+    <select id="listBySource" databaseId="autowonder-source-aware" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId}
+        <if test="type != null">AND type = #{type}</if>
+        <choose>
+            <when test="type != null">ORDER BY id ASC</when>
+            <otherwise>ORDER BY id DESC</otherwise>
+        </choose>
+    </select>
+    <select id="listByWorkitem" databaseId="autowonder-source-aware" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = 'WORKITEM' AND workitem_id = #{workitemId}
+        ORDER BY id DESC
+    </select>
+    <select id="listByWorkitem" databaseId="autowonder-legacy" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
         WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
         ORDER BY id DESC
     </select>
-    <select id="listByWorkitemAndType" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
-        SELECT * FROM artifact
-        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND type = #{type}
+    <select id="listByWorkitemAndType" databaseId="autowonder-source-aware" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = 'WORKITEM'
+          AND workitem_id = #{workitemId} AND type = #{type}
         ORDER BY id ASC
     </select>
-    <select id="listByDispatch" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
-        SELECT * FROM artifact
+    <select id="listByWorkitemAndType" databaseId="autowonder-legacy" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
+        WHERE tenant_id = #{tenantId}
+          AND workitem_id = #{workitemId} AND type = #{type}
+        ORDER BY id ASC
+    </select>
+    <select id="listByDispatch" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
         WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
         ORDER BY id DESC
     </select>
-    <delete id="deleteById">
-        DELETE FROM artifact WHERE tenant_id = #{tenantId} AND id = #{id}
+    <delete id="deleteById" databaseId="autowonder-source-aware">
+        DELETE FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = 'WORKITEM' AND id = #{id}
+    </delete>
+    <delete id="deleteById" databaseId="autowonder-legacy">
+        DELETE FROM artifact
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </delete>
+    <delete id="deleteBySourceAndId" databaseId="autowonder-source-aware">
+        DELETE FROM artifact
+        WHERE tenant_id = #{tenantId} AND source_type = #{sourceType}
+          AND workitem_id = #{sourceId} AND id = #{id}
     </delete>
 
-    <select id="listUsageArtifacts" resultType="com.aliyun.autowonder.artifact.ArtifactDO">
-        SELECT * FROM artifact
+    <select id="listUsageArtifacts" resultMap="artifactMap">
+        SELECT <include refid="cols"/> FROM artifact
         WHERE tenant_id = #{tenantId}
           AND (name = #{usageName} OR name LIKE CONCAT('%/', #{usageName}))
           AND dispatch_id IS NOT NULL

@@ -43,7 +43,8 @@ class WorkitemCliUploadTokenServiceTest {
         assertEquals("https://daily.auto-wonder.example.com", vo.getServerUrl());
         assertEquals("0.2.130", vo.getRuntimeVersion());
         assertEquals("AUTOWONDER_UPLOAD_TOKEN", vo.getTokenEnvName());
-        assertEquals(java.util.List.of(".md", ".markdown", ".png", ".jpg", ".jpeg", ".webp"),
+        assertEquals(java.util.List.of(".md", ".markdown", ".txt", ".html", ".pdf",
+                        ".png", ".jpg", ".jpeg", ".webp"),
                 vo.getSupportedExtensions());
         assertEquals(10, vo.getMaxFiles());
         assertEquals(5L * 1024 * 1024, vo.getMaxFileSizeBytes());
@@ -80,8 +81,21 @@ class WorkitemCliUploadTokenServiceTest {
     }
 
     @Test
-    void dispatchCredentialCannotMintEvenWithWriteMembership() {
+    void dispatchCredentialMintsScopedTokenLikeLongLived() {
         WorkitemCliUploadTokenService service = service("https://daily.auto-wonder.example.com", "0.2.130");
+
+        WorkitemCliUploadTokenVO vo = service.mint(
+                McpAccessTokenService.CredentialType.DISPATCH, USER_ID, WORKITEM_ID);
+
+        assertTrue(vo.getToken().startsWith(WorkitemCliUploadTokenService.TOKEN_PREFIX));
+        assertEquals("Bearer", vo.getTokenType());
+        assertEquals(1800, vo.getExpiresInSeconds());
+        assertEquals(USER_ID, service.authenticate(vo.getToken()));
+    }
+
+    @Test
+    void dispatchCredentialWithoutWriteMembershipCannotMint() {
+        WorkitemCliUploadTokenService service = serviceWithMember(member("READ_ONLY"));
 
         BizException e = assertThrows(BizException.class, () -> service.mint(
                 McpAccessTokenService.CredentialType.DISPATCH, USER_ID, WORKITEM_ID));
@@ -89,8 +103,21 @@ class WorkitemCliUploadTokenServiceTest {
     }
 
     @Test
-    void conversationCredentialCannotMintEvenWithWriteMembership() {
+    void conversationCredentialMintsScopedTokenLikeLongLived() {
         WorkitemCliUploadTokenService service = service("https://daily.auto-wonder.example.com", "0.2.130");
+
+        WorkitemCliUploadTokenVO vo = service.mint(
+                McpAccessTokenService.CredentialType.CONVERSATION, USER_ID, WORKITEM_ID);
+
+        assertTrue(vo.getToken().startsWith(WorkitemCliUploadTokenService.TOKEN_PREFIX));
+        assertEquals("Bearer", vo.getTokenType());
+        assertEquals(1800, vo.getExpiresInSeconds());
+        assertEquals(USER_ID, service.authenticate(vo.getToken()));
+    }
+
+    @Test
+    void conversationCredentialWithoutWriteMembershipCannotMint() {
+        WorkitemCliUploadTokenService service = serviceWithMember(member("READ_ONLY"));
 
         BizException e = assertThrows(BizException.class, () -> service.mint(
                 McpAccessTokenService.CredentialType.CONVERSATION, USER_ID, WORKITEM_ID));
@@ -185,6 +212,17 @@ class WorkitemCliUploadTokenServiceTest {
         assertTrue(service.commandTemplate().contains("--server-url https://autowonder.example.com "));
     }
 
+    @Test
+    void scheduledTaskCommandTemplatePointsAtScheduledTaskUploadSubcommand() {
+        WorkitemCliUploadTokenService service = service("https://autowonder.example.com/", "0.2.130");
+
+        String template = service.scheduledTaskCommandTemplate();
+        assertTrue(template.startsWith("npx -y autowonder@0.2.130 scheduled-task upload"));
+        assertTrue(template.contains("--server-url https://autowonder.example.com "));
+        assertTrue(template.contains("--scheduled-task-id <scheduled-task-id>"));
+        assertTrue(template.endsWith("--json"));
+    }
+
     // ---- fixtures ----
 
     private final WorkitemDao workitemDao = mock(WorkitemDao.class);
@@ -215,7 +253,7 @@ class WorkitemCliUploadTokenServiceTest {
         PlatformBrandingDao brandingDao = mock(PlatformBrandingDao.class);
         PlatformBrandingService branding = new PlatformBrandingService(
                 brandingDao, new InMemoryObjectStorage(), new OssProperties(),
-                baseUrl, runtimeVersion, "x.x.x");
+                baseUrl, runtimeVersion, "x.x.x", false);
         return new WorkitemCliUploadTokenService(jwtService(), workitemDao, workspaceMemberDao, branding);
     }
 

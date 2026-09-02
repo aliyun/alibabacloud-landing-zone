@@ -114,6 +114,9 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
         maxWidth: '100%',
         overflowWrap: 'anywhere',
         wordBreak: 'break-word',
+        // markdown 块级间距由渲染后的元素决定；若父级带 pre-wrap，
+        // 文本节点里的换行会被保留成字面空行，出现大块行间距空白。
+        whiteSpace: 'normal',
       }}
     >
       <ReactMarkdown

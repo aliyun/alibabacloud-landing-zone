@@ -35,8 +35,9 @@
             version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
+    <!-- 软删除时把 name 置为墓碑值 '#deleted-<id>'，释放 uk_type_name 占用的名称，避免重新上传/创建同名 skill 唯一键冲突 -->
     <update id="softDelete">
-        UPDATE skill SET is_deleted = 1, version = version + 1, modifier_id = #{modifierId}
+        UPDATE skill SET is_deleted = 1, name = CONCAT('#deleted-', id), version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
     <select id="findByTypeAndName" resultType="com.aliyun.autowonder.skill.SkillDO">

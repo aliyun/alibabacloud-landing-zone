@@ -13,6 +13,9 @@ import java.util.List;
 public class ConversationTurnEventService {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationTurnEventService.class);
+    // 服务端直推事件使用基于时间的序号，避免与 Runtime 每轮次从 1 递增的 eventSeq 冲突。
+    private static final java.util.concurrent.atomic.AtomicLong SERVER_PUSHED_EVENT_SEQ =
+            new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis());
 
     private final AgentConversationTurnEventDao eventDao;
     private final AgentConversationDao convDao;
@@ -75,6 +78,16 @@ public class ConversationTurnEventService {
     public List<AgentConversationTurnEventDO> listEventsAfter(long tenantId, long conversationId,
             long afterId, int limit) {
         return eventDao.listCompletedAfter(tenantId, conversationId, afterId, limit);
+    }
+
+    /**
+     * 服务端直接向浏览器推送轮次状态事件（不落库），用于取消等需要前端
+     * 立即感知终结态的场景。
+     */
+    public void publishStatusEvent(long tenantId, long conversationId, long turnId, String status) {
+        String payload = "{\"type\":\"status\",\"status\":\"" + status + "\"}";
+        publishToBrowser(tenantId, conversationId, turnId,
+                SERVER_PUSHED_EVENT_SEQ.incrementAndGet(), "status", payload);
     }
 
     private boolean allChunksPresent(long tenantId, long turnId, int dispatchAttempt,

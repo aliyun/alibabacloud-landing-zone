@@ -70,12 +70,95 @@ class RepoServiceTest {
                 "new desc", 3, 2L)).thenReturn(1);
 
         UpdateRepoRequest req = new UpdateRepoRequest();
+        req.setDescriptionPresent(true);
         req.setDescription("new desc");
 
         service.update(1L, req, 1L, 2L);
 
         verify(repoDao).update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", "main",
                 "new desc", 3, 2L);
+    }
+
+    @Test
+    void updateKeepsUnsentFields() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setDefaultBranch("main");
+        repo.setDescription("old desc");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(repoDao.update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", "main",
+                "old desc", 3, 2L)).thenReturn(1);
+
+        service.update(1L, new UpdateRepoRequest(), 1L, 2L);
+
+        verify(repoDao).update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", "main",
+                "old desc", 3, 2L);
+    }
+
+    @Test
+    void updateClearsNullableFieldsWhenExplicitNull() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setDefaultBranch("main");
+        repo.setDescription("old desc");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(repoDao.update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", null,
+                null, 3, 2L)).thenReturn(1);
+
+        UpdateRepoRequest req = new UpdateRepoRequest();
+        req.setDefaultBranchPresent(true);
+        req.setDefaultBranch(null);
+        req.setDescriptionPresent(true);
+        req.setDescription(null);
+
+        service.update(1L, req, 1L, 2L);
+
+        verify(repoDao).update(1L, 1L, "my-repo", "https://github.com/workspace/repo.git", null,
+                null, 3, 2L);
+    }
+
+    @Test
+    void updateRejectsBlankNameWhenPresent() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+
+        UpdateRepoRequest req = new UpdateRepoRequest();
+        req.setNamePresent(true);
+        req.setName("  ");
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+        assertEquals(ErrorCode.REPO_NAME_REQUIRED.getCode(), ex.getCode());
+    }
+
+    @Test
+    void updateRejectsNullUrlWhenPresent() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+
+        UpdateRepoRequest req = new UpdateRepoRequest();
+        req.setUrlPresent(true);
+        req.setUrl(null);
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+        assertEquals(ErrorCode.REPO_URL_REQUIRED.getCode(), ex.getCode());
     }
 
     @Test

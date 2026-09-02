@@ -6,11 +6,14 @@ import { useAuthStore } from '@/shared/auth/store';
 interface UseRealtimeOptions {
   onEvent: EventHandler;
   enabled?: boolean;
+  onReconnect?: () => void;
 }
 
-export function useRealtime(channel: string | null, { onEvent, enabled = true }: UseRealtimeOptions) {
+export function useRealtime(channel: string | null, { onEvent, enabled = true, onReconnect }: UseRealtimeOptions) {
   const handlerRef = useRef(onEvent);
   handlerRef.current = onEvent;
+  const reconnectRef = useRef(onReconnect);
+  reconnectRef.current = onReconnect;
 
   useEffect(() => {
     if (!channel || !enabled) return;
@@ -21,6 +24,11 @@ export function useRealtime(channel: string | null, { onEvent, enabled = true }:
     const sub = client.subscribe(channel, (event) => {
       handlerRef.current(event);
     });
-    return () => sub.unsubscribe();
+    let previouslyConnected = client.state === 'connected';
+    const unsubscribeState = client.onStateChange((state) => {
+      if (state === 'connected' && !previouslyConnected) reconnectRef.current?.();
+      previouslyConnected = state === 'connected';
+    });
+    return () => { sub.unsubscribe(); unsubscribeState(); };
   }, [channel, enabled]);
 }

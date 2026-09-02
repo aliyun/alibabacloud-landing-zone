@@ -7,6 +7,7 @@ import {
   Select,
   Space,
   Table,
+  Tabs,
   Tag,
   Tooltip,
 } from 'antd';
@@ -24,6 +25,7 @@ import {
   useUpdateMemberAccess,
   useUpdateMemberIdentityTags,
 } from './hooks';
+import { AccessRequestsPanel } from './AccessRequestsPanel';
 import { MemberAccessModal } from './MemberAccessModal';
 import { OwnerTransferModal } from './OwnerTransferModal';
 import type { MemberVO } from './api';
@@ -198,79 +200,95 @@ export function MembersPage() {
   ];
 
   return (
-    <Card
-      title="成员管理"
-      extra={adminOnlyTip(
-        <Button
-          disabled={!isAdmin}
-          onClick={() =>
-            accessCommand('ADMIN', '移交 Owner', () => setOwnerTransferOpen(true))}
-        >
-          移交 Owner
-        </Button>,
-      )}
-    >
-      <Space
-        style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}
-        align="start"
-        wrap
-      >
-        <Segmented
-          options={[
-            { label: `全部 (${members.length})`, value: 'ALL' },
-            { label: '管理员', value: 'ADMIN' },
-            { label: '读写', value: 'READ_WRITE' },
-            { label: '只读', value: 'READ_ONLY' },
-          ]}
-          value={levelFilter}
-          onChange={(value) => setLevelFilter(value as WorkspaceAccessLevel | 'ALL')}
-        />
-        <Space.Compact>
-          {adminOnlyTip(
-            <Select
-              showSearch
-              allowClear
-              filterOption={false}
-              aria-label="搜索全局人员"
-              disabled={!isAdmin}
-              value={selectedUserId}
-              placeholder="搜索全局人员"
-              loading={candidatesLoading}
-              style={{ width: 280 }}
-              onSearch={setCandidateKeyword}
-              onClear={() => {
-                setSelectedUserId(undefined);
-                setCandidateKeyword('');
-              }}
-              onChange={setSelectedUserId}
-              options={candidates.map((candidate) => ({
-                value: candidate.userId,
-                label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
-              }))}
-              notFoundContent={
-                candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
-              }
-            />,
-          )}
-          {adminOnlyTip(
-            <Button
-              type="primary"
-              disabled={!isAdmin || selectedUserId === undefined}
-              loading={addMemberMutation.isPending}
-              onClick={handleAddMember}
-            >
-              添加成员
-            </Button>,
-          )}
-        </Space.Compact>
-      </Space>
-      <Table
-        rowKey="userId"
-        columns={columns}
-        dataSource={filteredMembers}
-        loading={isLoading}
-        pagination={false}
-        scroll={{ x: 880 }}
+    <Card title="成员管理">
+      <Tabs
+        defaultActiveKey="members"
+        tabBarExtraContent={adminOnlyTip(
+          <Button
+            disabled={!isAdmin}
+            onClick={() =>
+              accessCommand('ADMIN', '移交 Owner', () => setOwnerTransferOpen(true))}
+          >
+            移交 Owner
+          </Button>,
+        )}
+        items={[
+          {
+            key: 'members',
+            label: '成员管理',
+            children: (
+              <>
+                <Space
+                  style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}
+                  align="start"
+                  wrap
+                >
+                  <Segmented
+                    options={[
+                      { label: `全部 (${members.length})`, value: 'ALL' },
+                      { label: '管理员', value: 'ADMIN' },
+                      { label: '读写', value: 'READ_WRITE' },
+                      { label: '只读', value: 'READ_ONLY' },
+                    ]}
+                    value={levelFilter}
+                    onChange={(value) => setLevelFilter(value as WorkspaceAccessLevel | 'ALL')}
+                  />
+                  <Space.Compact>
+                    {adminOnlyTip(
+                      <Select
+                        showSearch
+                        allowClear
+                        filterOption={false}
+                        aria-label="搜索全局人员"
+                        disabled={!isAdmin}
+                        value={selectedUserId}
+                        placeholder="搜索全局人员"
+                        loading={candidatesLoading}
+                        style={{ width: 280 }}
+                        onSearch={setCandidateKeyword}
+                        onClear={() => {
+                          setSelectedUserId(undefined);
+                          setCandidateKeyword('');
+                        }}
+                        onChange={setSelectedUserId}
+                        options={candidates.map((candidate) => ({
+                          value: candidate.userId,
+                          label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
+                        }))}
+                        notFoundContent={
+                          candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
+                        }
+                      />,
+                    )}
+                    {adminOnlyTip(
+                      <Button
+                        type="primary"
+                        disabled={!isAdmin || selectedUserId === undefined}
+                        loading={addMemberMutation.isPending}
+                        onClick={handleAddMember}
+                      >
+                        添加成员
+                      </Button>,
+                    )}
+                  </Space.Compact>
+                </Space>
+                <Table
+                  rowKey="userId"
+                  columns={columns}
+                  dataSource={filteredMembers}
+                  loading={isLoading}
+                  pagination={false}
+                  scroll={{ x: 880 }}
+                />
+              </>
+            ),
+          },
+          {
+            key: 'requests',
+            label: '待审批申请',
+            children: <AccessRequestsPanel />,
+          },
+        ]}
       />
       <MemberAccessModal
         open={editTarget !== null}

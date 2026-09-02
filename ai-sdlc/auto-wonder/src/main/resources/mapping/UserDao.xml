@@ -17,6 +17,14 @@
         LIMIT 1
     </select>
 
+    <select id="findByUsernameOrNickname" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE is_deleted = 0
+          AND status = 0
+          AND (username = #{name} OR nickname = #{name})
+        LIMIT 3
+    </select>
+
     <select id="findById" resultType="com.aliyun.autowonder.user.UserDO">
         SELECT * FROM `user`
         WHERE id = #{id} AND is_deleted = 0

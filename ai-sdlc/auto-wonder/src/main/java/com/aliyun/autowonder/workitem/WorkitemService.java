@@ -62,14 +62,21 @@ import com.aliyun.autowonder.workitem.dto.ProcessGraphVO;
 import com.aliyun.autowonder.workitem.dto.SubStepVO;
 import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
+import com.aliyun.autowonder.workitem.dto.WorkitemOriginVO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskNotificationService;
 import com.aliyun.autowonder.workitem.dto.WorkflowPlanStepVO;
 import com.aliyun.autowonder.workitem.dto.WorkflowPlanVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
 import java.util.ArrayList;
@@ -78,6 +85,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -86,6 +94,11 @@ import java.util.stream.Collectors;
 
 @Service
 public class WorkitemService {
+
+    private static final Logger log = LoggerFactory.getLogger(WorkitemService.class);
+    private static final int MAX_TAGS_PER_WORKITEM = 20;
+    private static final int MAX_TAG_LENGTH = 32;
+
 
     private static final Set<String> WORK_TYPES = Set.of("REQ", "TASK", "BUG");
     private static final Set<String> ACTIVE_DISPATCH_STATUSES = Set.of(
@@ -116,6 +129,14 @@ public class WorkitemService {
     private final ExternalWorkitemLinkDao externalWorkitemLinkDao;
     private final ExternalWorkitemViewService externalWorkitemViewService;
     private final ApplicationEventPublisher eventPublisher;
+    @Autowired(required = false)
+    private com.aliyun.autowonder.aiusage.DispatchAiUsageDao dispatchAiUsageDao;
+    @Autowired(required = false)
+    private ScheduledTaskRunDao scheduledTaskRunDao;
+    @Autowired(required = false)
+    private ScheduledTaskDao scheduledTaskDao;
+    @Autowired(required = false)
+    private ScheduledTaskNotificationService scheduledTaskNotificationService;
 
     /** A non-terminal (running) dispatch idle longer than this is treated as stalled. Default 60m. */
     @Value("${autowonder.workitem.stuck-threshold-ms:3600000}")
@@ -204,6 +225,13 @@ public class WorkitemService {
 
     @Transactional
     public WorkitemVO create(CreateWorkitemRequest req, long tenantId, long userId) {
+        return createWithOrigin(req, tenantId, userId, null, null);
+    }
+
+    /** Origin is accepted only by trusted server callers, never request JSON. */
+    @Transactional
+    public WorkitemVO createWithOrigin(CreateWorkitemRequest req, long workspaceId, long userId,
+                                       String originType, Long originId) {
         if (req.getWorkType() == null || !WORK_TYPES.contains(req.getWorkType())) {
             throw new BizException(ErrorCode.WORK_TYPE_INVALID);
         }
@@ -216,7 +244,7 @@ public class WorkitemService {
             throw new BizException(ErrorCode.STATUS_TEMPLATE_NOT_FOUND);
         }
         WorkitemDO w = new WorkitemDO();
-        w.setTenantId(tenantId);
+        w.setTenantId(workspaceId);
         w.setWorkType(req.getWorkType());
         w.setTitle(req.getTitle());
         w.setContentMd(req.getContentMd());
@@ -230,13 +258,19 @@ public class WorkitemService {
         w.setAssigneeRef(userId);
         w.setPriority(req.getPriority() == null ? 2 : req.getPriority());
         w.setCreatorId(userId);
+        w.setOriginType(originType);
+        w.setOriginId(originId);
         w.setVersion(0);
         workitemDao.insert(w);
+        if ("SCHEDULED_TASK_RUN".equals(originType) && originId != null && scheduledTaskNotificationService != null
+                && scheduledTaskRunDao != null) {
+            scheduledTaskNotificationService.derivedWorkitem(scheduledTaskRunDao.findById(workspaceId, originId));
+        }
 
-        writeEvent(tenantId, w.getId(), WorkitemEventType.CREATE.code(), null, init.getCode(), "HUMAN", userId);
+        writeEvent(workspaceId, w.getId(), WorkitemEventType.CREATE.code(), null, init.getCode(), "HUMAN", userId);
         if (req.getAssigneeType() != null) {
             return assign(w.getId(), req.getAssigneeType(), req.getAssigneeRef(),
-                    req.getSdlcId(), req.getSquadId(), tenantId, userId);
+                    req.getSdlcId(), req.getSquadId(), req.getScheduledStartAt(), workspaceId, userId);
         }
         return toVO(w);
     }
@@ -253,15 +287,28 @@ public class WorkitemService {
         return vo;
     }
 
+    /** Source-aware backlink query; never reads another workspace's derived workitems. */
+    public List<WorkitemVO> listByOrigin(long workspaceId, String originType, long originId) {
+        if (workspaceId <= 0 || originType == null || originType.isBlank() || originId <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        return workitemDao.listByOrigin(workspaceId, originType, originId).stream()
+                .filter(workitem -> Long.valueOf(workspaceId).equals(workitem.getTenantId()))
+                .map(this::toVO).collect(Collectors.toList());
+    }
+
     public PageResult<WorkitemVO> list(String workType, Long statusNodeId, String statusCategory,
                                       String assigneeType, Long assigneeRef, boolean pendingDecisionOnly,
                                       String mineScope,
-                                      long tenantId, long currentUserId, String keyword, int page, int size) {
+                                      long tenantId, long currentUserId, String keyword, String tag,
+                                      int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = size < 1 ? 20 : Math.min(size, 200);
         int offset = (p - 1) * s;
         String trimmed = keyword == null ? null : keyword.trim();
         String effectiveKeyword = (trimmed != null && !trimmed.isEmpty()) ? trimmed : null;
+        String trimmedTag = tag == null ? null : tag.trim();
+        String effectiveTag = (trimmedTag != null && !trimmedTag.isEmpty()) ? trimmedTag : null;
         String effectiveStatusCategory = normalizeStatusCategory(statusCategory);
         Long keywordId = null;
         if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
@@ -272,11 +319,11 @@ public class WorkitemService {
         }
         long total = workitemDao.count(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId);
+                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag);
         List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, offset, s);
-        Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(rows);
+                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag, offset, s);
+        Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(tenantId, rows);
 
         Set<Long> humanIds = new HashSet<>();
         Set<Long> agentIds = new HashSet<>();
@@ -329,7 +376,7 @@ public class WorkitemService {
                     .filter(Objects::nonNull)
                     .filter(link -> link.getWorkitemId() != null)
                     .collect(Collectors.groupingBy(ExternalWorkitemLinkDO::getWorkitemId));
-        Map<Long, List<DispatchDO>> allDispatchesByWorkitem = loadAllDispatches(workitemIds);
+        Map<Long, List<DispatchDO>> allDispatchesByWorkitem = loadAllDispatches(tenantId, workitemIds);
         Map<Long, ExternalPrincipalVO> sourceCreators = externalWorkitemViewService == null
                 ? Map.of()
                 : externalWorkitemViewService.reportersByWorkitem(
@@ -364,7 +411,7 @@ public class WorkitemService {
         return STATUS_CATEGORIES.contains(v) ? v : null;
     }
 
-    private Map<Long, DispatchDO> loadLatestDispatches(List<WorkitemDO> rows) {
+    private Map<Long, DispatchDO> loadLatestDispatches(long tenantId, List<WorkitemDO> rows) {
         List<Long> ids = rows.stream()
                 .map(WorkitemDO::getId)
                 .filter(Objects::nonNull)
@@ -373,7 +420,7 @@ public class WorkitemService {
             return Map.of();
         }
         Map<Long, DispatchDO> byWorkitem = new HashMap<>();
-        for (DispatchDO d : safeList(dispatchDao.listLatestByWorkitemIds(ids))) {
+        for (DispatchDO d : safeList(dispatchDao.listLatestByWorkitemIds(tenantId, ids))) {
             if (d != null && d.getWorkitemId() != null) {
                 byWorkitem.put(d.getWorkitemId(), d);
             }
@@ -381,11 +428,11 @@ public class WorkitemService {
         return byWorkitem;
     }
 
-    private Map<Long, List<DispatchDO>> loadAllDispatches(List<Long> workitemIds) {
+    private Map<Long, List<DispatchDO>> loadAllDispatches(long tenantId, List<Long> workitemIds) {
         if (workitemIds.isEmpty()) {
             return Map.of();
         }
-        return safeList(dispatchDao.listByWorkitemIds(workitemIds)).stream()
+        return safeList(dispatchDao.listByWorkitemIds(tenantId, workitemIds)).stream()
                 .filter(Objects::nonNull)
                 .filter(d -> d.getWorkitemId() != null)
                 .collect(Collectors.groupingBy(DispatchDO::getWorkitemId));
@@ -462,7 +509,7 @@ public class WorkitemService {
         }
         String s = value.toUpperCase();
         return s.contains("完成") || s.contains("关闭") || s.contains("发布")
-                || s.contains("DONE") || s.contains("CLOSED") || s.contains("RELEASED")
+                || s.contains("DONE") || s.contains("CLOSED") || s.contains("FIXED") || s.contains("RELEASED")
                 || s.contains("PUBLISHED");
     }
 
@@ -523,68 +570,120 @@ public class WorkitemService {
     @Transactional
     public WorkitemVO assign(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
                              long tenantId, long userId) {
-        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, tenantId, userId,
+        return assign(id, assigneeType, assigneeRef, sdlcId, squadId, null, tenantId, userId);
+    }
+
+    @Transactional
+    public WorkitemVO assign(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
+                             Date scheduledStartAt, long tenantId, long userId) {
+        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, tenantId, userId,
                 AssignmentActor.human(userId, resolveHumanName(userId)));
     }
 
     @Transactional
     public WorkitemVO assignAs(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
                                long tenantId, long modifierUserId, AssignmentActor actor) {
+        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, null, tenantId, modifierUserId, actor);
+    }
+
+    @Transactional
+    public WorkitemVO assignAs(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
+                               Date scheduledStartAt, long tenantId, long modifierUserId, AssignmentActor actor) {
         WorkitemDO w = workitemDao.findById(id);
         if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        if (Objects.equals(w.getAssigneeType(), assigneeType) && Objects.equals(w.getAssigneeRef(), assigneeRef)) {
+        // A same-assignee re-assign is normally a no-op, but after cancelling a planned
+        // start the workitem keeps its agent assignee and the re-assign carries the new
+        // scheduledStartAt, so only the assignee mutation is skipped, not the schedule.
+        boolean sameAssignee = Objects.equals(w.getAssigneeType(), assigneeType)
+                && Objects.equals(w.getAssigneeRef(), assigneeRef);
+        if (sameAssignee && scheduledStartAt == null) {
             return toVO(w);
         }
         AssignmentActor effectiveActor = actor == null
                 ? AssignmentActor.system("系统")
                 : actor;
-        validateSquadMember(assigneeType, assigneeRef, squadId, tenantId);
-        int rows = workitemDao.updateAssignee(id, tenantId, assigneeType, assigneeRef,
-                w.getVersion(), modifierUserId);
-        if (rows == 0) {
-            throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+        WorkitemDO reloaded = w;
+        WorkitemEventDO assignEvent = null;
+        if (!sameAssignee) {
+            validateSquadMember(assigneeType, assigneeRef, squadId, tenantId);
+            int rows = workitemDao.updateAssignee(id, tenantId, assigneeType, assigneeRef,
+                    w.getVersion(), modifierUserId);
+            if (rows == 0) {
+                throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+            }
+            String fromVal = w.getAssigneeRef() == null ? null : String.valueOf(w.getAssigneeRef());
+            String toVal = assigneeRef == null ? null : String.valueOf(assigneeRef);
+            assignEvent = new WorkitemEventDO();
+            assignEvent.setTenantId(tenantId);
+            assignEvent.setWorkitemId(id);
+            assignEvent.setEventType(WorkitemEventType.ASSIGN.code());
+            assignEvent.setFromVal(fromVal);
+            assignEvent.setToVal(toVal);
+            assignEvent.setActorType(effectiveActor.type());
+            assignEvent.setActorRef(effectiveActor.ref());
+            assignEvent.setDetailJson(assignDetailJson(w.getAssigneeType(), assigneeType));
+            eventDao.insert(assignEvent);
+
+            // First-time delivery start: bind chosen SDLC + its first step.
+            // Guard on w.getSdlcId()==null so a mid-flight currentStepId is never reset.
+            if ("AGENT".equals(assigneeType) && assigneeRef != null
+                    && w.getSdlcId() == null && w.getCurrentStepId() == null) {
+                Long effectiveSdlcId = sdlcId != null ? sdlcId
+                        : resolveAgentSdlcId(assigneeRef, tenantId, w.getWorkType());
+                bindSdlc(id, tenantId, effectiveSdlcId, w.getVersion() + 1, modifierUserId);
+            }
+
+            reloaded = workitemDao.findById(id);
+
+            // Record the real human who triggered the assignment (assign-operator) so a later
+            // handoff with no resolvable next-hop can fall back to them. SYSTEM-initiated assigns
+            // (agent->agent handoffs) must not overwrite the human operator.
+            if (effectiveActor.isHuman() && modifierUserId != SYSTEM_USER_ID && reloaded != null
+                    && !java.util.Objects.equals(reloaded.getAssignOperatorId(), modifierUserId)) {
+                workitemDao.updateAssignOperator(id, tenantId, modifierUserId, reloaded.getVersion(), modifierUserId);
+                // updateAssignOperator bumps the version when it matches; reload so the
+                // scheduled-start CAS below does not fail against the stale version.
+                reloaded = workitemDao.findById(id);
+            }
         }
-        String fromVal = w.getAssigneeRef() == null ? null : String.valueOf(w.getAssigneeRef());
-        String toVal = assigneeRef == null ? null : String.valueOf(assigneeRef);
-        WorkitemEventDO assignEvent = new WorkitemEventDO();
-        assignEvent.setTenantId(tenantId);
-        assignEvent.setWorkitemId(id);
-        assignEvent.setEventType(WorkitemEventType.ASSIGN.code());
-        assignEvent.setFromVal(fromVal);
-        assignEvent.setToVal(toVal);
-        assignEvent.setActorType(effectiveActor.type());
-        assignEvent.setActorRef(effectiveActor.ref());
-        assignEvent.setDetailJson(assignDetailJson(w.getAssigneeType(), assigneeType));
-        eventDao.insert(assignEvent);
 
-        // First-time delivery start: bind chosen SDLC + its first step.
-        // Guard on w.getSdlcId()==null so a mid-flight currentStepId is never reset.
-        if ("AGENT".equals(assigneeType) && assigneeRef != null
-                && w.getSdlcId() == null && w.getCurrentStepId() == null) {
-            Long effectiveSdlcId = sdlcId != null ? sdlcId
-                    : resolveAgentSdlcId(assigneeRef, tenantId, w.getWorkType());
-            bindSdlc(id, tenantId, effectiveSdlcId, w.getVersion() + 1, modifierUserId);
-        }
-
-        WorkitemDO reloaded = workitemDao.findById(id);
-
-        // Record the real human who triggered the assignment (assign-operator) so a later
-        // handoff with no resolvable next-hop can fall back to them. SYSTEM-initiated assigns
-        // (agent->agent handoffs) must not overwrite the human operator.
-        if (effectiveActor.isHuman() && modifierUserId != SYSTEM_USER_ID && reloaded != null
-                && !java.util.Objects.equals(reloaded.getAssignOperatorId(), modifierUserId)) {
-            workitemDao.updateAssignOperator(id, tenantId, modifierUserId, reloaded.getVersion(), modifierUserId);
+        if (scheduledStartAt != null && "AGENT".equals(assigneeType) && assigneeRef != null && reloaded != null) {
+            if (scheduledStartAt.after(new Date())) {
+                int scheduledRows = workitemDao.updateScheduledStartAt(id, tenantId, scheduledStartAt,
+                        reloaded.getVersion(), modifierUserId);
+                if (scheduledRows == 0) {
+                    throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+                }
+                reloaded = workitemDao.findById(id);
+            } else if (reloaded.getScheduledStartAt() != null) {
+                // A past planned time (picking "now" drifts into the past before submit) means
+                // deliver immediately; drop any existing schedule so the scheduled-start scanner
+                // cannot fire a second dispatch.
+                int clearedRows = workitemDao.clearScheduledStartAt(id, tenantId, reloaded.getVersion());
+                if (clearedRows == 0) {
+                    throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+                }
+                reloaded = workitemDao.findById(id);
+            }
         }
 
         if ("AGENT".equals(assigneeType) && assigneeRef != null) {
-            eventPublisher.publishEvent(new WorkitemAssignedEvent(
-                    tenantId, id, reloaded.getCurrentStepId(), assigneeRef,
-                    reloaded.getVersion(), modifierUserId));
+            boolean deferred = reloaded != null && reloaded.getScheduledStartAt() != null
+                    && reloaded.getScheduledStartAt().after(new Date());
+            if (deferred) {
+                // Delayed delivery: the scheduled-start scanner publishes the assign event
+                // once the planned time arrives.
+                log.info("Workitem {} agent delivery deferred until {}", id, reloaded.getScheduledStartAt());
+            } else {
+                eventPublisher.publishEvent(new WorkitemAssignedEvent(
+                        tenantId, id, reloaded.getCurrentStepId(), assigneeRef,
+                        reloaded.getVersion(), modifierUserId));
+            }
         }
         if ("HUMAN".equals(assigneeType) && assigneeRef != null
-                && assignEvent.getId() != null
+                && assignEvent != null && assignEvent.getId() != null
                 && !(effectiveActor.isHuman() && effectiveActor.ref() == assigneeRef)) {
             eventPublisher.publishEvent(new WorkitemHumanAssignedEvent(
                     tenantId,
@@ -598,6 +697,107 @@ public class WorkitemService {
                     currentRequestId()));
         }
         return toVO(reloaded);
+    }
+
+    /**
+     * Edit, clear, or immediately execute a workitem's planned agent start time.
+     * {@code executeNow} wins over {@code scheduledStartAt}: it CAS-clears the schedule and,
+     * only when this call actually cleared it, publishes the assign event that the deferred
+     * assignment skipped.
+     */
+    @Transactional
+    public WorkitemVO updateScheduledStart(long id, Date scheduledStartAt, boolean executeNow,
+                                           long tenantId, long userId) {
+        WorkitemDO w = workitemDao.findById(id);
+        if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
+            throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        }
+        if (executeNow || scheduledStartAt == null) {
+            // executeNow stamps scheduled_start_triggered_at (fireScheduledStartAt) so the UI
+            // keeps the scheduled badge after triggering; plain cancellation must not stamp.
+            int rows = executeNow
+                    ? workitemDao.fireScheduledStartAt(id, tenantId, w.getVersion())
+                    : workitemDao.clearScheduledStartAt(id, tenantId, w.getVersion());
+            if (rows == 0) {
+                WorkitemDO fresh = workitemDao.findById(id);
+                if (fresh != null && fresh.getScheduledStartAt() != null) {
+                    throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+                }
+                // Nothing to clear: either never scheduled or the scanner already fired.
+                return toVO(fresh);
+            }
+            WorkitemDO fresh = workitemDao.findById(id);
+            if (executeNow && fresh != null
+                    && "AGENT".equals(fresh.getAssigneeType()) && fresh.getAssigneeRef() != null) {
+                eventPublisher.publishEvent(new WorkitemAssignedEvent(
+                        tenantId, id, fresh.getCurrentStepId(), fresh.getAssigneeRef(),
+                        fresh.getVersion(), userId));
+            }
+            return toVO(fresh);
+        }
+        if (!"AGENT".equals(w.getAssigneeType()) || w.getAssigneeRef() == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        if (!scheduledStartAt.after(new Date())) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        int rows = workitemDao.updateScheduledStartAt(id, tenantId, scheduledStartAt, w.getVersion(), userId);
+        if (rows == 0) {
+            throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+        }
+        return toVO(workitemDao.findById(id));
+    }
+
+    @Transactional
+    public WorkitemVO updateTags(long id, List<String> tags, long tenantId, long userId) {
+        WorkitemDO w = workitemDao.findById(id);
+        if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
+            throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        }
+        List<String> normalized = normalizeTags(tags);
+        String tagsJson = normalized.isEmpty() ? null : JSON.toJSONString(normalized);
+        int rows = workitemDao.updateTags(id, tenantId, tagsJson, w.getVersion(), userId);
+        if (rows == 0) {
+            throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+        }
+        return toVO(workitemDao.findById(id));
+    }
+
+    private List<String> normalizeTags(List<String> tags) {
+        if (tags == null) {
+            return List.of();
+        }
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String tag : tags) {
+            if (tag == null) {
+                continue;
+            }
+            String trimmed = tag.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (trimmed.length() > MAX_TAG_LENGTH) {
+                throw new BizException(ErrorCode.PARAM_INVALID);
+            }
+            normalized.add(trimmed);
+            if (normalized.size() > MAX_TAGS_PER_WORKITEM) {
+                throw new BizException(ErrorCode.PARAM_INVALID);
+            }
+        }
+        return new ArrayList<>(normalized);
+    }
+
+    List<String> parseTagsJson(String tagsJson) {
+        if (tagsJson == null || tagsJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<String> parsed = JSON.parseArray(tagsJson, String.class);
+            return parsed == null ? List.of() : parsed;
+        } catch (RuntimeException e) {
+            log.warn("Failed to parse workitem tags json: {}", tagsJson, e);
+            return List.of();
+        }
     }
 
     /**
@@ -948,8 +1148,10 @@ public class WorkitemService {
     }
 
     public List<CommentVO> listComments(long workitemId) {
+        WorkitemDO owner = workitemDao.findById(workitemId);
+        if (owner == null || owner.getTenantId() == null) throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         List<CommentVO> result = new ArrayList<>();
-        for (WorkitemCommentDO c : commentDao.listByWorkitem(workitemId)) {
+        for (WorkitemCommentDO c : commentDao.listByWorkitem(owner.getTenantId(), workitemId)) {
             result.add(toCommentVO(c));
         }
         return result;
@@ -996,6 +1198,8 @@ public class WorkitemService {
             }
         }
 
+        enrichAgentUsage(tenantId, dispatches, agentProgress);
+
         WorkflowPlanVO workflowPlan = latestWorkflowPlan(runtimeEvents);
         if (!applyWorkflowPlan(workflowPlan, agentProgress)) {
             workflowPlan = null;
@@ -1010,7 +1214,7 @@ public class WorkitemService {
         result.setSteps(compatSteps);
         result.setWorkflowPlan(workflowPlan);
         result.setProcessGraph(buildProcessGraph(w, tenantId, dispatches));
-        result.setTotalDurationMs(workitemWallSpan(dispatches, new Date()));
+        result.setTotalDurationMs(sumAgentDurations(agentProgress));
         return result;
     }
 
@@ -1510,6 +1714,78 @@ public class WorkitemService {
         return agents.get(agents.size() - 1).getSteps();
     }
 
+    private void enrichAgentUsage(long tenantId, List<DispatchDO> dispatches,
+                                     List<AgentDeliveryProgressVO> agentProgress) {
+        if (dispatchAiUsageDao == null || dispatches.isEmpty() || agentProgress.isEmpty()) {
+            return;
+        }
+        List<Long> dispatchIds = dispatches.stream()
+                .map(DispatchDO::getId).filter(Objects::nonNull).collect(Collectors.toList());
+        if (dispatchIds.isEmpty()) {
+            return;
+        }
+        List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> usageRows;
+        try {
+            usageRows = dispatchAiUsageDao.listByDispatchIds(tenantId, dispatchIds);
+        } catch (RuntimeException ex) {
+            return;
+        }
+        if (usageRows == null || usageRows.isEmpty()) {
+            return;
+        }
+        Map<Long, List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO>> byAgent = usageRows.stream()
+                .filter(r -> r.getAgentId() != null)
+                .collect(Collectors.groupingBy(com.aliyun.autowonder.aiusage.DispatchAiUsageDO::getAgentId));
+        for (AgentDeliveryProgressVO agent : agentProgress) {
+            List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> rows = byAgent.get(agent.getAgentId());
+            if (rows == null || rows.isEmpty()) {
+                continue;
+            }
+            agent.setUsage(aggregateUsage(rows));
+
+            // Per-step usage aggregation
+            Map<String, List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO>> byStep = rows.stream()
+                    .filter(r -> r.getStepId() != null && !r.getStepId().isEmpty())
+                    .collect(Collectors.groupingBy(com.aliyun.autowonder.aiusage.DispatchAiUsageDO::getStepId));
+            if (!byStep.isEmpty() && agent.getSteps() != null) {
+                for (DeliveryStepVO step : agent.getSteps()) {
+                    List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> stepRows =
+                            byStep.get(String.valueOf(step.getStepId()));
+                    if (stepRows != null && !stepRows.isEmpty()) {
+                        step.setUsage(aggregateUsage(stepRows));
+                    }
+                }
+            }
+        }
+    }
+
+    private com.aliyun.autowonder.aiusage.dto.StepUsageSummaryVO aggregateUsage(
+            List<com.aliyun.autowonder.aiusage.DispatchAiUsageDO> rows) {
+        var vo = new com.aliyun.autowonder.aiusage.dto.StepUsageSummaryVO();
+        long input = 0, output = 0, cacheRead = 0, reasoning = 0;
+        java.math.BigDecimal credits = java.math.BigDecimal.ZERO;
+        String model = null;
+        for (var row : rows) {
+            input += row.getInputTokens() != null ? row.getInputTokens() : 0;
+            output += row.getOutputTokens() != null ? row.getOutputTokens() : 0;
+            cacheRead += row.getCacheReadTokens() != null ? row.getCacheReadTokens() : 0;
+            reasoning += row.getReasoningTokens() != null ? row.getReasoningTokens() : 0;
+            if (row.getCredits() != null) {
+                credits = credits.add(row.getCredits());
+            }
+            if (model == null && row.getModel() != null) {
+                model = row.getModel();
+            }
+        }
+        vo.setModel(model);
+        vo.setInputTokens(input);
+        vo.setOutputTokens(output);
+        vo.setCacheReadTokens(cacheRead);
+        vo.setReasoningTokens(reasoning);
+        vo.setCredits(credits.compareTo(java.math.BigDecimal.ZERO) == 0 ? null : credits);
+        return vo;
+    }
+
     private boolean hasActiveSdlcStep(AgentDeliveryProgressVO agent) {
         return safeList(agent.getSteps()).stream()
                 .anyMatch(step -> "active".equals(step.getStatus())
@@ -1551,36 +1827,23 @@ public class WorkitemService {
     }
 
     /**
-     * 工单执行总耗时：全部 dispatch 的墙钟跨度。
+     * 工单纯 Agent 执行总耗时：各 Agent 展示耗时之和。
      *
-     * <p>存在未终结 dispatch 时用 now 收口。该值 >= 各数字人耗时之和，
-     * 因为它包含数字人之间的交接与排队间隔。
+     * <p>与每个 Agent 面板展示的耗时完全同口径（各非交互 dispatch 的创建→更新时间之和，
+     * 已剔除人工交互 dispatch），因此总耗时恒等于页面上各 Agent 耗时累加值，
+     * 不包含数字人之间的交接、排队与人工处理间隔。
      */
-    private Long workitemWallSpan(List<DispatchDO> dispatches, Date now) {
-        if (dispatches == null || dispatches.isEmpty()) {
-            return null;
-        }
-        Long earliest = null;
-        Long latest = null;
-        boolean hasOpenDispatch = false;
-        for (DispatchDO d : dispatches) {
-            if (d.getGmtCreate() != null) {
-                long created = d.getGmtCreate().getTime();
-                earliest = earliest == null ? created : Math.min(earliest, created);
+    private Long sumAgentDurations(List<AgentDeliveryProgressVO> agents) {
+        long total = 0L;
+        boolean any = false;
+        for (AgentDeliveryProgressVO agent : safeList(agents)) {
+            if (agent == null || agent.getDurationMs() == null) {
+                continue;
             }
-            if (d.getGmtModified() != null) {
-                long modified = d.getGmtModified().getTime();
-                latest = latest == null ? modified : Math.max(latest, modified);
-            }
-            if (!DispatchStatus.isTerminal(d.getStatus())) {
-                hasOpenDispatch = true;
-            }
+            total += agent.getDurationMs();
+            any = true;
         }
-        if (earliest == null) {
-            return null;
-        }
-        long end = hasOpenDispatch ? now.getTime() : (latest == null ? earliest : latest);
-        return Math.max(0L, end - earliest);
+        return any ? total : null;
     }
 
     private String resolveAgentName(Long agentId) {
@@ -1889,7 +2152,7 @@ public class WorkitemService {
         if ("HUMAN".equals(workitem.getAssigneeType()) && workitem.getAssigneeRef() != null) {
             ids.putIfAbsent(workitem.getAssigneeRef(), workitem.getAssigneeRef());
         }
-        for (WorkitemCommentDO comment : safeList(commentDao.listByWorkitem(workitem.getId()))) {
+        for (WorkitemCommentDO comment : safeList(commentDao.listByWorkitem(workitem.getTenantId(), workitem.getId()))) {
             if (comment != null && "HUMAN".equals(comment.getAuthorType()) && comment.getAuthorRef() != null) {
                 ids.putIfAbsent(comment.getAuthorRef(), comment.getAuthorRef());
             }
@@ -1970,6 +2233,8 @@ public class WorkitemService {
     }
 
     public List<TimelineItemVO> getUnifiedTimeline(long workitemId) {
+        WorkitemDO owner = workitemDao.findById(workitemId);
+        if (owner == null || owner.getTenantId() == null) throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         List<TimelineItemVO> items = new ArrayList<>();
         WorkitemDO workitem = workitemDao.findById(workitemId);
         ExternalCollaborationVO externalCollaboration = workitem == null || workitem.getTenantId() == null
@@ -1977,7 +2242,7 @@ public class WorkitemService {
                 ? null
                 : externalWorkitemViewService.find(workitem.getTenantId(), workitemId);
 
-        for (WorkitemCommentDO c : commentDao.listByWorkitem(workitemId)) {
+        for (WorkitemCommentDO c : commentDao.listByWorkitem(owner.getTenantId(), workitemId)) {
             TimelineItemVO item = new TimelineItemVO();
             item.setId(c.getId());
             item.setType("comment");
@@ -2231,6 +2496,27 @@ public class WorkitemService {
         vo.setGmtCreate(w.getGmtCreate());
         vo.setGmtModified(w.getGmtModified());
         vo.setPendingDecision(false);
+        vo.setScheduledStartAt(w.getScheduledStartAt());
+        vo.setScheduledStartTriggeredAt(w.getScheduledStartTriggeredAt());
+        vo.setTags(parseTagsJson(w.getTags()));
+        if (w.getOriginType() != null && w.getOriginId() != null) {
+            WorkitemOriginVO origin = new WorkitemOriginVO();
+            origin.setType(w.getOriginType());
+            origin.setId(w.getOriginId());
+            if ("SCHEDULED_TASK_RUN".equals(w.getOriginType()) && scheduledTaskRunDao != null
+                    && scheduledTaskDao != null && w.getTenantId() != null) {
+                ScheduledTaskRunDO run = scheduledTaskRunDao.findById(w.getTenantId(), w.getOriginId());
+                if (run != null && Objects.equals(run.getWorkspaceId(), w.getTenantId())
+                        && run.getScheduledTaskId() != null) {
+                    ScheduledTaskDO task = scheduledTaskDao.findById(w.getTenantId(), run.getScheduledTaskId());
+                    if (task != null && Objects.equals(task.getWorkspaceId(), w.getTenantId())) {
+                        origin.setScheduledTaskId(task.getId());
+                        origin.setScheduledTaskName(task.getName());
+                    }
+                }
+            }
+            vo.setOrigin(origin);
+        }
 
         // Resolve status node name
         if (w.getStatusNodeId() != null) {
@@ -2298,6 +2584,9 @@ public class WorkitemService {
         vo.setGmtCreate(w.getGmtCreate());
         vo.setGmtModified(w.getGmtModified());
         vo.setPendingDecision(false);
+        vo.setScheduledStartAt(w.getScheduledStartAt());
+        vo.setScheduledStartTriggeredAt(w.getScheduledStartTriggeredAt());
+        vo.setTags(parseTagsJson(w.getTags()));
 
         if (w.getStatusNodeId() != null) {
             StatusNodeDO node = nodes.get(w.getStatusNodeId());

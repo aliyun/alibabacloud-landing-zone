@@ -16,9 +16,11 @@ import com.aliyun.autowonder.workitem.dto.CreateWorkitemRequest;
 import com.aliyun.autowonder.workitem.dto.DeliveryProgressVO;
 import com.aliyun.autowonder.workitem.dto.EventVO;
 import com.aliyun.autowonder.workitem.dto.ParticipantVO;
+import com.aliyun.autowonder.workitem.dto.ScheduledStartRequest;
 import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
 import com.aliyun.autowonder.workitem.dto.TransitionRequest;
 import com.aliyun.autowonder.workitem.dto.UpdateContentRequest;
+import com.aliyun.autowonder.workitem.dto.UpdateTagsRequest;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -71,10 +73,11 @@ public class WorkitemController {
             @RequestParam(value = "pendingDecisionOnly", defaultValue = "false") boolean pendingDecisionOnly,
             @RequestParam(value = "mineScope", required = false) String mineScope,
             @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "tag", required = false) String tag,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         return Result.ok(workitemService.list(workType, statusNodeId, statusCategory, assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, page, size));
+                pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, tag, page, size));
     }
 
     @PostMapping("/{id}/transition")
@@ -90,7 +93,21 @@ public class WorkitemController {
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "指派工作项")
     public Result<WorkitemVO> assign(@PathVariable("id") Long id, @RequestBody AssignRequest req) {
         return Result.ok(workitemService.assign(id, req.getAssigneeType(), req.getAssigneeRef(),
-                req.getSdlcId(), req.getSquadId(), currentWorkspaceId(), currentUserId()));
+                req.getSdlcId(), req.getSquadId(), req.getScheduledStartAt(), currentWorkspaceId(), currentUserId()));
+    }
+
+    @PutMapping("/{id}/scheduled-start")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "调整工作项计划执行时间")
+    public Result<WorkitemVO> updateScheduledStart(@PathVariable("id") Long id,
+            @RequestBody ScheduledStartRequest req) {
+        return Result.ok(workitemService.updateScheduledStart(id, req.getScheduledStartAt(),
+                Boolean.TRUE.equals(req.getExecuteNow()), currentWorkspaceId(), currentUserId()));
+    }
+
+    @PutMapping("/{id}/tags")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新工作项标签")
+    public Result<WorkitemVO> updateTags(@PathVariable("id") Long id, @RequestBody UpdateTagsRequest req) {
+        return Result.ok(workitemService.updateTags(id, req.getTags(), currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/content")

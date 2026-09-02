@@ -33,7 +33,7 @@ interface RepoPermRow {
 interface SkillRow {
   skillId: number;
   skillName: string;
-  type: 'SKILL' | 'MCP' | 'PLUGIN';
+  type: 'SKILL' | 'MCP' | 'PLUGIN' | 'HOOK';
   version?: number;
 }
 

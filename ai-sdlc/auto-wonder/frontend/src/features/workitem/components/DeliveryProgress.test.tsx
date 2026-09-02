@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { DeliveryProgress, formatDuration } from './DeliveryProgress';
+import { DeliveryProgress, formatDuration, convergeStepsForTerminalStatus } from './DeliveryProgress';
 import type { Artifact, DeliveryProgress as DeliveryProgressModel, DeliveryStep } from '@/shared/types/workitem';
 
 describe('formatDuration', () => {
@@ -582,12 +582,12 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
     expect(screen.getAllByText(/Agent Dev/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/2 artifacts/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Agent CR/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/执行中/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Code Review/)).toBeInTheDocument();
     expect(screen.getAllByText(/skill name is required/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByTestId('agent-progress-name')[0]);
+    expect(screen.getAllByText(/2 artifacts/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByText(/产物/)[0]);
     expect(screen.getByText('dev-summary.md')).toBeInTheDocument();
     expect(screen.getByText('screenshot.png')).toBeInTheDocument();
@@ -902,7 +902,7 @@ describe('DeliveryProgress', () => {
     expect(within(drawer).getByText(/pnpm test/)).toBeInTheDocument();
     expect(within(drawer).getByText('Run the implementation tests')).toBeInTheDocument();
     expect(within(drawer).getByText('Follow the worker SDLC')).toBeInTheDocument();
-    expect(within(drawer).getAllByText(/Usage unavailable/).length).toBeGreaterThan(0);
+    expect(within(drawer).queryByText(/Usage unavailable/)).not.toBeInTheDocument();
     expect(within(drawer).getByText(/checkpoint #18/)).toBeInTheDocument();
   });
 
@@ -1197,7 +1197,7 @@ describe('DeliveryProgress', () => {
 
     const agentName = screen.getByTestId('agent-progress-name');
     expect(agentName).toHaveStyle({ whiteSpace: 'nowrap' });
-    expect(screen.getByText('6 artifacts')).toBeInTheDocument();
+    expect(screen.getAllByText(/6 artifacts/).length).toBeGreaterThan(0);
     expect(screen.queryByText('artifact-1.md')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText(/产物/));
@@ -1242,7 +1242,7 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} />);
 
     expect(screen.getByText(/总耗时/)).toBeInTheDocument();
-    expect(screen.getByText('总耗时 2时14分')).toBeInTheDocument();
+    expect(screen.getByText('总耗时 2时14分 (Agents耗时)')).toBeInTheDocument();
   });
 
   it('omits the total duration from the card title when it is null', () => {
@@ -1264,5 +1264,150 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} />);
 
     expect(screen.queryByText(/总耗时/)).not.toBeInTheDocument();
+  });
+});
+
+describe('convergeStepsForTerminalStatus', () => {
+  const makeStep = (stepId: number, name: string, status: DeliveryStep['status']): DeliveryStep => ({
+    stepId,
+    name,
+    status,
+    executorName: null,
+    error: null,
+    subSteps: null,
+    durationMs: null,
+    attempts: null,
+  });
+
+  it('keeps statuses unchanged without a terminal status', () => {
+    const steps = [makeStep(1, '步骤一', 'done'), makeStep(2, '步骤二', 'active'), makeStep(3, '步骤三', 'pending')];
+    expect(convergeStepsForTerminalStatus(steps, null).map((step) => step.status)).toEqual(['done', 'active', 'pending']);
+    expect(convergeStepsForTerminalStatus(steps, 'RUNNING').map((step) => step.status)).toEqual(['done', 'active', 'pending']);
+  });
+
+  it('converges active steps to done when the run succeeded', () => {
+    const steps = [makeStep(1, '步骤一', 'done'), makeStep(2, '步骤二', 'active'), makeStep(3, '步骤三', 'active')];
+    expect(convergeStepsForTerminalStatus(steps, 'SUCCEEDED').map((step) => step.status)).toEqual(['done', 'done', 'done']);
+  });
+
+  it('marks only the last active step failed and earlier active steps done when the run failed', () => {
+    const steps = [makeStep(1, '步骤一', 'active'), makeStep(2, '步骤二', 'done'), makeStep(3, '步骤三', 'active')];
+    expect(convergeStepsForTerminalStatus(steps, 'FAILED').map((step) => step.status)).toEqual(['done', 'done', 'failed']);
+  });
+
+  it('converges active steps to cancelled when the run was cancelled', () => {
+    const steps = [makeStep(1, '步骤一', 'done'), makeStep(2, '步骤二', 'active')];
+    expect(convergeStepsForTerminalStatus(steps, 'CANCELLED').map((step) => step.status)).toEqual(['done', 'cancelled']);
+  });
+
+  it('treats a closed workitem status as succeeded', () => {
+    const steps = [makeStep(1, '步骤一', 'active')];
+    expect(convergeStepsForTerminalStatus(steps, '已关闭').map((step) => step.status)).toEqual(['done']);
+    expect(convergeStepsForTerminalStatus(steps, 'closed').map((step) => step.status)).toEqual(['done']);
+  });
+
+  it('converges active sub-steps together with their step', () => {
+    const steps: DeliveryStep[] = [{
+      ...makeStep(1, '步骤一', 'active'),
+      subSteps: [{ name: '子步骤', status: 'active' }],
+    }];
+    expect(convergeStepsForTerminalStatus(steps, 'SUCCEEDED')[0].subSteps?.[0].status).toBe('done');
+    expect(convergeStepsForTerminalStatus(steps, 'CANCELLED')[0].subSteps?.[0].status).toBe('cancelled');
+    expect(convergeStepsForTerminalStatus(steps, 'FAILED')[0].subSteps?.[0].status).toBe('failed');
+  });
+});
+
+describe('DeliveryProgress terminal convergence rendering', () => {
+  const makeStep = (stepId: number, name: string, status: DeliveryStep['status']): DeliveryStep => ({
+    stepId,
+    name,
+    status,
+    executorName: null,
+    error: null,
+    subSteps: null,
+    durationMs: null,
+    attempts: null,
+  });
+
+  it('shows 已完成 instead of a spinning step when the run succeeded with an incomplete event stream', () => {
+    render(<DeliveryProgress steps={[makeStep(1, '步骤一', 'done'), makeStep(2, '步骤二', 'active')]} terminalStatus="SUCCEEDED" />);
+    expect(within(screen.getByTestId('delivery-step-2')).getByText('已完成')).toBeInTheDocument();
+    expect(screen.queryByText('执行中')).not.toBeInTheDocument();
+  });
+
+  it('shows the last started step as failed and earlier ones completed when the run failed', () => {
+    render(<DeliveryProgress steps={[makeStep(1, '步骤一', 'active'), makeStep(2, '步骤二', 'active')]} terminalStatus="FAILED" />);
+    expect(within(screen.getByTestId('delivery-step-1')).getByText('已完成')).toBeInTheDocument();
+    expect(within(screen.getByTestId('delivery-step-2')).getByText('失败')).toBeInTheDocument();
+    expect(screen.queryByText('执行中')).not.toBeInTheDocument();
+  });
+
+  it('shows the running step as cancelled when the run was cancelled', () => {
+    render(<DeliveryProgress steps={[makeStep(1, '步骤一', 'active')]} terminalStatus="CANCELLED" />);
+    expect(within(screen.getByTestId('delivery-step-1')).getByText('已取消')).toBeInTheDocument();
+    expect(screen.queryByText('执行中')).not.toBeInTheDocument();
+  });
+
+  it('still renders active steps as running for non-terminal run statuses', () => {
+    render(<DeliveryProgress steps={[makeStep(1, '步骤一', 'active')]} terminalStatus="RUNNING" />);
+    expect(within(screen.getByTestId('delivery-step-1')).getByText('执行中')).toBeInTheDocument();
+  });
+
+  it('converges agent steps inside the agent panel when the run reached a terminal state', () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: '执行 Agent',
+        status: 'active',
+        durationMs: null,
+        steps: [makeStep(5, '执行步骤', 'active')],
+      }],
+    };
+    render(<DeliveryProgress progress={progress} terminalStatus="SUCCEEDED" />);
+    const stepCard = screen.getByTestId('delivery-step-5');
+    expect(within(stepCard).getByText('已完成')).toBeInTheDocument();
+    expect(within(stepCard).queryByText('执行中')).not.toBeInTheDocument();
+  });
+});
+
+describe('DeliveryProgress usage display', () => {
+  it('keeps agent and step rows compact: token badges without credits or artifacts count', () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: 'AW全栈开发',
+        status: 'finished',
+        durationMs: 1_050_000,
+        usage: { model: 'auto', inputTokens: 800_000, outputTokens: 200_000, credits: 82.61 },
+        steps: [{
+          stepId: 101,
+          name: '编码实现',
+          status: 'done',
+          executorName: 'AW全栈开发',
+          error: null,
+          subSteps: null,
+          durationMs: 1_050_000,
+          usage: { inputTokens: 800_000, outputTokens: 200_000, credits: 82.61 },
+          attempts: [
+            { dispatchId: 301, executorName: 'AW全栈开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 1_050_000 },
+          ],
+        }],
+      }],
+    };
+    const artifacts: Artifact[] = [
+      { id: 1, workitemId: 100, dispatchId: 301, name: 'dev-summary.md', type: 'MARKDOWN', size: 1024, gmtCreate: '' },
+      { id: 2, workitemId: 100, dispatchId: 301, name: 'run.log', type: 'TEXT', size: 128, gmtCreate: '' },
+    ];
+
+    render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+
+    expect(screen.getAllByText('1M').length).toBe(2);
+    expect(screen.queryByText(/82\.61/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/💰/)).not.toBeInTheDocument();
+    expect(screen.queryByText('2 artifacts')).not.toBeInTheDocument();
+    expect(screen.queryByText('无产物')).not.toBeInTheDocument();
+    expect(screen.getAllByText(/2 artifacts/).length).toBeGreaterThan(0);
   });
 });

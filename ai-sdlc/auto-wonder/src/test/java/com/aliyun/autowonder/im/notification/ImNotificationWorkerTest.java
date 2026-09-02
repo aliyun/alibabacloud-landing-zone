@@ -82,6 +82,51 @@ class ImNotificationWorkerTest {
         assertTrue(command.getValue().markdown().contains("**提及内容**：\n> @李四 请确认"));
     }
 
+    /**
+     * The DingTalk card title is chosen separately from the markdown body, so a new notification type
+     * that forgets to add a case here silently ships a correct body under "工单指派通知". Pin every title.
+     */
+    @Test
+    void eachNotificationTypeGetsItsOwnPushTitle() {
+        assertEquals("工单指派通知", titleFor(task()));
+        assertEquals("工单评论提醒", titleFor(commentMentionTask()));
+        assertEquals("权限申请通知", titleFor(workspaceAccessTask(
+                ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST, "READ_WRITE", null)));
+        assertEquals("权限申请审批结果", titleFor(workspaceAccessTask(
+                ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED, "READ_WRITE", "APPROVED")));
+    }
+
+    private static String titleFor(ImNotificationTask task) {
+        Fixture fixture = new Fixture();
+        when(fixture.identityService.find(9L, "DINGTALK")).thenReturn(identity("staff-001"));
+        when(fixture.channelConfigService.isReady("DINGTALK")).thenReturn(true);
+
+        fixture.worker.process(new ImNotificationEnvelope("1-0", task, 1L));
+
+        ArgumentCaptor<ImSendCommand> command = ArgumentCaptor.forClass(ImSendCommand.class);
+        verify(fixture.provider).send(command.capture());
+        return command.getValue().title();
+    }
+
+    private static ImNotificationTask workspaceAccessTask(String notificationType, String payload,
+                                                          String outcome) {
+        return new ImNotificationTask(
+                notificationType + ":555:DINGTALK:9",
+                555L,
+                100L,
+                // Access-request notifications carry no workitem: see the listeners' WHY comment.
+                0L,
+                9L,
+                "USER",
+                7L,
+                "王五",
+                "rid-1",
+                null,
+                notificationType,
+                payload,
+                outcome);
+    }
+
     private static ImNotificationTask commentMentionTask() {
         return new ImNotificationTask(
                 "COMMENT_MENTION:7001:DINGTALK:9",

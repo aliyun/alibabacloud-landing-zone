@@ -16,6 +16,7 @@ export interface WorkitemQuery {
   pendingDecisionOnly?: boolean;
   mineScope?: 'CREATED' | 'ASSIGNED';
   keyword?: string;
+  tag?: string;
 }
 
 export interface CreateWorkitemParams {
@@ -23,6 +24,10 @@ export interface CreateWorkitemParams {
   title: string;
   contentMd: string;
   priority?: number;
+  assigneeType?: string;
+  assigneeRef?: number | string;
+  squadId?: number | string;
+  scheduledStartAt?: string;
 }
 
 export async function listWorkitems(query: WorkitemQuery): Promise<PageResult<Workitem>> {
@@ -51,13 +56,28 @@ export async function assignWorkitem(
   assigneeRef: number | string,
   sdlcId?: number | string,
   squadId?: number | string,
+  scheduledStartAt?: string,
 ): Promise<Workitem> {
   const resp = await apiClient.put<Workitem>(`/api/workitems/${id}/assignee`, {
     assigneeType,
     assigneeRef,
     ...(sdlcId != null ? { sdlcId } : {}),
     ...(squadId != null ? { squadId } : {}),
+    ...(scheduledStartAt ? { scheduledStartAt } : {}),
   });
+  return resp.data;
+}
+
+export async function updateScheduledStart(
+  id: number | string,
+  params: { scheduledStartAt?: string | null; executeNow?: boolean },
+): Promise<Workitem> {
+  const resp = await apiClient.put<Workitem>(`/api/workitems/${id}/scheduled-start`, params);
+  return resp.data;
+}
+
+export async function updateWorkitemTags(id: number | string, tags: string[]): Promise<Workitem> {
+  const resp = await apiClient.put<Workitem>(`/api/workitems/${id}/tags`, { tags });
   return resp.data;
 }
 

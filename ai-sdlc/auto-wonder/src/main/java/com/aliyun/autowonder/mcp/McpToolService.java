@@ -16,10 +16,32 @@ import com.aliyun.autowonder.agent.dto.UpdateAgentRequest;
 import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.agent.dto.AgentVersionVO;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
+import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
+import com.aliyun.autowonder.artifact.ArtifactService;
+import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchPauseService;
+import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.guidance.GuidanceService;
+import com.aliyun.autowonder.audit.AuditLogRecord;
+import com.aliyun.autowonder.audit.AuditLogService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunCommentService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDispatchControlService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunViews;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskTriggerService;
+import com.aliyun.autowonder.scheduledtask.compat.ScheduledTaskCapabilityGuard;
+import com.aliyun.autowonder.scheduledtask.dto.CreateScheduledTaskRequest;
+import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskRunDetailVO;
+import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskRunVO;
+import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskVO;
+import com.aliyun.autowonder.scheduledtask.dto.UpdateScheduledTaskRequest;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
 import com.aliyun.autowonder.mcp.dto.PlatformSkillVO;
 import com.aliyun.autowonder.memory.MemoryService;
@@ -58,10 +80,16 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -148,6 +176,23 @@ public class McpToolService {
     private static final String REMOVE_AGENT_FROM_SQUAD = "autowonder.remove_agent_from_squad";
     private static final String PAUSE_DISPATCH = "autowonder.pause_dispatch";
     private static final String SET_AGENT_DEFAULT_SDLC = "autowonder.set_agent_default_sdlc";
+    private static final String CREATE_SCHEDULED_TASK = "autowonder.create_scheduled_task";
+    private static final String LIST_SCHEDULED_TASKS = "autowonder.list_scheduled_tasks";
+    private static final String GET_SCHEDULED_TASK = "autowonder.get_scheduled_task";
+    private static final String UPDATE_SCHEDULED_TASK = "autowonder.update_scheduled_task";
+    private static final String TRANSITION_SCHEDULED_TASK = "autowonder.transition_scheduled_task";
+    private static final String GET_SCHEDULED_TASK_RUN = "autowonder.get_scheduled_task_run";
+    private static final String ADD_SCHEDULED_TASK_RUN_COMMENT = "autowonder.add_scheduled_task_run_comment";
+    private static final Set<String> TRANSITION_SCHEDULED_TASK_ACTIONS = Set.of(
+            "enable", "pause", "archive", "run-now", "pause-run", "resume-run", "cancel-run");
+    private static final Set<String> SCHEDULED_TASK_LIST_STATUSES = Set.of(
+            "ACTIVE", "PAUSED", "EXHAUSTED", "ARCHIVED");
+    /**
+     * Dispatch credentials run inside one scheduled-task run and may only observe that run;
+     * task-level listing and mutation stay with human/conversation credentials.
+     */
+    private static final Set<String> DISPATCH_FORBIDDEN_SCHEDULED_TASK_TOOLS = Set.of(
+            CREATE_SCHEDULED_TASK, LIST_SCHEDULED_TASKS, UPDATE_SCHEDULED_TASK, TRANSITION_SCHEDULED_TASK);
     private static final String MEMORY_SCOPE_AGENT = "AGENT";
     private static final Set<String> MEMORY_SCOPES = Set.of(MEMORY_SCOPE_AGENT, "SQUAD", "ORG");
     /**
@@ -159,157 +204,171 @@ public class McpToolService {
                     Map.entry(LIST_PROJECTS,
                             globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(CREATE_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_WORKITEMS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ASSIGN_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ADD_WORKITEM_COMMENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_WORKITEM_COMMENTS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPLOAD_WORKITEM_DOCUMENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(WORKITEM_CLI_UPLOAD_TOKEN,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_WORKITEM_DOCUMENTS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_WORKITEM_DOCUMENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(TRANSITION_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PAUSE_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(RESUME_WORKITEM,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_STATUS_TEMPLATES,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_STATUS_TEMPLATE,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(CREATE_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SDLCS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ADD_SDLC_STEP,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_SDLC_STEP,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_SDLC_STEP,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(REORDER_SDLC_STEPS,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(ENABLE_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DISABLE_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_AGENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_AGENTS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_AGENT,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_AGENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_AGENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SUBMIT_AGENT_FOR_REVIEW,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PUBLISH_AGENT,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(GET_AGENT_VERSION,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_AGENT_CONFIG,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(GET_AGENT_VERSION_STATUS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(BIND_AGENT_REPOS,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(BIND_AGENT_SKILLS,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(BIND_AGENT_MEMORIES,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UNBIND_AGENT_REPOS,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UNBIND_AGENT_SKILLS,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UNBIND_AGENT_MEMORIES,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SKILLS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_SKILL,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_SKILL,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_SKILL,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(INSPECT_SKILL_PACKAGE,
                             globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPLOAD_SKILL_PACKAGE,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL_FROM_PACKAGE,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_SKILL_PACKAGE,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_PLATFORM_SKILLS,
                             globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(INSTALL_PLATFORM_SKILL,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_MEMORY,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SEARCH_MEMORIES,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_MEMORY,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(UPDATE_MEMORY,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DEPRECATE_MEMORY,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_MEMORY,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_REPOS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_REPO,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(LIST_REPO_RELATIONS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(CREATE_REPO_RELATION,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_REPO_RELATION,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_REPO,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UPDATE_REPO,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DELETE_REPO,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_SQUADS,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(GET_SQUAD,
-                            orgTool(WorkspaceAccessLevel.READ_ONLY)),
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(ADD_AGENT_TO_SQUAD,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(REMOVE_AGENT_FROM_SQUAD,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SQUAD,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PAUSE_DISPATCH,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)),
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SET_AGENT_DEFAULT_SDLC,
-                            orgTool(WorkspaceAccessLevel.READ_WRITE)));
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(CREATE_SCHEDULED_TASK,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(LIST_SCHEDULED_TASKS,
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(GET_SCHEDULED_TASK,
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(UPDATE_SCHEDULED_TASK,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(TRANSITION_SCHEDULED_TASK,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(GET_SCHEDULED_TASK_RUN,
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(ADD_SCHEDULED_TASK_RUN_COMMENT,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)));
 
     private static final String WORKSPACE_ID_DESCRIPTION =
             "Required. Target workspace id. Use autowonder.list_projects to discover the "
@@ -332,8 +391,49 @@ public class McpToolService {
     private final RepoService repoService;
     private final SquadService squadService;
     private final DispatchPauseService dispatchPauseService;
+    private ScheduledTaskCapabilityGuard capabilityGuard;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunCommentService scheduledTaskRunCommentService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AuditLogService auditLogService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunDao scheduledTaskRunDao;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskService scheduledTaskService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskTriggerService scheduledTaskTriggerService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunService scheduledTaskRunService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunDispatchControlService scheduledTaskRunDispatchControlService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ArtifactService artifactService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DispatchRuntimeEventDao dispatchRuntimeEventDao;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public McpToolService(WorkspaceService workspaceService, WorkitemService workitemService,
+                          GuidanceService guidanceService, SkillService skillService,
+                          SkillPackageService skillPackageService,
+                          SdlcService sdlcService, AgentService agentService,
+                          StatusTemplateService statusTemplateService,
+                          PlatformSkillCatalog platformSkillCatalog, DispatchDao dispatchDao,
+                          RequirementDocumentService requirementDocumentService,
+                          WorkitemCliUploadTokenService workitemCliUploadTokenService,
+                          MemoryService memoryService, RepoService repoService,
+                          SquadService squadService,
+                          DispatchPauseService dispatchPauseService,
+                          ScheduledTaskCapabilityGuard capabilityGuard) {
+        this(workspaceService, workitemService, guidanceService, skillService, skillPackageService, sdlcService,
+                agentService, statusTemplateService, platformSkillCatalog, dispatchDao,
+                requirementDocumentService, workitemCliUploadTokenService,
+                memoryService, repoService, squadService, dispatchPauseService);
+        this.capabilityGuard = capabilityGuard;
+    }
+
+    McpToolService(WorkspaceService workspaceService, WorkitemService workitemService,
                           GuidanceService guidanceService, SkillService skillService,
                           SkillPackageService skillPackageService,
                           SdlcService sdlcService, AgentService agentService,
@@ -408,7 +508,11 @@ public class McpToolService {
                                         + "(agent default first, then workitem-type match)."),
                                 prop("squadId", "integer", "Optional. Squad id; only validated when assigneeType=AGENT "
                                         + "and assigneeRef are both present, in which case the agent must belong to the squad. "
-                                        + "Omit to skip squad validation."))),
+                                        + "Omit to skip squad validation."),
+                                prop("scheduledStartAt", "string", "Optional. Planned agent delivery start time as an "
+                                        + "ISO-8601 instant (for example 2026-08-27T10:00:00Z); only meaningful when "
+                                        + "assigneeType=AGENT. Do not fill this parameter unless the user explicitly "
+                                        + "requests scheduled execution; omit it to dispatch immediately."))),
                 tool(LIST_WORKITEMS, "List AutoWonder workitems in the given workspace. "
                         + "This is a business query tool for finding workitems; do not use it to discover parameter enums "
                         + "(use the create_workitem/assign_workitem descriptions or list_status_templates instead). "
@@ -420,6 +524,7 @@ public class McpToolService {
                                 prop("assigneeType", "string", "Optional. Filter by assignee type: HUMAN or AGENT."),
                                 prop("assigneeRef", "integer", "Optional. Filter by assignee reference id (userId or agentId)."),
                                 prop("pendingDecisionOnly", "boolean", "Optional. When true, return only workitems pending human decision."),
+                                prop("tag", "string", "Optional. Filter by an exact workitem tag."),
                                 prop("page", "integer", "Optional. Page number, 1-based; defaults to 1."),
                                 prop("size", "integer", "Optional. Page size; defaults to 20."))),
                 tool(GET_WORKITEM, "Get one AutoWonder workitem by id.",
@@ -454,7 +559,11 @@ public class McpToolService {
                                         + "the SDLC id to bind. Omit it to let the server auto-resolve the correct SDLC "
                                         + "(agent default first, then workitem-type match)."),
                                 prop("squadId", "integer", "Optional. Squad id; only validated when "
-                                        + "assigneeType=AGENT and assigneeRef are both present."))),
+                                        + "assigneeType=AGENT and assigneeRef are both present."),
+                                prop("scheduledStartAt", "string", "Optional. Planned agent delivery start time as an "
+                                        + "ISO-8601 instant (for example 2026-08-27T10:00:00Z); only meaningful when "
+                                        + "assigneeType=AGENT. Do not fill this parameter unless the user explicitly "
+                                        + "requests scheduled execution; omit it to dispatch immediately."))),
                 tool(ADD_WORKITEM_COMMENT, "Add a comment to an AutoWonder workitem. "
                                 + "Pass targetAgentIds to create structured worker interactions. "
                                 + "Pass targetHumanIds when the comment mentions real users so the UI can highlight "
@@ -472,21 +581,24 @@ public class McpToolService {
                                 + workitemCliUploadTokenService.tokenEnvHint() + " && "
                                 + workitemCliUploadTokenService.commandTemplate() + ". "
                                 + "Keep this legacy tool only as a fallback when the CLI is unavailable. "
-                                + "Supports Markdown (.md, .markdown) and static images (PNG, JPEG, WebP: .png, .jpg, .jpeg, .webp). "
+                                + "Supports Markdown (.md, .markdown), text documents (.txt, .html) and PDF (.pdf), "
+                                + "plus static images (PNG, JPEG, WebP: .png, .jpg, .jpeg, .webp). "
                                 + "At most 10 attachments, 5MB each, 20MB total per workitem. "
-                                + "Use contentMd only for Markdown text and contentBase64 for images; contentBase64 wins when both are set. "
+                                + "Use contentMd only for Markdown/text content and contentBase64 for images and PDF; "
+                                + "contentBase64 wins when both are set. "
                                 + "IMPORTANT: For workitems that will be executed by a digital worker, upload all documents "
                                 + "before calling assign_workitem to ensure the first dispatch task includes these materials.",
                         schema(required("id", "filename"), prop("id", "integer"),
-                                prop("filename", "string", "Required. Attachment file name; only .md, .markdown, .png, .jpg, "
-                                        + ".jpeg, and .webp are accepted."),
-                                prop("contentMd", "string", "Markdown text body; Markdown files only. Ignored for images."),
+                                prop("filename", "string", "Required. Attachment file name; only .md, .markdown, .txt, "
+                                        + ".html, .pdf, .png, .jpg, .jpeg, and .webp are accepted."),
+                                prop("contentMd", "string", "Markdown or plain text body; Markdown and text files only. "
+                                        + "Ignored for images and PDF."),
                                 prop("contentBase64", "string", "Base64-encoded payload; the required form for PNG, JPEG, "
-                                        + "and WebP images. Wins over contentMd when both are set."),
+                                        + "WebP images and PDF files. Wins over contentMd when both are set."),
                                 prop("sourcePath", "string", "Optional local source path for display/audit only."))),
                 tool(WORKITEM_CLI_UPLOAD_TOKEN, "Mint a 30-minute, user-level, upload-only token for the AutoWonder CLI "
-                                + "`workitem upload` command. Only long-lived personal MCP credentials can mint it; "
-                                + "dispatch and conversation credentials are rejected. The token is not bound to an "
+                                + "`workitem upload` command. Long-lived personal, dispatch, and conversation "
+                                + "credentials can mint it. The token is not bound to an "
                                 + "organization or workitem and can be reused until it expires for any workitem the user "
                                 + "can currently modify; every upload re-checks live write membership. "
                                 + "id is the initial workitem id, used for the preflight check and the first exact command; "
@@ -574,9 +686,14 @@ public class McpToolService {
                         schema(required("id"), prop("id", "integer"))),
                 tool(DELETE_AGENT, "Delete an AutoWonder digital worker when it is not online.",
                         schema(required("id"), prop("id", "integer"))),
-                tool(UPDATE_AGENT, "Update an AutoWonder digital worker.",
-                        schema(required("id"), prop("id", "integer"), prop("name", "string"),
-                                prop("roleCode", "string"), prop("roleName", "string"),
+                tool(UPDATE_AGENT, "Update an AutoWonder digital worker. Partial update: omit an optional "
+                        + "field to keep its current value; pass null to clear it explicitly.",
+                        schema(required("id"), prop("id", "integer"),
+                                prop("name", "string", "Optional. New display name; omit to keep the current name."),
+                                prop("roleCode", "string", "Optional. Omit to keep the current role code; "
+                                        + "pass null to clear it."),
+                                prop("roleName", "string", "Optional. Omit to keep the current role name; "
+                                        + "pass null to clear it."),
                                 prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
                                 prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."))),
                 tool(SUBMIT_AGENT_FOR_REVIEW, "Submit an AutoWonder digital worker's editing version for review. "
@@ -594,16 +711,22 @@ public class McpToolService {
                         schema(required("agentId", "versionNo"),
                                 prop("agentId", "integer", "Required. Agent id."),
                                 prop("versionNo", "integer", "Required. Version number."))),
-                tool(UPDATE_AGENT_CONFIG, "Replace the editable configuration of an AutoWonder digital worker. "
-                        + "Callers should send the complete desired configuration; the result is the editing version.",
+                tool(UPDATE_AGENT_CONFIG, "Update the editable configuration of an AutoWonder digital worker. "
+                        + "Partial update: omit a field to keep its current value; pass null to clear it "
+                        + "explicitly (for example \"sdlcId\": null unbinds the SDLC flow). "
+                        + "The result is the editing version.",
                         schema(required("agentId"),
                                 prop("agentId", "integer", "Required. Agent id."),
-                                prop("roleName", "string", "Role name."),
-                                prop("roleCode", "string", "Stable role code."),
+                                prop("roleName", "string", "Optional. Omit to keep the current role name; "
+                                        + "pass null to clear it."),
+                                prop("roleCode", "string", "Optional. Omit to keep the current role code; "
+                                        + "pass null to clear it."),
                                 prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
                                 prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."),
-                                prop("sdlcId", "integer", "SDLC flow id."),
-                                prop("evolutionMode", "string", "Evolution mode."))),
+                                prop("sdlcId", "integer", "Optional. Omit to keep the current SDLC flow; "
+                                        + "pass null to unbind it."),
+                                prop("evolutionMode", "string", "Optional. Evolution mode; omit to keep the "
+                                        + "current evolution mode."))),
                 tool(GET_AGENT_VERSION_STATUS, "Query the current editing and online version status of an "
                         + "AutoWonder digital worker. Returns agent info and the full version history.",
                         schema(required("id"),
@@ -634,25 +757,25 @@ public class McpToolService {
                         schema(required("agentId", "memoryIds"),
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to unbind."))),
-                tool(CREATE_SKILL, "Create a skill, MCP server, or plugin record.",
+                tool(CREATE_SKILL, "Create a skill, MCP server, or plugin record. Runtime hooks must use the validated package endpoint.",
                         schema(required("type", "name"), prop("type", "string"), prop("name", "string"),
                                 prop("installSpec", "string"), prop("description", "string"))),
                 tool(LIST_SKILLS, "List installed AutoWonder skills.",
                         schema(prop("type", "string"), prop("page", "integer"), prop("size", "integer"))),
-                tool(GET_SKILL, "Get one skill, MCP server, or plugin record.",
+                tool(GET_SKILL, "Get one skill, MCP server, plugin, or Runtime hook record.",
                         schema(required("id"), prop("id", "integer"))),
-                tool(UPDATE_SKILL, "Update a skill, MCP server, or plugin record.",
+                tool(UPDATE_SKILL, "Update a skill, MCP server, or plugin record. Runtime hooks must use the validated package endpoint.",
                         schema(required("id"), prop("id", "integer"), prop("type", "string"),
                                 prop("name", "string"), prop("installSpec", "string"), prop("description", "string"))),
-                tool(DELETE_SKILL, "Delete a skill, MCP server, or plugin record.",
+                tool(DELETE_SKILL, "Delete a skill, MCP server, plugin, or Runtime hook record.",
                         schema(required("id"), prop("id", "integer"))),
                 tool(INSPECT_SKILL_PACKAGE, "Inspect a .zip or .tar.gz Skill package before upload. The archive must preserve safe relative paths and include root SKILL.md for SKILL packages.",
                         schema(required("fileName", "contentBase64"), skillPackageInputProps())),
-                tool(UPLOAD_SKILL_PACKAGE, "Upload a validated .zip or .tar.gz Skill package through MCP and return a package reference for create/update calls. Provide expectedMd5 to reject digest mismatches.",
+                tool(UPLOAD_SKILL_PACKAGE, "Upload a validated Skill/Plugin .zip or .tar.gz package, or a Runtime Hook .zip package, through MCP and return a package reference for create/update calls. Hook packages require root hook.yaml. Provide expectedMd5 to reject digest mismatches.",
                         schema(required("fileName", "contentBase64"), skillPackageInputProps())),
-                tool(CREATE_SKILL_FROM_PACKAGE, "Create a Skill or plugin from an uploaded Skill package reference. Pass idempotencyKey to make repeated identical package calls return the existing Skill instead of creating duplicates.",
+                tool(CREATE_SKILL_FROM_PACKAGE, "Create a Skill, Plugin, or Runtime Hook from an uploaded package reference. Pass idempotencyKey to make repeated identical package calls return the existing capability instead of creating duplicates.",
                         schema(required("packageOssRef"), skillPackageReferenceProps())),
-                tool(UPDATE_SKILL_PACKAGE, "Update an existing Skill or plugin with an uploaded Skill package reference.",
+                tool(UPDATE_SKILL_PACKAGE, "Update an existing Skill, Plugin, or Runtime Hook with an uploaded package reference.",
                         schema(required("id", "packageOssRef"), updateSkillPackageReferenceProps())),
                 tool(LIST_PLATFORM_SKILLS, "List installable AutoWonder platform skills.", schema()),
                 tool(INSTALL_PLATFORM_SKILL, "Install an AutoWonder platform skill into the given workspace.",
@@ -734,13 +857,13 @@ public class McpToolService {
                                 prop("url", "string", "Required. Git repository URL (e.g. git@github.com:group/project.git)."),
                                 prop("defaultBranch", "string", "Optional. Default branch name."),
                                 prop("description", "string", "Optional. Repository description."))),
-                tool(UPDATE_REPO, "Update an existing repository registered in AutoWonder.",
+                tool(UPDATE_REPO, "Update an existing repository registered in AutoWonder. Partial update semantics: fields omitted from the arguments are kept unchanged; explicitly passing null clears a nullable field (defaultBranch, description). name and url cannot be cleared.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Repository id."),
-                                prop("name", "string", "Optional. New repository name."),
-                                prop("url", "string", "Optional. New Git repository URL."),
-                                prop("defaultBranch", "string", "Optional. New default branch name."),
-                                prop("description", "string", "Optional. New repository description."))),
+                                prop("name", "string", "Optional. New repository name. Omit to keep unchanged; null or blank is rejected."),
+                                prop("url", "string", "Optional. New Git repository URL. Omit to keep unchanged; null or blank is rejected."),
+                                prop("defaultBranch", "string", "Optional. New default branch name. Omit to keep unchanged; pass null explicitly to clear it."),
+                                prop("description", "string", "Optional. New repository description. Omit to keep unchanged; pass null explicitly to clear it."))),
                 tool(DELETE_REPO, "Delete a repository from AutoWonder. The repository must not have any associated agent permissions.",
                         schema(required("id"), prop("id", "integer", "Required. Repository id."))),
                 tool(LIST_SQUADS, "List squads in the given workspace.",
@@ -774,7 +897,100 @@ public class McpToolService {
                         + "Returns the editing version id and the configured sdlcId.",
                         schema(required("agentId", "sdlcId"),
                                 prop("agentId", "integer", "Required. Agent id to configure."),
-                                prop("sdlcId", "integer", "Required. SDLC flow id to set as default.")))
+                                prop("sdlcId", "integer", "Required. SDLC flow id to set as default."))),
+                tool(CREATE_SCHEDULED_TASK, "Create a 7x24 scheduled task in the given workspace. "
+                        + "scheduleType=CRON requires cronExpression (Spring 6-field cron); "
+                        + "scheduleType=ONCE requires runAt (ISO-8601 instant). "
+                        + "The task starts ACTIVE unless initialStatus=PAUSED. "
+                        + "Returns the created task including id, status, nextFireAt and the next 5 fire previews. "
+                        + "To attach requirement/design documents to the task afterwards, upload them via the AutoWonder CLI "
+                        + "(see get_scheduled_task for the exact upload command); do not send file content through MCP.",
+                        schema(required("name", "instructionMd", "squadId", "initialAgentId", "scheduleType", "timezone"),
+                                prop("name", "string", "Required. Task name."),
+                                prop("instructionMd", "string", "Required. Markdown execution instruction for each run."),
+                                prop("squadId", "integer", "Required. Executor squad id."),
+                                prop("initialAgentId", "integer", "Required. Initial digital worker id that starts each run."),
+                                enumProp("scheduleType", List.of("CRON", "ONCE"), "Required. Schedule type."),
+                                prop("cronExpression", "string", "Cron expression; required when scheduleType=CRON."),
+                                prop("runAt", "string", "ISO-8601 fire instant; required when scheduleType=ONCE."),
+                                prop("timezone", "string", "Required. IANA timezone for the schedule, e.g. Asia/Shanghai."),
+                                enumProp("sessionMode", List.of("ISOLATED", "CONTINUE_LAST"),
+                                        "Optional. Run session mode; defaults to ISOLATED."),
+                                enumProp("overlapPolicy", List.of("SKIP", "QUEUE", "CANCEL_RUNNING"),
+                                        "Optional. Policy when a fire hits while a run is still active; defaults to SKIP."),
+                                enumProp("misfirePolicy", List.of("FIRE_LATEST", "FIRE_ALL", "SKIP"),
+                                        "Optional. Policy for missed fires; defaults to FIRE_LATEST."),
+                                enumProp("initialStatus", List.of("ACTIVE", "PAUSED"),
+                                        "Optional. Initial task status; defaults to ACTIVE."))),
+                tool(LIST_SCHEDULED_TASKS, "List 7x24 scheduled tasks in the given workspace. "
+                        + "Returns a paged object { list, total, offset, size }.",
+                        schema(enumProp("status", List.of("ACTIVE", "PAUSED", "EXHAUSTED", "ARCHIVED"),
+                                        "Optional. Filter by task status."),
+                                prop("squadId", "integer", "Optional. Filter by squad id."),
+                                prop("keyword", "string", "Optional. Fuzzy search on task name."),
+                                prop("size", "integer", "Optional. Page size; defaults to 20, max 100."),
+                                prop("offset", "integer", "Optional. Offset; defaults to 0."))),
+                tool(GET_SCHEDULED_TASK, "Get one 7x24 scheduled task aggregated with its recent runs "
+                        + "and 30-day health, and optionally its uploaded documents. "
+                        + "Dispatch credentials may only read the task that owns their own run. "
+                        + "IMPORTANT: Do not send file content or Base64 through MCP to attach requirement/design "
+                        + "documents to the task. Mint an upload token with autowonder.workitem_cli_upload_token and run "
+                        + "the scheduled-task upload command, e.g.: "
+                        + workitemCliUploadTokenService.tokenEnvHint() + " && "
+                        + workitemCliUploadTokenService.scheduledTaskCommandTemplate() + ". "
+                        + "The token is user-level and works for any scheduled task you can currently modify; "
+                        + "every upload re-checks live write membership. "
+                        + "List uploaded documents with includeDocuments=true.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Scheduled task id."),
+                                prop("includeRuns", "boolean", "Optional. Include the 10 most recent runs; defaults to true."),
+                                prop("includeDocuments", "boolean", "Optional. Include uploaded task documents; defaults to false."))),
+                tool(UPDATE_SCHEDULED_TASK, "Update a 7x24 scheduled task configuration. "
+                        + "version is the optimistic lock version from the latest read; a stale version is rejected. "
+                        + "Archived tasks cannot be updated. Returns the updated task.",
+                        schema(required("id", "version"),
+                                prop("id", "integer", "Required. Scheduled task id."),
+                                prop("version", "integer", "Required. Optimistic lock version read from the task."),
+                                prop("name", "string", "Optional. New task name."),
+                                prop("instructionMd", "string", "Optional. New Markdown execution instruction."),
+                                enumProp("scheduleType", List.of("CRON", "ONCE"), "Optional. New schedule type."),
+                                prop("cronExpression", "string", "Optional. New cron expression."),
+                                prop("runAt", "string", "Optional. New ISO-8601 fire instant for ONCE tasks."),
+                                prop("timezone", "string", "Optional. New IANA timezone."),
+                                enumProp("sessionMode", List.of("ISOLATED", "CONTINUE_LAST"), "Optional. New run session mode."),
+                                enumProp("overlapPolicy", List.of("SKIP", "QUEUE", "CANCEL_RUNNING"), "Optional. New overlap policy."),
+                                enumProp("misfirePolicy", List.of("FIRE_LATEST", "FIRE_ALL", "SKIP"), "Optional. New misfire policy."),
+                                prop("squadId", "integer", "Optional. New executor squad id."),
+                                prop("initialAgentId", "integer", "Optional. New initial digital worker id."))),
+                tool(TRANSITION_SCHEDULED_TASK, "Advance a 7x24 scheduled task or one of its runs. "
+                        + "Task-level actions: enable, pause, archive. Run-level actions need runId: "
+                        + "pause-run, resume-run, cancel-run. run-now manually triggers a new run and needs requestId "
+                        + "as the idempotency key. version is the optimistic lock version of the task "
+                        + "(task-level actions and run-now) or of the run (run-level actions). "
+                        + "Task-level actions return the ScheduledTaskVO; run-level actions and run-now return the ScheduledTaskRunVO.",
+                        schema(required("id", "action", "version"),
+                                prop("id", "integer", "Required. Scheduled task id."),
+                                enumProp("action", List.of("enable", "pause", "archive", "run-now",
+                                                "pause-run", "resume-run", "cancel-run"),
+                                        "Required. Transition action."),
+                                prop("version", "integer", "Required. Optimistic lock version."),
+                                prop("runId", "integer", "Run id; required for pause-run, resume-run and cancel-run."),
+                                prop("requestId", "string", "Idempotency request id; required for run-now."))),
+                tool(GET_SCHEDULED_TASK_RUN, "Get one scheduled task run aggregated with its event timeline, "
+                        + "artifacts, comments and optionally derived workitems. "
+                        + "Dispatch credentials may only read their own run.",
+                        schema(required("runId"),
+                                prop("runId", "integer", "Required. Scheduled task run id."),
+                                prop("includeEvents", "boolean", "Optional. Include the runtime event timeline; defaults to true."),
+                                prop("includeArtifacts", "boolean", "Optional. Include run artifacts; defaults to true."),
+                                prop("includeComments", "boolean", "Optional. Include run comments; defaults to true."),
+                                prop("includeDerivedWorkitems", "boolean", "Optional. Include workitems derived from the run; defaults to false."))),
+                tool(ADD_SCHEDULED_TASK_RUN_COMMENT, "Add a human-guidance comment to a scheduled task run. "
+                        + "Dispatch credentials may only comment on their own run; their comment is recorded "
+                        + "as the running digital worker.",
+                        schema(required("runId", "contentMd"),
+                                prop("runId", "integer", "Required. Scheduled task run id."),
+                                prop("contentMd", "string", "Required. Markdown comment content.")))
         );
     }
 
@@ -798,9 +1014,9 @@ public class McpToolService {
         tools = listTools().stream()
                 .filter(tool -> scopeLevel.allows(toolAccess(tool.getName()).level()))
                 .toList();
-        WorkspaceVO scopedWorkspace = workspaceService.getCurrent(principal.tenantId());
-        String workspaceName = scopedWorkspace != null ? scopedWorkspace.getName() : String.valueOf(principal.tenantId());
-        String desc = "Workspace: " + principal.tenantId() + "=" + workspaceName;
+        WorkspaceVO scopedWorkspace = workspaceService.getCurrent(principal.workspaceId());
+        String workspaceName = scopedWorkspace != null ? scopedWorkspace.getName() : String.valueOf(principal.workspaceId());
+        String desc = "Workspace: " + principal.workspaceId() + "=" + workspaceName;
         return applyWorkspaceIdDescriptions(tools, desc, desc);
     }
 
@@ -866,7 +1082,8 @@ public class McpToolService {
 
     public Object call(McpAccessTokenService.Principal principal, String name, Map<String, Object> args) {
         Map<String, Object> safeArgs = args == null ? Map.of() : args;
-        ToolExecutionContext context = resolveExecutionContext(principal, name, safeArgs);
+        ToolExecutionContext context = resolveDispatchBoundary(
+                resolveExecutionContext(principal, name, safeArgs));
         AutoWonderContext ambient = AutoWonderContext.get();
         Long previousWorkspaceId = ambient.getCurrentWorkspaceId();
         WorkspaceAccessLevel previousAccessLevel = ambient.getWorkspaceAccessLevel();
@@ -875,7 +1092,15 @@ public class McpToolService {
             ambient.setWorkspaceAccessLevel(context.accessLevel());
         }
         try {
-            return invoke(context, name, safeArgs);
+            Object result = invoke(context, name, safeArgs);
+            auditRunTool(context, name, result, null);
+            return result;
+        } catch (RuntimeException failure) {
+            if (!(failure instanceof BizException biz
+                    && ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY.getCode().equals(biz.getCode()))) {
+                auditRunTool(context, name, null, failure);
+            }
+            throw failure;
         } finally {
             ambient.setCurrentWorkspaceId(previousWorkspaceId);
             ambient.setWorkspaceAccessLevel(previousAccessLevel);
@@ -892,7 +1117,7 @@ public class McpToolService {
         ToolAccess access = toolAccess(name);
         Long requestedWorkspaceId = workspaceIdArgument(args);
         if (principal.isWorkspaceScoped()) {
-            long scopeWorkspaceId = principal.tenantId();
+            long scopeWorkspaceId = principal.workspaceId();
             if (requestedWorkspaceId != null && requestedWorkspaceId != scopeWorkspaceId) {
                 throw new BizException(ErrorCode.NO_PERMISSION,
                         "任务作用域令牌不能访问其他工作空间");
@@ -902,11 +1127,11 @@ public class McpToolService {
                 throw new BizException(ErrorCode.NO_PERMISSION);
             }
             return new ToolExecutionContext(scopeWorkspaceId, principal.userId(), scopeLevel,
-                    principal.tokenId(), principal.credentialType());
+                    principal.tokenId(), principal.credentialType(), null);
         }
         if (!access.workspaceScoped()) {
             return new ToolExecutionContext(null, principal.userId(), null,
-                    principal.tokenId(), principal.credentialType());
+                    principal.tokenId(), principal.credentialType(), null);
         }
         if (requestedWorkspaceId == null) {
             throw new BizException(ErrorCode.PARAM_INVALID,
@@ -918,7 +1143,25 @@ public class McpToolService {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
         return new ToolExecutionContext(requestedWorkspaceId, principal.userId(), memberLevel,
-                principal.tokenId(), principal.credentialType());
+                principal.tokenId(), principal.credentialType(), null);
+    }
+
+    private ToolExecutionContext resolveDispatchBoundary(ToolExecutionContext context) {
+        if (!isDispatchCredential(context)) {
+            return context;
+        }
+        DispatchDO dispatch = dispatchDao.findById(-context.tokenId());
+        if (dispatch == null
+                || !Objects.equals(dispatch.getTenantId(), context.workspaceId())
+                || dispatch.getAgentId() == null
+                || dispatch.getAgentId() <= 0) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+        if (dispatch.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            capabilityGuard.requireAvailable("mcp");
+        }
+        return new ToolExecutionContext(context.workspaceId(), context.userId(), context.accessLevel(),
+                context.tokenId(), context.credentialType(), dispatch);
     }
 
     private Long workspaceIdArgument(Map<String, Object> args) {
@@ -934,6 +1177,9 @@ public class McpToolService {
 
     private Object invoke(ToolExecutionContext context, String name,
                           Map<String, Object> safeArgs) {
+        if (isDispatchCredential(context) && DISPATCH_FORBIDDEN_SCHEDULED_TASK_TOOLS.contains(name)) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
         return switch (name) {
             case LIST_PROJECTS -> {
                 yield context.workspaceId() == null
@@ -941,8 +1187,17 @@ public class McpToolService {
                         : List.of(workspaceService.scopedWorkspace(context.workspaceId(), context.accessLevel()));
             }
             case CREATE_WORKITEM -> {
-                yield workitemService.create(toBean(safeArgs, CreateWorkitemRequest.class),
-                        context.workspaceId(), context.userId());
+                Date scheduledStartAt = isoInstantArgument(safeArgs, "scheduledStartAt");
+                CreateWorkitemRequest request = toBean(safeArgs, CreateWorkitemRequest.class);
+                request.setScheduledStartAt(scheduledStartAt);
+                if (isDispatchCredential(context)) {
+                    DispatchDO dispatch = requireDispatchOwner(context);
+                    if (dispatch.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+                        yield workitemService.createWithOrigin(request, context.workspaceId(), context.userId(),
+                                ExecutionSourceType.SCHEDULED_TASK_RUN.name(), dispatch.getWorkitemId());
+                    }
+                }
+                yield workitemService.create(request, context.workspaceId(), context.userId());
             }
             case LIST_WORKITEMS -> {
                 yield workitemService.list(str(safeArgs, "workType"), lng(safeArgs, "statusNodeId"),
@@ -950,7 +1205,7 @@ public class McpToolService {
                         str(safeArgs, "assigneeType"), lng(safeArgs, "assigneeRef"),
                         bool(safeArgs, "pendingDecisionOnly", false), str(safeArgs, "mineScope"),
                         context.workspaceId(), context.userId(),
-                        str(safeArgs, "keyword"),
+                        str(safeArgs, "keyword"), str(safeArgs, "tag"),
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20)).getList();
             }
             case GET_WORKITEM -> {
@@ -966,30 +1221,48 @@ public class McpToolService {
             }
             case ASSIGN_WORKITEM -> {
                 long workitemId = requiredLong(safeArgs, "id");
+                Date scheduledStartAt = isoInstantArgument(safeArgs, "scheduledStartAt");
                 if (isDispatchCredential(context)) {
                     DispatchDO dispatch = requireDispatchScope(context, workitemId);
                     yield workitemService.assignAs(workitemId, requiredString(safeArgs, "assigneeType"),
                             lng(safeArgs, "assigneeRef"), lng(safeArgs, "sdlcId"), lng(safeArgs, "squadId"),
+                            scheduledStartAt,
                             context.workspaceId(), context.userId(),
                             AssignmentActor.agent(dispatch.getAgentId(), resolveAgentName(dispatch.getAgentId())));
                 }
                 yield workitemService.assign(workitemId, requiredString(safeArgs, "assigneeType"),
                         lng(safeArgs, "assigneeRef"), lng(safeArgs, "sdlcId"), lng(safeArgs, "squadId"),
+                        scheduledStartAt,
                         context.workspaceId(), context.userId());
             }
             case ADD_WORKITEM_COMMENT -> {
                 AddCommentRequest req = toBean(safeArgs, AddCommentRequest.class);
                 long workitemId = requiredLong(safeArgs, "id");
-                var comment = isDispatchCredential(context)
-                        ? addDispatchAgentComment(context, workitemId, req.getContentMd(), req.getTargetHumanIds())
+                DispatchDO owner = isDispatchCredential(context) ? requireDispatchOwner(context) : null;
+                var comment = owner != null && owner.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                        ? addScheduledRunDispatchComment(context, owner, workitemId, req.getContentMd(),
+                                req.getTargetAgentIds(), req.getTargetHumanIds())
+                        : owner != null ? addDispatchAgentComment(context, workitemId, req.getContentMd(), req.getTargetHumanIds())
                         : workitemService.addComment(workitemId, req.getContentMd(), req.getTargetHumanIds(),
                                 context.workspaceId(), context.userId());
-                guidanceService.createForComment(context.workspaceId(), workitemId, comment.getId(),
-                        req.getContentMd(), req.getTargetAgentIds(), context.userId());
+                if (owner == null || owner.executionSourceType() == ExecutionSourceType.WORKITEM) {
+                    guidanceService.createForComment(context.workspaceId(), workitemId, comment.getId(),
+                            req.getContentMd(), req.getTargetAgentIds(), context.userId());
+                }
                 yield comment;
             }
             case LIST_WORKITEM_COMMENTS -> {
-                yield workitemService.listComments(requiredLong(safeArgs, "id"));
+                long id = requiredLong(safeArgs, "id");
+                if (isDispatchCredential(context)) {
+                    DispatchDO owner = requireDispatchOwner(context);
+                    if (owner.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+                        if (owner.getWorkitemId() != id || scheduledTaskRunCommentService == null) {
+                            throw new BizException(ErrorCode.NO_PERMISSION);
+                        }
+                        yield scheduledTaskRunCommentService.list(context.workspaceId(), id);
+                    }
+                }
+                yield workitemService.listComments(id);
             }
             case UPLOAD_WORKITEM_DOCUMENT -> {
                 yield requirementDocumentService.uploadMcp(requiredLong(safeArgs, "id"),
@@ -1079,8 +1352,10 @@ public class McpToolService {
                 yield Map.of("deleted", true);
             }
             case UPDATE_AGENT -> {
-                UpdateAgentRequest updateReq = toBean(normalizeAgentIdentityArgs(safeArgs), UpdateAgentRequest.class);
+                Map<String, Object> normalized = normalizeAgentIdentityArgs(safeArgs);
+                UpdateAgentRequest updateReq = toBean(normalized, UpdateAgentRequest.class);
                 updateReq.setId(requiredLong(safeArgs, "id"));
+                updateReq.setProvidedFields(presentAgentUpdateFields(normalized));
                 yield agentService.updateAgent(updateReq, context.workspaceId(), context.userId());
             }
             case SUBMIT_AGENT_FOR_REVIEW -> {
@@ -1097,8 +1372,9 @@ public class McpToolService {
                 yield agentService.getVersion(agentId, versionNo, context.workspaceId());
             }
             case UPDATE_AGENT_CONFIG -> {
-                UpdateConfigRequest request = toBean(normalizeAgentIdentityArgs(safeArgs),
-                        UpdateConfigRequest.class);
+                Map<String, Object> normalized = normalizeAgentIdentityArgs(safeArgs);
+                UpdateConfigRequest request = toBean(normalized, UpdateConfigRequest.class);
+                request.setProvidedFields(presentAgentUpdateFields(normalized));
                 yield agentService.editConfig(requiredLong(safeArgs, "agentId"), request,
                         context.workspaceId(), context.userId());
             }
@@ -1266,10 +1542,22 @@ public class McpToolService {
             case UPDATE_REPO -> {
                 long repoId = requiredLong(safeArgs, "id");
                 UpdateRepoRequest req = new UpdateRepoRequest();
-                req.setName(str(safeArgs, "name"));
-                req.setUrl(str(safeArgs, "url"));
-                req.setDefaultBranch(str(safeArgs, "defaultBranch"));
-                req.setDescription(str(safeArgs, "description"));
+                if (safeArgs.containsKey("name")) {
+                    req.setNamePresent(true);
+                    req.setName(str(safeArgs, "name"));
+                }
+                if (safeArgs.containsKey("url")) {
+                    req.setUrlPresent(true);
+                    req.setUrl(str(safeArgs, "url"));
+                }
+                if (safeArgs.containsKey("defaultBranch")) {
+                    req.setDefaultBranchPresent(true);
+                    req.setDefaultBranch(str(safeArgs, "defaultBranch"));
+                }
+                if (safeArgs.containsKey("description")) {
+                    req.setDescriptionPresent(true);
+                    req.setDescription(str(safeArgs, "description"));
+                }
                 yield repoService.update(repoId, req, context.workspaceId(), context.userId());
             }
             case DELETE_REPO -> {
@@ -1320,6 +1608,27 @@ public class McpToolService {
                         requiredLong(safeArgs, "dispatchId"), context.userId());
                 yield Map.of("dispatchId", dispatch.getId(), "status", dispatch.getStatus());
             }
+            case CREATE_SCHEDULED_TASK -> {
+                yield createScheduledTask(context, safeArgs);
+            }
+            case LIST_SCHEDULED_TASKS -> {
+                yield listScheduledTasks(context, safeArgs);
+            }
+            case GET_SCHEDULED_TASK -> {
+                yield getScheduledTask(context, safeArgs);
+            }
+            case UPDATE_SCHEDULED_TASK -> {
+                yield updateScheduledTask(context, safeArgs);
+            }
+            case TRANSITION_SCHEDULED_TASK -> {
+                yield transitionScheduledTask(context, safeArgs);
+            }
+            case GET_SCHEDULED_TASK_RUN -> {
+                yield getScheduledTaskRun(context, safeArgs);
+            }
+            case ADD_SCHEDULED_TASK_RUN_COMMENT -> {
+                yield addScheduledTaskRunComment(context, safeArgs);
+            }
             default -> throw new BizException(ErrorCode.MCP_TOOL_NOT_FOUND);
         };
     }
@@ -1329,6 +1638,389 @@ public class McpToolService {
         DispatchDO dispatch = requireDispatchScope(context, workitemId);
         return workitemService.addAgentComment(workitemId, contentMd, targetHumanIds,
                 context.workspaceId(), dispatch.getAgentId(), context.userId());
+    }
+
+    private CommentVO addScheduledRunDispatchComment(ToolExecutionContext context, DispatchDO dispatch,
+            long runId, String contentMd, List<Long> targetAgentIds, List<Long> targetHumanIds) {
+        if (!Objects.equals(dispatch.getWorkitemId(), runId) || scheduledTaskRunCommentService == null) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+        return scheduledTaskRunCommentService.addAgentComment(context.workspaceId(), runId, dispatch.getAgentId(), contentMd,
+                targetAgentIds == null ? List.of() : targetAgentIds,
+                targetHumanIds == null ? List.of() : targetHumanIds);
+    }
+
+    private void requireScheduledTaskCapability() {
+        if (capabilityGuard == null) {
+            throw new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY);
+        }
+        capabilityGuard.requireAvailable("mcp");
+    }
+
+    private <T> T requireScheduledTaskDependency(T dependency) {
+        if (dependency == null) {
+            throw new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY);
+        }
+        return dependency;
+    }
+
+    private void requireScheduledTaskOwner(ToolExecutionContext context, Long ownerId) {
+        if (!Objects.equals(ownerId, context.userId())
+                && context.accessLevel() != WorkspaceAccessLevel.ADMIN) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+    }
+
+    private ScheduledTaskRunDO requireScheduledTaskRun(ToolExecutionContext context, long runId) {
+        ScheduledTaskRunDO run = requireScheduledTaskDependency(scheduledTaskRunDao)
+                .findById(context.workspaceId(), runId);
+        if (run == null || !Long.valueOf(context.workspaceId()).equals(run.getWorkspaceId())) {
+            throw new BizException(ErrorCode.SCHEDULED_TASK_NOT_FOUND);
+        }
+        return run;
+    }
+
+    private void requireDispatchRunOfTask(ToolExecutionContext context, long taskId) {
+        DispatchDO dispatch = requireDispatchOwner(context);
+        ScheduledTaskRunDO run = requireScheduledTaskDependency(scheduledTaskRunDao)
+                .findById(context.workspaceId(), dispatch.getWorkitemId());
+        if (run == null || !Long.valueOf(taskId).equals(run.getScheduledTaskId())) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+    }
+
+    private Date isoInstantArgument(Map<String, Object> args, String key) {
+        String value = str(args, key);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Date.from(Instant.parse(value.trim()));
+        } catch (DateTimeParseException e) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, key + " 必须是 ISO-8601 时间");
+        }
+    }
+
+    private int requiredScheduledTaskVersion(Map<String, Object> args) {
+        Long version = lng(args, "version");
+        if (version == null || version < 0 || version > Integer.MAX_VALUE) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "version 必须提供且不能为负数");
+        }
+        return version.intValue();
+    }
+
+    private Object createScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        CreateScheduledTaskRequest request = new CreateScheduledTaskRequest();
+        request.setName(requiredString(args, "name"));
+        request.setInstructionMd(requiredString(args, "instructionMd"));
+        request.setSquadId(requiredLong(args, "squadId"));
+        request.setInitialAgentId(requiredLong(args, "initialAgentId"));
+        request.setScheduleType(requiredString(args, "scheduleType"));
+        request.setTimezone(requiredString(args, "timezone"));
+        request.setCronExpression(str(args, "cronExpression"));
+        request.setRunAt(isoInstantArgument(args, "runAt"));
+        request.setSessionMode(str(args, "sessionMode"));
+        request.setOverlapPolicy(str(args, "overlapPolicy"));
+        request.setMisfirePolicy(str(args, "misfirePolicy"));
+        request.setInitialStatus(str(args, "initialStatus"));
+        ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
+        ScheduledTaskVO task = taskService.create(request, context.workspaceId(), context.userId());
+        Map<String, Object> result = scheduledTaskMap(task);
+        if ("CRON".equals(task.getScheduleType()) && task.getCronExpression() != null) {
+            result.put("nextFirePreviews", taskService
+                    .preview(task.getCronExpression(), task.getTimezone(), 5).stream()
+                    .map(Instant::toString)
+                    .toList());
+        }
+        return result;
+    }
+
+    private Object listScheduledTasks(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        String status = str(args, "status");
+        if (status != null && !status.isBlank()) {
+            status = status.trim().toUpperCase(Locale.ROOT);
+            if (!SCHEDULED_TASK_LIST_STATUSES.contains(status)) {
+                throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "status 仅支持 ACTIVE/PAUSED/EXHAUSTED/ARCHIVED");
+            }
+        } else {
+            status = null;
+        }
+        int size = integer(args, "size", 20);
+        int offset = integer(args, "offset", 0);
+        if (size < 1 || size > 100 || offset < 0) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "size 必须在 1-100 之间且 offset 不能为负数");
+        }
+        var page = requireScheduledTaskDependency(scheduledTaskService).list(context.workspaceId(),
+                status, null, lng(args, "squadId"), str(args, "keyword"), size, offset);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("list", page.getList().stream().map(this::scheduledTaskMap).toList());
+        result.put("total", page.getTotal());
+        result.put("offset", offset);
+        result.put("size", size);
+        return result;
+    }
+
+    private Object getScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long id = requiredLong(args, "id");
+        if (isDispatchCredential(context)) {
+            requireDispatchRunOfTask(context, id);
+        }
+        ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
+        ScheduledTaskVO task = taskService.get(id, context.workspaceId());
+        ScheduledTaskRunDao runDao = requireScheduledTaskDependency(scheduledTaskRunDao);
+        Map<String, Object> result = scheduledTaskMap(task);
+        if (bool(args, "includeRuns", true)) {
+            result.put("recentRuns", runDao.listByTask(context.workspaceId(), id, 10, 0).stream()
+                    .map(ScheduledTaskRunViews::toVO)
+                    .map(this::scheduledRunMap)
+                    .toList());
+        }
+        Date since = Date.from(Instant.now().minus(30, ChronoUnit.DAYS));
+        result.put("health", Map.of(
+                "completed30d", runDao.countCompletedByTaskSince(context.workspaceId(), id, since),
+                "success30d", runDao.countSucceededByTaskSince(context.workspaceId(), id, since)));
+        if (bool(args, "includeDocuments", false)) {
+            result.put("documents", requirementDocumentService.list(
+                    new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, id), context.workspaceId()));
+        }
+        return result;
+    }
+
+    private Object updateScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long id = requiredLong(args, "id");
+        int version = requiredScheduledTaskVersion(args);
+        ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
+        requireScheduledTaskOwner(context, taskService.get(id, context.workspaceId()).getCreatorId());
+        UpdateScheduledTaskRequest request = new UpdateScheduledTaskRequest();
+        request.setVersion(version);
+        request.setName(str(args, "name"));
+        request.setInstructionMd(str(args, "instructionMd"));
+        request.setScheduleType(str(args, "scheduleType"));
+        request.setCronExpression(str(args, "cronExpression"));
+        request.setRunAt(isoInstantArgument(args, "runAt"));
+        request.setTimezone(str(args, "timezone"));
+        request.setSessionMode(str(args, "sessionMode"));
+        request.setOverlapPolicy(str(args, "overlapPolicy"));
+        request.setMisfirePolicy(str(args, "misfirePolicy"));
+        request.setSquadId(lng(args, "squadId"));
+        request.setInitialAgentId(lng(args, "initialAgentId"));
+        return scheduledTaskMap(taskService.update(id, request, context.workspaceId(), context.userId()));
+    }
+
+    private Object transitionScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long id = requiredLong(args, "id");
+        String action = requiredString(args, "action").trim().toLowerCase(Locale.ROOT);
+        if (!TRANSITION_SCHEDULED_TASK_ACTIONS.contains(action)) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+                    "action 仅支持 enable/pause/archive/run-now/pause-run/resume-run/cancel-run");
+        }
+        int version = requiredScheduledTaskVersion(args);
+        switch (action) {
+            case "enable":
+            case "pause":
+            case "archive": {
+                ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
+                requireScheduledTaskOwner(context, taskService.get(id, context.workspaceId()).getCreatorId());
+                ScheduledTaskVO updated = switch (action) {
+                    case "enable" -> taskService.enable(id, version, context.workspaceId(), context.userId());
+                    case "pause" -> taskService.pause(id, version, context.workspaceId(), context.userId());
+                    default -> taskService.archive(id, version, context.workspaceId(), context.userId());
+                };
+                return scheduledTaskMap(updated);
+            }
+            case "run-now": {
+                ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
+                String requestId = requiredString(args, "requestId");
+                ScheduledTaskVO task = taskService.get(id, context.workspaceId());
+                requireScheduledTaskOwner(context, task.getCreatorId());
+                if (!Integer.valueOf(version).equals(task.getVersion())) {
+                    throw new BizException(ErrorCode.SCHEDULED_TASK_VERSION_CONFLICT);
+                }
+                ScheduledTaskRunDO run = requireScheduledTaskDependency(scheduledTaskTriggerService)
+                        .fireManual(context.workspaceId(), id, requestId);
+                return scheduledRunMap(ScheduledTaskRunViews.toVO(run));
+            }
+            default:
+                return transitionScheduledTaskRun(context, action, version, requiredLong(args, "runId"));
+        }
+    }
+
+    private Object transitionScheduledTaskRun(ToolExecutionContext context, String action,
+                                              int version, long runId) {
+        ScheduledTaskRunDao runDao = requireScheduledTaskDependency(scheduledTaskRunDao);
+        ScheduledTaskRunService runService = requireScheduledTaskDependency(scheduledTaskRunService);
+        ScheduledTaskRunDispatchControlService control =
+                requireScheduledTaskDependency(scheduledTaskRunDispatchControlService);
+        ScheduledTaskRunDO existing = requireScheduledTaskRun(context, runId);
+        requireScheduledTaskOwner(context, existing.getOwnerId());
+        if ("pause-run".equals(action)) {
+            control.pauseActive(context.workspaceId(), runId, context.userId(), false);
+            return scheduledRunMap(ScheduledTaskRunViews.toVO(
+                    runService.transition(context.workspaceId(), runId, version, "PAUSED", context.userId())));
+        }
+        if ("resume-run".equals(action)) {
+            ScheduledTaskRunDO run = runService.transition(
+                    context.workspaceId(), runId, version, "QUEUED", context.userId());
+            ScheduledTaskRunOrchestrator orchestrator = requireScheduledTaskDependency(scheduledTaskRunOrchestrator);
+            if (!orchestrator.resumePaused(context.workspaceId(), runId, context.userId())) {
+                orchestrator.start(context.workspaceId(), runId, context.userId());
+            }
+            ScheduledTaskRunDO current = runDao.findById(context.workspaceId(), runId);
+            return scheduledRunMap(ScheduledTaskRunViews.toVO(current == null ? run : current));
+        }
+        if (!Integer.valueOf(version).equals(existing.getVersion())
+                || !runService.markCancelIntent(existing, context.userId())) {
+            throw new BizException(ErrorCode.SCHEDULED_TASK_VERSION_CONFLICT);
+        }
+        boolean awaitingPause = control.pauseActive(context.workspaceId(), runId, context.userId(), true);
+        ScheduledTaskRunDO current = runDao.findById(context.workspaceId(), runId);
+        if (current != null && "CANCELED".equals(current.getStatus())) {
+            return scheduledRunMap(ScheduledTaskRunViews.toVO(current));
+        }
+        String target = awaitingPause ? "PAUSED" : "CANCELED";
+        return scheduledRunMap(ScheduledTaskRunViews.toVO(
+                runService.transition(context.workspaceId(), runId, existing.getVersion(), target, context.userId())));
+    }
+
+    private Object getScheduledTaskRun(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long runId = requiredLong(args, "runId");
+        if (isDispatchCredential(context)) {
+            if (!Objects.equals(requireDispatchOwner(context).getWorkitemId(), runId)) {
+                throw new BizException(ErrorCode.NO_PERMISSION);
+            }
+        }
+        ScheduledTaskRunDO run = requireScheduledTaskRun(context, runId);
+        ScheduledTaskRunDetailVO detail = ScheduledTaskRunViews.toDetail(run);
+        List<DispatchDO> dispatches = dispatchDao.listBySource(context.workspaceId(),
+                ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId);
+        if (dispatches != null && !dispatches.isEmpty()) {
+            detail.setExecutorId(dispatches.get(dispatches.size() - 1).getExecutorId());
+        }
+        Map<String, Object> result = scheduledRunDetailMap(detail);
+        if (bool(args, "includeEvents", true)) {
+            DispatchRuntimeEventDao eventDao = requireScheduledTaskDependency(dispatchRuntimeEventDao);
+            List<Object> events = new ArrayList<>();
+            for (DispatchDO dispatch : dispatches == null ? List.<DispatchDO>of() : dispatches) {
+                events.addAll(eventDao.listByDispatch(context.workspaceId(), dispatch.getId()));
+            }
+            result.put("events", events);
+        }
+        if (bool(args, "includeArtifacts", true)) {
+            result.put("artifacts", requireScheduledTaskDependency(artifactService).listByOwner(
+                    new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, runId), context.workspaceId()));
+        }
+        if (bool(args, "includeComments", true)) {
+            result.put("comments", requireScheduledTaskDependency(scheduledTaskRunCommentService)
+                    .list(context.workspaceId(), runId));
+        }
+        if (bool(args, "includeDerivedWorkitems", false)) {
+            result.put("derivedWorkitems", workitemService.listByOrigin(context.workspaceId(),
+                    ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId));
+        }
+        return result;
+    }
+
+    private Object addScheduledTaskRunComment(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long runId = requiredLong(args, "runId");
+        String contentMd = requiredString(args, "contentMd");
+        if (isDispatchCredential(context)) {
+            return addScheduledRunDispatchComment(context, requireDispatchOwner(context), runId, contentMd, null, null);
+        }
+        return requireScheduledTaskDependency(scheduledTaskRunCommentService)
+                .addHumanComment(context.workspaceId(), runId, context.userId(), contentMd);
+    }
+
+    private Map<String, Object> scheduledTaskMap(ScheduledTaskVO task) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("id", task.getId());
+        value.put("name", task.getName());
+        value.put("instructionMd", task.getInstructionMd());
+        value.put("squadId", task.getSquadId());
+        value.put("initialAgentId", task.getInitialAgentId());
+        value.put("scheduleType", task.getScheduleType());
+        value.put("runAt", task.getRunAt());
+        value.put("cronExpression", task.getCronExpression());
+        value.put("timezone", task.getTimezone());
+        value.put("sessionMode", task.getSessionMode());
+        value.put("overlapPolicy", task.getOverlapPolicy());
+        value.put("misfirePolicy", task.getMisfirePolicy());
+        value.put("startDeadlineSeconds", task.getStartDeadlineSeconds());
+        value.put("affinityTimeoutSeconds", task.getAffinityTimeoutSeconds());
+        value.put("status", task.getStatus());
+        value.put("nextFireAt", task.getNextFireAt());
+        value.put("lastFireAt", task.getLastFireAt());
+        value.put("gmtCreate", task.getGmtCreate());
+        value.put("gmtModified", task.getGmtModified());
+        value.put("creatorId", task.getCreatorId());
+        value.put("modifierId", task.getModifierId());
+        value.put("version", task.getVersion());
+        return value;
+    }
+
+    private Map<String, Object> scheduledRunMap(ScheduledTaskRunVO run) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        putScheduledRunFields(value, run);
+        return value;
+    }
+
+    private Map<String, Object> scheduledRunDetailMap(ScheduledTaskRunDetailVO run) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        putScheduledRunFields(value, run);
+        value.put("squadId", run.getSquadId());
+        value.put("initialAgentId", run.getInitialAgentId());
+        value.put("sessionMode", run.getSessionMode());
+        value.put("resumeFromRunId", run.getResumeFromRunId());
+        value.put("ownerId", run.getOwnerId());
+        value.put("snapshot", run.getSnapshot());
+        value.put("executorId", run.getExecutorId());
+        return value;
+    }
+
+    private void putScheduledRunFields(Map<String, Object> value, ScheduledTaskRunVO run) {
+        value.put("id", run.getId());
+        value.put("scheduledTaskId", run.getScheduledTaskId());
+        value.put("triggerType", run.getTriggerType());
+        value.put("scheduledAt", run.getScheduledAt());
+        value.put("startedAt", run.getStartedAt());
+        value.put("finishedAt", run.getFinishedAt());
+        value.put("status", run.getStatus());
+        value.put("skipReason", run.getSkipReason());
+        value.put("currentAgentId", run.getCurrentAgentId());
+        value.put("sdlcId", run.getSdlcId());
+        value.put("currentStepId", run.getCurrentStepId());
+        value.put("degradedResume", run.isDegradedResume());
+        value.put("degradedReason", run.getDegradedReason());
+        value.put("resultSummary", run.getResultSummary());
+        value.put("error", run.getError());
+        value.put("version", run.getVersion());
+        value.put("gmtCreate", run.getGmtCreate());
+        value.put("gmtModified", run.getGmtModified());
+    }
+
+    private void auditRunTool(ToolExecutionContext context, String tool, Object result, RuntimeException failure) {
+        if (!isDispatchCredential(context) || auditLogService == null) return;
+        DispatchDO dispatch = context.dispatch();
+        if (dispatch == null || dispatch.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN) return;
+        AuditLogRecord audit = new AuditLogRecord();
+        audit.setTenantId(context.workspaceId()); audit.setActorId(dispatch.getAgentId()); audit.setActorType("AGENT");
+        audit.setModule("MCP"); audit.setAction("TOOL_CALL"); audit.setTargetType("scheduled_task_run");
+        audit.setTargetId(dispatch.getWorkitemId()); audit.setTriggerType("EVENT"); audit.setTriggerSource("MCP");
+        audit.setEventType("mcp.tool"); audit.detail("tool", tool).detail("dispatchId", dispatch.getId())
+                .detail("runId", dispatch.getWorkitemId()).detail("agentId", dispatch.getAgentId())
+                .detail("success", failure == null).detail("resultType", result == null ? null : result.getClass().getSimpleName());
+        if (scheduledTaskRunDao != null) {
+            var run = scheduledTaskRunDao.findById(context.workspaceId(), dispatch.getWorkitemId());
+            if (run != null) audit.detail("taskId", run.getScheduledTaskId());
+        }
+        if (failure != null) audit.detail("error", failure.getClass().getSimpleName());
+        auditLogService.record(audit);
     }
 
     private boolean isDispatchCredential(ToolExecutionContext context) {
@@ -1344,11 +2036,8 @@ public class McpToolService {
     }
 
     private DispatchDO requireDispatchOwner(ToolExecutionContext context) {
-        DispatchDO dispatch = dispatchDao.findById(-context.tokenId());
-        if (dispatch == null
-                || !Objects.equals(dispatch.getTenantId(), context.workspaceId())
-                || dispatch.getAgentId() == null
-                || dispatch.getAgentId() <= 0) {
+        DispatchDO dispatch = context.dispatch();
+        if (dispatch == null) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
         return dispatch;
@@ -1489,7 +2178,7 @@ public class McpToolService {
         return access;
     }
 
-    private static ToolAccess orgTool(WorkspaceAccessLevel level) {
+    private static ToolAccess workspaceTool(WorkspaceAccessLevel level) {
         return new ToolAccess(level, true);
     }
 
@@ -1600,6 +2289,34 @@ public class McpToolService {
                     prop("agentId", "integer", "Agent id that was configured."),
                     prop("editingVersionId", "integer", "Editing version id; call submit_agent_for_review then publish_agent to activate."),
                     prop("sdlcId", "integer", "The configured SDLC flow id."));
+            case CREATE_SCHEDULED_TASK -> scheduledTaskSchema(
+                    arrayProp("nextFirePreviews", Map.of("type", "string"),
+                            "Next 5 fire time previews (ISO-8601); present for CRON tasks only."));
+            case LIST_SCHEDULED_TASKS -> schema(required("list", "total"),
+                    arrayProp("list", scheduledTaskSchema(), "Scheduled tasks in this page."),
+                    prop("total", "integer", "Total matching tasks."),
+                    prop("offset", "integer", "Current offset."),
+                    prop("size", "integer", "Page size."));
+            case GET_SCHEDULED_TASK -> scheduledTaskSchema(
+                    arrayProp("recentRuns", scheduledRunSchema(), "Up to 10 most recent runs; present when includeRuns is true."),
+                    objectProp("health", schema(
+                            prop("completed30d", "integer", "Completed runs in the last 30 days."),
+                            prop("success30d", "integer", "Succeeded runs in the last 30 days.")),
+                            "30-day run health summary."),
+                    arrayProp("documents", artifactSchema(), "Requirement documents; present when includeDocuments is true."));
+            case UPDATE_SCHEDULED_TASK -> scheduledTaskSchema();
+            case TRANSITION_SCHEDULED_TASK -> {
+                Map<String, Object> anyOf = new LinkedHashMap<>();
+                anyOf.put("type", "object");
+                anyOf.put("anyOf", List.of(scheduledTaskSchema(), scheduledRunSchema()));
+                yield anyOf;
+            }
+            case GET_SCHEDULED_TASK_RUN -> scheduledRunDetailSchema(
+                    arrayProp("events", runEventSchema(), "Runtime events of the run's dispatches; present when includeEvents is true."),
+                    arrayProp("artifacts", artifactSchema(), "Run artifacts; present when includeArtifacts is true."),
+                    arrayProp("comments", commentSchema(), "Run comments; present when includeComments is true."),
+                    arrayProp("derivedWorkitems", workitemSchema(), "Workitems created by the run; present when includeDerivedWorkitems is true."));
+            case ADD_SCHEDULED_TASK_RUN_COMMENT -> commentSchema();
             default -> schema();
         };
     }
@@ -1636,6 +2353,8 @@ public class McpToolService {
                 nullableProp("health", "string", "Delivery health."),
                 nullableProp("healthReason", "string", "Reason when delivery health is stuck."),
                 prop("pendingDecision", "boolean", "Whether waiting for human decision."),
+                timestampProp("scheduledStartAt", "Planned agent delivery start time; null means immediate."),
+                arrayProp("tags", Map.of("type", "string"), "Workitem tags; empty when unset."),
                 prop("sourceType", "string", "Workitem source type."),
                 prop("deletable", "boolean", "Whether current user can delete it."),
                 nullableProp("deletableReason", "string", "Reason when deletion is not allowed."));
@@ -1658,6 +2377,89 @@ public class McpToolService {
                 prop("type", "string", "Artifact type."),
                 prop("size", "integer", "Artifact byte size."),
                 timestampProp("gmtCreate", "Creation time."));
+    }
+
+    private Map<String, Object> scheduledTaskSchema(Map<String, Object>... extra) {
+        Map<String, Object>[] base = new Map[]{prop("id", "integer", "Scheduled task id."),
+                prop("name", "string", "Task name."),
+                nullableProp("instructionMd", "string", "Markdown instruction for runs."),
+                prop("squadId", "integer", "Squad id that executes the task."),
+                prop("initialAgentId", "integer", "Initial digital worker id."),
+                prop("scheduleType", "string", "Schedule type: CRON or ONCE."),
+                timestampProp("runAt", "One-shot fire time; ONCE tasks only."),
+                nullableProp("cronExpression", "string", "Cron expression; CRON tasks only."),
+                nullableProp("timezone", "string", "IANA timezone for the cron expression."),
+                nullableProp("sessionMode", "string", "Run session mode."),
+                nullableProp("overlapPolicy", "string", "Overlap policy when a fire is due while a run is active."),
+                nullableProp("misfirePolicy", "string", "Misfire policy for missed fires."),
+                prop("startDeadlineSeconds", "integer", "Start deadline in seconds."),
+                prop("affinityTimeoutSeconds", "integer", "Executor affinity timeout in seconds."),
+                prop("status", "string", "Task status: ACTIVE, PAUSED, EXHAUSTED or ARCHIVED."),
+                timestampProp("nextFireAt", "Next scheduled fire time."),
+                timestampProp("lastFireAt", "Last fire time."),
+                timestampProp("gmtCreate", "Creation time."),
+                timestampProp("gmtModified", "Last modified time."),
+                prop("creatorId", "integer", "Creator user id."),
+                prop("modifierId", "integer", "Modifier user id."),
+                prop("version", "integer", "Optimistic lock version.")};
+        return schema(concat(base, extra));
+    }
+
+    private Map<String, Object> scheduledRunSchema(Map<String, Object>... extra) {
+        Map<String, Object>[] base = new Map[]{prop("id", "integer", "Run id."),
+                prop("scheduledTaskId", "integer", "Owning scheduled task id."),
+                prop("triggerType", "string", "Trigger type."),
+                timestampProp("scheduledAt", "Scheduled fire time."),
+                timestampProp("startedAt", "Run start time."),
+                timestampProp("finishedAt", "Run finish time."),
+                prop("status", "string", "Run status."),
+                nullableProp("skipReason", "string", "Reason when the fire was skipped."),
+                nullableProp("currentAgentId", "integer", "Current digital worker id."),
+                nullableProp("sdlcId", "integer", "Bound SDLC flow id."),
+                nullableProp("currentStepId", "integer", "Current SDLC step id."),
+                prop("degradedResume", "boolean", "Whether the run is a degraded resume."),
+                nullableProp("degradedReason", "string", "Degraded resume reason."),
+                nullableProp("resultSummary", "string", "Result summary."),
+                nullableProp("error", "string", "Error detail."),
+                prop("version", "integer", "Optimistic lock version."),
+                timestampProp("gmtCreate", "Creation time."),
+                timestampProp("gmtModified", "Last modified time.")};
+        return schema(concat(base, extra));
+    }
+
+    private Map<String, Object> scheduledRunDetailSchema(Map<String, Object>... extra) {
+        Map<String, Object>[] detail = new Map[]{nullableProp("squadId", "integer", "Squad id."),
+                nullableProp("initialAgentId", "integer", "Initial digital worker id."),
+                nullableProp("sessionMode", "string", "Run session mode."),
+                nullableProp("resumeFromRunId", "integer", "Run id this run resumed from."),
+                prop("ownerId", "integer", "Run owner user id."),
+                objectProp("snapshot", schema(), "Frozen execution snapshot of the run."),
+                nullableProp("executorId", "integer", "Executor id of the latest dispatch.")};
+        return scheduledRunSchema(concat(detail, extra));
+    }
+
+    private Map<String, Object> runEventSchema() {
+        return schema(prop("id", "integer", "Event record id."),
+                prop("workitemId", "integer", "Related run id."),
+                prop("dispatchId", "integer", "Dispatch id."),
+                nullableProp("agentId", "integer", "Agent id."),
+                prop("eventId", "string", "Event idempotency id."),
+                prop("seq", "integer", "Event sequence number."),
+                prop("eventType", "string", "Event type."),
+                nullableProp("stepId", "integer", "Step id."),
+                nullableProp("stepKey", "string", "Step key."),
+                nullableProp("stepOrder", "integer", "Step order."),
+                nullableProp("stepName", "string", "Step name."),
+                nullableProp("message", "string", "Event message."),
+                nullableProp("error", "string", "Error detail."),
+                timestampProp("eventTime", "Event time."),
+                timestampProp("gmtCreate", "Creation time."));
+    }
+
+    private Map<String, Object>[] concat(Map<String, Object>[] first, Map<String, Object>[] second) {
+        Map<String, Object>[] all = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, all, first.length, second.length);
+        return all;
     }
 
     private Map<String, Object> statusTemplateSchema() {
@@ -1927,18 +2729,18 @@ public class McpToolService {
     private Map<String, Object>[] skillPackageInputProps() {
         return new Map[]{prop("fileName", "string", "Required package file name; .zip or .tar.gz is supported."),
                 prop("contentBase64", "string", "Required base64 encoded package bytes."),
-                prop("type", "string", "Optional package type: SKILL or PLUGIN; defaults to SKILL."),
-                prop("name", "string", "Required for PLUGIN packages; ignored for SKILL packages."),
-                prop("description", "string", "Optional PLUGIN description."),
+                prop("type", "string", "Optional package type: SKILL, PLUGIN, or HOOK; defaults to SKILL."),
+                prop("name", "string", "Required for PLUGIN packages; optional for HOOK and must match root hook.yaml; ignored for SKILL."),
+                prop("description", "string", "Optional PLUGIN or HOOK description."),
                 prop("providers", "array", "Optional PLUGIN providers such as claude or qoder."),
                 prop("expectedMd5", "string", "Optional expected package MD5 digest.")};
     }
 
     private Map<String, Object>[] skillPackageReferenceProps() {
         return new Map[]{prop("packageOssRef", "string", "Uploaded package reference returned by upload_skill_package."),
-                prop("type", "string", "Optional package type: SKILL or PLUGIN; defaults to SKILL."),
-                prop("name", "string", "Required for PLUGIN packages; ignored for SKILL packages."),
-                prop("description", "string", "Optional PLUGIN description."),
+                prop("type", "string", "Optional package type: SKILL, PLUGIN, or HOOK; defaults to SKILL."),
+                prop("name", "string", "Required for PLUGIN packages; optional for HOOK and must match root hook.yaml; ignored for SKILL."),
+                prop("description", "string", "Optional PLUGIN or HOOK description."),
                 prop("providers", "array", "Optional PLUGIN providers such as claude or qoder."),
                 prop("expectedMd5", "string", "Optional expected package MD5 digest."),
                 prop("idempotencyKey", "string", "Optional idempotency key for create calls.")};
@@ -1963,6 +2765,12 @@ public class McpToolService {
         if (description != null) {
             property.put("description", description);
         }
+        return property;
+    }
+
+    private Map<String, Object> enumProp(String name, List<String> values, String description) {
+        Map<String, Object> property = prop(name, "string", description);
+        property.put("enum", values);
         return property;
     }
 
@@ -2065,6 +2873,19 @@ public class McpToolService {
         return normalized;
     }
 
+    private static final Set<String> AGENT_UPDATE_FIELDS = Set.of("name", "roleName", "roleCode",
+            "businessBackground", "responsibilities", "sdlcId", "evolutionMode");
+
+    private Set<String> presentAgentUpdateFields(Map<String, Object> normalizedArgs) {
+        Set<String> present = new LinkedHashSet<>();
+        for (String field : AGENT_UPDATE_FIELDS) {
+            if (normalizedArgs.containsKey(field)) {
+                present.add(field);
+            }
+        }
+        return present;
+    }
+
     private String str(Map<String, Object> args, String key) {
         Object value = args.get(key);
         return value == null ? null : String.valueOf(value);
@@ -2161,7 +2982,8 @@ public class McpToolService {
 
     private record ToolExecutionContext(Long workspaceId, long userId, WorkspaceAccessLevel accessLevel,
                                        long tokenId,
-                                       McpAccessTokenService.CredentialType credentialType) {
+                                       McpAccessTokenService.CredentialType credentialType,
+                                       DispatchDO dispatch) {
     }
 
     private record ToolAccess(WorkspaceAccessLevel level, boolean workspaceScoped) {

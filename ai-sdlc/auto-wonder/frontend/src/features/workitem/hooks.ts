@@ -111,18 +111,50 @@ export function useAddComment() {
 export function useAssignWorkitem() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, assigneeType = 'AGENT', assigneeRef, sdlcId, squadId }: {
+    mutationFn: ({ id, assigneeType = 'AGENT', assigneeRef, sdlcId, squadId, scheduledStartAt }: {
       id: number | string;
       assigneeType?: 'AGENT' | 'HUMAN';
       assigneeRef: number;
       sdlcId?: number;
       squadId?: number;
-    }) => api.assignWorkitem(id, assigneeType, assigneeRef, sdlcId, squadId),
+      scheduledStartAt?: string;
+    }) => api.assignWorkitem(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'participants'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'unified-timeline'] });
+      queryClient.invalidateQueries({ queryKey: ['workitems'] });
+    },
+  });
+}
+
+function invalidateWorkitemCaches(queryClient: ReturnType<typeof useQueryClient>, id: number | string) {
+  queryClient.invalidateQueries({ queryKey: ['workitem', id] });
+  queryClient.invalidateQueries({ queryKey: ['workitem', id, 'delivery-progress'] });
+  queryClient.invalidateQueries({ queryKey: ['workitem', id, 'unified-timeline'] });
+  queryClient.invalidateQueries({ queryKey: ['workitems'] });
+}
+
+export function useUpdateScheduledStart(workitemId: number | string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { scheduledStartAt?: string | null; executeNow?: boolean }) =>
+      api.updateScheduledStart(workitemId, params),
+    onSuccess: (_data, variables) => {
+      message.success(variables.executeNow ? '已立即执行' : variables.scheduledStartAt ? '计划执行时间已更新' : '已取消定时执行');
+      invalidateWorkitemCaches(queryClient, workitemId);
+    },
+  });
+}
+
+export function useUpdateWorkitemTags(workitemId: number | string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tags }: { tags: string[] }) => api.updateWorkitemTags(workitemId, tags),
+    onSuccess: () => {
+      message.success('标签已更新');
+      queryClient.invalidateQueries({ queryKey: ['workitem', workitemId] });
       queryClient.invalidateQueries({ queryKey: ['workitems'] });
     },
   });

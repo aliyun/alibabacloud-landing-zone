@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao">
+
+    <resultMap id="scheduledTaskRunMap" type="com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO">
+        <id column="id" property="id"/>
+        <result column="workspace_id" property="workspaceId"/>
+        <result column="scheduled_task_id" property="scheduledTaskId"/>
+        <result column="trigger_key" property="triggerKey"/>
+        <result column="trigger_type" property="triggerType"/>
+        <result column="scheduled_at" property="scheduledAt"/>
+        <result column="started_at" property="startedAt"/>
+        <result column="finished_at" property="finishedAt"/>
+        <result column="status" property="status"/>
+        <result column="skip_reason" property="skipReason"/>
+        <result column="squad_id" property="squadId"/>
+        <result column="initial_agent_id" property="initialAgentId"/>
+        <result column="current_agent_id" property="currentAgentId"/>
+        <result column="sdlc_id" property="sdlcId"/>
+        <result column="current_step_id" property="currentStepId"/>
+        <result column="session_mode" property="sessionMode"/>
+        <result column="resume_from_run_id" property="resumeFromRunId"/>
+        <result column="degraded_resume" property="degradedResume"/>
+        <result column="degraded_reason" property="degradedReason"/>
+        <result column="execution_snapshot_json" property="executionSnapshotJson"/>
+        <result column="result_summary" property="resultSummary"/>
+        <result column="error" property="error"/>
+        <result column="owner_id" property="ownerId"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+        <result column="version" property="version"/>
+    </resultMap>
+
+    <sql id="cols" databaseId="autowonder-source-aware">
+        id, workspace_id, scheduled_task_id, trigger_key, trigger_type, scheduled_at, started_at,
+        finished_at, status, skip_reason, squad_id, initial_agent_id, current_agent_id, sdlc_id,
+        current_step_id, session_mode, resume_from_run_id, degraded_resume, degraded_reason,
+        execution_snapshot_json, result_summary, error, owner_id, gmt_create, gmt_modified,
+        creator_id, modifier_id, version
+    </sql>
+
+    <insert id="insert" databaseId="autowonder-source-aware" parameterType="com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO scheduled_task_run
+            (workspace_id, scheduled_task_id, trigger_key, trigger_type, scheduled_at, started_at,
+             finished_at, status, skip_reason, squad_id, initial_agent_id, current_agent_id, sdlc_id,
+             current_step_id, session_mode, resume_from_run_id, degraded_resume, degraded_reason,
+             execution_snapshot_json, result_summary, error, owner_id, creator_id, modifier_id, version)
+        VALUES
+            (#{workspaceId}, #{scheduledTaskId}, #{triggerKey}, #{triggerType}, #{scheduledAt}, #{startedAt},
+             #{finishedAt}, #{status}, #{skipReason}, #{squadId}, #{initialAgentId}, #{currentAgentId},
+             #{sdlcId}, #{currentStepId}, #{sessionMode}, #{resumeFromRunId}, 0,
+             #{degradedReason}, #{executionSnapshotJson}, #{resultSummary}, #{error}, #{ownerId},
+             #{creatorId}, #{modifierId}, 0)
+    </insert>
+
+    <select id="findByTriggerKey" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE workspace_id = #{workspaceId} AND trigger_key = #{triggerKey}
+        LIMIT 1
+    </select>
+
+    <select id="findById" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE workspace_id = #{workspaceId} AND id = #{id}
+    </select>
+
+    <select id="listByTask" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE workspace_id = #{workspaceId} AND scheduled_task_id = #{scheduledTaskId}
+        ORDER BY id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="findActiveByTask" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE workspace_id = #{workspaceId} AND scheduled_task_id = #{scheduledTaskId}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+        ORDER BY scheduled_at ASC, id ASC
+    </select>
+    <select id="findActiveByTaskForUpdate" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE workspace_id = #{workspaceId} AND scheduled_task_id = #{scheduledTaskId}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+        ORDER BY scheduled_at ASC, id ASC
+        FOR UPDATE
+    </select>
+    <select id="countActive" databaseId="autowonder-source-aware" resultType="long">
+        SELECT COUNT(*) FROM scheduled_task_run
+        WHERE status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+    </select>
+    <select id="countCompletedByTaskSince" databaseId="autowonder-source-aware" resultType="long">SELECT COUNT(*) FROM scheduled_task_run WHERE workspace_id = #{workspaceId} AND scheduled_task_id = #{scheduledTaskId} AND finished_at >= #{since} AND status IN ('SUCCEEDED','FAILED','TIMED_OUT','CANCELED','SKIPPED')</select>
+    <select id="countSucceededByTaskSince" databaseId="autowonder-source-aware" resultType="long">SELECT COUNT(*) FROM scheduled_task_run WHERE workspace_id = #{workspaceId} AND scheduled_task_id = #{scheduledTaskId} AND finished_at >= #{since} AND status = 'SUCCEEDED'</select>
+
+    <select id="findNextQueued" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE workspace_id = #{workspaceId} AND scheduled_task_id = #{scheduledTaskId}
+          AND status = 'QUEUED'
+        ORDER BY scheduled_at ASC, id ASC
+        LIMIT 1
+    </select>
+
+    <select id="listStaleStarting" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE status = 'STARTING' AND gmt_modified &lt; #{before}
+        ORDER BY gmt_modified ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listStaleQueued" databaseId="autowonder-source-aware" resultMap="scheduledTaskRunMap">
+        SELECT <include refid="cols"/> FROM scheduled_task_run
+        WHERE status IN ('QUEUED', 'WAITING_EXECUTOR') AND gmt_modified &lt; #{before}
+        ORDER BY scheduled_at ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="updateStatus" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run
+        SET status = #{targetStatus},
+            started_at = CASE
+                WHEN #{targetStatus} = 'STARTING' THEN COALESCE(started_at, NOW(3))
+                ELSE started_at
+            END,
+            modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status = #{expectedStatus}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+          AND #{targetStatus} IN ('QUEUED', 'STARTING', 'WAITING_EXECUTOR', 'RUNNING', 'WAITING_HUMAN', 'PAUSED')
+          AND version = #{expectedVersion}
+    </update>
+
+    <update id="updateCurrentAssignment" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run
+        SET sdlc_id = #{sdlcId}, current_agent_id = #{currentAgentId}, current_step_id = #{currentStepId},
+            modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND version = #{expectedVersion}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+    </update>
+
+    <update id="initializeExecution" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run
+        SET status = 'STARTING', started_at = COALESCE(started_at, NOW(3)),
+            sdlc_id = #{sdlcId}, current_agent_id = #{currentAgentId},
+            current_step_id = #{currentStepId}, modifier_id = #{modifierId},
+            version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status = #{expectedStatus}
+          AND #{expectedStatus} IN ('QUEUED', 'STARTING')
+          AND version = #{expectedVersion}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+    </update>
+
+    <update id="updateTerminalResult" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run
+        SET status = #{targetStatus}, result_summary = #{resultSummary}, error = #{error},
+            finished_at = COALESCE(finished_at, NOW(3)), modifier_id = #{modifierId},
+            version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status = #{expectedStatus}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+          AND #{targetStatus} IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+          AND version = #{expectedVersion}
+    </update>
+
+    <update id="markDegraded" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run
+        SET degraded_resume = 1, degraded_reason = #{degradedReason},
+            resume_from_run_id = #{resumeFromRunId}, modifier_id = #{modifierId},
+            version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND version = #{expectedVersion}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+    </update>
+
+    <update id="markResumeSource" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run
+        SET resume_from_run_id = #{resumeFromRunId}, modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND version = #{expectedVersion}
+          AND status NOT IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED')
+    </update>
+    <update id="markCancelPending" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run SET error = 'CANCEL_PENDING', modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status = 'PAUSED' AND version = #{expectedVersion}
+    </update>
+    <update id="markCancelIntent" databaseId="autowonder-source-aware">
+        UPDATE scheduled_task_run SET error = 'CANCEL_PENDING', modifier_id = #{modifierId}, version = version + 1
+        WHERE workspace_id = #{workspaceId} AND id = #{id} AND status NOT IN ('SUCCEEDED','FAILED','TIMED_OUT','CANCELED','SKIPPED')
+          AND version = #{expectedVersion}
+    </update>
+</mapper>

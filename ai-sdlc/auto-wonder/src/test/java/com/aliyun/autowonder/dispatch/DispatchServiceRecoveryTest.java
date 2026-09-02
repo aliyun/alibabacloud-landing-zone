@@ -107,6 +107,19 @@ class DispatchServiceRecoveryTest {
                 eq(0), eq(0L));
     }
 
+    @Test
+    void legacyWorkitemContinueRejectsScheduledRunDispatchBeforeWorkitemQueries() {
+        DispatchDO source = dispatch(55L, DispatchStatus.FAILED, 2);
+        source.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(55L)).thenReturn(source);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.continueDispatch(100L, 200L, 55L, 9L));
+
+        verify(dispatchDao, never()).listByWorkitem(anyLong(), anyLong());
+        verify(dispatchDao, never()).insert(any());
+    }
+
     private DispatchDO dispatch(long id, String status, int attempt) {
         DispatchDO dispatch = new DispatchDO();
         dispatch.setId(id);

@@ -10,6 +10,7 @@ import com.aliyun.autowonder.mcp.dto.McpToolVO;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -48,14 +49,20 @@ public class McpController {
         return withContext(principal, () -> Result.ok(toolService.call(principal, request.getName(), request.getArguments())));
     }
 
-    @PostMapping(value = {"", "/rpc"}, produces = {
+    @PostMapping(value = {
+            "", "/rpc",
+            "/{pathToken}", "/{pathToken}/",
+            "/{pathToken}/rpc", "/{pathToken}/rpc/"
+    }, produces = {
             MediaType.APPLICATION_JSON_VALUE,
             MediaType.TEXT_EVENT_STREAM_VALUE
     })
     public ResponseEntity<?> rpc(@RequestHeader(value = "Authorization", required = false) String authorization,
-                                 @RequestParam(value = "token", required = false) String token,
+                                 @PathVariable(value = "pathToken", required = false) String pathToken,
+                                 @RequestParam(value = "token", required = false) String queryToken,
                                  @RequestHeader(value = "Accept", required = false) String accept,
                                  @RequestBody Map<String, Object> request) {
+        String token = resolveToken(pathToken, queryToken);
         if (!request.containsKey("id")) {
             acknowledgeNotification(authorization, token);
             return ResponseEntity.accepted().build();
@@ -84,6 +91,13 @@ public class McpController {
         } catch (Exception e) {
             return McpRpcResponse.error(id, -32603, e.getMessage());
         }
+    }
+
+    private String resolveToken(String pathToken, String queryToken) {
+        if (pathToken != null && !pathToken.isBlank()) {
+            return pathToken;
+        }
+        return queryToken;
     }
 
     private void acknowledgeNotification(String authorization, String token) {
@@ -144,7 +158,7 @@ public class McpController {
             ctx.setUserId(principal.userId());
             ctx.setTraceId(UUID.randomUUID().toString());
             if (principal.isWorkspaceScoped()) {
-                ctx.setCurrentWorkspaceId(principal.tenantId());
+                ctx.setCurrentWorkspaceId(principal.workspaceId());
                 ctx.setWorkspaceAccessLevel(principal.accessLevel());
             }
             return action.get();

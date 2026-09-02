@@ -34,9 +34,14 @@ public class SkillPackageService {
 
     static final String SOURCE_TYPE_OSS_ZIP = "OSS_ZIP";
     private static final String SKILL_TYPE = "SKILL";
+    private static final String HOOK_TYPE = "HOOK";
     private static final int MAX_ENTRIES = 500;
     static final long MAX_PACKAGE_SIZE = 100L * 1024L * 1024L;
     private static final Set<String> DIRECT_PLUGIN_PROVIDERS = Set.of("claude", "qoder");
+    private static final Set<String> HOOK_TRIGGERS = Set.of(
+            "beforeRepoPrepare", "afterRepoPrepare", "beforeAgentStart", "afterAgentExit",
+            "beforeStep", "afterStep", "beforeTool", "afterTool",
+            "beforeCommit", "beforePush", "onFailure", "cleanup");
 
     private final SkillDao skillDao;
     private final SkillService skillService;
@@ -70,8 +75,7 @@ public class SkillPackageService {
                                             String description, List<String> providers,
                                             String expectedMd5, long tenantId) {
         String normalizedType = normalizePackageType(type);
-        ParsedPackage parsed = "PLUGIN".equals(normalizedType)
-                ? parsePlugin(fileName, bytes, name, description) : parse(fileName, bytes);
+        ParsedPackage parsed = parseByType(normalizedType, fileName, bytes, name, description);
         verifyDigest(bytes, expectedMd5);
         String sha256 = digest(bytes, "SHA-256");
         StoredObject stored = storage.put(bucket,
@@ -133,8 +137,7 @@ public class SkillPackageService {
                                            List<String> providers, long tenantId, long userId,
                                            String idempotencyKey) {
         String normalizedType = normalizePackageType(type);
-        ParsedPackage parsed = "PLUGIN".equals(normalizedType)
-                ? parsePlugin(fileName, bytes, name, description) : parse(fileName, bytes);
+        ParsedPackage parsed = parseByType(normalizedType, fileName, bytes, name, description);
         SkillDO duplicate = skillDao.findByTypeAndName(tenantId, normalizedType, parsed.name);
         if (duplicate != null) {
             if (idempotencyKey != null && !idempotencyKey.isBlank()
@@ -167,7 +170,7 @@ public class SkillPackageService {
             throw new BizException(ErrorCode.SKILL_NOT_FOUND);
         }
         String type = normalizePackageType(existing.getType());
-        ParsedPackage parsed = "PLUGIN".equals(type) ? parsePlugin(fileName, bytes, name, description) : parse(fileName, bytes);
+        ParsedPackage parsed = parseByType(type, fileName, bytes, name, description);
         String packageMd5 = digest(parsed.bytes, "MD5");
         if (existing.getPackageMd5() != null && existing.getPackageMd5().equalsIgnoreCase(packageMd5)) {
             return skillService.get(id);
@@ -257,12 +260,14 @@ public class SkillPackageService {
 
 	private static String normalizePackageType(String type) {
 		String value = type == null ? SKILL_TYPE : type.trim().toUpperCase();
-		if (!SKILL_TYPE.equals(value) && !"PLUGIN".equals(value)) { throw invalid(); }
+		if (!SKILL_TYPE.equals(value) && !"PLUGIN".equals(value) && !HOOK_TYPE.equals(value)) { throw invalid(); }
 		return value;
 	}
 
 	private static String installSpec(String type, List<String> providers) {
-		if (SKILL_TYPE.equals(type)) { return JSON.toJSONString(Map.of("source", SOURCE_TYPE_OSS_ZIP)); }
+		if (SKILL_TYPE.equals(type) || HOOK_TYPE.equals(type)) {
+            return JSON.toJSONString(Map.of("source", SOURCE_TYPE_OSS_ZIP));
+        }
 		if (providers == null || providers.isEmpty()) { throw invalid(); }
 		List<String> normalized = providers.stream().map(value -> value.trim().toLowerCase(Locale.ROOT))
 				.distinct().collect(Collectors.toList());
@@ -296,10 +301,45 @@ public class SkillPackageService {
         return new ParsedPackage(metadata.name, metadata.description, normalizedFileName(metadata.name, suffix), bytes);
     }
 
+    private ParsedPackage parseByType(String type, String fileName, byte[] bytes,
+                                      String name, String description) {
+        if ("PLUGIN".equals(type)) {
+            return parsePlugin(fileName, bytes, name, description);
+        }
+        if (HOOK_TYPE.equals(type)) {
+            return parseHook(fileName, bytes, name, description);
+        }
+        return parse(fileName, bytes);
+    }
+
+    private ParsedPackage parseHook(String fileName, byte[] bytes, String requestedName, String description) {
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_PACKAGE_SIZE) {
+            throw invalid();
+        }
+        String suffix = packageSuffix(fileName);
+        if (!".zip".equals(suffix)) {
+            throw invalid();
+        }
+        String hookYaml = readRootTextFromZip(bytes, "hook.yaml");
+        HookMetadata metadata = parseHookMetadata(hookYaml);
+        if (requestedName != null && !requestedName.isBlank()
+                && !metadata.name.equals(requestedName.trim())) {
+            throw invalid();
+        }
+        String normalizedDescription = description == null || description.isBlank()
+                ? "Runtime lifecycle hook: " + metadata.trigger : description.trim();
+        return new ParsedPackage(metadata.name, normalizedDescription,
+                normalizedFileName(metadata.name, suffix), bytes);
+    }
+
     private String readRootSkillMd(byte[] bytes) {
+        return readRootTextFromZip(bytes, "SKILL.md");
+    }
+
+    private String readRootTextFromZip(byte[] bytes, String rootFileName) {
         int count = 0;
         long inflatedSize = 0;
-        String skillMd = null;
+        String rootText = null;
         byte[] buffer = new byte[8192];
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             ZipEntry entry;
@@ -311,7 +351,7 @@ public class SkillPackageService {
                 String name = entry.getName();
                 validateEntryName(name);
                 if (!entry.isDirectory()) {
-                    ByteArrayOutputStreamWithLimit skillMdBytes = "SKILL.md".equals(name)
+                    ByteArrayOutputStreamWithLimit rootBytes = rootFileName.equals(name)
                             ? new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE) : null;
                     int read;
                     while ((read = zis.read(buffer)) >= 0) {
@@ -319,41 +359,45 @@ public class SkillPackageService {
                         if (inflatedSize > MAX_PACKAGE_SIZE) {
                             throw invalid();
                         }
-                        if (skillMdBytes != null) {
-                            skillMdBytes.write(buffer, 0, read);
+                        if (rootBytes != null) {
+                            rootBytes.write(buffer, 0, read);
                         }
                     }
-                    if (skillMdBytes != null) {
-                        skillMd = new String(skillMdBytes.toByteArray(), StandardCharsets.UTF_8);
+                    if (rootBytes != null) {
+                        rootText = new String(rootBytes.toByteArray(), StandardCharsets.UTF_8);
                     }
                 }
             }
         } catch (IOException e) {
             throw invalid();
         }
-        if (skillMd == null) {
+        if (rootText == null) {
             throw invalid();
         }
-        return skillMd;
+        return rootText;
     }
 
     private String readRootSkillMdFromTarGz(byte[] bytes) {
-        TarGzReadResult result = readTarGz(bytes, true);
-        if (result.skillMd == null) {
+        return readRootTextFromTarGz(bytes, "SKILL.md");
+    }
+
+    private String readRootTextFromTarGz(byte[] bytes, String rootFileName) {
+        TarGzReadResult result = readTarGz(bytes, rootFileName);
+        if (result.rootText == null) {
             throw invalid();
         }
-        return result.skillMd;
+        return result.rootText;
     }
 
     private int validateTarGz(byte[] bytes) {
-        return readTarGz(bytes, false).files;
+        return readTarGz(bytes, null).files;
     }
 
-    private TarGzReadResult readTarGz(byte[] bytes, boolean captureSkillMd) {
+    private TarGzReadResult readTarGz(byte[] bytes, String rootFileName) {
         int entries = 0;
         int files = 0;
         long inflatedSize = 0;
-        String skillMd = null;
+        String rootText = null;
         try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
             byte[] header = new byte[512];
             while (readFully(gis, header) == 512) {
@@ -376,12 +420,12 @@ public class SkillPackageService {
                     if (inflatedSize > MAX_PACKAGE_SIZE) {
                         throw invalid();
                     }
-                    if (captureSkillMd && "SKILL.md".equals(name)) {
+                    if (rootFileName != null && rootFileName.equals(name)) {
                         byte[] content = gis.readNBytes(Math.toIntExact(size));
                         if (content.length != size) {
                             throw invalid();
                         }
-                        skillMd = new String(content, StandardCharsets.UTF_8);
+                        rootText = new String(content, StandardCharsets.UTF_8);
                     } else {
                         skipFully(gis, size);
                     }
@@ -391,7 +435,34 @@ public class SkillPackageService {
         } catch (IOException | ArithmeticException e) {
             throw invalid();
         }
-        return new TarGzReadResult(files, skillMd);
+        return new TarGzReadResult(files, rootText);
+    }
+
+    private HookMetadata parseHookMetadata(String hookYaml) {
+        try {
+            Object parsed = new Yaml().load(hookYaml);
+            if (!(parsed instanceof Map)) {
+                throw invalid();
+            }
+            Map<?, ?> map = (Map<?, ?>) parsed;
+            String schemaVersion = asString(map.get("schemaVersion"));
+            String name = asString(map.get("name"));
+            String version = asString(map.get("version"));
+            String trigger = asString(map.get("trigger"));
+            String command = asString(map.get("command"));
+            if (!"autowonder.hook.v1".equals(schemaVersion)
+                    || name == null || !name.matches("[A-Za-z0-9][A-Za-z0-9._-]*")
+                    || version == null || version.isBlank()
+                    || trigger == null || !HOOK_TRIGGERS.contains(trigger)
+                    || command == null || command.isBlank()) {
+                throw invalid();
+            }
+            return new HookMetadata(name, trigger);
+        } catch (BizException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw invalid();
+        }
     }
 
     private static int readFully(GZIPInputStream in, byte[] buffer) throws IOException {
@@ -573,7 +644,10 @@ public class SkillPackageService {
     private record PackageBytes(String fileName, byte[] bytes) {
     }
 
-    private record TarGzReadResult(int files, String skillMd) {
+    private record TarGzReadResult(int files, String rootText) {
+    }
+
+    private record HookMetadata(String name, String trigger) {
     }
 
     private static class ByteArrayOutputStreamWithLimit extends java.io.ByteArrayOutputStream {

@@ -299,7 +299,6 @@ public class SdlcService {
         if (steps.isEmpty()) {
             throw new BizException(ErrorCode.SDLC_ENABLE_NO_STEPS);
         }
-        validateStepOrder(steps);
         Long entryStepId = steps.get(0).getId();
         int rows = sdlcDao.updateStatus(id, tenantId, "ENABLED", entryStepId, s.getVersion(), userId);
         if (rows == 0) {
@@ -320,17 +319,6 @@ public class SdlcService {
         int rows = sdlcDao.updateStatus(id, tenantId, "DISABLED", null, s.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.SDLC_VERSION_CONFLICT);
-        }
-    }
-
-    private void validateStepOrder(List<SdlcStepDO> steps) {
-        if (steps.get(0).getStepOrder() != 1) {
-            throw new BizException(ErrorCode.SDLC_ENABLE_STEP_ORDER_GAP);
-        }
-        for (int i = 0; i < steps.size() - 1; i++) {
-            if (steps.get(i + 1).getStepOrder() - steps.get(i).getStepOrder() != 1) {
-                throw new BizException(ErrorCode.SDLC_ENABLE_STEP_ORDER_GAP);
-            }
         }
     }
 

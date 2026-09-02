@@ -43,14 +43,14 @@ public class ConversationMcpTokenService {
                 throw new IllegalArgumentException("invalid purpose");
             }
             long conversationId = ((Number) claims.get("subjectId")).longValue();
-            long tenantId = ((Number) claims.get("workspace")).longValue();
-            AgentConversationDO conversation = conversationDao.findById(tenantId, conversationId);
+            long workspaceId = ((Number) claims.get("workspace")).longValue();
+            AgentConversationDO conversation = conversationDao.findById(workspaceId, conversationId);
             if (conversation == null || !"ACTIVE".equals(conversation.getStatus())) {
                 throw new IllegalArgumentException("conversation is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();
             return new McpAccessTokenService.Principal(
-                    tenantId, userId, conversationId, WorkspaceAccessLevel.READ_WRITE,
+                    workspaceId, userId, conversationId, WorkspaceAccessLevel.READ_WRITE,
                     McpAccessTokenService.CredentialType.CONVERSATION);
         } catch (Exception e) {
             throw new BizException(ErrorCode.UNAUTHORIZED);

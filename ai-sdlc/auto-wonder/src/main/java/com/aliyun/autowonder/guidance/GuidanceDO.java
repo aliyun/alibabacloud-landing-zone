@@ -2,6 +2,7 @@ package com.aliyun.autowonder.guidance;
 
 import lombok.Getter;
 import lombok.Setter;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 
 import java.util.Date;
 
@@ -10,6 +11,7 @@ import java.util.Date;
 public class GuidanceDO {
     private Long id;
     private Long tenantId;
+    private String sourceType = ExecutionSourceType.WORKITEM.name();
     private Long workitemId;
     private Long commentId;
     private Long targetAgentId;

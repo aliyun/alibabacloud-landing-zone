@@ -63,6 +63,7 @@ class DispatchServiceRetryTest {
         service.retry(failed(1), 3);
         verify(dispatchDao).insert(argThat(d ->
                 d.getAttempt() == 2 && "200:300:2".equals(d.getIdempotencyKey())
+                        && ExecutionSourceType.WORKITEM.name().equals(d.getSourceType())
                         && DispatchStatus.PENDING.equals(d.getStatus())));
     }
 

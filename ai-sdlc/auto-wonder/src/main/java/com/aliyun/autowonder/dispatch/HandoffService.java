@@ -17,6 +17,7 @@ import com.aliyun.autowonder.workitem.WorkitemEventDO;
 import com.aliyun.autowonder.workitem.WorkitemEventType;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
 import com.aliyun.autowonder.workitem.WorkitemService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -53,6 +54,12 @@ public class HandoffService {
     private final DispatchDao dispatchDao;
     private final AgentDao agentDao;
     private final ApplicationEventPublisher eventPublisher;
+    private ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator;
+
+    @Autowired
+    public void setScheduledTaskRunOrchestrator(ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator) {
+        this.scheduledTaskRunOrchestrator = scheduledTaskRunOrchestrator;
+    }
 
     public HandoffService(WorkitemDao workitemDao, DispatchService dispatchService,
             AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, WorkspaceDao workspaceDao,
@@ -79,6 +86,21 @@ public class HandoffService {
 
     @Transactional
     public HandoffResult handle(long tenantId, long workitemId, long dispatchId, String to, String toType) {
+        DispatchDO source = dispatchDao == null ? null : dispatchDao.findById(dispatchId);
+        if (source != null && source.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            if (!Long.valueOf(tenantId).equals(source.getTenantId())
+                    || source.getWorkitemId() == null || scheduledTaskRunOrchestrator == null) {
+                return HandoffResult.rejected("DISPATCH_NOT_FOUND", "source scheduled dispatch not found");
+            }
+            // Do not trust the legacy frame's workitemId. The durable source dispatch owns the Run id.
+            return scheduledTaskRunOrchestrator.handoff(source, to);
+        }
+        try {
+            dispatchService.requireWorkitemDispatchBoundary(tenantId, workitemId, dispatchId);
+        } catch (BizException invalidSource) {
+            log.info("handoff source dispatch not found or not a workitem dispatch dispatchId={}", dispatchId);
+            return HandoffResult.rejected("DISPATCH_NOT_FOUND", "source dispatch not found for work item");
+        }
         // Serialize handoff against comment-triggered rework on the same workitem.
         // Without this row lock an old dispatch can pass the superseded check,
         // then overwrite the newer rework assignee after the rework transaction commits.
@@ -220,6 +242,7 @@ public class HandoffService {
             DispatchDO source = dispatchDao.findById(dispatchId);
             if (source == null
                     || !Long.valueOf(tenantId).equals(source.getTenantId())
+                    || source.executionSourceType() != ExecutionSourceType.WORKITEM
                     || !Long.valueOf(workitemId).equals(source.getWorkitemId())
                     || source.getAgentId() == null
                     || source.getAgentId() <= 0) {

@@ -4,6 +4,7 @@ import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDO;
 import com.aliyun.autowonder.agent.AgentVersionDao;
+import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import org.junit.jupiter.api.AfterEach;
@@ -946,6 +947,210 @@ class AgentConversationServiceTest {
         assertTrue(content.getValue().contains("Sender nickname: 李四"));
         assertTrue(content.getValue().contains("Sender staffId: staff-2"));
         assertTrue(content.getValue().contains("User message:\n我是谁"));
+    }
+
+    @Test
+    void requestTurnCancelSendsCancelFrameForProcessingTurn() {
+        ConversationRuntimePresence presence = mock(ConversationRuntimePresence.class);
+        when(presence.isExecutorOnline(9L)).thenReturn(true);
+        when(presence.supportsProtocolFeature(9L, "CONVERSATION_TURN_CANCEL")).thenReturn(true);
+        AgentConversationService presenceSvc = serviceWithPresence(presence);
+        presenceSvc.setCancelAckTimeoutSeconds(3600);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+
+        presenceSvc.requestTurnCancel(1L, 77L, 55L);
+
+        verify(transport).sendCancel(conv, 55L);
+        verify(turnDao, never()).updateInboundStatusIfProcessing(anyLong(), anyLong(), anyLong(),
+                anyString(), any());
+        verify(turnDao, never()).insert(any());
+    }
+
+    @Test
+    void requestTurnCancelRejectsWhenRuntimeDoesNotSupportCancelProtocol() {
+        ConversationRuntimePresence presence = mock(ConversationRuntimePresence.class);
+        when(presence.isExecutorOnline(9L)).thenReturn(true);
+        when(presence.supportsProtocolFeature(9L, "CONVERSATION_TURN_CANCEL")).thenReturn(false);
+        AgentConversationService presenceSvc = serviceWithPresence(presence);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> presenceSvc.requestTurnCancel(1L, 77L, 55L));
+
+        assertEquals("10409", ex.getCode());
+        verify(transport, never()).sendCancel(any(), anyLong());
+    }
+
+    @Test
+    void requestTurnCancelFinalizesQueuedTurnWithoutTransport() {
+        AgentConversationService cancelSvc = serviceWithPresence(mock(ConversationRuntimePresence.class));
+        cancelSvc.setConversationTurnEventService(mock(ConversationTurnEventService.class));
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO queued = processingInboundTurn(77L);
+        queued.setStatus("QUEUED");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(queued);
+        when(turnDao.updateStatusIfCurrent(1L, 55L, "QUEUED", "CANCELED", null)).thenReturn(1);
+
+        cancelSvc.requestTurnCancel(1L, 77L, 55L);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateStatusIfCurrent(1L, 55L, "QUEUED", "CANCELED", null);
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "CANCELED".equals(t.getStatus())
+                && "响应已终止".equals(t.getContent())));
+        verify(transport, never()).sendCancel(any(), anyLong());
+    }
+
+    @Test
+    void acknowledgeCanceledTurnPersistsPartialOutputAndPublishesCanceledEvent() {
+        ConversationTurnEventService eventService = mock(ConversationTurnEventService.class);
+        svc.setConversationTurnEventService(eventService);
+        svc.setCancelAckTimeoutSeconds(3600);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO inTurn = processingInboundTurn(77L);
+        inTurn.setExternalMsgId("msg-55");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(inTurn);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "CANCELED", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "CANCELED", null, "部分内容", null);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "CANCELED", null);
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "CANCELED".equals(t.getStatus())
+                && "部分内容".equals(t.getContent())));
+        verify(eventService).publishStatusEvent(1L, 77L, 55L, "canceled");
+        verify(sinkRegistry, never()).resolve(any());
+
+        // ack 已终结轮次，超时兜底不应再次落库。
+        svc.handleCancelAckTimeout(conv, 55L);
+        verify(turnDao, times(1)).insert(any());
+    }
+
+    @Test
+    void acknowledgeCanceledTurnPersistsFallbackWhenPartialOutputIsBlank() {
+        ConversationTurnEventService eventService = mock(ConversationTurnEventService.class);
+        svc.setConversationTurnEventService(eventService);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO inTurn = processingInboundTurn(77L);
+        inTurn.setExternalMsgId("msg-55");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(inTurn);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "CANCELED", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "CANCELED", null, null, null);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "CANCELED".equals(t.getStatus())
+                && "响应已终止".equals(t.getContent())));
+        verify(eventService).publishStatusEvent(1L, 77L, 55L, "canceled");
+        verify(sinkRegistry, never()).resolve(any());
+    }
+
+    @Test
+    void acknowledgeSuccessfulTurnPublishesCompletedStatusEvent() {
+        ConversationTurnEventService eventService = mock(ConversationTurnEventService.class);
+        svc.setConversationTurnEventService(eventService);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO inTurn = processingInboundTurn(77L);
+        inTurn.setExternalMsgId("msg-55");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(inTurn);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
+        commitTransactionSynchronizations();
+
+        verify(eventService).publishStatusEvent(1L, 77L, 55L, "completed");
+    }
+
+    @Test
+    void acknowledgeFailedTurnPublishesFailedStatusEvent() {
+        ConversationTurnEventService eventService = mock(ConversationTurnEventService.class);
+        svc.setConversationTurnEventService(eventService);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO inTurn = processingInboundTurn(77L);
+        inTurn.setExternalMsgId("msg-55");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(inTurn);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "FAILED", "boom"))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "FAILED", "boom", null, null);
+        commitTransactionSynchronizations();
+
+        verify(eventService).publishStatusEvent(1L, 77L, 55L, "failed");
+    }
+
+    @Test
+    void acknowledgeTurnSurvivesTerminalStatusEventPublishFailure() {
+        ConversationTurnEventService eventService = mock(ConversationTurnEventService.class);
+        doThrow(new RuntimeException("push down")).when(eventService)
+                .publishStatusEvent(anyLong(), anyLong(), anyLong(), anyString());
+        svc.setConversationTurnEventService(eventService);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO inTurn = processingInboundTurn(77L);
+        inTurn.setExternalMsgId("msg-55");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(inTurn);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null);
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "SUCCESS".equals(t.getStatus())));
+    }
+
+    @Test
+    void cancelAckTimeoutFinalizesStillProcessingTurnWithFallbackContent() {
+        ConversationTurnEventService eventService = mock(ConversationTurnEventService.class);
+        ConversationRuntimePresence presence = mock(ConversationRuntimePresence.class);
+        when(presence.isExecutorOnline(9L)).thenReturn(true);
+        when(presence.supportsProtocolFeature(9L, "CONVERSATION_TURN_CANCEL")).thenReturn(true);
+        AgentConversationService presenceSvc = serviceWithPresence(presence);
+        presenceSvc.setConversationTurnEventService(eventService);
+        presenceSvc.setCancelAckTimeoutSeconds(3600);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "CANCELED", null))
+                .thenReturn(1);
+
+        presenceSvc.requestTurnCancel(1L, 77L, 55L);
+        commitTransactionSynchronizations();
+        verify(turnDao, never()).insert(any());
+
+        presenceSvc.handleCancelAckTimeout(conv, 55L);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "CANCELED", null);
+        verify(turnDao).insert(argThat(t -> "OUT".equals(t.getDirection())
+                && "CANCELED".equals(t.getStatus())
+                && "响应已终止".equals(t.getContent())));
+        verify(eventService).publishStatusEvent(1L, 77L, 55L, "canceled");
+    }
+
+    private AgentConversationService serviceWithPresence(ConversationRuntimePresence presence) {
+        return new AgentConversationService(convDao, turnDao, transport, executorSelector,
+                agentDao, agentVersionDao, sinkRegistry, presence);
     }
 
     private AgentConversationDO existingConversationWithSession() {

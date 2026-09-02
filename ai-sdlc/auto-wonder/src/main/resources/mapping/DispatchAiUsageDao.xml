@@ -5,13 +5,13 @@
     <insert id="upsert" parameterType="com.aliyun.autowonder.aiusage.DispatchAiUsageDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO dispatch_ai_usage
-            (tenant_id, workitem_id, dispatch_id, agent_id, executor_id, artifact_id,
+            (tenant_id, workitem_id, dispatch_id, agent_id, executor_id, artifact_id, step_id,
              provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-             total_tokens, raw_json, usage_at)
+             reasoning_tokens, credits, total_tokens, raw_json, usage_at)
         VALUES
-            (#{tenantId}, #{workitemId}, #{dispatchId}, #{agentId}, #{executorId}, #{artifactId},
+            (#{tenantId}, #{workitemId}, #{dispatchId}, #{agentId}, #{executorId}, #{artifactId}, #{stepId},
              #{provider}, #{model}, #{inputTokens}, #{outputTokens}, #{cacheReadTokens}, #{cacheWriteTokens},
-             #{totalTokens}, #{rawJson}, #{usageAt})
+             #{reasoningTokens}, #{credits}, #{totalTokens}, #{rawJson}, #{usageAt})
         ON DUPLICATE KEY UPDATE
             id = LAST_INSERT_ID(id),
             workitem_id = VALUES(workitem_id),
@@ -22,6 +22,8 @@
             output_tokens = VALUES(output_tokens),
             cache_read_tokens = VALUES(cache_read_tokens),
             cache_write_tokens = VALUES(cache_write_tokens),
+            reasoning_tokens = VALUES(reasoning_tokens),
+            credits = VALUES(credits),
             total_tokens = VALUES(total_tokens),
             raw_json = VALUES(raw_json),
             usage_at = VALUES(usage_at),
@@ -37,4 +39,16 @@
           AND model = #{model}
           AND artifact_id IS NULL
     </update>
+
+    <select id="listByDispatchIds" resultType="com.aliyun.autowonder.aiusage.DispatchAiUsageDO">
+        SELECT id, tenant_id, workitem_id, dispatch_id, agent_id, executor_id, artifact_id, step_id,
+               provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+               reasoning_tokens, credits, total_tokens, raw_json, usage_at, gmt_create, gmt_modified
+        FROM dispatch_ai_usage
+        WHERE tenant_id = #{tenantId}
+          AND dispatch_id IN
+        <foreach item="did" collection="dispatchIds" open="(" separator="," close=")">
+            #{did}
+        </foreach>
+    </select>
 </mapper>

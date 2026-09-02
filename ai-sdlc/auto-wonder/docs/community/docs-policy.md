@@ -14,6 +14,8 @@ history, not in the published community tree.
 - `docs/THIRD-PARTY-NOTICES.md`: required third-party notices.
 - `docs/openapi-reference.md`: public server API reference.
 - `docs/scheduler-executor-protocol.md`: server/client runtime protocol.
+- `docs/runtime-usage.md`: client runtime command reference and operator QA.
+- `docs/scheduled-task-operations.md`: staged rollout runbook for scheduled tasks.
 - `docs/mcp-memory-management.md`: MCP memory tools.
 - `docs/mcp-skill-package-upload.md`: MCP Skill package tools.
 - `docs/autowonder-s3-storage.md`: optional standard S3 backend configuration.
@@ -25,12 +27,11 @@ history, not in the published community tree.
 - `docs/community/upstream-sync-log.md`: verified upstream baselines and history.
 - `docs/community/docs-policy.md`: this retention policy.
 - `docs/community/squad-template-seed.md`: template data and deployment contract.
-- `docs/skills/`: published product Skills (e.g. execution optimizer); sync from
-  master as-is.
 
-The deployment Skill under `skills/deploying-autowonder-on-alibaba-cloud/` owns
-the detailed Alibaba Cloud deployment, operations, troubleshooting, acceptance,
-rollback, and teardown documentation.
+All published product Skills are managed under the root `skills/` directory
+(e.g. deploying, upgrading, execution optimizer). The `skills/` directory and
+the root `.agents/` directory are both part of the community distribution and
+synced to the external GitHub repository.
 
 ## Excluded Documents
 

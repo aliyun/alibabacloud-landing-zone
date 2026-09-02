@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Modal, Form, Select, message } from 'antd';
+import { Modal, Form, Select, DatePicker, message } from 'antd';
+import type { Dayjs } from 'dayjs';
 import { listSquads, getSquadMembers } from '@/features/squad/api';
 import type { SquadMember } from '@/features/squad/api';
+import { ApiError } from '@/shared/types/common';
 import { useAssignWorkitem } from '../hooks';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import {
@@ -53,6 +55,9 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
           id: workitemId,
           assigneeRef: values.agentId,
           squadId: values.squadId,
+          scheduledStartAt: values.scheduledStartAt
+            ? (values.scheduledStartAt as Dayjs).toISOString()
+            : undefined,
         });
         message.success(hasSdlc ? '已重新指派' : '已启动交付');
         if (!hasSdlc) {
@@ -60,8 +65,8 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
         }
         form.resetFields();
         onClose();
-      } catch {
-        // ApiError already surfaced by interceptor
+      } catch (err) {
+        message.error(err instanceof ApiError ? err.message : '启动交付失败，请稍后重试');
       }
     });
   };
@@ -97,6 +102,14 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
               value: member.agentId,
               label: member.roleCode ? `${member.agentName} (${member.roleCode})` : member.agentName,
             }))}
+          />
+        </Form.Item>
+        <Form.Item name="scheduledStartAt" label="计划执行时间（可选）">
+          <DatePicker
+            showTime
+            style={{ width: '100%' }}
+            placeholder="留空则立即执行"
+            disabledDate={(current) => !!current && current.isBefore(new Date(), 'minute')}
           />
         </Form.Item>
       </Form>

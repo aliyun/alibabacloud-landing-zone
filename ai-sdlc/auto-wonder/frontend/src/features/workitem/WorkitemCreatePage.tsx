@@ -1,6 +1,10 @@
-import { Card, Form, Input, Select, Button, message } from 'antd';
+import { Card, Form, Input, Select, Button, DatePicker, message } from 'antd';
+import type { Dayjs } from 'dayjs';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useCreateWorkitem } from './hooks';
+import { listSquads, getSquadMembers } from '@/features/squad/api';
+import type { SquadMember } from '@/features/squad/api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { TextArea } = Input;
@@ -10,12 +14,27 @@ export function WorkitemCreatePage() {
   const [form] = Form.useForm();
   const createMut = useCreateWorkitem();
   const accessCommand = useAccessCommand();
+  const squadId = Form.useWatch('squadId', form);
+  const agentId = Form.useWatch('agentId', form);
+
+  const { data: squads } = useQuery({
+    queryKey: ['squads', 'workitem-create'],
+    queryFn: () => listSquads({ pageNum: 1, pageSize: 100 }),
+  });
+  const { data: members = [], isFetching: membersLoading } = useQuery({
+    queryKey: ['squad-members', squadId],
+    queryFn: () => getSquadMembers(squadId),
+    enabled: !!squadId,
+  });
 
   const handleSubmit = (values: {
     workType: string;
     title: string;
     contentMd: string;
     priority: number;
+    squadId?: number;
+    agentId?: number;
+    scheduledStartAt?: Dayjs;
   }) => {
     accessCommand('READ_WRITE', '创建工单', async () => {
       try {
@@ -24,6 +43,16 @@ export function WorkitemCreatePage() {
           title: values.title,
           contentMd: values.contentMd,
           priority: values.priority,
+          ...(values.agentId != null
+            ? {
+                assigneeType: 'AGENT',
+                assigneeRef: values.agentId,
+                ...(values.squadId != null ? { squadId: values.squadId } : {}),
+                ...(values.scheduledStartAt
+                  ? { scheduledStartAt: values.scheduledStartAt.toISOString() }
+                  : {}),
+              }
+            : {}),
         });
         message.success('工单创建成功');
         navigate(`/workitems/${wi.id}`);
@@ -61,6 +90,37 @@ export function WorkitemCreatePage() {
             ]}
           />
         </Form.Item>
+        <Card type="inner" title="定时交付（可选）" style={{ marginBottom: 24 }}>
+          <Form.Item name="squadId" label="交付小队">
+            <Select
+              allowClear
+              placeholder="选择后由数字员工交付"
+              options={(squads?.list || []).map((s) => ({ value: s.id, label: s.name }))}
+              onChange={() => form.setFieldValue('agentId', undefined)}
+            />
+          </Form.Item>
+          <Form.Item name="agentId" label="执行 Agent">
+            <Select
+              allowClear
+              placeholder={squadId ? '选择执行 Agent' : '请先选择交付小队'}
+              disabled={!squadId}
+              loading={membersLoading}
+              options={members.map((member: SquadMember) => ({
+                value: member.agentId,
+                label: member.roleCode ? `${member.agentName} (${member.roleCode})` : member.agentName,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="scheduledStartAt" label="定时执行时间">
+            <DatePicker
+              showTime
+              style={{ width: '100%' }}
+              placeholder="留空则立即执行"
+              disabled={!agentId}
+              disabledDate={(current) => !!current && current.isBefore(new Date(), 'minute')}
+            />
+          </Form.Item>
+        </Card>
         <Form.Item>
           <Button
             type="primary"

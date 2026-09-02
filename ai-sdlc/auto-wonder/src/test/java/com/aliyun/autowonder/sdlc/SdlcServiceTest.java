@@ -563,7 +563,7 @@ class SdlcServiceTest {
     }
 
     @Test
-    void enable_step_order_gap_throws() {
+    void enable_step_order_gap_succeeds() {
         SdlcDO s = sdlc(9L, "DRAFT");
         when(sdlcDao.findById(9L)).thenReturn(s);
         SdlcStepDO s1 = new SdlcStepDO();
@@ -573,8 +573,14 @@ class SdlcServiceTest {
         s2.setId(2L); s2.setSdlcId(9L); s2.setStepOrder(3);
         s2.setName("b"); s2.setHandlerType("HUMAN");
         when(stepDao.listBySdlc(9L)).thenReturn(List.of(s1, s2));
-        BizException ex = assertThrows(BizException.class, () -> service.enable(9L, null, 100L, 7L));
-        assertEquals("16005", ex.getCode());
+        when(sdlcDao.updateStatus(eq(9L), eq(100L), eq("ENABLED"), eq(1L), eq(0), eq(7L))).thenReturn(1);
+        SdlcDO enabled = sdlc(9L, "ENABLED");
+        enabled.setEntryStepId(1L);
+        when(sdlcDao.findById(9L)).thenReturn(s).thenReturn(enabled);
+
+        SdlcVO vo = service.enable(9L, null, 100L, 7L);
+        assertEquals("ENABLED", vo.getStatus());
+        verify(sdlcDao).updateStatus(9L, 100L, "ENABLED", 1L, 0, 7L);
     }
 
     @Test

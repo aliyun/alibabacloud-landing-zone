@@ -4,6 +4,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.Collection;
+import java.util.Date;
 import java.util.List;
 
 @Mapper
@@ -12,6 +13,9 @@ public interface WorkitemDao {
     void insert(WorkitemDO w);
     WorkitemDO findById(@Param("id") Long id);
     WorkitemDO findByIdForUpdate(@Param("id") Long id, @Param("tenantId") Long tenantId);
+    List<WorkitemDO> listByOrigin(@Param("tenantId") Long tenantId,
+                                  @Param("originType") String originType,
+                                  @Param("originId") Long originId);
     List<WorkitemDO> list(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
             @Param("statusNodeId") Long statusNodeId,
@@ -22,6 +26,7 @@ public interface WorkitemDao {
             @Param("mineScope") String mineScope,
             @Param("currentUserId") Long currentUserId,
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
+            @Param("tag") String tag,
             @Param("offset") int offset, @Param("limit") int limit);
     long count(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
@@ -32,7 +37,8 @@ public interface WorkitemDao {
             @Param("pendingDecisionOnly") boolean pendingDecisionOnly,
             @Param("mineScope") String mineScope,
             @Param("currentUserId") Long currentUserId,
-            @Param("keyword") String keyword, @Param("keywordId") Long keywordId);
+            @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
+            @Param("tag") String tag);
     int updateContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("title") String title, @Param("contentMd") String contentMd,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
@@ -64,5 +70,20 @@ public interface WorkitemDao {
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int updateSdlcAndStep(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("sdlcId") Long sdlcId, @Param("currentStepId") Long currentStepId,
+            @Param("version") Integer version, @Param("modifierId") Long modifierId);
+
+    /** Due agent-assigned workitems whose scheduled_start_at has arrived, oldest first. */
+    List<WorkitemDO> findScheduledDue(@Param("now") Date now, @Param("limit") int limit);
+    /** CAS-clear a due scheduled_start_at; rows already cleared or updated return 0. */
+    int clearScheduledStartAt(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("version") Integer version);
+    /** CAS-clear a scheduled_start_at that actually fired, stamping scheduled_start_triggered_at. */
+    int fireScheduledStartAt(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("version") Integer version);
+    int updateScheduledStartAt(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("scheduledStartAt") Date scheduledStartAt,
+            @Param("version") Integer version, @Param("modifierId") Long modifierId);
+    int updateTags(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("tags") String tagsJson,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
 }

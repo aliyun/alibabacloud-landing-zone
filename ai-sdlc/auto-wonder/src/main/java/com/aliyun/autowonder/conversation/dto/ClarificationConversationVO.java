@@ -15,6 +15,7 @@ public class ClarificationConversationVO {
     private String status;
     private boolean executorOnline;
     private boolean streamingSupported;
+    private boolean cancelSupported;
     private String cliSessionRef;
     private String processingStatus;
     private Long processingTurnId;

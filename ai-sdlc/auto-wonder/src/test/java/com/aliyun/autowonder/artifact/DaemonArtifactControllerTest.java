@@ -17,6 +17,9 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.test.util.ReflectionTestUtils;
+import com.aliyun.autowonder.scheduledtask.compat.ScheduledTaskCapabilityGuard;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 
 import java.util.List;
 import java.util.Map;
@@ -35,6 +38,7 @@ class DaemonArtifactControllerTest {
     private com.aliyun.autowonder.audit.AuditLogService auditLogService;
     private DispatchAiUsageService usageService;
     private DaemonArtifactController controller;
+    private ScheduledTaskCapabilityGuard capabilityGuard;
 
     @BeforeEach
     void setUp() {
@@ -46,12 +50,29 @@ class DaemonArtifactControllerTest {
         evolutionModeResolver = mock(EvolutionModeResolverLiteService.class);
         auditLogService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
         usageService = mock(DispatchAiUsageService.class);
+        capabilityGuard = mock(ScheduledTaskCapabilityGuard.class);
         lenient().when(evolutionModeResolver.resolve(anyLong(), anyLong())).thenReturn(EvolutionMode.ASSISTED);
         OssProperties props = new OssProperties();
         props.setArtifactBucket("test-artifact-bucket");
         controller = new DaemonArtifactController(authenticator, storage, artifactService,
                 memorySedimentation, evolutionDeltaIngestion, evolutionModeResolver, auditLogService, usageService,
                 props);
+        ReflectionTestUtils.setField(controller, "capabilityGuard", capabilityGuard);
+    }
+
+    @Test
+    void scheduledUploadFailsBeforeStorageOrScheduledServicesWhenUnavailable() throws Exception {
+        when(authenticator.authenticate(99L, "tok")).thenReturn(
+                DaemonUploadAuthenticator.AuthResult.success(10L, 20L, 30L, null,
+                        ExecutionSourceType.SCHEDULED_TASK_RUN));
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("daemon");
+
+        BizException failure = assertThrows(BizException.class, () -> controller.upload(99L, "tok", null,
+                null, new MultipartFile[]{new MockMultipartFile("files", "x", null, new byte[]{1})}));
+
+        assertEquals("30006", failure.getCode());
+        verifyNoInteractions(storage, artifactService, evolutionModeResolver);
     }
 
     @Test
@@ -105,6 +126,7 @@ class DaemonArtifactControllerTest {
                         && "ARTIFACT".equals(record.getModule())
                         && "UPLOAD_ARTIFACT".equals(record.getAction())));
         verify(usageService).ingestArtifact(eq(10L), eq(20L), eq(99L), any(), eq("deliverables/report.md"), eq("oss://bucket/k"), any(byte[].class));
+        verifyNoInteractions(capabilityGuard);
     }
 
     @Test

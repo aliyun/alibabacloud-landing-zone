@@ -449,13 +449,15 @@ class WorkitemCommentTest {
 
     @Test
     void listCommentsReturnsVOs() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemCommentDO c = new WorkitemCommentDO();
         c.setId(1L);
         c.setWorkitemId(5L);
         c.setAuthorType("HUMAN");
         c.setAuthorRef(7L);
         c.setContentMd("hi");
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of(c));
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of(c));
 
         List<CommentVO> vos = service.listComments(5L);
 
@@ -465,13 +467,15 @@ class WorkitemCommentTest {
 
     @Test
     void unifiedTimelineResolvesHumanCommentAuthorName() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemCommentDO c = new WorkitemCommentDO();
         c.setId(1L);
         c.setWorkitemId(5L);
         c.setAuthorType("HUMAN");
         c.setAuthorRef(7L);
         c.setContentMd("hi");
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of(c));
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of(c));
         when(eventDao.listByWorkitem(5L)).thenReturn(List.of());
         UserDO user = new UserDO();
         user.setId(7L);
@@ -487,6 +491,8 @@ class WorkitemCommentTest {
 
     @Test
     void unifiedTimelineReturnsNewestItemsFirst() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemCommentDO olderComment = new WorkitemCommentDO();
         olderComment.setId(1L);
         olderComment.setWorkitemId(5L);
@@ -498,7 +504,7 @@ class WorkitemCommentTest {
         newerEvent.setEventType("AONE_UPDATE");
         newerEvent.setActorType("SYSTEM");
         newerEvent.setGmtCreate(new Date(2_000L));
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of(olderComment));
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of(olderComment));
         when(eventDao.listByWorkitem(5L)).thenReturn(List.of(newerEvent));
 
         List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
@@ -510,6 +516,8 @@ class WorkitemCommentTest {
 
     @Test
     void unifiedTimelineFormatsAssignEventWithHumanTargetDisplayName() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemEventDO e = new WorkitemEventDO();
         e.setId(2L);
         e.setEventType("ASSIGN");
@@ -518,7 +526,7 @@ class WorkitemCommentTest {
         e.setActorType("AGENT");
         e.setActorRef(10001L);
         e.setDetailJson("{\"fromType\":\"AGENT\",\"toType\":\"HUMAN\"}");
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
         when(eventDao.listByWorkitem(5L)).thenReturn(List.of(e));
 
         AgentDO agent = new AgentDO();
@@ -541,6 +549,8 @@ class WorkitemCommentTest {
 
     @Test
     void unifiedTimelineShowsHumanOperatorOnStatusChangeEvent() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemEventDO e = new WorkitemEventDO();
         e.setId(3L);
         e.setEventType("STATUS_CHANGE");
@@ -548,7 +558,7 @@ class WorkitemCommentTest {
         e.setToVal("closed");
         e.setActorType("HUMAN");
         e.setActorRef(10000L);
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
         when(eventDao.listByWorkitem(5L)).thenReturn(List.of(e));
         UserDO user = new UserDO();
         user.setId(10000L);
@@ -564,6 +574,8 @@ class WorkitemCommentTest {
 
     @Test
     void unifiedTimelineOmitsOperatorForSystemActorAssignEvent() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemEventDO e = new WorkitemEventDO();
         e.setId(4L);
         e.setEventType("ASSIGN");
@@ -572,7 +584,7 @@ class WorkitemCommentTest {
         e.setActorType("SYSTEM");
         e.setActorRef(0L);
         e.setDetailJson("{\"fromType\":\"AGENT\",\"toType\":\"AGENT\"}");
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
         when(eventDao.listByWorkitem(5L)).thenReturn(List.of(e));
 
         List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
@@ -583,13 +595,15 @@ class WorkitemCommentTest {
 
     @Test
     void unifiedTimelineHidesExternalCommentTimestampAndShowsChineseAction() {
+        WorkitemDO owner = new WorkitemDO(); owner.setId(5L); owner.setTenantId(100L);
+        when(workitemDao.findById(5L)).thenReturn(owner);
         WorkitemEventDO event = new WorkitemEventDO();
         event.setId(2L);
         event.setEventType("EXTERNAL_COMMENT_AUTHOR_CHANGE");
         event.setFromVal("126033914");
         event.setToVal("1785923204000");
         event.setActorType("SYSTEM");
-        when(commentDao.listByWorkitem(5L)).thenReturn(List.of());
+        when(commentDao.listByWorkitem(100L, 5L)).thenReturn(List.of());
         when(eventDao.listByWorkitem(5L)).thenReturn(List.of(event));
 
         List<TimelineItemVO> items = service.getUnifiedTimeline(5L);

@@ -1,8 +1,10 @@
 package com.aliyun.autowonder.skill;
 
+import com.alibaba.fastjson.JSON;
 import com.aliyun.autowonder.agent.AgentSkillDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
@@ -39,7 +41,7 @@ class SkillServiceTest {
         CreateSkillRequest req = new CreateSkillRequest();
         req.setType("MCP");
         req.setName("my-server");
-        req.setInstallSpec("{\"cmd\":\"node\"}");
+        req.setInstallSpec("{\"transport\":\"stdio\",\"command\":\"node\"}");
         req.setDescription("desc");
 
         SkillVO vo = service.create(req, 1L, 2L);
@@ -140,6 +142,18 @@ class SkillServiceTest {
         CreateSkillRequest req = new CreateSkillRequest();
         req.setType("PLUGIN");
         req.setName("team-tools");
+
+        BizException ex = assertThrows(BizException.class, () -> service.create(req, 1L, 2L));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+        verify(skillDao, never()).insert(any());
+    }
+
+    @Test
+    void genericCreateRejectsHookWithoutValidatedPackage() {
+        CreateSkillRequest req = new CreateSkillRequest();
+        req.setType("HOOK");
+        req.setName("before-step");
 
         BizException ex = assertThrows(BizException.class, () -> service.create(req, 1L, 2L));
 
@@ -257,5 +271,34 @@ class SkillServiceTest {
         verify(skillDao, never()).update(anyLong(), anyLong(), any(), any(), any(), any(), anyInt(), anyLong());
         verify(skillDao).updatePackage(eq(1L), eq(1L), eq("SKILL"), eq("\"new\""), eq("old"), eq("d"),
                 eq("OSS_ZIP"), eq("oss://skills/new.zip"), isNull(), isNull(), eq("abc"), eq(3), eq(2L));
+    }
+
+    @Test
+    void createTreatsStringPrivateMarkerAsSecretForHeadersAndEnv() {
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        when(secretCrypto.encrypt("header-secret")).thenReturn("kc:v1:header");
+        when(secretCrypto.encrypt("env-secret")).thenReturn("kc:v1:env");
+        service = new SkillService(skillDao, agentSkillDao, userDao, secretCrypto);
+        when(skillDao.findByTypeAndName(1L, "MCP", "secure-http")).thenReturn(null);
+        when(skillDao.findByTypeAndName(1L, "MCP", "secure-stdio")).thenReturn(null);
+
+        CreateSkillRequest http = new CreateSkillRequest();
+        http.setType("MCP");
+        http.setName("secure-http");
+        http.setInstallSpec("{\"transport\":\"http\",\"url\":\"https://mcp.example.test\",\"headers\":{\"Authorization\":{\"secret\":\"true\",\"value\":\"header-secret\"}}}");
+        service.create(http, 1L, 2L);
+
+        CreateSkillRequest stdio = new CreateSkillRequest();
+        stdio.setType("MCP");
+        stdio.setName("secure-stdio");
+        stdio.setInstallSpec("{\"transport\":\"stdio\",\"command\":\"server\",\"env\":{\"TOKEN\":{\"secret\":\"true\",\"value\":\"env-secret\"}}}");
+        service.create(stdio, 1L, 2L);
+
+        ArgumentCaptor<SkillDO> stored = ArgumentCaptor.forClass(SkillDO.class);
+        verify(skillDao, times(2)).insert(stored.capture());
+        assertEquals("kc:v1:header", JSON.parseObject(stored.getAllValues().get(0).getInstallSpec())
+                .getJSONObject("headers").getJSONObject("Authorization").getString("ref"));
+        assertEquals("kc:v1:env", JSON.parseObject(stored.getAllValues().get(1).getInstallSpec())
+                .getJSONObject("env").getJSONObject("TOKEN").getString("ref"));
     }
 }

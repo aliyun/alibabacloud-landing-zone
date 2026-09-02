@@ -9,6 +9,7 @@ export interface PlatformBranding {
   mcpBaseUrl: string;
   recommendedRuntimeVersion: string;
   deploymentVersion: string;
+  communityEdition: boolean;
   canManage: boolean;
 }
 
@@ -42,8 +43,9 @@ export const DEFAULT_BRANDING: PlatformBranding = {
   primaryColor: '#f97316',
   domain: null,
   mcpBaseUrl: '',
-  recommendedRuntimeVersion: '0.2.138',
+  recommendedRuntimeVersion: '0.2.150',
   deploymentVersion: 'x.x.x',
+  communityEdition: false,
   canManage: false,
 };
 

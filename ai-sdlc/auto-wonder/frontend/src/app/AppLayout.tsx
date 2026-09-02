@@ -7,7 +7,7 @@ import { Sidebar, NAV_GROUPS, navItemMatchesPath } from './Sidebar';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
 import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
-import { logout } from '@/features/auth/api';
+import { logout, myWorkspacesQueryKey } from '@/features/auth/api';
 import { apiClient } from '@/shared/api/client';
 import type { WorkspaceInfo, SwitchWorkspaceResponse, UserInfo } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
@@ -133,7 +133,7 @@ export function AppLayout() {
   });
 
   const { data: workspaces } = useQuery({
-    queryKey: ['workspaces', 'mine'],
+    queryKey: myWorkspacesQueryKey(user?.id ?? null),
     queryFn: async () => {
       const resp = await apiClient.get<WorkspaceInfo[]>('/api/workspaces/mine');
       return resp.data;
@@ -228,6 +228,7 @@ export function AppLayout() {
       try { await logout(refreshToken); } catch { /* ignore */ }
     }
     clear();
+    queryClient.clear();
     navigate('/login');
   };
 

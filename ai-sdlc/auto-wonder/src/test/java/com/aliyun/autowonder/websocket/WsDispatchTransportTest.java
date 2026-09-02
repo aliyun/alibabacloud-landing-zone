@@ -2,6 +2,7 @@ package com.aliyun.autowonder.websocket;
 
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchCheckpointService;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.dispatch.ResumeDescriptor;
 import com.aliyun.autowonder.dispatch.ResumeCheckpointCandidate;
 import com.aliyun.autowonder.redis.RedisManager;
@@ -42,13 +43,36 @@ class WsDispatchTransportTest {
         d.setTenantId(100L);
         d.setWorkitemId(500L);
         d.setSdlcStepId(400164L);
+        d.setAgentId(7L);
+        d.setAgentVersionId(8L);
+        d.setIdempotencyKey("dispatch-identity");
         d.setAttempt(1);
         return d;
     }
 
     private TaskPackageResult pkg() {
+        return pkg(true);
+    }
+
+    private TaskPackageResult pkg(boolean requiresHookProtocol) {
+		return pkg(requiresHookProtocol, false);
+	}
+
+	private TaskPackageResult pkg(boolean requiresHookProtocol, boolean requiresToolHookProtocol) {
         return new TaskPackageResult("oss-ref", "abc123", 2048L, "https://oss/dl",
-                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                "autowonder-server", "sha256:key", "signed-envelope", "ed25519",
+                "public-key", "2026-08-07T04:00:00Z", true, false, false,
+                requiresHookProtocol, requiresToolHookProtocol);
+    }
+
+    private TaskPackageResult unsignedHookPkg() {
+        return new TaskPackageResult("oss-ref", "abc123", 2048L, "https://oss/dl",
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                null, null, null, null, null, null,
+                true, false, false, true);
     }
 
     @Test
@@ -74,9 +98,16 @@ class WsDispatchTransportTest {
         assertTrue(sent.contains("\"tenantId\":100"));
         assertTrue(sent.contains("\"workitemId\":500"));
         assertTrue(sent.contains("\"sdlcStepId\":400164"));
+        assertTrue(sent.contains("\"agentId\":7"));
+        assertTrue(sent.contains("\"agentVersionId\":8"));
+        assertTrue(sent.contains("\"idempotencyKey\":\"dispatch-identity\""));
         assertTrue(sent.contains("\"attempt\":1"));
         assertTrue(sent.contains("\"checksum\":\"sha256:deadbeef"));
         assertTrue(sent.contains("\"checksumScope\":\"zip_archive\""));
+        assertTrue(sent.contains("\"issuer\":\"autowonder-server\""));
+        assertTrue(sent.contains("\"signatureAlgorithm\":\"ed25519\""));
+        assertTrue(sent.contains("\"allowCommit\":true"));
+        assertTrue(sent.contains("\"allowPush\":false"));
         assertTrue(sent.contains("\"packageId\":"));
         assertTrue(sent.contains("\"packageRefreshPath\":\"/api/daemon/dispatches/99/package-url\""));
         assertTrue(sent.contains("\"artifactUploadPath\":\"/api/daemon/dispatches/99/artifacts\""));
@@ -86,6 +117,72 @@ class WsDispatchTransportTest {
         order.verify(tokens).issue(any());
         order.verify(basic).sendText(anyString());
         verify(redisManager, never()).publish(anyString(), anyString());
+    }
+
+    @Test
+    void warnsButDispatchesWhenHookProtocolMissing() {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.TASK_PACKAGE_SIGNATURE_V1))
+                .thenReturn(true);
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.TASK_PACKAGE_HOOKS_V1))
+                .thenReturn(false);
+        when(sessionRegistry.findByExecutorId(5L)).thenReturn(null);
+
+        assertDoesNotThrow(() -> transport.dispatch(dispatch(99L, 5L), pkg()));
+
+        verify(redisManager).publish(eq("node:dispatch:broadcast"), anyString());
+    }
+
+    @Test
+    void rejectsOnlyToolHookPackagesWhenExecutorLacksToolHookProtocol() {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.TASK_PACKAGE_SIGNATURE_V1))
+                .thenReturn(true);
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.TASK_PACKAGE_HOOKS_V1))
+                .thenReturn(true);
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.TASK_PACKAGE_TOOL_HOOKS_V1))
+                .thenReturn(false);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> transport.dispatch(dispatch(99L, 5L), pkg(true, true)));
+
+        assertTrue(error.getMessage().contains("blocking tool hooks"));
+        verify(redisManager, never()).publish(anyString(), anyString());
+    }
+
+    @Test
+    void dispatchesUnsignedHookPackageWithoutProtocolNegotiation() {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        when(sessionRegistry.findByExecutorId(5L)).thenReturn(null);
+
+        assertDoesNotThrow(() -> transport.dispatch(dispatch(99L, 5L), unsignedHookPkg()));
+
+        ArgumentCaptor<String> frame = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq("node:dispatch:broadcast"), frame.capture());
+        verifyNoInteractions(presence);
+        assertFalse(frame.getValue().contains("signatureRef"));
+        assertFalse(frame.getValue().contains("signatureAlgorithm"));
+        assertTrue(frame.getValue().contains("\"checksumScope\":\"zip_archive\""));
+    }
+
+    @Test
+    void legacyExecutorWithoutAnyProtocolStillReceivesPackageWithoutToolHooks() {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        when(sessionRegistry.findByExecutorId(5L)).thenReturn(null);
+
+        assertDoesNotThrow(() -> transport.dispatch(dispatch(99L, 5L), pkg(false)));
+
+        verify(redisManager).publish(eq("node:dispatch:broadcast"), anyString());
+        verify(presence, never()).supportsProtocolFeature(
+                5L, WsDispatchTransport.TASK_PACKAGE_TOOL_HOOKS_V1);
     }
 
     @Test
@@ -144,5 +241,21 @@ class WsDispatchTransportTest {
         transport.dispatch(dispatch(99L, 5L), pkg());
 
         verify(redisManager).publish(eq("node:dispatch:broadcast"), anyString());
+    }
+
+    @Test
+    void scheduledDispatchKeepsLegacyWorkitemIdWithoutAddingSourceTypeToWire() {
+        DispatchDO scheduled = dispatch(99L, 5L);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        scheduled.setWorkitemId(41001L);
+        when(sessionRegistry.findByExecutorId(5L)).thenReturn(null);
+
+        transport.dispatch(scheduled, pkg());
+
+        ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq("node:dispatch:broadcast"), json.capture());
+        com.alibaba.fastjson.JSONObject frame = com.alibaba.fastjson.JSON.parseObject(json.getValue());
+        assertEquals(41001L, frame.getLongValue("workitemId"));
+        assertFalse(frame.containsKey("sourceType"));
     }
 }

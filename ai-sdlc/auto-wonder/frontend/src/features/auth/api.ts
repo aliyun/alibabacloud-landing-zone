@@ -26,3 +26,9 @@ export async function register(params: RegisterParams): Promise<UserInfo> {
 export async function logout(refreshToken: string): Promise<void> {
   await apiClient.post('/api/auth/logout', { refreshToken });
 }
+
+// Keyed by user id so a newly logged-in account never reads the previous
+// account's cached workspace list.
+export function myWorkspacesQueryKey(userId: number | null) {
+  return ['workspaces', 'mine', userId] as const;
+}

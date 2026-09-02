@@ -9,6 +9,7 @@ import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.guidance.InteractionWorkflowService;
 import com.aliyun.autowonder.skill.RuntimeMcpConnectionTestService;
 import javax.websocket.Session;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import static org.mockito.Mockito.*;
 
@@ -81,6 +82,6 @@ class InboundFrameRouterConversationTest {
         router.route(es, "{\"type\":\"MCP_CONNECTION_TEST_RESULT\",\"testId\":\"test-1\","
                 + "\"success\":true,\"message\":\"连接成功\",\"durationMs\":12}");
 
-        verify(runtimeMcpConnectionTestService).complete(1L, 9L, "test-1", true, "连接成功", 12L);
+        verify(runtimeMcpConnectionTestService).complete(1L, 9L, "test-1", true, "连接成功", 12L, List.of());
     }
 }

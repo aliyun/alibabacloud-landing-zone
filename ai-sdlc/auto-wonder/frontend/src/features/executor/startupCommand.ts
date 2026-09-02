@@ -51,10 +51,12 @@ export function buildStartupCommand(
   os: StartupOs = 'posix',
 ): string {
   const provider = resolveProvider(clientKind);
-  const qoderFlags = (provider === 'qoder' || provider === 'qodercn') && qoder
+  const isQoderFamily = provider === 'qoder' || provider === 'qodercn';
+  const qoderFlags = isQoderFamily && qoder
     ? ` --model ${qoder.model} --reasoning-effort ${qoder.reasoningEffort} --context-window ${qoder.contextWindow}`
     : '';
-  const base = `npx -y autowonder@${runtimeVersion} connect --ws-url ${buildWsUrl(mcpBaseUrl)} --token ${token} --executor-id ${executorId} --provider ${provider} --memory-mode ${memoryMode}${qoderFlags}`;
+  const tokenAwareFlag = isQoderFamily ? ' --token-aware-enable' : '';
+  const base = `npx -y autowonder@${runtimeVersion} connect --ws-url ${buildWsUrl(mcpBaseUrl)} --token ${token} --executor-id ${executorId} --provider ${provider} --memory-mode ${memoryMode}${qoderFlags}${tokenAwareFlag}`;
   if (os === 'windows') {
     // Session-level UTF-8 console so Chinese progress output is not mangled on CP936 systems;
     // affects only the launched process session, never the user's system configuration.

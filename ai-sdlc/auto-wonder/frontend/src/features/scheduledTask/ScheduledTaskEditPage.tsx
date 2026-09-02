@@ -1,0 +1,14 @@
+import { Button, Card, Form, Input, Select, Space, Spin } from 'antd';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useNavigate, useParams } from 'react-router-dom';
+import { getScheduledTask, updateScheduledTask } from './api';
+import type { UpdateScheduledTaskBody } from './types';
+import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+
+export function ScheduledTaskEditPage() {
+  const id = Number(useParams<{ id: string }>().id); const navigate = useNavigate(); const access = useAccessCommand(); const [form] = Form.useForm<UpdateScheduledTaskBody>();
+  const task = useQuery({ queryKey: ['scheduled-tasks', id], queryFn: () => getScheduledTask(id), enabled: Number.isFinite(id) });
+  const save = useMutation({ mutationFn: (body: UpdateScheduledTaskBody) => updateScheduledTask(id, body), onSuccess: () => navigate(`/scheduled-tasks/${id}`) });
+  if (task.isLoading) return <Spin style={{ display: 'block', margin: 80 }} />; if (!task.data) return null;
+  return <Card title="编辑 定时任务" style={{ maxWidth: 760, margin: '0 auto' }}><Form form={form} layout="vertical" initialValues={task.data} onFinish={(value) => access('READ_WRITE', '编辑定时任务', () => { const current = task.data!; save.mutate({ name: value.name ?? current.name, instructionMd: value.instructionMd ?? current.instructionMd, squadId: current.squadId, initialAgentId: current.initialAgentId, scheduleType: current.scheduleType, runAt: current.runAt ?? undefined, cronExpression: value.cronExpression ?? current.cronExpression ?? undefined, timezone: current.timezone, sessionMode: value.sessionMode ?? current.sessionMode, overlapPolicy: value.overlapPolicy ?? current.overlapPolicy, misfirePolicy: value.misfirePolicy ?? current.misfirePolicy, startDeadlineSeconds: current.startDeadlineSeconds ?? undefined, affinityTimeoutSeconds: current.affinityTimeoutSeconds ?? undefined, version: current.version }); })}><Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="instructionMd" label="任务指令" rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item><Form.Item name="cronExpression" label="Cron 表达式"><Input disabled={task.data.scheduleType !== 'CRON'} /></Form.Item><Form.Item name="sessionMode" label="会话模式"><Select options={[{ value: 'ISOLATED', label: '隔离会话' }, { value: 'CONTINUOUS', label: '连续会话' }]} /></Form.Item><Form.Item name="overlapPolicy" label="重叠策略"><Select options={['SKIP', 'QUEUE', 'ALLOW'].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item name="misfirePolicy" label="补偿策略"><Select options={['SKIP_ALL', 'FIRE_LATEST', 'FIRE_ALL'].map((value) => ({ value, label: value }))} /></Form.Item><Space><Button type="primary" htmlType="submit" loading={save.isPending}>保存</Button><Button onClick={() => navigate(`/scheduled-tasks/${id}`)}>取消</Button></Space></Form></Card>;
+}

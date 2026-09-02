@@ -8,4 +8,10 @@ public interface ConversationTransport {
      */
     void send(AgentConversationDO conv, Long turnId, String content, String systemPrompt,
             Integer dispatchAttempt);
+
+    /**
+     * 通知 Runtime 终止指定轮次。Runtime 应立即停止生成，并以
+     * CONVERSATION_TURN_ACK(status=CANCELED, replyMarkdown=已产出的部分内容) 收尾。
+     */
+    void sendCancel(AgentConversationDO conv, Long turnId);
 }

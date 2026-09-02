@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import {
-  Table, Card, Tag, Button, Space, Segmented, Modal, Form, Input, Select, Popconfirm, message,
-  Radio, Alert, Typography, Descriptions, Divider,
+  Table, Card, Collapse, Tag, Button, Space, Segmented, Modal, Form, Input, Select, Popconfirm, message,
+  Radio, Alert, Typography, Descriptions, Divider, InputNumber, Checkbox, Tooltip,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, FolderOpenOutlined, FileTextOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, FolderOpenOutlined, FileTextOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listSkills, createSkill, updateSkill, deleteSkill, createSkillFromPackage, updateSkillPackage,
@@ -21,29 +21,34 @@ const typeLabel: Record<Skill['type'], string> = {
   MCP: 'MCP 服务',
   SKILL: '技能',
   PLUGIN: '插件',
+  HOOK: 'Runtime Hook',
 };
 
 const typeColor: Record<string, string> = {
-  MCP: 'blue', SKILL: 'green', PLUGIN: 'orange',
+  MCP: 'blue', SKILL: 'green', PLUGIN: 'orange', HOOK: 'purple',
 };
 
 const filterTypeOptions = [
   { value: '', label: '全部' },
   { value: 'SKILL', label: '技能' },
   { value: 'MCP', label: 'MCP 服务' },
+  { value: 'HOOK', label: 'Runtime Hook' },
 ];
 
 const creatableTypeOptions = [
   { value: 'SKILL', label: '技能' },
   { value: 'MCP', label: 'MCP 服务' },
+  { value: 'HOOK', label: 'Runtime Hook' },
 ];
 
 const MAX_SKILL_PACKAGE_BYTES = 100 * 1024 * 1024;
 const MAX_SKILL_PACKAGE_FILES = 500;
 const skillPackageLimitHint = '最多 500 个文件；压缩包和解压后的总大小均不超过 100 MB。';
+const AUTHORIZATION_MASK = '********';
 
 function accessLabel(record: Skill) {
   if (record.sourceType === 'OSS_ZIP') {
+    if (record.type === 'HOOK') return 'Hook 包';
     return '目录上传';
   }
   if (record.type === 'SKILL') {
@@ -64,6 +69,7 @@ export function SkillListPage() {
   const [detailSkill, setDetailSkill] = useState<Skill | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [connectionResults, setConnectionResults] = useState<Record<number, SkillConnectionTestResult>>({});
+  const [toolListResult, setToolListResult] = useState<SkillConnectionTestResult | null>(null);
   const [testingSkillId, setTestingSkillId] = useState<number | null>(null);
   const [testTargetSkill, setTestTargetSkill] = useState<Skill | null>(null);
   const [testExecutorId, setTestExecutorId] = useState<number | undefined>();
@@ -163,7 +169,12 @@ export function SkillListPage() {
         mcpTransport: mcpConfig.transport || 'http',
         mcpUrl: mcpConfig.url,
         mcpCommand: mcpConfig.command,
-        mcpArgs: Array.isArray(mcpConfig.args) ? mcpConfig.args.join(' ') : '',
+        mcpArgs: Array.isArray(mcpConfig.args)
+          ? mcpConfig.args.map((value) => ({ value: String(value) }))
+          : [],
+        mcpHeaders: mcpValues(mcpConfig.headers),
+        mcpEnv: mcpValues(mcpConfig.env),
+        mcpTimeoutSeconds: mcpConfig.timeoutSeconds || 60,
         providers: skill.type === 'PLUGIN' ? pluginProviders(skill.installSpec) : undefined,
       });
       setFormOpen(true);
@@ -188,9 +199,21 @@ export function SkillListPage() {
       }
       const values = await form.validateFields();
       if (values.type === 'MCP') {
+        const headers = serializeMcpValues(values.mcpHeaders);
+        const env = serializeMcpValues(values.mcpEnv);
         values.installSpec = JSON.stringify(values.mcpTransport === 'stdio'
-          ? { transport: 'stdio', command: values.mcpCommand, args: String(values.mcpArgs || '').split(/\s+/).filter(Boolean) }
-          : { transport: values.mcpTransport || 'http', url: values.mcpUrl });
+          ? {
+            transport: 'stdio',
+            command: values.mcpCommand,
+            args: (values.mcpArgs || []).map((item: { value?: string }) => item.value?.trim()).filter(Boolean),
+            env,
+          }
+          : {
+            transport: values.mcpTransport || 'http',
+            url: values.mcpUrl,
+            headers,
+            timeoutSeconds: values.mcpTimeoutSeconds || 60,
+          });
       }
       if (editingSkill) {
         const updateData = {
@@ -303,6 +326,11 @@ export function SkillListPage() {
               <Tag color={connectionResult.success ? 'success' : 'error'}>
                 {formatConnectionResult(connectionResult)}
               </Tag>
+            )}
+            {record.type === 'MCP' && connectionResult?.success && connectionResult.tools && (
+              <Button type="link" size="small" onClick={() => setToolListResult(connectionResult)}>
+                查看 {connectionResult.tools.length} 个工具
+              </Button>
             )}
             <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
             <Popconfirm
@@ -452,6 +480,7 @@ export function SkillListPage() {
       <Modal
         title={editingSkill ? '编辑能力' : '新增能力'}
         open={formOpen}
+        width={680}
         forceRender
         onOk={handleSubmit}
         onCancel={closeForm}
@@ -459,10 +488,10 @@ export function SkillListPage() {
       >
         <Form form={form} layout="vertical">
           <Form.Item name="type" label="类型" rules={[{ required: true }]}>
-			<Select disabled={!!editingSkill} onChange={(value) => setAccessMode(value === 'PLUGIN' ? 'package' : 'manual')}
+			<Select disabled={!!editingSkill} onChange={(value) => setAccessMode(value === 'PLUGIN' || value === 'HOOK' ? 'package' : 'manual')}
               options={creatableTypeOptions} />
           </Form.Item>
-          {(selectedType === 'SKILL' || selectedType === 'PLUGIN') && (
+          {(selectedType === 'SKILL' || selectedType === 'PLUGIN' || selectedType === 'HOOK') && (
             <Form.Item label="接入方式">
               <Radio.Group
                 value={accessMode}
@@ -471,8 +500,8 @@ export function SkillListPage() {
                   setDirectoryResult(null);
                   setZipFile(null);
                 }}
-                options={selectedType === 'PLUGIN'
-                  ? [{ value: 'package', label: '上传插件 ZIP' }]
+                options={selectedType === 'PLUGIN' || selectedType === 'HOOK'
+                  ? [{ value: 'package', label: selectedType === 'HOOK' ? '上传 Hook ZIP' : '上传插件 ZIP' }]
                   : [{ value: 'manual', label: '手动接入' }, { value: 'package', label: '上传本地目录' }]}
               />
             </Form.Item>
@@ -522,14 +551,14 @@ export function SkillListPage() {
               </Space>
             </Form.Item>
           )}
-          {accessMode === 'package' && selectedType === 'PLUGIN' && (
-            <Form.Item label="插件 ZIP" required>
+          {accessMode === 'package' && (selectedType === 'PLUGIN' || selectedType === 'HOOK') && (
+            <Form.Item label={selectedType === 'HOOK' ? 'Hook ZIP' : '插件 ZIP'} required>
               <Space direction="vertical">
                 <Typography.Text type="secondary">{skillPackageLimitHint}</Typography.Text>
                 <input type="file" accept=".zip,application/zip" onChange={(event) => {
                   const file = event.target.files?.[0] || null;
                   if (file && file.size > MAX_SKILL_PACKAGE_BYTES) {
-                    message.error(`插件 ZIP 超过 100 MB。${skillPackageLimitHint}`);
+                    message.error(`${selectedType === 'HOOK' ? 'Hook' : '插件'} ZIP 超过 100 MB。${skillPackageLimitHint}`);
                     event.currentTarget.value = '';
                     setZipFile(null);
                     return;
@@ -544,21 +573,88 @@ export function SkillListPage() {
               <Select mode="multiple" options={[{ value: 'claude' }, { value: 'qoder' }]} />
             </Form.Item>
           )}
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入能力名称' }]}>
+          <Form.Item name="name" label="名称"
+            rules={selectedType === 'HOOK' ? [] : [{ required: true, message: '请输入能力名称' }]}>
             <Input disabled={accessMode === 'package' && selectedType === 'SKILL'} placeholder="如: code-review-mcp" />
           </Form.Item>
           {selectedType === 'MCP' && (
             <>
-              <Form.Item name="mcpTransport" label="连接方式" initialValue="http">
-                <Select options={[{ value: 'http', label: 'HTTP' }, { value: 'sse', label: 'SSE' }, { value: 'stdio', label: '本地命令' }]} />
+              <Form.Item name="mcpTransport" label="服务器类型" initialValue="http">
+                <Select options={[
+                  { value: 'http', label: 'Streamable HTTP' },
+                  { value: 'sse', label: 'SSE' },
+                  { value: 'stdio', label: '本地命令（STDIO）' },
+                ]} />
               </Form.Item>
               <Form.Item noStyle shouldUpdate={(prev, next) => prev.mcpTransport !== next.mcpTransport}>
                 {({ getFieldValue }) => getFieldValue('mcpTransport') === 'stdio' ? (
                   <>
                     <Form.Item name="mcpCommand" label="可执行文件" rules={[{ required: true }]}><Input placeholder="如 npx" /></Form.Item>
-                    <Form.Item name="mcpArgs" label="参数"><Input placeholder="参数以空格分隔" /></Form.Item>
+                    <Form.List name="mcpArgs">
+                      {(fields, { add, remove }) => <Form.Item label="参数（可选）">
+                        {fields.map((field) => <div key={field.key} style={{ display: 'flex', width: '100%', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                          <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: '请输入参数' }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                            <Input placeholder="如 --server-url" />
+                          </Form.Item>
+                          <MinusCircleOutlined aria-label="删除参数" onClick={() => remove(field.name)} />
+                        </div>)}
+                        <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined />}>添加参数</Button>
+                      </Form.Item>}
+                    </Form.List>
+                    <Form.List name="mcpEnv">
+                      {(fields, { add, remove }) => <Form.Item label="Env（可选）">
+                        {fields.map((field) => <div key={field.key} style={{ display: 'flex', width: '100%', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                          <Form.Item {...field} name={[field.name, 'name']} rules={[{ required: true, message: '请输入变量名' }]} style={{ flex: '0 1 240px', minWidth: 0, marginBottom: 0 }}>
+                            <Input placeholder="变量名" />
+                          </Form.Item>
+                          <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: '请输入变量值' }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                            <Input placeholder="变量值" autoComplete="new-password" onFocus={(event) => { if (form.getFieldValue(['mcpEnv', field.name, 'secret']) && event.currentTarget.value === AUTHORIZATION_MASK) form.setFieldValue(['mcpEnv', field.name, 'value'], ''); }} />
+                          </Form.Item>
+                          <Form.Item {...field} name={[field.name, 'secret']} valuePropName="checked" style={{ flex: 'none', marginBottom: 0 }}><Tooltip title="加密保存；编辑时只能填写新值"><Checkbox style={{ whiteSpace: 'nowrap' }} onChange={(event) => form.setFieldValue(['mcpEnv', field.name, 'secret'], event.target.checked)}>私密</Checkbox></Tooltip></Form.Item>
+                          <MinusCircleOutlined aria-label="删除 Env" onClick={() => remove(field.name)} />
+                        </div>)}
+                        <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined />}>添加 Env</Button>
+                      </Form.Item>}
+                    </Form.List>
                   </>
-                ) : <Form.Item name="mcpUrl" label="HTTPS 地址" rules={[{ required: true, type: 'url' }]}><Input placeholder="https://example.com/mcp" /></Form.Item>}
+                ) : (
+                  <>
+                    <Form.Item name="mcpUrl" label="HTTPS 地址" rules={[{ required: true, type: 'url' }]}><Input placeholder="https://example.com/mcp" /></Form.Item>
+                    <Form.List name="mcpHeaders">
+                      {(fields, { add, remove }) => (
+                        <Form.Item label="Headers（可选）">
+                          {fields.map((field) => (
+                            <div key={field.key} style={{ display: 'flex', width: '100%', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                              <Form.Item {...field} name={[field.name, 'name']} rules={[{ required: true, message: '请输入 Header 名称' }]} style={{ flex: '0 1 180px', minWidth: 0, marginBottom: 0 }}>
+                                <Input placeholder="Authorization" />
+                              </Form.Item>
+                              <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: '请输入 Header 值' }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                                <Input
+                                  placeholder="Bearer your-token"
+                                  autoComplete="new-password"
+                                  onFocus={(event) => {
+                                    if (form.getFieldValue(['mcpHeaders', field.name, 'secret']) && event.currentTarget.value === AUTHORIZATION_MASK) {
+                                      form.setFieldValue(['mcpHeaders', field.name, 'value'], '');
+                                    }
+                                  }}
+                                />
+                              </Form.Item>
+                              <Form.Item {...field} name={[field.name, 'secret']} valuePropName="checked" style={{ flex: 'none', marginBottom: 0 }}>
+                                <Tooltip title="加密保存；编辑时只能填写新值"><Checkbox style={{ whiteSpace: 'nowrap' }} onChange={(event) => form.setFieldValue(['mcpHeaders', field.name, 'secret'], event.target.checked)}>私密</Checkbox></Tooltip>
+                              </Form.Item>
+                              <MinusCircleOutlined aria-label="删除 Header" onClick={() => remove(field.name)} />
+                            </div>
+                          ))}
+                          <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined />}>添加 Header</Button>
+                        </Form.Item>
+                      )}
+                    </Form.List>
+                    <Form.Item name="mcpTimeoutSeconds" label="超时时间（秒）" initialValue={60}
+                      rules={[{ required: true, message: '请输入超时时间' }]} extra="连接、工具列表获取和工具调用的超时时间，范围 1–600 秒。">
+                      <InputNumber min={1} max={600} precision={0} style={{ width: '100%' }} />
+                    </Form.Item>
+                  </>
+                )}
               </Form.Item>
             </>
           )}
@@ -572,6 +668,24 @@ export function SkillListPage() {
             <Input.TextArea disabled={accessMode === 'package' && selectedType === 'SKILL'} rows={2} placeholder="描述该能力的功能" />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal title={`MCP 工具列表（${toolListResult?.tools?.length || 0}）`} open={toolListResult !== null}
+        footer={null} onCancel={() => setToolListResult(null)} width={680}>
+        {(toolListResult?.tools || []).length > 0 && <Collapse
+          expandIconPosition="start"
+          items={(toolListResult?.tools || []).map((tool, index) => ({
+            key: `${tool.name || 'tool'}-${index}`,
+            collapsible: 'icon',
+            label: <Typography.Text strong>{tool.name || '-'}</Typography.Text>,
+            children: <>
+              {tool.description && <Typography.Paragraph>{tool.description}</Typography.Paragraph>}
+              {tool.inputSchema !== undefined && <Typography.Paragraph code style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
+                {JSON.stringify(tool.inputSchema, null, 2)}
+              </Typography.Paragraph>}
+            </>,
+          }))}
+        />}
+        {toolListResult?.tools?.length === 0 && <Typography.Text type="secondary">该 MCP 未返回工具。</Typography.Text>}
       </Modal>
     </>
   );
@@ -604,7 +718,45 @@ function detailAccessText(skill: Skill) {
     ];
     return lines.join('\n');
   }
-  return skill.installSpec || '暂无安装/下载方式';
+  if (skill.type !== 'MCP') {
+    return skill.installSpec || '暂无安装/下载方式';
+  }
+  try {
+    const config = JSON.parse(skill.installSpec || '{}') as Record<string, unknown>;
+    const headers = config.headers as Record<string, unknown> | undefined;
+    if (headers) {
+      config.headers = Object.fromEntries(Object.entries(headers).map(([name, value]) => [
+        name, typeof value === 'object' && value !== null ? AUTHORIZATION_MASK : value,
+      ]));
+    }
+    const env = config.env as Record<string, unknown> | undefined;
+    if (env) config.env = Object.fromEntries(Object.entries(env).map(([name, value]) => [
+      name, typeof value === 'object' && value !== null ? AUTHORIZATION_MASK : value,
+    ]));
+    return JSON.stringify(config, null, 2);
+  } catch {
+    return skill.installSpec || '暂无安装/下载方式';
+  }
+}
+
+function mcpValues(raw: unknown) {
+  return Object.entries((raw || {}) as Record<string, unknown>).map(([name, rawValue]) => {
+    const secret = typeof rawValue === 'object' && rawValue !== null
+      && ((rawValue as Record<string, unknown>).secret === true || (rawValue as Record<string, unknown>).kind === 'secretRef');
+    return {
+      name,
+      secret,
+      value: secret ? AUTHORIZATION_MASK : String(rawValue ?? ''),
+    };
+  });
+}
+
+function serializeMcpValues(entries: Array<{ name?: string; value?: string; secret?: boolean | string }> = []) {
+  return Object.fromEntries(entries.filter((entry) => entry.name?.trim()).map((entry) => [
+    entry.name!.trim(), (entry.secret === true || entry.secret === 'true')
+      ? { secret: true, value: entry.value === AUTHORIZATION_MASK ? '' : (entry.value || '') }
+      : (entry.value || ''),
+  ]));
 }
 
 function pluginProviders(installSpec?: string): string[] {

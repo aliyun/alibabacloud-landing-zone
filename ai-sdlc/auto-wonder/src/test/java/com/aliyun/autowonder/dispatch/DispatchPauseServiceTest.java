@@ -37,6 +37,20 @@ class DispatchPauseServiceTest {
     }
 
     @Test
+    void workitemPauseRejectsScheduledRunDispatch() {
+        DispatchDO scheduled = dispatch(55L, DispatchStatus.RUNNING, 0);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(55L)).thenReturn(scheduled);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.requestPause(100L, 200L, 55L, 9L));
+
+        verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(),
+                any(), any(), any(), any(), any(), anyInt(), anyLong());
+        verifyNoInteractions(transport);
+    }
+
+    @Test
     void repeatedPauseRequestIsIdempotentAndRedeliversCommand() {
         DispatchDO pausing = dispatch(55L, DispatchStatus.PAUSING, 1);
         when(dispatchDao.findById(55L)).thenReturn(pausing);
@@ -100,6 +114,20 @@ class DispatchPauseServiceTest {
         assertTrue(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
         verify(dispatchDao).updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
                 isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L));
+    }
+
+    @Test
+    void executorPauseCompletionRemainsSourceAgnostic() {
+        DispatchDO scheduled = dispatch(55L, DispatchStatus.PAUSING, 1);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(55L)).thenReturn(scheduled);
+        when(checkpointService.matchesDurableReceipt(100L, 55L, 42L, "sha256:abc"))
+                .thenReturn(true);
+        when(dispatchDao.updateStatus(eq(55L), eq(100L), eq(DispatchStatus.PAUSED),
+                isNull(), isNull(), isNull(), isNull(), isNull(), eq(1), eq(0L)))
+                .thenReturn(1);
+
+        assertTrue(service.onPaused(100L, 7L, 55L, 42L, "sha256:abc"));
     }
 
     @Test

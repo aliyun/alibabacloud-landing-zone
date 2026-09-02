@@ -188,7 +188,7 @@ class McpAccessTokenServiceTest {
         McpAccessTokenService.Principal principal =
                 service.authenticateBearer("Bearer " + LONG_TOKEN);
 
-        assertNull(principal.tenantId());
+        assertNull(principal.workspaceId());
         assertNull(principal.accessLevel());
         assertFalse(principal.isWorkspaceScoped());
         assertEquals(USER_ID, principal.userId());
@@ -253,7 +253,7 @@ class McpAccessTokenServiceTest {
         McpAccessTokenService.Principal principal =
                 authService.authenticateBearer("Bearer " + token);
 
-        assertEquals(TENANT_ID, principal.tenantId());
+        assertEquals(TENANT_ID, principal.workspaceId());
         assertTrue(principal.isWorkspaceScoped());
         assertEquals(USER_ID, principal.userId());
         assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
@@ -283,7 +283,7 @@ class McpAccessTokenServiceTest {
         McpAccessTokenService.Principal principal =
                 authService.authenticateBearer("Bearer " + token);
 
-        assertEquals(TENANT_ID, principal.tenantId());
+        assertEquals(TENANT_ID, principal.workspaceId());
         assertTrue(principal.isWorkspaceScoped());
         assertEquals(WorkspaceAccessLevel.READ_WRITE, principal.accessLevel());
         assertEquals(McpAccessTokenService.CredentialType.DISPATCH,

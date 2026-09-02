@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
-public class ConversationRealtimeAuthorizationService {
+public class ConversationRealtimeAuthorizationService implements RealtimeChannelAuthorizationService {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationRealtimeAuthorizationService.class);
     private static final String CONVERSATION_PREFIX = "conversation:";
@@ -18,7 +18,7 @@ public class ConversationRealtimeAuthorizationService {
         this.conversationDao = conversationDao;
     }
 
-    public boolean authorize(long tenantId, long userId, String channel) {
+    public boolean authorize(long workspaceId, long userId, String channel) {
         if (channel == null || !channel.startsWith(CONVERSATION_PREFIX)) {
             return false;
         }
@@ -28,14 +28,17 @@ public class ConversationRealtimeAuthorizationService {
         } catch (NumberFormatException e) {
             return false;
         }
-        AgentConversationDO conv = conversationDao.findById(tenantId, conversationId);
+        AgentConversationDO conv = conversationDao.findById(workspaceId, conversationId);
         if (conv == null) {
-            log.warn("conversation subscription denied: not found tenantId={} conversationId={}",
-                    tenantId, conversationId);
+            log.warn("conversation subscription denied: not found workspaceId={} conversationId={}",
+                    workspaceId, conversationId);
             return false;
         }
         return true;
     }
+
+    @Override
+    public boolean supports(String channel) { return channel != null && channel.startsWith(CONVERSATION_PREFIX); }
 
     public Long parseConversationId(String channel) {
         if (channel == null || !channel.startsWith(CONVERSATION_PREFIX)) {

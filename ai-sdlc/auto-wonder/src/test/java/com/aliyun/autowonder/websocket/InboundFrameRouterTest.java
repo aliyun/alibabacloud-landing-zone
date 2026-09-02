@@ -1,12 +1,14 @@
 package com.aliyun.autowonder.websocket;
 
 import com.aliyun.autowonder.artifact.ArtifactService;
+import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.dispatch.HandoffResult;
 import com.aliyun.autowonder.dispatch.HandoffService;
 import com.aliyun.autowonder.dispatch.DispatchDO;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorService;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.guidance.InteractionWorkflowService;
@@ -14,6 +16,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.test.util.ReflectionTestUtils;
+import com.aliyun.autowonder.scheduledtask.compat.ScheduledTaskCapabilityGuard;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 
 import javax.websocket.Session;
 import javax.websocket.RemoteEndpoint;
@@ -31,6 +37,7 @@ class InboundFrameRouterTest {
     private DispatchPauseService pauseService;
     private GuidanceService guidanceService;
     private InboundFrameRouter router;
+    private ScheduledTaskCapabilityGuard capabilityGuard;
 
     @BeforeEach
     void setUp() {
@@ -41,8 +48,13 @@ class InboundFrameRouterTest {
         drainScheduler = mock(DispatchDrainScheduler.class);
         pauseService = mock(DispatchPauseService.class);
         guidanceService = mock(GuidanceService.class);
+        when(guidanceService.bindingForInboundAcknowledgement(100L, 1L, 77L))
+                .thenReturn(new GuidanceService.InboundAcknowledgementBinding(42L,
+                        new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 200L)));
+        capabilityGuard = mock(ScheduledTaskCapabilityGuard.class);
         router = new InboundFrameRouter(dispatchService, artifactService, presenceManager,
                 handoffService, drainScheduler, pauseService, guidanceService);
+        ReflectionTestUtils.setField(router, "capabilityGuard", capabilityGuard);
     }
 
     private ExecutorSession session(long executorId, long agentId, long tenantId) {
@@ -130,6 +142,106 @@ class InboundFrameRouterTest {
         router.route(session(1L, 10L, 100L),
                 "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"status\":\"APPLIED\"}");
         verify(guidanceService).acknowledge(100L, 1L, 77L, "APPLIED", null, null);
+    }
+
+    @Test
+    void scheduledGuidanceAckWithoutDispatchIdFailsBeforeAcknowledgementWhenUnavailable() {
+        when(guidanceService.bindingForInboundAcknowledgement(100L, 1L, 77L))
+                .thenReturn(new GuidanceService.InboundAcknowledgementBinding(88L,
+                        new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L)));
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("daemon");
+
+        BizException failure = assertThrows(BizException.class, () -> router.route(
+                session(1L, 10L, 100L),
+                "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"status\":\"APPLIED\"}"));
+
+        assertEquals("30006", failure.getCode());
+        verify(guidanceService, never()).acknowledge(anyLong(), anyLong(), anyLong(),
+                any(), any(), any());
+    }
+
+    @Test
+    void workitemGuidanceAckWithoutDispatchIdDoesNotCallScheduledGuard() {
+        when(guidanceService.bindingForInboundAcknowledgement(100L, 1L, 77L))
+                .thenReturn(new GuidanceService.InboundAcknowledgementBinding(42L,
+                        new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 200L)));
+
+        router.route(session(1L, 10L, 100L),
+                "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"status\":\"APPLIED\"}");
+
+        verify(guidanceService).acknowledge(100L, 1L, 77L, "APPLIED", null, null);
+        verifyNoInteractions(capabilityGuard);
+    }
+
+    @Test
+    void scheduledGuidanceAckIgnoresUnrelatedWorkitemDispatchIdBeforeAnySideEffect() {
+        InteractionWorkflowService workflowService = mock(InteractionWorkflowService.class);
+        InboundFrameRouter workflowRouter = new InboundFrameRouter(dispatchService, artifactService,
+                presenceManager, handoffService, drainScheduler, pauseService, guidanceService,
+                workflowService, null, null);
+        ReflectionTestUtils.setField(workflowRouter, "capabilityGuard", capabilityGuard);
+        when(guidanceService.bindingForInboundAcknowledgement(100L, 1L, 77L))
+                .thenReturn(new GuidanceService.InboundAcknowledgementBinding(88L,
+                        new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L)));
+        when(dispatchService.artifactOwnerForInbound(100L, 42L))
+                .thenReturn(new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 42L));
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("daemon");
+
+        BizException failure = assertThrows(BizException.class, () -> workflowRouter.route(
+                session(1L, 10L, 100L),
+                "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"dispatchId\":42," +
+                        "\"status\":\"APPLIED\",\"workflowPlan\":{\"targetAgentId\":40044}}"));
+
+        assertEquals("30006", failure.getCode());
+        verify(dispatchService, never()).artifactOwnerForInbound(100L, 42L);
+        verify(guidanceService, never()).acknowledge(anyLong(), anyLong(), anyLong(),
+                any(), any(), any());
+        verifyNoInteractions(workflowService);
+    }
+
+    @Test
+    void availableScheduledGuidanceAckRejectsMismatchedFrameDispatchIdBeforeWorkflow() {
+        InteractionWorkflowService workflowService = mock(InteractionWorkflowService.class);
+        InboundFrameRouter workflowRouter = new InboundFrameRouter(dispatchService, artifactService,
+                presenceManager, handoffService, drainScheduler, pauseService, guidanceService,
+                workflowService, null, null);
+        ReflectionTestUtils.setField(workflowRouter, "capabilityGuard", capabilityGuard);
+        when(guidanceService.bindingForInboundAcknowledgement(100L, 1L, 77L))
+                .thenReturn(new GuidanceService.InboundAcknowledgementBinding(88L,
+                        new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L)));
+
+        BizException failure = assertThrows(BizException.class, () -> workflowRouter.route(
+                session(1L, 10L, 100L),
+                "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"dispatchId\":42," +
+                        "\"status\":\"APPLIED\",\"workflowPlan\":{\"targetAgentId\":40044}}"));
+
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), failure.getCode());
+        verifyNoInteractions(workflowService);
+        verify(guidanceService, never()).acknowledge(anyLong(), anyLong(), anyLong(),
+                any(), any(), any());
+    }
+
+    @Test
+    void unresolvedGuidanceAckFailsClosedBeforeAnyClientDispatchSideEffect() {
+        InteractionWorkflowService workflowService = mock(InteractionWorkflowService.class);
+        InboundFrameRouter workflowRouter = new InboundFrameRouter(dispatchService, artifactService,
+                presenceManager, handoffService, drainScheduler, pauseService, guidanceService,
+                workflowService, null, null);
+        ReflectionTestUtils.setField(workflowRouter, "capabilityGuard", capabilityGuard);
+        when(guidanceService.bindingForInboundAcknowledgement(100L, 1L, 77L)).thenReturn(null);
+
+        BizException failure = assertThrows(BizException.class, () -> workflowRouter.route(
+                session(1L, 10L, 100L),
+                "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"dispatchId\":42," +
+                        "\"status\":\"APPLIED\",\"workflowPlan\":{\"targetAgentId\":40044}}"));
+
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), failure.getCode());
+        verify(dispatchService, never()).artifactOwnerForInbound(anyLong(), anyLong());
+        verify(guidanceService, never()).acknowledge(anyLong(), anyLong(), anyLong(),
+                any(), any(), any());
+        verifyNoInteractions(workflowService, capabilityGuard);
     }
 
     @Test
@@ -327,12 +439,15 @@ class InboundFrameRouterTest {
 
     @Test
     void artifactUploadedCallsRecord() {
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 200L));
         String json = "{\"type\":\"ARTIFACT_UPLOADED\",\"dispatchId\":55,\"workitemId\":200," +
                 "\"name\":\"patch.diff\",\"artifactType\":\"PATCH\",\"ossRef\":\"oss://x\",\"size\":1024}";
         router.route(session(1L, 10L, 100L), json);
 
         ArgumentCaptor<ReportArtifactRequest> cap = ArgumentCaptor.forClass(ReportArtifactRequest.class);
-        verify(artifactService).record(cap.capture(), eq(100L));
+        verify(artifactService).record(cap.capture(), eq(100L),
+                eq(new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 200L)));
         ReportArtifactRequest req = cap.getValue();
         assertEquals(55L, req.getDispatchId());
         assertEquals(200L, req.getWorkitemId());
@@ -340,6 +455,50 @@ class InboundFrameRouterTest {
         assertEquals("PATCH", req.getType());
         assertEquals("oss://x", req.getOssRef());
         assertEquals(1024L, req.getSize());
+        verifyNoInteractions(capabilityGuard);
+    }
+
+    @Test
+    void scheduledArtifactFrameFailsBeforeScheduledArtifactServiceWhenUnavailable() {
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L));
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("daemon");
+
+        assertThrows(BizException.class, () -> router.route(session(1L, 10L, 100L),
+                "{\"type\":\"ARTIFACT_UPLOADED\",\"dispatchId\":55,\"workitemId\":200}"));
+
+        verifyNoInteractions(artifactService);
+    }
+
+    @Test
+    void scheduledProgressAndResultFailBeforeDispatchSideEffectsWhenUnavailable() {
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L));
+        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
+                .when(capabilityGuard).requireAvailable("daemon");
+
+        assertThrows(BizException.class, () -> router.route(session(1L, 10L, 100L),
+                "{\"type\":\"TASK_PROGRESS\",\"dispatchId\":55}"));
+        assertThrows(BizException.class, () -> router.route(session(1L, 10L, 100L),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false}"));
+
+        verify(dispatchService, never()).onProgress(anyLong(), anyLong(), any());
+        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
+                any(), any(), anyBoolean());
+        verifyNoInteractions(guidanceService, pauseService);
+    }
+
+    @Test
+    void workitemProgressResolvesDurableSourceWithoutScheduledGuard() {
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 200L));
+
+        router.route(session(1L, 10L, 100L),
+                "{\"type\":\"TASK_PROGRESS\",\"dispatchId\":55}");
+
+        verify(dispatchService).onProgress(eq(100L), eq(55L), any());
+        verifyNoInteractions(capabilityGuard);
     }
 
     @Test

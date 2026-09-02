@@ -2,10 +2,15 @@ package com.aliyun.autowonder.guidance;
 
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
+import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.AgentSdlcResolver;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunCommentService;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
@@ -18,6 +23,7 @@ import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -36,12 +42,13 @@ class GuidanceServiceTest {
     private DispatchService dispatchService;
     private AgentSdlcResolver sdlcResolver;
     private ApplicationEventPublisher eventPublisher;
+    private WorkitemCommentDao commentDao;
 
     @BeforeEach
     void setUp() {
         guidanceDao = mock(GuidanceDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
+        commentDao = mock(WorkitemCommentDao.class);
         agentDao = mock(AgentDao.class);
         dispatchDao = mock(DispatchDao.class);
         transport = mock(GuidanceTransport.class);
@@ -95,6 +102,138 @@ class GuidanceServiceTest {
 
         verify(guidanceDao).insert(argThat(row -> Long.valueOf(40013L).equals(row.getTargetAgentId())));
         verify(workitemService, never()).getParticipants(anyLong(), anyLong());
+    }
+
+    @Test
+    void inboundAcknowledgementOwnerUsesBoundDispatchWhenGuidanceSourceIsStale() {
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(77L);
+        guidance.setTenantId(100L);
+        guidance.setWorkitemId(200L);
+        guidance.setSourceType(ExecutionSourceType.WORKITEM.name());
+        guidance.setDispatchId(88L);
+        guidance.setExecutorId(10005L);
+        DispatchDO dispatch = dispatch(88L, "RUNNING");
+        dispatch.setWorkitemId(200L);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(guidanceDao.findById(77L)).thenReturn(guidance);
+        when(dispatchDao.findById(88L)).thenReturn(dispatch);
+
+        GuidanceService.InboundAcknowledgementBinding binding =
+                service.bindingForInboundAcknowledgement(100L, 10005L, 77L);
+        assertEquals(88L, binding.dispatchId());
+        assertEquals(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L), binding.owner());
+    }
+
+    @Test
+    void inboundAcknowledgementOwnerRejectsForeignGuidance() {
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(77L);
+        guidance.setTenantId(101L);
+        guidance.setWorkitemId(200L);
+        when(guidanceDao.findById(77L)).thenReturn(guidance);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.bindingForInboundAcknowledgement(100L, 10005L, 77L));
+    }
+
+    @Test
+    void inboundAcknowledgementOwnerRejectsMismatchedBoundDispatch() {
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(77L);
+        guidance.setTenantId(100L);
+        guidance.setWorkitemId(200L);
+        guidance.setDispatchId(88L);
+        guidance.setExecutorId(10005L);
+        DispatchDO unrelated = dispatch(88L, "RUNNING");
+        unrelated.setWorkitemId(201L);
+        when(guidanceDao.findById(77L)).thenReturn(guidance);
+        when(dispatchDao.findById(88L)).thenReturn(unrelated);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.bindingForInboundAcknowledgement(100L, 10005L, 77L));
+    }
+
+    @Test
+    void inboundAcknowledgementBindingRejectsDifferentExecutor() {
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(77L);
+        guidance.setTenantId(100L);
+        guidance.setWorkitemId(200L);
+        guidance.setDispatchId(88L);
+        guidance.setExecutorId(10006L);
+        DispatchDO dispatch = dispatch(88L, "RUNNING");
+        dispatch.setWorkitemId(200L);
+        when(guidanceDao.findById(77L)).thenReturn(guidance);
+        when(dispatchDao.findById(88L)).thenReturn(dispatch);
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.bindingForInboundAcknowledgement(100L, 10005L, 77L));
+    }
+
+    @Test
+    void runGuidanceDeliveryUsesRunSourceEvenWhenWorkitemHasSameId() {
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(701L); guidance.setTenantId(100L); guidance.setSourceType("SCHEDULED_TASK_RUN");
+        guidance.setWorkitemId(50L); guidance.setCommentId(600L); guidance.setTargetAgentId(40013L);
+        DispatchDO dispatch = dispatch(93L, "PENDING");
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        dispatch.setWorkitemId(50L); dispatch.setExecutorId(9L); dispatch.setAgentId(40013L);
+        dispatch.setResumeMode("CANONICAL_INTERACTION");
+        WorkitemCommentDO runComment = new WorkitemCommentDO();
+        runComment.setId(600L); runComment.setTenantId(100L); runComment.setWorkitemId(50L);
+        runComment.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); runComment.setContentMd("run only");
+        when(guidanceDao.listQueuedForDispatch(100L, 93L)).thenReturn(List.of(guidance));
+        when(guidanceDao.bindDispatch(701L, 100L, 93L, 9L)).thenReturn(1);
+        when(commentDao.findBySourceAndId(100L, "SCHEDULED_TASK_RUN", 50L, 600L)).thenReturn(runComment);
+
+        service.deliverQueued(dispatch);
+
+        verify(commentDao).findBySourceAndId(100L, "SCHEDULED_TASK_RUN", 50L, 600L);
+        verify(commentDao, never()).findById(anyLong(), anyLong());
+        verify(transport).send(guidance, "run only");
+    }
+
+    @Test
+    void runGuidancePinsTargetFrozenVersionBeforeItsPendingDispatchCanPackage() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDao", runs);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(50L); run.setWorkspaceId(100L); run.setVersion(1); run.setStatus("RUNNING");
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":40013,\"agentVersionId\":40033}]}");
+        WorkitemCommentDO comment = new WorkitemCommentDO();
+        comment.setId(600L); comment.setTenantId(100L); comment.setWorkitemId(50L);
+        comment.setSourceType("SCHEDULED_TASK_RUN");
+        DispatchDO interaction = dispatch(93L, "PENDING"); interaction.setSourceType("SCHEDULED_TASK_RUN");
+        interaction.setAgentId(40013L); interaction.setWorkitemId(50L);
+        when(runs.findById(100L, 50L)).thenReturn(run);
+        when(commentDao.findBySourceAndId(100L, "SCHEDULED_TASK_RUN", 50L, 600L)).thenReturn(comment);
+        when(dispatchService.enqueueScheduledRunCommentInteraction(100L, 50L, 40013L, null, 701L, 7L))
+                .thenReturn(interaction);
+
+        service.createForScheduledRunComment(100L, 50L, 600L, 40013L, 7L);
+
+        verify(dispatchService).pinScheduledAgentVersion(93L, 100L, 40033L);
+        verify(workitemService, never()).addAgentComment(anyLong(), anyString(), anyLong(), anyLong());
+    }
+
+    @Test
+    void scheduledRunGuidanceReplyUsesRunCommentServiceForRealtimePublish() {
+        ScheduledTaskRunCommentService runComments = mock(ScheduledTaskRunCommentService.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunCommentService", runComments);
+        GuidanceDO guidance = new GuidanceDO();
+        guidance.setId(701L); guidance.setTenantId(100L); guidance.setSourceType("SCHEDULED_TASK_RUN");
+        guidance.setWorkitemId(50L); guidance.setTargetAgentId(40013L); guidance.setDispatchId(93L);
+        CommentVO reply = new CommentVO(); reply.setId(902L);
+        when(guidanceDao.acknowledge(701L, 100L, 9L, GuidanceStatus.APPLIED, null)).thenReturn(1);
+        when(guidanceDao.findById(701L)).thenReturn(guidance);
+        when(runComments.addAgentComment(100L, 50L, 40013L, "已完成")).thenReturn(reply);
+        when(guidanceDao.bindReplyComment(701L, 100L, 902L)).thenReturn(1);
+
+        service.acknowledge(100L, 9L, 701L, GuidanceStatus.APPLIED, null, "已完成");
+
+        verify(runComments).addAgentComment(100L, 50L, 40013L, "已完成");
+        verify(workitemService, never()).addAgentComment(anyLong(), eq("已完成"), anyLong(), anyLong());
     }
 
     @Test

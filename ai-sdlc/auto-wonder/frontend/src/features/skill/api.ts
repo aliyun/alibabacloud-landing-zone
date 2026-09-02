@@ -2,7 +2,7 @@ import { apiClient } from '@/shared/api/client';
 
 export interface Skill {
   id: number;
-  type: 'MCP' | 'SKILL' | 'PLUGIN';
+  type: 'MCP' | 'SKILL' | 'PLUGIN' | 'HOOK';
   name: string;
   installSpec: string;
   description: string;
@@ -29,6 +29,7 @@ export interface SkillConnectionTestResult {
   success: boolean;
   message: string;
   durationMs?: number;
+  tools?: Array<{ name?: string; description?: string; inputSchema?: unknown }>;
 }
 
 export async function listSkills(params: {

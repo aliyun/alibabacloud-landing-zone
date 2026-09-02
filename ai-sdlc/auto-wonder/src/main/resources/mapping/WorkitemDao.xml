@@ -2,7 +2,8 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.workitem.WorkitemDao">
-    <insert id="insert" parameterType="com.aliyun.autowonder.workitem.WorkitemDO"
+    <insert id="insert" databaseId="autowonder-legacy"
+            parameterType="com.aliyun.autowonder.workitem.WorkitemDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO workitem
         <trim prefix="(" suffix=")" suffixOverrides=",">
@@ -18,6 +19,23 @@
             #{creatorId}, 0, 0
         </trim>
     </insert>
+    <insert id="insert" databaseId="autowonder-source-aware"
+            parameterType="com.aliyun.autowonder.workitem.WorkitemDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            tenant_id, work_type, title, content_md, template_id, status_node_id,
+            sdlc_id, current_step_id, assignee_type, assignee_ref, assign_operator_id, priority,
+            <if test="gmtCreate != null">gmt_create,</if>
+            creator_id, origin_type, origin_id, is_deleted, version
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            #{tenantId}, #{workType}, #{title}, #{contentMd}, #{templateId}, #{statusNodeId},
+            #{sdlcId}, #{currentStepId}, #{assigneeType}, #{assigneeRef}, #{assignOperatorId}, #{priority},
+            <if test="gmtCreate != null">#{gmtCreate},</if>
+            #{creatorId}, #{originType}, #{originId}, 0, 0
+        </trim>
+    </insert>
     <select id="findById" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
         SELECT * FROM workitem WHERE id = #{id} AND is_deleted = 0 LIMIT 1
     </select>
@@ -26,8 +44,14 @@
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
         LIMIT 1 FOR UPDATE
     </select>
+    <select id="listByOrigin" databaseId="autowonder-source-aware" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT * FROM workitem
+        WHERE tenant_id = #{tenantId} AND origin_type = #{originType} AND origin_id = #{originId}
+          AND is_deleted = 0
+        ORDER BY id DESC
+    </select>
     <!-- 最新一次派发已成功（与 WorkitemService.applyPendingDecision 的 latest dispatch 语义一致） -->
-    <sql id="latestDispatchSucceeded">
+    <sql id="latestDispatchSucceeded" databaseId="autowonder-legacy">
         EXISTS (
             SELECT 1 FROM dispatch d
             WHERE d.id = (
@@ -36,6 +60,21 @@
                   AND d2.workitem_id = w.id
                   AND d2.is_deleted = 0
             )
+              AND d.status = 'SUCCEEDED'
+              AND d.is_deleted = 0
+        )
+    </sql>
+    <sql id="latestDispatchSucceeded" databaseId="autowonder-source-aware">
+        EXISTS (
+            SELECT 1 FROM dispatch d
+            WHERE d.id = (
+                SELECT MAX(d2.id) FROM dispatch d2
+                WHERE d2.tenant_id = w.tenant_id
+                  AND d2.source_type = 'WORKITEM'
+                  AND d2.workitem_id = w.id
+                  AND d2.is_deleted = 0
+            )
+              AND d.source_type = 'WORKITEM'
               AND d.status = 'SUCCEEDED'
               AND d.is_deleted = 0
         )
@@ -55,6 +94,7 @@
                   OR COALESCE(sn.name, '') LIKE '%发布%'
                   OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
                   OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
+                  OR UPPER(COALESCE(sn.name, '')) LIKE '%FIXED%'
                   OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
               )
         )
@@ -70,6 +110,7 @@
                   OR snc.name LIKE '%发布%'
                   OR UPPER(snc.name) LIKE '%DONE%'
                   OR UPPER(snc.name) LIKE '%CLOSED%'
+                  OR UPPER(snc.name) LIKE '%FIXED%'
                   OR UPPER(snc.name) LIKE '%PUBLISHED%'
               )
         )
@@ -116,10 +157,7 @@
         <if test="assigneeType != null">AND w.assignee_type = #{assigneeType}</if>
         <if test="assigneeRef != null">AND w.assignee_ref = #{assigneeRef}</if>
         <if test="pendingDecisionOnly">
-            AND w.assignee_type = 'HUMAN'
-            AND w.assignee_ref = #{currentUserId}
-            AND <include refid="latestDispatchSucceeded"/>
-            AND <include refid="notDoneNodeFilter"/>
+            <include refid="pendingDecisionDispatchFilter"/>
         </if>
         <if test="mineScope == 'CREATED'">AND w.creator_id = #{currentUserId}</if>
         <if test="mineScope == 'ASSIGNED'">AND w.assignee_type = 'HUMAN' AND w.assignee_ref = #{currentUserId}</if>
@@ -147,6 +185,75 @@
                 AND NOT <include refid="statusNameInProgress"/>
             </when>
         </choose>
+        <if test="tag != null and tag != ''">
+            AND JSON_CONTAINS(w.tags, JSON_QUOTE(#{tag}))
+        </if>
+    </sql>
+    <sql id="pendingDecisionDispatchFilter" databaseId="autowonder-legacy">
+            AND w.assignee_type = 'HUMAN'
+            AND w.assignee_ref = #{currentUserId}
+            AND EXISTS (
+                SELECT 1 FROM dispatch d
+                WHERE d.id = (
+                    SELECT MAX(d2.id) FROM dispatch d2
+                    WHERE d2.tenant_id = w.tenant_id
+                      AND d2.workitem_id = w.id
+                      AND d2.is_deleted = 0
+                )
+                  AND d.status = 'SUCCEEDED'
+                  AND d.is_deleted = 0
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM status_node sn
+                WHERE sn.id = w.status_node_id
+                  AND (
+                      UPPER(COALESCE(sn.category, '')) = 'DONE'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
+                      OR COALESCE(sn.name, '') LIKE '%完成%'
+                      OR COALESCE(sn.name, '') LIKE '%关闭%'
+                      OR COALESCE(sn.name, '') LIKE '%发布%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%FIXED%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
+                  )
+            )
+    </sql>
+    <sql id="pendingDecisionDispatchFilter" databaseId="autowonder-source-aware">
+            AND w.assignee_type = 'HUMAN'
+            AND w.assignee_ref = #{currentUserId}
+            AND EXISTS (
+                SELECT 1 FROM dispatch d
+                WHERE d.id = (
+                    SELECT MAX(d2.id) FROM dispatch d2
+                    WHERE d2.tenant_id = w.tenant_id
+                      AND d2.source_type = 'WORKITEM'
+                      AND d2.workitem_id = w.id
+                      AND d2.is_deleted = 0
+                )
+                  AND d.source_type = 'WORKITEM'
+                  AND d.status = 'SUCCEEDED'
+                  AND d.is_deleted = 0
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM status_node sn
+                WHERE sn.id = w.status_node_id
+                  AND (
+                      UPPER(COALESCE(sn.category, '')) = 'DONE'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
+                      OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
+                      OR COALESCE(sn.name, '') LIKE '%完成%'
+                      OR COALESCE(sn.name, '') LIKE '%关闭%'
+                      OR COALESCE(sn.name, '') LIKE '%发布%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%FIXED%'
+                      OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
+                  )
+            )
     </sql>
     <select id="list" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
         SELECT w.* FROM workitem w
@@ -234,4 +341,39 @@
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN
         <foreach collection="ids" item="wid" open="(" separator="," close=")">#{wid}</foreach>
     </select>
+    <!-- 定时执行扫描：仅命中已指派 AGENT 且绑定 SDLC 的到期工单 -->
+    <select id="findScheduledDue" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT * FROM workitem
+        WHERE tenant_id IN (SELECT id FROM org WHERE is_deleted = 0)
+          AND scheduled_start_at &lt;= #{now}
+          AND assignee_type = 'AGENT'
+          AND sdlc_id IS NOT NULL
+          AND current_step_id IS NOT NULL
+          AND is_deleted = 0
+        ORDER BY scheduled_start_at ASC
+        LIMIT #{limit}
+    </select>
+    <!-- CAS 清除：并发扫描时只有一个节点能成功；已清除的行返回 0 -->
+    <update id="clearScheduledStartAt">
+        UPDATE workitem SET scheduled_start_at = NULL, version = version + 1, modifier_id = 0
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version}
+          AND scheduled_start_at IS NOT NULL AND is_deleted = 0
+    </update>
+    <!-- 定时真正触发时清除计划时间并记录触发时间，供列表/详情页持续展示定时标识 -->
+    <update id="fireScheduledStartAt">
+        UPDATE workitem SET scheduled_start_at = NULL, scheduled_start_triggered_at = NOW(3),
+            version = version + 1, modifier_id = 0
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version}
+          AND scheduled_start_at IS NOT NULL AND is_deleted = 0
+    </update>
+    <update id="updateScheduledStartAt">
+        UPDATE workitem SET scheduled_start_at = #{scheduledStartAt},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateTags">
+        UPDATE workitem SET tags = #{tags},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
 </mapper>

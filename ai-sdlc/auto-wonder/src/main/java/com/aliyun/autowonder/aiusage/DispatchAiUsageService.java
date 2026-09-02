@@ -135,7 +135,10 @@ public class DispatchAiUsageService {
             long outputTokens = nonNegative(entry.getOutputTokens());
             long cacheReadTokens = nonNegative(entry.getCacheReadTokens());
             long cacheWriteTokens = nonNegative(entry.getCacheWriteTokens());
-            long totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+            long reasoningTokens = nonNegative(entry.getReasoningTokens());
+            long totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens;
+            java.math.BigDecimal credits = entry.getCredits() != null
+                    ? java.math.BigDecimal.valueOf(entry.getCredits()) : null;
 
             DispatchAiUsageDO usage = new DispatchAiUsageDO();
             usage.setTenantId(dispatch.getTenantId());
@@ -146,10 +149,13 @@ public class DispatchAiUsageService {
             usage.setArtifactId(artifactId);
             usage.setProvider(provider);
             usage.setModel(model);
+            usage.setStepId(entry.getStepId() != null ? entry.getStepId() : "");
             usage.setInputTokens(inputTokens);
             usage.setOutputTokens(outputTokens);
             usage.setCacheReadTokens(cacheReadTokens);
             usage.setCacheWriteTokens(cacheWriteTokens);
+            usage.setReasoningTokens(reasoningTokens);
+            usage.setCredits(credits);
             usage.setTotalTokens(totalTokens);
             usage.setRawJson(JSON.toJSONString(entry));
             usage.setUsageAt(usageAt);

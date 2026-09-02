@@ -4,8 +4,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/shared/auth/store';
 import {
   addMember,
+  approveAccessRequest,
   getCurrentMembership,
+  listAccessRequests,
   listMembers,
+  rejectAccessRequest,
   removeMember,
   searchMemberCandidates,
   transferOwner,
@@ -16,6 +19,11 @@ import type { WorkspaceAccessLevel } from '@/shared/types/common';
 
 const MEMBERS_QUERY_KEY = ['members'] as const;
 const CURRENT_MEMBERSHIP_QUERY_KEY = ['current-membership'] as const;
+const ACCESS_REQUESTS_QUERY_KEY_PREFIX = ['workspace-access-requests'] as const;
+
+export function accessRequestsQueryKey(status: string) {
+  return [...ACCESS_REQUESTS_QUERY_KEY_PREFIX, status] as const;
+}
 
 function showMutationError(error: unknown) {
   message.error(error instanceof Error ? error.message : '操作失败');
@@ -120,6 +128,39 @@ export function useTransferOwner() {
         message.warning('Owner 已移交，请刷新页面同步当前访问等级');
       });
       message.success('Owner 已移交');
+    },
+    onError: showMutationError,
+  });
+}
+
+export function useAccessRequests(status: string) {
+  return useQuery({
+    queryKey: accessRequestsQueryKey(status),
+    queryFn: () => listAccessRequests(status),
+  });
+}
+
+export function useApproveAccessRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: number) => approveAccessRequest(requestId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ACCESS_REQUESTS_QUERY_KEY_PREFIX });
+      queryClient.invalidateQueries({ queryKey: MEMBERS_QUERY_KEY });
+      message.success('已通过该申请');
+    },
+    onError: showMutationError,
+  });
+}
+
+export function useRejectAccessRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requestId, reason }: { requestId: number; reason?: string }) =>
+      rejectAccessRequest(requestId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ACCESS_REQUESTS_QUERY_KEY_PREFIX });
+      message.success('已拒绝该申请');
     },
     onError: showMutationError,
   });

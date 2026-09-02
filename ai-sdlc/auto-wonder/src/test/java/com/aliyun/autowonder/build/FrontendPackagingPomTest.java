@@ -34,8 +34,8 @@ class FrontendPackagingPomTest {
 
         assertTrue(xml.contains("<id>auto-wonder</id>"),
                 "The default Maven profile must include the frontend build");
-        assertTrue(xml.contains("ci --include=optional --cache ../target/npm-cache"),
-                "npm ci must include optional dependencies and use a project-local cache because Vite/Rollup uses platform-specific optional packages");
+        assertTrue(xml.contains("ci --include=dev --include=optional --cache ../target/npm-cache"),
+                "npm ci must include development and optional dependencies and use a project-local cache because Vite/Rollup uses platform-specific optional packages");
         assertTrue(xml.contains("verify-frontend-static-assets"),
                 "Maven package lifecycle should verify static frontend assets before producing deployable artifacts");
         assertTrue(xml.contains("target/classes/static/index.html"),

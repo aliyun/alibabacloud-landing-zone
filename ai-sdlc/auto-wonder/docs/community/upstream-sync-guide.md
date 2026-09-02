@@ -24,9 +24,22 @@ required for a community build and runtime.
      but new Aone-specific feature development on master need not be synced —
      only sync Aone changes when they are inseparable from a broader product
      feature that community requires;
+   - Aone-specific configuration keys beyond `AUTOWONDER_AONE_ENABLED` — for
+     example `AUTOWONDER_AONE_WEB_BASE_URL` — must never be listed in
+     `docs/community/application.env.example`. External community users have no
+     Aone instance, and these keys are optional with empty defaults that do not
+     affect startup or runtime while Aone is disabled. Their absence from the
+     environment inventory is intentional and permanent; the configuration-key
+     audit in step 4 must not report it as a missing key. Do not reintroduce them
+     in a later sync;
    - the community frontend supports creating Qoder CLI executors only; preserve
      this restriction when syncing executor UI changes from master;
    - the supported release target remains Linux x86_64 until expanded explicitly.
+   - all product Skills live under root `skills/` (not `docs/skills/`); sync
+     upstream `docs/skills/` content into `skills/` during merge;
+   - the root `.agents/` directory is part of the community distribution; both
+     `skills/` and `.agents/` must be synced to the external GitHub repository
+     under `ai-sdlc/auto-wonder/`.
 5. Do not preserve a community difference when the new master implementation is
    already community-compatible.
 6. Do not silently drop a master feature to make a conflict easier to resolve.
@@ -45,6 +58,20 @@ required for a community build and runtime.
     incremental SQL into `docs/migration/`. Updating the full schema alone is not
     sufficient. Previously published migrations must not be modified, renamed,
     or deleted.
+12. After every sync, verify runtime and deployment version consistency across
+    all sources of truth. At minimum, confirm that these values agree:
+    - `application.yml` → `autowonder.runtime.recommended-version` default;
+    - `skills/deploying-autowonder-on-alibaba-cloud/assets/templates/deployment-manifest.json`
+      → `recommendedRuntimeVersion`;
+    - `skills/deploying-autowonder-on-alibaba-cloud/tests/test_manifest.py`;
+    - `skills/deploying-autowonder-on-alibaba-cloud/tests/test_script_contracts.py`;
+    - `skills/upgrading-autowonder-on-alibaba-cloud/tests/test_upgrade_info.py`
+      → `recommendedRuntimeVersion` fixtures and assertions.
+
+    Both deploy and upgrade Skills must reference the same runtime version so
+    that fresh deployments and upgrades converge to the correct executor release.
+    A mismatch means external deployments or upgrades will install an outdated
+    runtime version. Treat this as a blocking sync defect.
 
 ## Conflict Decisions
 
@@ -102,7 +129,14 @@ After the merge:
    - review deployment input collection, protected environment generation,
      upgrade planning, operator documentation, and tests for impact;
    - record every intentional Community difference. An unexplained missing key
-     is a blocking sync defect.
+     is a blocking sync defect. "Missing" means a key the runtime reads that
+     neither `docs/community/application.env.example` nor `application*.yml`
+     provides. The deployment environment contract is the union of both sources —
+     `plan-upgrade.sh` collects `${VAR}` placeholders from the yml as well as the
+     `KEY=` lines of the example — so a key that appears only in the yml is
+     already covered by upgrade planning and is not a defect. Do not bulk-add
+     such keys to the example: doing so changes their contract hash and makes the
+     upgrade planner report them as changed env for no functional gain.
 5. Run the gates in [verification.md](verification.md), including backend tests,
    frontend tests/build, deployment Skill tests, and internal-reference scans.
    Run Maven verification and standalone frontend gates serially because both
@@ -125,6 +159,31 @@ After the merge:
    conclusion, and verification results.
 8. Commit the log update separately, push `community`, and confirm local HEAD
    equals `origin/community`.
+
+## Required Release File
+
+Every sync that increments `VERSION` must produce a release file at
+`releases/release_vX.Y.Z_YYYYMMDD.md`. The file must include at minimum:
+
+- version bump and rationale;
+- previous and new master baselines;
+- feature/fix summary;
+- community adaptations;
+- **Upgrade And Data Impact** — describe any breaking runtime, configuration,
+  or data-format change that affects an existing deployment upgrading to this
+  version; if none, state "None — backward-compatible with previous release";
+- **DDL/DML/Migration Impact** — list new migration files, schema changes (DDL),
+  and any data manipulation (DML) or manual data action required; if none, state
+  "No DDL/DML change";
+- configuration and deployment impact;
+- verification results;
+- risks;
+- MR/PR links.
+
+The external GitHub copy must include `ai-sdlc/auto-wonder/VERSION` and
+`ai-sdlc/auto-wonder/releases/release_vX.Y.Z_YYYYMMDD.md` matching the
+community branch exactly. A missing or outdated `VERSION` in the external
+repository is a blocking sync defect.
 
 ## Required Log Entry
 

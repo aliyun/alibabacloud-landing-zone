@@ -2,6 +2,9 @@ package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -18,6 +21,8 @@ public class DispatchPauseService {
     private final DispatchDao dispatchDao;
     private final DispatchCheckpointService checkpointService;
     private final DispatchControlTransport transport;
+    private ScheduledTaskRunDao scheduledRunDao;
+    private ScheduledTaskRunService scheduledRunService;
 
     public DispatchPauseService(DispatchDao dispatchDao,
             DispatchCheckpointService checkpointService,
@@ -26,9 +31,26 @@ public class DispatchPauseService {
         this.checkpointService = checkpointService;
         this.transport = transport;
     }
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setScheduledRunControl(ScheduledTaskRunDao scheduledRunDao, ScheduledTaskRunService scheduledRunService) {
+        this.scheduledRunDao = scheduledRunDao; this.scheduledRunService = scheduledRunService;
+    }
 
     public DispatchDO requestPause(long tenantId, long workitemId, long dispatchId, long userId) {
         DispatchDO dispatch = requireDispatch(tenantId, workitemId, dispatchId);
+        return requestPause(dispatch, tenantId, userId);
+    }
+
+    /** Source-aware administrative pause used by scheduled Run controls. */
+    public DispatchDO requestPauseScheduledRun(long workspaceId, long runId, long dispatchId, long userId) {
+        DispatchDO dispatch = dispatchDao.findById(dispatchId);
+        if (dispatch == null || !Long.valueOf(workspaceId).equals(dispatch.getTenantId())
+                || dispatch.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN
+                || !Long.valueOf(runId).equals(dispatch.getWorkitemId())) throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
+        return requestPause(dispatch, workspaceId, userId);
+    }
+
+    private DispatchDO requestPause(DispatchDO dispatch, long tenantId, long userId) {
         if (DispatchStatus.PAUSED.equals(dispatch.getStatus())) {
             return dispatch;
         }
@@ -72,8 +94,10 @@ public class DispatchPauseService {
                         tenantId, dispatchId, checkpointSeq, checkpointSha256)) {
             return false;
         }
-        return dispatchDao.updateStatus(dispatchId, tenantId, DispatchStatus.PAUSED,
+        boolean paused = dispatchDao.updateStatus(dispatchId, tenantId, DispatchStatus.PAUSED,
                 null, null, null, null, null, dispatch.getVersion(), SYSTEM_USER_ID) == 1;
+        if (paused) completeScheduledCancelIfReady(dispatch);
+        return paused;
     }
 
     /**
@@ -97,6 +121,7 @@ public class DispatchPauseService {
         }
         int rows = dispatchDao.updateStatus(dispatchId, tenantId, DispatchStatus.PAUSED,
                 null, null, null, null, null, dispatch.getVersion(), SYSTEM_USER_ID);
+        if (rows == 1) completeScheduledCancelIfReady(dispatch);
         return rows == 1 ? CompletionDisposition.PAUSED : CompletionDisposition.REJECTED;
     }
 
@@ -125,10 +150,21 @@ public class DispatchPauseService {
     private DispatchDO requireDispatch(long tenantId, long workitemId, long dispatchId) {
         DispatchDO dispatch = dispatchDao.findById(dispatchId);
         if (dispatch == null || dispatch.getTenantId() != tenantId
+                || dispatch.executionSourceType() != ExecutionSourceType.WORKITEM
                 || dispatch.getWorkitemId() != workitemId) {
             throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
         }
         return dispatch;
+    }
+
+    private void completeScheduledCancelIfReady(DispatchDO dispatch) {
+        if (scheduledRunDao == null || scheduledRunService == null
+                || dispatch.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN) return;
+        ScheduledTaskRunDO run = scheduledRunDao.findById(dispatch.getTenantId(), dispatch.getWorkitemId());
+        if (run == null || !"CANCEL_PENDING".equals(run.getError())) return;
+        boolean quiescent = dispatchDao.listBySource(dispatch.getTenantId(), ExecutionSourceType.SCHEDULED_TASK_RUN.name(), dispatch.getWorkitemId())
+                .stream().allMatch(d -> DispatchStatus.isTerminal(d.getStatus()) || DispatchStatus.PAUSED.equals(d.getStatus()));
+        if (quiescent) scheduledRunService.finish(run, "CANCELED", null, "CANCELED", SYSTEM_USER_ID);
     }
 
     private DispatchDO ownedDispatch(long tenantId, long executorId, long dispatchId) {

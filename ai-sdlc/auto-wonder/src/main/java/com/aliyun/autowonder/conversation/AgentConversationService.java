@@ -4,6 +4,8 @@ import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDO;
 import com.aliyun.autowonder.agent.AgentVersionDao;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import com.aliyun.autowonder.integration.dingtalk.DingTalkSourceContext;
@@ -27,7 +29,13 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -49,7 +57,11 @@ public class AgentConversationService {
     private static final int MAX_TURN_ERROR_LENGTH = 1024;
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_QUEUED = "QUEUED";
+    private static final String STATUS_CANCELED = "CANCELED";
     private static final String DIRECTION_IN = "IN";
+    private static final String PROTOCOL_FEATURE_TURN_CANCEL = "CONVERSATION_TURN_CANCEL";
+    private static final long DEFAULT_CANCEL_ACK_TIMEOUT_SECONDS = 30;
+    private static final String CANCELED_FALLBACK_CONTENT = "响应已终止";
 
     private final AgentConversationDao convDao;
     private final AgentConversationTurnDao turnDao;
@@ -60,6 +72,15 @@ public class AgentConversationService {
     private final ConversationChannelSinkRegistry sinkRegistry;
     private final ConversationRuntimePresence runtimePresence;
     private TransactionTemplate failureTransactionTemplate;
+    private ConversationTurnEventService conversationTurnEventService;
+    private final Map<Long, ScheduledFuture<?>> pendingCancels = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService cancelTimeoutScheduler =
+            Executors.newSingleThreadScheduledExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "conversation-cancel-timeout");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private long cancelAckTimeoutSeconds = DEFAULT_CANCEL_ACK_TIMEOUT_SECONDS;
 
     @Autowired
     public AgentConversationService(AgentConversationDao convDao, AgentConversationTurnDao turnDao,
@@ -88,6 +109,15 @@ public class AgentConversationService {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.failureTransactionTemplate = template;
+    }
+
+    @Autowired(required = false)
+    void setConversationTurnEventService(ConversationTurnEventService conversationTurnEventService) {
+        this.conversationTurnEventService = conversationTurnEventService;
+    }
+
+    void setCancelAckTimeoutSeconds(long cancelAckTimeoutSeconds) {
+        this.cancelAckTimeoutSeconds = cancelAckTimeoutSeconds;
     }
 
     @Transactional
@@ -300,12 +330,20 @@ public class AgentConversationService {
             out.setTenantId(tenantId);
             out.setConversationId(conversationId);
             out.setDirection("OUT");
-            out.setContent(outboundReplyContent(replyMarkdown, error));
+            out.setContent(STATUS_CANCELED.equalsIgnoreCase(status)
+                    ? canceledReplyContent(replyMarkdown)
+                    : outboundReplyContent(replyMarkdown, error));
             out.setRequestId(currentRequestId());
             out.setStatus(status);
             out.setError(error);
             turnDao.insert(out);
             convDao.updateStatusAndLastTurn(tenantId, conversationId, "ACTIVE", new Date());
+            if (STATUS_CANCELED.equalsIgnoreCase(status)) {
+                cancelPendingCancelTimeout(turnId);
+                publishCanceledStatusEvent(tenantId, conversationId, turnId);
+            } else {
+                publishAckTerminalStatusEvent(tenantId, conversationId, turnId, status);
+            }
             PendingChannelReply channelReply = null;
             if ("SUCCESS".equalsIgnoreCase(status) && replyMarkdown != null) {
                 String sourceExternalMsgId = inboundTurn == null ? null : inboundTurn.getExternalMsgId();
@@ -325,6 +363,160 @@ public class AgentConversationService {
             return "回复失败：" + error;
         }
         return "（数字人未返回内容）";
+    }
+
+    private String canceledReplyContent(String replyMarkdown) {
+        if (replyMarkdown != null && !replyMarkdown.isBlank()) {
+            return replyMarkdown;
+        }
+        return CANCELED_FALLBACK_CONTENT;
+    }
+
+    private void publishCanceledStatusEvent(Long tenantId, Long conversationId, Long turnId) {
+        if (conversationTurnEventService == null) {
+            return;
+        }
+        try {
+            conversationTurnEventService.publishStatusEvent(tenantId, conversationId, turnId, "canceled");
+        } catch (RuntimeException e) {
+            log.warn("conversation canceled status event publish failed conversationId={} turnId={}",
+                    conversationId, turnId, e);
+        }
+    }
+
+    /** ACK 正常终结（非取消）时直推终态事件；否则轮次结束后浏览器端没有任何
+     *  触发重新拉取会话的事件，澄清界面会一直停留在"回复中"状态。 */
+    private void publishAckTerminalStatusEvent(Long tenantId, Long conversationId, Long turnId,
+            String status) {
+        if (conversationTurnEventService == null) {
+            return;
+        }
+        String terminalStatus;
+        if ("SUCCESS".equalsIgnoreCase(status)) {
+            terminalStatus = "completed";
+        } else if ("FAILED".equalsIgnoreCase(status)) {
+            terminalStatus = "failed";
+        } else {
+            return;
+        }
+        try {
+            conversationTurnEventService.publishStatusEvent(tenantId, conversationId, turnId,
+                    terminalStatus);
+        } catch (RuntimeException e) {
+            log.warn("conversation ack terminal status event publish failed conversationId={} turnId={}",
+                    conversationId, turnId, e);
+        }
+    }
+
+    @Transactional
+    public void requestTurnCancel(Long tenantId, Long conversationId, Long turnId) {
+        if (tenantId == null || conversationId == null || turnId == null) {
+            throw new IllegalArgumentException("tenantId, conversationId and turnId are required");
+        }
+        AgentConversationDO conv = convDao.findById(tenantId, conversationId);
+        if (conv == null) {
+            throw new IllegalArgumentException("conversation not found");
+        }
+        AgentConversationTurnDO turn = inboundTurn(tenantId, conversationId, turnId);
+        if (turn == null || !DIRECTION_IN.equals(turn.getDirection())) {
+            throw new BizException(ErrorCode.NOT_FOUND, "conversation turn not found: " + turnId);
+        }
+        if (!STATUS_PROCESSING.equals(turn.getStatus()) && !STATUS_QUEUED.equals(turn.getStatus())) {
+            throw new BizException(ErrorCode.CONFLICT,
+                    "conversation turn is not cancelable: " + turn.getStatus());
+        }
+        if (STATUS_QUEUED.equals(turn.getStatus())) {
+            // 排队中的轮次尚未下发到 Runtime，直接在服务端终结。
+            withConversationLockEffects(conversationLockName(tenantId, conversationId),
+                    () -> finalizeTurnCancelLocked(tenantId, conv, turnId, null));
+            publishCanceledStatusEvent(tenantId, conversationId, turnId);
+            return;
+        }
+        if (conv.getExecutorId() == null || runtimePresence == null
+                || !runtimePresence.isExecutorOnline(conv.getExecutorId())
+                || !runtimePresence.supportsProtocolFeature(conv.getExecutorId(),
+                        PROTOCOL_FEATURE_TURN_CANCEL)) {
+            throw new BizException(ErrorCode.CONFLICT,
+                    "runtime does not support conversation turn cancel");
+        }
+        transport.sendCancel(conv, turnId);
+        scheduleCancelAckTimeout(conv, turnId);
+    }
+
+    private void scheduleCancelAckTimeout(AgentConversationDO conv, Long turnId) {
+        ScheduledFuture<?> future = cancelTimeoutScheduler.schedule(
+                () -> handleCancelAckTimeout(conv, turnId),
+                cancelAckTimeoutSeconds, TimeUnit.SECONDS);
+        ScheduledFuture<?> previous = pendingCancels.put(turnId, future);
+        if (previous != null) {
+            previous.cancel(false);
+        }
+    }
+
+    private void cancelPendingCancelTimeout(Long turnId) {
+        ScheduledFuture<?> future = pendingCancels.remove(turnId);
+        if (future != null) {
+            future.cancel(false);
+        }
+    }
+
+    // 包级可见，便于单测直接触发超时路径。
+    void handleCancelAckTimeout(AgentConversationDO conv, Long turnId) {
+        ScheduledFuture<?> current = pendingCancels.remove(turnId);
+        if (current == null) {
+            // Runtime 已应答取消（ack 路径会先移除定时器），无需兜底。
+            return;
+        }
+        log.warn("conversation cancel ack timeout conversationId={} turnId={}",
+                conv.getId(), turnId);
+        try {
+            Long tenantId = conv.getTenantId();
+            Long conversationId = conv.getId();
+            if (failureTransactionTemplate != null) {
+                failureTransactionTemplate.executeWithoutResult(status ->
+                        withConversationLockEffects(conversationLockName(tenantId, conversationId),
+                                () -> finalizeTurnCancelLocked(tenantId, conv, turnId, null)));
+            } else {
+                withConversationLockEffects(conversationLockName(tenantId, conversationId),
+                        () -> finalizeTurnCancelLocked(tenantId, conv, turnId, null));
+            }
+        } catch (RuntimeException e) {
+            log.error("conversation cancel ack timeout finalization failed conversationId={} turnId={}",
+                    conv.getId(), turnId, e);
+            return;
+        }
+        publishCanceledStatusEvent(conv.getTenantId(), conv.getId(), turnId);
+    }
+
+    private PostCommitEffects finalizeTurnCancelLocked(Long tenantId, AgentConversationDO conv,
+            Long turnId, String partialContent) {
+        AgentConversationTurnDO turn = inboundTurn(tenantId, conv.getId(), turnId);
+        if (turn == null || !DIRECTION_IN.equals(turn.getDirection())) {
+            return null;
+        }
+        int finalized;
+        if (STATUS_PROCESSING.equals(turn.getStatus())) {
+            finalized = turnDao.updateInboundStatusIfProcessing(tenantId, conv.getId(), turnId,
+                    STATUS_CANCELED, null);
+        } else if (STATUS_QUEUED.equals(turn.getStatus())) {
+            finalized = turnDao.updateStatusIfCurrent(tenantId, turnId, STATUS_QUEUED,
+                    STATUS_CANCELED, null);
+        } else {
+            return null;
+        }
+        if (finalized != 1) {
+            return null;
+        }
+        AgentConversationTurnDO out = new AgentConversationTurnDO();
+        out.setTenantId(tenantId);
+        out.setConversationId(conv.getId());
+        out.setDirection("OUT");
+        out.setContent(canceledReplyContent(partialContent));
+        out.setRequestId(currentRequestId());
+        out.setStatus(STATUS_CANCELED);
+        turnDao.insert(out);
+        convDao.updateStatusAndLastTurn(tenantId, conv.getId(), "ACTIVE", new Date());
+        return new PostCommitEffects(null, nextQueuedDispatch(tenantId, conv));
     }
 
     private boolean isActiveInboundTurn(AgentConversationTurnDO inboundTurn, Long conversationId) {

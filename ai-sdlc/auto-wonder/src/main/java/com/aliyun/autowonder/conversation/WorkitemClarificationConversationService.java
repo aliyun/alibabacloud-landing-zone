@@ -82,6 +82,9 @@ public class WorkitemClarificationConversationService {
                 .collect(Collectors.toList());
 
         AgentConversationTurnDO processing = turnDao.findProcessingInbound(tenantId, conversationId);
+        if (processing == null) {
+            processing = turnDao.findNextQueuedInbound(tenantId, conversationId);
+        }
         return toVO(conv, turnVOs, processing);
     }
 
@@ -141,6 +144,18 @@ public class WorkitemClarificationConversationService {
                 conv.getChannelConversationId(), content, externalMsgId);
     }
 
+    public void cancelTurn(Long tenantId, Long workitemId, Long conversationId, Long turnId) {
+        AgentConversationDO conv = convDao.findById(tenantId, conversationId);
+        if (conv == null) {
+            throw new IllegalArgumentException("conversation not found");
+        }
+        if (!CHANNEL.equals(conv.getChannel()) || !BIZ_REF_TYPE.equals(conv.getBizRefType())
+                || !workitemId.equals(conv.getBizRefId())) {
+            throw new IllegalArgumentException("conversation does not belong to this workitem");
+        }
+        conversationService.requestTurnCancel(tenantId, conversationId, turnId);
+    }
+
     private ClarificationConversationVO toVO(AgentConversationDO conv, List<ClarificationTurnVO> turns) {
         return toVO(conv, turns, null);
     }
@@ -153,6 +168,9 @@ public class WorkitemClarificationConversationService {
         boolean streamingSupported = executorOnline
                 && runtimePresence != null
                 && runtimePresence.supportsProtocolFeature(conv.getExecutorId(), "CONVERSATION_TURN_EVENT");
+        boolean cancelSupported = executorOnline
+                && runtimePresence != null
+                && runtimePresence.supportsProtocolFeature(conv.getExecutorId(), "CONVERSATION_TURN_CANCEL");
         AgentDO agent = agentDao.findById(conv.getAgentId());
         return ClarificationConversationVO.builder()
                 .id(conv.getId())
@@ -162,6 +180,7 @@ public class WorkitemClarificationConversationService {
                 .status(conv.getStatus())
                 .executorOnline(executorOnline)
                 .streamingSupported(streamingSupported)
+                .cancelSupported(cancelSupported)
                 .cliSessionRef(conv.getCliSessionRef())
                 .processingStatus(processing != null ? processing.getStatus() : null)
                 .processingTurnId(processing != null ? processing.getId() : null)

@@ -2,6 +2,7 @@ package com.aliyun.autowonder.artifact;
 
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.TokenService;
@@ -37,7 +38,8 @@ public class DaemonUploadAuthenticator {
             return AuthResult.fail();
         }
         log.info("upload auth ok dispatchId={} tenantId={} workitemId={}", dispatchId, d.getTenantId(), d.getWorkitemId());
-        return AuthResult.success(d.getTenantId(), d.getWorkitemId(), d.getAgentId(), d.getResumeMode());
+        return AuthResult.success(d.getTenantId(), d.getWorkitemId(), d.getAgentId(), d.getResumeMode(),
+                d.executionSourceType());
     }
 
     public static class AuthResult {
@@ -46,25 +48,34 @@ public class DaemonUploadAuthenticator {
         private final long workitemId;
         private final long agentId;
         private final String resumeMode;
+        private final ExecutionSourceType sourceType;
 
-        private AuthResult(boolean success, long tenantId, long workitemId, long agentId, String resumeMode) {
+        private AuthResult(boolean success, long tenantId, long workitemId, long agentId, String resumeMode,
+                           ExecutionSourceType sourceType) {
             this.success = success;
             this.tenantId = tenantId;
             this.workitemId = workitemId;
             this.agentId = agentId;
             this.resumeMode = resumeMode;
+            this.sourceType = sourceType;
         }
 
         public static AuthResult success(long tenantId, long workitemId, long agentId) {
-            return success(tenantId, workitemId, agentId, null);
+            return success(tenantId, workitemId, agentId, null, ExecutionSourceType.WORKITEM);
         }
 
         public static AuthResult success(long tenantId, long workitemId, long agentId, String resumeMode) {
-            return new AuthResult(true, tenantId, workitemId, agentId, resumeMode);
+            return success(tenantId, workitemId, agentId, resumeMode, ExecutionSourceType.WORKITEM);
+        }
+
+        public static AuthResult success(long tenantId, long workitemId, long agentId, String resumeMode,
+                                         ExecutionSourceType sourceType) {
+            return new AuthResult(true, tenantId, workitemId, agentId, resumeMode,
+                    sourceType == null ? ExecutionSourceType.WORKITEM : sourceType);
         }
 
         public static AuthResult fail() {
-            return new AuthResult(false, 0, 0, 0, null);
+            return new AuthResult(false, 0, 0, 0, null, ExecutionSourceType.WORKITEM);
         }
 
         public boolean isSuccess() { return success; }
@@ -72,6 +83,7 @@ public class DaemonUploadAuthenticator {
         public long getWorkitemId() { return workitemId; }
         public long getAgentId() { return agentId; }
         public String getResumeMode() { return resumeMode; }
+        public ExecutionSourceType getSourceType() { return sourceType; }
         public boolean isInteractionDispatch() {
             return "COMMENT_INTERACTION".equalsIgnoreCase(resumeMode)
                     || "SIDE_INTERACTION".equalsIgnoreCase(resumeMode)

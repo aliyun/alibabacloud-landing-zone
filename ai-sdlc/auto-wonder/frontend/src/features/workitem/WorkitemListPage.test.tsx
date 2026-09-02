@@ -52,6 +52,76 @@ describe('WorkitemListPage', () => {
     expect(screen.getByText('总工单数 6001 个')).toBeInTheDocument();
   });
 
+  it('shows the 定时执行 icon for scheduled workitems in kanban view', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 21, title: '定时工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', scheduledStartAt: '2026-09-01T02:00:00Z', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+            { id: 22, title: '普通工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('定时工单')).toBeInTheDocument();
+    expect(screen.getByLabelText('定时执行')).toBeInTheDocument();
+  });
+
+  it('shows the 定时执行 icon in table view title column for scheduled workitems', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 23, title: '表格定时工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', scheduledStartAt: '2026-09-01T02:00:00Z', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    await userEvent.click(await screen.findByLabelText('表格视图'));
+    expect(await screen.findByText('表格定时工单')).toBeInTheDocument();
+    expect(screen.getByLabelText('定时执行')).toBeInTheDocument();
+  });
+
+  it('keeps the scheduled badge after the planned start has already fired', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 24, title: '已触发定时工单', workType: 'REQ', statusName: '开发中', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', scheduledStartTriggeredAt: '2026-08-26T10:00:00Z', version: 2, gmtCreate: '2026-07-01', gmtModified: '2026-08-26' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('已触发定时工单')).toBeInTheDocument();
+    expect(screen.getByLabelText('定时执行已触发')).toBeInTheDocument();
+  });
+
+  it('marks scheduled-task derived workitems in the list', async () => {
+    server.use(
+      http.get('/api/workitems', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 25, title: '定时任务派生工单', workType: 'TASK', statusName: '待处理', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', origin: { type: 'SCHEDULED_TASK_RUN', id: 9, scheduledTaskId: 77, scheduledTaskName: '每日巡检' }, version: 1, gmtCreate: '2026-08-26T02:00:00Z', gmtModified: '2026-08-26T02:00:00Z' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('定时任务派生工单')).toBeInTheDocument();
+    expect(screen.getByLabelText('定时任务执行')).toBeInTheDocument();
+  });
+
   it('shows the 异常 tag for a stuck workitem in kanban', async () => {
     server.use(
       http.get('/api/workitems', () => {

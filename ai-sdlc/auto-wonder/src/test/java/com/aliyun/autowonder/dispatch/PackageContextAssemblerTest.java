@@ -209,7 +209,7 @@ class PackageContextAssemblerTest {
         WorkitemCommentDO second = new WorkitemCommentDO();
         second.setId(11L); second.setTenantId(TENANT); second.setAuthorType("AGENT"); second.setAuthorRef(400L);
         second.setContentMd("I have started the adjustment.");
-        when(commentDao.listByWorkitem(200L)).thenReturn(List.of(first, second));
+        when(commentDao.listByWorkitem(TENANT, 200L)).thenReturn(List.of(first, second));
 
         PackageContext context = assembler.assemble(dispatch(), version());
 
@@ -494,6 +494,12 @@ class PackageContextAssemblerTest {
 
         assertEquals("eager", ctx.getRepos().get(0).get("mode"));
         assertEquals("lazy", ctx.getRepos().get(1).get("mode"));
+        assertEquals(true, ctx.getRepos().get(0).get("allowCommit"));
+        assertEquals(true, ctx.getRepos().get(0).get("allowPush"));
+        assertEquals(true, ctx.getRepos().get(0).get("allowNetwork"));
+        assertEquals(false, ctx.getRepos().get(1).get("allowCommit"));
+        assertEquals(false, ctx.getRepos().get(1).get("allowPush"));
+        assertEquals(true, ctx.getRepos().get(1).get("allowNetwork"));
         assertFalse(ctx.getRepos().get(0).containsKey("worktreeBranch"));
         assertFalse(ctx.getRepos().get(1).containsKey("worktreeBranch"));
     }
@@ -1018,9 +1024,8 @@ class PackageContextAssemblerTest {
         assertEquals("QA", digital.get(1).get("roleCode"));
     }
 
-    @SuppressWarnings("unchecked")
     @Test
-    void rosterExcludesCrossTenantWorkitemHumanAssignee() {
+    void packageAssemblyFailsClosedForCrossTenantWorkitem() {
         // workitem belongs to a DIFFERENT tenant than the dispatch
         WorkitemDO w = new WorkitemDO();
         w.setId(200L);
@@ -1031,12 +1036,11 @@ class PackageContextAssemblerTest {
         stubEmptyExceptRoster();
         when(squadMemberDao.listByAgent(400L)).thenReturn(List.of());
 
-        PackageContext ctx = assembler.assemble(dispatch(), version());
-        Map<String, Object> roster = ctx.getRoster();
-        assertNotNull(roster);
-        List<Map<String, Object>> humans = (List<Map<String, Object>>) roster.get("humanTeammates");
-        assertTrue(humans == null || humans.isEmpty(),
-                "cross-tenant workitem HUMAN assignee must not leak into roster");
+        com.aliyun.autowonder.common.error.BizException failure = assertThrows(
+                com.aliyun.autowonder.common.error.BizException.class,
+                () -> assembler.assemble(dispatch(), version()));
+
+        assertEquals("13003", failure.getCode());
     }
 
     @SuppressWarnings("unchecked")

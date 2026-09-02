@@ -6,7 +6,7 @@ import { theme } from 'antd';
 import { useMemoryList, useMemoryGroups, useCreateMemory, useUpdateMemory, useDeleteMemory } from './hooks';
 import type { Memory, MemoryGroup, CreateMemoryParams, UpdateMemoryParams } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
-import { useAgent } from '@/features/agent/hooks';
+import { useAgent, useAgentList } from '@/features/agent/hooks';
 import { useMemoryReviewActions } from './useMemoryReviewActions';
 import { MemoryReviewModals } from './MemoryReviewModals';
 
@@ -76,6 +76,7 @@ export function MemoryListPage() {
     view === 'BY_AGENT' ? { page, size, scope, ownerRef, type, status } : undefined,
   );
   const groups = groupsQuery.data ?? [];
+  const { data: orgAgents = [], isLoading: orgAgentsLoading } = useAgentList(1, 100);
   const groupedMemories = useMemo(() => groups.flatMap((g) => g.memories), [groups]);
   const visibleMemories = view === 'BY_AGENT' ? groupedMemories : data;
   const createMutation = useCreateMemory();
@@ -374,6 +375,32 @@ export function MemoryListPage() {
           options={Object.entries(statusConfig).map(([v, o]) => ({ value: v, label: o.text }))}
         />
       </Space>
+
+      {view === 'BY_AGENT' && (
+        <Space wrap style={{ width: '100%', marginBottom: 16 }} data-testid="memory-agent-filter-tags">
+          {orgAgentsLoading ? (
+            <Typography.Text type="secondary">员工列表加载中…</Typography.Text>
+          ) : (
+            <>
+              <Tag.CheckableTag
+                checked={ownerRef === undefined}
+                onChange={() => { setOwnerRef(undefined); setPage(1); }}
+              >
+                全部
+              </Tag.CheckableTag>
+              {orgAgents.map((agent) => (
+                <Tag.CheckableTag
+                  key={agent.id}
+                  checked={ownerRef === agent.id}
+                  onChange={() => { setOwnerRef(agent.id); setPage(1); }}
+                >
+                  {agent.name} ({agent.id})
+                </Tag.CheckableTag>
+              ))}
+            </>
+          )}
+        </Space>
+      )}
 
       {view === 'TIMELINE' ? (
         <List

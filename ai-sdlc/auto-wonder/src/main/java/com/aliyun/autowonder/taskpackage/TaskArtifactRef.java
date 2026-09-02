@@ -9,4 +9,6 @@ import lombok.Setter;
 public class TaskArtifactRef {
     private String name;
     private String ossRef;
+    /** Optional immutable content digest captured by a scheduled Run snapshot. */
+    private String expectedSha256;
 }

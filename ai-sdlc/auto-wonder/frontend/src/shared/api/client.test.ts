@@ -394,4 +394,50 @@ describe('apiClient', () => {
     expect(useAuthStore.getState().accessToken).toBeNull();
     useAuthStore.getState().clear();
   });
+
+  it('login 401 surfaces the backend message without refreshing or clearing the session', async () => {
+    let refreshCalls = 0;
+    useAuthStore.getState().setTokens('stale-access', 'stale-refresh');
+
+    server.use(
+      http.post('/api/auth/login', () => HttpResponse.json({
+        success: false, code: '10401', message: '用户名或密码错误',
+        data: null, traceId: 'trace-login-fail',
+      }, { status: 401 })),
+      http.post('/api/auth/refresh', () => {
+        refreshCalls += 1;
+        return HttpResponse.json({
+          success: true, code: '0', message: '',
+          data: { accessToken: 'new-access-token' }, traceId: null,
+        });
+      }),
+    );
+
+    await expect(apiClient.post('/api/auth/login', { username: 'bob', password: 'wrong' }))
+      .rejects.toMatchObject({
+        code: '10401',
+        message: '用户名或密码错误',
+        traceId: 'trace-login-fail',
+      });
+
+    expect(refreshCalls).toBe(0);
+    expect(useAuthStore.getState().accessToken).toBe('stale-access');
+    useAuthStore.getState().clear();
+  });
+
+  it('login failure envelope with HTTP 200 also surfaces the backend message', async () => {
+    server.use(
+      http.post('/api/auth/login', () => HttpResponse.json({
+        success: false, code: '10401', message: '用户名或密码错误',
+        data: null, traceId: 'trace-envelope',
+      })),
+    );
+
+    await expect(apiClient.post('/api/auth/login', { username: 'bob', password: 'wrong' }))
+      .rejects.toMatchObject({
+        code: '10401',
+        message: '用户名或密码错误',
+        traceId: 'trace-envelope',
+      });
+  });
 });

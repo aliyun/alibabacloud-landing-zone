@@ -145,6 +145,34 @@ class WorkspaceMemberDaoSqlTest {
         assertTrue(ownerUpdate.contains("is_deleted = 0"));
     }
 
+    @Test
+    void pagedWorkspaceListOrdersByAUniqueTiebreakerSoPagesCannotTear() throws Exception {
+        String listAllPaged = statement(orgMapperXml(), "listAllPaged", "select");
+
+        // gmt_create is DATETIME(3) defaulting to CURRENT_TIMESTAMP(3), so bulk-seeded
+        // workspaces tie; without a unique tiebreaker MySQL may order ties differently
+        // per page request and a workspace shows up twice while another is skipped.
+        assertTrue(listAllPaged.contains("ORDER BY gmt_create DESC, id DESC"),
+                "listAllPaged must order by gmt_create DESC, id DESC so equal gmt_create "
+                        + "values cannot reorder between page requests, got: " + listAllPaged);
+    }
+
+    @Test
+    void pagedWorkspaceListAndItsTotalShareOneKeywordFilter() throws Exception {
+        String xml = orgMapperXml();
+        String listAllPaged = statement(xml, "listAllPaged", "select");
+        String countAll = statement(xml, "countAll", "select");
+
+        // A drifting predicate narrows the page but not the total, so the UI paginates
+        // to empty pages; the shared fragment is what keeps the two in lockstep.
+        assertTrue(listAllPaged.contains("<include refid=\"allWorkspacesFilter\"/>"),
+                "listAllPaged must include the shared allWorkspacesFilter fragment instead of "
+                        + "inlining the keyword predicate, got: " + listAllPaged);
+        assertTrue(countAll.contains("<include refid=\"allWorkspacesFilter\"/>"),
+                "countAll must include the shared allWorkspacesFilter fragment so its total "
+                        + "matches the page query, got: " + countAll);
+    }
+
     private static void assertActiveUpdateContract(String sql, String assignment) {
         assertTrue(sql.contains("UPDATE org_member SET " + assignment));
         assertTrue(sql.contains("modifier_id = #{modifierId}"));

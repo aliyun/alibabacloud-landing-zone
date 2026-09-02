@@ -11,7 +11,7 @@ const { Text } = Typography;
 const MAX_DOCUMENTS = 10;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.png', '.jpg', '.jpeg', '.webp'];
+const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.txt', '.html', '.pdf', '.png', '.jpg', '.jpeg', '.webp'];
 const VISUAL_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 interface RequirementDocumentsCardProps {
@@ -54,7 +54,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       const files = Array.from(fileList ?? []);
       if (files.length === 0) return;
       if (files.some((file) => !isSupportedContextFile(file))) {
-        message.error('仅支持上传 .md、.markdown、.png、.jpg、.jpeg、.webp 文件');
+        message.error('仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp 文件');
         return;
       }
       if (files.some((file) => file.size > MAX_FILE_BYTES)) {
@@ -102,7 +102,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
             aria-label="选择需求/设计上下文文件"
             type="file"
             multiple
-            accept=".md,.markdown,.png,.jpg,.jpeg,.webp"
+            accept=".md,.markdown,.txt,.html,.pdf,.png,.jpg,.jpeg,.webp"
             style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}
             onChange={(event) => {
               handleFiles(event.target.files);
@@ -126,7 +126,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       style={{ marginTop: 14 }}
     >
       <Text type="secondary" style={{ display: 'block', marginBottom: documents.length === 0 ? 0 : 8 }}>
-        支持 Markdown、PNG、JPEG、WebP；最多 10 个附件，单个最大 5 MB，总计不超过 20 MB。
+        支持 Markdown、TXT、HTML、PDF、PNG、JPEG、WebP；最多 10 个附件，单个最大 5 MB，总计不超过 20 MB。
       </Text>
       {loading ? (
         <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>

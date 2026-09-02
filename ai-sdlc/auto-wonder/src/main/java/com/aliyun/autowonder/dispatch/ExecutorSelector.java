@@ -51,6 +51,25 @@ public class ExecutorSelector {
         return select(agentId, preferredExecutorId, true);
     }
 
+    /**
+     * A recovery must never infer that a persisted executor id is still usable.
+     * Keep that check at the same boundary as normal selection so continuous Runs
+     * can wait for their original runtime without exposing Runtime internals.
+     */
+    public boolean isAvailable(long executorId) {
+        return hasCapacity(executorId, false);
+    }
+
+    /** Select only the requested executor. Continuous native sessions cannot fail over. */
+    public Long selectStrict(long agentId, long executorId) {
+        Set<String> members = redisManager.smembers(execsKey(agentId));
+        if (members == null || !members.contains(String.valueOf(executorId))
+                || !hasCapacity(executorId, false)) {
+            return null;
+        }
+        return executorId;
+    }
+
     private Long select(long agentId, Long preferredExecutorId, boolean interaction) {
         Set<String> members = redisManager.smembers(execsKey(agentId));
         if (members == null || members.isEmpty()) {

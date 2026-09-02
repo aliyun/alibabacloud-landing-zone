@@ -11,6 +11,7 @@ import java.util.List;
 @Setter
 public class DispatchVO {
     private Long id;
+    private String sourceType;
     private Long workitemId;
     private Long sdlcStepId;
     private Long agentId;

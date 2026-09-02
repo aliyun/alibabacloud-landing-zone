@@ -70,8 +70,11 @@ function isAccessDenied(code: string): boolean {
     || code === ErrorCodes.WORKSPACE_ACCESS_INSUFFICIENT;
 }
 
-function isLoginRequest(url?: string): boolean {
-  return url === '/api/auth/login';
+// A 401 from the login endpoint is a business error (wrong credentials), not a
+// session expiry; routing it through handleUnauthorized would redirect/reload
+// the login page and swallow the backend's specific error message.
+function isAuthEntryRequest(config?: InternalAxiosRequestConfig): boolean {
+  return config?.url === '/api/auth/login';
 }
 
 async function synchronizeWorkspaceAfterFailure(code: string): Promise<void> {
@@ -175,7 +178,7 @@ apiClient.interceptors.response.use(
   async (response) => {
     const body = response.data as ApiResult<unknown>;
     if (!body.success) {
-      if (body.code === ErrorCodes.UNAUTHORIZED && !isLoginRequest(response.config.url)) {
+      if (body.code === ErrorCodes.UNAUTHORIZED && !isAuthEntryRequest(response.config)) {
         return handleUnauthorized(response.config);
       }
       const apiError = new ApiError(body.code, body.message, body.traceId);
@@ -189,7 +192,7 @@ apiClient.interceptors.response.use(
     if (error.response?.data?.code) {
       const body = error.response.data;
 
-      if (body.code === ErrorCodes.UNAUTHORIZED && !isLoginRequest(error.config?.url)) {
+      if (body.code === ErrorCodes.UNAUTHORIZED && !isAuthEntryRequest(error.config)) {
         return handleUnauthorized(error.config);
       }
       const apiErr = new ApiError(body.code, body.message, body.traceId);

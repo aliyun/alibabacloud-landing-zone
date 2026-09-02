@@ -57,6 +57,7 @@ describe('buildDebugCommand', () => {
       'npx -y autowonder@0.2.138 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor'
       + ' --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform'
       + ' --model ultimate --reasoning-effort high --context-window 1000000'
+      + ' --token-aware-enable'
       + ' --debug 2>&1 | tee ~/aw-qoder-10000-260824-15-30-42.log',
     );
   });

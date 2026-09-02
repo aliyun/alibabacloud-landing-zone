@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -28,26 +29,26 @@ class SkillConnectionTestServiceTest {
     @Test
     void allMcpTransportsDelegateToSelectedRuntime() {
         RuntimeMcpConnectionTestService runtime = mock(RuntimeMcpConnectionTestService.class);
-        when(runtime.test(100L, 7L, "http", null, List.of(), "https://mcp.example.com/mcp"))
-                .thenReturn(new RuntimeMcpConnectionTestService.SkillConnectionTestResult(true, "连接成功", 42L));
-        when(skillDao.findById(1L)).thenReturn(mcpSkill("{\"transport\":\"http\",\"url\":\"https://mcp.example.com/mcp\"}"));
+        when(runtime.test(100L, 7L, "http", null, List.of(), "https://mcp.example.com/mcp", Map.of("Authorization", "Bearer test-token"), 45))
+                .thenReturn(new RuntimeMcpConnectionTestService.SkillConnectionTestResult(true, "连接成功", 42L, List.of()));
+        when(skillDao.findById(1L)).thenReturn(mcpSkill("{\"transport\":\"http\",\"url\":\"https://mcp.example.com/mcp\",\"headers\":{\"Authorization\":\"Bearer test-token\"},\"timeoutSeconds\":45}"));
 
         SkillConnectionTestVO result = new SkillConnectionTestService(skillDao, runtime).test(1L, 100L, 7L);
 
         assertTrue(result.isSuccess());
         assertEquals(42L, result.getDurationMs());
-        verify(runtime).test(100L, 7L, "http", null, List.of(), "https://mcp.example.com/mcp");
+        verify(runtime).test(100L, 7L, "http", null, List.of(), "https://mcp.example.com/mcp", Map.of("Authorization", "Bearer test-token"), 45);
     }
 
     @Test
     void stdioMcpDelegatesItsCommandToSelectedRuntime() {
         RuntimeMcpConnectionTestService runtime = mock(RuntimeMcpConnectionTestService.class);
-        when(runtime.test(100L, 7L, "stdio", "uvx", List.of("mcp-server-fetch"), null))
-                .thenReturn(new RuntimeMcpConnectionTestService.SkillConnectionTestResult(true, "连接成功", 42L));
+        when(runtime.test(100L, 7L, "stdio", "uvx", List.of("mcp-server-fetch"), null, Map.of(), 60))
+                .thenReturn(new RuntimeMcpConnectionTestService.SkillConnectionTestResult(true, "连接成功", 42L, List.of()));
         when(skillDao.findById(1L)).thenReturn(mcpSkill("{\"transport\":\"stdio\",\"command\":\"uvx\",\"args\":[\"mcp-server-fetch\"]}"));
 
         assertTrue(new SkillConnectionTestService(skillDao, runtime).test(1L, 100L, 7L).isSuccess());
-        verify(runtime).test(100L, 7L, "stdio", "uvx", List.of("mcp-server-fetch"), null);
+        verify(runtime).test(100L, 7L, "stdio", "uvx", List.of("mcp-server-fetch"), null, Map.of(), 60);
     }
 
     @Test

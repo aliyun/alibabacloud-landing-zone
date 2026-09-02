@@ -74,7 +74,9 @@ public class DispatchQueryService {
         if (rows.isEmpty()) {
             return new ArrayList<>();
         }
-        Map<Long, String> titles = index(collectIds(rows, DispatchDO::getWorkitemId),
+        Map<Long, String> titles = index(collectIds(rows.stream()
+                        .filter(d -> d.executionSourceType() == ExecutionSourceType.WORKITEM)
+                        .collect(Collectors.toList()), DispatchDO::getWorkitemId),
                 ids -> workitemDao.listByIds(tenantId, ids), WorkitemDO::getId, WorkitemDO::getTitle);
         Map<Long, String> agentNames = index(collectIds(rows, DispatchDO::getAgentId),
                 ids -> agentDao.listByIds(tenantId, ids), AgentDO::getId, AgentDO::getName);
@@ -87,6 +89,7 @@ public class DispatchQueryService {
         for (DispatchDO d : rows) {
             DispatchVO vo = new DispatchVO();
             vo.setId(d.getId());
+            vo.setSourceType(d.executionSourceType().name());
             vo.setWorkitemId(d.getWorkitemId());
             vo.setSdlcStepId(d.getSdlcStepId());
             vo.setAgentId(d.getAgentId());
@@ -99,7 +102,9 @@ public class DispatchQueryService {
             vo.setPackageOssRef(d.getPackageOssRef());
             vo.setGmtCreate(d.getGmtCreate());
             vo.setGmtModified(d.getGmtModified());
-            vo.setWorkitemTitle(d.getWorkitemId() == null ? null : titles.get(d.getWorkitemId()));
+            vo.setWorkitemTitle(d.getWorkitemId() == null
+                    || d.executionSourceType() != ExecutionSourceType.WORKITEM
+                    ? null : titles.get(d.getWorkitemId()));
             vo.setAgentName(d.getAgentId() == null ? null : agentNames.get(d.getAgentId()));
             vo.setAgentVersionNo(d.getAgentVersionId() == null ? null : versionNos.get(d.getAgentVersionId()));
             vo.setExecutorName(d.getExecutorId() == null ? null : executorNames.get(d.getExecutorId()));

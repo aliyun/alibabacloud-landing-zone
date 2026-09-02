@@ -236,7 +236,7 @@ describe('ExecutorListPage', () => {
       'https://daily.auto-wonder.example.com/api/mcp',
       '0.2.130',
     )).toBe(
-      `npx -y autowonder@0.2.130 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider ${provider} --memory-mode provider-local`,
+      `npx -y autowonder@0.2.130 connect --ws-url wss://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider ${provider} --memory-mode provider-local${provider === 'qoder' || provider === 'qodercn' ? ' --token-aware-enable' : ''}`,
     );
   });
 
@@ -247,11 +247,17 @@ describe('ExecutorListPage', () => {
 
   it('uses provider model IDs and fixed Qoder runtime choices', () => {
     expect(QODER_MODELS.map((model) => model.value)).toEqual([
-      'auto', 'ultimate', 'performance', 'efficient', 'lite', 'cmodel',
-      'qmodel_38max', 'qmodel_latest', 'qmodel', 'kmodel_latest', 'kmodel',
-      'gm51model', 'dmodel', 'dfmodel', 'mmodel',
+      'auto', 'ultimate', 'performance', 'efficient', 'lite',
+      'qmodel_38max', 'qfmodel', 'qmodel_latest', 'qmodel',
+      'kmodel_latest', 'kmodel', 'gmodel', 'gfmodel',
+      'dmodel', 'dfmodel', 'mmodel',
     ]);
     expect(QODER_MODELS).toContainEqual({ value: 'qmodel_38max', label: 'Qwen3.8-Max' });
+    expect(QODER_MODELS).toContainEqual({ value: 'auto', label: 'Auto (default)' });
+    expect(QODER_MODELS).toContainEqual({ value: 'qfmodel', label: 'Qwen3.8-Flash' });
+    expect(QODER_MODELS).toContainEqual({ value: 'gmodel', label: 'GLM-5.3' });
+    expect(QODER_MODELS).toContainEqual({ value: 'gfmodel', label: 'GLM-5.3-Flash' });
+    expect(QODER_MODELS.some((model) => model.value === 'cmodel' || model.value === 'gm51model')).toBe(false);
     expect(qoderOptionsForModel('ultimate').contextWindows).toEqual([
       { value: '1000000', label: '1M' },
       { value: '400000', label: '400K' },
@@ -260,6 +266,8 @@ describe('ExecutorListPage', () => {
     expect(qoderOptionsForModel('ultimate').reasoningEfforts.map((option) => option.value)).toEqual([
       'max', 'xhigh', 'high', 'medium', 'low', 'none',
     ]);
+    expect(qoderOptionsForModel('qfmodel').defaultReasoningEffort).toBe('medium');
+    expect(qoderOptionsForModel('gmodel').defaultContextWindow).toBe('260000');
   });
 
   it('builds a Qoder command with the selected fixed runtime options', () => {
@@ -276,7 +284,7 @@ describe('ExecutorListPage', () => {
         contextWindow: '1000000',
       },
     )).toBe(
-      'npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
+      'npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qoder --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000 --token-aware-enable',
     );
   });
 
@@ -354,7 +362,7 @@ describe('ExecutorListPage', () => {
         contextWindow: '1000000',
       },
     )).toBe(
-      'npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qodercn --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000',
+      'npx -y autowonder@0.2.130 connect --ws-url ws://daily.auto-wonder.example.com/ws/executor --token exec_test_token --executor-id 10000 --provider qodercn --memory-mode platform --model ultimate --reasoning-effort high --context-window 1000000 --token-aware-enable',
     );
   });
 

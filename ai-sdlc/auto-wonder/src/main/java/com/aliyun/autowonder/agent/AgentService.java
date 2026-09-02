@@ -137,16 +137,40 @@ public class AgentService {
     public AgentVersionVO editConfig(long agentId, UpdateConfigRequest req, long tenantId, long userId) {
         AgentDO agent = findAgentInTenant(agentId, tenantId);
         AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
-        String identityJson = identityJsonWithEvolutionMode(draft.getIdentityJson(), req.getEvolutionMode());
+        String identityJson = fieldProvided(req.getProvidedFields(), "evolutionMode")
+                ? identityJsonWithEvolutionMode(draft.getIdentityJson(), req.getEvolutionMode())
+                : draft.getIdentityJson();
+        String roleName = fieldProvided(req.getProvidedFields(), "roleName")
+                ? req.getRoleName() : draft.getRoleName();
+        String roleCode = fieldProvided(req.getProvidedFields(), "roleCode")
+                ? req.getRoleCode() : draft.getRoleCode();
+        String businessBackground = fieldProvided(req.getProvidedFields(), "businessBackground")
+                ? req.getBusinessBackground() : draft.getBusinessBackground();
+        String responsibilities = fieldProvided(req.getProvidedFields(), "responsibilities")
+                ? req.getResponsibilities() : draft.getResponsibilities();
+        Long sdlcId = fieldProvided(req.getProvidedFields(), "sdlcId")
+                ? req.getSdlcId() : draft.getSdlcId();
         int rows = versionDao.updateConfig(draft.getId(), tenantId,
-                req.getRoleName(), req.getRoleCode(),
-                req.getBusinessBackground(), req.getResponsibilities(), req.getSdlcId(),
+                roleName, roleCode,
+                businessBackground, responsibilities, sdlcId,
                 identityJson,
                 draft.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
         return toVersionVO(versionDao.findById(draft.getId()));
+    }
+
+    private boolean fieldProvided(java.util.Set<String> providedFields, String fieldName) {
+        return providedFields == null || providedFields.contains(fieldName);
+    }
+
+    private String mergeField(java.util.Set<String> providedFields, String fieldName,
+            String requested, String current) {
+        if (providedFields == null) {
+            return requested != null ? requested : current;
+        }
+        return providedFields.contains(fieldName) ? requested : current;
     }
 
     @Transactional
@@ -159,7 +183,7 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_NOT_FOUND);
         }
 
-        if (req.getName() != null) {
+        if (fieldProvided(req.getProvidedFields(), "name") && req.getName() != null) {
             if (req.getName().isBlank()) {
                 throw new BizException(ErrorCode.AGENT_NAME_REQUIRED);
             }
@@ -171,15 +195,25 @@ public class AgentService {
             agent = agentDao.findById(agent.getId());
         }
 
-        boolean hasVersionField = req.getRoleCode() != null || req.getRoleName() != null
-                || req.getBusinessBackground() != null || req.getResponsibilities() != null;
+        boolean hasVersionField = fieldProvided(req.getProvidedFields(), "roleCode")
+                || fieldProvided(req.getProvidedFields(), "roleName")
+                || fieldProvided(req.getProvidedFields(), "businessBackground")
+                || fieldProvided(req.getProvidedFields(), "responsibilities");
+        if (req.getProvidedFields() == null) {
+            hasVersionField = req.getRoleCode() != null || req.getRoleName() != null
+                    || req.getBusinessBackground() != null || req.getResponsibilities() != null;
+        }
 
         if (hasVersionField) {
             AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
-            String roleName = req.getRoleName() != null ? req.getRoleName() : draft.getRoleName();
-            String roleCode = req.getRoleCode() != null ? req.getRoleCode() : draft.getRoleCode();
-            String bg = req.getBusinessBackground() != null ? req.getBusinessBackground() : draft.getBusinessBackground();
-            String resp = req.getResponsibilities() != null ? req.getResponsibilities() : draft.getResponsibilities();
+            String roleName = mergeField(req.getProvidedFields(), "roleName",
+                    req.getRoleName(), draft.getRoleName());
+            String roleCode = mergeField(req.getProvidedFields(), "roleCode",
+                    req.getRoleCode(), draft.getRoleCode());
+            String bg = mergeField(req.getProvidedFields(), "businessBackground",
+                    req.getBusinessBackground(), draft.getBusinessBackground());
+            String resp = mergeField(req.getProvidedFields(), "responsibilities",
+                    req.getResponsibilities(), draft.getResponsibilities());
             int rows = versionDao.updateConfig(draft.getId(), tenantId,
                     roleName, roleCode, bg, resp, draft.getSdlcId(),
                     draft.getIdentityJson(), draft.getVersion(), userId);

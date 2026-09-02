@@ -111,21 +111,93 @@ class DispatchAiUsageServiceTest {
     }
 
     @Test
-    void schemaAndMapperEnforceDispatchProviderModelIdempotency() throws Exception {
-        String schema = Files.readString(Path.of("docs/autowonder-schema.sql"));
+    void schemaAndMapperEnforceDispatchStepProviderModelIdempotency() throws Exception {
+        String migration = Files.readString(Path.of("docs/migration/V046__ai_usage_step_id.sql"));
         String mapper = new String(
                 getClass().getResourceAsStream("/mapping/DispatchAiUsageDao.xml").readAllBytes(),
                 StandardCharsets.UTF_8);
 
-        assertTrue(schema.contains("UNIQUE KEY `uk_dispatch_provider_model` (`tenant_id`, `dispatch_id`, `provider`, `model`)"));
+        assertTrue(migration.contains("uk_dispatch_step_provider_model"));
+        assertTrue(migration.contains("step_id"));
         assertTrue(mapper.contains("ON DUPLICATE KEY UPDATE"));
-        assertTrue(mapper.contains("artifact_id = COALESCE(VALUES(artifact_id), artifact_id)"));
+        assertTrue(mapper.contains("#{stepId}"));
+        assertTrue(mapper.contains("step_id"));
     }
 
     @Test
     void invalidUsageArtifactDoesNotBlockUploadPath() {
         service.ingestArtifact(10L, 20L, 99L, 77L, "observability/usage.json", "bucket/key", "bad json".getBytes(StandardCharsets.UTF_8));
 
+        verifyNoInteractions(usageDao);
+    }
+
+    @Test
+    void ingestsPerStepUsageWithStepId() {
+        DispatchDO dispatch = dispatch();
+        when(dispatchDao.findById(99L)).thenReturn(dispatch);
+        byte[] content = ("{\"usage\":["
+                + "{\"provider\":\"qoder\",\"model\":\"auto\",\"step_id\":\"400554\",\"input_tokens\":500,\"output_tokens\":50,\"reasoning_tokens\":10,\"credits\":1.5},"
+                + "{\"provider\":\"qoder\",\"model\":\"auto\",\"step_id\":\"400555\",\"input_tokens\":300,\"output_tokens\":30,\"reasoning_tokens\":5,\"credits\":0.8}"
+                + "]}").getBytes(StandardCharsets.UTF_8);
+
+        service.ingestArtifact(10L, 20L, 99L, 77L, "observability/usage.json", null, content);
+
+        ArgumentCaptor<DispatchAiUsageDO> captor = ArgumentCaptor.forClass(DispatchAiUsageDO.class);
+        verify(usageDao, times(2)).upsert(captor.capture());
+        List<DispatchAiUsageDO> writes = captor.getAllValues();
+        assertEquals("400554", writes.get(0).getStepId());
+        assertEquals("400555", writes.get(1).getStepId());
+        assertEquals(500L, writes.get(0).getInputTokens());
+        assertEquals(300L, writes.get(1).getInputTokens());
+        assertEquals(10L, writes.get(0).getReasoningTokens());
+        assertEquals(5L, writes.get(1).getReasoningTokens());
+    }
+
+    @Test
+    void nullStepIdDefaultsToEmptyString() {
+        DispatchDO dispatch = dispatch();
+        when(dispatchDao.findById(99L)).thenReturn(dispatch);
+        byte[] content = "{\"usage\":[{\"provider\":\"qoder\",\"model\":\"auto\",\"input_tokens\":100,\"output_tokens\":10}]}"
+                .getBytes(StandardCharsets.UTF_8);
+
+        service.ingestArtifact(10L, 20L, 99L, 77L, "observability/usage.json", null, content);
+
+        ArgumentCaptor<DispatchAiUsageDO> captor = ArgumentCaptor.forClass(DispatchAiUsageDO.class);
+        verify(usageDao).upsert(captor.capture());
+        assertEquals("", captor.getValue().getStepId());
+    }
+
+    @Test
+    void creditsAndReasoningTokensPersisted() {
+        DispatchDO dispatch = dispatch();
+        when(dispatchDao.findById(99L)).thenReturn(dispatch);
+        byte[] content = "{\"usage\":[{\"provider\":\"qoder\",\"model\":\"auto\",\"step_id\":\"700001\",\"input_tokens\":1000,\"output_tokens\":100,\"reasoning_tokens\":50,\"credits\":2.5}]}"
+                .getBytes(StandardCharsets.UTF_8);
+
+        service.ingestArtifact(10L, 20L, 99L, 77L, "observability/usage.json", null, content);
+
+        ArgumentCaptor<DispatchAiUsageDO> captor = ArgumentCaptor.forClass(DispatchAiUsageDO.class);
+        verify(usageDao).upsert(captor.capture());
+        DispatchAiUsageDO usage = captor.getValue();
+        assertEquals(50L, usage.getReasoningTokens());
+        assertEquals(new java.math.BigDecimal("2.5"), usage.getCredits());
+        assertEquals("700001", usage.getStepId());
+    }
+
+    @Test
+    void nonUsageArtifactIsIgnored() {
+        service.ingestArtifact(10L, 20L, 99L, 77L, "artifacts/output/report.md", null, "hello".getBytes(StandardCharsets.UTF_8));
+        verifyNoInteractions(usageDao);
+        verifyNoInteractions(dispatchDao);
+    }
+
+    @Test
+    void emptyUsageArrayDoesNotPersist() {
+        DispatchDO dispatch = dispatch();
+        when(dispatchDao.findById(99L)).thenReturn(dispatch);
+        byte[] content = "{\"usage\":[]}".getBytes(StandardCharsets.UTF_8);
+
+        service.ingestArtifact(10L, 20L, 99L, 77L, "observability/usage.json", null, content);
         verifyNoInteractions(usageDao);
     }
 

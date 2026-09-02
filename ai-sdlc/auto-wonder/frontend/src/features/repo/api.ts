@@ -39,6 +39,13 @@ export interface CreateRepoRequest {
   description?: string;
 }
 
+export interface UpdateRepoRequest {
+  name?: string;
+  url?: string;
+  defaultBranch?: string | null;
+  description?: string | null;
+}
+
 export interface RepoRelation {
   id: number;
   fromRepoId: number;
@@ -82,7 +89,7 @@ export async function getRepo(id: string | number): Promise<Repo> {
   return resp.data;
 }
 
-export async function updateRepo(id: string | number, data: { description?: string }): Promise<Repo> {
+export async function updateRepo(id: string | number, data: UpdateRepoRequest): Promise<Repo> {
   const resp = await apiClient.put<Repo>(`/api/repos/${id}`, data);
   return resp.data;
 }

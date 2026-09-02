@@ -40,12 +40,18 @@ class McpControllerTest {
 
     @Test
     void rpcMappingSupportsRootMcpUrlForQueryTokenClients() throws Exception {
-        Method method = McpController.class.getMethod("rpc", String.class, String.class, String.class, Map.class);
+        Method method = McpController.class.getMethod("rpc",
+                String.class, String.class, String.class, String.class, Map.class);
         PostMapping mapping = method.getAnnotation(PostMapping.class);
 
         assertNotNull(mapping);
-        assertTrue(List.of(mapping.value()).contains(""));
-        assertTrue(List.of(mapping.value()).contains("/rpc"));
+        List<String> patterns = List.of(mapping.value());
+        assertTrue(patterns.contains(""));
+        assertTrue(patterns.contains("/rpc"));
+        assertTrue(patterns.contains("/{pathToken}"));
+        assertTrue(patterns.contains("/{pathToken}/"));
+        assertTrue(patterns.contains("/{pathToken}/rpc"));
+        assertTrue(patterns.contains("/{pathToken}/rpc/"));
     }
 
     @Test
@@ -159,6 +165,44 @@ class McpControllerTest {
                         .content("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"))
                 .andExpect(status().isAccepted())
                 .andExpect(content().string(""));
+    }
+
+    @Test
+    void rpcAuthenticatesWithTokenInUrlPath() throws Exception {
+        McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
+        McpToolService toolService = mock(McpToolService.class);
+        McpAccessTokenService.Principal principal =
+                principal(WorkspaceAccessLevel.READ_ONLY);
+        when(tokenService.authenticate(null, "awmcp_path_token")).thenReturn(principal);
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new McpController(tokenService, toolService)).build();
+
+        mvc.perform(post("/api/mcp/awmcp_path_token/")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"result\":")));
+
+        verify(tokenService).authenticate(null, "awmcp_path_token");
+    }
+
+    @Test
+    void rpcUrlPathTokenTakesPriorityOverLegacyQueryToken() throws Exception {
+        McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
+        McpToolService toolService = mock(McpToolService.class);
+        McpAccessTokenService.Principal principal =
+                principal(WorkspaceAccessLevel.READ_ONLY);
+        when(tokenService.authenticate(null, "awmcp_path_token")).thenReturn(principal);
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new McpController(tokenService, toolService)).build();
+
+        mvc.perform(post("/api/mcp/awmcp_path_token/rpc")
+                        .queryParam("token", "awmcp_query_token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}"))
+                .andExpect(status().isOk());
+
+        verify(tokenService).authenticate(null, "awmcp_path_token");
     }
 
     @Test

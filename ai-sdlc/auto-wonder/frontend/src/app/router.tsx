@@ -37,6 +37,12 @@ import { AboutAutoWonderPage } from '@/features/about/AboutAutoWonderPage';
 import { EvolutionPage } from '@/features/evolution/EvolutionPage';
 import { BrandingConfigPage } from '@/features/platform/BrandingConfigPage';
 import { ProfileSettingsPage } from '@/features/profile/ProfileSettingsPage';
+import { ScheduledTaskListPage } from '@/features/scheduledTask/ScheduledTaskListPage';
+import { ScheduledTaskCreatePage } from '@/features/scheduledTask/ScheduledTaskCreatePage';
+import { ScheduledTaskDetailPage } from '@/features/scheduledTask/ScheduledTaskDetailPage';
+import { ScheduledTaskEditPage } from '@/features/scheduledTask/ScheduledTaskEditPage';
+import { ScheduledTaskRunDetailPage } from '@/features/scheduledTask/ScheduledTaskRunDetailPage';
+import { ScheduledTaskCapabilityGate } from '@/features/scheduledTask/ScheduledTaskCapabilityGate';
 
 export function createAppRoutes(): RouteObject[] {
   return [
@@ -93,6 +99,11 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/memories/reviews', element: <MemoryReviewPage /> },
         { path: '/skills', element: <SkillListPage /> },
         { path: '/executors', element: <ExecutorListPage /> },
+        { path: '/scheduled-tasks', element: <ScheduledTaskCapabilityGate><ScheduledTaskListPage /></ScheduledTaskCapabilityGate> },
+        { path: '/scheduled-tasks/new', element: <ScheduledTaskCapabilityGate><ScheduledTaskCreatePage /></ScheduledTaskCapabilityGate> },
+        { path: '/scheduled-tasks/:id/edit', element: <ScheduledTaskCapabilityGate><ScheduledTaskEditPage /></ScheduledTaskCapabilityGate> },
+        { path: '/scheduled-tasks/:id', element: <ScheduledTaskCapabilityGate><ScheduledTaskDetailPage /></ScheduledTaskCapabilityGate> },
+        { path: '/scheduled-task-runs/:runId', element: <ScheduledTaskCapabilityGate><ScheduledTaskRunDetailPage /></ScheduledTaskCapabilityGate> },
         { path: '/executions', element: <ExecutionListPage /> },
         { path: '/status-templates', element: <StatusTemplatePage /> },
         { path: '/integrations', element: <WorkitemIntegrationPage /> },

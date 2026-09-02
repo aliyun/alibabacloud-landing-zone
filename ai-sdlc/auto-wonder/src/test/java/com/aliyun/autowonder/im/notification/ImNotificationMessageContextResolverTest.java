@@ -37,7 +37,7 @@ class ImNotificationMessageContextResolverTest {
         when(statusNodeDao.findById(88L)).thenReturn(status);
         when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                "https://wonder.example.com", "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false));
+                "https://wonder.example.com", "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false, false));
 
         ImNotificationMessageContext context = resolver.resolve(task());
 
@@ -57,7 +57,7 @@ class ImNotificationMessageContextResolverTest {
                 new ImNotificationMessageContextResolver(workspaceDao, workitemDao, statusNodeDao, brandingService);
         when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                null, "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false));
+                null, "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false, false));
         when(brandingService.trustedPublicBaseUrl()).thenReturn("https://private.example.com");
 
         ImNotificationMessageContext context = resolver.resolve(task());
@@ -78,7 +78,7 @@ class ImNotificationMessageContextResolverTest {
                 new ImNotificationMessageContextResolver(workspaceDao, workitemDao, statusNodeDao, brandingService);
         when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
                 "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                "   ", "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false));
+                "   ", "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false, false));
         when(brandingService.trustedPublicBaseUrl()).thenReturn("https://private.example.com/");
 
         ImNotificationMessageContext context = resolver.resolve(task());

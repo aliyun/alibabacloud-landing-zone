@@ -20,6 +20,12 @@ public enum ErrorCode {
     WORKSPACE_OWNER_MUTATION_PROTECTED("12009", "工作空间所有者不可直接修改"),
     WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN("12010", "不可修改自己的工作空间访问级别"),
     WORKSPACE_OWNER_TRANSFER_INVALID("12011", "工作空间所有者转让不合法"),
+    WORKSPACE_ACCESS_REQUEST_DUPLICATE("12012", "已有待审批的申请"),
+    WORKSPACE_ACCESS_REQUEST_ALREADY_MEMBER("12013", "已是该工作空间成员"),
+    WORKSPACE_ACCESS_REQUEST_NOT_FOUND("12014", "权限申请记录不存在"),
+    WORKSPACE_ACCESS_REQUEST_LEVEL_INVALID("12015", "申请的权限级别不合法"),
+    WORKSPACE_ACCESS_REQUEST_NOT_REQUESTER("12016", "仅申请人本人可撤销申请"),
+    WORKSPACE_ACCESS_REQUEST_NOT_PENDING("12017", "该申请已不在待审核状态，无法撤销"),
     // 13xxx 状态机/工单/澄清
     WORK_TYPE_INVALID("13001", "工单类型不合法"),
     STATUS_TEMPLATE_NOT_FOUND("13002", "未找到默认状态模版"),
@@ -64,7 +70,6 @@ public enum ErrorCode {
     SDLC_NAME_REQUIRED("16002", "流程名称不能为空"),
     SDLC_NOT_DRAFT("16003", "流程非草稿状态,无法编辑结构"),
     SDLC_ENABLE_NO_STEPS("16004", "流程至少需要一个步骤才能启用"),
-    SDLC_ENABLE_STEP_ORDER_GAP("16005", "步骤序号不连续"),
     SDLC_ENABLE_INVALID_TARGET("16006", "步骤流转目标不属于本流程"),
     SDLC_ENABLE_STATUS_INCOMPATIBLE("16007", "步骤状态映射与状态模版不兼容"),
     SDLC_ALREADY_ENABLED("16008", "流程已启用"),
@@ -147,7 +152,14 @@ public enum ErrorCode {
     DEACTIVATION_NOT_PENDING("29004", "当前没有进行中的注销申请"),
     DEACTIVATION_ALREADY_REVOKED("29005", "注销申请已撤销"),
     DEACTIVATION_CONFIRM_MISMATCH("29006", "确认输入不匹配，请重新输入用户名确认"),
-    DEACTIVATION_ACCOUNT_DISABLED("29007", "该账号已注销，无法登录");
+    DEACTIVATION_ACCOUNT_DISABLED("29007", "该账号已注销，无法登录"),
+    // 30xxx 定时任务
+    SCHEDULED_TASK_NOT_FOUND("30001", "定时任务不存在"),
+    SCHEDULED_TASK_VERSION_CONFLICT("30002", "定时任务已被修改，请重试"),
+    SCHEDULED_TASK_CRON_INVALID("30003", "Cron 表达式或时区不合法"),
+    SCHEDULED_TASK_VALIDATION_FAILED("30004", "定时任务参数不合法"),
+    SCHEDULED_TASK_INVALID_STATE("30005", "定时任务当前状态不允许该操作"),
+    SCHEDULED_TASK_SCHEMA_NOT_READY("30006", "当前环境尚未完成 7×24 能力升级");
 
     private final String code;
     private final String message;

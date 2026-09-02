@@ -42,4 +42,22 @@
     <select id="listActive" resultType="com.aliyun.autowonder.workspace.WorkspaceDO">
         SELECT * FROM `org` WHERE is_deleted = 0 ORDER BY id
     </select>
+    <!-- Shared by listAllPaged/countAll so the page and its total always apply the same filter. -->
+    <sql id="allWorkspacesFilter">
+        WHERE is_deleted = 0
+        <if test="keyword != null and keyword != ''">
+            AND (name LIKE CONCAT('%', #{keyword}, '%')
+                 OR description LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+    </sql>
+    <select id="listAllPaged" resultType="com.aliyun.autowonder.workspace.WorkspaceDO">
+        SELECT * FROM `org`
+        <include refid="allWorkspacesFilter"/>
+        ORDER BY gmt_create DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="countAll" resultType="long">
+        SELECT COUNT(*) FROM `org`
+        <include refid="allWorkspacesFilter"/>
+    </select>
 </mapper>

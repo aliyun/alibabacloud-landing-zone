@@ -80,6 +80,43 @@ async function waitForAdminControls() {
 }
 
 describe('MembersPage', () => {
+  it('filters members by access level using the segmented control', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('dev1@co.com')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: '读写' }).closest('label')!);
+
+    expect(screen.getByText('dev1@co.com')).toBeInTheDocument();
+    expect(screen.queryByText('admin@co.com')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: '管理员' }).closest('label')!);
+
+    expect(screen.getByText('admin@co.com')).toBeInTheDocument();
+    expect(screen.queryByText('dev1@co.com')).not.toBeInTheDocument();
+  });
+
+  it('renders a dash for members without identity tags or join date', async () => {
+    server.use(
+      http.get('/api/workspaces/current/members', () => HttpResponse.json({
+        success: true, code: '0', message: '',
+        data: [
+          {
+            userId: 3, username: 'newbie', email: '', nickname: '',
+            accessLevel: 'READ_ONLY', identityTags: [], joinedAt: '', owner: false,
+          },
+        ],
+        traceId: null,
+      })),
+    );
+    renderPage();
+
+    const row = (await screen.findByText('newbie')).closest('tr');
+    expect(within(row!).getAllByText('-').length).toBeGreaterThanOrEqual(2);
+    expect(within(row!).getByText('只读权限')).toBeInTheDocument();
+  });
+
   it('renders owner, access levels, and identity tags without role data', async () => {
     renderPage();
 
@@ -306,5 +343,127 @@ describe('MembersPage', () => {
     await user.click(screen.getByRole('button', { name: '添加成员' }));
 
     await waitFor(() => expect(addHandler).toHaveBeenCalledWith({ userId: 3 }));
+  });
+
+  it('shows the approval tab but does not fetch requests until it is opened', async () => {
+    const user = userEvent.setup();
+    let accessRequestsFetches = 0;
+    server.use(
+      http.get('/api/workspaces/current/access-requests', () => {
+        accessRequestsFetches += 1;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', data: [], traceId: null,
+        });
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('admin@co.com');
+    expect(screen.getByRole('tab', { name: '待审批申请' })).toBeInTheDocument();
+    expect(accessRequestsFetches).toBe(0);
+
+    await user.click(screen.getByRole('tab', { name: '待审批申请' }));
+
+    expect(await screen.findByText('暂无待审批的申请')).toBeInTheDocument();
+    expect(accessRequestsFetches).toBe(1);
+  });
+
+  it('an admin can approve a pending request from the approval tab', async () => {
+    const user = userEvent.setup();
+    const approveHandler = vi.fn();
+    server.use(
+      http.get('/api/workspaces/current/access-requests', () => HttpResponse.json({
+        success: true, code: '0', message: '', data: [
+          {
+            id: 101, tenantId: 7, requesterId: 2, requesterName: '张三',
+            requestedLevel: 'READ_WRITE', status: 'PENDING',
+            reviewerId: null, reviewerName: null, rejectReason: null,
+            gmtCreate: '2026-08-20T10:30:00',
+          },
+        ], traceId: null,
+      })),
+      http.post('/api/workspaces/current/access-requests/101/approve', () => {
+        approveHandler();
+        return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
+      }),
+    );
+    renderPage();
+
+    await user.click(await screen.findByRole('tab', { name: '待审批申请' }));
+
+    const row = (await screen.findByText('张三')).closest('tr');
+    await user.click(within(row!).getByRole('button', { name: '通过' }));
+
+    await waitFor(() => expect(approveHandler).toHaveBeenCalledTimes(1));
+  });
+
+  it('a rejection from the approval tab submits its reason', async () => {
+    const user = userEvent.setup();
+    const rejectHandler = vi.fn();
+    server.use(
+      http.get('/api/workspaces/current/access-requests', () => HttpResponse.json({
+        success: true, code: '0', message: '', data: [
+          {
+            id: 101, tenantId: 7, requesterId: 2, requesterName: '张三',
+            requestedLevel: 'READ_WRITE', status: 'PENDING',
+            reviewerId: null, reviewerName: null, rejectReason: null,
+            gmtCreate: '2026-08-20T10:30:00',
+          },
+        ], traceId: null,
+      })),
+      http.post('/api/workspaces/current/access-requests/101/reject', async ({ request }) => {
+        rejectHandler(await request.json().catch(() => null));
+        return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
+      }),
+    );
+    renderPage();
+
+    await user.click(await screen.findByRole('tab', { name: '待审批申请' }));
+
+    const row = (await screen.findByText('张三')).closest('tr');
+    await user.click(within(row!).getByRole('button', { name: '拒绝' }));
+
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByRole('textbox'), '内部空间');
+    await user.click(within(dialog).getByRole('button', { name: /确认拒绝/ }));
+
+    await waitFor(() => expect(rejectHandler).toHaveBeenCalledWith({ reason: '内部空间' }));
+  });
+
+  it('a non-admin cannot mutate requests from the approval tab', async () => {
+    const user = userEvent.setup();
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: '测试工作空间', description: '' },
+      'READ_WRITE',
+    );
+    const mutateHandler = vi.fn();
+    server.use(
+      http.get('/api/workspaces/current/membership', () => HttpResponse.json({
+        success: true, code: '0', message: '',
+        data: { ...mockMembers[0], accessLevel: 'READ_WRITE' }, traceId: null,
+      })),
+      http.get('/api/workspaces/current/access-requests', () => HttpResponse.json({
+        success: true, code: '0', message: '', data: [
+          {
+            id: 101, tenantId: 7, requesterId: 2, requesterName: '张三',
+            requestedLevel: 'READ_WRITE', status: 'PENDING',
+            reviewerId: null, reviewerName: null, rejectReason: null,
+            gmtCreate: '2026-08-20T10:30:00',
+          },
+        ], traceId: null,
+      })),
+      http.post('/api/workspaces/current/access-requests/101/approve', mutateHandler),
+      http.post('/api/workspaces/current/access-requests/101/reject', mutateHandler),
+    );
+    renderPage();
+
+    await user.click(await screen.findByRole('tab', { name: '待审批申请' }));
+
+    const row = (await screen.findByText('张三')).closest('tr');
+    await user.click(within(row!).getByRole('button', { name: '通过' }));
+    expect(
+      await screen.findAllByText('当前为读写权限，通过权限申请需要管理员权限'),
+    ).toHaveLength(1);
+    expect(mutateHandler).not.toHaveBeenCalled();
   });
 });

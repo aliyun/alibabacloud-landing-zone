@@ -32,7 +32,7 @@ export const STATUS_COLUMNS: StatusColumn[] = [
 export function classifyStatus(statusName: string | null): string {
   if (!statusName) return 'NEW';
   const s = statusName.toUpperCase();
-  if (s.includes('完成') || s.includes('关闭') || s.includes('DONE') || s.includes('CLOSED') || s.includes('PUBLISHED') || s.includes('发布')) return 'DONE';
+  if (s.includes('完成') || s.includes('关闭') || s.includes('DONE') || s.includes('CLOSED') || s.includes('FIXED') || s.includes('PUBLISHED') || s.includes('发布')) return 'DONE';
   if (s.includes('执行') || s.includes('开发') || s.includes('PROGRESS') || s.includes('RUNNING') || s.includes('验证')) return 'IN_PROGRESS';
   if (s.includes('决策') || s.includes('DECISION') || s.includes('审核') || s.includes('REVIEW') || s.includes('阻塞')) return 'PENDING_DECISION';
   return 'NEW';

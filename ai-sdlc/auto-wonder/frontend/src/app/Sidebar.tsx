@@ -15,6 +15,7 @@ import {
   SafetyCertificateOutlined,
   LineChartOutlined,
   HistoryOutlined,
+  ClockCircleOutlined,
   ApiOutlined,
   CompassOutlined,
   MessageOutlined,
@@ -25,6 +26,8 @@ import type { MenuProps } from 'antd';
 import type { ItemType } from 'antd/es/menu/interface';
 import { useAgentPendingReviewCount } from '@/features/agent/hooks';
 import { useMemoryPendingReviewCount } from '@/features/memory/hooks';
+import { useScheduledTaskCapability } from '@/features/scheduledTask/hooks';
+import { isScheduledTaskCapabilityQueryReady } from '@/features/scheduledTask/ScheduledTaskCapabilityGate';
 
 export interface NavItem {
   key: string;
@@ -50,6 +53,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: '交付',
     items: [
       { key: '/workitems', label: '工单', icon: <FileTextOutlined /> },
+      { key: '/scheduled-tasks', label: '定时任务', icon: <ClockCircleOutlined /> },
       { key: '/executions', label: '执行记录', icon: <HistoryOutlined /> },
     ],
   },
@@ -115,13 +119,14 @@ export function navItemMatchesPath(item: NavItem, pathname: string) {
 export function buildMenuItems(
   badges?: Record<string, number>,
   collapsed?: boolean,
+  scheduledTaskAvailable = false,
 ): ItemType[] {
   return NAV_GROUPS.map((group) => ({
     key: group.key,
     label: group.label,
     type: 'group' as const,
     children: group.items
-      .filter((item) => !item.hidden)
+      .filter((item) => !item.hidden && (item.key !== '/scheduled-tasks' || scheduledTaskAvailable))
       .map((item) => {
         const count = badges?.[item.key] ?? 0;
         const icon = count > 0 && collapsed
@@ -148,12 +153,17 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
 
   const { data: agentCount = 0 } = useAgentPendingReviewCount();
   const { data: memoryCount = 0 } = useMemoryPendingReviewCount();
+  const scheduledTaskCapability = useScheduledTaskCapability();
 
   const badges: Record<string, number> = {};
   if (agentCount > 0) badges['/agents/reviews'] = agentCount;
   if (memoryCount > 0) badges['/memories'] = memoryCount;
 
-  const menuItems: MenuProps['items'] = buildMenuItems(badges, collapsed).map((item) =>
+  const menuItems: MenuProps['items'] = buildMenuItems(
+    badges,
+    collapsed,
+    isScheduledTaskCapabilityQueryReady(scheduledTaskCapability),
+  ).map((item) =>
     collapsed && item && item.type === 'group' ? { ...item, label: '' } : item,
   );
   const selectedKey = resolveSelectedNavKey(location.pathname);

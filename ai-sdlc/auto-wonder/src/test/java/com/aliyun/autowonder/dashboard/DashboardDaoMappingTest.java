@@ -45,6 +45,35 @@ class DashboardDaoMappingTest {
         assertFalse(normalizedRunning.contains("LIMIT"));
     }
 
+    @Test
+    void workitemSemanticsAreFencedWhileGlobalDispatchMetricsRemainSourceAgnostic() throws IOException {
+        String xml = readMapping();
+
+        String legacyFence = sqlBody(xml, "workitemDispatchFence", "autowonder-legacy");
+        String sourceAwareFence = sqlBody(xml, "workitemDispatchFence", "autowonder-source-aware");
+        assertFalse(legacyFence.contains("source_type"));
+        assertTrue(sourceAwareFence.contains("d.source_type = 'WORKITEM'"));
+
+        assertUsesWorkitemDispatchFence(sqlBody(xml, "endToEndSuccessfulWorkitems"),
+                "endToEndSuccessfulWorkitems");
+        assertUsesWorkitemDispatchFence(selectBody(xml, "squadInProgressWorkitems"),
+                "squadInProgressWorkitems");
+        for (String id : java.util.List.of("listRunningFeed", "listRecentFeed",
+                "listRunningWorkitems", "listAgentRunning")) {
+            assertUsesWorkitemDispatchFence(selectBody(xml, id), id);
+        }
+        for (String id : java.util.List.of("countRunningDispatches", "countQueuedDispatches",
+                "countTodaySucceeded", "countTodayFailedOrTimeout", "countTodayRetries",
+                "avgTodaySuccessDurationMinutes", "countActiveSquads", "squadLineAggregates",
+                "onlineWorkstations")) {
+            assertFalse(selectBody(xml, id).contains("source_type"), id);
+        }
+    }
+
+    private void assertUsesWorkitemDispatchFence(String sql, String id) {
+        assertTrue(sql.contains("<include refid=\"workitemDispatchFence\"/>"), id);
+    }
+
     private void assertUsesEndToEndSuccessDefinition(String sql) {
         String normalized = sql.replaceAll("\\s+", " ").trim();
         assertTrue(normalized.contains("FROM workitem w"));
@@ -74,6 +103,10 @@ class DashboardDaoMappingTest {
         return xml.substring(bodyStart, bodyEnd);
     }
 
+    private String sqlBody(String xml, String id, String databaseId) {
+        return elementBody(xml, "sql", id, databaseId);
+    }
+
     private String selectBody(String xml, String id) {
         String startTag = "<select id=\"" + id + "\"";
         int start = xml.indexOf(startTag);
@@ -82,6 +115,23 @@ class DashboardDaoMappingTest {
         int bodyEnd = xml.indexOf("</select>", bodyStart);
         assertTrue(bodyStart > 0 && bodyEnd > bodyStart, "Malformed select " + id);
         return xml.substring(bodyStart, bodyEnd);
+    }
+
+    private String elementBody(String xml, String element, String id, String databaseId) {
+        String startTag = "<" + element + " id=\"" + id + "\"";
+        int searchFrom = 0;
+        while (true) {
+            int start = xml.indexOf(startTag, searchFrom);
+            assertTrue(start >= 0, "Missing " + element + " " + id + " for " + databaseId);
+            int tagEnd = xml.indexOf('>', start);
+            String tag = xml.substring(start, tagEnd + 1);
+            if (tag.contains("databaseId=\"" + databaseId + "\"")) {
+                int bodyEnd = xml.indexOf("</" + element + ">", tagEnd + 1);
+                assertTrue(bodyEnd > tagEnd, "Malformed " + element + " " + id);
+                return xml.substring(tagEnd + 1, bodyEnd);
+            }
+            searchFrom = tagEnd + 1;
+        }
     }
 
     private String readMapping() throws IOException {

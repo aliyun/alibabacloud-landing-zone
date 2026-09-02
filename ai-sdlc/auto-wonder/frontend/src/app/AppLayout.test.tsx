@@ -352,6 +352,41 @@ describe('AppLayout', () => {
     expect(screen.getByText('退出登录')).toBeInTheDocument();
   });
 
+  it('clears auth state and the entire query cache on logout', async () => {
+    useAuthStore.getState().setUser({
+      id: 1,
+      username: 'alice',
+      nickname: '爱丽丝',
+      email: 'alice@example.com',
+    });
+    useAuthStore.getState().setAccessToken('session-token');
+    useAuthStore.getState().setCurrentWorkspace({ id: 7, name: '星云工坊', description: '研发工作空间' }, 'ADMIN');
+
+    const { queryClient } = renderWithQueryClient(
+      <MemoryRouter initialEntries={['/workitems']}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="/workitems" element={<div>工作项页</div>} />
+          </Route>
+          <Route path="/login" element={<div>登录页</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    queryClient.setQueryData(['workspaces', 'mine', 1], [{ id: 7, name: '星云工坊', description: '研发工作空间' }]);
+    queryClient.setQueryData(['workitems', { page: 1, size: 20 }], { content: [{ id: 101, title: '租户数据' }] });
+
+    await userEvent.click(screen.getByText('爱丽丝'));
+    await userEvent.click(screen.getByText('退出登录'));
+
+    await waitFor(() => {
+      expect(screen.getByText('登录页')).toBeInTheDocument();
+    });
+    expect(useAuthStore.getState().accessToken).toBeNull();
+    expect(useAuthStore.getState().currentWorkspace).toBeNull();
+    expect(queryClient.getQueryData(['workspaces', 'mine', 1])).toBeUndefined();
+    expect(queryClient.getQueryData(['workitems', { page: 1, size: 20 }])).toBeUndefined();
+  });
+
   it('applies truncation constraints for long workspace and user text', () => {
     const longWorkspaceName = '超长工作空间名称'.repeat(12);
     const longNickname = '超长昵称'.repeat(12);

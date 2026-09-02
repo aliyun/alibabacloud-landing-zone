@@ -62,8 +62,25 @@ public class WsConversationTransport implements ConversationTransport {
         frame.put("capabilitySha256", capability.sha256());
         frame.put("capabilityHash", capability.capabilityHash());
         frame.put("mcpToken", capability.mcpToken());
-        String payload = frame.toJSONString();
-        ExecutorSession session = sessionRegistry.findByExecutorId(conv.getExecutorId());
+        frame.put("mcpSecrets", capability.mcpSecrets());
+        deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
+    }
+
+    @Override
+    public void sendCancel(AgentConversationDO conv, Long turnId) {
+        if (conv.getExecutorId() == null) {
+            throw new IllegalArgumentException("conversation must have a bound executor");
+        }
+        JSONObject frame = new JSONObject(true);
+        frame.put("type", "CONVERSATION_TURN_CANCEL");
+        frame.put("executorId", conv.getExecutorId());
+        frame.put("conversationId", conv.getId());
+        frame.put("turnId", turnId);
+        deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
+    }
+
+    private void deliverToExecutor(Long executorId, String payload) {
+        ExecutorSession session = sessionRegistry.findByExecutorId(executorId);
         try {
             if (session != null && session.getSession().isOpen()) {
                 session.sendText(payload);

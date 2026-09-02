@@ -7,7 +7,11 @@ import com.aliyun.autowonder.storage.ObjectStorage;
 import com.aliyun.autowonder.storage.OssProperties;
 import com.aliyun.autowonder.storage.StoredObject;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mock.web.MockMultipartFile;
+
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Parameter;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -27,7 +31,35 @@ class PlatformBrandingServiceTest {
         assertEquals("https://daily.auto-wonder.example.com/api/mcp", config.getMcpBaseUrl());
         assertEquals("0.2.130", config.getRecommendedRuntimeVersion());
         assertEquals("x.x.x", config.getDeploymentVersion());
+        assertFalse(config.isCommunityEdition());
         assertFalse(config.isCanManage());
+    }
+
+    @Test
+    void recommendedRuntimeVersionConstructorDefaultIsPinned() {
+        String placeholder = "${autowonder.runtime.recommended-version:";
+        String foundDefault = null;
+        for (Constructor<?> constructor : PlatformBrandingService.class.getConstructors()) {
+            for (Parameter parameter : constructor.getParameters()) {
+                Value annotation = parameter.getAnnotation(Value.class);
+                if (annotation != null && annotation.value().startsWith(placeholder)
+                        && annotation.value().endsWith("}")) {
+                    foundDefault = annotation.value()
+                            .substring(placeholder.length(), annotation.value().length() - 1);
+                }
+            }
+        }
+        assertEquals("0.2.150", foundDefault);
+    }
+
+    @Test
+    void publicConfigExposesCommunityEditionFlagWhenEnabled() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService service =
+                newService(dao, new InMemoryObjectStorage(), "x.x.x", true);
+
+        assertTrue(service.publicConfig().isCommunityEdition());
+        assertTrue(service.adminConfig(true).isCommunityEdition());
     }
 
     @Test
@@ -36,7 +68,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
 
         assertThrows(IllegalStateException.class,
-                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.130", "x.x.x"));
+                () -> new PlatformBrandingService(dao, new InMemoryObjectStorage(), props, "", "0.2.130", "x.x.x", false));
     }
 
     @Test
@@ -46,10 +78,10 @@ class PlatformBrandingServiceTest {
 
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.130", "x.x.x"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com?x=1", "0.2.130", "x.x.x", false));
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
-                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.130", "x.x.x"));
+                        dao, new InMemoryObjectStorage(), props, "https://daily.example.com#anchor", "0.2.130", "x.x.x", false));
     }
 
     @Test
@@ -211,7 +243,7 @@ class PlatformBrandingServiceTest {
         assertThrows(IllegalStateException.class,
                 () -> new PlatformBrandingService(
                         dao, new InMemoryObjectStorage(), props,
-                        "https://daily.auto-wonder.example.com", "0.2.130", "not-a-version"));
+                        "https://daily.auto-wonder.example.com", "0.2.130", "not-a-version", false));
     }
 
     @Test
@@ -229,7 +261,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
         PlatformBrandingService service = new PlatformBrandingService(
                 dao, new InMemoryObjectStorage(), props,
-                "http://autowonder.internal.example.com:8080//", "1.0.0", "x.x.x");
+                "http://autowonder.internal.example.com:8080//", "1.0.0", "x.x.x", false);
 
         assertEquals("http://autowonder.internal.example.com:8080", service.trustedPublicBaseUrl());
         assertEquals("http://autowonder.internal.example.com:8080/api/mcp",
@@ -242,7 +274,7 @@ class PlatformBrandingServiceTest {
         OssProperties props = new OssProperties();
         PlatformBrandingService service = new PlatformBrandingService(
                 dao, new InMemoryObjectStorage(), props,
-                "https://daily.auto-wonder.example.com", "0.3.0-beta.2", "x.x.x");
+                "https://daily.auto-wonder.example.com", "0.3.0-beta.2", "x.x.x", false);
 
         assertEquals("0.3.0-beta.2", service.recommendedRuntimeVersion());
     }
@@ -258,10 +290,17 @@ class PlatformBrandingServiceTest {
 
     private static PlatformBrandingService newService(
             PlatformBrandingDao dao, ObjectStorage storage, String deploymentVersion) {
+        return newService(dao, storage, deploymentVersion, false);
+    }
+
+    private static PlatformBrandingService newService(
+            PlatformBrandingDao dao, ObjectStorage storage,
+            String deploymentVersion, boolean communityEdition) {
         OssProperties props = new OssProperties();
         props.setBucket("community-test");
         return new PlatformBrandingService(
-                dao, storage, props, "https://daily.auto-wonder.example.com", "0.2.130", deploymentVersion);
+                dao, storage, props, "https://daily.auto-wonder.example.com",
+                "0.2.130", deploymentVersion, communityEdition);
     }
 
     private static PlatformBrandingDO row(String name, String color, String domain) {

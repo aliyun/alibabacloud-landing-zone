@@ -176,4 +176,12 @@ class ExecutorSelectorTest {
 
         assertEquals(10L, selector.select(1L, 20L));
     }
+
+    @Test
+    void strictSelectionNeverFallsBackWhenSessionOwnerDropsOrFills() {
+        when(redisManager.smembers(ExecutorSelector.execsKey(1L))).thenReturn(Set.of("10", "20"));
+        when(executorRegistry.isAvailable(20L)).thenReturn(false);
+        assertNull(selector.selectStrict(1L, 20L));
+        verify(executorRegistry, never()).isAvailable(10L);
+    }
 }

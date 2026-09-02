@@ -485,7 +485,7 @@ public class AoneInboundSyncService {
         }
         WorkitemDO existing = workitemDao.findById(link.getWorkitemId());
         ExternalPrincipalService.IdentitySnapshot identity = resolveIdentity(binding, detail, link);
-        boolean updated = syncExistingWorkitem(binding, detail, existing, userId);
+        boolean updated = syncExistingWorkitem(binding, detail, existing, link, userId);
         Long previousBusinessOwnerId = link.getBusinessOwnerPrincipalId();
         String previousLifecycle = link.getSourceLifecycle();
         applySnapshot(link, detail, identity, hash);
@@ -502,27 +502,57 @@ public class AoneInboundSyncService {
     }
 
     private boolean syncExistingWorkitem(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail,
-                                         WorkitemDO existing, long userId) {
-        if (existing != null) {
-            String title = detail.getTitle() == null ? existing.getTitle() : truncateTitle(detail.getTitle());
-            String contentMd = detail.getContentMd() == null ? existing.getContentMd() : detail.getContentMd();
-            Integer priority = detail.getPriority() == null ? existing.getPriority() : detail.getPriority();
-            boolean contentChanged = !Objects.equals(title, existing.getTitle())
-                    || !Objects.equals(contentMd, existing.getContentMd())
-                    || !Objects.equals(priority, existing.getPriority());
-            if (contentChanged) {
-                int rows = workitemDao.updateExternalContent(existing.getId(), binding.getTenantId(), title, contentMd,
-                        priority, existing.getVersion(), userId);
-                if (rows == 0) {
-                    throw new IllegalStateException("external workitem content version conflict");
-                }
-            }
-            if (contentChanged) {
-                writeEvent(binding.getTenantId(), existing.getId(), WorkitemEventType.AONE_UPDATE.code(), null, detail.getExternalId(), userId);
-                return true;
-            }
+                                         WorkitemDO existing, ExternalWorkitemLinkDO link, long userId) {
+        if (existing == null) {
+            return false;
         }
-        return false;
+        int version = existing.getVersion();
+        boolean statusChanged = false;
+        if (syncExternalStatus(binding, detail, existing, link, version, userId)) {
+            statusChanged = true;
+            version++;
+        }
+        String title = detail.getTitle() == null ? existing.getTitle() : truncateTitle(detail.getTitle());
+        String contentMd = detail.getContentMd() == null ? existing.getContentMd() : detail.getContentMd();
+        Integer priority = detail.getPriority() == null ? existing.getPriority() : detail.getPriority();
+        boolean contentChanged = !Objects.equals(title, existing.getTitle())
+                || !Objects.equals(contentMd, existing.getContentMd())
+                || !Objects.equals(priority, existing.getPriority());
+        if (contentChanged) {
+            int rows = workitemDao.updateExternalContent(existing.getId(), binding.getTenantId(), title, contentMd,
+                    priority, version, userId);
+            if (rows == 0) {
+                throw new IllegalStateException("external workitem content version conflict");
+            }
+            writeEvent(binding.getTenantId(), existing.getId(), WorkitemEventType.AONE_UPDATE.code(), null, detail.getExternalId(), userId);
+        }
+        return statusChanged || contentChanged;
+    }
+
+    private boolean syncExternalStatus(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail,
+                                       WorkitemDO existing, ExternalWorkitemLinkDO link, int version, long userId) {
+        // Imported workitems track the source status only until delivery starts; once a squad/agent
+        // owns the workitem the delivery state machine is authoritative and Aone drift must not
+        // overwrite it.
+        if (!"EXTERNAL".equals(existing.getAssigneeType())) {
+            return false;
+        }
+        String incomingStatus = detail.getStatusName();
+        if (incomingStatus == null || incomingStatus.isBlank()
+                || incomingStatus.equals(link.getSourceStatusName())) {
+            return false;
+        }
+        StatusNodeDO node = statusBootstrapService.ensureStatus(binding, detail, List.of(), userId);
+        if (node == null || node.getId().equals(existing.getStatusNodeId())) {
+            return false;
+        }
+        int rows = workitemDao.updateStatus(existing.getId(), binding.getTenantId(), node.getId(), version, userId);
+        if (rows == 0) {
+            throw new IllegalStateException("external workitem status version conflict");
+        }
+        writeEvent(binding.getTenantId(), existing.getId(), WorkitemEventType.STATUS_CHANGE.code(),
+                link.getSourceStatusName(), node.getName(), userId);
+        return true;
     }
 
     private boolean isPendingOutboundStaleSnapshot(ExternalWorkitemLinkDO link, String remoteHash) {

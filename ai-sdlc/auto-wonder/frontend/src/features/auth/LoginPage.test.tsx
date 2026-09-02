@@ -103,4 +103,29 @@ describe('LoginPage', () => {
       expect(screen.getByText(/用户名或密码错误/)).toBeInTheDocument();
     });
   });
+
+  it('shows backend message when login fails with HTTP 401', async () => {
+    server.use(
+      http.post('/api/auth/login', () => {
+        return HttpResponse.json({
+          success: false,
+          code: '10401',
+          message: '用户名或密码错误',
+          data: null,
+          traceId: 'trace-y',
+        }, { status: 401 });
+      }),
+    );
+
+    renderLogin();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/用户名/), 'bob');
+    await user.type(screen.getByLabelText(/密码/), 'wrong');
+    await user.click(screen.getByRole('button', { name: /登\s*录/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/用户名或密码错误/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/未登录或登录已失效/)).not.toBeInTheDocument();
+  });
 });

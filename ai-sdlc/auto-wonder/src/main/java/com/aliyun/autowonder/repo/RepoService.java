@@ -81,16 +81,34 @@ public class RepoService {
         if (repo == null) {
             throw new BizException(ErrorCode.REPO_NOT_FOUND);
         }
-        String name = req.getName() != null ? req.getName().trim() : repo.getName();
-        String url = req.getUrl() != null ? req.getUrl().trim() : repo.getUrl();
-        String defaultBranch = req.getDefaultBranch() != null ? req.getDefaultBranch() : repo.getDefaultBranch();
-        String description = req.getDescription() != null ? req.getDescription() : repo.getDescription();
+        String name = requiredField(req.isNamePresent(), req.getName(), repo.getName(),
+                ErrorCode.REPO_NAME_REQUIRED);
+        String url = requiredField(req.isUrlPresent(), req.getUrl(), repo.getUrl(),
+                ErrorCode.REPO_URL_REQUIRED);
+        String defaultBranch = optionalField(req.isDefaultBranchPresent(),
+                req.getDefaultBranch(), repo.getDefaultBranch());
+        String description = optionalField(req.isDescriptionPresent(),
+                req.getDescription(), repo.getDescription());
         int rows = repoDao.update(id, tenantId, name, url, defaultBranch,
                 description, repo.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.REPO_VERSION_CONFLICT);
         }
         return get(id);
+    }
+
+    private String requiredField(boolean present, String value, String current, ErrorCode missing) {
+        if (!present) {
+            return current;
+        }
+        if (value == null || value.isBlank()) {
+            throw new BizException(missing);
+        }
+        return value.trim();
+    }
+
+    private String optionalField(boolean present, String value, String current) {
+        return present ? value : current;
     }
 
     @Transactional

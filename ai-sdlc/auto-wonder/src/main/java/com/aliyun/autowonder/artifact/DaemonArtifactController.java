@@ -5,6 +5,9 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
+import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskNotificationService;
 import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.evolution.EvolutionDeltaIngestionLiteService;
@@ -14,6 +17,8 @@ import com.aliyun.autowonder.memory.MemorySedimentationService;
 import com.aliyun.autowonder.storage.ObjectStorage;
 import com.aliyun.autowonder.storage.OssProperties;
 import com.aliyun.autowonder.storage.StoredObject;
+import com.aliyun.autowonder.scheduledtask.compat.ScheduledTaskCapabilityGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -42,8 +47,29 @@ public class DaemonArtifactController {
     private final AuditLogService auditLogService;
     private final DispatchAiUsageService usageService;
     private final String artifactBucket;
+    private ScheduledTaskCapabilityGuard capabilityGuard;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskRunDao scheduledTaskRunDao;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ScheduledTaskNotificationService scheduledTaskNotificationService;
 
+    @Autowired
     public DaemonArtifactController(DaemonUploadAuthenticator authenticator,
+                                    ObjectStorage storage,
+                                    ArtifactService artifactService,
+                                    MemorySedimentationService memorySedimentation,
+                                    EvolutionDeltaIngestionLiteService evolutionDeltaIngestion,
+                                    EvolutionModeResolverLiteService evolutionModeResolver,
+                                    AuditLogService auditLogService,
+                                    DispatchAiUsageService usageService,
+                                    OssProperties ossProperties,
+                                    ScheduledTaskCapabilityGuard capabilityGuard) {
+        this(authenticator, storage, artifactService, memorySedimentation, evolutionDeltaIngestion,
+                evolutionModeResolver, auditLogService, usageService, ossProperties);
+        this.capabilityGuard = capabilityGuard;
+    }
+
+    DaemonArtifactController(DaemonUploadAuthenticator authenticator,
                                     ObjectStorage storage,
                                     ArtifactService artifactService,
                                     MemorySedimentationService memorySedimentation,
@@ -77,6 +103,9 @@ public class DaemonArtifactController {
             log.info("artifact upload auth failed dispatchId={}", dispatchId);
             return ResponseEntity.status(401).build();
         }
+        if (auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            capabilityGuard.requireAvailable("daemon");
+        }
         EvolutionMode evolutionMode = evolutionModeResolver.resolve(auth.getTenantId(), auth.getAgentId());
 
         JSONArray metadata = null;
@@ -92,7 +121,9 @@ public class DaemonArtifactController {
             return ResponseEntity.badRequest().body(Map.of("error", "too many files"));
         }
 
-        String prefix = "t/" + auth.getTenantId() + "/workitem/" + auth.getWorkitemId()
+        String ownerSegment = auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                ? "scheduled-task-run" : "workitem";
+        String prefix = "t/" + auth.getTenantId() + "/" + ownerSegment + "/" + auth.getWorkitemId()
                 + "/dispatch/" + dispatchId + "/";
         List<Map<String, Object>> fileReceipts = new ArrayList<>(files.length);
 
@@ -130,7 +161,13 @@ public class DaemonArtifactController {
             req.setType(artifactType);
             req.setOssRef(so.getOssRef());
             req.setSize(so.getSize());
-            Long artifactId = artifactService.record(req, auth.getTenantId());
+            Long artifactId = auth.getSourceType() == ExecutionSourceType.WORKITEM
+                    ? artifactService.record(req, auth.getTenantId())
+                    : artifactService.record(req, auth.getTenantId(),
+                    new ArtifactOwnerRef(auth.getSourceType(), auth.getWorkitemId()));
+            if (auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN && scheduledTaskNotificationService != null) {
+                scheduledTaskNotificationService.artifact(auth.getTenantId(), auth.getWorkitemId());
+            }
             usageService.ingestArtifact(auth.getTenantId(), auth.getWorkitemId(), dispatchId, artifactId, path, so.getOssRef(), bytes);
             if (!isTelemetry(logical)) {
                 recordArtifactAudit(auth, dispatchId, path, classify(logical), so.getSize());
@@ -188,9 +225,15 @@ public class DaemonArtifactController {
         record.setTriggerSource("DAEMON_CALLBACK");
         record.setEventType("daemon.artifact");
         record.detail("workitemId", auth.getWorkitemId())
+                .detail("sourceType", auth.getSourceType().name())
                 .detail("path", path)
                 .detail("type", type)
                 .detail("size", size);
+        if (auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            record.detail("runId", auth.getWorkitemId());
+            var run = scheduledTaskRunDao == null ? null : scheduledTaskRunDao.findById(auth.getTenantId(), auth.getWorkitemId());
+            if (run != null) record.detail("taskId", run.getScheduledTaskId());
+        }
         auditLogService.record(record);
     }
 

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.workitem.dto;
 
+import com.aliyun.autowonder.aiusage.dto.StepUsageSummaryVO;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -15,4 +16,5 @@ public class AgentDeliveryProgressVO {
     /** Latest replace-in-place activity; not an append-only timeline. */
     private String currentActivity;
     private List<DeliveryStepVO> steps;
+    private StepUsageSummaryVO usage;
 }
