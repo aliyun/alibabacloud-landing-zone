@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-DEPLOY_BUILD="$SCRIPT_DIR/../../deploying-autowonder-on-alibaba-cloud/scripts/build-release.sh"
+DEPLOY_BUILD="$SCRIPT_DIR/build-release.sh"
 source "$SCRIPT_DIR/upgrade-lib.sh"
 
 manifest=
@@ -21,11 +21,11 @@ done
 [[ -n "$manifest" && -f "$manifest" ]] || die "upgrade build requires --manifest FILE"
 [[ -n "$source_dir" && -n "$output_dir" ]] || die "upgrade build requires source and output directories"
 [[ -n "$source_dir" ]] && source_dir=$(resolve_upgrade_project_source_dir "$source_dir")
-[[ -f "$source_dir/skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/autowonder.service" ]] || \
-  die "upgrade target source is missing its versioned systemd unit"
+[[ -f "$source_dir/skills/upgrading-autowonder-on-alibaba-cloud/assets/systemd/autowonder.service" ]] || \
+  die "upgrade target source is missing its versioned upgrade Skill systemd unit"
 refresh_and_require_upgrade_approval "$manifest"
 bash "$DEPLOY_BUILD" --manifest "$manifest" --source-dir "$source_dir" --output-dir "$output_dir"
-unit_source="$source_dir/skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/autowonder.service"
+unit_source="$source_dir/skills/upgrading-autowonder-on-alibaba-cloud/assets/systemd/autowonder.service"
 unit_target="$output_dir/autowonder.service"
 install -m 0444 "$unit_source" "$unit_target"
 unit_hash=$(sha256_file "$unit_target")

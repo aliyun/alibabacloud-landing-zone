@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Layout, Dropdown, Typography, Button, Drawer, Grid, message } from 'antd';
+import { Layout, Dropdown, Typography, Button, Drawer, Grid, message, theme } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckOutlined, LoadingOutlined, LogoutOutlined, DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined, UserOutlined } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Sidebar, NAV_GROUPS, navItemMatchesPath } from './Sidebar';
+import { PlatformAgentStatusBanner } from './PlatformAgentStatusBanner';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
+import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
 import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
 import { logout, myWorkspacesQueryKey } from '@/features/auth/api';
@@ -102,7 +104,8 @@ const orangeWhiteInitialStyle = {
   boxShadow: '0 2px 8px rgba(255, 106, 0, 0.10)',
 } as const;
 
-export function AppLayout() {
+export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
+  const { token } = theme.useToken();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -119,13 +122,14 @@ export function AppLayout() {
   const isMobile = shouldUseMobileLayout(screens);
 
   useEffect(() => {
+    if (helpCenter) return;
     const refresh = () => {
       void refreshCurrentMembership();
     };
     refresh();
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, []);
+  }, [helpCenter]);
 
   const { data: branding = DEFAULT_BRANDING } = useQuery({
     queryKey: BRANDING_QUERY_KEY,
@@ -134,6 +138,7 @@ export function AppLayout() {
 
   const { data: workspaces } = useQuery({
     queryKey: myWorkspacesQueryKey(user?.id ?? null),
+    enabled: !helpCenter,
     queryFn: async () => {
       const resp = await apiClient.get<WorkspaceInfo[]>('/api/workspaces/mine');
       return resp.data;
@@ -161,6 +166,7 @@ export function AppLayout() {
   }, [currentWorkspace?.id, setAccessToken, setCurrentWorkspace, queryClient]);
 
   useEffect(() => {
+    if (helpCenter) return;
     const targetWorkspaceId = getWorkspaceDeepLinkId(location.search);
     if (!targetWorkspaceId) {
       return;
@@ -201,6 +207,7 @@ export function AppLayout() {
       cancelled = true;
     };
   }, [
+    helpCenter,
     currentWorkspace?.id,
     location.hash,
     location.pathname,
@@ -258,8 +265,8 @@ export function AppLayout() {
   const menuButtonLabel = isMobile ? '打开菜单' : collapsed ? '展开菜单' : '折叠菜单';
 
   return (
-    <Layout style={{ height: '100vh', minWidth: 0 }}>
-      {!isMobile && (
+    <Layout className={helpCenter ? 'help-layout' : undefined} style={{ height: '100vh', minWidth: 0 }}>
+      {!helpCenter && !isMobile && (
         <Sider
           width={220}
           collapsedWidth={72}
@@ -324,7 +331,7 @@ export function AppLayout() {
         </Sider>
       )}
 
-      <Drawer
+      {!helpCenter && <Drawer
         placement="left"
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
@@ -375,23 +382,29 @@ export function AppLayout() {
           </div>
         </Dropdown>
         <Sidebar />
-      </Drawer>
+      </Drawer>}
 
       <Layout style={{ minWidth: 0 }}>
         <Header style={{
           height: 60, padding: isMobile ? '0 12px' : '0 24px',
+          flexShrink: helpCenter ? 0 : undefined,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          borderBottom: '1px solid rgba(0,0,0,0.04)', background: '#fff',
+          borderBottom: `1px solid ${helpCenter ? token.colorBorderSecondary : 'rgba(0,0,0,0.04)'}`, background: helpCenter ? token.colorBgContainer : '#fff',
           minWidth: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1, overflow: 'hidden' }}>
-            <Button
+            {helpCenter ? (
+              <a href="/" aria-label="返回平台" style={{ display: 'flex', alignItems: 'center', gap: 10, color: token.colorText, flexShrink: 0 }}>
+                <img src={branding.logoUrl || '/logo.png'} alt="" width={28} height={28} style={{ objectFit: 'contain', borderRadius: 6 }} />
+                {!isMobile && <Text strong style={{ fontSize: 15 }}>{branding.platformName}</Text>}
+              </a>
+            ) : <Button
               type="text"
               onClick={toggleCollapsed}
               aria-label={menuButtonLabel}
               icon={isMobile || collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               style={{ fontSize: 16, color: '#6b7280', flexShrink: 0 }}
-            />
+            />}
             <Text
               style={{
                 ...ellipsisTextStyle,
@@ -401,20 +414,21 @@ export function AppLayout() {
                 minWidth: 0,
                 flex: 1,
               }}
-              title={[sectionTitle, pageTitle].filter(Boolean).join(' / ')}
+              title={helpCenter ? '帮助中心' : [sectionTitle, pageTitle].filter(Boolean).join(' / ')}
             >
-              {sectionTitle ? (
+              {!helpCenter && sectionTitle ? (
                 <>
                   <span style={{ color: '#6b7280' }}>{sectionTitle}</span>
                   <span style={{ margin: '0 6px', color: '#e5e7eb' }}>/</span>
                 </>
               ) : null}
-              <span style={{ color: '#374151' }}>{pageTitle}</span>
+              <span style={{ color: helpCenter ? token.colorTextSecondary : '#374151', marginLeft: helpCenter ? 12 : 0 }}>{helpCenter ? '帮助中心' : pageTitle}</span>
             </Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 16, minWidth: 0, marginLeft: isMobile ? 8 : 16, flexShrink: 0 }}>
-            <NotificationBell />
-            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
+            {!helpCenter && <HelpCenterLink />}
+            {(!helpCenter || user) && <NotificationBell fetchUnread={!helpCenter} />}
+            {helpCenter && !user ? <Button href="/login">登录</Button> : <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -469,10 +483,11 @@ export function AppLayout() {
                   </>
                 )}
               </div>
-            </Dropdown>
+            </Dropdown>}
           </div>
         </Header>
-        <Content style={{ padding: isMobile ? 12 : 24, overflow: 'auto', background: '#f8f9fb', minWidth: 0 }}>
+        {!helpCenter && <PlatformAgentStatusBanner />}
+        <Content style={{ padding: helpCenter ? 0 : isMobile ? 12 : 24, overflow: helpCenter ? 'hidden' : 'auto', background: helpCenter ? token.colorBgContainer : '#f8f9fb', minWidth: 0, minHeight: 0 }}>
           <Outlet />
         </Content>
       </Layout>

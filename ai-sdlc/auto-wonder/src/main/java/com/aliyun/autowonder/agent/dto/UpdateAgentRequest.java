@@ -11,6 +11,7 @@ import lombok.Setter;
 public class UpdateAgentRequest {
     private Long id;
     private String name;
+    private String avatarUrl;
     private String roleCode;
     private String roleName;
     /** REST compatibility field containing the digital worker's SOUL.md Markdown content. */

@@ -76,6 +76,25 @@ describe('RuntimeTraceDrawer', () => {
     expect(within(drawer).getAllByText(gateReason).length).toBeGreaterThanOrEqual(2);
   });
 
+  it('surfaces the blocking tool hook instead of the missing completion request', async () => {
+    const blockage = 'tool_hook_blocked: kind safety_denial hook jarvis-tool-safety trigger beforeTool status blocked exitCode 2 blockedCalls 3';
+    server.use(
+      http.get('/api/dispatches/44/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: {
+        ...failedTracePayload,
+        events: [
+          { eventId: 'e-progress', eventType: 'progress', detail: {} },
+          { eventId: 'e-blocked', eventType: 'step.failed', detail: { reason: blockage } },
+          { eventId: 'e-symptom', eventType: 'step.failed', detail: { reason: 'missing completion request' } },
+        ],
+      } })),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:44', dispatchId: 44, agentName: '开发', status: 'FAILED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+    const alert = await screen.findByTestId('dispatch-failure-reason');
+    expect(within(alert).getByText(blockage)).toBeInTheDocument();
+    expect(within(alert).queryByText('missing completion request')).not.toBeInTheDocument();
+  });
+
   it('does not show a failure alert for a non-failed dispatch', async () => {
     server.use(
       http.get('/api/dispatches/44/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: failedTracePayload })),
@@ -149,22 +168,167 @@ describe('RuntimeTraceDrawer usage display', () => {
   });
 });
 
+describe('RuntimeTraceDrawer independent pane scrolling', () => {
+  const liveTurn = (turnId: string, stepName: string, contextFiles: unknown[] = []) => ({
+    traceId: turnId, turnId, stepName, status: 'COMPLETED', durationMs: 900, providerCoverage: 'FULL',
+    tokenUsage: usage, usage, eventIds: [], spans: [], observations: [], contextFiles,
+  });
+
+  function liveTrace(dispatchId: number, turns: unknown[], events: unknown[] = []) {
+    return {
+      schemaVersion: 'autowonder.runtime-trace.v2', source: 'LIVE', dispatchId, provider: 'qoder', changed: true,
+      tokenUsage: usage, events,
+      sessions: [{ sessionId: 'session-live', provider: 'qoder', status: 'COMPLETED', durationMs: 900, tokenUsage: usage, boundaries: [], eventIds: [], turns }],
+    };
+  }
+
+  // jsdom does not keep a scroll offset, so the offset is captured on the element itself.
+  function spyScrollTop(pane: HTMLElement) {
+    const state = { top: 0 };
+    Object.defineProperty(pane, 'scrollTop', {
+      configurable: true,
+      get: () => state.top,
+      set: (value: number) => { state.top = value; },
+    });
+    return state;
+  }
+
+  it('bounds the timeline and the detail into independent scroll areas', async () => {
+    server.use(
+      http.get('/api/dispatches/46/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: liveTrace(46, [liveTurn('t1', '需求分析')]) })),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:46', dispatchId: 46, agentName: '开发', status: 'SUCCEEDED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+
+    const panes = await screen.findByTestId('runtime-trace-panes');
+    expect(panes).toHaveStyle({ display: 'grid', minHeight: '0', overflow: 'hidden' });
+    expect(screen.getByTestId('runtime-trace-timeline-pane')).toHaveStyle({ overflow: 'auto' });
+    expect(screen.getByTestId('runtime-trace-detail-pane')).toHaveStyle({ overflow: 'auto' });
+    expect(document.querySelector('.ant-drawer-body')).toHaveStyle({ display: 'flex', flexDirection: 'column', minHeight: '0', overflow: 'hidden' });
+  });
+
+  it('keeps the dispatch summary and failure alert out of the shrinking panes', async () => {
+    server.use(
+      http.get('/api/dispatches/46/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: liveTrace(46, [], [
+        { eventId: 'e-failed', eventType: 'step.failed', detail: { reason: 'gate rejected the step' } },
+      ]) })),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:46', dispatchId: 46, agentName: '开发', status: 'FAILED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+
+    const summary = await screen.findByTestId('runtime-trace-dispatch-summary');
+    expect(summary).toHaveStyle({ flexShrink: '0' });
+    const alert = await screen.findByTestId('dispatch-failure-reason');
+    expect(alert).toHaveStyle({ flexShrink: '0' });
+
+    const panes = screen.getByTestId('runtime-trace-panes');
+    expect(summary.contains(panes)).toBe(false);
+    expect(alert.contains(panes)).toBe(false);
+    expect(screen.getByTestId('runtime-trace-timeline-pane').contains(summary)).toBe(false);
+  });
+
+  it('starts the detail pane at its own top when another turn is selected', async () => {
+    server.use(
+      http.get('/api/dispatches/47/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: liveTrace(47, [liveTurn('t1', '需求分析'), liveTurn('t2', '编码实现')]) })),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:47', dispatchId: 47, agentName: '开发', status: 'SUCCEEDED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+    const drawer = await screen.findByTestId('runtime-trace-drawer');
+    fireEvent.click(await within(drawer).findByText(/Turn t1/));
+
+    const pane = within(drawer).getByTestId('runtime-trace-detail-pane');
+    const scroll = spyScrollTop(pane);
+    scroll.top = 320;
+
+    fireEvent.click(within(drawer).getByText(/Turn t2/));
+
+    expect(scroll.top).toBe(0);
+    expect(within(drawer).getByTestId('runtime-trace-detail-pane')).toBe(pane);
+    expect(within(drawer).getByText('编码实现')).toBeInTheDocument();
+  });
+
+  it('starts the detail pane at its own top when a context file preview opens', async () => {
+    const file = { contentRef: 'ctx:1', name: 'notes.md', role: 'CONTEXT', mediaType: 'text/markdown', sizeBytes: 12, previewable: true };
+    server.use(
+      http.get('/api/dispatches/48/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: liveTrace(48, [liveTurn('t1', '需求分析', [file])]) })),
+      http.get('/api/dispatches/48/runtime-trace/context', () => HttpResponse.text('preview body')),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:48', dispatchId: 48, agentName: '开发', status: 'SUCCEEDED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+    const drawer = await screen.findByTestId('runtime-trace-drawer');
+    fireEvent.click(await within(drawer).findByText(/Turn t1/));
+
+    const pane = within(drawer).getByTestId('runtime-trace-detail-pane');
+    const scroll = spyScrollTop(pane);
+    scroll.top = 260;
+
+    fireEvent.click(within(drawer).getByText('notes.md'));
+
+    await waitFor(() => expect(within(drawer).getByText('preview body')).toBeInTheDocument());
+    expect(scroll.top).toBe(0);
+  });
+});
+
+describe('RuntimeTraceDrawer states', () => {
+  it('renders no trace content while the drawer is closed without a dispatch', () => {
+    render(<RuntimeTraceDrawer node={null} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+
+    expect(screen.queryByTestId('runtime-trace-drawer')).not.toBeInTheDocument();
+    expect(screen.queryByText('执行 Trace')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a trace load failure in an alert', async () => {
+    server.use(
+      http.get('/api/dispatches/49/runtime-trace', () => HttpResponse.json({ success: false, code: '500', message: 'trace backend exploded', data: null }, { status: 500 })),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:49', dispatchId: 49, agentName: '开发', status: 'SUCCEEDED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+
+    expect(await screen.findByText('trace backend exploded')).toBeInTheDocument();
+    expect(screen.queryByTestId('runtime-trace-panes')).not.toBeInTheDocument();
+  });
+});
+
 describe('dispatchFailureReason', () => {
-  it('returns the reason of the latest failure event', () => {
+  it('returns the reason of the earliest failure event', () => {
     expect(dispatchFailureReason([
       { eventType: 'step.failed', detail: { reason: 'first failure' } },
       { eventType: 'progress', detail: { reason: 'not a failure event' } },
       { eventType: 'session.failed', detail: { reason: 'latest failure' } },
-    ])).toBe('latest failure');
+    ])).toBe('first failure');
   });
 
-  it('ignores failure events without a usable reason and falls back to earlier ones', () => {
+  it('ignores failure events without a usable reason', () => {
     expect(dispatchFailureReason([
-      { eventType: 'step.failed', detail: { reason: 'kept' } },
       { eventType: 'step.failed', detail: { reason: '   ' } },
       { eventType: 'session.failed', detail: { reason: 123 } },
       { eventType: 'step.failed', detail: {} },
+      { eventType: 'step.failed', detail: { reason: 'kept' } },
     ])).toBe('kept');
+  });
+
+  it('prefers a blocking tool hook over the symptoms recorded after it', () => {
+    const blockage = 'tool_hook_blocked: kind safety_denial hook jarvis-tool-safety trigger beforeTool status blocked exitCode 2 blockedCalls 3';
+    expect(dispatchFailureReason([
+      { eventType: 'step.failed', detail: { reason: blockage } },
+      { eventType: 'step.failed', detail: { reason: 'missing completion request' } },
+      { eventType: 'session.failed', detail: { reason: 'agent turn failed' } },
+    ])).toBe(blockage);
+  });
+
+  it('prefers a blocking tool hook recorded after an earlier symptom', () => {
+    const blockage = 'tool_hook_blocked: kind hook_error hook jarvis-tool-safety trigger afterTool status failed exitCode 1 blockedCalls 4';
+    expect(dispatchFailureReason([
+      { eventType: 'step.failed', detail: { reason: 'missing completion request' } },
+      { eventType: 'session.failed', detail: { reason: blockage } },
+    ])).toBe(blockage);
+  });
+
+  it('does not treat an ordinary reason mentioning the hook as a blockage', () => {
+    expect(dispatchFailureReason([
+      { eventType: 'step.failed', detail: { reason: 'hook jarvis-tool-safety exited 1 once' } },
+      { eventType: 'step.failed', detail: { reason: 'missing completion request' } },
+    ])).toBe('hook jarvis-tool-safety exited 1 once');
   });
 
   it('returns null when there is no failure event', () => {

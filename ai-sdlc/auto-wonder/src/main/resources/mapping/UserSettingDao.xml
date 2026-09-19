@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.user.UserSettingDao">
+    <resultMap id="UserSettingResultMap" type="com.aliyun.autowonder.user.UserSettingDO">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="setting_key" property="settingKey"/>
+        <result column="value_json" property="valueJson"/>
+        <result column="creator_id" property="creatorId"/>
+        <result column="modifier_id" property="modifierId"/>
+        <result column="is_deleted" property="isDeleted"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.user.UserSettingDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO user_setting (user_id, setting_key, value_json, creator_id, modifier_id, is_deleted)
+        VALUES (#{userId}, #{settingKey}, #{valueJson}, #{creatorId}, #{modifierId}, 0)
+    </insert>
+
+    <select id="findByUk" resultMap="UserSettingResultMap">
+        SELECT * FROM user_setting
+        WHERE user_id = #{userId} AND setting_key = #{settingKey}
+        LIMIT 1
+    </select>
+
+    <select id="findLive" resultMap="UserSettingResultMap">
+        SELECT * FROM user_setting
+        WHERE user_id = #{userId} AND setting_key = #{settingKey} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByUser" resultMap="UserSettingResultMap">
+        SELECT * FROM user_setting
+        WHERE user_id = #{userId} AND is_deleted = 0
+        ORDER BY setting_key
+    </select>
+
+    <update id="update">
+        UPDATE user_setting SET value_json = #{valueJson}, modifier_id = #{modifierId}, is_deleted = 0
+        WHERE id = #{id} AND user_id = #{userId}
+    </update>
+
+    <update id="softDelete">
+        UPDATE user_setting SET is_deleted = 1, modifier_id = #{userId}
+        WHERE id = #{id} AND user_id = #{userId} AND is_deleted = 0
+    </update>
+</mapper>

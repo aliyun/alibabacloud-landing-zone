@@ -180,7 +180,7 @@ class DispatchPauseServiceTest {
     void expiresStalePausingDispatchWithRecoverableError() {
         DispatchDO stale = dispatch(55L, DispatchStatus.PAUSING, 1);
         when(dispatchDao.failStalePausing(eq(55L), eq(100L), eq(10_000L),
-                contains("暂停确认超时"), eq(0L))).thenReturn(1);
+                startsWith(DispatchFailureReason.PAUSE_CONFIRMATION_MISSING + ":"), eq(0L))).thenReturn(1);
 
         assertTrue(service.expireTimedOutPause(stale, 10_000L));
     }

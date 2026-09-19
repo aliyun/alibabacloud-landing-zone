@@ -5,6 +5,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.dto.RuntimeActivityTimelineVO;
+import com.aliyun.autowonder.dispatch.dto.DispatchLiveActivityVO;
 import com.aliyun.autowonder.dispatch.dto.RuntimeTraceVO;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
@@ -23,10 +24,13 @@ public class RuntimeTraceController {
 
     private final RuntimeTraceService traceService;
     private final RuntimeTraceArtifactService artifactService;
+    private final DispatchLiveActivityService liveActivityService;
 
-    public RuntimeTraceController(RuntimeTraceService traceService, RuntimeTraceArtifactService artifactService) {
+    public RuntimeTraceController(RuntimeTraceService traceService, RuntimeTraceArtifactService artifactService,
+            DispatchLiveActivityService liveActivityService) {
         this.traceService = traceService;
         this.artifactService = artifactService;
+        this.liveActivityService = liveActivityService;
     }
 
     @GetMapping("/{id}/runtime-trace")
@@ -38,6 +42,13 @@ public class RuntimeTraceController {
         }
         RuntimeTraceVO completed = artifactService.loadOutlineIfPresent(workspaceId, id);
         return Result.ok(completed == null ? traceService.get(workspaceId, id, afterSeq) : completed);
+    }
+
+    /** Persisted event log, independent of the compact completed-trace outline. */
+    @GetMapping("/{id}/runtime-trace/events")
+    public Result<RuntimeTraceVO> events(@PathVariable("id") long id,
+                                        @RequestParam(value = "afterSeq", required = false) Long afterSeq) {
+        return Result.ok(traceService.get(currentWorkspaceId(), id, afterSeq));
     }
 
     @GetMapping("/{id}/runtime-trace/activities")
@@ -65,6 +76,13 @@ public class RuntimeTraceController {
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header("X-Content-Type-Options", "nosniff")
                 .body(content.bytes());
+    }
+
+    @GetMapping("/{id}/live-activity")
+    public Result<DispatchLiveActivityVO> getLiveActivity(@PathVariable("id") long id,
+            @RequestParam(value = "afterSeq", required = false) Long afterSeq,
+            @RequestParam(value = "limit", required = false) Integer limit) {
+        return Result.ok(liveActivityService.get(currentWorkspaceId(), id, afterSeq, limit));
     }
 
     private long currentWorkspaceId() {

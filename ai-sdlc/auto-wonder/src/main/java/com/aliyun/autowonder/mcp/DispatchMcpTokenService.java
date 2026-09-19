@@ -25,6 +25,9 @@ public class DispatchMcpTokenService {
     private static final long TTL_SECONDS = 24 * 60 * 60;
     private static final Set<String> ACTIVE = Set.of("PACKAGING", "PENDING", "DISPATCHED", "ACKED", "RUNNING", "PAUSING");
 
+    private com.aliyun.autowonder.dispatch.DispatchRecoveryService recovery;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRecovery(com.aliyun.autowonder.dispatch.DispatchRecoveryService service) { recovery = service; }
     private final JwtService jwtService;
     private final DispatchDao dispatchDao;
     private final WorkitemDao workitemDao;
@@ -85,7 +88,7 @@ public class DispatchMcpTokenService {
             long dispatchId = ((Number) claims.get("subjectId")).longValue();
             long workspaceId = ((Number) claims.get("workspace")).longValue();
             DispatchDO dispatch = dispatchDao.findById(dispatchId);
-            if (dispatch == null || !workspaceIdEquals(dispatch, workspaceId) || !ACTIVE.contains(dispatch.getStatus())) {
+            if (dispatch == null || !workspaceIdEquals(dispatch, workspaceId) || !ACTIVE.contains(dispatch.getStatus()) || (recovery != null && recovery.fenced(dispatch))) {
                 throw new IllegalArgumentException("dispatch is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();

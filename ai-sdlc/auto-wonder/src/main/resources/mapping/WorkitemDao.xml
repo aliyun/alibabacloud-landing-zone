@@ -161,6 +161,14 @@
         </if>
         <if test="mineScope == 'CREATED'">AND w.creator_id = #{currentUserId}</if>
         <if test="mineScope == 'ASSIGNED'">AND w.assignee_type = 'HUMAN' AND w.assignee_ref = #{currentUserId}</if>
+        <if test="mineScope == 'WATCHED'">
+            AND EXISTS (
+                SELECT 1 FROM workitem_watcher ww
+                WHERE ww.tenant_id = w.tenant_id
+                  AND ww.workitem_id = w.id
+                  AND ww.user_id = #{currentUserId}
+            )
+        </if>
         <if test="keyword != null and keyword != ''">
             AND (w.title LIKE CONCAT('%', #{keyword}, '%')
             <if test="keywordId != null">OR w.id = #{keywordId}</if>)
@@ -188,6 +196,20 @@
         <if test="tag != null and tag != ''">
             AND JSON_CONTAINS(w.tags, JSON_QUOTE(#{tag}))
         </if>
+        <!-- 定时工单聚合：待触发看 scheduled_start_at，已触发看 scheduled_start_triggered_at
+             （fireScheduledStartAt 触发时清空前者并打戳后者，因此两者互斥）；
+             参数为空时不追加任何条件，保证既有工单列表零回归 -->
+        <choose>
+            <when test="scheduledStart == 'ALL'">
+                AND (w.scheduled_start_at IS NOT NULL OR w.scheduled_start_triggered_at IS NOT NULL)
+            </when>
+            <when test="scheduledStart == 'PENDING'">
+                AND w.scheduled_start_at IS NOT NULL
+            </when>
+            <when test="scheduledStart == 'TRIGGERED'">
+                AND w.scheduled_start_triggered_at IS NOT NULL
+            </when>
+        </choose>
     </sql>
     <sql id="pendingDecisionDispatchFilter" databaseId="autowonder-legacy">
             AND w.assignee_type = 'HUMAN'

@@ -34,6 +34,8 @@ interface PanelConversation {
   cancelSupported?: boolean;
   pendingElicitations?: Array<Record<string, unknown>>;
   turns?: Array<{ id: number; direction: string; content: string; status: string }>;
+  /** 详情接口带回的命令快照种子（打开会话即秒显 `/` 候选） */
+  availableCommands?: Array<Record<string, unknown>> | null;
 }
 
 function payloadOf(conv: PanelConversation) {
@@ -62,9 +64,12 @@ function ok(data: unknown) {
 }
 
 let detailCalls = 0;
+let refreshCalls = 0;
 
 function mockPanel(conv: PanelConversation) {
   const payload = payloadOf(conv);
+  // 命令快照只有详情接口填充（与服务端一致），列表接口不带
+  const detail = { ...payload, availableCommands: conv.availableCommands ?? null };
   server.use(
     http.get('/api/squads', () => ok({
       list: [{ id: 9, name: '交付小队', description: '', memberCount: 1, gmtCreate: '' }],
@@ -75,8 +80,16 @@ function mockPanel(conv: PanelConversation) {
     http.get('/api/workitems/:workitemId/clarification-conversations', () => ok([payload])),
     http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => {
       detailCalls += 1;
-      return ok(payload);
+      return ok(detail);
     }),
+    // 打开会话即触发带外命令探针：所有用例统一兜底，避免未 mock 落入 unhandled
+    http.post(
+      '/api/workitems/:workitemId/clarification-conversations/:conversationId/commands/refresh',
+      () => {
+        refreshCalls += 1;
+        return ok(null);
+      },
+    ),
   );
   return payload;
 }
@@ -115,6 +128,7 @@ function emit(eventSeq: number, eventType: string, payload: unknown, turnId = 3)
 describe('WorkitemClarificationPanel ACP 交互接线', () => {
   beforeEach(() => {
     detailCalls = 0;
+    refreshCalls = 0;
   });
 
   afterEach(() => {
@@ -460,6 +474,72 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
     expect(textarea).toHaveValue('/quest ');
     // 已选定命令后浮层收起，后面输入的是参数
     expect(screen.queryByTestId('slash-command-picker')).toBeNull();
+  });
+
+  // 打开会话即刻用详情里的命令快照种子（不等 acp_commands 实时事件），
+  // 同时后台补一次 commands/refresh 探针去刷新耐久命令。
+  it('seeds slash commands from the conversation detail and probes commands/refresh on open', async () => {
+    const seed = [{ name: 'quest', description: '两阶段问卷' }];
+    const turns = [{ id: 1, direction: 'IN', content: '你好', status: 'COMPLETED' }];
+    await renderPanel({ acpInteractionSupported: true, availableCommands: seed, turns });
+
+    // 探针在打开会话时后台发出（fire-and-forget），且不阻塞输入
+    await waitFor(() => expect(refreshCalls).toBe(1));
+
+    // 快照种子先于任何 acp_commands 实时事件生效：敲 `/` 立刻有候选
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '/' } });
+    expect(await screen.findByTestId('slash-command-quest')).toBeInTheDocument();
+    expect(screen.getByText('两阶段问卷')).toBeInTheDocument();
+
+    // 实时命令到达后优先于快照种子
+    emit(1, 'acp_commands', {
+      type: 'acp_commands',
+      data: { availableCommands: [{ name: 'commit', description: '提交改动' }] },
+    }, 1);
+    await waitFor(() => expect(screen.queryByTestId('slash-command-quest')).toBeNull());
+    expect(screen.getByTestId('slash-command-commit')).toBeInTheDocument();
+
+    // 去重：详情重拉、重渲染、能力位抖动（false→true 会让 effect 重跑）都不能重复探针
+    const detailBase = { ...payloadOf({ acpInteractionSupported: true, turns }), availableCommands: seed };
+    let supported = true;
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => {
+        detailCalls += 1;
+        supported = !supported;
+        return ok({ ...detailBase, acpInteractionSupported: supported });
+      }),
+    );
+    const detailsBefore = detailCalls;
+    act(() => { window.dispatchEvent(new Event('visibilitychange')); });
+    await waitFor(() => expect(detailCalls).toBeGreaterThan(detailsBefore));
+    act(() => { window.dispatchEvent(new Event('visibilitychange')); });
+    await waitFor(() => expect(supported).toBe(true));
+    fireEvent.change(textarea, { target: { value: '/c' } });
+
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+    expect(refreshCalls).toBe(1);
+    expect(screen.getByTestId('slash-command-commit')).toBeInTheDocument();
+  });
+
+  // Fix #3：执行器权威上报「就是没有命令」时不能被快照种子盖回去，
+  // 否则 `/` 会一直浮出早已失效的候选（空列表 ≠ 尚未上报）。
+  it('keeps an executor-reported empty command set over the seed', async () => {
+    const seed = [{ name: 'quest', description: '两阶段问卷' }];
+    const turns = [{ id: 1, direction: 'IN', content: '你好', status: 'COMPLETED' }];
+    await renderPanel({ acpInteractionSupported: true, availableCommands: seed, turns });
+
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    fireEvent.change(textarea, { target: { value: '/' } });
+    expect(await screen.findByTestId('slash-command-quest')).toBeInTheDocument();
+
+    // 探针结果：命令集已空（服务端直推带 turnId:0）
+    emit(2, 'acp_commands', { type: 'acp_commands', data: { availableCommands: [] } }, 0);
+
+    await waitFor(() => expect(screen.queryByTestId('slash-command-picker')).toBeNull());
+    fireEvent.change(textarea, { target: { value: '/q' } });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(screen.queryByTestId('slash-command-quest')).toBeNull();
   });
 
   // F20：执行器没吐 acp_commands 就没有候选，/ 不能弹出空浮层。

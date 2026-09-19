@@ -74,6 +74,54 @@ public class JwtService {
                 "subjectId", claims.get("subjectId", Number.class).longValue());
     }
 
+    /**
+     * 会话令牌额外绑定 agent 与 agentVersion：会话切到新的在线版本后，
+     * 上一版本签出的令牌必须立刻失效，而不是继续用旧身份跑满 TTL。
+     */
+    public String signConversation(long userId, long tenantId, String purpose, long conversationId,
+            long agentId, long agentVersionId, long ttlSeconds) {
+        long now = System.currentTimeMillis();
+        return Jwts.builder()
+                .setSubject(String.valueOf(userId))
+                .claim("uid", userId)
+                .claim("workspace", tenantId)
+                .claim("purpose", purpose)
+                .claim("subjectId", conversationId)
+                .claim("agentId", agentId)
+                .claim("agentVersionId", agentVersionId)
+                .setIssuedAt(new Date(now))
+                .setExpiration(new Date(now + ttlSeconds * 1000L))
+                .signWith(key)
+                .compact();
+    }
+
+    public ConversationClaims parseConversation(String token) {
+        Claims claims = Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token).getBody();
+        String purpose = claims.get("purpose", String.class);
+        if (purpose == null) {
+            throw new IllegalArgumentException("claim purpose is missing");
+        }
+        return new ConversationClaims(
+                requireClaim(claims, "uid"),
+                requireClaim(claims, "workspace"),
+                purpose,
+                requireClaim(claims, "subjectId"),
+                requireClaim(claims, "agentId"),
+                requireClaim(claims, "agentVersionId"));
+    }
+
+    private long requireClaim(Claims claims, String name) {
+        Number value = claims.get(name, Number.class);
+        if (value == null) {
+            // 旧版会话令牌没有 agent 声明，身份归属不可信，必须整体拒绝而不是当成 0。
+            throw new IllegalArgumentException("claim " + name + " is missing");
+        }
+        return value.longValue();
+    }
+
+    public record ConversationClaims(long userId, long tenantId, String purpose,
+            long conversationId, long agentId, long agentVersionId) {}
+
     public String signUserPurpose(long userId, String purpose, long ttlSeconds) {
         long now = System.currentTimeMillis();
         return Jwts.builder()

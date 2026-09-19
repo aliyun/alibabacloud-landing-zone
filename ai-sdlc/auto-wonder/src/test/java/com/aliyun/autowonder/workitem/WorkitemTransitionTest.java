@@ -143,6 +143,64 @@ class WorkitemTransitionTest {
     }
 
     @Test
+    void checkedTransitionRejectsStaleSource() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 22L, 1));
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 21L, 100L, 9L, 20L, 1));
+        assertEquals("13005", ex.getCode());
+        verifyNoInteractions(transitionDao, eventDao);
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void checkedTransitionRejectsStaleVersion() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 2));
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 21L, 100L, 9L, 20L, 1));
+        assertEquals("13005", ex.getCode());
+        verifyNoInteractions(transitionDao, eventDao);
+    }
+
+    @Test
+    void checkedTransitionStillRequiresLegalEdge() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 99L, 100L, 9L, 20L, 1));
+        assertEquals("13004", ex.getCode());
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void checkedTransitionUpdatesMatchingSnapshot() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(new StatusTransitionDO());
+        when(workitemDao.updateStatus(5L, 100L, 21L, 1, 9L)).thenReturn(1);
+        service.transition(5L, 21L, 100L, 9L, 20L, 1);
+        verify(workitemDao).updateStatus(5L, 100L, 21L, 1, 9L);
+        verify(eventDao).insert(any(WorkitemEventDO.class));
+    }
+
+    @Test
+    void transitionRejectsOtherWorkspace() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 21L, 200L, 9L));
+        assertEquals("13003", ex.getCode());
+        verifyNoInteractions(transitionDao, eventDao);
+    }
+
+    @Test
+    void transitionRejectsMissingStateMachine() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 1);
+        w.setStatusNodeId(null);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 21L, 100L, 9L));
+        assertEquals("13004", ex.getCode());
+        verifyNoInteractions(transitionDao, eventDao);
+    }
+
+    @Test
     void agentTransitionResolvesCodeAndWritesAgentEvent() {
         WorkitemDO w = workitem(5L, 10L, 20L, 0);
         when(workitemDao.findById(5L)).thenReturn(w);

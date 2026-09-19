@@ -3,6 +3,7 @@ package com.aliyun.autowonder.insights.dto;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Getter
@@ -20,6 +21,10 @@ public class InsightMetricsVO {
         private long avgTokensPerTask;
         private long dailyAvg;
         private List<Integer> trend;
+        private BigDecimal totalCredits;
+        private BigDecimal avgCreditsPerTask;
+        private BigDecimal dailyAvgCredits;
+        private List<BigDecimal> creditsTrend;
     }
 
     @Getter

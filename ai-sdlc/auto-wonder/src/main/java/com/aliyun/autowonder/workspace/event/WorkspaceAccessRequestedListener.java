@@ -19,7 +19,6 @@ import java.util.List;
 @Component
 public class WorkspaceAccessRequestedListener {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceAccessRequestedListener.class);
-    private static final String PROVIDER = "DINGTALK";
     private static final String LEVEL_ADMIN = "ADMIN";
     private static final String ACTOR_TYPE_USER = "USER";
 
@@ -40,14 +39,16 @@ public class WorkspaceAccessRequestedListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = false)
     public void onWorkspaceAccessRequested(WorkspaceAccessRequestedEvent event) {
+        String provider = "UNKNOWN";
         try {
+            provider = channelConfigService.selectedProvider();
             log.info("IM workspace access request notification published tenantId={} requestId={} "
                             + "requesterId={} provider={}",
-                    event.tenantId(), event.requestId(), event.requesterId(), PROVIDER);
-            if (!channelConfigService.isReady(PROVIDER)) {
+                    event.tenantId(), event.requestId(), event.requesterId(), provider);
+            if (!channelConfigService.isReady(provider)) {
                 log.info("IM workspace access request notification skipped channel not ready tenantId={} "
                                 + "requestId={} requesterId={} provider={}",
-                        event.tenantId(), event.requestId(), event.requesterId(), PROVIDER);
+                        event.tenantId(), event.requestId(), event.requesterId(), provider);
                 return;
             }
 
@@ -62,25 +63,25 @@ public class WorkspaceAccessRequestedListener {
                 if (adminUserId == event.requesterId()) {
                     continue;
                 }
-                notifyAdmin(event, adminUserId);
+                notifyAdmin(event, adminUserId, provider);
             }
         } catch (Exception e) {
-            logFailure(event, "failed", e);
+            logFailure(event, provider, "failed", e);
         }
     }
 
-    private void notifyAdmin(WorkspaceAccessRequestedEvent event, long adminUserId) {
-        UserImIdentityDO identity = identityService.find(adminUserId, PROVIDER);
+    private void notifyAdmin(WorkspaceAccessRequestedEvent event, long adminUserId, String provider) {
+        UserImIdentityDO identity = identityService.find(adminUserId, provider);
         if (identity == null || !hasText(identity.getExternalUserId())) {
             log.info("IM workspace access request notification skipped missing identity tenantId={} "
                             + "requestId={} recipientUserId={} provider={}",
-                    event.tenantId(), event.requestId(), adminUserId, PROVIDER);
+                    event.tenantId(), event.requestId(), adminUserId, provider);
             return;
         }
 
         ImNotificationTask task = new ImNotificationTask(
                 ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST + ":" + event.requestId()
-                        + ":" + PROVIDER + ":" + adminUserId,
+                        + ":" + provider + ":" + adminUserId,
                 event.requestId(),
                 event.tenantId(),
                 // Not a workitem notification: ImNotificationMessageContextResolver unconditionally
@@ -99,26 +100,26 @@ public class WorkspaceAccessRequestedListener {
         try {
             queue.enqueue(task);
         } catch (Exception e) {
-            logRecipientFailure(event, adminUserId, "enqueue-failed", e);
+            logRecipientFailure(event, adminUserId, provider, "enqueue-failed", e);
             return;
         }
         log.info("IM workspace access request notification queued tenantId={} requestId={} "
                         + "recipientUserId={} provider={}",
-                event.tenantId(), event.requestId(), adminUserId, PROVIDER);
+                event.tenantId(), event.requestId(), adminUserId, provider);
     }
 
-    private static void logFailure(WorkspaceAccessRequestedEvent event, String reason, Exception failure) {
+    private static void logFailure(WorkspaceAccessRequestedEvent event, String provider, String reason, Exception failure) {
         AlreadyLoggedException safe = AlreadyLoggedException.from(failure);
         log.error("IM workspace access request notification {} tenantId={} requestId={} requesterId={} provider={}",
-                reason, event.tenantId(), event.requestId(), event.requesterId(), PROVIDER, safe);
+                reason, event.tenantId(), event.requestId(), event.requesterId(), provider, safe);
     }
 
     private static void logRecipientFailure(WorkspaceAccessRequestedEvent event, long recipientUserId,
-                                            String reason, Exception failure) {
+                                            String provider, String reason, Exception failure) {
         AlreadyLoggedException safe = AlreadyLoggedException.from(failure);
         log.error("IM workspace access request notification {} tenantId={} requestId={} "
                         + "recipientUserId={} provider={}",
-                reason, event.tenantId(), event.requestId(), recipientUserId, PROVIDER, safe);
+                reason, event.tenantId(), event.requestId(), recipientUserId, provider, safe);
     }
 
     private static boolean hasText(String value) {

@@ -9,6 +9,50 @@ import static org.mockito.Mockito.*;
 class ExecutorRegistryTest {
 
     @Test
+    void currentDispatchSnapshotRejectsPreviousWebsocketSession() {
+        RedisManager redis = mock(RedisManager.class);
+        ExecutorRegistry registry = new ExecutorRegistry(redis);
+        ExecutorDispatchSnapshot stale = new ExecutorDispatchSnapshot(
+                "old", 10, true, true, java.util.Set.of(55L), java.util.Set.of(55L),
+                java.util.Set.of(), java.util.Set.of(), null, 123L);
+        when(redis.get(ExecutorDispatchSnapshot.key(10L))).thenReturn(stale);
+        when(redis.getString("exec:session:10")).thenReturn("current");
+
+        assertTrue(registry.currentDispatchSnapshot(10L).isEmpty());
+    }
+
+    @Test
+    void currentDispatchSnapshotReturnsCompleteCurrentSession() {
+        RedisManager redis = mock(RedisManager.class);
+        ExecutorRegistry registry = new ExecutorRegistry(redis);
+        ExecutorDispatchSnapshot current = new ExecutorDispatchSnapshot(
+                "current", 10, true, true, java.util.Set.of(55L), java.util.Set.of(55L, 56L),
+                java.util.Set.of(77L), java.util.Set.of(), null, 123L);
+        when(redis.get(ExecutorDispatchSnapshot.key(10L))).thenReturn(current);
+        when(redis.getString("exec:session:10")).thenReturn("current");
+
+        assertEquals(current, registry.currentDispatchSnapshot(10L).orElseThrow());
+    }
+
+    @Test
+    void authoritativeOwnedSetProvesReleaseOnlyWhenInventoryIsReady() {
+        RedisManager redis = mock(RedisManager.class);
+        ExecutorRegistry registry = new ExecutorRegistry(redis);
+        when(redis.getString("exec:session:10")).thenReturn("current");
+        when(redis.get(ExecutorDispatchSnapshot.key(10L))).thenReturn(
+                new ExecutorDispatchSnapshot("current", 10, true, false, java.util.Set.of(),
+                        java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), null, 1L),
+                new ExecutorDispatchSnapshot("current", 10, true, true, java.util.Set.of(),
+                        java.util.Set.of(55L), java.util.Set.of(), java.util.Set.of(), null, 2L),
+                new ExecutorDispatchSnapshot("current", 10, true, true, java.util.Set.of(),
+                        java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), null, 3L));
+
+        assertTrue(registry.isDispatchOwnedOrUnknown(10L, 55L));
+        assertTrue(registry.isDispatchOwnedOrUnknown(10L, 55L));
+        assertFalse(registry.isDispatchOwnedOrUnknown(10L, 55L));
+    }
+
+    @Test
     void heartbeatPersistsExactRunningDispatchMembershipIncludingEmptySet() {
         RedisManager redis = mock(RedisManager.class);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
@@ -53,6 +97,7 @@ class ExecutorRegistryTest {
         RedisManager redis = mock(RedisManager.class);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         when(redis.exists(ExecutorRegistry.onlineKey(10L))).thenReturn(true);
+        stubCurrentSnapshot(redis, 10L);
         when(redis.exists(ExecutorRegistry.providerCooldownKey(10L))).thenReturn(true);
         when(redis.getString(ExecutorRegistry.providerCooldownKey(10L)))
                 .thenReturn("failover:agent_error.provider_quota_limit");
@@ -109,11 +154,24 @@ class ExecutorRegistryTest {
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         String cooldownKey = ExecutorRegistry.providerCooldownKey(10L);
         when(redis.exists(ExecutorRegistry.onlineKey(10L))).thenReturn(true);
+        stubCurrentSnapshot(redis, 10L);
         when(redis.exists(cooldownKey)).thenReturn(true);
         when(redis.getString(cooldownKey)).thenReturn("agent_error.provider_quota_limit");
 
         assertTrue(registry.isAvailable(10L));
         verify(redis).del(cooldownKey);
+    }
+
+    @Test
+    void closedCurrentSessionIsImmediatelyOffline() {
+        RedisManager redis = mock(RedisManager.class);
+        ExecutorRegistry registry = new ExecutorRegistry(redis);
+        when(redis.exists(ExecutorRegistry.onlineKey(10L))).thenReturn(true);
+        stubCurrentSnapshot(redis, 10L);
+        when(redis.exists(ExecutorDispatchSnapshot.closedSessionKey(10L, "current")))
+                .thenReturn(true);
+
+        assertFalse(registry.isOnline(10L));
     }
 
     @Test
@@ -151,5 +209,13 @@ class ExecutorRegistryTest {
         assertFalse(registry.hasNoReportedRunningDispatches(3L));
         assertFalse(registry.hasNoReportedRunningDispatches(4L));
         assertFalse(registry.hasNoReportedRunningDispatches(5L));
+    }
+
+    private static void stubCurrentSnapshot(RedisManager redis, long executorId) {
+        when(redis.getString("exec:session:" + executorId)).thenReturn("current");
+        when(redis.get(ExecutorDispatchSnapshot.key(executorId))).thenReturn(
+                new ExecutorDispatchSnapshot("current", 10, true, true,
+                        java.util.Set.of(), java.util.Set.of(), java.util.Set.of(),
+                        java.util.Set.of(), null, 1L));
     }
 }

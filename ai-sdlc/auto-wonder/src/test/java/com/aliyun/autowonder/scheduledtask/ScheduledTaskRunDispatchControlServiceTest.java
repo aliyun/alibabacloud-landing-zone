@@ -15,4 +15,24 @@ class ScheduledTaskRunDispatchControlServiceTest {
         verify(pauses).requestPauseScheduledRun(1L, 9L, 5L, 7L);
         verify(dao, never()).listByWorkitem(anyLong(), anyLong());
     }
+
+    @Test void forceCancelTerminatesNonTerminalDispatchesWithoutPauseHandshake() {
+        DispatchDao dao = mock(DispatchDao.class); DispatchPauseService pauses = mock(DispatchPauseService.class);
+        DispatchDO running = new DispatchDO(); running.setId(5L); running.setStatus(DispatchStatus.RUNNING); running.setVersion(4);
+        DispatchDO stuckPaused = new DispatchDO(); stuckPaused.setId(6L); stuckPaused.setStatus(DispatchStatus.PAUSED); stuckPaused.setVersion(2);
+        DispatchDO finished = new DispatchDO(); finished.setId(7L); finished.setStatus(DispatchStatus.SUCCEEDED); finished.setVersion(9);
+        when(dao.listBySource(1L, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 9L)).thenReturn(List.of(running, stuckPaused, finished));
+
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        var service = new ScheduledTaskRunDispatchControlService(dao, pauses);
+        service.setRecoveryService(recovery);
+        service.forceCancelActive(1L, 9L, 7L);
+
+        verify(dao).listBySource(1L, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 9L);
+        verify(recovery).forceCancelScheduledRun(1L, 9L, 5L, 7L);
+        verify(recovery).forceCancelScheduledRun(1L, 9L, 6L, 7L);
+        verifyNoMoreInteractions(recovery);
+        verifyNoMoreInteractions(dao);
+        verifyNoInteractions(pauses);
+    }
 }

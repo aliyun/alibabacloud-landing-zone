@@ -27,6 +27,7 @@ public interface WorkitemDao {
             @Param("currentUserId") Long currentUserId,
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
             @Param("tag") String tag,
+            @Param("scheduledStart") String scheduledStart,
             @Param("offset") int offset, @Param("limit") int limit);
     long count(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
@@ -38,7 +39,8 @@ public interface WorkitemDao {
             @Param("mineScope") String mineScope,
             @Param("currentUserId") Long currentUserId,
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
-            @Param("tag") String tag);
+            @Param("tag") String tag,
+            @Param("scheduledStart") String scheduledStart);
     int updateContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("title") String title, @Param("contentMd") String contentMd,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);

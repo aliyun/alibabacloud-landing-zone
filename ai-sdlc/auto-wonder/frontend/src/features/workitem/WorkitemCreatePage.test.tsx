@@ -1,11 +1,10 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
-import dayjs from 'dayjs';
 import { server } from '@/test/mocks/server';
 import { WorkitemCreatePage } from './WorkitemCreatePage';
 import { useAuthStore } from '@/shared/auth/store';
@@ -18,6 +17,7 @@ function renderPage() {
         <Routes>
           <Route path="/workitems/new" element={<WorkitemCreatePage />} />
           <Route path="/workitems/:id" element={<div>工单详情</div>} />
+          <Route path="/workitems" element={<div>工单列表</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -29,24 +29,21 @@ describe('WorkitemCreatePage', () => {
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     vi.restoreAllMocks();
-    server.use(
-      http.get('/api/squads', () =>
-        HttpResponse.json({
-          success: true, code: '0', message: '', traceId: null,
-          data: { list: [], total: 0, pageNum: 1, pageSize: 100 },
-        }),
-      ),
-    );
   });
 
-  it('does not render deprecated SDLC field but offers optional scheduled delivery', () => {
+  it('does not render deprecated SDLC field nor the scheduled delivery module', () => {
     renderPage();
 
     expect(screen.queryByLabelText(/SDLC 流程/)).not.toBeInTheDocument();
-    expect(screen.getByText('定时交付（可选）')).toBeInTheDocument();
-    expect(screen.getByLabelText('交付小队')).toBeInTheDocument();
-    expect(screen.getByLabelText('执行 Agent')).toBeInTheDocument();
-    expect(screen.getByLabelText('定时执行时间')).toBeInTheDocument();
+    expect(screen.queryByText('定时交付（可选）')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('交付小队')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('执行 Agent')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('定时执行时间')).not.toBeInTheDocument();
+
+    expect(screen.getByLabelText('类型')).toBeInTheDocument();
+    expect(screen.getByLabelText('标题')).toBeInTheDocument();
+    expect(screen.getByLabelText('描述')).toBeInTheDocument();
+    expect(screen.getByLabelText('优先级')).toBeInTheDocument();
   });
 
   it('creates a workitem without auto assignment payload', async () => {
@@ -114,29 +111,33 @@ describe('WorkitemCreatePage', () => {
     expect(screen.getByText('新建工单')).toBeInTheDocument();
   });
 
-  it('creates a scheduled agent workitem when squad, agent and time are selected', async () => {
+  it('never queries squads nor sends assignment fields when squads exist', async () => {
+    let squadCalls = 0;
+    let memberCalls = 0;
     let requestedBody: Record<string, unknown> | null = null;
     server.use(
-      http.get('/api/squads', () =>
-        HttpResponse.json({
+      http.get('/api/squads', () => {
+        squadCalls += 1;
+        return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: { list: [{ id: 1, name: 'AW交付组', description: '', memberCount: 1, gmtCreate: '' }], total: 1, pageNum: 1, pageSize: 100 },
-        }),
-      ),
-      http.get('/api/squads/:squadId/members', () =>
-        HttpResponse.json({
+        });
+      }),
+      http.get('/api/squads/:squadId/members', () => {
+        memberCalls += 1;
+        return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: [{ agentId: 77, agentName: 'Agent-77', roleCode: 'AW_FS_DEV' }],
-        }),
-      ),
+        });
+      }),
       http.post('/api/workitems', async ({ request }) => {
         requestedBody = await request.json() as Record<string, unknown>;
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: {
-            id: 99, workType: 'REQ', title: '定时工单', contentMd: '按计划执行', priority: 2,
-            assigneeType: 'AGENT', assigneeRef: 77, version: 0,
-            gmtCreate: '2026-08-26T10:00:00Z', gmtModified: '2026-08-26T10:00:00Z',
+            id: 99, workType: 'REQ', title: '普通工单', contentMd: '无定时配置', priority: 2,
+            assigneeType: 'HUMAN', assigneeRef: 10000, version: 0,
+            gmtCreate: '2026-09-08T10:00:00Z', gmtModified: '2026-09-08T10:00:00Z',
           },
         });
       }),
@@ -144,33 +145,60 @@ describe('WorkitemCreatePage', () => {
 
     renderPage();
 
-    await userEvent.type(screen.getByLabelText('标题'), '定时工单');
-    await userEvent.type(screen.getByLabelText('描述'), '按计划执行');
-
-    await userEvent.click(screen.getByLabelText('交付小队'));
-    await userEvent.click(await screen.findByText('AW交付组'));
-    await userEvent.click(await screen.findByLabelText('执行 Agent'));
-    await userEvent.click(await screen.findByText('Agent-77 (AW_FS_DEV)'));
-
-    // 实现的 disabledDate 会拦掉早于当前时刻的定时执行时间，基准必须相对「现在」取未来时间
-    const scheduledStart = dayjs().add(1, 'day').startOf('hour');
-    await userEvent.type(screen.getByPlaceholderText('留空则立即执行'), scheduledStart.format('YYYY-MM-DD HH:mm:ss'));
-    await userEvent.tab();
+    await userEvent.type(screen.getByLabelText('标题'), '普通工单');
+    await userEvent.type(screen.getByLabelText('描述'), '无定时配置');
+    expect(screen.queryByText('AW交付组')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('留空则立即执行')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /创\s*建/ }));
 
     await waitFor(() => {
-      expect(requestedBody).toMatchObject({
+      expect(requestedBody).toEqual({
         workType: 'REQ',
-        title: '定时工单',
-        contentMd: '按计划执行',
+        title: '普通工单',
+        contentMd: '无定时配置',
         priority: 2,
-        assigneeType: 'AGENT',
-        assigneeRef: 77,
-        squadId: 1,
       });
     });
-    expect(new Date(requestedBody!.scheduledStartAt as string).toISOString())
-      .toBe(scheduledStart.toISOString());
+    expect(await screen.findByText('工单详情')).toBeInTheDocument();
+    expect(squadCalls).toBe(0);
+    expect(memberCalls).toBe(0);
+  });
+
+  it('stays on the form and shows no success toast when create fails', async () => {
+    let createCalls = 0;
+    const success = vi.spyOn(message, 'success').mockImplementation(
+      () => undefined as unknown as ReturnType<typeof message.success>,
+    );
+    server.use(
+      http.post('/api/workitems', () => {
+        createCalls += 1;
+        return HttpResponse.json({ success: false, code: '500', message: '创建失败', traceId: null, data: null });
+      }),
+    );
+
+    renderPage();
+
+    await userEvent.type(screen.getByLabelText('标题'), '失败工单');
+    await userEvent.type(screen.getByLabelText('描述'), '提交失败');
+    await userEvent.click(screen.getByRole('button', { name: /创\s*建/ }));
+
+    await waitFor(() => expect(createCalls).toBe(1));
+    // mutateAsync 的拒绝沿微任务传播到 handleSubmit 的 catch，需显式 flush 后再断言
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(success).not.toHaveBeenCalled();
+    expect(screen.getByText('新建工单')).toBeInTheDocument();
+    expect(screen.queryByText('工单详情')).not.toBeInTheDocument();
+  });
+
+  it('returns to the workitem list when cancel is clicked', async () => {
+    renderPage();
+
+    await userEvent.click(screen.getByRole('button', { name: /取\s*消/ }));
+
+    expect(await screen.findByText('工单列表')).toBeInTheDocument();
   });
 });

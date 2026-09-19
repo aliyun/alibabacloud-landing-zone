@@ -71,7 +71,7 @@ public class EvolutionAssetManifestLiteService {
     }
 
     private void addSkillCards(List<EvolutionAssetManifestCardVO> cards, long tenantId, String contextKey, int limit) {
-        for (SkillVO skill : skillService.list(null, 1, limit)) {
+        for (SkillVO skill : skillService.list(tenantId, null, 1, limit)) {
             EvolutionAssetManifestCardVO card = new EvolutionAssetManifestCardVO();
             card.setAssetType(SKILL);
             card.setAssetId(skill.getId());

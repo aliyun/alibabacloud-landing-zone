@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.setting;
 
+import com.aliyun.autowonder.im.PlatformImChannelConfigService;
+
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
@@ -19,17 +21,20 @@ public class SystemSettingService {
 
     private final SystemSettingDao settingDao;
     private final SecretCrypto secretCrypto;
+    private final PlatformImChannelConfigService imConfigs;
 
-    public SystemSettingService(SystemSettingDao settingDao, SecretCrypto secretCrypto) {
+    public SystemSettingService(SystemSettingDao settingDao, SecretCrypto secretCrypto,
+            PlatformImChannelConfigService imConfigs) {
         this.settingDao = settingDao;
         this.secretCrypto = secretCrypto;
+        this.imConfigs = imConfigs;
     }
 
     public List<SettingVO> listByGroup(String group, long tenantId) {
         validateGroup(group);
         List<SettingVO> result = new ArrayList<>();
         for (SystemSettingDO s : settingDao.listByGroup(tenantId, group)) {
-            result.add(toVO(s));
+            if (!"NOTIFY".equals(group) || allowedNotifyKey(s.getSettingKey())) result.add(toVO(s));
         }
         return result;
     }
@@ -39,6 +44,11 @@ public class SystemSettingService {
         validateGroup(group);
         if (req.getItems() == null || req.getItems().isEmpty()) {
             return;
+        }
+        for (UpdateSettingsRequest.SettingItem item : req.getItems()) {
+            if ("NOTIFY".equals(group) && !allowedNotifyKey(item.getKey())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "项目通知必须使用平台选择的 IM 渠道");
+            }
         }
         for (UpdateSettingsRequest.SettingItem item : req.getItems()) {
             SystemSettingDO existing = settingDao.findByUk(tenantId, group, item.getKey());
@@ -86,6 +96,11 @@ public class SystemSettingService {
             return secretCrypto.decrypt(s.getCredentialRef());
         }
         return s.getValueJson();
+    }
+
+    private boolean allowedNotifyKey(String key) {
+        String selected = imConfigs.selectedProvider().toLowerCase(java.util.Locale.ROOT);
+        return key != null && (!(key.startsWith("dingtalk_") || key.startsWith("feishu_")) || key.startsWith(selected + "_"));
     }
 
     private void validateGroup(String group) {

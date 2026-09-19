@@ -138,13 +138,16 @@ describe('AllWorkspacesTab', () => {
     expect(within(memberCard).getByText(/进入工作空间/)).toBeInTheDocument();
     expect(within(memberCard).queryByRole('button', { name: /申请权限/ })).not.toBeInTheDocument();
 
+    const memberEnter = within(memberCard).getByTestId('all-workspace-enter-1');
     // Membership must be in the accessibility tree, not carried only by badge absence
     // and opacity. The accessible name has to say the user is already a member.
-    expect(memberCard).toHaveAccessibleName('进入工作空间 星云工坊（已加入）');
-    expect(screen.getByRole('button', { name: /已加入/ })).toBe(memberCard);
+    expect(memberEnter).toHaveAccessibleName('进入工作空间 星云工坊（已加入）');
+    expect(screen.getByRole('button', { name: /已加入/ })).toBe(memberEnter);
     // The non-member rows must not be reachable under a membership-implying name.
     expect(screen.queryAllByRole('button', { name: /已加入/ })).toHaveLength(1);
-    expect(memberCard).not.toHaveAttribute('aria-busy', 'true');
+    expect(memberEnter).not.toHaveAttribute('aria-busy', 'true');
+    // A plain member holds no manage rights, so no edit/delete entries ride along.
+    expect(within(memberCard).queryByTestId('all-workspace-manage-area-1')).not.toBeInTheDocument();
 
     expect(within(pendingCard).getByText('审批中')).toBeInTheDocument();
     expect(within(pendingCard).queryByRole('button', { name: /申请权限/ })).not.toBeInTheDocument();
@@ -152,9 +155,12 @@ describe('AllWorkspacesTab', () => {
     expect(within(notMemberCard).getByText('未加入')).toBeInTheDocument();
     expect(within(notMemberCard).getByRole('button', { name: /申请权限/ })).toBeInTheDocument();
 
-    // Only MEMBER cards are activatable; non-members must not be reachable as buttons.
+    // Only enterable cards expose an activation control, and that control is a nested
+    // <button>; the card wrapper itself stays a plain <div> for every membership status,
+    // so non-members are never reachable as buttons at all.
     expect(screen.getAllByRole('button', { name: /申请权限/ })).toHaveLength(1);
-    expect(memberCard.tagName).toBe('BUTTON');
+    expect(memberEnter.tagName).toBe('BUTTON');
+    expect(memberCard.tagName).toBe('DIV');
     expect(pendingCard.tagName).not.toBe('BUTTON');
     expect(notMemberCard.tagName).not.toBe('BUTTON');
   });
@@ -293,7 +299,7 @@ describe('AllWorkspacesTab', () => {
 
     renderTab();
 
-    await user.click(await screen.findByTestId('all-workspace-card-1'));
+    await user.click(await screen.findByTestId('all-workspace-enter-1'));
 
     await waitFor(() => {
       expect(switchCalls).toBe(1);
@@ -323,7 +329,7 @@ describe('AllWorkspacesTab', () => {
     const { queryClient } = renderTab();
     queryClient.setQueryData(['workitems', { page: 1, size: 20 }], { content: [{ id: 5 }] });
 
-    await user.click(await screen.findByTestId('all-workspace-card-1'));
+    await user.click(await screen.findByTestId('all-workspace-enter-1'));
 
     await waitFor(() => {
       expect(queryClient.getQueryData(['workitems', { page: 1, size: 20 }])).toBeUndefined();
@@ -352,28 +358,28 @@ describe('AllWorkspacesTab', () => {
 
     renderTab();
 
-    const firstCard = await screen.findByTestId('all-workspace-card-1');
-    const secondCard = screen.getByTestId('all-workspace-card-2');
+    const firstEnter = await screen.findByTestId('all-workspace-enter-1');
+    const secondEnter = screen.getByTestId('all-workspace-enter-2');
 
     // Phase 1 — declarative suppression. React flushes the busy state before the next
     // event, so `disabled` is already on the DOM and further clicks are no-ops.
-    fireEvent.click(firstCard);
+    fireEvent.click(firstEnter);
 
     await waitFor(() => {
       expect(switchCalls).toBeGreaterThanOrEqual(1);
     });
-    expect(firstCard).toHaveAttribute('aria-busy', 'true');
-    expect(firstCard).toHaveAccessibleName('正在进入工作空间 星云工坊（已加入）');
-    expect(firstCard).toBeDisabled();
-    expect(secondCard).toBeDisabled();
-    expect(secondCard).not.toHaveAttribute('aria-busy', 'true');
+    expect(firstEnter).toHaveAttribute('aria-busy', 'true');
+    expect(firstEnter).toHaveAccessibleName('正在进入工作空间 星云工坊（已加入）');
+    expect(firstEnter).toBeDisabled();
+    expect(secondEnter).toBeDisabled();
+    expect(secondEnter).not.toHaveAttribute('aria-busy', 'true');
 
-    // Repeated activation of both the busy card and a competing MEMBER card must never
-    // add a second switch: two racing successes would pair one workspace's token with
-    // another workspace's currentWorkspace, the reviewer's [1,1,2].
-    fireEvent.click(firstCard);
-    fireEvent.click(secondCard);
-    fireEvent.click(firstCard);
+    // Repeated activation of both the busy enter control and a competing MEMBER card's
+    // must never add a second switch: two racing successes would pair one workspace's
+    // token with another workspace's currentWorkspace, the reviewer's [1,1,2].
+    fireEvent.click(firstEnter);
+    fireEvent.click(secondEnter);
+    fireEvent.click(firstEnter);
 
     expect(switchCalls).toBe(1);
     expect(startedRequests.filter((url) => url.includes('/switch')).length)
@@ -407,8 +413,8 @@ describe('AllWorkspacesTab', () => {
     );
 
     renderTab();
-    const firstCard = await screen.findByTestId('all-workspace-card-1');
-    const secondCard = screen.getByTestId('all-workspace-card-2');
+    const firstEnter = await screen.findByTestId('all-workspace-enter-1');
+    const secondEnter = screen.getByTestId('all-workspace-enter-2');
 
     // `disabled` cannot cover this: both clicks are delivered inside one act() batch, so
     // React has not re-rendered either card as disabled when the second handler runs.
@@ -416,8 +422,8 @@ describe('AllWorkspacesTab', () => {
     // keeps its own view of `disabled`, so stripping the DOM attribute cannot reproduce
     // this — the batch is the only way to reach the handler twice.)
     await act(async () => {
-      fireEvent.click(firstCard);
-      fireEvent.click(secondCard);
+      fireEvent.click(firstEnter);
+      fireEvent.click(secondEnter);
     });
 
     await waitFor(() => {
@@ -457,17 +463,17 @@ describe('AllWorkspacesTab', () => {
     );
 
     renderTab();
-    const card = await screen.findByTestId('all-workspace-card-1');
-    await user.click(card);
+    const enter = await screen.findByTestId('all-workspace-enter-1');
+    await user.click(enter);
 
     expect(await screen.findByText('你已不是该工作空间成员')).toBeInTheDocument();
     // A failed switch must release the guard, otherwise one error wedges the grid.
     await waitFor(() => {
-      expect(card).toBeEnabled();
+      expect(enter).toBeEnabled();
     });
-    expect(card).not.toHaveAttribute('aria-busy', 'true');
+    expect(enter).not.toHaveAttribute('aria-busy', 'true');
 
-    await user.click(card);
+    await user.click(enter);
     await waitFor(() => {
       expect(switchCalls).toBe(2);
     });
@@ -538,7 +544,7 @@ describe('AllWorkspacesTab', () => {
     );
 
     renderTab();
-    await user.click(await screen.findByTestId('all-workspace-card-1'));
+    await user.click(await screen.findByTestId('all-workspace-enter-1'));
 
     expect(await screen.findByText('你已不是该工作空间成员')).toBeInTheDocument();
     expect(screen.getByTestId('location-path')).toHaveTextContent('/workspaces');
@@ -573,27 +579,31 @@ describe('AllWorkspacesTab', () => {
 
   it('keeps the modal open when the target merely leaves the current result page', async () => {
     const user = userEvent.setup();
-    useListHandler((req) => pageEnvelope(
-      req.keyword
-        ? [{ ...notMemberWorkspace, id: 9, name: '别的空间' }]
-        : [notMemberWorkspace],
+    let targetOnPage = true;
+    useListHandler(() => pageEnvelope(
+      targetOnPage
+        ? [notMemberWorkspace]
+        : [{ ...notMemberWorkspace, id: 9, name: '别的空间' }],
       1,
       1,
       20,
     ));
 
-    renderTab();
+    const { queryClient } = renderTab();
 
     const card = await screen.findByTestId('all-workspace-card-3');
     await user.click(within(card).getByRole('button', { name: /申请权限/ }));
     expect(await screen.findByText('申请加入「数据中台」')).toBeInTheDocument();
 
-    // Narrowing the search drops the target row from the page, but says nothing about
-    // membership. Yanking the dialog away here would be over-eager: the id is still
-    // valid and the backend remains the authority on whether the request is allowed.
-    await user.type(screen.getByRole('textbox', { name: /搜索工作空间/ }), 'q');
-    expect(await screen.findByText('别的空间', {},
-      { timeout: DEBOUNCED_FIND_TIMEOUT })).toBeInTheDocument();
+    // A refreshed result page can omit this row without changing membership.
+    // Drive the real query refresh instead of typing behind the modal: its focus
+    // trap can redirect keystrokes under full-suite load. Search/debounce has its
+    // own coverage; this case checks the open dialog's response to a missing row.
+    targetOnPage = false;
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['workspaces', 'all'] });
+    });
+    expect(await screen.findByText('别的空间')).toBeInTheDocument();
 
     expect(screen.getByText('申请加入「数据中台」')).toBeInTheDocument();
     expect(screen.queryByText(/加入状态已更新/)).not.toBeInTheDocument();
@@ -789,14 +799,77 @@ describe('AllWorkspacesTab', () => {
 
     const memberCard = await screen.findByTestId('all-workspace-card-1');
     expect(fadedBlocks(memberCard)).toEqual([]);
-    expect(memberCard).toHaveStyle({ cursor: 'pointer' });
+    expect(within(memberCard).getByTestId('all-workspace-enter-1')).toHaveStyle({ cursor: 'pointer' });
 
-    // The non-member card has no enter handler at all, so its cursor must not promise a
-    // click that enters — the only thing to click inside it is 申请权限.
+    // The non-member card has no enter handler at all, so it must not promise a click
+    // that enters — the only thing to click inside it is 申请权限.
     const notMemberCard = screen.getByTestId('all-workspace-card-3');
     expect(fadedBlocks(notMemberCard)).toHaveLength(1);
-    expect(notMemberCard).toHaveStyle({ cursor: 'default' });
+    expect(within(notMemberCard).queryByTestId(/all-workspace-enter-/)).not.toBeInTheDocument();
     expect(notMemberCard.tagName).not.toBe('BUTTON');
+  });
+
+  it('gives a platform admin enter, edit and delete over a workspace they never joined', async () => {
+    const user = userEvent.setup();
+    useListHandler(() => pageEnvelope([{ ...notMemberWorkspace, canManage: true }]));
+
+    renderTab();
+
+    const card = await screen.findByTestId('all-workspace-card-3');
+    // canManage is server-computed: a platform admin who never joined still gets the
+    // enter affordance and the manage entries, not the join-application dead end.
+    expect(within(card).queryByTestId(/apply-access-/)).not.toBeInTheDocument();
+    const enter = within(card).getByTestId('all-workspace-enter-3');
+    expect(enter).toBeEnabled();
+    // Not a member, so the accessible name must not claim 已加入 either.
+    expect(enter).toHaveAccessibleName('进入工作空间 数据中台');
+    // F7.5: every action on this card is real, so nothing on it may fade.
+    expect(fadedBlocks(card)).toEqual([]);
+    expect(within(card).getByTestId('all-workspace-manage-area-3')).toBeInTheDocument();
+    expect(within(card).getByTestId('all-workspace-edit-3'))
+      .toHaveAccessibleName('编辑工作空间 数据中台');
+    expect(within(card).getByTestId('all-workspace-delete-3'))
+      .toHaveAccessibleName('删除工作空间 数据中台');
+
+    // The manage entries open the shared lifecycle dialogs against this workspace.
+    await user.click(within(card).getByTestId('all-workspace-edit-3'));
+    expect(await screen.findByText('编辑「数据中台」')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /取\s*消/ }));
+    await user.click(within(card).getByTestId('all-workspace-delete-3'));
+    expect(await screen.findByText('删除「数据中台」')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace-delete-consequences')).toBeInTheDocument();
+  });
+
+  it('switches into the workspace from a platform-admin card without joining', async () => {
+    const user = userEvent.setup();
+    let switchCalls = 0;
+    useListHandler(() => pageEnvelope([{ ...notMemberWorkspace, canManage: true }]));
+    server.use(
+      http.post('/api/workspaces/3/switch', () => {
+        switchCalls += 1;
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          traceId: null,
+          data: { accessToken: 'platform-admin-token', accessLevel: 'ADMIN' },
+        });
+      }),
+    );
+
+    renderTab();
+
+    await user.click(await screen.findByTestId('all-workspace-enter-3'));
+
+    await waitFor(() => {
+      expect(switchCalls).toBe(1);
+      expect(useAuthStore.getState().accessToken).toBe('platform-admin-token');
+      expect(useAuthStore.getState().currentWorkspace?.id).toBe(3);
+      expect(useAuthStore.getState().accessLevel).toBe('ADMIN');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/');
+    });
   });
 
   it('leaves the apply button reachable by keyboard', async () => {
@@ -809,9 +882,9 @@ describe('AllWorkspacesTab', () => {
     await user.tab();
     expect(screen.getByRole('textbox', { name: /搜索工作空间/ })).toHaveFocus();
     await user.tab();
-    expect(screen.getByTestId('all-workspace-card-1')).toHaveFocus();
-    // The card itself is a <div> for non-members, so this is the only stop inside it —
-    // F7.3's visible focus ring has something to be visible on.
+    expect(screen.getByTestId('all-workspace-enter-1')).toHaveFocus();
+    // Every card wrapper is a plain <div>, so the enter control and 申请权限 are the
+    // only stops — F7.3's visible focus ring has something to be visible on.
     await user.tab();
     expect(screen.getByTestId('apply-access-3')).toHaveFocus();
   });

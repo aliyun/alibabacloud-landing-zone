@@ -28,6 +28,7 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.storage.InMemoryObjectStorage;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
@@ -623,8 +624,8 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         RedisManager redis = new RedisManager(new JedisPool(REDIS.getHost(), REDIS.getMappedPort(6379)), false);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         PresenceManager presence = new PresenceManager(redis, new NodeIdentity());
-        presence.register(501L, 40L, 2);
-        presence.register(502L, 41L, 2);
+        registerRuntime(presence, 501L, 40L, 2);
+        registerRuntime(presence, 502L, 41L, 2);
         ExecutorSelector selector = new ExecutorSelector(redis, registry, presence, dispatchDao);
         InMemoryObjectStorage packages = new InMemoryObjectStorage();
         RecordingTransport transport = new RecordingTransport();
@@ -714,7 +715,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         RedisManager redis = new RedisManager(new JedisPool(REDIS.getHost(), REDIS.getMappedPort(6379)), false);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         PresenceManager presence = new PresenceManager(redis, new NodeIdentity());
-        presence.register(504L, 40L, 2);
+        registerRuntime(presence, 504L, 40L, 2);
         RecordingTransport transport = new RecordingTransport();
         DispatchService dispatchService = new DispatchService(dispatchDao, sessionMapper(DispatchRuntimeEventDao.class),
                 sessionMapper(WorkitemDao.class), agentDao, agentVersionDao,
@@ -764,7 +765,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         RedisManager redis = new RedisManager(new JedisPool(REDIS.getHost(), REDIS.getMappedPort(6379)), false);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         PresenceManager presence = new PresenceManager(redis, new NodeIdentity());
-        presence.register(505L, 40L, 2);
+        registerRuntime(presence, 505L, 40L, 2);
         RecordingTransport transport = new RecordingTransport();
         DispatchService dispatchService = new DispatchService(dispatchDao, sessionMapper(DispatchRuntimeEventDao.class),
                 sessionMapper(WorkitemDao.class), agentDao, agentVersionDao,
@@ -822,7 +823,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
 
         RedisManager redis = new RedisManager(new JedisPool(REDIS.getHost(), REDIS.getMappedPort(6379)), false);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
-        PresenceManager presence = new PresenceManager(redis, new NodeIdentity()); presence.register(503L, 40L, 2);
+        PresenceManager presence = new PresenceManager(redis, new NodeIdentity()); registerRuntime(presence, 503L, 40L, 2);
         ExecutorSelector selector = new ExecutorSelector(redis, registry, presence, dispatchDao);
         RecordingTransport transport = new RecordingTransport();
         DispatchService dispatchService = new DispatchService(dispatchDao, sessionMapper(DispatchRuntimeEventDao.class),
@@ -913,7 +914,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         }
         RedisManager redis = new RedisManager(new JedisPool(REDIS.getHost(), REDIS.getMappedPort(6379)), false);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
-        new PresenceManager(redis, new NodeIdentity()).register(502L, 40L, 2);
+        registerRuntime(new PresenceManager(redis, new NodeIdentity()), 502L, 40L, 2);
         RecordingTransport transport = new RecordingTransport();
         DispatchService dispatchService = new DispatchService(dispatchDao,
                 sessionMapper(DispatchRuntimeEventDao.class), sessionMapper(WorkitemDao.class), agentDao,
@@ -1029,7 +1030,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         PresenceManager presence = new PresenceManager(redis, new NodeIdentity());
         // 501 is deliberately absent: only 502 can execute the checkpoint-only fallback.
-        presence.register(502L, 40L, 2);
+        registerRuntime(presence, 502L, 40L, 2);
         ExecutorSelector selector = new ExecutorSelector(redis, registry, presence, dispatchDao);
         OssProperties oss = new OssProperties(); oss.setArtifactBucket("checkpoints");
         DispatchCheckpointService checkpoints = new DispatchCheckpointService(sessionMapper(DispatchCheckpointDao.class),
@@ -1194,7 +1195,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         RedisManager redis = new RedisManager(new JedisPool(REDIS.getHost(), REDIS.getMappedPort(6379)), false);
         ExecutorRegistry registry = new ExecutorRegistry(redis);
         PresenceManager presence = new PresenceManager(redis, new NodeIdentity());
-        presence.register(503L, 40L, 2);
+        registerRuntime(presence, 503L, 40L, 2);
         DispatchService dispatchService = new DispatchService(dispatchDao, sessionMapper(DispatchRuntimeEventDao.class),
                 sessionMapper(WorkitemDao.class), agentDao, agentVersionDao,
                 new ExecutorSelector(redis, registry, presence, dispatchDao),
@@ -1322,6 +1323,19 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         }
     }
 
+    /** Registers the same complete inventory required from the current Runtime protocol. */
+    private static void registerRuntime(PresenceManager presence, long executorId,
+            long agentId, int capacity) {
+        String sessionId = "scheduled-test-" + executorId;
+        presence.announceSession(executorId, sessionId);
+        assertEquals(PresenceManager.SessionMutationResult.APPLIED,
+                presence.publishHeartbeat(executorId, agentId, sessionId,
+                        new ExecutorDispatchSnapshot(sessionId, capacity, true, true,
+                                java.util.Set.of(), java.util.Set.of(), java.util.Set.of(),
+                                java.util.Set.of(), null, System.currentTimeMillis()),
+                        java.util.List.of("dispatch_inventory_v1"), "test", "test"));
+    }
+
     private static String sha256(byte[] bytes) {
         assertNotNull(bytes);
         try {
@@ -1354,6 +1368,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         @Override public StoredObject put(String bucket, String key, byte[] data) { throw new UnsupportedOperationException(); }
         @Override public byte[] get(String ossRef) { return null; }
         @Override public String presignGet(String ossRef, int ttlSeconds) { return null; }
+        @Override public String presignPut(String bucket, String key, java.time.Duration ttl) { return null; }
         @Override public boolean exists(String ossRef) { return false; }
         @Override public void delete(String ossRef) { }
     }
@@ -1365,6 +1380,7 @@ class ScheduledTaskSpringMybatisIntegrationTest {
         }
         @Override public byte[] get(String ossRef) { return objects.get(ossRef); }
         @Override public String presignGet(String ossRef, int ttlSeconds) { return ossRef; }
+        @Override public String presignPut(String bucket, String key, java.time.Duration ttl) { return bucket + "/" + key; }
         @Override public boolean exists(String ossRef) { return objects.containsKey(ossRef); }
         @Override public void delete(String ossRef) { objects.remove(ossRef); }
         void clear() { objects.clear(); }

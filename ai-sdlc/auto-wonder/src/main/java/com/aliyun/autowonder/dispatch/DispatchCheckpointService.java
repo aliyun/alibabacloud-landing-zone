@@ -42,6 +42,9 @@ public class DispatchCheckpointService {
     private final ObjectStorage storage;
     private final String checkpointBucket;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private LegacyCheckpointNormalizer legacyCheckpointNormalizer;
+
     public DispatchCheckpointService(DispatchCheckpointDao checkpointDao,
             DispatchRuntimeEventDao runtimeEventDao, DispatchDao dispatchDao, ObjectStorage storage,
             OssProperties ossProperties) {
@@ -59,7 +62,7 @@ public class DispatchCheckpointService {
                 dispatch.getTenantId(), dispatch.getId(), checkpointSeq);
         if (existing != null) {
             ensureRepoRevisionSidecar(existing, archive);
-            prune(dispatch);
+            pruneBestEffort(dispatch);
             return existing;
         }
         String sha256 = sha256(archive);
@@ -84,16 +87,26 @@ public class DispatchCheckpointService {
         ensureRepoRevisionSidecar(checkpoint, archive);
         try {
             checkpointDao.insert(checkpoint);
-            prune(dispatch);
+            pruneBestEffort(dispatch);
             return checkpoint;
         } catch (DuplicateKeyException race) {
             DispatchCheckpointDO winner = checkpointDao.findByDispatchAndSeq(
                     dispatch.getTenantId(), dispatch.getId(), checkpointSeq);
             if (winner != null) {
-                prune(dispatch);
+                pruneBestEffort(dispatch);
                 return winner;
             }
             throw race;
+        }
+    }
+
+    private void pruneBestEffort(DispatchDO dispatch) {
+        try {
+            prune(dispatch);
+        } catch (RuntimeException cleanupFailure) {
+            // The durable receipt is independent of retention. A later store retries cleanup.
+            log.warn("checkpoint retention cleanup failed tenantId={} dispatchId={}",
+                    dispatch.getTenantId(), dispatch.getId(), cleanupFailure);
         }
     }
 
@@ -102,6 +115,7 @@ public class DispatchCheckpointService {
                 dispatch.getTenantId(), dispatch.getId(), RETAIN_CHECKPOINTS)) {
             storage.delete(obsolete.getOssRef());
             storage.delete(repoStateRef(obsolete.getOssRef()));
+            storage.delete(LegacyCheckpointNormalizer.compatibilityRef(obsolete.getOssRef()));
             checkpointDao.deleteById(dispatch.getTenantId(), dispatch.getId(), obsolete.getId());
         }
     }
@@ -390,7 +404,9 @@ public class DispatchCheckpointService {
                 || "SIDE_INTERACTION".equals(dispatch.getResumeMode())
                 || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode())
                 || "COMMENT_REWORK".equals(dispatch.getResumeMode()))
-                ? checkpoints.stream().map(item -> new ResumeCheckpointCandidate(
+                ? checkpoints.stream().map(item -> legacyCheckpointNormalizer == null
+                        ? item : legacyCheckpointNormalizer.normalize(item))
+                        .map(item -> new ResumeCheckpointCandidate(
                         storage.presignGet(item.getOssRef(), DOWNLOAD_TTL_SECONDS),
                         "sha256:" + item.getSha256(), item.getCheckpointSeq())).toList()
                 : List.of();
@@ -405,7 +421,7 @@ public class DispatchCheckpointService {
                 "DEGRADED_CONTINUOUS".equals(dispatch.getResumeMode()) ? null
                         : (providerSession == null ? checkpoint.getProviderSessionId() : providerSession.sessionId()),
                 downloadUrl,
-                "sha256:" + checkpoint.getSha256(),
+                candidates.isEmpty() ? "sha256:" + checkpoint.getSha256() : candidates.get(0).getSha256(),
                 checkpoint.getCheckpointSeq(),
                 candidates);
     }

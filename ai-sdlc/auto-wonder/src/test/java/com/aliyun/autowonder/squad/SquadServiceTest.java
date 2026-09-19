@@ -93,6 +93,134 @@ class SquadServiceTest {
         SquadVO vo = service.get(10L);
         assertEquals(2, vo.getMemberAgentIds().size());
         assertEquals(2, vo.getMemberCount());
+        assertEquals(List.of(), vo.getSdlcs());
+        assertEquals(List.of(), vo.getExecutors());
+    }
+
+    @Test
+    void get_derives_sdlcs_and_executors_from_member_agents() {
+        SquadDO sq = tenantSquad(10L, 100L);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        when(memberDao.listBySquad(10L)).thenReturn(List.of(agentMember(1L), agentMember(2L)));
+
+        AgentDO published = new AgentDO();
+        published.setId(1L);
+        published.setOnlineVersionId(11L);
+        AgentDO draftOnly = new AgentDO();
+        draftOnly.setId(2L);
+        when(agentDao.listByIds(eq(100L), any())).thenReturn(List.of(published, draftOnly));
+
+        AgentVersionDO version = new AgentVersionDO();
+        version.setId(11L);
+        version.setSdlcId(30L);
+        when(agentVersionDao.listByIds(eq(100L), any())).thenReturn(List.of(version));
+
+        SdlcDO flow = new SdlcDO();
+        flow.setId(30L);
+        flow.setName("全栈交付");
+        flow.setWorkType("REQ");
+        flow.setStatus("ENABLED");
+        when(sdlcDao.listByIds(any())).thenReturn(List.of(flow));
+
+        // The DAO returns id DESC; the VO must not simply inherit that direction.
+        when(executorDao.listByAgentIds(eq(100L), any()))
+                .thenReturn(List.of(squadExecutor(92L, 2L, "Beta"), squadExecutor(91L, 1L, "Alpha")));
+        when(executorRegistry.isOnline(91L)).thenReturn(true);
+        when(executorRegistry.isOnline(92L)).thenReturn(false);
+
+        SquadVO vo = service.get(10L);
+
+        assertEquals(1, vo.getSdlcs().size());
+        assertEquals(30L, vo.getSdlcs().get(0).getId());
+        assertEquals("全栈交付", vo.getSdlcs().get(0).getName());
+        assertEquals("REQ", vo.getSdlcs().get(0).getWorkType());
+        assertEquals("ENABLED", vo.getSdlcs().get(0).getStatus());
+
+        assertEquals(2, vo.getExecutors().size());
+        assertEquals(91L, vo.getExecutors().get(0).getId());
+        assertEquals("Alpha", vo.getExecutors().get(0).getAgentName());
+        assertEquals("ONLINE", vo.getExecutors().get(0).getStatus());
+        assertEquals("OFFLINE", vo.getExecutors().get(1).getStatus());
+    }
+
+    @Test
+    void get_without_members_returns_empty_derived_lists() {
+        SquadDO sq = tenantSquad(10L, 100L);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        when(memberDao.listBySquad(10L)).thenReturn(List.of());
+
+        SquadVO vo = service.get(10L);
+
+        assertEquals(List.of(), vo.getSdlcs());
+        assertEquals(List.of(), vo.getExecutors());
+        verify(executorDao, never()).listByAgentIds(any(), any());
+    }
+
+    @Test
+    void get_without_a_tenant_returns_empty_derived_lists() {
+        when(squadDao.findById(10L)).thenReturn(tenantSquad(10L, null));
+        when(memberDao.listBySquad(10L)).thenReturn(List.of(agentMember(1L)));
+
+        SquadVO vo = service.get(10L);
+
+        assertEquals(List.of(), vo.getSdlcs());
+        assertEquals(List.of(), vo.getExecutors());
+        verify(agentDao, never()).listByIds(any(), any());
+    }
+
+    @Test
+    void get_skips_the_version_lookup_when_no_member_agent_is_published() {
+        SquadDO sq = tenantSquad(10L, 100L);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        when(memberDao.listBySquad(10L)).thenReturn(List.of(agentMember(1L)));
+
+        AgentDO draftOnly = new AgentDO();
+        draftOnly.setId(1L);
+        when(agentDao.listByIds(eq(100L), any())).thenReturn(List.of(draftOnly));
+        when(executorDao.listByAgentIds(eq(100L), any())).thenReturn(List.of());
+
+        SquadVO vo = service.get(10L);
+
+        assertEquals(List.of(), vo.getSdlcs());
+        verify(agentVersionDao, never()).listByIds(any(), any());
+        verify(sdlcDao, never()).listByIds(any());
+    }
+
+    @Test
+    void list_keeps_derived_details_null() {
+        SquadDO sq = tenantSquad(10L, 100L);
+        when(squadDao.list(0, 20)).thenReturn(List.of(sq));
+        when(memberDao.listBySquad(10L)).thenReturn(List.of(agentMember(1L)));
+
+        List<SquadVO> result = service.list(1, 20);
+
+        assertNull(result.get(0).getSdlcs());
+        assertNull(result.get(0).getExecutors());
+    }
+
+    private SquadDO tenantSquad(long id, Long tenantId) {
+        SquadDO sq = new SquadDO();
+        sq.setId(id);
+        sq.setName("test");
+        sq.setVersion(0);
+        sq.setTenantId(tenantId);
+        return sq;
+    }
+
+    private SquadMemberDO agentMember(long agentId) {
+        SquadMemberDO m = new SquadMemberDO();
+        m.setAgentId(agentId);
+        return m;
+    }
+
+    private ExecutorDO squadExecutor(long id, long agentId, String agentName) {
+        ExecutorDO e = new ExecutorDO();
+        e.setId(id);
+        e.setAgentId(agentId);
+        e.setAgentName(agentName);
+        e.setName("executor-" + id);
+        e.setClientKind("QODER_CLI");
+        return e;
     }
 
     @Test
@@ -260,6 +388,26 @@ class SquadServiceTest {
     }
 
     @Test
+    void listMembers_projects_agent_kind() {
+        SquadDO sq = new SquadDO();
+        sq.setId(10L);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        SquadMemberDO m1 = new SquadMemberDO();
+        m1.setAgentId(9L);
+        when(memberDao.listBySquad(10L)).thenReturn(List.of(m1));
+        AgentDO agent = new AgentDO();
+        agent.setId(9L);
+        agent.setName("Chief of Staff");
+        agent.setKind("PLATFORM");
+        when(agentDao.listByIds(100L, List.of(9L))).thenReturn(List.of(agent));
+
+        List<SquadMemberVO> result = service.listMembers(10L, 100L);
+
+        assertEquals(1, result.size());
+        assertEquals("PLATFORM", result.get(0).getAgentKind());
+    }
+
+    @Test
     void delete_soft_deletes_and_clears_members() {
         SquadDO sq = new SquadDO();
         sq.setId(10L);
@@ -270,5 +418,36 @@ class SquadServiceTest {
         service.delete(10L, 100L, 7L);
         verify(squadDao).softDelete(10L, 100L, 0, 7L);
         verify(memberDao).deleteBySquad(10L, 100L);
+    }
+
+    @Test
+    void update_passes_debug_flag_to_dao() {
+        SquadDO sq = new SquadDO();
+        sq.setId(10L);
+        sq.setName("test");
+        sq.setVersion(3);
+        sq.setDebugLogEnabled(true);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        when(squadDao.update(10L, 100L, null, null, null, true, 3, 7L)).thenReturn(1);
+        when(memberDao.listBySquad(10L)).thenReturn(List.of());
+
+        UpdateSquadRequest req = new UpdateSquadRequest();
+        req.setDebugLogEnabled(true);
+        SquadVO vo = service.update(10L, req, 100L, 7L);
+
+        verify(squadDao).update(10L, 100L, null, null, null, true, 3, 7L);
+        assertTrue(vo.isDebugLogEnabled());
+    }
+
+    @Test
+    void get_defaults_debug_flag_to_false_when_column_absent() {
+        SquadDO sq = new SquadDO();
+        sq.setId(10L);
+        sq.setName("test");
+        sq.setVersion(0);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        when(memberDao.listBySquad(10L)).thenReturn(List.of());
+
+        assertFalse(service.get(10L).isDebugLogEnabled());
     }
 }

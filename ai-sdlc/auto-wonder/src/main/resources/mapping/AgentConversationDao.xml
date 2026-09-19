@@ -6,34 +6,40 @@
     <resultMap id="BaseResultMap" type="com.aliyun.autowonder.conversation.AgentConversationDO">
         <id column="id" property="id"/>
         <result column="tenant_id" property="tenantId"/>
+        <result column="owner_user_id" property="ownerUserId"/>
         <result column="agent_id" property="agentId"/>
         <result column="agent_version_id" property="agentVersionId"/>
         <result column="channel" property="channel"/>
         <result column="biz_ref_type" property="bizRefType"/>
         <result column="biz_ref_id" property="bizRefId"/>
         <result column="channel_conversation_id" property="channelConversationId"/>
+        <result column="title" property="title"/>
+        <result column="title_source" property="titleSource"/>
         <result column="cli_session_ref" property="cliSessionRef"/>
         <result column="executor_id" property="executorId"/>
         <result column="status" property="status"/>
         <result column="last_turn_at" property="lastTurnAt"/>
+        <result column="archived_at" property="archivedAt"/>
+        <result column="deleted_at" property="deletedAt"/>
         <result column="gmt_create" property="gmtCreate"/>
         <result column="gmt_modified" property="gmtModified"/>
         <result column="version" property="version"/>
     </resultMap>
 
     <sql id="Base_Column_List">
-        id, tenant_id, agent_id, agent_version_id, channel, biz_ref_type, biz_ref_id, channel_conversation_id, cli_session_ref,
-        executor_id, status, last_turn_at, gmt_create, gmt_modified, version
+        id, tenant_id, owner_user_id, agent_id, agent_version_id, channel, biz_ref_type, biz_ref_id, channel_conversation_id,
+        title, title_source, cli_session_ref, executor_id, status, last_turn_at, archived_at, deleted_at,
+        gmt_create, gmt_modified, version
     </sql>
 
     <insert id="insert" parameterType="com.aliyun.autowonder.conversation.AgentConversationDO"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO agent_conversation
-        (tenant_id, agent_id, agent_version_id, channel, biz_ref_type, biz_ref_id, channel_conversation_id, cli_session_ref,
-         executor_id, status, last_turn_at, version)
+        (tenant_id, owner_user_id, agent_id, agent_version_id, channel, biz_ref_type, biz_ref_id, channel_conversation_id,
+         title, title_source, cli_session_ref, executor_id, status, last_turn_at, archived_at, deleted_at, version)
         VALUES
-        (#{tenantId}, #{agentId}, #{agentVersionId}, #{channel}, #{bizRefType}, #{bizRefId}, #{channelConversationId}, #{cliSessionRef},
-         #{executorId}, #{status}, #{lastTurnAt}, 0)
+        (#{tenantId}, #{ownerUserId}, #{agentId}, #{agentVersionId}, #{channel}, #{bizRefType}, #{bizRefId}, #{channelConversationId},
+         #{title}, #{titleSource}, #{cliSessionRef}, #{executorId}, #{status}, #{lastTurnAt}, #{archivedAt}, #{deletedAt}, 0)
     </insert>
 
     <select id="findByKey" resultMap="BaseResultMap">
@@ -95,5 +101,55 @@
         ORDER BY gmt_create DESC, id DESC
         LIMIT 1
     </select>
+
+    <select id="listPlatformByOwner" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM agent_conversation
+        WHERE tenant_id = #{tenantId}
+          AND channel = 'PLATFORM_ASSISTANT'
+          AND owner_user_id = #{ownerUserId}
+          AND deleted_at IS NULL
+        <choose>
+            <when test="archived != null and archived">
+                AND archived_at IS NOT NULL
+            </when>
+            <when test="archived != null">
+                AND archived_at IS NULL
+            </when>
+        </choose>
+        <if test="keyword != null and keyword != ''">
+            AND (title LIKE CONCAT('%', #{keyword}, '%')
+                 OR channel_conversation_id LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY last_turn_at DESC, id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <update id="updatePlatformMetadata">
+        UPDATE agent_conversation
+        <set>
+            <if test="title != null">
+                title = #{title},
+                title_source = #{titleSource},
+            </if>
+            archived_at = #{archivedAt},
+            version = version + 1
+        </set>
+        WHERE tenant_id = #{tenantId}
+          AND id = #{id}
+          AND channel = 'PLATFORM_ASSISTANT'
+          AND owner_user_id = #{ownerUserId}
+          AND deleted_at IS NULL
+    </update>
+
+    <update id="markPlatformDeleted">
+        UPDATE agent_conversation
+        SET deleted_at = #{deletedAt}, version = version + 1
+        WHERE tenant_id = #{tenantId}
+          AND id = #{id}
+          AND channel = 'PLATFORM_ASSISTANT'
+          AND owner_user_id = #{ownerUserId}
+          AND deleted_at IS NULL
+    </update>
 
 </mapper>

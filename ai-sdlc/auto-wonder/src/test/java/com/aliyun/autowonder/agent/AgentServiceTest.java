@@ -10,6 +10,7 @@ import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -81,7 +82,7 @@ class AgentServiceTest {
     @Test
     void get_not_found_throws() {
         when(agentDao.findById(9L)).thenReturn(null);
-        BizException ex = assertThrows(BizException.class, () -> service.get(9L));
+        BizException ex = assertThrows(BizException.class, () -> service.get(9L, 100L));
         assertEquals("14001", ex.getCode());
     }
 
@@ -104,7 +105,7 @@ class AgentServiceTest {
         version.setResponsibilities("推动工单流转、任务指派和进度汇报。");
         when(versionDao.findById(10L)).thenReturn(version);
 
-        AgentVO vo = service.get(1L);
+        AgentVO vo = service.get(1L, 100L);
 
         assertEquals("项目负责人", vo.getRoleName());
         assertEquals("PROJECT_MANAGER", vo.getRoleCode());
@@ -119,10 +120,73 @@ class AgentServiceTest {
         a.setName("test");
         a.setStatus("DRAFT");
         a.setLatestVersionNo(1);
-        when(agentDao.list(eq(100L), eq("DRAFT"), eq(0), eq(20))).thenReturn(List.of(a));
-        List<AgentVO> vos = service.list(100L, "DRAFT", 1, 20);
+        when(agentDao.list(eq(100L), eq("DRAFT"), isNull(), isNull(), eq(0), eq(20))).thenReturn(List.of(a));
+        List<AgentVO> vos = service.list(100L, "DRAFT", null, null, 1, 20);
         assertEquals(1, vos.size());
         assertEquals("test", vos.get(0).getName());
+    }
+
+    @Test
+    void create_sets_standard_kind() {
+        doAnswer(inv -> { ((AgentDO) inv.getArgument(0)).setId(1L); return null; })
+                .when(agentDao).insert(any());
+        doAnswer(inv -> { ((AgentVersionDO) inv.getArgument(0)).setId(2L); return null; })
+                .when(versionDao).insert(any());
+
+        CreateAgentRequest req = new CreateAgentRequest();
+        req.setName("普通员工");
+
+        service.create(req, 100L, 7L);
+
+        verify(agentDao).insert(argThat((AgentDO a) -> "STANDARD".equals(a.getKind())));
+    }
+
+    @Test
+    void list_passes_kind_filter_to_dao() {
+        AgentDO a = new AgentDO();
+        a.setId(9L);
+        a.setTenantId(100L);
+        a.setKind("PLATFORM");
+        when(agentDao.list(eq(100L), isNull(), eq("PLATFORM"), isNull(), eq(0), eq(20))).thenReturn(List.of(a));
+
+        List<AgentVO> vos = service.list(100L, null, "PLATFORM", null, 1, 20);
+
+        assertEquals(1, vos.size());
+        assertEquals("PLATFORM", vos.get(0).getKind());
+        verify(agentDao).list(eq(100L), isNull(), eq("PLATFORM"), isNull(), eq(0), eq(20));
+    }
+
+    @Test
+    void list_pushes_squad_filter_to_dao_and_fills_attribution() {
+        AgentDO a = new AgentDO();
+        a.setId(1L);
+        a.setName("test");
+        a.setStatus("ONLINE");
+        a.setLatestVersionNo(1);
+        when(agentDao.list(eq(100L), isNull(), isNull(), eq(List.of(7L)), eq(0), eq(20))).thenReturn(List.of(a));
+        SquadAttributionService attribution = mock(SquadAttributionService.class);
+        service.setSquadAttributionService(attribution);
+
+        List<AgentVO> vos = service.list(100L, null, null, List.of(7L), 1, 20);
+
+        assertEquals(1, vos.size());
+        verify(agentDao).list(eq(100L), isNull(), isNull(), eq(List.of(7L)), eq(0), eq(20));
+        verify(attribution).fillAgentSquads(100L, vos);
+    }
+
+    @Test
+    void list_leaves_squad_fields_null_without_attribution_service() {
+        AgentDO a = new AgentDO();
+        a.setId(1L);
+        a.setName("test");
+        a.setStatus("ONLINE");
+        a.setLatestVersionNo(1);
+        when(agentDao.list(eq(100L), isNull(), isNull(), isNull(), eq(0), eq(20))).thenReturn(List.of(a));
+
+        List<AgentVO> vos = service.list(100L, null, null, null, 1, 20);
+
+        assertNull(vos.get(0).getSquadIds());
+        assertNull(vos.get(0).getSquadNames());
     }
 
     @Test
@@ -134,7 +198,7 @@ class AgentServiceTest {
         agent.setStatus("ONLINE");
         agent.setOnlineVersionId(10L);
         agent.setLatestVersionNo(3);
-        when(agentDao.list(eq(100L), isNull(), eq(0), eq(20))).thenReturn(List.of(agent));
+        when(agentDao.list(eq(100L), isNull(), isNull(), isNull(), eq(0), eq(20))).thenReturn(List.of(agent));
 
         AgentVersionDO version = new AgentVersionDO();
         version.setId(10L);
@@ -162,7 +226,7 @@ class AgentServiceTest {
         when(executorRegistry.isOnline(91L)).thenReturn(true);
         when(executorRegistry.isOnline(92L)).thenReturn(false);
 
-        List<AgentVO> vos = service.list(100L, null, 1, 20);
+        List<AgentVO> vos = service.list(100L, null, null, null, 1, 20);
 
         assertEquals(1, vos.size());
         AgentVO vo = vos.get(0);
@@ -177,8 +241,10 @@ class AgentServiceTest {
 
     @Test
     void getVersion_includes_config_relations() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
         AgentVersionDO version = new AgentVersionDO();
         version.setId(10L);
+        version.setTenantId(100L);
         version.setAgentId(1L);
         version.setVersionNo(1);
         version.setStatus("DRAFT");
@@ -187,6 +253,7 @@ class AgentServiceTest {
         AgentRepoPermDO repoPerm = new AgentRepoPermDO();
         repoPerm.setRepoId(11L);
         repoPerm.setPermLevel("WRITE");
+        repoPerm.setAllowedBranchPatterns("[\"develop\",\"release/*\"]");
         when(repoPermDao.listByVersion(10L)).thenReturn(List.of(repoPerm));
 
         AgentSkillDO skill = new AgentSkillDO();
@@ -198,10 +265,11 @@ class AgentServiceTest {
         memoryRef.setSource("ORG");
         when(memoryRefDao.listByVersion(10L)).thenReturn(List.of(memoryRef));
 
-        AgentVersionVO vo = service.getVersion(1L, 1);
+        AgentVersionVO vo = service.getVersion(1L, 1, 100L);
 
         assertEquals(11L, vo.getRepoPerms().get(0).getRepoId());
         assertEquals("WRITE", vo.getRepoPerms().get(0).getPermLevel());
+        assertEquals(List.of("develop", "release/*"), vo.getRepoPerms().get(0).getAllowedBranchPatterns());
         assertEquals(22L, vo.getSkills().get(0).getSkillId());
         assertEquals(33L, vo.getMemoryRefs().get(0).getMemoryId());
         assertEquals("ORG", vo.getMemoryRefs().get(0).getSource());
@@ -421,6 +489,8 @@ class AgentServiceTest {
 
         AgentVersionDO draft = new AgentVersionDO();
         draft.setId(10L);
+        draft.setTenantId(100L);
+        draft.setAgentId(1L);
         draft.setStatus("DRAFT");
         draft.setRoleName("old-role");
         draft.setRoleCode("OLD");
@@ -536,6 +606,8 @@ class AgentServiceTest {
 
         AgentVersionDO draft = new AgentVersionDO();
         draft.setId(10L);
+        draft.setTenantId(100L);
+        draft.setAgentId(1L);
         draft.setStatus("DRAFT");
         draft.setRoleName("old-role");
         draft.setRoleCode("OLD");
@@ -571,6 +643,8 @@ class AgentServiceTest {
 
         AgentVersionDO draft = new AgentVersionDO();
         draft.setId(10L);
+        draft.setTenantId(100L);
+        draft.setAgentId(1L);
         draft.setStatus("DRAFT");
         draft.setRoleName("old-role");
         draft.setRoleCode("OLD");
@@ -607,6 +681,8 @@ class AgentServiceTest {
 
         AgentVersionDO draft = new AgentVersionDO();
         draft.setId(10L);
+        draft.setTenantId(100L);
+        draft.setAgentId(1L);
         draft.setStatus("DRAFT");
         draft.setRoleName("old-role");
         draft.setRoleCode("OLD");
@@ -623,5 +699,282 @@ class AgentServiceTest {
 
         verify(versionDao).updateConfig(eq(10L), eq(100L), eq("new-role"), isNull(),
                 isNull(), isNull(), isNull(), isNull(), eq(0), eq(7L));
+    }
+
+    @Test
+    void get_exposes_sdlc_and_evolution_mode_of_the_published_version() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO online = versionRow(50L, 1, "APPROVED");
+        online.setSdlcId(9L);
+        online.setIdentityJson("{\"evolutionMode\":\"AUTO_PROPOSAL\"}");
+        when(versionDao.findById(50L)).thenReturn(online);
+
+        AgentVO vo = service.get(1L, 100L);
+
+        assertEquals("coder", vo.getRoleName());
+        assertEquals("DEV", vo.getRoleCode());
+        assertEquals(Long.valueOf(9L), vo.getSdlcId());
+        assertEquals("AUTO_PROPOSAL", vo.getEvolutionMode());
+        assertFalse(vo.isHasDraft());
+        assertNull(vo.getDraftVersionNo());
+    }
+
+    @Test
+    void get_defaults_evolution_mode_to_assisted_when_identity_json_is_absent() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null));
+        when(versionDao.findById(50L)).thenReturn(versionRow(50L, 1, "APPROVED"));
+
+        assertEquals("ASSISTED", service.get(1L, 100L).getEvolutionMode());
+    }
+
+    @Test
+    void get_marks_unpublished_draft_without_mixing_it_into_published_values() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, 60L));
+        AgentVersionDO online = versionRow(50L, 1, "APPROVED");
+        online.setRoleName("published-role");
+        AgentVersionDO draft = versionRow(60L, 2, "DRAFT");
+        draft.setRoleName("draft-role");
+        when(versionDao.findById(50L)).thenReturn(online);
+        when(versionDao.findById(60L)).thenReturn(draft);
+
+        AgentVO vo = service.get(1L, 100L);
+
+        assertEquals("published-role", vo.getRoleName());
+        assertTrue(vo.isHasDraft());
+        assertEquals(Integer.valueOf(2), vo.getDraftVersionNo());
+    }
+
+    @Test
+    void offline_keeps_displaying_the_version_that_online_will_restore() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "ONLINE", 50L, null),
+                agentRow(1L, "OFFLINE", null, null));
+        AgentVersionDO approved = versionRow(50L, 1, "APPROVED");
+        approved.setSdlcId(9L);
+        when(versionDao.findById(50L)).thenReturn(approved);
+        when(versionDao.listApprovedByAgent(1L)).thenReturn(List.of(approved));
+        when(agentDao.updateStatus(eq(1L), eq(100L), eq("OFFLINE"),
+                isNull(), isNull(), eq(1), eq(0), eq(7L))).thenReturn(1);
+
+        AgentVO vo = service.offline(1L, 100L, 7L);
+
+        assertEquals("OFFLINE", vo.getStatus());
+        assertEquals("coder", vo.getRoleName());
+        assertEquals(Long.valueOf(9L), vo.getSdlcId());
+    }
+
+    @Test
+    void online_restores_the_same_displayed_values_after_offline() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "OFFLINE", null, null),
+                agentRow(1L, "ONLINE", 50L, null));
+        AgentVersionDO approved = versionRow(50L, 1, "APPROVED");
+        approved.setSdlcId(9L);
+        approved.setIdentityJson("{\"evolutionMode\":\"MANUAL\"}");
+        when(versionDao.findById(50L)).thenReturn(approved);
+        when(versionDao.listApprovedByAgent(1L)).thenReturn(List.of(approved));
+        when(agentDao.updateStatus(eq(1L), eq(100L), eq("ONLINE"),
+                eq(50L), isNull(), eq(1), eq(0), eq(7L))).thenReturn(1);
+
+        AgentVO vo = service.online(1L, 100L, 7L);
+
+        assertEquals("ONLINE", vo.getStatus());
+        assertEquals("coder", vo.getRoleName());
+        assertEquals(Long.valueOf(9L), vo.getSdlcId());
+        assertEquals("MANUAL", vo.getEvolutionMode());
+    }
+
+    @Test
+    void submit_returns_the_version_fields_now_under_review() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L),
+                agentRow(1L, "PENDING_REVIEW", null, 10L));
+        AgentVersionDO draft = versionRow(10L, 1, "DRAFT");
+        draft.setSdlcId(9L);
+        draft.setIdentityJson("{\"evolutionMode\":\"MANUAL\"}");
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateStatus(eq(10L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), isNull(), isNull(), eq(0), eq(7L))).thenReturn(1);
+        when(agentDao.updateStatus(eq(1L), eq(100L), eq("PENDING_REVIEW"),
+                isNull(), eq(10L), eq(1), eq(0), eq(7L))).thenReturn(1);
+
+        AgentVO vo = service.submit(1L, 100L, 7L);
+
+        assertEquals("PENDING_REVIEW", vo.getStatus());
+        assertEquals("coder", vo.getRoleName());
+        assertEquals(Long.valueOf(9L), vo.getSdlcId());
+        assertEquals("MANUAL", vo.getEvolutionMode());
+    }
+
+    @Test
+    void updateAgent_persists_trimmed_avatar_url_without_touching_the_draft() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(agentDao.updateAvatarUrl(1L, 100L, "https://cdn/a.png", 0, 7L)).thenReturn(1);
+
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(1L);
+        req.setAvatarUrl("  https://cdn/a.png  ");
+
+        service.updateAgent(req, 100L, 7L);
+
+        verify(agentDao).updateAvatarUrl(1L, 100L, "https://cdn/a.png", 0, 7L);
+        verify(versionDao, never()).updateConfig(anyLong(), anyLong(), any(), any(), any(), any(),
+                any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void updateAgent_clears_avatar_url_when_blank() {
+        AgentDO agent = agentRow(1L, "DRAFT", null, 10L);
+        agent.setAvatarUrl("https://cdn/old.png");
+        when(agentDao.findById(1L)).thenReturn(agent);
+        when(agentDao.updateAvatarUrl(1L, 100L, null, 0, 7L)).thenReturn(1);
+
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(1L);
+        req.setAvatarUrl("   ");
+
+        service.updateAgent(req, 100L, 7L);
+
+        verify(agentDao).updateAvatarUrl(1L, 100L, null, 0, 7L);
+    }
+
+    @Test
+    void updateAgent_avatar_conflict_throws() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(agentDao.updateAvatarUrl(1L, 100L, "https://cdn/a.png", 0, 7L)).thenReturn(0);
+
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(1L);
+        req.setAvatarUrl("https://cdn/a.png");
+
+        BizException ex = assertThrows(BizException.class, () -> service.updateAgent(req, 100L, 7L));
+        assertEquals("14003", ex.getCode());
+    }
+
+    @Test
+    void updateAgent_presence_mode_leaves_omitted_avatar_untouched() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(agentDao.updateName(1L, 100L, "新名称", 0, 7L)).thenReturn(1);
+
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(1L);
+        req.setName("新名称");
+        req.setProvidedFields(java.util.Set.of("name"));
+
+        service.updateAgent(req, 100L, 7L);
+
+        verify(agentDao).updateName(1L, 100L, "新名称", 0, 7L);
+        verify(agentDao, never()).updateAvatarUrl(anyLong(), anyLong(), any(), any(), anyLong());
+    }
+
+    private AgentDO agentRow(long id, String status, Long onlineVersionId, Long editingVersionId) {
+        AgentDO a = new AgentDO();
+        a.setId(id);
+        a.setTenantId(100L);
+        a.setName("worker");
+        a.setStatus(status);
+        a.setOnlineVersionId(onlineVersionId);
+        a.setEditingVersionId(editingVersionId);
+        a.setLatestVersionNo(1);
+        a.setVersion(0);
+        return a;
+    }
+
+    private AgentVersionDO versionRow(long id, int versionNo, String status) {
+        AgentVersionDO v = new AgentVersionDO();
+        v.setId(id);
+        v.setTenantId(100L);
+        v.setAgentId(1L);
+        v.setVersionNo(versionNo);
+        v.setStatus(status);
+        v.setRoleName("coder");
+        v.setRoleCode("DEV");
+        v.setBusinessBackground("bg");
+        v.setResponsibilities("resp");
+        v.setVersion(0);
+        return v;
+    }
+
+    private AgentDO platformAgent(long id, long tenantId, String status) {
+        AgentDO a = new AgentDO();
+        a.setId(id);
+        a.setTenantId(tenantId);
+        a.setKind("PLATFORM");
+        a.setStatus(status);
+        a.setLatestVersionNo(1);
+        a.setVersion(0);
+        return a;
+    }
+
+    @Test
+    void delete_platform_agent_throws() {
+        when(agentDao.findById(9L)).thenReturn(platformAgent(9L, 100L, "ONLINE"));
+        BizException ex = assertThrows(BizException.class, () -> service.delete(9L, 100L, 7L));
+        assertEquals("14012", ex.getCode());
+        verify(agentDao, never()).softDelete(anyLong(), anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void offline_platform_agent_throws() {
+        when(agentDao.findById(9L)).thenReturn(platformAgent(9L, 100L, "ONLINE"));
+        BizException ex = assertThrows(BizException.class, () -> service.offline(9L, 100L, 7L));
+        assertEquals("14013", ex.getCode());
+        verify(agentDao, never()).updateStatus(anyLong(), anyLong(), any(), any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void updateAgent_rename_platform_agent_throws() {
+        when(agentDao.findById(9L)).thenReturn(platformAgent(9L, 100L, "ONLINE"));
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(9L);
+        req.setName("改名");
+        BizException ex = assertThrows(BizException.class, () -> service.updateAgent(req, 100L, 7L));
+        assertEquals("14014", ex.getCode());
+        verify(agentDao, never()).updateName(anyLong(), anyLong(), any(), any(), anyLong());
+    }
+
+    @Test
+    void updateAgent_change_avatar_platform_agent_throws() {
+        when(agentDao.findById(9L)).thenReturn(platformAgent(9L, 100L, "ONLINE"));
+        UpdateAgentRequest req = new UpdateAgentRequest();
+        req.setId(9L);
+        req.setAvatarUrl("https://cdn/new.png");
+        BizException ex = assertThrows(BizException.class, () -> service.updateAgent(req, 100L, 7L));
+        assertEquals("14014", ex.getCode());
+        verify(agentDao, never()).updateAvatarUrl(anyLong(), anyLong(), any(), any(), anyLong());
+    }
+
+    @Test
+    void editConfig_set_sdlc_on_platform_agent_throws() {
+        AgentDO agent = platformAgent(9L, 100L, "ONLINE");
+        agent.setEditingVersionId(10L);
+        when(agentDao.findById(9L)).thenReturn(agent);
+        UpdateConfigRequest req = new UpdateConfigRequest();
+        req.setSdlcId(77L);
+        BizException ex = assertThrows(BizException.class, () -> service.editConfig(9L, req, 100L, 7L));
+        assertEquals("14014", ex.getCode());
+        verify(versionDao, never()).updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void editConfig_other_fields_on_platform_agent_allowed() {
+        AgentDO agent = platformAgent(9L, 100L, "ONLINE");
+        agent.setEditingVersionId(10L);
+        when(agentDao.findById(9L)).thenReturn(agent);
+        AgentVersionDO draft = new AgentVersionDO();
+        draft.setId(10L);
+        draft.setTenantId(100L);
+        draft.setAgentId(9L);
+        draft.setStatus("DRAFT");
+        draft.setVersion(0);
+        when(versionDao.findById(10L)).thenReturn(draft);
+        when(versionDao.updateConfig(anyLong(), anyLong(), any(), any(), any(), any(), any(), any(), any(), anyLong()))
+                .thenReturn(1);
+
+        UpdateConfigRequest req = new UpdateConfigRequest();
+        req.setResponsibilities("# 新 AGENT.md");
+        req.setSdlcId(null);
+
+        service.editConfig(9L, req, 100L, 7L);
+
+        verify(versionDao).updateConfig(eq(10L), eq(100L), isNull(), isNull(), isNull(),
+                eq("# 新 AGENT.md"), isNull(), isNull(), eq(0), eq(7L));
     }
 }

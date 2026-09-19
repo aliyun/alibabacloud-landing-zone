@@ -29,6 +29,9 @@
         <skipFrontend>false</skipFrontend>
         <skipGitCommitId>false</skipGitCommitId>
         <aws-sdk-version>2.50.3</aws-sdk-version>
+        <!-- Align public archive dependencies with Commons Compress 1.28.0. -->
+        <commons-lang3.version>3.18.0</commons-lang3.version>
+        <commons-codec.version>1.19.0</commons-codec.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -269,6 +272,17 @@
             <scope>provided</scope>
         </dependency>
         <!-- Commons -->
+        <!-- Runtime checkpoint archive handling; also used by the pinned Testcontainers suite. -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>1.28.0</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>2.20.0</version>
+        </dependency>
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>

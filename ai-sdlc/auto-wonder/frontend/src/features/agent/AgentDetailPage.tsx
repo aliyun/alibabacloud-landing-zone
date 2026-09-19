@@ -2,8 +2,9 @@ import { Alert, Card, Tag, Button, Space, Table, Popconfirm, message, Spin, Resu
 import { useState } from 'react';
 import { ArrowLeftOutlined, RollbackOutlined, EditOutlined, PoweroffOutlined, PlayCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAgent, useAgentVersions, useRollback, useOfflineAgent, useOnlineAgent, useDeleteAgent, useAgentWorkitems, useAgentMemories } from './hooks';
-import type { AgentVersionSummary } from './api';
+import { getVersion, type AgentVersion, type AgentVersionSummary } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { AgentStatCards } from './components/AgentStatCards';
 import { AgentWorkitemList } from './components/AgentWorkitemList';
@@ -27,6 +28,45 @@ const agentStatusMap: Record<string, { color: string; label: string }> = {
   OFFLINE: { color: 'default', label: '离线' },
   PENDING_REVIEW: { color: 'processing', label: '待审核' },
 };
+
+const evolutionModeLabels: Record<string, string> = {
+  MANUAL: '纯手动',
+  ASSISTED: '辅助审核（推荐）',
+  AUTO_PROPOSAL: '自动生成候选',
+};
+
+function evolutionModeLabel(mode?: string | null) {
+  return evolutionModeLabels[mode ?? ''] ?? '未设置';
+}
+
+/** Mirrors the edit page: a version without an explicit mode is treated as ASSISTED. */
+function versionEvolutionMode(version: AgentVersion) {
+  if (version.evolutionMode) return version.evolutionMode;
+  if (!version.identityJson) return 'ASSISTED';
+  try {
+    const parsed = JSON.parse(version.identityJson) as { evolutionMode?: string };
+    return parsed.evolutionMode || 'ASSISTED';
+  } catch {
+    return 'ASSISTED';
+  }
+}
+
+function sdlcLabel(sdlcId?: number | null) {
+  return sdlcId == null ? '未绑定' : `#${sdlcId}`;
+}
+
+interface DraftDiffRow {
+  key: string;
+  field: string;
+  current: string;
+  draft: string;
+}
+
+const draftDiffColumns: ColumnsType<DraftDiffRow> = [
+  { title: '字段', dataIndex: 'field', width: 120 },
+  { title: '当前生效', dataIndex: 'current', ellipsis: true },
+  { title: '草稿', dataIndex: 'draft', ellipsis: true },
+];
 
 function AgentIdentitySection({ title, content }: { title: string; content?: string | null }) {
   const value = content?.trim();
@@ -58,6 +98,15 @@ export function AgentDetailPage() {
   const [offlineConfirmOpen, setOfflineConfirmOpen] = useState(false);
   const [onlineConfirmOpen, setOnlineConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [draftDiffOpen, setDraftDiffOpen] = useState(false);
+
+  const draftVersionNo = agent?.hasDraft ? (agent.draftVersionNo ?? null) : null;
+  // Fetched only when the comparison is opened, so the detail page stays on two requests otherwise.
+  const { data: draftVersion } = useQuery({
+    queryKey: ['agent', agentId, 'version', draftVersionNo ?? 0],
+    queryFn: () => getVersion(agentId, draftVersionNo as number),
+    enabled: draftDiffOpen && draftVersionNo != null && draftVersionNo > 0,
+  });
 
   if (!agentId || isNaN(agentId)) return (
     <Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
@@ -145,6 +194,22 @@ export function AgentDetailPage() {
   ];
 
   const statusInfo = agentStatusMap[agent.status] || { color: 'default', label: agent.status };
+  const isPlatform = agent.kind === 'PLATFORM';
+
+  const draftDiffRows: DraftDiffRow[] = draftVersion
+    ? [
+      { key: 'roleName', field: '角色名称', current: agent.roleName || '-', draft: draftVersion.roleName || '-' },
+      { key: 'roleCode', field: '角色码', current: agent.roleCode || '-', draft: draftVersion.roleCode || '-' },
+      { key: 'sdlcId', field: 'SDLC 模版', current: sdlcLabel(agent.sdlcId), draft: sdlcLabel(draftVersion.sdlcId) },
+      {
+        key: 'evolutionMode', field: '自进化模式',
+        current: evolutionModeLabel(agent.evolutionMode),
+        draft: evolutionModeLabel(versionEvolutionMode(draftVersion)),
+      },
+      { key: 'soul', field: 'SOUL.md', current: agent.businessBackground || '-', draft: draftVersion.businessBackground || '-' },
+      { key: 'agentmd', field: 'AGENT.md', current: agent.responsibilities || '-', draft: draftVersion.responsibilities || '-' },
+    ]
+    : [];
 
   return (
     <div>
@@ -164,6 +229,16 @@ export function AgentDetailPage() {
         />
       )}
 
+      {isPlatform && (
+        <Alert
+          showIcon
+          type="info"
+          message="平台智能体"
+          description="出厂自带的 Chief of Staff：不可删除、不可下线，名称与头像锁定，不绑定 SDLC、不承接开发任务；AGENT.md/SOUL.md、技能与记忆可维护，变更仍需审核。无需配置平台智能体的仓库配置，其默认拥有平台所有的仓库的读取权限，进行平台智能的管理。"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       {agent.status === 'DRAFT' && (
         <Alert
           showIcon
@@ -174,11 +249,39 @@ export function AgentDetailPage() {
         />
       )}
 
+      {draftVersionNo != null && agent.status !== 'DRAFT' && (
+        <Alert
+          showIcon
+          type="warning"
+          message={`存在未发布的草稿 v${draftVersionNo}`}
+          description="下方展示的是当前生效的配置；草稿里的修改要提交审核并通过后才会生效。"
+          style={{ marginBottom: 16 }}
+          action={
+            <Space direction="vertical" size={4}>
+              <Button size="small" onClick={() => setDraftDiffOpen((open) => !open)}>
+                {draftDiffOpen ? '收起差异' : '查看草稿差异'}
+              </Button>
+              <Button size="small" type="link"
+                onClick={() => accessCommand('READ_WRITE', '编辑数字员工', () => navigate(`/agents/${agentId}/edit`))}>
+                编辑草稿
+              </Button>
+            </Space>
+          }
+        />
+      )}
+
+      {draftDiffOpen && draftVersionNo != null && (
+        <Card size="small" title={`当前生效 vs 草稿 v${draftVersionNo}`} style={{ marginBottom: 16 }}>
+          <Table rowKey="key" size="small" columns={draftDiffColumns} dataSource={draftDiffRows}
+            pagination={false} loading={!draftVersion} />
+        </Card>
+      )}
+
       <Card
         style={{ marginBottom: 16, borderTop: '3px solid #f97316' }}
         extra={
           <Space>
-            {agent.status === 'ONLINE' && (
+            {agent.status === 'ONLINE' && !isPlatform && (
               <Popconfirm
                 title="确定下线该数字员工？"
                 open={offlineConfirmOpen}
@@ -206,7 +309,7 @@ export function AgentDetailPage() {
                 <Button icon={<PlayCircleOutlined />}>上线</Button>
               </Popconfirm>
             )}
-            {agent.status !== 'ONLINE' && (
+            {agent.status !== 'ONLINE' && !isPlatform && (
               <Popconfirm
                 title="确定删除该数字员工？删除后不可恢复。"
                 okText="确定删除"
@@ -232,6 +335,7 @@ export function AgentDetailPage() {
           <Space size={8}>
             <Text strong style={{ fontSize: 18 }}>{agent.name}</Text>
             <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
+            {isPlatform && <Tag color="gold">平台</Tag>}
           </Space>
           <Text type="secondary">
             最新版本 {agent.latestVersionNo ? `v${agent.latestVersionNo}` : '-'}
@@ -245,6 +349,8 @@ export function AgentDetailPage() {
           <Space size={8} wrap>
             {agent.roleName && <Tag color="blue">{agent.roleName}</Tag>}
             {agent.roleCode && <Tag>{agent.roleCode}</Tag>}
+            <Tag color="geekblue">SDLC 模版：{sdlcLabel(agent.sdlcId)}</Tag>
+            <Tag color="purple">自进化模式：{evolutionModeLabel(agent.evolutionMode)}</Tag>
           </Space>
           <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
             <AgentIdentitySection title="SOUL.md" content={agent.businessBackground} />

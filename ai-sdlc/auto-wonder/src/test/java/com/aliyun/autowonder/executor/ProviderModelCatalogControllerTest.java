@@ -22,7 +22,10 @@ class ProviderModelCatalogControllerTest {
     void readRouteReturnsTheGlobalProviderSnapshot() {
         ExecutorService executorService = mock(ExecutorService.class);
         ProviderModelCatalogService catalogService = mock(ProviderModelCatalogService.class);
-        ExecutorController controller = new ExecutorController(executorService, catalogService);
+        ExecutorLaunchConfigService launchConfigService = mock(ExecutorLaunchConfigService.class);
+        ExecutorLaunchCommandService launchCommandService = mock(ExecutorLaunchCommandService.class);
+        ExecutorController controller =
+                new ExecutorController(executorService, catalogService, launchConfigService, launchCommandService);
         ProviderModelCatalogVO snapshot = new ProviderModelCatalogVO("qoder", List.of(), null);
         when(catalogService.read("qoder")).thenReturn(snapshot);
 

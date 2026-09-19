@@ -132,7 +132,7 @@ class ImNotificationFormatterTest {
                 **申请人**：李四
                 **申请权限**：读写
 
-                [去审批](https://auto.example.com/settings/members?tab=requests)""", message);
+                [去审批](https://auto.example.com/settings/members?tab=requests&workspaceId=100)""", message);
         assertFalse(message.contains("需要你处理"));
         assertFalse(message.contains("/workitems/"));
         assertFalse(message.contains("READ_WRITE"));

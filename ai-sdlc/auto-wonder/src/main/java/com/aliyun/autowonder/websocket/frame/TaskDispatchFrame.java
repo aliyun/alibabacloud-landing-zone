@@ -38,6 +38,8 @@ public class TaskDispatchFrame extends OutboundFrame {
     private String packageRefreshPath;
     private String artifactUploadPath;
     private String checkpointUploadPath;
+    /** 仅对声明 DEBUG_LOG_V1 且 dispatch 冻结开关为 true 的执行器下发；否则整段缺省（老 runtime 无感）。 */
+    private DebugLogDirective debugLog;
     private String resumeMode;
     private String resumeSessionBehavior;
     private Long resumeFromDispatchId;
@@ -50,6 +52,8 @@ public class TaskDispatchFrame extends OutboundFrame {
     private String dispatchMcpToken;
     /** Task-scoped MCP values, keyed by opaque secret references. Never persisted in task packages. */
     private Map<String, String> mcpSecrets;
+    /** Complete platform-managed environment snapshot for this send. */
+    private Map<String, String> environmentVariables;
 
     public TaskDispatchFrame() {
         setType("TASK_DISPATCH");

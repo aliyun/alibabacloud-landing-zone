@@ -9,7 +9,7 @@ import { SkillListPage } from './SkillListPage';
 import { useAuthStore } from '@/shared/auth/store';
 import { message } from 'antd';
 import type { ExecutorVO } from '@/features/executor/api';
-import type { SkillPackageFileContent } from './api';
+import type { BatchSkillCategoryResult, Category, Skill, SkillPackageFileContent } from './api';
 
 function renderPage(accessLevel: 'READ_ONLY' | 'READ_WRITE' = 'READ_WRITE') {
   useAuthStore.setState({ accessLevel });
@@ -61,10 +61,13 @@ describe('SkillListPage', () => {
       http.get('/api/skills', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
-          data: [
-            { id: 1, name: 'GitHub MCP', type: 'MCP', installSpec: 'npx @anthropic/mcp-server-github', description: 'GitHub integration', version: 1, gmtCreate: '2026-07-01' },
-            { id: 2, name: 'Code Review', type: 'SKILL', installSpec: 'built-in', description: '自动代码审查', version: 1, gmtCreate: '2026-07-01' },
-          ],
+          data: {
+            list: [
+              { id: 1, name: 'GitHub MCP', type: 'MCP', installSpec: 'npx @anthropic/mcp-server-github', description: 'GitHub integration', version: 1, gmtCreate: '2026-07-01' },
+              { id: 2, name: 'Code Review', type: 'SKILL', installSpec: 'built-in', description: '自动代码审查', version: 1, gmtCreate: '2026-07-01' },
+            ],
+            total: 2, pageNum: 1, pageSize: 20,
+          },
         });
       }),
     );
@@ -86,25 +89,63 @@ describe('SkillListPage', () => {
     expect(screen.queryByText('built-in')).not.toBeInTheDocument();
   });
 
+  it('drives table pagination from the backend total, not the current page length', async () => {
+    const requestedPages: number[] = [];
+    server.use(
+      http.get('/api/skills', ({ request }) => {
+        const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
+        requestedPages.push(page);
+        // 后端返回真实总数 45，但当前页只带 2 条：分页必须按 45 计算，而不是当前页的 2 条
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            list: [
+              { id: 1, name: 'Skill One', type: 'SKILL', installSpec: 'built-in', description: '一', version: 1, gmtCreate: '2026-07-01' },
+              { id: 2, name: 'Skill Two', type: 'SKILL', installSpec: 'built-in', description: '二', version: 1, gmtCreate: '2026-07-01' },
+            ],
+            total: 45, pageNum: page, pageSize: 20,
+          },
+        });
+      }),
+      http.get('/api/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+    );
+
+    renderPage();
+    await screen.findByText('Skill One');
+
+    // 总数取自后端 total（45）：showTotal 与页码数量都据此渲染，而不是当前页的 2 条
+    expect(screen.getByText('共 45 条')).toBeInTheDocument();
+    expect(document.querySelector('.ant-pagination-item-3')).not.toBeNull();
+
+    // 翻到第 2 页会以 page=2 重新请求
+    await userEvent.click(document.querySelector('.ant-pagination-item-2 a') as HTMLElement);
+    await waitFor(() => expect(requestedPages).toContain(2));
+  });
+
   it('opens a detail modal with description and install spec', async () => {
     server.use(
       http.get('/api/skills', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
-          data: [
-            {
-              id: 1,
-              name: 'GitHub MCP',
-              type: 'MCP',
-              installSpec: 'npx @anthropic/mcp-server-github',
-              description: 'GitHub integration',
-              sourceType: 'INSTALL_SPEC',
-              version: 1,
-              gmtCreate: '2026-07-01T10:00:00Z',
-              gmtModified: '2026-07-12T12:30:00Z',
-              modifierName: '蔡何',
-            },
-          ],
+          data: {
+            list: [
+              {
+                id: 1,
+                name: 'GitHub MCP',
+                type: 'MCP',
+                installSpec: 'npx @anthropic/mcp-server-github',
+                description: 'GitHub integration',
+                sourceType: 'INSTALL_SPEC',
+                version: 1,
+                gmtCreate: '2026-07-01T10:00:00Z',
+                gmtModified: '2026-07-12T12:30:00Z',
+                modifierName: '蔡何',
+              },
+            ],
+            total: 1, pageNum: 1, pageSize: 20,
+          },
         });
       }),
     );
@@ -127,10 +168,13 @@ describe('SkillListPage', () => {
       http.get('/api/skills', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
-          data: [
-            { id: 1, name: 'GitHub MCP', type: 'MCP', installSpec: '{"transport":"http","url":"https://example.com/mcp"}', description: 'GitHub integration', version: 1, gmtCreate: '2026-07-01' },
-            { id: 2, name: 'Code Review', type: 'SKILL', installSpec: 'built-in', description: '自动代码审查', version: 1, gmtCreate: '2026-07-01' },
-          ],
+          data: {
+            list: [
+              { id: 1, name: 'GitHub MCP', type: 'MCP', installSpec: '{"transport":"http","url":"https://example.com/mcp"}', description: 'GitHub integration', version: 1, gmtCreate: '2026-07-01' },
+              { id: 2, name: 'Code Review', type: 'SKILL', installSpec: 'built-in', description: '自动代码审查', version: 1, gmtCreate: '2026-07-01' },
+            ],
+            total: 2, pageNum: 1, pageSize: 20,
+          },
         });
       }),
       http.get('/api/executors', () => {
@@ -164,9 +208,12 @@ describe('SkillListPage', () => {
       http.get('/api/skills', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
-          data: [
-            { id: 1, name: 'Broken MCP', type: 'MCP', installSpec: '{"transport":"http","url":"https://example.com/mcp"}', description: 'Broken integration', version: 1, gmtCreate: '2026-07-01' },
-          ],
+          data: {
+            list: [
+              { id: 1, name: 'Broken MCP', type: 'MCP', installSpec: '{"transport":"http","url":"https://example.com/mcp"}', description: 'Broken integration', version: 1, gmtCreate: '2026-07-01' },
+            ],
+            total: 1, pageNum: 1, pageSize: 20,
+          },
         });
       }),
       http.get('/api/executors', () => {
@@ -197,7 +244,7 @@ describe('SkillListPage', () => {
       http.get('/api/skills', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
-          data: [],
+          data: { list: [], total: 0, pageNum: 1, pageSize: 20 },
         });
       }),
     );
@@ -214,7 +261,7 @@ describe('SkillListPage', () => {
     const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
     server.use(
       http.get('/api/skills', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
+        success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 20 },
       })),
     );
 
@@ -230,7 +277,7 @@ describe('SkillListPage', () => {
   it('filter tab does not show PLUGIN option', async () => {
     server.use(
       http.get('/api/skills', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
+        success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 20 },
       })),
       http.get('/api/executors', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],
@@ -248,7 +295,7 @@ describe('SkillListPage', () => {
   it('create modal type dropdown does not show PLUGIN option', async () => {
     server.use(
       http.get('/api/skills', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
+        success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 20 },
       })),
       http.get('/api/executors', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],
@@ -278,7 +325,7 @@ describe('SkillListPage', () => {
   });
 });
 
-const PACKAGE_SKILL = {
+const PACKAGE_SKILL: Skill = {
   id: 1,
   name: 'custom-skill',
   type: 'SKILL',
@@ -335,7 +382,7 @@ function packageHandlers(options: PackageHandlerOptions = {}) {
   return [
     http.get('/api/skills', () => HttpResponse.json({
       success: true, code: '0', message: '', traceId: null,
-      data: [options.skill ?? PACKAGE_SKILL],
+      data: { list: [options.skill ?? PACKAGE_SKILL], total: 1, pageNum: 1, pageSize: 20 },
     })),
     http.get('/api/skills/1/package/files', () => HttpResponse.json(options.filesBody ?? {
       success: true, code: '0', message: '', traceId: null,
@@ -663,7 +710,7 @@ describe('SkillListPage package content', () => {
     let completed = 0;
     server.use(
       http.get('/api/skills', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [PACKAGE_SKILL],
+        success: true, code: '0', message: '', traceId: null, data: { list: [PACKAGE_SKILL], total: 1, pageNum: 1, pageSize: 20 },
       })),
       http.get('/api/skills/1/package/files', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
@@ -694,5 +741,720 @@ describe('SkillListPage package content', () => {
     await new Promise((resolve) => { setTimeout(resolve, 0); });
     expect(packagePreview()).toHaveTextContent('参考文档');
     expect(packagePreview()).not.toHaveTextContent('这是包内的 Markdown 文件。');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 项目级多级分类：分组展示、管理弹窗、打标与批量打标
+// ---------------------------------------------------------------------------
+
+function ok(data: unknown) {
+  return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
+}
+
+function fail(message: string) {
+  return HttpResponse.json({ success: false, code: '10404', message, traceId: null });
+}
+
+const CATEGORIES: Category[] = [
+  { id: 1, parentId: null, name: '编码', description: null, path: '编码', version: 0, gmtCreate: '2026-09-16T10:00:00Z' },
+  { id: 2, parentId: 1, name: '前端', description: 'Web 开发', path: '编码 → 前端', version: 0, gmtCreate: '2026-09-16T10:00:00Z' },
+  { id: 3, parentId: null, name: '办公', description: null, path: '办公', version: 0, gmtCreate: '2026-09-16T10:00:00Z' },
+];
+
+const CATEGORIZED_SKILL: Skill = {
+  id: 101, name: 'Vue 指南', type: 'SKILL', installSpec: 'built-in', description: '前端组件技巧',
+  categoryId: 2, categoryPath: '编码 → 前端', version: 1, gmtCreate: '2026-07-01',
+};
+
+const UNCATEGORIZED_SKILL: Skill = {
+  id: 102, name: '数据抓取', type: 'MCP', installSpec: 'npx fetch-mcp', description: '',
+  categoryId: null, categoryPath: null, version: 1, gmtCreate: '2026-07-01',
+};
+
+// 分类接口默认兜底是空列表；这里提供带数据的内存存储，写操作直接改存储，
+// 增删改后的重新拉取就能在同一份 store 里读到最新树。
+function categoryFixtureStore(options: { onSkillList?: (size: string | null, type: string | null) => void } = {}) {
+  const categories = CATEGORIES.map((category) => ({ ...category }));
+  const skills = [CATEGORIZED_SKILL, UNCATEGORIZED_SKILL].map((skill) => ({ ...skill }));
+  const handlers = [
+    http.get('/api/categories', () => ok(categories)),
+    http.get('/api/skills', ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      options.onSkillList?.(params.get('size'), params.get('type'));
+      const type = params.get('type');
+      const filtered = type ? skills.filter((skill) => skill.type === type) : skills;
+      return ok({ list: filtered, total: filtered.length, pageNum: 1, pageSize: 20 });
+    }),
+  ];
+  return { categories, skills, handlers };
+}
+
+function renderCategoryPage(accessLevel: 'READ_ONLY' | 'READ_WRITE' | 'ADMIN' = 'ADMIN') {
+  useAuthStore.setState({
+    accessLevel,
+    user: { id: 7, username: 'alice', nickname: 'Alice', email: 'alice@example.com' },
+    currentWorkspace: { id: 10002, name: '验证项目', description: '' },
+  });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <SkillListPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function rowCheckboxes(): HTMLElement[] {
+  // scroll.x 表格会渲染隐藏的 .ant-table-measure-row（表头宽度测量克隆，含全选项且 pointer-events: none），
+  // 真正可交互的只有数据行上的复选框
+  return Array.from(document.querySelectorAll<HTMLElement>(
+    '.ant-table-tbody tr:not(.ant-table-measure-row) .ant-checkbox-input',
+  ));
+}
+
+async function clickManageTreeNode(label: string) {
+  const dialog = screen.getByRole('dialog');
+  const target = Array.from(dialog.querySelectorAll<HTMLElement>('.ant-tree-title'))
+    .find((node) => node.textContent === label);
+  if (!target) {
+    throw new Error(`分类树中找不到节点: ${label}`);
+  }
+  await userEvent.click(target);
+}
+
+async function pickSelectOption(selector: HTMLElement, optionText: string) {
+  await userEvent.click(selector);
+  const option = await screen.findByText(optionText, { selector: '.ant-select-item-option-content' });
+  await userEvent.click(option);
+}
+
+describe('SkillListPage categories', () => {
+  afterEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('renders category text without a dropdown until clicked', async () => {
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+
+    expect(screen.getByTitle('编码 → 前端')).toBeInTheDocument();
+    expect(screen.getByText('Vue 指南').closest('tr')?.querySelector('button[aria-label]')).toHaveTextContent('编码 → 前端');
+    // 未打标的能力显示空值占位
+    expect(screen.getByText('数据抓取').closest('td')).not.toHaveTextContent('编码 → 前端');
+    expect(screen.getByText('数据抓取').closest('tr')?.querySelector('button[aria-label]')).toHaveTextContent('—');
+  });
+
+  it('shows the category row in the detail modal', async () => {
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(within(screen.getByText('Vue 指南').closest('tr') as HTMLElement)
+      .getByRole('button', { name: /详情/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('编码 → 前端');
+
+    // antd 默认 autoInsertSpace 会在两个中文字符之间插空格，可访问名实际是 "关 闭"
+    await userEvent.click(within(dialog).getByRole('button', { name: /关\s*闭/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    await userEvent.click(within(screen.getByText('数据抓取').closest('tr') as HTMLElement)
+      .getByRole('button', { name: /详情/ }));
+    const reopened = await screen.findByRole('dialog');
+    expect(reopened).toHaveTextContent('未分类');
+  });
+
+  it('groups skills by category when the display switch is on', async () => {
+    const requestedSizes: Array<string | null> = [];
+    server.use(...categoryFixtureStore({ onSkillList: (size) => requestedSizes.push(size) }).handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    expect(screen.getByText('共 2 条')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('switch', { name: '按分类展示' }));
+
+    await screen.findByText(/按分类展示，类型筛选仍生效/);
+    // 两个 forceRender 弹窗的隐藏 DOM 会污染全局文本查询，这里按卡片/折叠头断言。
+    // 顶层分组顺序：编码（含后代分组）→ 未分类置底；没有能力的分类整支剪掉
+    const card = screen.getByRole('button', { name: /新增能力/ }).closest('.ant-card') as HTMLElement;
+    const headers = Array.from(card.querySelectorAll<HTMLElement>('.ant-collapse-header'));
+    expect(headers).toHaveLength(3);
+    expect(headers[0]).toHaveTextContent('编码');
+    expect(headers[0]).toHaveTextContent('1 项');
+    expect(headers[1]).toHaveTextContent('前端');
+    expect(headers[1]).toHaveTextContent('1 项');
+    expect(headers[2]).toHaveTextContent('未分类');
+    expect(within(card).queryByText('办公')).not.toBeInTheDocument();
+    expect(within(card).getByText('数据抓取')).toBeInTheDocument();
+    expect(screen.getByText(/共 2 条能力/)).toBeInTheDocument();
+    // 分组视图不再渲染平铺分页
+    expect(within(card).queryByText('共 2 条')).not.toBeInTheDocument();
+    // 分组视图按 size=100 翻页取全量，而不是只取当前页
+    expect(requestedSizes).toContain('100');
+  });
+
+  it('keeps the type filter active in the grouped view', async () => {
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('switch', { name: '按分类展示' }));
+    await screen.findByText(/按分类展示，类型筛选仍生效/);
+
+    await userEvent.click(screen.getByText('技能', { selector: '.ant-segmented-item-label' }));
+
+    await waitFor(() => expect(screen.queryByText('数据抓取')).not.toBeInTheDocument());
+    expect(screen.getByText('Vue 指南')).toBeInTheDocument();
+    expect(screen.getByText(/共 1 条能力/)).toBeInTheDocument();
+  });
+
+  it('restores the grouping preference per user and workspace', async () => {
+    server.use(...categoryFixtureStore().handlers);
+    window.localStorage.setItem('autowonder.skills.groupByCategory.10002.7', 'on');
+
+    const { unmount } = renderCategoryPage();
+    // 预置偏好为开：挂载即分组，而不是默认平铺
+    await screen.findByText(/按分类展示，类型筛选仍生效/);
+
+    // 切换账号后回落到该用户自己的偏好（默认关闭）
+    useAuthStore.setState({ user: { id: 8, username: 'bob', nickname: 'Bob', email: 'bob@example.com' } });
+    await screen.findByText('共 2 条');
+    expect(screen.queryByText(/按分类展示，类型筛选仍生效/)).not.toBeInTheDocument();
+
+    // 切回原账号又恢复分组
+    useAuthStore.setState({ user: { id: 7, username: 'alice', nickname: 'Alice', email: 'alice@example.com' } });
+    await screen.findByText(/按分类展示，类型筛选仍生效/);
+
+    // 关闭后写回 off，重新挂载保持平铺
+    await userEvent.click(screen.getByRole('switch', { name: '按分类展示' }));
+    await waitFor(() => expect(window.localStorage.getItem('autowonder.skills.groupByCategory.10002.7')).toBe('off'));
+    await screen.findByText('共 2 条');
+    unmount();
+
+    renderCategoryPage();
+    await screen.findByText('共 2 条');
+    expect(screen.queryByText(/按分类展示，类型筛选仍生效/)).not.toBeInTheDocument();
+  });
+
+  it('clears row selection when toggling the grouping switch', async () => {
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(rowCheckboxes()[0]);
+    expect(await screen.findByText('已选 1 项')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('switch', { name: '按分类展示' }));
+    await screen.findByText(/按分类展示，类型筛选仍生效/);
+    expect(screen.queryByText('已选 1 项')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('switch', { name: '按分类展示' }));
+    await screen.findByText('共 2 条');
+    // 切回平铺后选择已被清空，而不是恢复
+    expect(screen.queryByText('已选 1 项')).not.toBeInTheDocument();
+    expect((rowCheckboxes()[0] as HTMLInputElement).checked).toBe(false);
+  });
+
+  it.each(['READ_ONLY', 'READ_WRITE'] as const)('denies opening category management for %s members', async (accessLevel) => {
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage(accessLevel);
+    await screen.findByText('Vue 指南');
+
+    await userEvent.click(screen.getByRole('button', { name: /管理分类/ }));
+    expect(errorSpy).toHaveBeenCalledWith(`当前为${accessLevel === 'READ_ONLY' ? '只读权限' : '读写权限'}，管理分类需要管理员权限`);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    errorSpy.mockRestore();
+  });
+
+  it('denies batch tagging for read-only members', async () => {
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage('READ_ONLY');
+    await screen.findByText('Vue 指南');
+    await userEvent.click(rowCheckboxes()[0]);
+
+    await userEvent.click(screen.getByRole('button', { name: /批量设置分类/ }));
+    expect(errorSpy).toHaveBeenCalledWith('当前为只读权限，批量设置能力分类需要读写权限');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    errorSpy.mockRestore();
+  });
+
+  it('creates a category from the manage modal and refreshes the tree', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const createBodies: Array<Record<string, unknown>> = [];
+    const store = categoryFixtureStore();
+    server.use(
+      ...store.handlers,
+      http.post('/api/categories', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        createBodies.push(body);
+        const created: Category = {
+          id: 9,
+          parentId: (body.parentId as number | null) ?? null,
+          name: body.name as string,
+          description: (body.description as string | null) ?? null,
+          path: `编码 → 前端 → ${body.name as string}`,
+          version: 0,
+          gmtCreate: '2026-09-16T10:00:00Z',
+        };
+        store.categories.push(created);
+        return ok(created);
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /管理分类/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('管理分类');
+    expect(dialog).toHaveTextContent('分类目录');
+    expect(dialog).toHaveTextContent('未分类为系统视图，不是分类节点。');
+
+    // 没有选中节点时默认新增顶级分类。
+    expect(dialog.querySelector('.ant-select-selection-item')?.textContent).toBe('无（顶级分类）');
+    await clickManageTreeNode('前端');
+    await userEvent.click(within(dialog).getByRole('button', { name: /新增分类/ }));
+    // 新增时清空名称，使用选中节点作为上级，提交 POST 而不是修改原节点。
+    expect(within(dialog).getByPlaceholderText('如: Vue')).toHaveValue('');
+    expect(dialog.querySelector('.ant-select-selection-item')?.textContent).toBe('编码 → 前端');
+    await userEvent.type(within(dialog).getByPlaceholderText('如: Vue'), 'React');
+    await userEvent.click(within(dialog).getByRole('button', { name: /保存分类/ }));
+
+    await waitFor(() => expect(createBodies).toEqual([{ name: 'React', parentId: 2, description: null }]));
+    expect(successSpy).toHaveBeenCalledWith('分类已创建');
+    // 保存后目录刷新并默认展开：新节点出现在树下
+    await waitFor(() => expect(within(dialog).getAllByText('React').length).toBeGreaterThan(0));
+    successSpy.mockRestore();
+  });
+
+  it('requires a name before saving a category', async () => {
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /管理分类/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /保存分类/ }));
+
+    expect(await within(dialog).findByText('请输入分类名称')).toBeInTheDocument();
+  });
+
+  it('edits a category from the tree with a prefilled form', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const updateBodies: Array<{ id: number; body: Record<string, unknown> }> = [];
+    const store = categoryFixtureStore();
+    server.use(
+      ...store.handlers,
+      http.put('/api/categories/:id', async ({ params, request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        updateBodies.push({ id: Number(params.id), body });
+        return ok({ ...store.categories.find((category) => category.id === 2)!, name: body.name as string });
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /管理分类/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    await clickManageTreeNode('前端');
+    const nameInput = within(dialog).getByPlaceholderText('如: Vue') as HTMLInputElement;
+    await waitFor(() => expect(nameInput.value).toBe('前端'));
+    // 表单按分类当前值预填：上级分类显示编码
+    expect(dialog.querySelector('.ant-select-selection-item')?.textContent).toBe('编码');
+
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, '前端工程');
+    await userEvent.click(within(dialog).getByRole('button', { name: /保存分类/ }));
+
+    await waitFor(() => expect(updateBodies).toEqual([{
+      id: 2,
+      body: { name: '前端工程', parentId: 1, description: 'Web 开发' },
+    }]));
+    expect(successSpy).toHaveBeenCalledWith('分类已保存');
+    successSpy.mockRestore();
+  });
+
+  it('excludes the editing category and its descendants from parent options', async () => {
+    server.use(...categoryFixtureStore().handlers);
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /管理分类/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    await clickManageTreeNode('编码');
+    await waitFor(() => expect((within(dialog).getByPlaceholderText('如: Vue') as HTMLInputElement).value).toBe('编码'));
+
+    await userEvent.click(dialog.querySelector('.ant-select-selector') as HTMLElement);
+    const optionTexts = await vi.waitFor(() => {
+      const texts = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-tree-title'))
+        .map((element) => element.textContent ?? '');
+      expect(texts.length).toBeGreaterThan(0);
+      return texts;
+    });
+    expect(optionTexts).toContain('无（顶级分类）');
+    expect(optionTexts).toContain('办公');
+    // 自身与后代不可作为上级，防止移动到自己的子树下形成环
+    expect(optionTexts).not.toContain('编码');
+    expect(optionTexts).not.toContain('前端');
+  });
+
+  it('shows delete only on the selected tree row and confirms before deleting', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const deletedIds: number[] = [];
+    const store = categoryFixtureStore();
+    server.use(
+      ...store.handlers,
+      http.delete('/api/categories/:id', ({ params }) => {
+        const id = Number(params.id);
+        deletedIds.push(id);
+        const index = store.categories.findIndex((category) => category.id === id);
+        if (index >= 0) store.categories.splice(index, 1);
+        return ok(null);
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /管理分类/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).queryByRole('button', { name: /删除分类/ })).not.toBeInTheDocument();
+    // 删除入口仅出现在选中行，并随选中节点切换
+    await clickManageTreeNode('编码');
+    expect(within(dialog).getByRole('button', { name: '删除分类「编码」' }).closest('.ant-tree-treenode')).toHaveTextContent('编码');
+    await clickManageTreeNode('办公');
+    expect(within(dialog).queryByRole('button', { name: '删除分类「编码」' })).not.toBeInTheDocument();
+    const deleteButton = within(dialog).getByRole('button', { name: '删除分类「办公」' });
+    expect(deleteButton.closest('.ant-tree-treenode')).toHaveTextContent('办公');
+    await userEvent.click(deleteButton);
+    // Popconfirm 浮层挂在 body 门户下，不在弹窗 DOM 里
+    expect(screen.getByText('确定删除分类「办公」？')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^删\s*除$/ }));
+
+    await waitFor(() => expect(deletedIds).toEqual([3]));
+    expect(successSpy).toHaveBeenCalledWith('分类已删除');
+    await waitFor(() => expect(within(dialog).queryByText('办公')).not.toBeInTheDocument());
+    successSpy.mockRestore();
+  });
+
+  it('changes and clears category directly in the list without editing the skill', async () => {
+    const store = categoryFixtureStore();
+    const calls: unknown[] = [];
+    server.use(...store.handlers, http.put('/api/skills/:id/category', async ({ request }) => {
+      const body = await request.json() as { categoryId: number | null };
+      calls.push(body);
+      store.skills[0].categoryId = body.categoryId;
+      store.skills[0].categoryPath = body.categoryId == null ? null : '办公';
+      return ok(null);
+    }));
+    renderCategoryPage('READ_WRITE');
+    await screen.findByText('Vue 指南');
+    const row = screen.getByText('Vue 指南').closest('tr')!;
+    await userEvent.click(within(row).getByRole('button', { name: '修改Vue 指南的分类' }));
+    const parentTitle = await screen.findByText('编码', { selector: '.ant-select-tree-title' });
+    const parentNode = parentTitle.closest('.ant-select-tree-treenode')!;
+    expect(parentNode).toHaveClass('ant-select-tree-treenode-switcher-open');
+    expect(screen.getByText('前端', { selector: '.ant-select-tree-title' })).toBeInTheDocument();
+    await userEvent.click(parentNode.querySelector('.ant-select-tree-switcher')!);
+    await waitFor(() => expect(parentNode).toHaveClass('ant-select-tree-treenode-switcher-close'));
+    expect(calls).toEqual([]);
+    await userEvent.click(parentNode.querySelector('.ant-select-tree-switcher')!);
+    await waitFor(() => expect(parentNode).toHaveClass('ant-select-tree-treenode-switcher-open'));
+    await userEvent.click(await screen.findByText('办公', { selector: '.ant-select-tree-title' }));
+    await waitFor(() => expect(calls).toEqual([{ categoryId: 3 }]));
+    await waitFor(() => expect(within(row).getByRole('button', { name: '修改Vue 指南的分类' })).toHaveTextContent('办公'));
+    await userEvent.click(within(row).getByRole('button', { name: '修改Vue 指南的分类' }));
+    expect(screen.queryByText('未分类', { selector: '.ant-select-tree-title' })).not.toBeInTheDocument();
+    await userEvent.click(row.querySelector('.ant-select-clear')!);
+    await waitFor(() => expect(calls).toEqual([{ categoryId: 3 }, { categoryId: null }]));
+    await waitFor(() => expect(within(row).getByRole('button', { name: '修改Vue 指南的分类' })).toHaveTextContent('—'));
+    await userEvent.click(within(row).getByRole('button', { name: '修改Vue 指南的分类' }));
+    expect(within(row).getByText('选择分类')).toBeInTheDocument();
+    expect(screen.queryByText('未分类', { selector: '.ant-select-tree-title' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('preserves the original category when inline saving fails', async () => {
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+    server.use(...categoryFixtureStore().handlers, http.put('/api/skills/:id/category', () => fail('分类不存在')));
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    const row = screen.getByText('Vue 指南').closest('tr')!;
+    await userEvent.click(within(row).getByRole('button', { name: '修改Vue 指南的分类' }));
+    await userEvent.click(await screen.findByText('办公', { selector: '.ant-select-tree-title' }));
+    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('分类不存在'));
+    expect(within(row).getByRole('button', { name: '修改Vue 指南的分类' })).toHaveTextContent('编码 → 前端');
+    errorSpy.mockRestore();
+  });
+
+  it('tags a new skill through the dedicated endpoint after creation', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const createBodies: Array<Record<string, unknown>> = [];
+    const tagCalls: Array<{ id: number; body: Record<string, unknown> }> = [];
+    server.use(
+      ...categoryFixtureStore().handlers,
+      http.post('/api/skills', async ({ request }) => {
+        createBodies.push(await request.json() as Record<string, unknown>);
+        return ok({ id: 201, name: '新技能', type: 'SKILL', installSpec: 'built-in', description: '', version: 1, gmtCreate: '2026-09-16T10:00:00Z' });
+      }),
+      http.put('/api/skills/:id/category', async ({ params, request }) => {
+        tagCalls.push({ id: Number(params.id), body: await request.json() as Record<string, unknown> });
+        return ok(null);
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /新增能力/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.type(within(dialog).getByPlaceholderText('如: code-review-mcp'), '新技能');
+    await userEvent.type(within(dialog).getByPlaceholderText('如: npx @anthropic/mcp-server-github'), 'npm i new-skill');
+    // 分类标签选择已有分类（表单里第二个下拉，第一个是类型）
+    const selectors = dialog.querySelectorAll('.ant-select-selector');
+    await pickSelectOption(selectors[selectors.length - 1] as HTMLElement, '编码 → 前端');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => expect(tagCalls).toEqual([{ id: 201, body: { categoryId: 2 } }]));
+    expect(createBodies).toHaveLength(1);
+    expect(successSpy).toHaveBeenCalledWith('创建成功');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    successSpy.mockRestore();
+  });
+
+  it('skips the tagging call when a new skill stays uncategorized', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const tagCalls: Array<{ id: number; body: Record<string, unknown> }> = [];
+    server.use(
+      ...categoryFixtureStore().handlers,
+      http.post('/api/skills', () => ok({ id: 201, name: '新技能', type: 'SKILL', installSpec: 'built-in', description: '', version: 1, gmtCreate: '2026-09-16T10:00:00Z' })),
+      http.put('/api/skills/:id/category', async ({ params, request }) => {
+        tagCalls.push({ id: Number(params.id), body: await request.json() as Record<string, unknown> });
+        return ok(null);
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /新增能力/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    // 分类保持默认的「未分类」：新建无需再发取消打标请求
+    await userEvent.type(within(dialog).getByPlaceholderText('如: code-review-mcp'), '新技能');
+    await userEvent.type(within(dialog).getByPlaceholderText('如: npx @anthropic/mcp-server-github'), 'npm i new-skill');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => expect(successSpy).toHaveBeenCalledWith('创建成功'));
+    expect(tagCalls).toHaveLength(0);
+    successSpy.mockRestore();
+  });
+
+  it('retags an existing skill from the edit form without touching the update payload', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const updateBodies: Array<{ id: number; body: Record<string, unknown> }> = [];
+    const tagCalls: Array<{ id: number; body: Record<string, unknown> }> = [];
+    server.use(
+      ...categoryFixtureStore().handlers,
+      http.put('/api/skills/:id', async ({ params, request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        updateBodies.push({ id: Number(params.id), body });
+        return ok({ ...CATEGORIZED_SKILL, name: body.name as string });
+      }),
+      http.put('/api/skills/:id/category', async ({ params, request }) => {
+        tagCalls.push({ id: Number(params.id), body: await request.json() as Record<string, unknown> });
+        return ok(null);
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(within(screen.getByText('Vue 指南').closest('tr') as HTMLElement)
+      .getByRole('button', { name: /编辑/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    // 编辑表单按当前分类预填（技能表单里第二个下拉是分类标签）
+    await waitFor(() => {
+      const selections = dialog.querySelectorAll('.ant-select-selection-item');
+      expect(selections[selections.length - 1]?.textContent).toBe('编码 → 前端');
+    });
+
+    const nameInput = within(dialog).getByPlaceholderText('如: code-review-mcp') as HTMLInputElement;
+    await userEvent.clear(nameInput);
+    await userEvent.type(nameInput, 'Vue 指南 v2');
+    const selectors = dialog.querySelectorAll('.ant-select-selector');
+    await pickSelectOption(selectors[selectors.length - 1] as HTMLElement, '办公');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+
+    // 能力内容走更新接口且不带分类字段；分类只走专用打标接口
+    await waitFor(() => expect(updateBodies).toHaveLength(1));
+    expect(updateBodies[0].id).toBe(101);
+    expect(updateBodies[0].body).not.toHaveProperty('categoryId');
+    await waitFor(() => expect(tagCalls).toEqual([{ id: 101, body: { categoryId: 3 } }]));
+    expect(successSpy).toHaveBeenCalledWith('已保存');
+    successSpy.mockRestore();
+  });
+
+  it('keeps the saved skill but warns when the tagging call fails', async () => {
+    const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    server.use(
+      ...categoryFixtureStore().handlers,
+      http.post('/api/skills', () => ok({ id: 201, name: '新技能', type: 'SKILL', installSpec: 'built-in', description: '', version: 1, gmtCreate: '2026-09-16T10:00:00Z' })),
+      http.put('/api/skills/:id/category', () => fail('分类不存在')),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(screen.getByRole('button', { name: /新增能力/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    await userEvent.type(within(dialog).getByPlaceholderText('如: code-review-mcp'), '新技能');
+    await userEvent.type(within(dialog).getByPlaceholderText('如: npx @anthropic/mcp-server-github'), 'npm i new-skill');
+    const selectors = dialog.querySelectorAll('.ant-select-selector');
+    await pickSelectOption(selectors[selectors.length - 1] as HTMLElement, '编码 → 前端');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+
+    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('能力已保存，但分类设置失败：分类不存在'));
+    // 打标失败不回滚能力保存
+    expect(successSpy).toHaveBeenCalledWith('创建成功');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    errorSpy.mockRestore();
+    successSpy.mockRestore();
+  });
+
+  it('applies batch tagging to the selected rows', async () => {
+    const successSpy = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    const batchBodies: Array<Record<string, unknown>> = [];
+    server.use(
+      ...categoryFixtureStore().handlers,
+      http.post('/api/skills/category/batch', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        batchBodies.push(body);
+        return ok((body.skillIds as number[]).map((skillId) => ({ skillId, success: true })));
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(rowCheckboxes()[0]);
+    await userEvent.click(rowCheckboxes()[1]);
+    expect(await screen.findByText('已选 2 项')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /批量设置分类/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('将为已选的 2 项能力设置分类');
+    await pickSelectOption(dialog.querySelector('.ant-select-selector') as HTMLElement, '编码 → 前端');
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => expect(batchBodies).toEqual([{ skillIds: [101, 102], categoryId: 2 }]));
+    expect(successSpy).toHaveBeenCalledWith('已为 2 项能力设置分类');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // 应用后清空选择
+    expect(screen.queryByText('已选 2 项')).not.toBeInTheDocument();
+    expect((rowCheckboxes()[0] as HTMLInputElement).checked).toBe(false);
+    successSpy.mockRestore();
+  });
+
+  it('reports partial failures from batch tagging', async () => {
+    const warningSpy = vi.spyOn(message, 'warning').mockImplementation(() => undefined as never);
+    const batchBodies: Array<Record<string, unknown>> = [];
+    const results: BatchSkillCategoryResult[] = [
+      { skillId: 101, success: true },
+      { skillId: 102, success: false, message: '能力不存在' },
+    ];
+    server.use(
+      ...categoryFixtureStore().handlers,
+      http.post('/api/skills/category/batch', async ({ request }) => {
+        batchBodies.push(await request.json() as Record<string, unknown>);
+        return ok(results);
+      }),
+    );
+
+    renderCategoryPage();
+    await screen.findByText('Vue 指南');
+    await userEvent.click(rowCheckboxes()[0]);
+    await userEvent.click(rowCheckboxes()[1]);
+    await userEvent.click(screen.getByRole('button', { name: /批量设置分类/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    // 目标分类保持「未分类」：批量取消打标要显式提交 null
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => expect(batchBodies).toEqual([{ skillIds: [101, 102], categoryId: null }]));
+    await waitFor(() => expect(warningSpy).toHaveBeenCalledWith('成功 1 项、失败 1 项：#102 能力不存在'));
+    warningSpy.mockRestore();
+  });
+});
+
+describe('SkillListPage package upload', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it.each([
+    ['ZIP', false], ['文件夹', false], ['ZIP', true], ['文件夹', true],
+  ] as const)('supports %s for package upload (editing=%s)', async (source, editing) => {
+    const api = await import('./api');
+    server.use(...packageHandlers());
+    const inspect = vi.spyOn(api, 'inspectSkillPackage').mockResolvedValue({
+      name: 'uploaded-skill', description: 'Uploaded description', fileName: 'uploaded-skill.zip', packageSize: 100,
+    });
+    const create = vi.spyOn(api, 'createSkillFromPackage').mockResolvedValue(PACKAGE_SKILL);
+    const update = vi.spyOn(api, 'updateSkillPackage').mockResolvedValue(PACKAGE_SKILL);
+    renderPage();
+    await screen.findByText(PACKAGE_SKILL.name);
+    await userEvent.click(screen.getByRole('button', { name: editing ? /编辑/ : /新增能力/ }));
+    const dialog = await screen.findByRole('dialog');
+    if (!editing) await userEvent.click(within(dialog).getByText('上传文件夹 / ZIP'));
+    const file = new File([source === 'ZIP' ? 'archive bytes' : '---\nname: uploaded-skill\ndescription: Uploaded description\n---\n'],
+      source === 'ZIP' ? 'uploaded-skill.zip' : 'SKILL.md', { type: source === 'ZIP' ? 'application/zip' : 'text/plain' });
+    if (source === '文件夹') Object.defineProperty(file, 'webkitRelativePath', { value: 'uploaded-skill/SKILL.md' });
+    await userEvent.upload(within(dialog).getByLabelText(`选择能力${source === 'ZIP' ? ' ZIP' : '文件夹'}`), file);
+    await waitFor(() => expect(within(dialog).getByLabelText('名称')).toHaveValue('uploaded-skill'));
+    expect(inspect).toHaveBeenCalledOnce();
+    expect(inspect.mock.calls[0][0].name).toBe('uploaded-skill.zip');
+    expect(inspect.mock.calls[0][0].size).toBeGreaterThan(0);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(editing ? update : create).toHaveBeenCalledOnce());
+    const metadata = { type: 'SKILL', name: 'uploaded-skill', description: 'Uploaded description', providers: undefined };
+    if (editing) expect(update).toHaveBeenCalledWith(PACKAGE_SKILL.id, inspect.mock.calls[0][0], metadata);
+    else expect(create).toHaveBeenCalledWith(inspect.mock.calls[0][0], metadata);
+  });
+
+  it('clears the previous ZIP when replacement inspection fails', async () => {
+    const api = await import('./api');
+    server.use(...packageHandlers());
+    vi.spyOn(api, 'inspectSkillPackage')
+      .mockResolvedValueOnce({ name: 'valid', description: 'Valid', fileName: 'valid.zip', packageSize: 1 })
+      .mockRejectedValueOnce(new Error('Invalid archive'));
+    const update = vi.spyOn(api, 'updateSkillPackage').mockResolvedValue(PACKAGE_SKILL);
+    const error = vi.spyOn(message, 'error').mockImplementation(() => (() => undefined) as ReturnType<typeof message.error>);
+    renderPage();
+    await screen.findByText(PACKAGE_SKILL.name);
+    await userEvent.click(screen.getByRole('button', { name: /编辑/ }));
+    const dialog = await screen.findByRole('dialog');
+    const input = within(dialog).getByLabelText('选择能力 ZIP');
+    await userEvent.upload(input, new File(['valid'], 'valid.zip', { type: 'application/zip' }));
+    await waitFor(() => expect(within(dialog).getByLabelText('名称')).toHaveValue('valid'));
+    await userEvent.upload(input, new File(['bad'], 'bad.zip', { type: 'application/zip' }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith('Invalid archive'));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+    expect(update).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith('请先选择并完成解析文件夹或 ZIP');
   });
 });

@@ -13,6 +13,7 @@ public class SquadDO {
     private String description;
     private Long ownerId;
     private Integer status;
+    private Boolean debugLogEnabled;
     private Date gmtCreate;
     private Date gmtModified;
     private Long creatorId;

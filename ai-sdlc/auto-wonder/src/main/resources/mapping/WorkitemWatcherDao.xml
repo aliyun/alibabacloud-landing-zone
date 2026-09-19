@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workitem.WorkitemWatcherDao">
+    <insert id="insertIgnore" parameterType="com.aliyun.autowonder.workitem.WorkitemWatcherDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workitem_watcher (tenant_id, workitem_id, user_id)
+        VALUES (#{tenantId}, #{workitemId}, #{userId})
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
+
+    <delete id="delete">
+        DELETE FROM workitem_watcher
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND user_id = #{userId}
+    </delete>
+
+    <select id="listByWorkitem" resultType="com.aliyun.autowonder.workitem.WorkitemWatcherDO">
+        SELECT * FROM workitem_watcher
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY gmt_create ASC, id ASC
+    </select>
+
+    <select id="find" resultType="com.aliyun.autowonder.workitem.WorkitemWatcherDO">
+        SELECT * FROM workitem_watcher
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND user_id = #{userId}
+        LIMIT 1
+    </select>
+
+    <select id="listByUser" resultType="com.aliyun.autowonder.workitem.WorkitemWatcherDO">
+        SELECT * FROM workitem_watcher
+        WHERE tenant_id = #{tenantId} AND user_id = #{userId}
+        ORDER BY gmt_create DESC, id DESC
+    </select>
+</mapper>

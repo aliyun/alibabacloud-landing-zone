@@ -12,10 +12,7 @@ class UpgradePolicyTest(unittest.TestCase):
         runbook = (SKILL_ROOT / "references" / "upgrade-runbook.md").read_text(
             encoding="utf-8"
         )
-        deploy_skill = (
-            SKILL_ROOT.parent / "deploying-autowonder-on-alibaba-cloud" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-        policy = " ".join(f"{skill}\n{runbook}\n{deploy_skill}".split()).lower()
+        policy = " ".join(f"{skill}\n{runbook}".split()).lower()
 
         for term in [
             "upgrade-info/index.json",
@@ -75,7 +72,7 @@ class UpgradePolicyTest(unittest.TestCase):
         )
         self.assertIn("upgrade-backup|rollback-upgrade", wrapper)
 
-    def test_startup_contract_covers_platform_dependencies_and_wrong_account_reauth(self):
+    def test_startup_contract_separates_credentials_from_missing_targets(self):
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         runbook = (SKILL_ROOT / "references" / "upgrade-runbook.md").read_text(
             encoding="utf-8"
@@ -88,10 +85,10 @@ class UpgradePolicyTest(unittest.TestCase):
             "alibaba cloud cli",
             "sts getcalleridentity",
             "--mode oauth",
-            "no manifest-owned autowonder deployment",
-            "equivalent natural-language confirmation",
-            "do not require an exact confirmation phrase",
-            "overwrite the previous cli login",
+            "missing targets does not establish an expired login",
+            "only a confirmed missing profile/session or recognized credential failure triggers oauth",
+            "do not trigger login for transient api/network failures or unknown errors",
+            "do not replay mutations",
         ]:
             self.assertIn(term, policy)
 
@@ -103,8 +100,11 @@ class UpgradePolicyTest(unittest.TestCase):
         policy = " ".join(f"{skill}\n{runbook}".split()).lower()
 
         for term in [
-            "git pull --ff-only",
-            "origin/master",
+            "fetch `origin/master`",
+            "isolated clean detached worktree",
+            "worktree at the exact fetched commit",
+            "preserve a dirty, ahead, or divergent local branch unchanged",
+            "never merge, rebase, reset, or build it",
             "never ask the user for a target git ref",
             "commit equality is the only version-availability check",
             "do not block because of git ancestry",
@@ -124,27 +124,17 @@ class UpgradePolicyTest(unittest.TestCase):
         ]:
             self.assertIn(term, policy)
 
-    def test_shared_bootstrap_installs_every_declared_windows_and_macos_tool(self):
-        deploy_root = SKILL_ROOT.parent / "deploying-autowonder-on-alibaba-cloud"
-        posix = (deploy_root / "scripts" / "bootstrap-control-host.sh").read_text(
-            encoding="utf-8"
-        )
-        windows = (
-            deploy_root / "scripts" / "windows" / "bootstrap-control-host.ps1"
-        ).read_text(encoding="utf-8")
-
-        for term in [
-            "install_macos_dependency aliyun aliyun-cli",
-            "install_macos_dependency python3 python@3.13",
-            "install_macos_dependency gtar gnu-tar",
-        ]:
-            self.assertIn(term, posix)
-        for term in [
-            "'Alibaba.AlibabaCloudCLI'",
-            "'Python.Python.3.13'",
-            "'GnuWin32.Tar'",
-        ]:
-            self.assertIn(term, windows)
+    def test_shared_bootstrap_uses_private_runtime_instead_of_global_installers(self):
+        runtime_root = SKILL_ROOT
+        posix = (runtime_root / 'scripts/bootstrap-control-host.sh').read_text()
+        windows = (runtime_root / 'scripts/windows/bootstrap-control-host.ps1').read_text()
+        self.assertIn('autowonder_runtime_environment', posix)
+        self.assertIn('runtime-bootstrap.ps1', windows)
+        self.assertIn('tool_runtime.py', windows)
+        for source in (posix, windows):
+            self.assertNotIn('brew install', source)
+            self.assertNotIn('winget install', source)
+            self.assertNotIn('ossutil-v1.', source)
 
     def test_upgrade_plan_is_the_only_mutation_authority(self):
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")

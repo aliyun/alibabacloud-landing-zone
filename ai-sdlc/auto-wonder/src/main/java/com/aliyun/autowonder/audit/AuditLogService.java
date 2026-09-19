@@ -62,7 +62,7 @@ public class AuditLogService {
         int offset = (p - 1) * sz;
         List<AuditLogVO> result = new ArrayList<>();
         for (AuditLogDO log : auditLogDao.search(tenantId, query.getModule(), query.getAction(),
-                query.getActorId(), query.getTargetType(), query.getTargetId(),
+                query.getActorType(), query.getActorId(), query.getTargetType(), query.getTargetId(),
                 query.getStartTime(), query.getEndTime(), query.getKeyword(), offset, sz)) {
             result.add(toVO(log));
         }
@@ -71,7 +71,7 @@ public class AuditLogService {
 
     public int count(AuditLogQuery query, long tenantId) {
         return auditLogDao.countSearch(tenantId, query.getModule(), query.getAction(),
-                query.getActorId(), query.getTargetType(), query.getTargetId(),
+                query.getActorType(), query.getActorId(), query.getTargetType(), query.getTargetId(),
                 query.getStartTime(), query.getEndTime(), query.getKeyword());
     }
 

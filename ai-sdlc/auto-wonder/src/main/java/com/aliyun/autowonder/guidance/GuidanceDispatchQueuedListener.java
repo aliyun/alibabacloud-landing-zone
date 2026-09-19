@@ -14,6 +14,8 @@ public class GuidanceDispatchQueuedListener {
         this.dispatchService = dispatchService;
     }
 
+    // Do not reuse the just-committed transaction's connection for recovery state writes.
+    @org.springframework.scheduling.annotation.Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onQueued(GuidanceDispatchQueuedEvent event) {
         dispatchService.runPending(event.dispatchId());

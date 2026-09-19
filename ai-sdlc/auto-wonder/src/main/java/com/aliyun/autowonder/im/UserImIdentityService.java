@@ -46,9 +46,10 @@ public class UserImIdentityService {
     public List<UserImIdentityVO> list(long userId) {
         try {
             List<UserImIdentityVO> result = new ArrayList<>();
-            for (UserImIdentityDO identity : identityDao.listByUserId(userId)) {
-                result.add(toVO(identity, channelConfigService.isReady(identity.getProvider())));
-            }
+            String provider = channelConfigService.selectedProvider();
+            UserImIdentityDO identity = identityDao.find(userId, provider);
+            boolean ready = channelConfigService.isReady(provider);
+            result.add(identity == null ? emptyVO(provider, ready) : toVO(identity, ready));
             return result;
         } catch (AlreadyLoggedException e) {
             throw e;
@@ -70,6 +71,7 @@ public class UserImIdentityService {
     public UserImIdentityVO update(long userId, String provider, String externalUserId) {
         String normalizedProvider = ImProviderType.normalize(provider);
         try {
+            channelConfigService.requireSelected(normalizedProvider);
             String normalizedExternalId = trimToNull(externalUserId);
             if (normalizedExternalId != null && normalizedExternalId.length() > 256) {
                 throw new BizException(ErrorCode.PARAM_INVALID,
@@ -160,6 +162,7 @@ public class UserImIdentityService {
 
     public void sendTest(long userId, String provider) {
         String normalizedProvider = ImProviderType.normalize(provider);
+        channelConfigService.requireSelected(normalizedProvider);
         String recipientFingerprint = "none";
         log.info("IM notification test requested provider={} userId={} recipientFingerprint={}",
                 normalizedProvider, userId, recipientFingerprint);

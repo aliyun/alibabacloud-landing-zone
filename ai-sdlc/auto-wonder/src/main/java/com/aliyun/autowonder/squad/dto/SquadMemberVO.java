@@ -9,6 +9,8 @@ import java.util.List;
 public class SquadMemberVO {
     private Long agentId;
     private String agentName;
+    /** STANDARD=普通数字员工 / PLATFORM=平台数字人 */
+    private String agentKind;
     private String roleCode;
     private String roleName;
     private String responsibilities;

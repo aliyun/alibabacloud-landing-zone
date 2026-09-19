@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.repo;
 
 import com.aliyun.autowonder.agent.AgentRepoPermDao;
+import com.aliyun.autowonder.agent.AgentRepoRefDO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 
@@ -186,10 +187,65 @@ class RepoServiceTest {
         repo.setTenantId(1L);
         repo.setVersion(0);
         when(repoDao.findById(1L)).thenReturn(repo);
-        when(agentRepoPermDao.countByRepoId(1L, 1L)).thenReturn(2);
+        when(agentRepoPermDao.listActiveRefsByRepoId(1L, 1L))
+                .thenReturn(List.of(activeRef(40013L, "AW全栈开发", 90001L, 3, "ONLINE")));
 
         BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
         assertEquals(ErrorCode.REPO_DELETE_IN_USE.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("AW全栈开发(#40013) 在线版本 v3"),
+                "错误信息必须指明有效引用来源，实际为: " + ex.getMessage());
+        verify(repoDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void deleteInUseByEditingDraftNamesDraftAsSource() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setVersion(0);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(agentRepoPermDao.listActiveRefsByRepoId(1L, 1L))
+                .thenReturn(List.of(activeRef(40013L, "AW全栈开发", 90002L, 4, "EDITING")));
+
+        BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
+        assertEquals(ErrorCode.REPO_DELETE_IN_USE.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("编辑草稿 v4"), ex.getMessage());
+        verify(repoDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void deleteInUseListsEveryReferencingAgent() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setVersion(0);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(agentRepoPermDao.listActiveRefsByRepoId(1L, 1L)).thenReturn(List.of(
+                activeRef(40013L, "AW全栈开发", 90001L, 3, "ONLINE"),
+                activeRef(40014L, "AW测试工程师", 90003L, 1, "EDITING")));
+
+        BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
+        assertTrue(ex.getMessage().contains("AW全栈开发(#40013) 在线版本 v3"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("AW测试工程师(#40014) 编辑草稿 v1"), ex.getMessage());
+        verify(repoDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void deleteInUseToleratesMissingAgentNameAndVersionNo() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setVersion(0);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(agentRepoPermDao.listActiveRefsByRepoId(1L, 1L)).thenReturn(List.of(
+                activeRef(40013L, "  ", 90001L, null, "ONLINE"),
+                activeRef(40014L, null, 90003L, 2, "EDITING")));
+
+        BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
+        assertEquals(ErrorCode.REPO_DELETE_IN_USE.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("数字员工(#40013) 在线版本"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("数字员工(#40014) 编辑草稿 v2"), ex.getMessage());
+        assertFalse(ex.getMessage().contains("在线版本 v"), ex.getMessage());
     }
 
     @Test
@@ -199,7 +255,7 @@ class RepoServiceTest {
         repo.setTenantId(1L);
         repo.setVersion(0);
         when(repoDao.findById(1L)).thenReturn(repo);
-        when(agentRepoPermDao.countByRepoId(1L, 1L)).thenReturn(0);
+        when(agentRepoPermDao.listActiveRefsByRepoId(1L, 1L)).thenReturn(List.of());
         when(repoDao.softDelete(1L, 1L, 0, 2L)).thenReturn(1);
 
         service.delete(1L, 1L, 2L);
@@ -207,6 +263,17 @@ class RepoServiceTest {
         verify(repoDao).softDelete(1L, 1L, 0, 2L);
         verify(conclusionDao).deleteByRepoId(1L, 1L);
         verify(relationDao).deleteByRepoId(1L, 1L);
+    }
+
+    private AgentRepoRefDO activeRef(long agentId, String agentName, long agentVersionId,
+                                     Integer versionNo, String refType) {
+        AgentRepoRefDO ref = new AgentRepoRefDO();
+        ref.setAgentId(agentId);
+        ref.setAgentName(agentName);
+        ref.setAgentVersionId(agentVersionId);
+        ref.setVersionNo(versionNo);
+        ref.setRefType(refType);
+        return ref;
     }
 
     @Test

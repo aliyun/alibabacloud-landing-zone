@@ -97,7 +97,7 @@ export function AboutAutoWonderPage() {
 
       <section className="about-aw-hero">
         <div className="about-aw-hero-copy">
-          <div className="about-aw-eyebrow">AutoWonder · Autonomous SDLC Agent Platform</div>
+          <div className="about-aw-eyebrow">AutoWonder · AI Native SDLC Platform</div>
           <h1>
             把工单交给一支
             <br />

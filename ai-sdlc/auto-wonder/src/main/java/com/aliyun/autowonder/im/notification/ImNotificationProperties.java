@@ -18,6 +18,9 @@ public class ImNotificationProperties {
     private long recoveryDelayMs = 1000L;
     private int sendConcurrency = 4;
     private String consumer = "autowonder-im-notification-worker";
+    private String dlqStreamKey = "autowonder:im-notification:dlq";
+    private long dlqMaxLength = 10000L;
+    private long maxBackoffMs = 30000L;
 
     public String getStreamKey() {
         return streamKey;
@@ -113,6 +116,30 @@ public class ImNotificationProperties {
 
     public void setConsumer(String consumer) {
         this.consumer = hasText(consumer) ? consumer : "autowonder-im-notification-worker";
+    }
+
+    public String getDlqStreamKey() {
+        return dlqStreamKey;
+    }
+
+    public void setDlqStreamKey(String dlqStreamKey) {
+        this.dlqStreamKey = hasText(dlqStreamKey) ? dlqStreamKey : "autowonder:im-notification:dlq";
+    }
+
+    public long getDlqMaxLength() {
+        return dlqMaxLength;
+    }
+
+    public void setDlqMaxLength(long dlqMaxLength) {
+        this.dlqMaxLength = dlqMaxLength > 0 ? dlqMaxLength : 10000L;
+    }
+
+    public long getMaxBackoffMs() {
+        return maxBackoffMs;
+    }
+
+    public void setMaxBackoffMs(long maxBackoffMs) {
+        this.maxBackoffMs = maxBackoffMs > 0 ? maxBackoffMs : 30000L;
     }
 
     private static boolean hasText(String value) {

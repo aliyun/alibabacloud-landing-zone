@@ -141,7 +141,7 @@
 dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspaceId` 时沿用该工作空间，传入其他工作空间的
 `workspaceId` 返回 `NO_PERMISSION`。
 
-客户端 MCP endpoint 来自部署属性 `autowonder.public-base-url`，工作空间管理员不能修改该地址；执行器启动命令的 WebSocket 地址也从同一部署地址派生。
+客户端 MCP endpoint 优先使用平台品牌配置中保存的「部署域名」（`PUT /api/platform/branding` 的 `domain`），未配置时回退到部署属性 `autowonder.public-base-url`，保存域名后无需重启即时生效；工作空间管理员不能修改该地址。执行器启动命令的 WebSocket 地址也从同一地址派生。
 
 ### 平台品牌配置
 
@@ -159,7 +159,7 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
   "primaryColor": "#f97316", "domain": "https://auto-wonder.example.com" }
 ```
 
-`mcpBaseUrl` 是只读部署信息，不属于品牌更新请求，不能通过工作空间 API 修改。
+`mcpBaseUrl` 由品牌配置的 `domain` 与部署属性 `autowonder.public-base-url` 动态派生（配置了域名则用域名，未配置时回退部署地址），不是品牌更新请求的字段，不能通过品牌更新接口直接改写；保存或清空 `domain` 后该值即时变化。
 
 ---
 
@@ -266,8 +266,9 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 
 ### PUT /api/squads/{id}
 ```json
-{ "name": "string", "description": "string", "ownerId": 1 }
+{ "name": "string", "description": "string", "ownerId": 1, "debugLogEnabled": true }
 ```
+> `debugLogEnabled` 可选;缺省/null 时保留库中现值(COALESCE)。开启后该小队数字人每轮 dispatch 收集全量 debug 日志,下一轮生效(开关在派发打包时冻结到 dispatch 行,中途变更不影响已创建的 dispatch)。GET /api/squads 与 GET /api/squads/{id} 的 SquadVO 同步返回 `debugLogEnabled` 布尔字段。
 
 ### POST /api/squads/{id}/members
 ```json
@@ -618,8 +619,19 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 | 方法 | 路径 | 认证方式 | 说明 |
 |------|------|----------|------|
 | POST | `/api/daemon/dispatches/{dispatchId}/artifacts` | Daemon/dispatch 凭据 | 执行器上传制品 |
+| POST | `/api/daemon/dispatches/{dispatchId}/debug-log-upload` | Daemon/dispatch 凭据 | debug 日志直传签发(返回 objectKey + presignPut uploadUrl,TTL 20min) |
 
 参数: `token` (query), `idempotencyKey` (query, 可选), `filesMetadata` (query, JSON array), `files` (multipart)
+
+debug-log-upload 请求体: `{ "sizeBytes": 123, "sha256": "<64hex>", "truncated": false, "dispatchStatus": "SUCCEEDED|FAILED|TIMEOUT|CANCELED" }`;响应: `{ "objectKey", "uploadUrl", "expiresAt", "alreadyUploaded" }`(已 UPLOADED 时 uploadUrl/expiresAt 为 null、alreadyUploaded=true,幂等);错误(校验次序固定 404→403→409→422→400): 400 请求体非法(dispatchStatus 不在枚举/sizeBytes 为负/sha256 非裸 64 位 hex)、403 token/归属不符、404 dispatch 不存在、409 未到终态、422 未开启 debug、503 签发失败(DB/OSS 异常)。直传不可达时中转兜底复用上行的 artifacts 通道,文件路径 `debug/{roleCode}-{dispatchId}.log.gz`,服务端识别 `debug/` 前缀 → DEBUG_LOG 类型并重排为与直传一致的 canonical objectKey。
+
+### Debug 日志查询
+
+| 方法 | 路径 | 访问要求 | 说明 |
+|------|------|----------|------|
+| GET | `/api/debug-logs` | READ_ONLY | 按执行主体/数字人/时间查询 debug 日志登记(UPLOADED 行含 presignGet 下载 URL,TTL 10min) |
+
+参数: `sourceType` (WORKITEM|SCHEDULED_TASK_RUN,必填), `sourceId` (必填), `agentId` (可选), `since` (epoch ms,可选), `page` (默认 1), `size` (默认 50,上限 200)。响应 data 为 `DebugLogVO[]`: `{ id, sourceType, sourceId, dispatchId, agentId, runNo, dispatchStatus, objectKey, sizeBytes, sha256, truncated, uploadChannel, status, errorMessage, gmtCreate, downloadUrl }`(downloadUrl 仅 UPLOADED 行非空)。
 
 ---
 
@@ -830,6 +842,60 @@ Trial decision 返回中包含：
 查询参数：`sourceSystem`、`externalWorkitemId`、`status`、`page`、`size`。`status` 可为 `CREATED`、`UPDATED`、`DUPLICATE`、`FAILED`。
 
 返回记录包含来源系统、外部工单 ID、本地工单 ID、请求 ID、导入状态、失败原因、原始链接和导入时间。状态回写、处理结果回传和 webhook 可在现有 integration outbox/provider 机制上继续扩展。
+
+---
+
+## 25. Aone 部署分支自动退出 (Aone Deploy)
+
+分支被合并删除后，Aone CD 流水线里的变更不会自动退出，下一次「出版本」会以 `CODE_PLATFORM_BRANCH_NOT_FOUND` 失败并阻塞后续阶段。本组接口用于查看配置和手动触发一轮「已删除分支自动退出」巡检；定时巡检由 `autowonder.aone-deploy.fixed-delay-ms` 驱动，用 Redis 锁保证多节点只跑一份。
+
+| 方法 | 路径 | 访问要求 | 说明 |
+|------|------|------|------|
+| GET | `/api/aone-deploy/config` | ADMIN | 查看生效配置（凭证打码） |
+| POST | `/api/aone-deploy/stale-branch-quit/run` | ADMIN | 手动跑一轮巡检 |
+
+功能默认关闭（`enabled=false`）且默认试运行（`dry-run=true`）。全部端点、路径与凭证来自 `autowonder.aone-deploy.*` 配置，代码里不含任何环境地址或密钥。
+
+### GET /api/aone-deploy/config
+
+返回 `ready`（必填项是否齐全）、`missingRequirements`（缺项清单，如 `base-url`、`access-secret|credential-ref`、`quit-path`）、`clientKey`（打码）、`credentialConfigured`（服务密钥是否已配置，只回显布尔值），以及归一化后的 `pipelineIds`、`protectedCrIds`、`protectedBranches`、`retryDelaysMs`、`quitBatchSize`、`probeTimeoutSeconds`、`lockTtlMs` 等运行时旋钮。任何情况下都不回显服务密钥明文。
+
+### POST /api/aone-deploy/stale-branch-quit/run
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| dryRun | boolean | 否 | 覆盖配置里的试运行开关；不传则沿用 `autowonder.aone-deploy.dry-run` |
+
+成功返回：
+
+```json
+{
+  "executed": true,
+  "dryRun": false,
+  "repoUrl": "git@example.invalid:group/auto-wonder.git",
+  "branchSnapshotAvailable": true,
+  "scannedPipelines": 2,
+  "scannedChanges": 41,
+  "staleCount": 2,
+  "plannedCount": 0,
+  "quitCount": 2,
+  "failedCount": 0,
+  "protectedCount": 0,
+  "keptCount": 38,
+  "unknownCount": 1,
+  "items": [
+    { "pipelineId": 422, "crId": 35937385, "status": "INTG", "branch": "feat/xxx",
+      "branchState": "MISSING", "decision": "QUIT", "reason": "远端分支已删除", "success": true }
+  ],
+  "errors": []
+}
+```
+
+`branchState` 取值 `EXISTS`（远端还在）、`MISSING`（确认已删除，唯一会被退出的状态）、`UNKNOWN`（变更没有分支信息，绝不猜测）。`decision` 取值 `QUIT`、`PLANNED`（试运行命中）、`KEEP`、`PROTECTED`（命中保护变更或保护分支名单）、`SKIPPED`、`QUIT_FAILED`。
+
+未执行时 `executed=false`，`skipReason` 为 `DISABLED` 或 `NOT_CONFIGURED`（后者附 `missingRequirements`）。远端分支快照不可用时本轮直接中止：`branchSnapshotAvailable=false`、`quitCount=0`，不会误退任何变更。
+
+每轮巡检都会写一条审计日志：module `INTEGRATION`、action `AONE_STALE_BRANCH_AUTO_QUIT`、targetType `aone_pipeline`，eventType 为 `QUIT`、`DRY_RUN` 或 `ABORTED`，detail 内含各项计数与实际退出的 `quitCrIds`。
 
 ---
 

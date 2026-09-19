@@ -1,6 +1,8 @@
 import { apiClient } from '@/shared/api/client';
+import { csvParam } from '@/shared/api/csvParam';
 
 export type AgentStatus = 'DRAFT' | 'PENDING_REVIEW' | 'ONLINE' | 'OFFLINE';
+export type AgentKind = 'STANDARD' | 'PLATFORM';
 export type EvolutionMode = 'MANUAL' | 'ASSISTED' | 'AUTO_PROPOSAL';
 
 export interface Agent {
@@ -8,6 +10,7 @@ export interface Agent {
   name: string;
   avatarUrl: string | null;
   status: AgentStatus;
+  kind?: AgentKind | null;
   onlineVersionId: number | null;
   editingVersionId: number | null;
   latestVersionNo: number | null;
@@ -17,11 +20,19 @@ export interface Agent {
   roleCode?: string | null;
   businessBackground?: string | null;
   responsibilities?: string | null;
+  sdlcId?: number | null;
+  evolutionMode?: EvolutionMode | null;
+  /** True when an unpublished draft version exists alongside the currently displayed values. */
+  hasDraft?: boolean;
+  draftVersionNo?: number | null;
   executorOnlineCount?: number;
   executorTotalCount?: number;
   skillCount?: number;
   memoryCount?: number;
   repoPermCount?: number;
+  environmentVariables?: AgentEnvironmentVariableRef[];
+  squadIds?: number[] | null;
+  squadNames?: string[] | null;
 }
 
 export interface AgentVersionSummary {
@@ -52,6 +63,7 @@ export interface AgentVersion {
   repoPerms?: RepoPermItem[];
   skills?: SkillItem[];
   memoryRefs?: MemoryRefItem[];
+  environmentVariables?: AgentEnvironmentVariableRef[];
 }
 
 export interface UpdateConfigRequest {
@@ -61,6 +73,12 @@ export interface UpdateConfigRequest {
   responsibilities?: string;
   sdlcId?: number | null;
   evolutionMode?: EvolutionMode;
+}
+
+/** Agent-row fields. Name and avatar are not versioned, so they bypass the draft/review flow. */
+export interface UpdateAgentRequest {
+  name?: string;
+  avatarUrl?: string | null;
 }
 
 export interface CreateAgentRequest {
@@ -76,6 +94,7 @@ export interface RepoPermItem {
   repoId: number;
   repoName?: string;
   permLevel: string;
+  allowedBranchPatterns?: string[];
 }
 
 export interface SkillItem {
@@ -88,8 +107,23 @@ export interface MemoryRefItem {
   source: string;
 }
 
-export async function listAgents(params: { page: number; size: number; status?: string }): Promise<Agent[]> {
-  const resp = await apiClient.get<Agent[]>('/api/agents', { params });
+export interface AgentEnvironmentVariableRef {
+  id: number;
+  name: string;
+  description: string | null;
+  value: '**';
+}
+
+export async function listAgents(params: {
+  page: number;
+  size: number;
+  status?: string;
+  kind?: AgentKind;
+  squadIds?: number[];
+}): Promise<Agent[]> {
+  const resp = await apiClient.get<Agent[]>('/api/agents', {
+    params: { ...params, squadIds: csvParam(params.squadIds) },
+  });
   return resp.data;
 }
 
@@ -100,6 +134,11 @@ export async function getAgent(id: number): Promise<Agent> {
 
 export async function createAgent(params: CreateAgentRequest): Promise<Agent> {
   const resp = await apiClient.post<Agent>('/api/agents', params);
+  return resp.data;
+}
+
+export async function updateAgent(id: number, payload: UpdateAgentRequest): Promise<Agent> {
+  const resp = await apiClient.patch<Agent>(`/api/agents/${id}`, payload);
   return resp.data;
 }
 
@@ -153,8 +192,8 @@ export async function deleteAgent(agentId: number): Promise<void> {
 }
 
 // --- Repo permissions ---
-export async function addRepoPerm(agentId: number, repoId: number, permLevel: string): Promise<void> {
-  await apiClient.post(`/api/agents/${agentId}/repos`, { repoId, permLevel });
+export async function addRepoPerm(agentId: number, repoId: number, permLevel: string, allowedBranchPatterns?: string[]): Promise<void> {
+  await apiClient.post(`/api/agents/${agentId}/repos`, { repoId, permLevel, allowedBranchPatterns });
 }
 
 export async function removeRepoPerm(agentId: number, repoId: number): Promise<void> {
@@ -182,6 +221,21 @@ export async function removeMemoryRef(agentId: number, memoryId: number): Promis
 export async function listAgentMemories(agentId: number): Promise<MemoryRefItem[]> {
   const resp = await apiClient.get<MemoryRefItem[]>(`/api/agents/${agentId}/memories`);
   return resp.data;
+}
+
+// --- Environment variable refs ---
+export async function addEnvironmentVariableRef(
+  agentId: number,
+  environmentVariableId: number,
+): Promise<void> {
+  await apiClient.post(`/api/agents/${agentId}/environment-variables/${environmentVariableId}`);
+}
+
+export async function removeEnvironmentVariableRef(
+  agentId: number,
+  environmentVariableId: number,
+): Promise<void> {
+  await apiClient.delete(`/api/agents/${agentId}/environment-variables/${environmentVariableId}`);
 }
 
 // --- Review list (pending agents) ---

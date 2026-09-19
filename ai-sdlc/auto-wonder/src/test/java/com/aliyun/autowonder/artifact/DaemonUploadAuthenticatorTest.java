@@ -27,6 +27,13 @@ class DaemonUploadAuthenticatorTest {
     }
 
     @Test
+    void canceledExecutorMayNotWriteBusinessArtifacts() {
+        var d = new DispatchDO(); d.setId(10L); d.setStatus("CANCELED");
+        when(dispatchDao.findById(10L)).thenReturn(d);
+        assertTrue(authenticator.isMutationFenced(10L));
+    }
+
+    @Test
     void successWhenTokenValid() {
         DispatchDO d = new DispatchDO();
         d.setId(1L);
@@ -86,5 +93,44 @@ class DaemonUploadAuthenticatorTest {
 
         DaemonUploadAuthenticator.AuthResult r = authenticator.authenticate(1L, "tok");
         assertFalse(r.isSuccess());
+    }
+
+    @Test
+    void detailedAuthSeparatesMissingDispatchFromBadToken() {
+        when(dispatchDao.findById(999L)).thenReturn(null);
+        assertEquals(DaemonUploadAuthenticator.DetailedAuthStatus.DISPATCH_NOT_FOUND,
+                authenticator.authenticateDetailed(999L, "tok").status());
+        assertNull(authenticator.authenticateDetailed(999L, "tok").dispatch());
+
+        DispatchDO d = new DispatchDO();
+        d.setId(1L);
+        d.setExecutorId(900L);
+        d.setTenantId(100L);
+        when(dispatchDao.findById(1L)).thenReturn(d);
+        ExecutorDO e = new ExecutorDO();
+        e.setId(900L);
+        e.setTokenRef("ref_abc");
+        when(executorDao.findById(900L)).thenReturn(e);
+        when(tokenService.validate("ref_abc", "wrong")).thenReturn(false);
+        assertEquals(DaemonUploadAuthenticator.DetailedAuthStatus.TOKEN_INVALID,
+                authenticator.authenticateDetailed(1L, "wrong").status());
+
+        when(tokenService.validate("ref_abc", "tok123")).thenReturn(true);
+        DaemonUploadAuthenticator.DetailedAuthResult ok =
+                authenticator.authenticateDetailed(1L, "tok123");
+        assertEquals(DaemonUploadAuthenticator.DetailedAuthStatus.OK, ok.status());
+        assertSame(d, ok.dispatch());
+    }
+
+    @Test
+    void detailedAuthTreatsUnassignedExecutorAsTokenInvalid() {
+        DispatchDO d = new DispatchDO();
+        d.setId(2L);
+        d.setExecutorId(null);
+        when(dispatchDao.findById(2L)).thenReturn(d);
+
+        assertEquals(DaemonUploadAuthenticator.DetailedAuthStatus.TOKEN_INVALID,
+                authenticator.authenticateDetailed(2L, "tok").status());
+        verifyNoInteractions(tokenService);
     }
 }

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
+import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingUpsertRequest;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingView;
@@ -14,12 +15,24 @@ class DingTalkBindingControllerTest {
     private final DingTalkBindingService svc = mock(DingTalkBindingService.class);
     private final DingTalkStreamClientManager streamClientManager =
             mock(DingTalkStreamClientManager.class);
+    private final PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
+    private final com.aliyun.autowonder.im.PlatformImChannelConfigService imConfigs =
+            mock(com.aliyun.autowonder.im.PlatformImChannelConfigService.class);
     private final DingTalkBindingController ctrl =
-            new DingTalkBindingController(svc, streamClientManager, "https://autowonder.example");
+            new DingTalkBindingController(svc, streamClientManager, brandingService, imConfigs);
 
     @AfterEach
     void tearDown() {
         AutoWonderContext.destroy();
+    }
+
+    @Test
+    void rejectsDingTalkWritesWhenPlatformSelectsFeishu() {
+        doThrow(new com.aliyun.autowonder.common.error.BizException(
+                com.aliyun.autowonder.common.error.ErrorCode.PARAM_INVALID)).when(imConfigs).requireSelected("DINGTALK");
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> ctrl.create(new BindingUpsertRequest()));
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> ctrl.update(1L, new BindingUpsertRequest()));
+        verifyNoInteractions(svc, streamClientManager);
     }
 
     @Test
@@ -40,14 +53,30 @@ class DingTalkBindingControllerTest {
             view.setStreamStatusUpdatedAt(1784810000000L);
             return null;
         }).when(svc).applyStreamStatus(eq(row), any(BindingView.class));
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://wonder.example.com");
 
         BindingView v = ctrl.toView(row);
 
         assertEquals("****", v.getAppSecretMasked());
-        assertTrue(v.getCallbackUrl().contains("tok123"));
+        assertEquals("https://wonder.example.com/api/integrations/dingtalk/callback?token=tok123",
+                v.getCallbackUrl());
         assertEquals("ONLINE", v.getStreamEnv());
         assertEquals("CONNECTED", v.getStreamStatus());
         assertEquals(1784810000000L, v.getStreamStatusUpdatedAt());
+    }
+
+    @Test
+    void callbackUrlFollowsTheBrandingDomainWithoutRestart() {
+        DingtalkRobotBindingDO row = binding(7L, "HTTP_CALLBACK", "ENABLED");
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://wonder.example.com");
+
+        assertEquals("https://wonder.example.com/api/integrations/dingtalk/callback?token=tok",
+                ctrl.toView(row).getCallbackUrl());
+
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://daily.auto-wonder.example.com");
+
+        assertEquals("https://daily.auto-wonder.example.com/api/integrations/dingtalk/callback?token=tok",
+                ctrl.toView(row).getCallbackUrl());
     }
 
     @Test

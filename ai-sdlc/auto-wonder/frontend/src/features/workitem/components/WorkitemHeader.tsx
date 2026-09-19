@@ -3,6 +3,7 @@ import { Typography, Tag, Space } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { ScheduledExecutionBadge } from './ScheduledExecutionBadge';
 import { WorkitemCreditsBadge } from './WorkitemCreditsBadge';
+import { ShareWorkitemButton } from './ShareWorkitemButton';
 import type { WorkitemUsageSummary } from '@/shared/types/workitem';
 
 const { Title } = Typography;
@@ -17,6 +18,8 @@ interface WorkitemHeaderProps {
   title: string;
   statusName: string | null;
   workType: string;
+  /** 传了才渲染右上角分享入口：分享链接要带工单 id */
+  workitemId?: number;
   origin?: { type: string; id: number; scheduledTaskId?: number | null; scheduledTaskName?: string | null } | null;
   scheduledStartAt?: string | null;
   scheduledStartTriggeredAt?: string | null;
@@ -24,19 +27,24 @@ interface WorkitemHeaderProps {
   usage?: WorkitemUsageSummary | null;
 }
 
-export function WorkitemHeader({ title, statusName, workType, origin, scheduledStartAt, scheduledStartTriggeredAt, gmtCreate, usage }: WorkitemHeaderProps) {
+export function WorkitemHeader({ title, statusName, workType, workitemId, origin, scheduledStartAt, scheduledStartTriggeredAt, gmtCreate, usage }: WorkitemHeaderProps) {
   const navigate = useNavigate();
 
   return (
     <div>
-      <div style={{ marginBottom: 12, fontSize: 13, color: '#666', cursor: 'pointer' }}>
-        <span onClick={() => navigate('/workitems')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <ArrowLeftOutlined /> 返回
-        </span>
-        <span style={{ margin: '0 6px' }}>/</span>
-        <span>交付任务</span>
-        <span style={{ margin: '0 6px' }}>/</span>
-        <span style={{ color: '#333' }}>{title}</span>
+      <div style={{ marginBottom: 12, fontSize: 13, color: '#666', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ minWidth: 0, cursor: 'pointer' }}>
+          <span onClick={() => navigate('/workitems')} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <ArrowLeftOutlined /> 返回
+          </span>
+          <span style={{ margin: '0 6px' }}>/</span>
+          <span>交付任务</span>
+          <span style={{ margin: '0 6px' }}>/</span>
+          <span style={{ color: '#333' }}>{title}</span>
+        </div>
+        {workitemId != null ? (
+          <ShareWorkitemButton workitemId={workitemId} title={title} />
+        ) : null}
       </div>
       <Space align="center" size={12} wrap>
         <Title level={4} style={{ margin: 0, lineHeight: 1.32 }}>{title}</Title>

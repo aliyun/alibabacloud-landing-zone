@@ -22,6 +22,8 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.net.URI;
 import java.time.Duration;
@@ -120,6 +122,16 @@ public class S3ObjectStorage implements ObjectStorage {
                 GetObjectPresignRequest.builder()
                         .signatureDuration(Duration.ofSeconds(ttlSeconds))
                         .getObjectRequest(GetObjectRequest.builder().bucket(bk[0]).key(bk[1]).build())
+                        .build());
+        return presigned.url().toString();
+    }
+
+    @Override
+    public String presignPut(String bucket, String key, Duration ttl) {
+        PresignedPutObjectRequest presigned = presigner.presignPutObject(
+                PutObjectPresignRequest.builder()
+                        .signatureDuration(ttl)
+                        .putObjectRequest(PutObjectRequest.builder().bucket(bucket).key(key).build())
                         .build());
         return presigned.url().toString();
     }

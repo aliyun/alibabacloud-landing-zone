@@ -138,7 +138,7 @@ export function PlatformAdminPanel() {
       <Alert
         type="info"
         showIcon
-        message="平台管理员可以管理全局品牌配置、协作通知和工作空间回收站。管理员不可移除自己，且至少保留一名。"
+        message="平台管理员可以管理平台配置、协作通知和所有工作空间（含回收站）。管理员不可移除自己，且至少保留一名。"
       />
 
       <Space.Compact>

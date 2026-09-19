@@ -3,7 +3,6 @@ package com.aliyun.autowonder.workitem;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.guidance.GuidanceService;
-import com.aliyun.autowonder.integration.AoneWorkitemRefreshService;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
 import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
@@ -15,7 +14,6 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class WorkitemControllerTest {
@@ -26,12 +24,11 @@ class WorkitemControllerTest {
     }
 
     @Test
-    void readOnlyAccessSkipsExternalRefreshAndReturnsServiceData() {
+    void readsReturnServiceDataWithoutExternalRefresh() {
         WorkitemService workitemService = mock(WorkitemService.class);
-        AoneWorkitemRefreshService refreshService = mock(AoneWorkitemRefreshService.class);
         GuidanceService guidanceService = mock(GuidanceService.class);
-        WorkitemController controller =
-                new WorkitemController(workitemService, refreshService, guidanceService);
+        WorkitemWatcherService watcherService = mock(WorkitemWatcherService.class);
+        WorkitemController controller = new WorkitemController(workitemService, guidanceService, watcherService);
         setContext(WorkspaceAccessLevel.READ_ONLY);
         WorkitemVO workitem = new WorkitemVO();
         List<CommentVO> comments = List.of(new CommentVO());
@@ -44,28 +41,21 @@ class WorkitemControllerTest {
         assertSame(comments, controller.listComments(2L).getData());
         assertSame(timeline, controller.unifiedTimeline(3L).getData());
 
-        verifyNoInteractions(refreshService);
         verify(guidanceService).attachInteractionStatuses(100L, 3L, timeline);
     }
 
     @Test
-    void readWriteAccessRefreshesAllLinkedWorkitemReads() {
-        WorkitemService workitemService = mock(WorkitemService.class);
-        AoneWorkitemRefreshService refreshService = mock(AoneWorkitemRefreshService.class);
-        GuidanceService guidanceService = mock(GuidanceService.class);
-        WorkitemController controller =
-                new WorkitemController(workitemService, refreshService, guidanceService);
+    void transitionForwardsDragSnapshotToServiceGate() {
+        WorkitemService service = mock(WorkitemService.class);
+        WorkitemController controller = new WorkitemController(service, mock(GuidanceService.class),
+                mock(WorkitemWatcherService.class));
         setContext(WorkspaceAccessLevel.READ_WRITE);
-        when(workitemService.listComments(2L)).thenReturn(List.of());
-        when(workitemService.getUnifiedTimeline(3L)).thenReturn(List.of());
-
-        controller.get(1L);
-        controller.listComments(2L);
-        controller.unifiedTimeline(3L);
-
-        verify(refreshService).refreshIfLinked(1L, 100L, 7L);
-        verify(refreshService).refreshIfLinked(2L, 100L, 7L);
-        verify(refreshService).refreshIfLinked(3L, 100L, 7L);
+        var request = new com.aliyun.autowonder.workitem.dto.TransitionRequest();
+        request.setToNodeId(21L);
+        request.setFromNodeId(20L);
+        request.setExpectedVersion(3);
+        controller.transition(1L, request);
+        verify(service).transition(1L, 21L, 100L, 7L, 20L, 3);
     }
 
     private void setContext(WorkspaceAccessLevel accessLevel) {

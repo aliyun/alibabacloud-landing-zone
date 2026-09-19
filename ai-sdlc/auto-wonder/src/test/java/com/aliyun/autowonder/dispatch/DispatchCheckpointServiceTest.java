@@ -18,6 +18,37 @@ import static org.mockito.Mockito.*;
 class DispatchCheckpointServiceTest {
 
     @Test
+    void recoveryProjectsLegacyCheckpointThroughRetryLineageAndKeepsWireChecksumConsistent() throws Exception {
+        LegacyCheckpointNormalizerTest fixture = new LegacyCheckpointNormalizerTest();
+        DispatchCheckpointDO checkpoint = fixture.source(LegacyCheckpointNormalizerTest.PREFIX);
+        when(fixture.artifacts.listByDispatch(10002L, 13378L)).thenReturn(List.of(fixture.artifact()));
+        DispatchCheckpointDao dao = mock(DispatchCheckpointDao.class);
+        DispatchDao dispatchDao = mock(DispatchDao.class);
+        DispatchCheckpointService service = new DispatchCheckpointService(dao,
+                mock(DispatchRuntimeEventDao.class), dispatchDao, fixture.storage, new OssProperties());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "legacyCheckpointNormalizer",
+                new LegacyCheckpointNormalizer(fixture.artifacts, fixture.storage));
+        long[] lineage = {13407L, 13406L, 13403L, 13378L};
+        for (int i = 0; i < lineage.length - 1; i++) {
+            DispatchDO row = new DispatchDO(); row.setTenantId(10002L); row.setId(lineage[i]);
+            row.setResumeFromDispatchId(lineage[i + 1]);
+            when(dispatchDao.findById(lineage[i])).thenReturn(row);
+        }
+        when(dao.listLatestByDispatch(10002L, 13378L, 2)).thenReturn(List.of(checkpoint));
+        DispatchDO retry = new DispatchDO(); retry.setTenantId(10002L); retry.setWorkitemId(55411L);
+        retry.setResumeMode("RECOVERY"); retry.setResumeFromDispatchId(13407L);
+
+        ResumeDescriptor result = service.descriptor(retry);
+
+        assertEquals(13378L, result.sourceDispatchId());
+        assertNotEquals("sha256:" + checkpoint.getSha256(), result.checkpointSha256());
+        assertEquals(result.checkpointSha256(), result.checkpointCandidates().get(0).getSha256());
+        assertEquals(result.checkpointDownloadUrl(), result.checkpointCandidates().get(0).getDownloadUrl());
+        assertEquals(123L, result.checkpointSeq());
+        assertEquals(checkpoint.getSha256(), LegacyCheckpointNormalizerTest.sha(fixture.storage.get(checkpoint.getOssRef())));
+    }
+
+    @Test
     void freshSideInteractionKeepsItsModeWithoutAResumeSource() {
         DispatchCheckpointService service = new DispatchCheckpointService(
                 mock(DispatchCheckpointDao.class), mock(DispatchRuntimeEventDao.class),
@@ -78,6 +109,7 @@ class DispatchCheckpointServiceTest {
         service.store(dispatch, 3L, "codex", "session", "runtime", "step", new byte[]{1});
 
         verify(storage).delete("artifact-bucket/old-checkpoint");
+        verify(storage).delete("artifact-bucket/old-checkpoint.compat-exact-ref-v1.tar.gz");
         verify(dao).deleteById(100L, 55L, 1L);
     }
 

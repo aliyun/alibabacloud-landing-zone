@@ -10,6 +10,11 @@ export interface Notification {
   gmtCreate: string;
 }
 
+export interface NotificationPage {
+  items: Notification[];
+  total: number;
+}
+
 export interface NotificationPref {
   type: string;
   inApp: boolean;

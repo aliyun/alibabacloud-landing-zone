@@ -1,7 +1,6 @@
 package com.aliyun.autowonder.im.notification;
 
 import com.aliyun.autowonder.branding.PlatformBrandingService;
-import com.aliyun.autowonder.branding.dto.PlatformBrandingVO;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
@@ -11,8 +10,7 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 class ImNotificationMessageContextResolverTest {
 
@@ -35,9 +33,7 @@ class ImNotificationMessageContextResolverTest {
         when(workspaceDao.findById(7L)).thenReturn(workspace);
         when(workitemDao.findById(42L)).thenReturn(workitem);
         when(statusNodeDao.findById(88L)).thenReturn(status);
-        when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
-                "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                "https://wonder.example.com", "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false, false));
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://wonder.example.com");
 
         ImNotificationMessageContext context = resolver.resolve(task());
 
@@ -55,10 +51,7 @@ class ImNotificationMessageContextResolverTest {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         ImNotificationMessageContextResolver resolver =
                 new ImNotificationMessageContextResolver(workspaceDao, workitemDao, statusNodeDao, brandingService);
-        when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
-                "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                null, "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false, false));
-        when(brandingService.trustedPublicBaseUrl()).thenReturn("https://private.example.com");
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://private.example.com");
 
         ImNotificationMessageContext context = resolver.resolve(task());
 
@@ -69,21 +62,22 @@ class ImNotificationMessageContextResolverTest {
     }
 
     @Test
-    void fallsBackToPublicBaseUrlWhenBrandingDomainBlank() {
+    void baseUrlFollowsBrandingChangesWithoutDerivingFromTheBrandingViewObject() {
         WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         StatusNodeDao statusNodeDao = mock(StatusNodeDao.class);
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         ImNotificationMessageContextResolver resolver =
                 new ImNotificationMessageContextResolver(workspaceDao, workitemDao, statusNodeDao, brandingService);
-        when(brandingService.publicConfig()).thenReturn(new PlatformBrandingVO(
-                "WonderHub", "/logo.png", "aliyun-orange", "#f97316",
-                "   ", "https://wonder.example.com/api/mcp", "0.2.130", "x.x.x", false, false));
-        when(brandingService.trustedPublicBaseUrl()).thenReturn("https://private.example.com/");
 
-        ImNotificationMessageContext context = resolver.resolve(task());
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://wonder.example.com");
+        assertEquals("https://wonder.example.com", resolver.resolve(task()).baseUrl());
 
-        assertEquals("https://private.example.com/", context.baseUrl());
+        when(brandingService.effectivePublicBaseUrl()).thenReturn("https://private.example.com");
+        assertEquals("https://private.example.com", resolver.resolve(task()).baseUrl());
+
+        // 域名解析只发生在 PlatformBrandingService：resolver 不再自己读 VO 的 domain 字段推导
+        verify(brandingService, never()).publicConfig();
     }
 
     private static ImNotificationTask task() {

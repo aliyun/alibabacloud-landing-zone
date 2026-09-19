@@ -9,16 +9,26 @@ import { getRuntimeTrace, getRuntimeTraceContext, getRuntimeTraceObservation, ge
 const { Text, Title } = Typography;
 const ACTIVE_STATUSES = new Set(['RUNNING', 'ACKED', 'DISPATCHED', 'PAUSING']);
 const FAILURE_EVENT_TYPES = new Set(['step.failed', 'session.failed']);
+const FIRST_CAUSE_REASON = /^tool_hook_blocked\b/;
 
+/**
+ * Returns the first causal failure of a dispatch. A blocking tool hook is
+ * always the cause of the symptoms recorded after it, so it wins regardless of
+ * position; otherwise the earliest failure event is the one closest to the root
+ * cause.
+ */
 export function dispatchFailureReason(events?: RuntimeTraceEvent[] | null): string | null {
   if (!events) return null;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
+  let earliest: string | null = null;
+  for (const event of events) {
     if (!FAILURE_EVENT_TYPES.has(event.eventType)) continue;
     const reason = event.detail?.reason;
-    if (typeof reason === 'string' && reason.trim()) return reason.trim();
+    if (typeof reason !== 'string' || !reason.trim()) continue;
+    const trimmed = reason.trim();
+    if (FIRST_CAUSE_REASON.test(trimmed)) return trimmed;
+    if (earliest === null) earliest = trimmed;
   }
-  return null;
+  return earliest;
 }
 
 interface RuntimeTraceDrawerProps {
@@ -194,6 +204,7 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
   const [error, setError] = useState<string | null>(null);
   const [contextPreview, setContextPreview] = useState<{ name: string; content: string } | null>(null);
   const lastSeq = useRef<number | null>(null);
+  const detailPane = useRef<HTMLDivElement | null>(null);
   const active = ACTIVE_STATUSES.has(node?.status?.toUpperCase() || '');
   const failureReason = useMemo(
     () => (node?.status?.toUpperCase() === 'FAILED' ? dispatchFailureReason(trace?.events) : null),
@@ -231,6 +242,12 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
     };
   }, [node, processGraph.edges]);
 
+  // The detail pane scrolls on its own, so a new target must start at its own top.
+  useEffect(() => {
+    const pane = detailPane.current;
+    if (pane) pane.scrollTop = 0;
+  }, [selection, contextPreview]);
+
   const select = async (next: Selection) => {
     if (node?.dispatchId == null || trace?.source !== 'OSS' || next.kind === 'session' || next.kind === 'boundary') { setSelection(next); return; }
     setDetailLoading(true);
@@ -256,25 +273,26 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
     setContextPreview({ name: file.name, content: new TextDecoder().decode(bytes) });
   };
 
-  return <Drawer open={node != null} onClose={onClose} width={1100} title={node ? `${node.agentName} · ${node.stepName || '执行 Trace'}` : '执行 Trace'} destroyOnClose>
-    <div data-testid="runtime-trace-drawer">
-      {node && <div style={{ display: 'flex', gap: 12, alignItems: 'center', paddingBottom: 14, borderBottom: '1px solid #eceff3' }}>
+  return <Drawer open={node != null} onClose={onClose} width={1100} title={node ? `${node.agentName} · ${node.stepName || '执行 Trace'}` : '执行 Trace'} destroyOnClose
+    styles={{ body: { display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 } }}>
+    <div data-testid="runtime-trace-drawer" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      {node && <div data-testid="runtime-trace-dispatch-summary" style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0, paddingBottom: 14, borderBottom: '1px solid #eceff3' }}>
         <Text strong>Dispatch #{node.dispatchId}</Text><Tag color={statusColor(node.status)}>{node.status || 'UNKNOWN'}</Tag>
         {continuity.previous != null && <Text type="secondary">恢复自 #{continuity.previous}</Text>}
         {continuity.next != null && <Text type="secondary">继续到 #{continuity.next}</Text>}
         <span style={{ flex: 1 }} />
         {trace && <Text type="secondary">{trace.provider || 'provider'} · {trace.sessions.reduce((sum, item) => sum + item.turns.length, 0)} Turns{usage(trace.tokenUsage)}</Text>}
       </div>}
-      {failureReason && <Alert data-testid="dispatch-failure-reason" style={{ marginTop: 12 }} type="error" showIcon message="Dispatch 失败原因" description={failureReason} />}
-      {error && <Alert closable onClose={() => setError(null)} style={{ marginTop: 12 }} type="error" showIcon message={error} />}
+      {failureReason && <Alert data-testid="dispatch-failure-reason" style={{ marginTop: 12, flexShrink: 0 }} type="error" showIcon message="Dispatch 失败原因" description={failureReason} />}
+      {error && <Alert closable onClose={() => setError(null)} style={{ marginTop: 12, flexShrink: 0 }} type="error" showIcon message={error} />}
       {loading && !trace ? <div style={{ textAlign: 'center', padding: 60 }}><Spin /></div> : trace && (
-        <div style={{ display: 'grid', gridTemplateColumns: '42% 58%', minHeight: 620, marginTop: 14, border: '1px solid #e5e9ef', borderRadius: 10, overflow: 'hidden' }}>
-          <div style={{ padding: 14, overflow: 'auto', borderRight: '1px solid #e5e9ef', background: '#fafbfc' }}>
+        <div data-testid="runtime-trace-panes" style={{ display: 'grid', gridTemplateColumns: '42% 58%', flex: 1, minHeight: 0, marginTop: 14, border: '1px solid #e5e9ef', borderRadius: 10, overflow: 'hidden' }}>
+          <div data-testid="runtime-trace-timeline-pane" style={{ padding: 14, overflow: 'auto', borderRight: '1px solid #e5e9ef', background: '#fafbfc' }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}><Title level={5} style={{ margin: 0, flex: 1 }}>Trace timeline</Title><Tag>{trace.source || 'LIVE'}</Tag></div>
             <TraceTimeline trace={trace} onSelect={(next) => void select(next)} />
             {!trace.sessions.length && <Empty description="Runtime 尚未上报 Session Trace" />}
           </div>
-          <div style={{ padding: 20, overflow: 'auto' }}>
+          <div data-testid="runtime-trace-detail-pane" ref={detailPane} style={{ padding: 20, overflow: 'auto' }}>
             {contextPreview ? <div><Button size="small" onClick={() => setContextPreview(null)}>返回 Turn</Button><Payload title={contextPreview.name} value={contextPreview.content} /></div>
               : <DetailPanel dispatchId={node?.dispatchId || 0} selection={selection} loading={detailLoading} onContext={(file) => void openContext(file)} />}
           </div>

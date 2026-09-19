@@ -195,6 +195,25 @@ public class InteractionWorkflowService {
         }
     }
 
+    public void reconcileReleasedWaiters(long tenantId, long executorId) {
+        for (DispatchDO predecessor : safe(dispatchDao.listReleasedPausePredecessors(executorId, 200))) {
+            if (predecessor.getTenantId() == tenantId) {
+                activateLatestWaitingRework(tenantId, predecessor.getWorkitemId(), predecessor.getId());
+            }
+        }
+    }
+
+    public void reconcileReleasedWaiters() {
+        for (DispatchDO predecessor : safe(dispatchDao.listReleasedPausePredecessors(null, 200))) {
+            activateLatestWaitingRework(predecessor.getTenantId(), predecessor.getWorkitemId(),
+                    predecessor.getId());
+        }
+    }
+
+    private static List<DispatchDO> safe(List<DispatchDO> rows) {
+        return rows == null ? List.of() : rows;
+    }
+
     private void activateLatestWaitingRework(long tenantId, long workitemId, long pausedDispatchId) {
         transactionTemplate.executeWithoutResult(status -> {
             if (lockWorkitemIfPresent(tenantId, workitemId) == null) {

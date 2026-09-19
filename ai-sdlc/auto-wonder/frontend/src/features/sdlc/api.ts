@@ -1,4 +1,5 @@
 import { apiClient } from '@/shared/api/client';
+import { csvParam } from '@/shared/api/csvParam';
 
 export type SdlcId = string | number;
 
@@ -13,6 +14,10 @@ export interface SdlcTemplate {
   version: number;
   gmtCreate: string;
   steps: SdlcStep[];
+  /** Non-deleted step count; the list endpoint returns this instead of steps. */
+  stepCount?: number;
+  squadIds?: number[] | null;
+  squadNames?: string[] | null;
 }
 
 export interface SdlcStep {
@@ -29,8 +34,16 @@ export interface SdlcStep {
   retryBudget: number | null;
 }
 
-export async function listSdlcTemplates(params: { page: number; size: number; workType?: string; status?: string }): Promise<SdlcTemplate[]> {
-  const resp = await apiClient.get<SdlcTemplate[]>('/api/sdlcs', { params });
+export async function listSdlcTemplates(params: {
+  page: number;
+  size: number;
+  workType?: string;
+  status?: string;
+  squadIds?: number[];
+}): Promise<SdlcTemplate[]> {
+  const resp = await apiClient.get<SdlcTemplate[]>('/api/sdlcs', {
+    params: { ...params, squadIds: csvParam(params.squadIds) },
+  });
   return resp.data;
 }
 
@@ -79,7 +92,26 @@ export async function addStep(sdlcId: SdlcId, data: CreateStepParams): Promise<S
   return resp.data;
 }
 
-export async function updateStep(sdlcId: SdlcId, stepId: SdlcId, data: Partial<CreateStepParams>): Promise<SdlcStep> {
+// 更新是 PATCH 语义：未携带的字段后端保留原值，传空串才会清空可空字段。
+// 顺序由 reorderSteps 维护，因此这里不含 stepOrder。
+export interface UpdateStepParams {
+  name?: string;
+  kind?: string;
+  instructionMd?: string;
+  checklistJson?: string;
+  gatePolicyJson?: string;
+  required?: boolean;
+  timeoutSeconds?: number | null;
+  retryBudget?: number | null;
+  code?: string;
+  handlerType?: string;
+  handlerRoleRef?: string;
+  statusOnEnterCode?: string;
+  onSuccess?: string;
+  onFail?: string;
+}
+
+export async function updateStep(sdlcId: SdlcId, stepId: SdlcId, data: UpdateStepParams): Promise<SdlcStep> {
   const resp = await apiClient.put<SdlcStep>(`/api/sdlcs/${sdlcId}/steps/${stepId}`, data);
   return resp.data;
 }

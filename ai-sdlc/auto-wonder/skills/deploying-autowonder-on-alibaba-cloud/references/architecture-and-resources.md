@@ -109,3 +109,5 @@ Major cost drivers are two ECS nodes, public ALB traffic, HA RDS, multi-zone
 Redis, storage/requests in two OSS buckets, SLS ingestion/indexing/retention, and
 remote state resources. Presets express an intention; query live inventory and
 pricing before plan approval. Recommendations are not a live price quote.
+
+Adaptive selection preserves enterprise-class x86 ECS 2 vCPU/4 GiB, MySQL 8 HA 2 vCPU/4 GiB and 100 GiB ESSD, and Redis 7 community standard primary/replica 1 GiB. CPU/memory alone do not prove equivalent performance. SKU and zone names come from live discovery; supported product semantics remain explicit in deployment-policy.json. See operations-runbook.md for placement/quote limitations.

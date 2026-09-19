@@ -47,6 +47,15 @@ class ImNotificationWorkerTest {
     }
 
     @Test
+    void disabledProjectPreferenceAcknowledgesWithoutSending() {
+        Fixture fixture = new Fixture();
+        when(fixture.preferenceService.isDisabled(7L, 9L, "WORKITEM_ASSIGNED", "DINGTALK")).thenReturn(true);
+        fixture.worker.process(envelope(1L));
+        verify(fixture.queue).ack("1-0");
+        verify(fixture.provider, never()).send(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void successfulDeliverySendsWithLatestIdentityMarksDeliveredAndAcks() {
         Fixture fixture = new Fixture();
         UserImIdentityDO identity = identity("staff-001");
@@ -239,6 +248,8 @@ class ImNotificationWorkerTest {
 
         verify(dropped.provider, never()).send(org.mockito.ArgumentMatchers.any());
         verify(dropped.queue).ack("1-0");
+        verify(dropped.queue).sendToDlq(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.contains("exceeded max attempts"));
     }
 
     @Test
@@ -296,8 +307,16 @@ class ImNotificationWorkerTest {
         assertTrue(rendered.contains("IM notification malformed payload dropped"));
         assertTrue(rendered.contains("messageId=1-0"));
         assertTrue(rendered.contains("reason=malformed payload"));
+        assertTrue(rendered.contains("payloadSummary=len=31 md5="));
         assertFalse(rendered.contains("secret-value"));
         assertFalse(rendered.contains("staff-42"));
+
+        ArgumentCaptor<Map<String, String>> dlqFields = ArgumentCaptor.forClass(Map.class);
+        verify(fixture.redis).xadd(org.mockito.ArgumentMatchers.eq("autowonder:im-notification:dlq"),
+                dlqFields.capture(), org.mockito.ArgumentMatchers.eq(10000L));
+        assertEquals("1-0", dlqFields.getValue().get("messageId"));
+        assertEquals("{secret-value staff-42 not-json", dlqFields.getValue().get("payload"));
+        assertTrue(dlqFields.getValue().get("dropReason").startsWith("malformed payload: "));
     }
 
     @Test
@@ -329,8 +348,90 @@ class ImNotificationWorkerTest {
         assertTrue(rendered.contains("IM notification malformed payload dropped"));
         assertTrue(rendered.contains("messageId=1-0"));
         assertTrue(rendered.contains("reason=malformed payload"));
+        assertTrue(rendered.contains("payloadSummary=len=31 md5="));
         assertFalse(rendered.contains("secret-value"));
         assertFalse(rendered.contains("staff-42"));
+
+        ArgumentCaptor<Map<String, String>> dlqFields = ArgumentCaptor.forClass(Map.class);
+        verify(fixture.redis).xadd(org.mockito.ArgumentMatchers.eq("autowonder:im-notification:dlq"),
+                dlqFields.capture(), org.mockito.ArgumentMatchers.eq(10000L));
+        assertEquals("1-0", dlqFields.getValue().get("messageId"));
+        assertEquals("{secret-value staff-42 not-json", dlqFields.getValue().get("payload"));
+    }
+
+    @Test
+    void dlqWriteFailureStillAcksAndLogsSeparateError() {
+        Fixture fixture = new Fixture();
+        ImNotificationEnvelope invalid = ImNotificationEnvelope.invalid(
+                "1-0", 1L, "malformed payload: JsonParseException", "len=4 md5=x", "{bad");
+        doThrow(new RuntimeException("redis down")).when(fixture.queue)
+                .sendToDlq(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+
+        List<LogEvent> events = captureErrors(() -> fixture.worker.process(invalid));
+
+        verify(fixture.queue).ack("1-0");
+        assertEquals(2, events.size());
+        String dlqFailure = render(events.get(1));
+        assertTrue(dlqFailure.contains("IM notification DLQ write failed"));
+        assertTrue(dlqFailure.contains("messageId=1-0"));
+    }
+
+    @Test
+    void backoffDelayDoublesPerConsecutiveFailureUpToCap() {
+        assertEquals(0L, ImNotificationWorker.backoffDelayMs(0, 1000L, 30000L));
+        assertEquals(1000L, ImNotificationWorker.backoffDelayMs(1, 1000L, 30000L));
+        assertEquals(2000L, ImNotificationWorker.backoffDelayMs(2, 1000L, 30000L));
+        assertEquals(4000L, ImNotificationWorker.backoffDelayMs(3, 1000L, 30000L));
+        assertEquals(8000L, ImNotificationWorker.backoffDelayMs(4, 1000L, 30000L));
+        assertEquals(16000L, ImNotificationWorker.backoffDelayMs(5, 1000L, 30000L));
+        assertEquals(30000L, ImNotificationWorker.backoffDelayMs(6, 1000L, 30000L));
+        assertEquals(30000L, ImNotificationWorker.backoffDelayMs(100, 1000L, 30000L));
+    }
+
+    @Test
+    void pollNewFailureSleepsBackoffAndSuccessResetsToBaseDelay() {
+        Fixture fixture = new Fixture();
+        fixture.properties.setPollDelayMs(40L);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        when(fixture.queue.readNew("autowonder-im-notification-worker", 10)).thenAnswer(invocation -> {
+            int call = calls.incrementAndGet();
+            if (call <= 2 || call == 4) {
+                throw new RuntimeException("redis down");
+            }
+            return List.of();
+        });
+
+        long start = System.nanoTime();
+        fixture.worker.pollNew();
+        fixture.worker.pollNew();
+        long twoFailuresMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertTrue(twoFailuresMs >= 110L,
+                "two consecutive failures should back off 40ms+80ms, got " + twoFailuresMs + "ms");
+
+        fixture.worker.pollNew();
+
+        start = System.nanoTime();
+        fixture.worker.pollNew();
+        long afterResetMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertTrue(afterResetMs >= 35L,
+                "first failure after a success should sleep the base delay");
+        assertTrue(afterResetMs < 80L,
+                "backoff should reset to base delay after success, got " + afterResetMs + "ms");
+    }
+
+    @Test
+    void recoverStaleFailureSleepsBackoff() {
+        Fixture fixture = new Fixture();
+        fixture.properties.setRecoveryDelayMs(30L);
+        when(fixture.queue.claimStale("autowonder-im-notification-worker", 10))
+                .thenThrow(new RuntimeException("redis down"));
+
+        long start = System.nanoTime();
+        fixture.worker.recoverStale();
+        long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertTrue(elapsedMs >= 25L,
+                "first recovery failure should back off the base delay, got " + elapsedMs + "ms");
     }
 
     @Test
@@ -445,6 +546,7 @@ class ImNotificationWorkerTest {
         final ImProvider provider = mock(ImProvider.class);
         final ImNotificationMessageContextResolver contextResolver = mock(ImNotificationMessageContextResolver.class);
         final ImNotificationProperties properties = new ImNotificationProperties();
+        final ImNotificationPreferenceService preferenceService = mock(ImNotificationPreferenceService.class);
         final ImNotificationWorker worker;
 
         Fixture() {
@@ -460,7 +562,7 @@ class ImNotificationWorkerTest {
                     channelConfigService,
                     new ImProviderRegistry(List.of(provider)),
                     properties,
-                    contextResolver);
+                    contextResolver, preferenceService);
         }
     }
 
@@ -472,6 +574,7 @@ class ImNotificationWorkerTest {
         final PlatformImChannelConfigService channelConfigService = mock(PlatformImChannelConfigService.class);
         final ImProvider provider = mock(ImProvider.class);
         final ImNotificationMessageContextResolver contextResolver = mock(ImNotificationMessageContextResolver.class);
+        final ImNotificationPreferenceService preferenceService = mock(ImNotificationPreferenceService.class);
         final ImNotificationWorker worker;
 
         RedisWorkerFixture() {
@@ -487,7 +590,7 @@ class ImNotificationWorkerTest {
                     channelConfigService,
                     new ImProviderRegistry(List.of(provider)),
                     properties,
-                    contextResolver);
+                    contextResolver, preferenceService);
         }
     }
 }

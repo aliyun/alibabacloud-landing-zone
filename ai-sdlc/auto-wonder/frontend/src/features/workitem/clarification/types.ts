@@ -18,6 +18,8 @@ export interface ClarificationConversation {
   turns: ClarificationTurn[];
   /** 仅详情接口填充：刷新页面后据此恢复未解决的问答卡片 */
   pendingElicitations?: ClarificationElicitation[] | null;
+  /** 上次探针缓存的斜杠命令快照（详情接口返回，可能缺省）。 */
+  availableCommands?: AcpSlashCommand[] | null;
 }
 
 export interface ClarificationElicitation {

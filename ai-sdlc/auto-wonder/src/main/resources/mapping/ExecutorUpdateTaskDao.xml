@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.executor.ExecutorUpdateTaskDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.executor.ExecutorUpdateTaskDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO executor_update_task (tenant_id, executor_id, request_id, current_version, target_version,
+            status, attempt_count, max_attempts, next_attempt_at, source, requested_by, creator_id, is_deleted)
+        VALUES (#{tenantId}, #{executorId}, #{requestId}, #{currentVersion}, #{targetVersion},
+            #{status}, #{attemptCount}, #{maxAttempts}, #{nextAttemptAt}, #{source}, #{requestedBy},
+            #{creatorId}, 0)
+    </insert>
+    <select id="findByRequestId" resultType="com.aliyun.autowonder.executor.ExecutorUpdateTaskDO">
+        SELECT * FROM executor_update_task
+        WHERE request_id = #{requestId} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="findActiveByExecutor" resultType="com.aliyun.autowonder.executor.ExecutorUpdateTaskDO">
+        SELECT * FROM executor_update_task
+        WHERE tenant_id = #{tenantId} AND executor_id = #{executorId} AND is_deleted = 0
+          AND status IN ('PENDING', 'DRAINING', 'UPDATING')
+        ORDER BY id DESC LIMIT 1
+    </select>
+    <select id="listLatestByExecutors" resultType="com.aliyun.autowonder.executor.ExecutorUpdateTaskDO">
+        SELECT t.* FROM executor_update_task t
+        JOIN (
+            SELECT MAX(id) AS id FROM executor_update_task
+            WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND executor_id IN
+            <!-- An empty collection would render "IN ()", a syntax error; IN (NULL) matches no row. -->
+            <choose>
+                <when test="executorIds != null and executorIds.size() > 0">
+                    <foreach collection="executorIds" item="eid" open="(" separator="," close=")">#{eid}</foreach>
+                </when>
+                <otherwise>(NULL)</otherwise>
+            </choose>
+            GROUP BY executor_id
+        ) latest ON latest.id = t.id
+    </select>
+    <select id="listDeliverable" resultType="com.aliyun.autowonder.executor.ExecutorUpdateTaskDO">
+        SELECT * FROM executor_update_task
+        WHERE is_deleted = 0 AND status IN ('PENDING', 'DRAINING', 'UPDATING')
+          AND (next_attempt_at IS NULL OR next_attempt_at &lt;= #{now})
+        ORDER BY COALESCE(next_attempt_at, '1970-01-01') ASC, id ASC
+        LIMIT #{limit}
+    </select>
+    <!-- Rides the idx_executor(tenant_id, executor_id, is_deleted) prefix; no extra index needed. -->
+    <select id="countRecentAutoFailures" resultType="int">
+        SELECT COUNT(1) FROM executor_update_task
+        WHERE tenant_id = #{tenantId} AND executor_id = #{executorId} AND is_deleted = 0
+          AND source = 'AUTO' AND status = 'FAILED'
+          AND completed_at IS NOT NULL AND completed_at &gt;= #{since}
+    </select>
+    <update id="updateStatus">
+        UPDATE executor_update_task SET status = #{to},
+            completed_at = CASE WHEN #{to} IN ('SUCCESS', 'FAILED') THEN CURRENT_TIMESTAMP(3) ELSE NULL END
+        WHERE id = #{id} AND is_deleted = 0
+        <if test="from != null and from.size() > 0">
+            AND status IN
+            <foreach collection="from" item="s" open="(" separator="," close=")">#{s}</foreach>
+        </if>
+    </update>
+    <update id="markDelivered">
+        UPDATE executor_update_task SET delivered_at = #{deliveredAt}, next_attempt_at = #{nextAttemptAt}
+        WHERE id = #{id} AND is_deleted = 0 AND status IN ('PENDING', 'DRAINING', 'UPDATING')
+    </update>
+    <update id="postpone">
+        UPDATE executor_update_task SET next_attempt_at = #{nextAttemptAt}
+        WHERE id = #{id} AND is_deleted = 0 AND status IN ('PENDING', 'DRAINING', 'UPDATING')
+    </update>
+    <update id="recordFailure">
+        UPDATE executor_update_task
+        SET status = #{to},
+            attempt_count = attempt_count + 1,
+            last_error = #{lastError},
+            next_attempt_at = #{nextAttemptAt},
+            <!-- Cleared so the sweep re-sends a retry; a set delivered_at means "awaiting client". -->
+            delivered_at = NULL,
+            completed_at = CASE WHEN #{to} = 'FAILED' THEN CURRENT_TIMESTAMP(3) ELSE NULL END
+        WHERE id = #{id} AND is_deleted = 0 AND status IN ('PENDING', 'DRAINING', 'UPDATING')
+    </update>
+</mapper>

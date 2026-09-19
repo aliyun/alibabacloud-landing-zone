@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
@@ -30,8 +31,7 @@ public class WorkitemCliUploadTokenService {
     public static final String PURPOSE = "workitem-requirement-upload";
     public static final String TOKEN_ENV_NAME = "AUTOWONDER_UPLOAD_TOKEN";
     public static final Duration TOKEN_TTL = Duration.ofMinutes(30);
-    public static final List<String> SUPPORTED_EXTENSIONS =
-            List.of(".md", ".markdown", ".txt", ".html", ".pdf", ".png", ".jpg", ".jpeg", ".webp");
+    public static final List<String> SUPPORTED_EXTENSIONS = RequirementDocumentService.SUPPORTED_EXTENSIONS;
     public static final int MAX_FILES = 10;
     public static final long MAX_FILE_SIZE_BYTES = 5L * 1024L * 1024L;
     public static final long MAX_TOTAL_SIZE_BYTES = 20L * 1024L * 1024L;
@@ -76,7 +76,7 @@ public class WorkitemCliUploadTokenService {
         vo.setTokenType("Bearer");
         vo.setExpiresInSeconds(TOKEN_TTL.getSeconds());
         vo.setExpiresAt(Instant.ofEpochSecond(now + TOKEN_TTL.getSeconds()).toString());
-        vo.setServerUrl(brandingService.trustedPublicBaseUrl());
+        vo.setServerUrl(brandingService.effectivePublicBaseUrl());
         vo.setRuntimeVersion(brandingService.recommendedRuntimeVersion());
         vo.setTokenEnvName(TOKEN_ENV_NAME);
         vo.setCommand(posixCommand(token, workitemId));
@@ -110,7 +110,7 @@ public class WorkitemCliUploadTokenService {
     /** One-line command template used in MCP tool descriptions; carries no token. */
     public String commandTemplate() {
         return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
-                + " workitem upload --server-url " + brandingService.trustedPublicBaseUrl()
+                + " workitem upload --server-url " + brandingService.effectivePublicBaseUrl()
                 + " --workitem-id <workitem-id>"
                 + " --file <filepath-1> --file <filepath-2> --file <images-1> --json";
     }
@@ -118,7 +118,7 @@ public class WorkitemCliUploadTokenService {
     /** One-line scheduled-task upload command template used in MCP tool descriptions; carries no token. */
     public String scheduledTaskCommandTemplate() {
         return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
-                + " scheduled-task upload --server-url " + brandingService.trustedPublicBaseUrl()
+                + " scheduled-task upload --server-url " + brandingService.effectivePublicBaseUrl()
                 + " --scheduled-task-id <scheduled-task-id>"
                 + " --file <filepath-1> --file <filepath-2> --file <images-1> --json";
     }
@@ -130,7 +130,7 @@ public class WorkitemCliUploadTokenService {
     private String posixCommand(String token, long workitemId) {
         return "export " + TOKEN_ENV_NAME + "=" + posixQuote(token) + "\n\n"
                 + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem upload \\\n"
-                + "  --server-url " + posixQuote(brandingService.trustedPublicBaseUrl()) + " \\\n"
+                + "  --server-url " + posixQuote(brandingService.effectivePublicBaseUrl()) + " \\\n"
                 + "  --workitem-id " + workitemId + " \\\n"
                 + "  --file <filepath-1> \\\n"
                 + "  --file <filepath-2> \\\n"
@@ -141,7 +141,7 @@ public class WorkitemCliUploadTokenService {
     private String powershellCommand(String token, long workitemId) {
         return "$env:" + TOKEN_ENV_NAME + "=" + powershellQuote(token) + "\n\n"
                 + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem upload `\n"
-                + "  --server-url " + powershellQuote(brandingService.trustedPublicBaseUrl()) + " `\n"
+                + "  --server-url " + powershellQuote(brandingService.effectivePublicBaseUrl()) + " `\n"
                 + "  --workitem-id " + workitemId + " `\n"
                 + "  --file <filepath-1> `\n"
                 + "  --file <filepath-2> `\n"

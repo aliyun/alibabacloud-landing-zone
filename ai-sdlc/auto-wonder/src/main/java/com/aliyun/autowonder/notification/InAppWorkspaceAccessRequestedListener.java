@@ -18,7 +18,6 @@ public class InAppWorkspaceAccessRequestedListener {
     private static final Logger log = LoggerFactory.getLogger(InAppWorkspaceAccessRequestedListener.class);
     private static final String LEVEL_ADMIN = "ADMIN";
     private static final String REF_TYPE = "WORKSPACE_ACCESS_REQUEST";
-    private static final String REVIEW_LINK = "/settings/members?tab=requests";
 
     private final NotifyService notifyService;
     private final WorkspaceMemberDao memberDao;
@@ -81,7 +80,7 @@ public class InAppWorkspaceAccessRequestedListener {
         notifyEvent.setType(REF_TYPE);
         notifyEvent.setTitle("有新的权限申请");
         notifyEvent.setContent(content);
-        notifyEvent.setLink(REVIEW_LINK);
+        notifyEvent.setLink(WorkspaceAccessNotifyText.reviewLink(event.tenantId()));
         notifyEvent.setRefType(REF_TYPE);
         notifyEvent.setRefId(event.requestId());
         notifyEvent.setRecipientIds(List.of(recipientId));

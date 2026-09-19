@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.workspace;
 
+import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -48,23 +49,27 @@ public class AccessRequestService {
     private final AccessRequestDao accessRequestDao;
     private final UserDao userDao;
     private final ApplicationEventPublisher eventPublisher;
+    private final SystemAdminService systemAdminService;
 
     public AccessRequestService(WorkspaceDao workspaceDao,
                                 WorkspaceMemberDao workspaceMemberDao,
                                 AccessRequestDao accessRequestDao,
                                 UserDao userDao,
-                                ApplicationEventPublisher eventPublisher) {
+                                ApplicationEventPublisher eventPublisher,
+                                SystemAdminService systemAdminService) {
         this.workspaceDao = workspaceDao;
         this.workspaceMemberDao = workspaceMemberDao;
         this.accessRequestDao = accessRequestDao;
         this.userDao = userDao;
         this.eventPublisher = eventPublisher;
+        this.systemAdminService = systemAdminService;
     }
 
     public PageResult<WorkspaceListItemVO> listAll(String keyword, int page, int size, long currentUserId) {
         int offset = (page - 1) * size;
         List<WorkspaceDO> workspaces = workspaceDao.listAllPaged(keyword, offset, size);
         long total = workspaceDao.countAll(keyword);
+        boolean systemAdmin = systemAdminService.isSystemAdmin(currentUserId);
 
         // Two bulk lookups instead of per-row queries: the caller's memberships and pending requests.
         Map<Long, String> levelByWorkspaceId = new HashMap<>();
@@ -82,6 +87,7 @@ public class AccessRequestService {
             item.setId(workspace.getId());
             item.setName(workspace.getName());
             item.setDescription(workspace.getDescription());
+            item.setVersion(workspace.getVersion());
 
             String memberLevel = levelByWorkspaceId.get(workspace.getId());
             if (memberLevel != null) {
@@ -95,9 +101,12 @@ public class AccessRequestService {
             }
             // F8: computed here so the list page renders edit/delete without a per-row permission
             // call. Owner is org.owner_id (D8) — there is no OWNER access level to compare against.
+            // A platform admin manages every workspace, including the ones it never joined.
             boolean owner = Objects.equals(workspace.getOwnerId(), currentUserId);
             item.setIsOwner(owner);
-            item.setCanManage(owner || WorkspaceAccessLevel.ADMIN.name().equals(memberLevel));
+            item.setCanManage(owner
+                    || WorkspaceAccessLevel.ADMIN.name().equals(memberLevel)
+                    || systemAdmin);
             items.add(item);
         }
         return new PageResult<>(items, total, page, size);

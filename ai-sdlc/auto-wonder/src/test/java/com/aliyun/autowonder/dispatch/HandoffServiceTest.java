@@ -5,13 +5,18 @@ import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.im.notification.WorkitemHumanAssignedEvent;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.user.UserDO;
+import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -23,6 +28,26 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class HandoffServiceTest {
+
+    private final WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
+    private final WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+    private final UserDao userDao = mock(UserDao.class);
+
+    @BeforeEach
+    void setUpHumanMember() {
+        for (long id : new long[]{77L, 42L, 7L}) {
+            UserDO user = new UserDO();
+            user.setId(id);
+            user.setStatus(0);
+            when(userDao.findById(id)).thenReturn(user);
+            WorkspaceMemberDO member = new WorkspaceMemberDO();
+            member.setTenantId(100L);
+            member.setUserId(id);
+            member.setStatus(0);
+            member.setAccessLevel("READ_ONLY");
+            when(workspaceMemberDao.findByWorkspaceAndUser(100L, id)).thenReturn(member);
+        }
+    }
 
     @AfterEach
     void clearRequestContext() {
@@ -38,7 +63,7 @@ class HandoffServiceTest {
                 .requireWorkitemDispatchBoundary(100L, 500L, 300L);
         HandoffService service = new HandoffService(workitemDao, dispatchService,
                 mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class),
-                mock(WorkspaceDao.class), mock(WorkitemEventDao.class));
+                workspaceDao, workspaceMemberDao, userDao, mock(WorkitemEventDao.class));
 
         HandoffResult result = service.handle(100L, 500L, 300L, "QA", "AGENT");
 
@@ -57,7 +82,7 @@ class HandoffServiceTest {
 
         HandoffService service = new HandoffService(workitemDao, dispatchService,
                 mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class),
-                mock(WorkspaceDao.class), mock(WorkitemEventDao.class));
+                workspaceDao, workspaceMemberDao, userDao, mock(WorkitemEventDao.class));
 
         HandoffResult result = service.handle(100L, 500L, 300L, "AW_CR", "AGENT");
 
@@ -86,27 +111,19 @@ class HandoffServiceTest {
         return dispatch;
     }
 
-    private WorkspaceDO workspace(long id, Long ownerId) {
-        WorkspaceDO o = new WorkspaceDO();
-        o.setId(id);
-        o.setOwnerId(ownerId);
-        return o;
-    }
-
     @Test
     void concreteNumericHumanTargetIsAssignedAndStops() {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
-        when(roleResolver.resolveOnlineAgentId(100L, "77")).thenReturn(null);
+        when(roleResolver.resolveOnlineAgentId(100L, "77")).thenReturn(77L);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 77L, 3, 0L)).thenReturn(1);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(100L, 500L, 300L, "77", "HUMAN");
 
         assertEquals(HandoffResult.Status.HUMAN_ASSIGNED, result.status());
@@ -117,12 +134,33 @@ class HandoffServiceTest {
     }
 
     @Test
+    void humanHandoffRechecksActiveMembershipBeforeAssignment() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+        when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
+        HandoffService svc = new HandoffService(workitemDao, mock(DispatchService.class),
+                mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class), workspaceDao, workspaceMemberDao, userDao, eventDao);
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(100L, 77L);
+        member.setStatus(1);
+        assertEquals(HandoffResult.Status.REJECTED, svc.handle(100L, 500L, 300L, "77", "HUMAN").status());
+        member.setStatus(0);
+        userDao.findById(77L).setStatus(1);
+        assertEquals(HandoffResult.Status.REJECTED, svc.handle(100L, 500L, 300L, "77", "HUMAN").status());
+        userDao.findById(77L).setStatus(0);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 77L)).thenReturn(null);
+        assertEquals(HandoffResult.Status.REJECTED, svc.handle(100L, 500L, 300L, "77", "HUMAN").status());
+        when(userDao.findById(77L)).thenReturn(null);
+        assertEquals(HandoffResult.Status.REJECTED, svc.handle(100L, 500L, 300L, "77", "HUMAN").status());
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
+        verifyNoInteractions(eventDao);
+    }
+
+    @Test
     void agentHandoff_startsTargetOwnSdlcFirstStep_rebindsWorkitem_andSyncsAssignee() {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 10000L)).thenReturn(workitem(500L, 10000L, 4));
@@ -137,7 +175,7 @@ class HandoffServiceTest {
         newDispatch.setId(9001L);
         when(dispatchService.enqueueHandoff(10000L, 500L, 300031L, 10002L, 300L, 0L)).thenReturn(newDispatch);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(10000L, 500L, 300L, "QA", "AGENT");
 
         assertEquals(HandoffResult.Status.AGENT_DISPATCHED, result.status());
@@ -155,7 +193,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         WorkitemDO w = workitem(500L, 100L, 3);
@@ -167,7 +204,7 @@ class HandoffServiceTest {
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 42L, 3, 0L)).thenReturn(1);
 
         HandoffService svc = new HandoffService(workitemDao, dispatchService,
-                roleResolver, sdlcResolver, workspaceDao, eventDao);
+                roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(100L, 500L, 300L, "AW_CR", "AGENT");
 
         assertEquals(HandoffResult.Status.HUMAN_ASSIGNED, result.status());
@@ -184,21 +221,17 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
         when(roleResolver.resolveOnlineAgentId(100L, "reviewer")).thenReturn(null);
-        WorkspaceDO workspace = new WorkspaceDO();
-        workspace.setOwnerId(99L);
-        when(workspaceDao.findById(100L)).thenReturn(workspace);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(100L, 500L, 300L, "reviewer", "AGENT");
 
         assertEquals(HandoffResult.Status.REJECTED, result.status());
         assertEquals("TARGET_UNRESOLVED", result.reasonCode());
-        verify(workspaceDao, never()).findById(anyLong());
+        verifyNoInteractions(workspaceMemberDao, userDao);
         verify(dispatchService, never()).enqueue(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
         verify(workitemDao, never()).updateSdlcAndStep(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
         verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
@@ -210,7 +243,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         WorkitemDO w = workitem(500L, 100L, 3);
@@ -219,7 +251,7 @@ class HandoffServiceTest {
         when(roleResolver.resolveOnlineAgentId(100L, "AW_CR")).thenReturn(null);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 42L, 3, 0L)).thenReturn(1);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(100L, 500L, 300L, "AW_CR", "AGENT");
 
         assertEquals(HandoffResult.Status.HUMAN_ASSIGNED, result.status());
@@ -235,14 +267,13 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
         when(roleResolver.resolveOnlineAgentId(100L, "QA")).thenReturn(12L);
         when(sdlcResolver.resolveSdlcId(100L, 12L)).thenReturn(null);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(100L, 500L, 300L, "QA", "AGENT");
 
         assertEquals(HandoffResult.Status.REJECTED, result.status());
@@ -255,7 +286,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
@@ -265,7 +295,7 @@ class HandoffServiceTest {
         existing.setStatus(DispatchStatus.PENDING);
         when(dispatchService.findHandoffBySource(100L, 300L)).thenReturn(existing);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         HandoffResult result = svc.handle(100L, 500L, 300L, "QA", "AGENT");
 
         assertEquals(HandoffResult.Status.AGENT_DISPATCHED, result.status());
@@ -283,7 +313,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         WorkitemDO w = workitem(500L, 100L, 3);
@@ -292,31 +321,47 @@ class HandoffServiceTest {
         when(roleResolver.resolveOnlineAgentId(eq(100L), anyString())).thenReturn(null);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 42L, 3, 0L)).thenReturn(1);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
-        svc.handle(100L, 500L, 300L, "需求决策人", "HUMAN");
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
+        HandoffResult result = svc.handle(100L, 500L, 300L, "需求决策人", "HUMAN");
 
-        verify(workitemDao).updateAssignee(eq(500L), eq(100L), eq("HUMAN"), eq(42L), eq(3), eq(0L));
+        assertEquals(HandoffResult.Status.HUMAN_ASSIGNED, result.status());
+        verify(workitemDao).updateAssignee(500L, 100L, "HUMAN", 42L, 3, 0L);
         verify(dispatchService, never()).enqueue(anyLong(), anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
     }
 
     @Test
     void unresolvedTo_noOperator_fallsBackToTenantAdmin() {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
-        DispatchService dispatchService = mock(DispatchService.class);
-        AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
-        AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
-
-        when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3)); // no operator
-        when(roleResolver.resolveOnlineAgentId(eq(100L), anyString())).thenReturn(null);
-        when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 7L));
+        when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
+        WorkspaceDO workspace = new WorkspaceDO();
+        workspace.setId(100L);
+        workspace.setOwnerId(7L);
+        when(workspaceDao.findById(100L)).thenReturn(workspace);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 7L, 3, 0L)).thenReturn(1);
+        HandoffService svc = new HandoffService(workitemDao, mock(DispatchService.class),
+                mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class), workspaceDao, workspaceMemberDao, userDao, eventDao);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
-        svc.handle(100L, 500L, 300L, "someone", "HUMAN");
+        HandoffResult result = svc.handle(100L, 500L, 300L, "someone", "HUMAN");
 
-        verify(workitemDao).updateAssignee(eq(500L), eq(100L), eq("HUMAN"), eq(7L), eq(3), eq(0L));
+        assertEquals(HandoffResult.Status.HUMAN_ASSIGNED, result.status());
+        assertEquals(7L, result.targetRef());
+        verify(workitemDao).updateAssignee(500L, 100L, "HUMAN", 7L, 3, 0L);
+    }
+
+    @Test
+    void missingOrInvalidHumanTargetWithoutFallbackIsRejected() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
+        HandoffService svc = new HandoffService(workitemDao, dispatchService,
+                mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class), workspaceDao, workspaceMemberDao, userDao,
+                mock(WorkitemEventDao.class));
+
+        for (String target : new String[]{null, "", "someone", "0", "-1", "AONE:77", "9223372036854775808"}) {
+            assertEquals(HandoffResult.Status.REJECTED, svc.handle(100L, 500L, 300L, target, "HUMAN").status());
+        }
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
     }
 
     @Test
@@ -325,7 +370,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 10000L)).thenReturn(workitem(500L, 10000L, 4));
@@ -340,7 +384,7 @@ class HandoffServiceTest {
         newDispatch.setId(9001L);
         when(dispatchService.enqueueHandoff(10000L, 500L, 300031L, 10002L, 300L, 0L)).thenReturn(newDispatch);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         svc.handle(10000L, 500L, 300L, "QA", "AGENT");
 
         verify(eventDao).insert(argThat(e ->
@@ -358,7 +402,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         DispatchDao dispatchDao = mock(DispatchDao.class);
         AgentDao agentDao = mock(AgentDao.class);
@@ -390,7 +433,7 @@ class HandoffServiceTest {
         when(agentDao.findById(40014L)).thenReturn(agent);
 
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, dispatchDao, agentDao, mock(ApplicationEventPublisher.class));
+                workspaceDao, workspaceMemberDao, userDao, eventDao, dispatchDao, agentDao, mock(ApplicationEventPublisher.class));
         svc.handle(10000L, 500L, 300L, "QA", "AGENT");
 
         verify(eventDao).insert(argThat(e ->
@@ -408,14 +451,13 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
         when(roleResolver.resolveOnlineAgentId(100L, "77")).thenReturn(null);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 77L, 3, 0L)).thenReturn(1);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         svc.handle(100L, 500L, 300L, "77", "HUMAN");
 
         verify(eventDao).insert(argThat(e ->
@@ -434,7 +476,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         DispatchDao dispatchDao = mock(DispatchDao.class);
         AgentDao agentDao = mock(AgentDao.class);
@@ -462,7 +503,7 @@ class HandoffServiceTest {
         }).when(eventDao).insert(any());
 
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, dispatchDao, agentDao, publisher);
+                workspaceDao, workspaceMemberDao, userDao, eventDao, dispatchDao, agentDao, publisher);
         svc.handle(100L, 500L, 300L, "77", "HUMAN");
 
         verify(eventDao).insert(argThat(e -> "ASSIGN".equals(e.getEventType())
@@ -486,7 +527,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
         WorkitemDO w = workitem(500L, 100L, 3);
@@ -499,7 +539,7 @@ class HandoffServiceTest {
         DispatchDao dispatchDao = mock(DispatchDao.class);
         when(dispatchDao.findById(300L)).thenReturn(workitemDispatch(300L, 100L, 500L));
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, dispatchDao, mock(AgentDao.class), publisher);
+                workspaceDao, workspaceMemberDao, userDao, eventDao, dispatchDao, mock(AgentDao.class), publisher);
 
         BizException ex = assertThrows(BizException.class,
                 () -> svc.handle(100L, 500L, 300L, "77", "HUMAN"));
@@ -515,7 +555,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         DispatchDao dispatchDao = mock(DispatchDao.class);
         AgentDao agentDao = mock(AgentDao.class);
@@ -532,7 +571,7 @@ class HandoffServiceTest {
         when(dispatchDao.findById(300L)).thenReturn(workitemDispatch(300L, 100L, 500L));
 
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, dispatchDao, agentDao, publisher);
+                workspaceDao, workspaceMemberDao, userDao, eventDao, dispatchDao, agentDao, publisher);
         svc.handle(100L, 500L, 300L, "77", "HUMAN");
 
         ArgumentCaptor<WorkitemHumanAssignedEvent> published =
@@ -550,7 +589,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
 
@@ -568,7 +606,7 @@ class HandoffServiceTest {
         DispatchDao dispatchDao = mock(DispatchDao.class);
         when(dispatchDao.findById(300L)).thenReturn(workitemDispatch(300L, 10000L, 500L));
         HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver,
-                workspaceDao, eventDao, dispatchDao, mock(AgentDao.class), publisher);
+                workspaceDao, workspaceMemberDao, userDao, eventDao, dispatchDao, mock(AgentDao.class), publisher);
         svc.handle(10000L, 500L, 300L, "QA", "AGENT");
 
         verify(publisher, never()).publishEvent(isA(WorkitemHumanAssignedEvent.class));
@@ -580,7 +618,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         WorkitemDO w = workitem(500L, 10000L, 4);
@@ -598,7 +635,7 @@ class HandoffServiceTest {
         newDispatch.setId(9001L);
         when(dispatchService.enqueueHandoff(10000L, 500L, 300031L, 10002L, 300L, 0L)).thenReturn(newDispatch);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         svc.handle(10000L, 500L, 300L, "QA", "AGENT");
 
         ArgumentCaptor<com.aliyun.autowonder.workitem.WorkitemEventDO> captor =
@@ -617,7 +654,6 @@ class HandoffServiceTest {
         DispatchService dispatchService = mock(DispatchService.class);
         AgentRoleResolver roleResolver = mock(AgentRoleResolver.class);
         AgentSdlcResolver sdlcResolver = mock(AgentSdlcResolver.class);
-        WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
 
         WorkitemDO w = workitem(500L, 100L, 3);
@@ -627,7 +663,7 @@ class HandoffServiceTest {
         when(roleResolver.resolveOnlineAgentId(100L, "77")).thenReturn(null);
         when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 77L, 3, 0L)).thenReturn(1);
 
-        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao);
+        HandoffService svc = new HandoffService(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao);
         svc.handle(100L, 500L, 300L, "77", "HUMAN");
 
         ArgumentCaptor<com.aliyun.autowonder.workitem.WorkitemEventDO> captor =

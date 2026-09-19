@@ -32,6 +32,10 @@ function isMarkdown(name: string): boolean {
   return ['md', 'markdown'].includes(extension(name));
 }
 
+function isHtml(name: string): boolean {
+  return ['html', 'htm'].includes(extension(name));
+}
+
 function isTextLike(name: string): boolean {
   return ['md', 'markdown', 'txt', 'log', 'json', 'jsonl', 'csv'].includes(extension(name));
 }
@@ -47,6 +51,7 @@ export function ArtifactPreviewModal({ open, artifact, onClose }: ArtifactPrevie
     if (!artifact) return 'unsupported';
     if (isImage(artifact.name)) return 'image';
     if (isVideo(artifact.name)) return 'video';
+    if (isHtml(artifact.name)) return 'html';
     if (isTextLike(artifact.name)) return 'text';
     return 'unsupported';
   }, [artifact]);
@@ -80,7 +85,7 @@ export function ArtifactPreviewModal({ open, artifact, onClose }: ArtifactPrevie
       };
     }
 
-    if (previewKind === 'text') {
+    if (previewKind === 'text' || previewKind === 'html') {
       const artifactSize = artifact.size;
       if (artifactSize == null) {
         setError('无法确认产物大小，请下载后查看');
@@ -171,6 +176,15 @@ export function ArtifactPreviewModal({ open, artifact, onClose }: ArtifactPrevie
           controls
           onError={() => setError('视频加载失败')}
           style={{ width: '100%', maxHeight: '70vh', display: 'block', background: '#000' }}
+        />
+      )}
+      {!loading && !error && artifact && previewKind === 'html' && previewUrl && (
+        <iframe
+          data-testid="artifact-html-preview"
+          src={previewUrl}
+          title={artifact.name}
+          sandbox="allow-scripts allow-forms allow-modals"
+          style={{ width: '100%', height: '70vh', border: '1px solid #d9d9d9', background: '#fff' }}
         />
       )}
       {!loading && !error && artifact && previewKind === 'text' && text != null && (

@@ -53,7 +53,7 @@ public class AgentController {
 
     @GetMapping("/{id}")
     public Result<AgentVO> get(@PathVariable("id") Long id) {
-        return Result.ok(agentService.get(id));
+        return Result.ok(agentService.get(id, currentWorkspaceId()));
     }
 
     @DeleteMapping("/{id}")
@@ -73,9 +73,11 @@ public class AgentController {
     @GetMapping
     public Result<List<AgentVO>> list(
             @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "kind", required = false) String kind,
+            @RequestParam(value = "squadIds", required = false) List<Long> squadIds,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(agentService.list(currentWorkspaceId(), status, page, size));
+        return Result.ok(agentService.list(currentWorkspaceId(), status, kind, squadIds, page, size));
     }
 
     @GetMapping("/reviews/count")
@@ -128,7 +130,7 @@ public class AgentController {
 
     @GetMapping("/{id}/versions")
     public Result<List<AgentVersionSummaryVO>> listVersions(@PathVariable("id") Long id) {
-        return Result.ok(agentService.listVersions(id));
+        return Result.ok(agentService.listVersions(id, currentWorkspaceId()));
     }
 
     @GetMapping("/{id}/versions/{versionNo}")
@@ -181,6 +183,22 @@ public class AgentController {
     @GetMapping("/{id}/memories")
     public Result<List<MemoryRefVO>> listMemories(@PathVariable("id") Long id) {
         return Result.ok(agentService.listMemoryRefs(id));
+    }
+
+    @PostMapping("/{id}/environment-variables/{environmentVariableId}")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "挂载智能体环境变量")
+    public Result<Void> addEnvironmentVariableRef(@PathVariable("id") Long id,
+                                                   @PathVariable("environmentVariableId") Long environmentVariableId) {
+        agentService.addEnvironmentVariableRef(id, environmentVariableId, currentWorkspaceId(), currentUserId());
+        return Result.ok(null);
+    }
+
+    @DeleteMapping("/{id}/environment-variables/{environmentVariableId}")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "解绑智能体环境变量")
+    public Result<Void> removeEnvironmentVariableRef(@PathVariable("id") Long id,
+                                                      @PathVariable("environmentVariableId") Long environmentVariableId) {
+        agentService.removeEnvironmentVariableRef(id, environmentVariableId, currentWorkspaceId(), currentUserId());
+        return Result.ok(null);
     }
 
     @GetMapping("/{id}/squads")

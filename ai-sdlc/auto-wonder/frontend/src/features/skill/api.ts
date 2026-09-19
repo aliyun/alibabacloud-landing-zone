@@ -1,5 +1,6 @@
 import { apiClient } from '@/shared/api/client';
 import { useAuthStore } from '@/shared/auth/store';
+import type { PageResult } from '@/shared/types/common';
 
 export interface Skill {
   id: number;
@@ -7,6 +8,8 @@ export interface Skill {
   name: string;
   installSpec: string;
   description: string;
+  categoryId?: number | null;
+  categoryPath?: string | null;
   sourceType?: 'INSTALL_SPEC' | 'OSS_ZIP';
   packageOssRef?: string;
   packageFileName?: string;
@@ -17,6 +20,24 @@ export interface Skill {
   gmtModified?: string;
   modifierId?: number;
   modifierName?: string;
+}
+
+export interface Category {
+  id: number;
+  parentId: number | null;
+  name: string;
+  description: string | null;
+  /** 完整路径（如「编码 → 前端 → Vue」），仅用于展示，打标始终使用稳定 ID。 */
+  path: string;
+  version: number;
+  gmtCreate: string;
+  gmtModified?: string;
+}
+
+export interface BatchSkillCategoryResult {
+  skillId: number;
+  success: boolean;
+  message?: string;
 }
 
 export interface SkillPackageInspectResult {
@@ -106,8 +127,73 @@ export async function listSkills(params: {
   page: number;
   size: number;
   type?: string;
-}): Promise<Skill[]> {
-  const resp = await apiClient.get<Skill[]>('/api/skills', { params });
+  categoryId?: number;
+  includeDescendants?: boolean;
+  uncategorized?: boolean;
+}): Promise<PageResult<Skill>> {
+  const resp = await apiClient.get<PageResult<Skill>>('/api/skills', { params });
+  return resp.data;
+}
+
+// 分组视图需要按完整筛选结果统计每个分类的数量，不能只取当前页；
+// 服务端单页上限 100，这里翻页取全量（上限 5000 条防御异常数据）。
+export async function listAllSkills(type?: string): Promise<Skill[]> {
+  const size = 100;
+  const first = await listSkills({ page: 1, size, type });
+  const all = [...first.list];
+  const maxPage = Math.ceil(first.total / size);
+  for (let page = 2; page <= maxPage; page += 1) {
+    const next = await listSkills({ page, size, type });
+    all.push(...next.list);
+  }
+  return all;
+}
+
+export async function listCategories(): Promise<Category[]> {
+  const resp = await apiClient.get<Category[]>('/api/categories');
+  return resp.data;
+}
+
+export async function getCategory(id: number): Promise<Category> {
+  const resp = await apiClient.get<Category>(`/api/categories/${id}`);
+  return resp.data;
+}
+
+export async function createCategory(data: {
+  name: string;
+  parentId?: number | null;
+  description?: string | null;
+}): Promise<Category> {
+  const resp = await apiClient.post<Category>('/api/categories', data);
+  return resp.data;
+}
+
+export async function updateCategory(id: number, data: {
+  name?: string;
+  parentId?: number | null;
+  description?: string | null;
+}): Promise<Category> {
+  const resp = await apiClient.put<Category>(`/api/categories/${id}`, data);
+  return resp.data;
+}
+
+export async function deleteCategory(id: number): Promise<void> {
+  await apiClient.delete(`/api/categories/${id}`);
+}
+
+// 打标请求必须显式携带 categoryId：null 表示取消打标（后端把缺字段视为参数错误）。
+export async function setSkillCategory(id: number, categoryId: number | null): Promise<void> {
+  await apiClient.put(`/api/skills/${id}/category`, { categoryId });
+}
+
+export async function batchSetSkillCategory(
+  skillIds: number[],
+  categoryId: number | null,
+): Promise<BatchSkillCategoryResult[]> {
+  const resp = await apiClient.post<BatchSkillCategoryResult[]>('/api/skills/category/batch', {
+    skillIds,
+    categoryId,
+  });
   return resp.data;
 }
 

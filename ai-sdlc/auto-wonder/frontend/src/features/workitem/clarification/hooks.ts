@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRealtime } from '@/shared/realtime/useRealtime';
+import { ApiError, ErrorCodes } from '@/shared/types/common';
 import * as api from './api';
 import { buildTimeline, type TimelineNode } from './timeline';
 import type {
@@ -10,11 +11,39 @@ import type {
   ProviderEventPayload,
 } from './types';
 
+/** 临时故障（网络/5xx）的自动重试上限：之后交给显式错误态 + 手动重试，避免请求风暴。 */
+export const CLARIFICATION_QUERY_MAX_RETRY = 2;
+/** 固定短间隔重试：临时抖动通常亚秒级恢复，指数退避在这里只会拖慢首屏错误反馈。 */
+export const CLARIFICATION_QUERY_RETRY_DELAY_MS = 300;
+
+/** 客户端/权限类业务码：重试无意义（401/403/404/归属校验失败），按真实原因直接失败。 */
+const CLARIFICATION_NON_RETRYABLE_CODES = new Set([
+  ErrorCodes.UNAUTHORIZED,
+  ErrorCodes.NO_PERMISSION,
+  ErrorCodes.NOT_FOUND,
+  ErrorCodes.WORKSPACE_NOT_MEMBER,
+  ErrorCodes.WORKSPACE_ACCESS_INSUFFICIENT,
+  ErrorCodes.ORG_NOT_FOUND_OR_NO_PERMISSION,
+  '10001', // PARAM_INVALID：会话不存在或不属于当前工单
+]);
+
+export function isClarificationNonRetryableError(error: unknown): boolean {
+  return error instanceof ApiError && CLARIFICATION_NON_RETRYABLE_CODES.has(error.code);
+}
+
+/** 历史列表/详情的有界重试：客户端错误立即失败，其余最多自动重试 2 次。 */
+export function clarificationQueryRetry(failureCount: number, error: unknown): boolean {
+  if (isClarificationNonRetryableError(error)) return false;
+  return failureCount < CLARIFICATION_QUERY_MAX_RETRY;
+}
+
 export function useClarificationConversations(workitemId: number | string, agentId: number | null) {
   return useQuery({
     queryKey: ['workitem', workitemId, 'clarification-conversations', agentId],
     queryFn: () => api.listClarificationConversations(workitemId, agentId!),
     enabled: !!workitemId && !!agentId,
+    retry: clarificationQueryRetry,
+    retryDelay: () => CLARIFICATION_QUERY_RETRY_DELAY_MS,
   });
 }
 
@@ -26,6 +55,8 @@ export function useClarificationConversation(workitemId: number | string, conver
     // 回复中期间定期轮询兜底：终态实时事件丢失（断连/推送失败）时，
     // 仅靠事件触发的失效会让会话永久停留在 PROCESSING，loading 与输入禁用卡死。
     refetchInterval: (query) => clarificationConversationRefetchInterval(query.state.data),
+    retry: clarificationQueryRetry,
+    retryDelay: () => CLARIFICATION_QUERY_RETRY_DELAY_MS,
   });
 }
 
@@ -98,6 +129,12 @@ export function useClarificationEvents(
 ) {
   const queryClient = useQueryClient();
   const [streamedEvents, setStreamedEvents] = useState<StreamedEvent[]>([]);
+  // 斜杠命令是会话级能力，独立于轮次事件流存放：由实时 acp_commands 事件写入，
+  // 只在切换会话时重置，绝不被每轮 resetStreamedEvents 清空（否则输入可用时 `/`
+  // 早已没有候选）。
+  // null = 执行器尚未上报（此时该用会话详情带回的快照种子）；[] = 上报过且确实
+  // 没有命令（权威结论，不能被种子覆盖）。两者语义不同，不能合并成空数组。
+  const [durableCommands, setDurableCommands] = useState<AcpSlashCommand[] | null>(null);
   const lastEventSeqRef = useRef(0);
   const seenEventsRef = useRef(new Set<string>());
   const invalidationTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -118,6 +155,14 @@ export function useClarificationEvents(
       seenEventsRef.current.add(dedupKey);
 
       lastEventSeqRef.current = payload.eventSeq;
+
+      if (payload.eventType === 'acp_commands') {
+        // 命令是会话级能力，走独立耐久态；绝不进轮次事件流（服务端直推的 turnId:0
+        // 会污染 targetTurnId/streamedText）。去重与 seq 仍按统一口径推进。
+        setDurableCommands(payload.payload?.data?.availableCommands ?? []);
+        return;
+      }
+
       setStreamedEvents((prev) => [
         ...prev,
         {
@@ -149,6 +194,7 @@ export function useClarificationEvents(
 
   useEffect(() => {
     setStreamedEvents([]);
+    setDurableCommands(null);
     lastEventSeqRef.current = 0;
     seenEventsRef.current = new Set();
     return () => {
@@ -201,17 +247,13 @@ export function useClarificationEvents(
 
   const timeline = useMemo(() => buildTimeline(visibleEvents), [visibleEvents]);
 
-  /** 斜杠命令是会话级能力，取全量事件里的末次快照 —— 按轮次过滤会让候选
-   *  在轮次切换后凭空消失。 */
-  const availableCommands = useMemo(() => {
-    let latest: AcpSlashCommand[] = [];
-    for (const ev of streamedEvents) {
-      if (ev.eventType === 'acp_commands') {
-        latest = ev.payload?.data?.availableCommands ?? [];
-      }
-    }
-    return latest;
-  }, [streamedEvents]);
+  /** 斜杠命令是会话级能力：直接暴露耐久态（实时 acp_commands 事件写入、仅切换
+   *  会话时重置），不再从每轮都会被清空的 streamedEvents 派生 —— 否则输入框可用
+   *  时 `/` 候选早已消失。
+   *
+   *  <p>null = 本会话还没收到任何 acp_commands（调用方应退回会话详情的快照种子）；
+   *  [] = 执行器上报过且确实没有命令，属权威结论，不该被种子盖回去。 */
+  const availableCommands: AcpSlashCommand[] | null = durableCommands;
 
   const streamedTurnId = useMemo(() => {
     if (processingTurnId != null) return processingTurnId;

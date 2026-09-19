@@ -4,18 +4,19 @@ import { listWorkitems } from '@/features/workitem/api';
 
 import { useAuthStore } from '@/shared/auth/store';
 
-export function useAgentList(page: number, size: number, status?: string) {
+export function useAgentList(page: number, size: number, status?: string, kind?: api.AgentKind, squadIds?: number[]) {
   return useQuery({
-    queryKey: ['agents', page, size, status],
-    queryFn: () => api.listAgents({ page, size, status }),
+    queryKey: ['agents', page, size, status, kind, squadIds],
+    queryFn: () => api.listAgents({ page, size, status, kind, squadIds }),
   });
 }
 
 export function useAgent(id: number) {
+  const workspaceId = useAuthStore((state) => state.currentWorkspace?.id);
   return useQuery({
-    queryKey: ['agent', id],
+    queryKey: ['agent', id, 'detail', workspaceId],
     queryFn: () => api.getAgent(id),
-    enabled: id > 0,
+    enabled: id > 0 && Boolean(workspaceId),
   });
 }
 
@@ -28,10 +29,11 @@ export function useAgentVersions(agentId: number) {
 }
 
 export function useAgentVersion(agentId: number, versionNo: number) {
+  const workspaceId = useAuthStore((state) => state.currentWorkspace?.id);
   return useQuery({
-    queryKey: ['agent', agentId, 'version', versionNo],
+    queryKey: ['agent', agentId, 'version', versionNo, workspaceId],
     queryFn: () => api.getVersion(agentId, versionNo),
-    enabled: agentId > 0 && versionNo > 0,
+    enabled: agentId > 0 && versionNo > 0 && Boolean(workspaceId),
   });
 }
 
@@ -49,8 +51,24 @@ export function useEditConfig() {
     mutationFn: ({ agentId, config }: { agentId: number; config: api.UpdateConfigRequest }) =>
       api.editConfig(agentId, config),
     onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
       queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] });
       queryClient.invalidateQueries({ queryKey: ['agent', v.agentId, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', v.agentId, 'version'] });
+    },
+  });
+}
+
+export function useUpdateAgent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: api.UpdateAgentRequest }) =>
+      api.updateAgent(id, payload),
+    onSuccess: (_d, v) => {
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', v.id] });
+      queryClient.invalidateQueries({ queryKey: ['agent', v.id, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', v.id, 'version'] });
     },
   });
 }
@@ -140,8 +158,8 @@ export function useDeleteAgent() {
 export function useAddRepoPerm() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ agentId, repoId, permLevel }: { agentId: number; repoId: number; permLevel: string }) =>
-      api.addRepoPerm(agentId, repoId, permLevel),
+    mutationFn: ({ agentId, repoId, permLevel, allowedBranchPatterns }: { agentId: number; repoId: number; permLevel: string; allowedBranchPatterns?: string[] }) =>
+      api.addRepoPerm(agentId, repoId, permLevel, allowedBranchPatterns),
     onSuccess: (_d, v) => queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] }),
   });
 }
@@ -188,6 +206,20 @@ export function useRemoveMemoryRef() {
     mutationFn: ({ agentId, memoryId }: { agentId: number; memoryId: number }) =>
       api.removeMemoryRef(agentId, memoryId),
     onSuccess: (_d, v) => queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] }),
+  });
+}
+
+export function useAddEnvironmentVariableRef() {
+  return useMutation({
+    mutationFn: ({ agentId, environmentVariableId }: { agentId: number; environmentVariableId: number }) =>
+      api.addEnvironmentVariableRef(agentId, environmentVariableId),
+  });
+}
+
+export function useRemoveEnvironmentVariableRef() {
+  return useMutation({
+    mutationFn: ({ agentId, environmentVariableId }: { agentId: number; environmentVariableId: number }) =>
+      api.removeEnvironmentVariableRef(agentId, environmentVariableId),
   });
 }
 

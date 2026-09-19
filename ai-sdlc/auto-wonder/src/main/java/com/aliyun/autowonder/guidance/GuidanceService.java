@@ -534,6 +534,16 @@ public class GuidanceService {
             interaction.setTargetAgentName(target == null ? String.valueOf(guidance.getTargetAgentId()) : target.getName());
             interaction.setStatus(guidance.getStatus());
             interaction.setError(guidance.getError());
+            interaction.setDispatchId(guidance.getDispatchId());
+            DispatchDO execution = guidance.getDispatchId() == null ? null : dispatchDao.findById(guidance.getDispatchId());
+            if (execution != null && Objects.equals(execution.getTenantId(), workspaceId)) {
+                interaction.setExecutionStatus(execution.getStatus());
+                if (Set.of("QUEUED", "DELIVERED").contains(guidance.getStatus())
+                        && Set.of("FAILED", "TIMEOUT", "CANCELED").contains(execution.getStatus())) {
+                    interaction.setStatus("CANCELED".equals(execution.getStatus()) ? "CANCELED" : "FAILED");
+                    interaction.setError(execution.getError());
+                }
+            }
             if (guidance.getReplyCommentId() != null) {
                 TimelineItemVO reply = comments.get(guidance.getReplyCommentId());
                 if (reply != null) {

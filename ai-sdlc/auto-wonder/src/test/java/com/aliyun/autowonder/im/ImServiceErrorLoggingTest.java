@@ -128,7 +128,7 @@ class ImServiceErrorLoggingTest {
         String credential = "kms://never-log-this-reference";
         PlatformImChannelConfigDao dao = mock(PlatformImChannelConfigDao.class);
         SecretCrypto secretCrypto = mock(SecretCrypto.class);
-        when(dao.listActive()).thenThrow(
+        when(dao.selectedProvider()).thenThrow(
                 new IllegalStateException("database failed for " + credential));
         PlatformImChannelConfigService service =
                 new PlatformImChannelConfigService(dao, secretCrypto);
@@ -158,7 +158,8 @@ class ImServiceErrorLoggingTest {
         String externalUserId = "never-log-full-identity";
         UserImIdentityDao dao = mock(UserImIdentityDao.class);
         PlatformImChannelConfigService channelService = mock(PlatformImChannelConfigService.class);
-        when(dao.listByUserId(200L)).thenThrow(
+        when(channelService.selectedProvider()).thenReturn("DINGTALK");
+        when(dao.find(200L, "DINGTALK")).thenThrow(
                 new IllegalStateException("database failed for " + externalUserId));
         UserImIdentityService service = new UserImIdentityService(dao, channelService);
 

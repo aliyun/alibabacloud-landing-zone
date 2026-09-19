@@ -1,0 +1,50 @@
+# name	os	arch	version	https_url	sha256_or_sha512	format	executable
+# Verified 2026-09-18 from publisher metadata (no binary install performed):
+# Python: https://raw.githubusercontent.com/astral-sh/uv/main/crates/uv-python/download-metadata.json
+# Terraform: https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_SHA256SUMS
+# Linux Python rows require glibc. musl Linux is not a supported bootstrap target.
+# Missing tool/platform rows never select an unverified download; qualified system tools may be reused.
+python	darwin	arm64	3.13.11	https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11%2B20260127-aarch64-apple-darwin-install_only_stripped.tar.gz	718a87bf84d81cb81355488ca37be1f66c2252304be2090721016948de96e7ca	tar.gz	python/bin/python3
+python	darwin	x86_64	3.13.11	https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11%2B20260127-x86_64-apple-darwin-install_only_stripped.tar.gz	2a84ac3dff6892d857b3bf7fc00f88335ed97f4ac4577e0651a56cc7f13239d7	tar.gz	python/bin/python3
+python	linux	arm64	3.13.11	https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11%2B20260127-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz	f0f53642d65155007cbfa8601722f9bc189a5c8633f54fb78fcfef8bc817545f	tar.gz	python/bin/python3
+python	linux	x86_64	3.13.11	https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11%2B20260127-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz	ec6aef3fec3183593445c2a57378d7f140e3a1fe637e7fec1dbfba10c5076549	tar.gz	python/bin/python3
+python	windows	arm64	3.13.11	https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11%2B20260127-aarch64-pc-windows-msvc-install_only_stripped.tar.gz	d23657833459e3550d0279701e751afa3fafa19e718bdb5c731d11e1ba2235af	tar.gz	python/python.exe
+python	windows	x86_64	3.13.11	https://github.com/astral-sh/python-build-standalone/releases/download/20260127/cpython-3.13.11%2B20260127-x86_64-pc-windows-msvc-install_only_stripped.tar.gz	da73138f249d9eb38acf7b43225c40a8cd5ee2218474bbcf567e274626005f37	tar.gz	python/python.exe
+terraform	darwin	x86_64	1.9.8	https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_darwin_amd64.zip	be591e8c59c49d0cfbc7664d24910a4b43840b89d0a4bbca662149bbf0397e91	zip	terraform
+terraform	darwin	arm64	1.9.8	https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_darwin_arm64.zip	873d7b925d08578fb6bb9c12c7cd92ae73e289e07c360f2fdd69f9036b7baaab	zip	terraform
+terraform	linux	x86_64	1.9.8	https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip	186e0145f5e5f2eb97cbd785bc78f21bae4ef15119349f6ad4fa535b83b10df8	zip	terraform
+terraform	linux	arm64	1.9.8	https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_arm64.zip	f85868798834558239f6148834884008f2722548f84034c9b0f62934b2d73ebb	zip	terraform
+terraform	windows	x86_64	1.9.8	https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_windows_amd64.zip	2667de56106bc6707968286357e29c20f8dbbb2f429ef57099b04994f82d9684	zip	terraform.exe
+# JDK publisher asset digests: https://github.com/adoptium/temurin21-binaries/releases/expanded_assets/jdk-21.0.10%2B7
+jdk	darwin	arm64	21.0.10	https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10%2B7/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.10_7.tar.gz	01ca390455216ca27bdddf8cfad51aaedb4f90e1e23aad9bfd9e90caaa2c5f1b	tar.gz	jdk-21.0.10+7/Contents/Home/bin/java
+jdk	darwin	x86_64	21.0.10	https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10%2B7/OpenJDK21U-jdk_x64_mac_hotspot_21.0.10_7.tar.gz	7484d5d4cdb02fc17a842ab86ddac2524a0365066659c46b2e258c64152379cd	tar.gz	jdk-21.0.10+7/Contents/Home/bin/java
+jdk	linux	arm64	21.0.10	https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10%2B7/OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.10_7.tar.gz	357fee29fb0d5c079f6730db98b28942df13a6eed426f6c61cd4ad703ab27b9a	tar.gz	jdk-21.0.10+7/bin/java
+jdk	linux	x86_64	21.0.10	https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10%2B7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.10_7.tar.gz	ea3b9bd464d6dd253e9a7accf59f7ccd2a36e4aa69640b7251e3370caef896a4	tar.gz	jdk-21.0.10+7/bin/java
+jdk	windows	arm64	21.0.10	https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10%2B7/OpenJDK21U-jdk_aarch64_windows_hotspot_21.0.10_7.zip	0e1f016cd74c05ab4fe2b2a839f6439e3dc516c9bb201bfb75d12b3fb2a63334	zip	jdk-21.0.10+7/bin/java.exe
+jdk	windows	x86_64	21.0.10	https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10%2B7/OpenJDK21U-jdk_x64_windows_hotspot_21.0.10_7.zip	08cae782814f027f8b159d6b68823f0f87422eb475c1a0ea1abc7a4357aaf11f	zip	jdk-21.0.10+7/bin/java.exe
+# Maven SHA512: https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz.sha512
+maven	darwin	arm64	3.9.11	https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz	bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978	tar.gz	apache-maven-3.9.11/bin/mvn
+maven	darwin	x86_64	3.9.11	https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz	bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978	tar.gz	apache-maven-3.9.11/bin/mvn
+maven	linux	arm64	3.9.11	https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz	bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978	tar.gz	apache-maven-3.9.11/bin/mvn
+maven	linux	x86_64	3.9.11	https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz	bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978	tar.gz	apache-maven-3.9.11/bin/mvn
+maven	windows	arm64	3.9.11	https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz	bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978	tar.gz	apache-maven-3.9.11/bin/mvn.cmd
+maven	windows	x86_64	3.9.11	https://archive.apache.org/dist/maven/maven-3/3.9.11/binaries/apache-maven-3.9.11-bin.tar.gz	bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978	tar.gz	apache-maven-3.9.11/bin/mvn.cmd
+# Aliyun CLI publisher asset digests: https://github.com/aliyun/aliyun-cli/releases/expanded_assets/v3.4.11
+aliyun	linux	x86_64	3.4.11	https://github.com/aliyun/aliyun-cli/releases/download/v3.4.11/aliyun-cli-linux-3.4.11-amd64.tgz	a7e3df497db14c10d4d7587795e9fa7849b0c51dfce02908b9de5a41fe717d5c	tar.gz	aliyun
+aliyun	linux	arm64	3.4.11	https://github.com/aliyun/aliyun-cli/releases/download/v3.4.11/aliyun-cli-linux-3.4.11-arm64.tgz	b0b6f6f7545f9472b697fc27915c8956e5a3320a6160729dcc5b4eff21435ae8	tar.gz	aliyun
+aliyun	darwin	x86_64	3.4.11	https://github.com/aliyun/aliyun-cli/releases/download/v3.4.11/aliyun-cli-macosx-3.4.11-amd64.tgz	4add3122147ff31aa3801efced5b1df7a9c4b2397dc361c90c8fc8804f71337a	tar.gz	aliyun
+aliyun	darwin	arm64	3.4.11	https://github.com/aliyun/aliyun-cli/releases/download/v3.4.11/aliyun-cli-macosx-3.4.11-arm64.tgz	2783fdd41c7f4f23174ef5ed08fe24c7f57d1ada12ffc4ee45d3b244e365a279	tar.gz	aliyun
+aliyun	windows	x86_64	3.4.11	https://github.com/aliyun/aliyun-cli/releases/download/v3.4.11/aliyun-cli-windows-3.4.11-amd64.zip	e1feb461f68e200255ca0e96081947060f81526a45233b4ded030f8b43b2f188	zip	aliyun.exe
+# jq publisher asset digests: https://github.com/jqlang/jq/releases/expanded_assets/jq-1.8.2
+jq	linux	x86_64	1.8.2	https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64	b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f	raw	jq
+jq	linux	arm64	1.8.2	https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-arm64	8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309	raw	jq
+jq	darwin	x86_64	1.8.2	https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-amd64	e94b266e3c26690550006abe63152b782280f4e14374accdf04cbde844f00bc0	raw	jq
+jq	darwin	arm64	1.8.2	https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-macos-arm64	2d75340ba57a4b4b4c8708a21c2dc8e958a48aaa8bba13b27f77f6e4c0eca07e	raw	jq
+jq	windows	x86_64	1.8.2	https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-amd64.exe	a6fc67fedaf9128a3309a1e2ebb8b986aeccf70122ee46d2cb4849e423f0c627	raw	jq.exe
+jq	windows	arm64	1.8.2	https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-windows-arm64.exe	083b5377392bc57cf27052b6d20a2d927770683bca844632901ff38b4b7b0ac7	raw	jq.exe
+# ossutil publisher downloads and digests: https://help.aliyun.com/zh/oss/developer-reference/ossutil-overview/
+ossutil	linux	x86_64	2.4.0	https://gosspublic.alicdn.com/ossutil/v2/2.4.0/ossutil-2.4.0-linux-amd64.zip	85edf66b2fb7238f5c7e25cab820cf29312319fe4935b7c86a6b8485eb434f3c	zip	ossutil-2.4.0-linux-amd64/ossutil
+ossutil	linux	arm64	2.4.0	https://gosspublic.alicdn.com/ossutil/v2/2.4.0/ossutil-2.4.0-linux-arm64.zip	7767240e9667d1f26fbe4e04f90b796b4356889e77d0076cc8a543c8ce081987	zip	ossutil-2.4.0-linux-arm64/ossutil
+ossutil	darwin	x86_64	2.4.0	https://gosspublic.alicdn.com/ossutil/v2/2.4.0/ossutil-2.4.0-mac-amd64.zip	86685f129c76dbf94d7f9298152e24bb895289d866cb1a6115aa141c1a1b455b	zip	ossutil-2.4.0-mac-amd64/ossutil
+ossutil	darwin	arm64	2.4.0	https://gosspublic.alicdn.com/ossutil/v2/2.4.0/ossutil-2.4.0-mac-arm64.zip	26e51080c6d6c9848fe3aea8a6b0cbd88453e65cd41c5a27573c59335a78a41d	zip	ossutil-2.4.0-mac-arm64/ossutil
+ossutil	windows	x86_64	2.4.0	https://gosspublic.alicdn.com/ossutil/v2/2.4.0/ossutil-2.4.0-windows-amd64.zip	dd68cffb62d88e59ff3d7fde6055ac7b8e2197e2adce7e540bcd6c706a2c4a49	zip	ossutil-2.4.0-windows-amd64/ossutil.exe

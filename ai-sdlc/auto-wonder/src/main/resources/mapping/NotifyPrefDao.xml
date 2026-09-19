@@ -4,8 +4,8 @@
 <mapper namespace="com.aliyun.autowonder.notification.NotifyPrefDao">
     <insert id="insert" parameterType="com.aliyun.autowonder.notification.NotifyPrefDO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO notify_pref (tenant_id, user_id, type, in_app, dingtalk)
-        VALUES (#{tenantId}, #{userId}, #{type}, #{inApp}, #{dingtalk})
+        INSERT INTO notify_pref (tenant_id, user_id, type, in_app, dingtalk, feishu)
+        VALUES (#{tenantId}, #{userId}, #{type}, #{inApp}, #{dingtalk}, #{feishu})
     </insert>
 
     <select id="listByUser" resultType="com.aliyun.autowonder.notification.NotifyPrefDO">
@@ -19,7 +19,7 @@
     </select>
 
     <update id="update">
-        UPDATE notify_pref SET in_app = #{inApp}, dingtalk = #{dingtalk}
+        UPDATE notify_pref SET in_app = #{inApp}, dingtalk = #{dingtalk}, feishu = #{feishu}
         WHERE id = #{id}
     </update>
 </mapper>

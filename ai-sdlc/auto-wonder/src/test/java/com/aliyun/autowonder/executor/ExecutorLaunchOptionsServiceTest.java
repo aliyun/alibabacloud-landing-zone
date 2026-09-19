@@ -212,42 +212,6 @@ class ExecutorLaunchOptionsServiceTest {
     }
 
     @Test
-    void resolveModelFallsBackToTheCallerDefaultAndTrimsTheRequestedId() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(), null));
-
-        assertEquals("auto", service.resolveModel("qoder", null, ExecutorLaunchOptionsService.AUTO_MODEL));
-        assertEquals("qmodel_latest",
-                service.resolveModel("qoder", "", ExecutorLaunchOptionsService.DEFAULT_MODEL));
-        assertEquals("lite", service.resolveModel("qoder", " lite ", ExecutorLaunchOptionsService.AUTO_MODEL));
-    }
-
-    @Test
-    void resolveModelDemotesAnIdTheRedisCatalogNoLongerOffers() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder", List.of(
-                new ProviderModelCatalogItemVO("auto", "Auto (default)"),
-                new ProviderModelCatalogItemVO("lite", "Lite")), null));
-
-        assertEquals("lite", service.resolveModel("qoder", "lite", ExecutorLaunchOptionsService.AUTO_MODEL));
-        // Redis rotates the usable ids, so a stale one is re-resolved server-side instead of rejected.
-        assertEquals("auto", service.resolveModel("qoder", "qmodel_latest",
-                ExecutorLaunchOptionsService.DEFAULT_MODEL));
-        assertEquals("auto", service.resolveModel("qoder", "gpt-5", ExecutorLaunchOptionsService.AUTO_MODEL));
-    }
-
-    @Test
-    void resolveModelFallsBackToTheFirstCatalogEntryWithoutAnAutoOption() {
-        when(modelCatalogService.read("qoder")).thenReturn(new ProviderModelCatalogVO("qoder",
-                List.of(new ProviderModelCatalogItemVO("lite", "Lite")), null));
-
-        assertEquals("lite", service.resolveModel("qoder", "gpt-5", ExecutorLaunchOptionsService.DEFAULT_MODEL));
-    }
-
-    @Test
-    void resolveModelWithoutACatalogForTheProviderKeepsTheRequestedFallback() {
-        assertEquals("auto", service.resolveModel("claude", null, ExecutorLaunchOptionsService.AUTO_MODEL));
-    }
-
-    @Test
     void liveCatalogIsNullForProvidersWithoutAModelCatalog() {
         assertNull(service.liveCatalog("claude"));
         assertNull(service.liveCatalog(null));

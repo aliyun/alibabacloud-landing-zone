@@ -11,7 +11,7 @@ import time
 import unittest
 
 SKILLS = Path(__file__).resolve().parents[2]
-WINDOWS = SKILLS / 'deploying-autowonder-on-alibaba-cloud/scripts/windows'
+WINDOWS = SKILLS / 'upgrading-autowonder-on-alibaba-cloud/scripts/windows'
 UPGRADE = SKILLS / 'upgrading-autowonder-on-alibaba-cloud/scripts'
 PWSH = os.environ.get('AUTOWONDER_TEST_PWSH') or shutil.which('pwsh') or shutil.which('powershell')
 
@@ -120,11 +120,11 @@ class WindowsUpgradeGateRuntimeTests(unittest.TestCase):
 
     def test_refresh_uses_live_cloud_and_keeps_only_unchanged_approval(self):
         # Copy unmodified production code, replacing only OS ACL and cloud boundaries.
-        copied_windows = self.directory / 'skills/deploying-autowonder-on-alibaba-cloud/scripts/windows'
+        copied_windows = self.directory / 'skills/upgrading-autowonder-on-alibaba-cloud/scripts/windows'
         copied_upgrade = self.directory / 'skills/upgrading-autowonder-on-alibaba-cloud/scripts'
         copied_windows.mkdir(parents=True)
-        copied_upgrade.mkdir(parents=True)
-        for name in ('verify-deployment-targets.ps1', 'upgrade_plan.py', 'approve-upgrade-plan.ps1'):
+        copied_upgrade.mkdir(parents=True, exist_ok=True)
+        for name in ('verify-deployment-targets.ps1', 'ecs_inventory.py', 'upgrade_plan.py', 'approve-upgrade-plan.ps1'):
             shutil.copy2(UPGRADE / name, copied_upgrade / name)
         cloud_file = self.directory / 'cloud.json'
         boundaries = """
@@ -155,6 +155,11 @@ function Invoke-AliyunJson {
         refreshed = json.loads(self.manifest.read_text())
         self.assertEqual(data['upgrade']['approval'], refreshed['upgrade']['approval'])
         self.assertGreaterEqual(refreshed['upgrade']['targetVerification']['verifiedEpoch'], data['upgrade']['targetVerification']['verifiedEpoch'])
+        checkpoint_before_malformed_response = self.manifest.read_bytes()
+        cloud_file.write_text(json.dumps({'node': node, 'extra': [None]}))
+        result = self.run_ps(command)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(checkpoint_before_malformed_response, self.manifest.read_bytes())
         cloud_file.write_text(json.dumps({'node': node, 'extra': [{'InstanceId': 'i-unexpected'}]}))
         result = self.run_ps(command)
         self.assertNotEqual(0, result.returncode)

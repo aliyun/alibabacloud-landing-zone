@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Button, Card, Input, Select, Space, Table } from 'antd';
+import { Alert, Button, Card, Descriptions, Drawer, Input, Segmented, Select, Space, Table, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { countAuditLogs, listAuditLogs } from './api';
 import type { AuditLog, AuditLogFilters } from './api';
@@ -18,6 +18,7 @@ const moduleOptions = [
   { label: '工单', value: 'WORKITEM' },
   { label: '数字员工', value: 'AGENT' },
   { label: '技能', value: 'SKILL' },
+  { label: '执行', value: 'DISPATCH' },
   { label: '状态模板', value: 'STATUS_TEMPLATE' },
 ];
 
@@ -28,6 +29,7 @@ const actionOptions = [
   { label: '删除', value: 'DELETE' },
   { label: '审核通过', value: 'APPROVE' },
   { label: '驳回', value: 'REJECT' },
+  { label: '运行事件', value: 'RUNTIME_EVENT' },
 ];
 
 const targetTypeOptions = [
@@ -35,6 +37,7 @@ const targetTypeOptions = [
   { label: '工单', value: 'workitem' },
   { label: '数字员工', value: 'agent' },
   { label: '技能', value: 'skill' },
+  { label: '执行', value: 'dispatch' },
 ];
 
 const timeRangeOptions = [
@@ -81,12 +84,12 @@ function detailText(record: AuditLog): string {
   if (Object.keys(detail).length === 0) {
     return record.detail || record.detailJson || '-';
   }
-  const fields = ['path', 'method', 'status', 'workitemId', 'dispatchId', 'stepName', 'message', 'error'];
+  const fields = ['message', 'error', 'stepName', 'path', 'status'];
   const summary = fields
     .filter((field) => detail[field] !== undefined && detail[field] !== null && detail[field] !== '')
     .map((field) => `${field}: ${String(detail[field])}`)
     .join('；');
-  return summary || record.detailJson || '-';
+  return summary || String(detail.eventType || '-');
 }
 
 function triggerText(record: AuditLog): string {
@@ -96,6 +99,7 @@ function triggerText(record: AuditLog): string {
 }
 
 export function AuditLogPage() {
+  const [selected, setSelected] = useState<AuditLog | null>(null);
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [draft, setDraft] = useState({
@@ -107,14 +111,14 @@ export function AuditLogPage() {
     timeRange: '',
     keyword: '',
   });
-  const [filters, setFilters] = useState<Omit<AuditLogFilters, 'page' | 'size'>>({});
+  const [filters, setFilters] = useState<Omit<AuditLogFilters, 'page' | 'size'>>({ actorType: 'HUMAN' });
 
   const queryFilters = useMemo(
     () => ({ page, size, ...filters }),
     [page, size, filters],
   );
 
-  const { data = [], isLoading } = useQuery({
+  const { data = [], isLoading, isError } = useQuery({
     queryKey: ['audit-logs', queryFilters],
     queryFn: () => listAuditLogs(queryFilters),
   });
@@ -130,17 +134,18 @@ export function AuditLogPage() {
       const actorType = record.actorType || parseDetail(record).actorType;
       return `${record.actorName || `#${record.actorId}`}${actorType ? ` (${actorType})` : ''}`;
     } },
-    { title: '模块', dataIndex: 'module', width: 100 },
-    { title: '操作', dataIndex: 'action', width: 120 },
-    { title: '触发机制', dataIndex: 'detailJson', width: 170, render: (_, record) => triggerText(record) },
-    { title: '事件类型', dataIndex: 'detailJson', width: 150, render: (_, record) => parseDetail(record).eventType || '-' },
-    { title: '目标类型', dataIndex: 'targetType', width: 100, render: (v: string | null) => v || '-' },
-    { title: '目标ID', dataIndex: 'targetId', width: 100, render: (v: string | null) => v || '-' },
-    { title: '详情', dataIndex: 'detail', ellipsis: true, render: (_, record) => detailText(record) },
+    { title: '操作', dataIndex: 'action', width: 200, render: (action: string, record) => (
+      <><div>{actionOptions.find((option) => option.value === action)?.label || action}</div>
+        <Typography.Text type="secondary">{moduleOptions.find((option) => option.value === record.module)?.label || record.module}</Typography.Text></>
+    ) },
+    { title: '对象', width: 150, render: (_, record) => `${targetTypeOptions.find((option) => option.value === record.targetType)?.label || record.targetType || '—'}${record.targetId != null ? ` #${record.targetId}` : ''}` },
+    { title: '摘要', ellipsis: true, render: (_, record) => detailText(record) },
+    { title: '', width: 90, render: (_, record) => <Button type="link" onClick={() => setSelected(record)}>详情</Button> },
   ];
 
   const applyFilters = () => {
     setFilters({
+      actorType: filters.actorType,
       module: draft.module || undefined,
       action: draft.action || undefined,
       actorId: draft.actorId ? Number(draft.actorId) : undefined,
@@ -162,12 +167,20 @@ export function AuditLogPage() {
       timeRange: '',
       keyword: '',
     });
-    setFilters({});
+    setFilters({ actorType: 'HUMAN' });
     setPage(1);
   };
 
   return (
     <Card title="审计日志">
+      <Space direction="vertical" size={8} style={{ marginBottom: 20, width: '100%' }}>
+        <Segmented value={filters.actorType || ''} options={[
+          { label: '人工操作', value: 'HUMAN' }, { label: '数字员工', value: 'AGENT' },
+          { label: '系统', value: 'SYSTEM' }, { label: '全部', value: '' },
+        ]} onChange={(value) => { setFilters((current) => ({ ...current, actorType: value || undefined })); setPage(1); }} />
+        <Typography.Text type="secondary">默认查看人工操作；数字员工的运行事件可切换查看，完整字段保留在详情中。</Typography.Text>
+      </Space>
+      {isError && <Alert type="error" showIcon message="审计日志加载失败，请稍后重试" /> }
       <Space wrap size={12} style={{ marginBottom: 16 }}>
         <Select
           value={draft.module}
@@ -215,6 +228,7 @@ export function AuditLogPage() {
         <Button onClick={resetFilters}>重置</Button>
       </Space>
       <Table
+        scroll={{ x: 900 }}
         rowKey="id"
         columns={columns}
         dataSource={data}
@@ -227,6 +241,20 @@ export function AuditLogPage() {
           showTotal: (t) => `共 ${t} 条`,
         }}
       />
+      <Drawer title="审计日志详情" width="min(760px, 95vw)" open={selected !== null} onClose={() => setSelected(null)}>
+        {selected && <>
+          <Descriptions column={1} bordered size="small" items={[
+            { key: 'id', label: '日志 ID', children: selected.id },
+            { key: 'action', label: '原始操作', children: selected.action },
+            { key: 'trigger', label: '触发机制', children: triggerText(selected) },
+            { key: 'event', label: '事件类型', children: String(parseDetail(selected).eventType || '—') },
+          ]} />
+          <Typography.Title level={5}>完整记录</Typography.Title>
+          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#fafafa', padding: 16 }}>{JSON.stringify(selected, null, 2)}</pre>
+          <Typography.Title level={5}>事件详情</Typography.Title>
+          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(parseDetail(selected), null, 2)}</pre>
+        </>}
+      </Drawer>
     </Card>
   );
 }

@@ -102,6 +102,18 @@ class WebAuditInterceptorTest {
     }
 
     @Test
+    void auditsAgentEnvironmentVariableBindingsWithoutRequestSecrets() {
+        AuditLogRecord mount = recordedRequest("POST", "/api/agents/42/environment-variables/9");
+        AuditLogRecord unmount = recordedRequest("DELETE", "/api/agents/42/environment-variables/9");
+
+        assertEquals("CREATE_AGENTS_ID_ENVIRONMENT_VARIABLES_ID", mount.getAction());
+        assertEquals("DELETE_AGENTS_ID_ENVIRONMENT_VARIABLES_ID", unmount.getAction());
+        assertEquals(42L, mount.getTargetId());
+        assertFalse(mount.getDetail().containsKey("body"));
+        assertFalse(unmount.getDetail().containsKey("body"));
+    }
+
+    @Test
     void doesNotNormalizeShortOrDigitFreeSegments() {
         assertEquals("CREATE_SKILLS_V2_RELEASES", recordedAction("POST", "/api/skills/v2/releases"));
         assertEquals("CREATE_SKILLS_ABCDEFABCDEFABCD_RELEASE",

@@ -28,4 +28,10 @@ class WorkspaceAccessNotifyTextTest {
         assertThat(WorkspaceAccessNotifyText.accessLevelLabel(null)).isEmpty();
         assertThat(WorkspaceAccessNotifyText.accessLevelLabel("SUPER")).isEqualTo("SUPER");
     }
+
+    @Test
+    void reviewLinkCarriesApprovalTabAndRequestingWorkspace() {
+        assertThat(WorkspaceAccessNotifyText.reviewLink(100L))
+                .isEqualTo("/settings/members?tab=requests&workspaceId=100");
+    }
 }

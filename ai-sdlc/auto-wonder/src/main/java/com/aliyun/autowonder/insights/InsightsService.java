@@ -18,6 +18,8 @@ import com.aliyun.autowonder.insights.participation.HumanAgentParticipationRefre
 import com.aliyun.autowonder.insights.participation.HumanAgentParticipationSnapshotStore.ParsedSnapshot;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
@@ -57,6 +59,18 @@ public class InsightsService {
         int days = daysFromRange(timeRange);
         cost.setDailyAvg(days > 0 ? totalTokens / days : 0);
         cost.setTrend(buildTokenTrend(tenantId, since, agentId));
+        BigDecimal totalCredits = insightsDao.countTotalCredits(tenantId, since, agentId);
+        if (totalCredits == null) {
+            totalCredits = BigDecimal.ZERO;
+        }
+        cost.setTotalCredits(totalCredits);
+        cost.setAvgCreditsPerTask(usageWorkitems > 0
+                ? totalCredits.divide(BigDecimal.valueOf(usageWorkitems), 2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO);
+        cost.setDailyAvgCredits(days > 0
+                ? totalCredits.divide(BigDecimal.valueOf(days), 2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO);
+        cost.setCreditsTrend(buildCreditsTrend(tenantId, since, agentId));
         vo.setCost(cost);
 
         // Efficiency
@@ -147,6 +161,23 @@ public class InsightsService {
         return raw.stream()
                 .map(m -> ((Number) m.getOrDefault("tokens", 0)).intValue())
                 .collect(Collectors.toList());
+    }
+
+    private List<BigDecimal> buildCreditsTrend(long tenantId, Date since, Long agentId) {
+        List<Map<String, Object>> raw = insightsDao.dailyCreditsTrend(tenantId, since, agentId);
+        if (raw == null || raw.isEmpty()) {
+            return Collections.nCopies(7, BigDecimal.ZERO);
+        }
+        return raw.stream()
+                .map(m -> toBigDecimal(m.get("credits")))
+                .collect(Collectors.toList());
+    }
+
+    private BigDecimal toBigDecimal(Object raw) {
+        if (raw == null) {
+            return BigDecimal.ZERO;
+        }
+        return raw instanceof BigDecimal ? (BigDecimal) raw : new BigDecimal(String.valueOf(raw));
     }
 
     public boolean forceParticipationRefresh(long tenantId) {

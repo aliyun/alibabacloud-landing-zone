@@ -4,8 +4,8 @@ import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.conversation.dto.ClarificationConversationVO;
 import com.aliyun.autowonder.conversation.dto.ClarificationElicitationVO;
+import com.aliyun.autowonder.conversation.dto.ClarificationSlashCommandVO;
 import com.aliyun.autowonder.conversation.dto.ClarificationTurnVO;
-import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,22 +27,26 @@ public class WorkitemClarificationConversationService {
     private final AgentConversationTurnDao turnDao;
     private final AgentConversationService conversationService;
     private final AgentDao agentDao;
-    private final ExecutorSelector executorSelector;
     private final ConversationRuntimePresence runtimePresence;
     private final ConversationElicitationService elicitationService;
+    private final ConversationCommandsService commandsService;
+    private final ConversationExecutorRouter executorRouter;
 
     public WorkitemClarificationConversationService(AgentConversationDao convDao,
             AgentConversationTurnDao turnDao, AgentConversationService conversationService,
-            AgentDao agentDao, ExecutorSelector executorSelector,
+            AgentDao agentDao,
             ConversationRuntimePresence runtimePresence,
-            ConversationElicitationService elicitationService) {
+            ConversationElicitationService elicitationService,
+            ConversationCommandsService commandsService,
+            ConversationExecutorRouter executorRouter) {
         this.convDao = convDao;
         this.turnDao = turnDao;
         this.conversationService = conversationService;
         this.agentDao = agentDao;
-        this.executorSelector = executorSelector;
         this.runtimePresence = runtimePresence;
         this.elicitationService = elicitationService;
+        this.commandsService = commandsService;
+        this.executorRouter = executorRouter;
     }
 
     public void verifyConversationBelongsToWorkitem(Long tenantId, Long workitemId, Long conversationId) {
@@ -73,6 +77,8 @@ public class WorkitemClarificationConversationService {
                 || !workitemId.equals(conv.getBizRefId())) {
             throw new IllegalArgumentException("conversation does not belong to this workitem");
         }
+        // 历史正文是详情接口的核心价值，读取失败必须显式抛错：
+        // 降级成空 turns 会把「读取失败」伪装成「没有历史」（工单 55411 缺陷一形态）。
         List<AgentConversationTurnDO> turns = turnDao.listTurnsByConversation(tenantId, conversationId);
         List<ClarificationTurnVO> turnVOs = turns.stream()
                 .map(t -> ClarificationTurnVO.builder()
@@ -89,8 +95,33 @@ public class WorkitemClarificationConversationService {
         if (processing == null) {
             processing = turnDao.findNextQueuedInbound(tenantId, conversationId);
         }
-        // 仅详情接口查挂起卡片：列表页不需要，逐会话查会白跑 N 次。
-        return toVO(conv, turnVOs, processing, pendingElicitationVOs(tenantId, conversationId));
+        // 仅详情接口查挂起卡片与命令快照：列表页不需要，逐会话查会白跑 N 次（快照还是 Redis 读）。
+        // 两者都是辅助信息：失败降级为空并留诊断日志，不阻断已有历史返回（修复要求 3）。
+        return toVO(conv, turnVOs, processing,
+                pendingElicitationsQuietly(tenantId, conversationId),
+                commandsSnapshotQuietly(tenantId, conversationId));
+    }
+
+    /** 挂起卡片是辅助信息：失败降级为空列表，已有历史仍正常返回。 */
+    private List<ClarificationElicitationVO> pendingElicitationsQuietly(Long tenantId, Long conversationId) {
+        try {
+            return pendingElicitationVOs(tenantId, conversationId);
+        } catch (RuntimeException e) {
+            log.warn("pending elicitations degraded tenantId={} conversationId={}: {}", tenantId,
+                    conversationId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 命令快照（Redis 种子）是辅助信息：失败降级为空列表，已有历史仍正常返回。 */
+    private List<ClarificationSlashCommandVO> commandsSnapshotQuietly(Long tenantId, Long conversationId) {
+        try {
+            return commandsService.snapshot(tenantId, conversationId);
+        } catch (RuntimeException e) {
+            log.warn("commands snapshot degraded tenantId={} conversationId={}: {}", tenantId,
+                    conversationId, e.getMessage());
+            return List.of();
+        }
     }
 
     private List<ClarificationElicitationVO> pendingElicitationVOs(Long tenantId, Long conversationId) {
@@ -130,11 +161,13 @@ public class WorkitemClarificationConversationService {
         if (agent == null) {
             throw new IllegalArgumentException("agent not found");
         }
-        Long executorId = executorSelector.select(agentId, null);
+        Long executorId = executorRouter.select(tenantId, agentId,
+                requireOnlineVersion(agent), null);
 
         AgentConversationDO conv = new AgentConversationDO();
         conv.setTenantId(tenantId);
         conv.setAgentId(agentId);
+        conv.setAgentVersionId(agent.getOnlineVersionId());
         conv.setChannel(CHANNEL);
         conv.setBizRefType(BIZ_REF_TYPE);
         conv.setBizRefId(workitemId);
@@ -158,7 +191,9 @@ public class WorkitemClarificationConversationService {
                 || !workitemId.equals(conv.getBizRefId())) {
             throw new IllegalArgumentException("conversation does not belong to this workitem");
         }
-        Long executorId = executorSelector.select(conv.getAgentId(), conv.getExecutorId());
+        AgentDO agent = agentDao.findById(conv.getAgentId());
+        Long executorId = executorRouter.select(tenantId, conv.getAgentId(),
+                requireOnlineVersion(agent), conv.getExecutorId());
         if (executorId == null) {
             throw new IllegalStateException("RUNTIME_OFFLINE");
         }
@@ -182,25 +217,28 @@ public class WorkitemClarificationConversationService {
         conversationService.requestTurnCancel(tenantId, conversationId, turnId);
     }
 
+    private Long requireOnlineVersion(AgentDO agent) {
+        if (agent == null || agent.getOnlineVersionId() == null) {
+            throw new IllegalStateException("agent has no online version");
+        }
+        return agent.getOnlineVersionId();
+    }
+
     private ClarificationConversationVO toVO(AgentConversationDO conv, List<ClarificationTurnVO> turns) {
-        return toVO(conv, turns, null, List.of());
+        return toVO(conv, turns, null, List.of(), List.of());
     }
 
     private ClarificationConversationVO toVO(AgentConversationDO conv, List<ClarificationTurnVO> turns,
-            AgentConversationTurnDO processing, List<ClarificationElicitationVO> pendingElicitations) {
-        boolean executorOnline = conv.getExecutorId() != null
-                && runtimePresence != null
-                && runtimePresence.isExecutorOnline(conv.getExecutorId());
+            AgentConversationTurnDO processing, List<ClarificationElicitationVO> pendingElicitations,
+            List<ClarificationSlashCommandVO> availableCommands) {
+        boolean executorOnline = executorOnlineQuietly(conv.getExecutorId());
         boolean streamingSupported = executorOnline
-                && runtimePresence != null
-                && runtimePresence.supportsProtocolFeature(conv.getExecutorId(), "CONVERSATION_TURN_EVENT");
+                && protocolFeatureQuietly(conv.getExecutorId(), "CONVERSATION_TURN_EVENT");
         boolean cancelSupported = executorOnline
-                && runtimePresence != null
-                && runtimePresence.supportsProtocolFeature(conv.getExecutorId(), "CONVERSATION_TURN_CANCEL");
+                && protocolFeatureQuietly(conv.getExecutorId(), "CONVERSATION_TURN_CANCEL");
         // 离线时卡片提交必然失败（回答要下发帧），所以入口也不该亮出来。
-        // executorOnline 已蕴含 runtimePresence 非空，无需重复判空。
         boolean acpInteractionSupported = executorOnline
-                && runtimePresence.supportsProtocolFeature(conv.getExecutorId(),
+                && protocolFeatureQuietly(conv.getExecutorId(),
                         "CONVERSATION_ACP_INTERACTION_V1");
         AgentDO agent = agentDao.findById(conv.getAgentId());
         return ClarificationConversationVO.builder()
@@ -220,6 +258,34 @@ public class WorkitemClarificationConversationService {
                 .gmtCreate(conv.getGmtCreate())
                 .turns(turns)
                 .pendingElicitations(pendingElicitations)
+                .availableCommands(availableCommands)
                 .build();
+    }
+
+    /** 在线状态是辅助能力：查询失败按离线降级并留诊断日志，不阻断历史返回。 */
+    private boolean executorOnlineQuietly(Long executorId) {
+        if (executorId == null || runtimePresence == null) {
+            return false;
+        }
+        try {
+            return runtimePresence.isExecutorOnline(executorId);
+        } catch (RuntimeException e) {
+            log.warn("executor presence degraded executorId={}: {}", executorId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** 协议能力协商同属辅助信息：失败按不支持降级，不阻断历史返回。 */
+    private boolean protocolFeatureQuietly(Long executorId, String feature) {
+        if (executorId == null || runtimePresence == null) {
+            return false;
+        }
+        try {
+            return runtimePresence.supportsProtocolFeature(executorId, feature);
+        } catch (RuntimeException e) {
+            log.warn("protocol feature degraded executorId={} feature={}: {}", executorId, feature,
+                    e.getMessage());
+            return false;
+        }
     }
 }

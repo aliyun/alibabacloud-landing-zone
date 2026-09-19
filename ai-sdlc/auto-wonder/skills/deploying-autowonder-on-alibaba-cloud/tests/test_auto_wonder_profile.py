@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
+import sys
 import tempfile
 import unittest
 
@@ -262,7 +264,7 @@ if [[ " $* " == *" configure "* ]]; then
   : > "$AUTH_STATE"
   exit 0
 fi
-[[ -f "$AUTH_STATE" ]] || exit 41
+[[ -f "$AUTH_STATE" ]] || { echo "ErrorCode: InvalidSecurityToken.Expired" >&2; exit 41; }
 printf '{"AccountId":"1234567890123456"}\n'
 """,
             )
@@ -280,10 +282,18 @@ printf '{"AccountId":"1234567890123456"}\n'
                 }
             )
 
+            # Isolate tool setup from authentication: no downloads or real tools.
+            scripts = root / 'scripts'
+            scripts.mkdir()
+            for name in ('bootstrap-control-host.sh', 'lib.sh', 'cloud_diagnostics.py'):
+                shutil.copyfile(ROOT / 'scripts' / name, scripts / name)
+            (scripts / 'runtime-env.sh').write_text(
+                'autowonder_runtime_environment() { export AUTOWONDER_PYTHON="$FIXTURE_PYTHON" JAVA_HOME="$HOME/jdk" PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1; }\n')
+            env['FIXTURE_PYTHON'] = sys.executable
             result = subprocess.run(
                 [
                     "bash",
-                    str(ROOT / "scripts/bootstrap-control-host.sh"),
+                    str(scripts / "bootstrap-control-host.sh"),
                     "--manifest",
                     str(manifest),
                 ],
@@ -293,6 +303,8 @@ printf '{"AccountId":"1234567890123456"}\n'
             )
 
             self.assertEqual(0, result.returncode, result.stderr)
+            data = json.loads(result.stdout)
+            self.assertEqual(data.pop('runtimeEnvironment')['AUTOWONDER_PYTHON'], sys.executable)
             self.assertEqual(
                 {
                     "platform": "posix",
@@ -301,7 +313,7 @@ printf '{"AccountId":"1234567890123456"}\n'
                     "accountId": "1234567890123456",
                     "validated": True,
                 },
-                json.loads(result.stdout),
+                data,
             )
             calls = log.read_text(encoding="utf-8").splitlines()
             self.assertEqual(
@@ -356,7 +368,6 @@ printf '{"AccountId":"1234567890123456"}\n'
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             manifest = self.write_manifest(root / "manifest.json")
-            source = self.write_source(root / "source")
             cli_dir = root / ".aliyun"
             cli_dir.mkdir()
             cli_config = cli_dir / "config.json"
@@ -384,29 +395,11 @@ if [[ " $* " == *" configure "* ]]; then
   exit 0
 fi
 if [[ " $* " == *" sts GetCallerIdentity "* ]]; then
-  [[ -f "$AUTH_STATE" ]] || exit 41
+  [[ -f "$AUTH_STATE" ]] || { echo "ErrorCode: InvalidSecurityToken.Expired" >&2; exit 41; }
   printf '{"AccountId":"1234567890123456"}\n'
   exit 0
 fi
-if [[ " $* " == *" ecs DescribeInstanceTypes "* ]]; then
-  printf '{"InstanceTypes":{"InstanceType":[{"InstanceTypeId":"ecs.c8a.large","CpuCoreCount":2,"MemorySize":4,"CpuArchitecture":"X86"}]}}\n'
-elif [[ " $* " == *" ecs DescribeAvailableResource "* ]]; then
-  printf '{"AvailableZones":{"AvailableZone":[{"AvailableResources":{"AvailableResource":[{"SupportedResources":{"SupportedResource":[{"Value":"ecs.c8a.large"}]}}]}}]}}\n'
-else
-  printf '{}\n'
-fi
-""",
-            )
-            self.write_executable(binary_dir / "terraform", "#!/usr/bin/env bash\nexit 0\n")
-            self.write_executable(
-                binary_dir / "ossutil",
-                """#!/usr/bin/env bash
-case "${1:-}:${2:-}" in
-  version:*|--version:*) echo 'ossutil version 2.1.0';;
-  help:cp|help:rm) echo '--endpoint --region --force';;
-  help:presign) echo '--expires-duration --endpoint --region';;
-  *) exit 0;;
-esac
+exit 42
 """,
             )
             env = os.environ.copy()
@@ -421,14 +414,15 @@ esac
                 }
             )
 
+            # Exercise shared authentication independently of resource discovery.
             result = subprocess.run(
                 [
                     "bash",
-                    str(ROOT / "scripts/preflight.sh"),
-                    "--manifest",
+                    "-c",
+                    'source "$1"; configure_cloud_profile "$2"; ensure_alicloud_profile_identity cn-hangzhou',
+                    "bash",
+                    str(ROOT / "scripts/lib.sh"),
                     str(manifest),
-                    "--source-dir",
-                    str(source),
                 ],
                 text=True,
                 capture_output=True,

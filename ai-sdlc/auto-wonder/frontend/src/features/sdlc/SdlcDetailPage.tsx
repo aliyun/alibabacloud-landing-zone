@@ -17,7 +17,7 @@ import {
 } from './api';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
 import { SDLC_AI_ENABLED } from './featureFlags';
-import type { SdlcId, SdlcStep, CreateStepParams } from './api';
+import type { SdlcId, SdlcStep, CreateStepParams, UpdateStepParams } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
@@ -84,7 +84,7 @@ export function SdlcDetailPage() {
   });
 
   const updateStepMutation = useMutation({
-    mutationFn: ({ stepId, data }: { stepId: SdlcId; data: Partial<CreateStepParams> }) =>
+    mutationFn: ({ stepId, data }: { stepId: SdlcId; data: UpdateStepParams }) =>
       updateStep(sdlcId, stepId, data),
     onSuccess: () => { invalidate(); setStepModalOpen(false); setEditingStep(null); stepForm.resetFields(); message.success('步骤已更新'); },
     onError: (e) => { message.error(e instanceof Error ? e.message : '更新步骤失败'); },
@@ -528,7 +528,12 @@ function ChecklistPreview({ raw }: { raw: string }) {
     return (
       <div style={{ display: 'grid', gap: 4, maxWidth: 360 }}>
         {parsed.map((item, idx) => (
-          <div key={idx}>✓ {typeof item === 'string' ? item : JSON.stringify(item)}</div>
+          <div key={idx}>
+            • {typeof item === 'string' ? item : typeof item?.text === 'string' ? item.text : JSON.stringify(item)}
+            {item && typeof item === 'object' && item.allowNotApplicable === true && (
+              <div style={{ color: '#666' }}>允许不适用：{typeof item.notApplicableWhen === 'string' ? item.notApplicableWhen : '未填写有效条件'}</div>
+            )}
+          </div>
         ))}
       </div>
     );
@@ -608,11 +613,13 @@ function ChecklistFieldHelp() {
   return (
     <div style={{ display: 'grid', gap: 6, maxWidth: 420 }}>
       <div><b>含义：</b>步骤执行过程中 agent 需要逐项完成的检查清单。Agent 在执行时会看到这些检查项，完成后通过 API 逐个勾选。</div>
-      <div><b>行为：</b>如果策略中配置了 checklistRequired: true，gate 校验时会要求所有检查项都被勾选才能通过。</div>
+      <div><b>行为：</b>如果策略中配置了 checklistRequired: true，gate 要求每项完成；仅明确允许不适用的项，可在满足配置条件时附原因标记为“不适用”，不能冒充检查通过。</div>
       <div>
         <b>格式：</b>JSON 数组，每项含 id 和 text，如：
         <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{'[{"id": "tests-pass", "text": "运行相关测试全部通过"}]'}</pre>
       </div>
+      <div><b>条件检查项：</b>先升级执行器 Runtime，再配置 allowNotApplicable: true 和非空 notApplicableWhen。执行时需报告 NOT_APPLICABLE、checked: false 及具体 reason；未配置的必需项仍须通过。</div>
+      <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{'[{"id":"code-tests","text":"代码测试通过","allowNotApplicable":true,"notApplicableWhen":"本轮仅澄清需求，未进入代码实施分支"}]'}</pre>
     </div>
   );
 }
@@ -623,7 +630,7 @@ function GatePolicyFieldHelp() {
       <div><b>含义：</b>步骤完成时 Runtime Gate 的校验规则。Agent 提交 completion 后，gate 会根据策略自动校验产出是否满足要求。</div>
       <div><b>evidenceRequired：</b>是否要求 agent 在提交完成时声明 evidenceRefs（证据文件路径列表）。</div>
       <div><b>requiredArtifacts：</b>要求产出目录中必须存在的文件/目录前缀。如 ["evidence/"] 表示 evidence/ 目录必须非空。</div>
-      <div><b>checklistRequired：</b>是否要求检查项全部勾选。</div>
+      <div><b>checklistRequired：</b>是否要求所有检查项完成或按配置条件附理由标为不适用。空清单与未处理项不能通过。</div>
       <div>
         <b>示例：</b>
         <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{'{ "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }'}</pre>

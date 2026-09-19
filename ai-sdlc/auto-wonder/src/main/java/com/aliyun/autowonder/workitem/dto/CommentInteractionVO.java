@@ -9,6 +9,8 @@ import java.util.Date;
 @Setter
 public class CommentInteractionVO {
     private Long guidanceId;
+    private Long dispatchId;
+    private String executionStatus;
     private Long targetAgentId;
     private String targetAgentName;
     private String status;

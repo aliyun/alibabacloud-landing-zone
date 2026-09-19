@@ -12,6 +12,7 @@ public class AgentDO {
     private String name;
     private String avatarUrl;
     private String status;
+    private String kind;
     private Long onlineVersionId;
     private Long editingVersionId;
     private Integer latestVersionNo;

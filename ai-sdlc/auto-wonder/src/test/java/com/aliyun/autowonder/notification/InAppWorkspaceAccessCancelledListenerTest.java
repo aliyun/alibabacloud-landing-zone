@@ -69,7 +69,7 @@ class InAppWorkspaceAccessCancelledListenerTest {
         assertEquals("WORKSPACE_ACCESS_REQUEST", sent.getType());
         assertEquals("WORKSPACE_ACCESS_REQUEST", sent.getRefType());
         assertEquals(555L, sent.getRefId());
-        assertEquals("/settings/members?tab=requests", sent.getLink());
+        assertEquals("/settings/members?tab=requests&workspaceId=100", sent.getLink());
         assertEquals("权限申请已撤销", sent.getTitle());
         // FR-6: who, when, and that the record will be deleted. The timestamp is clock-derived,
         // so the invariant parts before and after it are pinned instead of the whole sentence.

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Space } from 'antd';
 import { MessageOutlined, ArrowLeftOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { WorkitemClarificationPanel } from '../clarification/WorkitemClarificationPanel';
 import { CLARIFICATION_THEME } from '../clarification/theme';
 import { SquadMembers } from './SquadMembers';
+import { WatcherList } from './WatcherList';
 import { DeliveryProgress } from './DeliveryProgress';
+import { DebugLogList } from './DebugLogList';
 import { ExternalCollaborationCard } from './ExternalCollaborationCard';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import type {
@@ -81,22 +83,37 @@ export function RightPanel({
   const pauseMutation = usePauseDispatch(workitemId);
   const accessCommand = useAccessCommand();
 
-  const switchMode = (next: 'progress' | 'clarify') => {
+  const applyMode = useCallback((next: ClarifyPanelMode) => {
     setMode(next);
     if (next === 'progress') {
       setClarifyHeight(null);
       setClarifyFullscreen(false);
       userExitedFullscreenRef.current = false;
     }
+  }, []);
+
+  const switchMode = (next: 'progress' | 'clarify') => {
+    applyMode(next);
     onModeChange?.(next);
   };
 
+  /** URL 是澄清视图的唯一真源，页面级入口（「启动交付」前的澄清引导，工单 53315）改的也是 URL。
+   *  initialMode 原本只在挂载时读一次，那种入口就切不动面板，所以这里跟着 prop 变化同步内部态。
+   *  ref 守卫是必须的：只在 prop 真变化时同步。否则内部 switchMode 已经把 mode 改成 clarify、
+   *  而调用方没有接 onModeChange（URL 不动）时，拿 mode 去比对会立刻把用户拽回进度态。 */
+  const lastInitialModeRef = useRef<ClarifyPanelMode | undefined>(initialMode);
+  useEffect(() => {
+    if (lastInitialModeRef.current === initialMode) return;
+    lastInitialModeRef.current = initialMode;
+    applyMode(initialMode ?? 'progress');
+  }, [initialMode, applyMode]);
+
   // 主动退出全屏的唯一入口，保证 Esc 与按钮两条路径不会走偏
-  const exitFullscreen = () => {
+  const exitFullscreen = useCallback(() => {
     userExitedFullscreenRef.current = true;
     setClarifyFullscreen(false);
     onFullscreenChange?.(false);
-  };
+  }, [onFullscreenChange]);
 
   const enterFullscreen = () => {
     userExitedFullscreenRef.current = false;
@@ -111,7 +128,7 @@ export function RightPanel({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [clarifyFullscreen]);
+  }, [clarifyFullscreen, exitFullscreen]);
 
   const clarifyMaxHeight =
     clarifyBoxRef.current?.parentElement?.getBoundingClientRect().height || window.innerHeight;
@@ -220,6 +237,7 @@ export function RightPanel({
 
         <ExternalCollaborationCard collaboration={externalCollaboration} />
         <SquadMembers participants={participants} loading={participantsLoading} />
+        <WatcherList workitemId={workitemId} />
         <DeliveryProgress
           steps={steps}
           progress={progress}
@@ -240,6 +258,7 @@ export function RightPanel({
           )}
           pausingDispatchId={pauseMutation.isPending ? pauseMutation.variables?.dispatchId : null}
         />
+        <DebugLogList workitemId={workitemId} />
       </Space>
     </div>
   );

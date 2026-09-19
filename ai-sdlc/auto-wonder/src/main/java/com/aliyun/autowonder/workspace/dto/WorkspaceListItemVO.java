@@ -15,4 +15,6 @@ public class WorkspaceListItemVO {
     /** Wrapper type so Jackson emits {@code isOwner} rather than {@code owner}; see WorkspaceVO. */
     private Boolean isOwner;
     private Boolean canManage;
+    /** Optimistic lock echoed to the edit modal, same as WorkspaceVO.version. */
+    private Integer version;
 }

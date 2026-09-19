@@ -234,4 +234,106 @@ describe('AgentDetailPage', () => {
     });
     expect(screen.queryByText('确定删除该数字员工？删除后不可恢复。')).not.toBeInTheDocument();
   });
+
+  it('hides delete and offline actions for platform agents and shows the platform badge', async () => {
+    mockAgent({ kind: 'PLATFORM', name: 'Chief of Staff', status: 'ONLINE' });
+
+    renderPage();
+
+    expect(await screen.findByText('Chief of Staff')).toBeInTheDocument();
+    expect(screen.getByText('平台')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /下线/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /删除/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /编辑配置/ })).toBeInTheDocument();
+    expect(screen.getByText(/无需配置平台智能体的仓库配置/)).toBeInTheDocument();
+    expect(screen.getByText(/其默认拥有平台所有的仓库的读取权限，进行平台智能的管理。/)).toBeInTheDocument();
+  });
+
+  it('shows the sdlc template and evolution mode of the effective version', async () => {
+    mockAgent({ roleName: 'Frontend Dev', sdlcId: 7, evolutionMode: 'AUTO_PROPOSAL' });
+
+    renderPage();
+
+    expect(await screen.findByText('SDLC 模版：#7')).toBeInTheDocument();
+    expect(screen.getByText('自进化模式：自动生成候选')).toBeInTheDocument();
+  });
+
+  it('falls back to unset labels when sdlc and evolution mode are missing', async () => {
+    mockAgent();
+
+    renderPage();
+
+    expect(await screen.findByText('SDLC 模版：未绑定')).toBeInTheDocument();
+    expect(screen.getByText('自进化模式：未设置')).toBeInTheDocument();
+  });
+
+  it('warns about an unpublished draft and compares it with the effective config', async () => {
+    mockAgent({ roleName: 'Frontend Dev', evolutionMode: 'ASSISTED', hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions/3', () =>
+        ok({
+          id: 13, agentId: 1, versionNo: 3, status: 'DRAFT',
+          roleName: '后端开发', roleCode: 'BE_DEV',
+          businessBackground: '草稿业务背景', responsibilities: '草稿职责',
+          sdlcId: 9, identityJson: '{"evolutionMode":"MANUAL"}', evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null,
+          version: 0, gmtCreate: '2026-07-02',
+        }),
+      ),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('存在未发布的草稿 v3')).toBeInTheDocument();
+    expect(screen.getByText('下方展示的是当前生效的配置；草稿里的修改要提交审核并通过后才会生效。')).toBeInTheDocument();
+    // Published values stay authoritative on the detail page.
+    expect(screen.getByText('Frontend Dev')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+
+    expect(await screen.findByText('当前生效 vs 草稿 v3')).toBeInTheDocument();
+    expect(await screen.findByText('后端开发')).toBeInTheDocument();
+    expect(screen.getByText('草稿业务背景')).toBeInTheDocument();
+    expect(screen.getByText('纯手动')).toBeInTheDocument();
+    expect(screen.getByText('#9')).toBeInTheDocument();
+  });
+
+  it('does not fetch the draft version until the comparison is opened', async () => {
+    const draftRequests: string[] = [];
+    mockAgent({ hasDraft: true, draftVersionNo: 3 });
+    server.use(
+      http.get('/api/agents/1/versions/3', () => {
+        draftRequests.push('v3');
+        return ok({ id: 13, agentId: 1, versionNo: 3, status: 'DRAFT', roleName: '后端开发', roleCode: 'BE_DEV', businessBackground: '', responsibilities: '', sdlcId: null, identityJson: null, reviewerId: null, reviewComment: null, reviewedAt: null, version: 0, gmtCreate: '2026-07-02' });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('存在未发布的草稿 v3')).toBeInTheDocument();
+    expect(draftRequests).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: /查看草稿差异/ }));
+    await waitFor(() => expect(draftRequests).toHaveLength(1));
+
+    await userEvent.click(screen.getByRole('button', { name: /收起差异/ }));
+    expect(screen.queryByText('当前生效 vs 草稿 v3')).not.toBeInTheDocument();
+  });
+
+  it('does not warn about a draft when none exists', async () => {
+    mockAgent();
+
+    renderPage();
+
+    await screen.findByText('Alpha');
+    expect(screen.queryByText(/存在未发布的草稿/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the review guidance instead of the draft warning for a draft agent', async () => {
+    mockAgent({ status: 'DRAFT', onlineVersionId: null, hasDraft: true, draftVersionNo: 1 });
+
+    renderPage();
+
+    expect(await screen.findByText('数字员工尚未提交审核')).toBeInTheDocument();
+    expect(screen.queryByText(/存在未发布的草稿/)).not.toBeInTheDocument();
+  });
 });

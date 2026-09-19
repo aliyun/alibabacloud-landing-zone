@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
 import './AuthEntryShell.css';
 
 interface AuthEntryShellProps {
@@ -21,9 +22,10 @@ const workflow = [
 export function AuthEntryShell({ children }: AuthEntryShellProps) {
   return (
     <div className="auth-entry-page">
+      <div className="auth-entry-help"><HelpCenterLink /></div>
       <section className="auth-entry-story" aria-label="AutoWonder 产品理念">
         <div>
-          <div className="auth-entry-eyebrow">AutoWonder · Agent SDLC</div>
+          <div className="auth-entry-eyebrow">AutoWonder · AI Native SDLC Platform</div>
           <h1>登录后，把工单交给数字员工小队</h1>
           <p>工单系统、仓库、SDLC、执行器和工作空间记忆在入口第一屏形成完整认知。</p>
         </div>

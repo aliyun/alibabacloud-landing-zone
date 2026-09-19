@@ -19,11 +19,14 @@ public class WorkitemClarificationConversationController {
 
     private final WorkitemClarificationConversationService service;
     private final ConversationTurnEventService turnEventService;
+    private final ConversationCommandsService commandsService;
 
     public WorkitemClarificationConversationController(WorkitemClarificationConversationService service,
-            ConversationTurnEventService turnEventService) {
+            ConversationTurnEventService turnEventService,
+            ConversationCommandsService commandsService) {
         this.service = service;
         this.turnEventService = turnEventService;
+        this.commandsService = commandsService;
     }
 
     @GetMapping
@@ -110,6 +113,17 @@ public class WorkitemClarificationConversationController {
         long tenantId = currentWorkspaceId();
         service.verifyConversationBelongsToWorkitem(tenantId, workitemId, conversationId);
         return Result.ok(turnEventService.listEventsByTurn(tenantId, conversationId, turnId));
+    }
+
+    /** 打开会话时触发命令探针；幂等去重在 service 内。只读取能力、不改会话状态。 */
+    @PostMapping("/{conversationId}/commands/refresh")
+    public Result<Void> refreshCommands(
+            @PathVariable Long workitemId,
+            @PathVariable Long conversationId) {
+        long tenantId = currentWorkspaceId();
+        service.verifyConversationBelongsToWorkitem(tenantId, workitemId, conversationId);
+        commandsService.refresh(tenantId, conversationId);
+        return Result.ok(null);
     }
 
     private long currentWorkspaceId() {

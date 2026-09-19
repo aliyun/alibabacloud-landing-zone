@@ -4,11 +4,25 @@
 <mapper namespace="com.aliyun.autowonder.agent.AgentRepoPermDao">
     <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentRepoPermDO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO agent_repo_perm (tenant_id, agent_version_id, repo_id, perm_level)
-        VALUES (#{tenantId}, #{agentVersionId}, #{repoId}, #{permLevel})
+        INSERT INTO agent_repo_perm (tenant_id, agent_version_id, repo_id, perm_level, allowed_branch_patterns)
+        VALUES (#{tenantId}, #{agentVersionId}, #{repoId}, #{permLevel}, #{allowedBranchPatterns})
     </insert>
+    <update id="update" parameterType="com.aliyun.autowonder.agent.AgentRepoPermDO">
+        UPDATE agent_repo_perm
+        SET perm_level = #{permLevel}, allowed_branch_patterns = #{allowedBranchPatterns}
+        WHERE tenant_id = #{tenantId}
+          AND agent_version_id = #{agentVersionId}
+          AND repo_id = #{repoId}
+    </update>
     <select id="listByVersion" resultType="com.aliyun.autowonder.agent.AgentRepoPermDO">
         SELECT * FROM agent_repo_perm WHERE agent_version_id = #{agentVersionId}
+    </select>
+    <select id="findByVersionAndRepoForUpdate" resultType="com.aliyun.autowonder.agent.AgentRepoPermDO">
+        SELECT * FROM agent_repo_perm
+        WHERE tenant_id = #{tenantId}
+          AND agent_version_id = #{agentVersionId}
+          AND repo_id = #{repoId}
+        FOR UPDATE
     </select>
     <delete id="deleteByVersionAndRepo">
         DELETE FROM agent_repo_perm WHERE agent_version_id = #{agentVersionId} AND repo_id = #{repoId} AND tenant_id = #{tenantId}
@@ -16,7 +30,21 @@
     <delete id="deleteByVersion">
         DELETE FROM agent_repo_perm WHERE agent_version_id = #{agentVersionId}
     </delete>
-    <select id="countByRepoId" resultType="int">
-        SELECT COUNT(*) FROM agent_repo_perm WHERE repo_id = #{repoId} AND tenant_id = #{tenantId}
+    <select id="listActiveRefsByRepoId" resultType="com.aliyun.autowonder.agent.AgentRepoRefDO">
+        SELECT a.id AS agentId,
+               a.name AS agentName,
+               av.id AS agentVersionId,
+               av.version_no AS versionNo,
+               CASE WHEN a.online_version_id = av.id THEN 'ONLINE' ELSE 'EDITING' END AS refType
+        FROM agent_repo_perm p
+        JOIN agent_version av ON av.id = p.agent_version_id
+        JOIN agent a ON a.id = av.agent_id
+        WHERE p.repo_id = #{repoId}
+          AND p.tenant_id = #{tenantId}
+          AND a.tenant_id = #{tenantId}
+          AND a.is_deleted = 0
+          AND av.is_deleted = 0
+          AND (a.online_version_id = av.id OR a.editing_version_id = av.id)
+        ORDER BY a.id, av.version_no
     </select>
 </mapper>

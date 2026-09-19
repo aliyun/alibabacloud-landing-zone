@@ -26,62 +26,31 @@ import static org.mockito.Mockito.when;
 class SystemAdminServiceTest {
 
     @Test
-    void allowsFirstActiveUser() {
+    void aDemotedFirstUserNeverRegainsThePlatformAdminRole() {
         UserDao userDao = mock(UserDao.class);
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
+        when(userDao.findById(10000L)).thenReturn(user(10000L, 0));
         SystemAdminService service = new SystemAdminService(userDao);
 
-        assertTrue(service.isFirstActiveUser(10000L));
-        assertDoesNotThrow(() -> service.requireFirstActiveUser(10000L, "更新平台品牌配置"));
-    }
-
-    @Test
-    void rejectsNonFirstActiveUser() {
-        UserDao userDao = mock(UserDao.class);
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
-        SystemAdminService service = new SystemAdminService(userDao);
-
-        assertFalse(service.isFirstActiveUser(10001L));
+        // The first active user had the flag revoked: being first grants nothing anymore, and no
+        // fallback read of findFirstActiveUserId exists to silently restore the privilege.
+        assertFalse(service.isSystemAdmin(10000L));
         BizException error = assertThrows(BizException.class,
-                () -> service.requireFirstActiveUser(10001L, "更新平台品牌配置"));
-        assertTrue(error.getMessage().contains("仅系统第一个用户可以管理品牌配置"));
-    }
-
-    @Test
-    void rejectsWhenNoActiveUserExists() {
-        UserDao userDao = mock(UserDao.class);
-        when(userDao.findFirstActiveUserId()).thenReturn(null);
-        SystemAdminService service = new SystemAdminService(userDao);
-
-        assertFalse(service.isFirstActiveUser(10000L));
-        assertThrows(BizException.class,
-                () -> service.requireFirstActiveUser(10000L, "更新平台品牌配置"));
+                () -> service.requireSystemAdmin(10000L, "修改平台配置"));
+        assertTrue(error.getMessage().contains("仅平台管理员可以修改平台配置"));
+        verify(userDao, never()).findFirstActiveUserId();
     }
 
     @Test
     void treatsTheIsAdminColumnAsPlatformAdminWhateverTheFirstActiveUserIs() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.findById(10001L)).thenReturn(user(10001L, 1));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
         SystemAdminService service = new SystemAdminService(userDao);
 
-        // D3: is_admin is the flag, so a later user promoted by the migration is an admin even
-        // though the first-active-user fallback would not name them.
+        // D3: is_admin is the flag, so a later user promoted by an operator is an admin even
+        // though they are not the first active user.
         assertTrue(service.isSystemAdmin(10001L));
         assertDoesNotThrow(() -> service.requireSystemAdmin(10001L, "查看工作空间回收站"));
         verify(userDao, never()).findFirstActiveUserId();
-    }
-
-    @Test
-    void fallsBackToTheFirstActiveUserSoAnUnmigratedDatabaseKeepsAnAdmin() {
-        UserDao userDao = mock(UserDao.class);
-        when(userDao.findById(10000L)).thenReturn(user(10000L, 0));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
-        SystemAdminService service = new SystemAdminService(userDao);
-
-        // Neither V046 nor the startup self-heal has run yet on this database. Refusing here would
-        // lock everybody out of the recycle bin, so the legacy rule still applies.
-        assertTrue(service.isSystemAdmin(10000L));
     }
 
     @Test
@@ -89,13 +58,11 @@ class SystemAdminServiceTest {
         UserDao userDao = mock(UserDao.class);
         when(userDao.findById(10002L)).thenReturn(user(10002L, 0));
         when(userDao.findById(10003L)).thenReturn(null);
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
         SystemAdminService service = new SystemAdminService(userDao);
 
         assertFalse(service.isSystemAdmin(null));
         assertFalse(service.isSystemAdmin(10002L));
-        // A row that cannot be read still falls through to the legacy rule, and is refused there
-        // only because the id is not the first active user — never because the row is missing.
+        // An unreadable row simply means "not an admin" — there is no legacy rule to fall through to.
         assertFalse(service.isSystemAdmin(10003L));
         BizException error = assertThrows(BizException.class,
                 () -> service.requireSystemAdmin(10002L, "查看工作空间回收站"));
@@ -103,7 +70,7 @@ class SystemAdminServiceTest {
     }
 
     @Test
-    void selfHealLeavesAnExistingPlatformAdminAlone() {
+    void registerInitLeavesAnExistingPlatformAdminAlone() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.countSystemAdmins()).thenReturn(1L);
         SystemAdminService service = new SystemAdminService(userDao);
@@ -111,13 +78,13 @@ class SystemAdminServiceTest {
         assertFalse(service.ensureSystemAdmin());
 
         // Reading the first active user at all would risk promoting a second admin over the one
-        // the migration already chose.
+        // the operator already chose.
         verify(userDao, never()).findFirstActiveUserId();
         verify(userDao, never()).markSystemAdmin(10000L);
     }
 
     @Test
-    void selfHealDoesNothingOnAnEmptyPlatform() {
+    void registerInitDoesNothingOnAnEmptyPlatform() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.countSystemAdmins()).thenReturn(0L);
         when(userDao.findFirstActiveUserId()).thenReturn(null);
@@ -129,7 +96,7 @@ class SystemAdminServiceTest {
     }
 
     @Test
-    void selfHealPromotesTheLowestActiveIdAndReportsThePromotion() {
+    void registerInitPromotesTheLowestActiveIdAndReportsThePromotion() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.countSystemAdmins()).thenReturn(0L);
         when(userDao.findFirstActiveUserId()).thenReturn(10000L);
@@ -142,16 +109,92 @@ class SystemAdminServiceTest {
     }
 
     @Test
-    void selfHealLosesARaceQuietlyBecauseTheGuardAlreadyRejectedTheWrite() {
+    void registerInitLosesARaceQuietlyBecauseTheGuardAlreadyRejectedTheWrite() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.countSystemAdmins()).thenReturn(0L);
         when(userDao.findFirstActiveUserId()).thenReturn(10000L);
-        // markSystemAdmin carries an is_admin = 0 predicate, so concurrent starters all resolve the
-        // same id and exactly one of them flips it.
+        // markSystemAdmin carries an is_admin = 0 predicate, so concurrent registrations all
+        // resolve the same id and exactly one of them flips it.
         when(userDao.markSystemAdmin(10000L)).thenReturn(0);
         SystemAdminService service = new SystemAdminService(userDao);
 
         assertFalse(service.ensureSystemAdmin());
+    }
+
+    @Test
+    void initMigrationIsSkippedEntirelyWhenTheCompletionMarkerExists() {
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.isPlatformAdminInitDone()).thenReturn(true);
+        SystemAdminService service = new SystemAdminService(userDao);
+
+        assertFalse(service.ensurePlatformAdminInitialized());
+
+        // The marker is the whole decision: no roster read, no promotion, no re-write of the marker.
+        verify(userDao, never()).countSystemAdmins();
+        verify(userDao, never()).findFirstActiveUserId();
+        verify(userDao, never()).markSystemAdmin(any());
+        verify(userDao, never()).markPlatformAdminInitDone();
+    }
+
+    @Test
+    void initMigrationMarksCompletionWithoutPromotingWhenAnAdminAlreadyExists() {
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.isPlatformAdminInitDone()).thenReturn(false);
+        when(userDao.countSystemAdmins()).thenReturn(1L);
+        SystemAdminService service = new SystemAdminService(userDao);
+
+        assertFalse(service.ensurePlatformAdminInitialized());
+
+        // An operator-granted admin must win over the migration; the marker still gets written so
+        // the migration never runs again.
+        verify(userDao, never()).findFirstActiveUserId();
+        verify(userDao, never()).markSystemAdmin(any());
+        verify(userDao).markPlatformAdminInitDone();
+    }
+
+    @Test
+    void initMigrationPromotesTheFirstActiveUserOnceAndWritesTheMarker() {
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.isPlatformAdminInitDone()).thenReturn(false);
+        when(userDao.countSystemAdmins()).thenReturn(0L);
+        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
+        when(userDao.markSystemAdmin(10000L)).thenReturn(1);
+        SystemAdminService service = new SystemAdminService(userDao);
+
+        assertTrue(service.ensurePlatformAdminInitialized());
+
+        verify(userDao).markSystemAdmin(10000L);
+        verify(userDao).markPlatformAdminInitDone();
+    }
+
+    @Test
+    void initMigrationStillMarksCompletionWhenNobodyCanBePromoted() {
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.isPlatformAdminInitDone()).thenReturn(false);
+        when(userDao.countSystemAdmins()).thenReturn(0L);
+        when(userDao.findFirstActiveUserId()).thenReturn(null);
+        SystemAdminService service = new SystemAdminService(userDao);
+
+        assertFalse(service.ensurePlatformAdminInitialized());
+
+        // No user to promote, but the completion marker is still written: later restarts must not
+        // silently promote a user who registered after this run.
+        verify(userDao, never()).markSystemAdmin(any());
+        verify(userDao).markPlatformAdminInitDone();
+    }
+
+    @Test
+    void initMigrationLosesThePromotionRaceQuietlyButStillMarksCompletion() {
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.isPlatformAdminInitDone()).thenReturn(false);
+        when(userDao.countSystemAdmins()).thenReturn(0L);
+        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
+        when(userDao.markSystemAdmin(10000L)).thenReturn(0);
+        SystemAdminService service = new SystemAdminService(userDao);
+
+        assertFalse(service.ensurePlatformAdminInitialized());
+
+        verify(userDao).markPlatformAdminInitDone();
     }
 
     @Test
@@ -186,18 +229,17 @@ class SystemAdminServiceTest {
     }
 
     @Test
-    void rosterExplainsTheLastAdminRuleWhenTheOnlyAdminIsSomebodyElse() {
+    void rosterExplainsTheLastAdminRuleWhenOnlyOneAdminRemains() {
         UserDao userDao = mock(UserDao.class);
-        // The operator holds no is_admin flag and is admin only through the first-active-user
-        // fallback, so the single persisted admin is not their own row.
+        // A viewer without the flag still sees the roster read-only; the single admin in it is
+        // exactly the row the "keep at least one admin" rule protects.
         when(userDao.findById(10000L)).thenReturn(user(10000L, "alice", 0, 0));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
         when(userDao.listSystemAdmins()).thenReturn(List.of(user(10001L, "bob", 1, 0)));
         SystemAdminService service = new SystemAdminService(userDao);
 
         PlatformAdminListVO vo = service.listPlatformAdmins(10000L);
 
-        assertTrue(vo.isCanManage());
+        assertFalse(vo.isCanManage());
         PlatformAdminVO only = vo.getAdmins().get(0);
         assertFalse(only.isSelf());
         assertFalse(only.isRemovable());
@@ -208,7 +250,6 @@ class SystemAdminServiceTest {
     void rosterReportsADeactivatedAdminAsInactiveAndDeniesManagementToAViewerWhoIsNotAnAdmin() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.findById(10002L)).thenReturn(user(10002L, "carol", 0, 0));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
         // The roster is not filtered on status, so an admin whose account was deactivated still
         // occupies a seat and still counts towards the "keep at least one admin" rule.
         when(userDao.listSystemAdmins()).thenReturn(List.of(user(10001L, "bob", 1, 1)));
@@ -291,7 +332,6 @@ class SystemAdminServiceTest {
     void addRejectsAnOperatorWhoIsNotAPlatformAdmin() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.findById(10002L)).thenReturn(user(10002L, "carol", 0, 0));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
         SystemAdminService service = new SystemAdminService(userDao);
 
         BizException error = assertThrows(BizException.class,
@@ -333,8 +373,7 @@ class SystemAdminServiceTest {
     @Test
     void removeRefusesToEmptyTheAdminRoster() {
         UserDao userDao = mock(UserDao.class);
-        when(userDao.findById(10000L)).thenReturn(user(10000L, "alice", 0, 0));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
+        when(userDao.findById(10000L)).thenReturn(user(10000L, "alice", 1, 0));
         when(userDao.findById(10001L)).thenReturn(user(10001L, "bob", 1, 0));
         when(userDao.countSystemAdmins()).thenReturn(1L);
         SystemAdminService service = new SystemAdminService(userDao);
@@ -366,7 +405,6 @@ class SystemAdminServiceTest {
     void removeRejectsAnOperatorWhoIsNotAPlatformAdmin() {
         UserDao userDao = mock(UserDao.class);
         when(userDao.findById(10002L)).thenReturn(user(10002L, "carol", 0, 0));
-        when(userDao.findFirstActiveUserId()).thenReturn(10000L);
         SystemAdminService service = new SystemAdminService(userDao);
 
         BizException error = assertThrows(BizException.class,

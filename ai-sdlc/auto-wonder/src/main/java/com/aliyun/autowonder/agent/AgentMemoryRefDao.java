@@ -13,5 +13,6 @@ public interface AgentMemoryRefDao {
                                      @Param("tenantId") Long tenantId);
     int deleteByVersionAndMemory(@Param("agentVersionId") Long agentVersionId, @Param("memoryId") Long memoryId, @Param("tenantId") Long tenantId);
     int deleteByVersion(@Param("agentVersionId") Long agentVersionId);
+    int deleteByMemoryId(@Param("memoryId") Long memoryId, @Param("tenantId") Long tenantId);
     int countByMemoryId(@Param("memoryId") Long memoryId, @Param("tenantId") Long tenantId);
 }

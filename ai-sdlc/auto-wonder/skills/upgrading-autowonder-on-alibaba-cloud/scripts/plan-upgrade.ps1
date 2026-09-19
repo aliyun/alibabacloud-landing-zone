@@ -8,7 +8,7 @@ param(
     [switch]$ForceRedeploy
 )
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '..\..\deploying-autowonder-on-alibaba-cloud\scripts\windows\lib.ps1')
+. (Join-Path $PSScriptRoot 'windows\lib.ps1')
 Protect-CurrentUserFile -Path $Manifest
 Protect-CurrentUserFile -Path $EnvFile
 $data = Get-ManifestData -Manifest $Manifest

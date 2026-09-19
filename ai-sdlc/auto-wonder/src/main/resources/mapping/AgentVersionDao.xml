@@ -24,10 +24,31 @@
         SELECT * FROM agent_version WHERE agent_id = #{agentId} AND status = 'APPROVED' AND is_deleted = 0
         ORDER BY version_no DESC
     </select>
+    <!-- SDLC 删除的数字人占用校验：仅统计“当前生效版本”(agent.online_version_id 指向的版本)引用该 SDLC 的数字人。
+         历史版本、非生效草稿及已软删除的数字人/版本均不计入，避免改绑并发布后旧 SDLC 因历史引用无法删除。
+         JOIN 额外约束 av.agent_id = a.id，确保生效指针指向的版本确属该数字人本人，
+         与运行时 AgentSdlcResolver.resolveSdlcId 的 agentId 守卫同口径，脏数据下也不误计占用。 -->
     <select id="listAgentIdsBySdlcId" resultType="java.lang.Long">
-        SELECT DISTINCT agent_id FROM agent_version
-        WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
-        ORDER BY agent_id LIMIT 5
+        SELECT DISTINCT a.id FROM agent a
+        JOIN agent_version av ON av.id = a.online_version_id AND av.agent_id = a.id
+        WHERE av.sdlc_id = #{sdlcId} AND av.is_deleted = 0 AND a.is_deleted = 0
+        ORDER BY a.id LIMIT 5
+    </select>
+    <select id="listOnlineBySdlcIds" resultType="com.aliyun.autowonder.agent.AgentVersionDO">
+        SELECT DISTINCT av.sdlc_id, av.agent_id
+        FROM agent_version av
+        JOIN agent a ON a.online_version_id = av.id AND a.tenant_id = #{tenantId} AND a.is_deleted = 0
+        WHERE av.is_deleted = 0
+          AND av.tenant_id = #{tenantId}
+          AND av.sdlc_id IN
+        <!-- An empty collection would render "IN ()", a syntax error; IN (NULL) matches no row. -->
+        <choose>
+            <when test="sdlcIds != null and sdlcIds.size() > 0">
+                <foreach collection="sdlcIds" item="sdid" open="(" separator="," close=")">#{sdid}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+        ORDER BY av.sdlc_id, av.agent_id
     </select>
     <update id="updateConfig">
         UPDATE agent_version SET role_name = #{roleName}, role_code = #{roleCode},
@@ -37,13 +58,15 @@
             version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
+    <!-- identity_json holds configuration (evolutionMode) and must survive a status transition, while
+         reviewer_id/review_comment are review-scoped and intentionally reset on every transition. -->
     <update id="updateStatus">
         UPDATE agent_version
         <set>
             status = #{status},
             reviewer_id = #{reviewerId},
             review_comment = #{reviewComment},
-            identity_json = #{identityJson},
+            <if test="identityJson != null">identity_json = #{identityJson},</if>
             <if test="reviewerId != null">reviewed_at = NOW(3),</if>
             version = version + 1,
             modifier_id = #{modifierId}

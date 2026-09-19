@@ -43,7 +43,9 @@ The authenticated `/api/health` endpoint is not a startup probe. Capabilities
 should report Aone disabled.
 `AUTOWONDER_PUBLIC_BASE_URL` is stored in the environment file; when not
 explicitly supplied, `runtime-config` derives it from manifest
-`applicationBaseUrl` before deployment.
+`applicationBaseUrl` before deployment. Without a domain, this is
+`http://<alb-public-ipv4>` using the numerically first of the two ALB EIPs,
+not the ALB DNS name. An explicitly supplied environment URL is preserved.
 
 ## Configuration And Data Services
 

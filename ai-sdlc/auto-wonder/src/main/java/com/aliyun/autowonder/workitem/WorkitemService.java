@@ -301,6 +301,7 @@ public class WorkitemService {
                                       String assigneeType, Long assigneeRef, boolean pendingDecisionOnly,
                                       String mineScope,
                                       long tenantId, long currentUserId, String keyword, String tag,
+                                      String scheduledStart,
                                       int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = size < 1 ? 20 : Math.min(size, 200);
@@ -310,6 +311,7 @@ public class WorkitemService {
         String trimmedTag = tag == null ? null : tag.trim();
         String effectiveTag = (trimmedTag != null && !trimmedTag.isEmpty()) ? trimmedTag : null;
         String effectiveStatusCategory = normalizeStatusCategory(statusCategory);
+        String effectiveScheduledStart = normalizeScheduledStart(scheduledStart);
         Long keywordId = null;
         if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
             try {
@@ -319,10 +321,12 @@ public class WorkitemService {
         }
         long total = workitemDao.count(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag);
+                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
+                effectiveScheduledStart);
         List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag, offset, s);
+                pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
+                effectiveScheduledStart, offset, s);
         Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(tenantId, rows);
 
         Set<Long> humanIds = new HashSet<>();
@@ -387,8 +391,10 @@ public class WorkitemService {
         for (WorkitemDO w : rows) {
             WorkitemVO vo = toVO(w, userMap, agentMap, nodeMap, sdlcMap);
             DispatchDO latest = latestByWorkitem.get(w.getId());
+            vo.setExecutionStatus(latest == null ? null : latest.getStatus());
             applyPendingDecision(vo, w, latest, nodeMap);
             applyHealth(vo, w, latest, now, nodeMap);
+            applyScheduledPhase(vo, w, latest, now, nodeMap);
             applyDeleteEligibility(vo, w, extLinksMap, allDispatchesByWorkitem);
             if (SOURCE_TYPE_EXTERNAL.equals(vo.getSourceType())) {
                 applyExternalSource(vo, extLinksMap.getOrDefault(w.getId(), List.of()));
@@ -409,6 +415,15 @@ public class WorkitemService {
         }
         String v = statusCategory.trim().toUpperCase();
         return STATUS_CATEGORIES.contains(v) ? v : null;
+    }
+
+    /** 定时工单筛选值归一化，非法值视为不过滤，保证不传参数时列表行为与现状一致。 */
+    private String normalizeScheduledStart(String scheduledStart) {
+        if (scheduledStart == null || scheduledStart.isBlank()) {
+            return null;
+        }
+        String v = scheduledStart.trim().toUpperCase();
+        return WorkitemScheduledPhase.isFilter(v) ? v : null;
     }
 
     private Map<Long, DispatchDO> loadLatestDispatches(long tenantId, List<WorkitemDO> rows) {
@@ -466,6 +481,32 @@ public class WorkitemService {
         vo.setHealthReason(r.reason());
     }
 
+    /**
+     * 定时工单的阶段派生。判定顺序按操作语义排列：未到点的定时仍可改期/取消/立即启动，
+     * 因此待触发先于完成态；其后依次是完成态状态节点、最新 dispatch 非终态、待处理。
+     * 从未设置过定时的工单保持 null，普通工单列表不受影响。
+     */
+    private void applyScheduledPhase(WorkitemVO vo, WorkitemDO w, DispatchDO latest, long now,
+                                     Map<Long, StatusNodeDO> nodeMap) {
+        Date scheduledStartAt = w.getScheduledStartAt();
+        if (scheduledStartAt == null && w.getScheduledStartTriggeredAt() == null) {
+            return;
+        }
+        if (scheduledStartAt != null && scheduledStartAt.getTime() > now) {
+            vo.setScheduledPhase(WorkitemScheduledPhase.PENDING);
+            return;
+        }
+        if (isDoneStatus(w.getStatusNodeId(), vo.getStatusName(), nodeMap)) {
+            vo.setScheduledPhase(WorkitemScheduledPhase.DONE);
+            return;
+        }
+        if (latest != null && !DispatchStatus.isTerminal(latest.getStatus())) {
+            vo.setScheduledPhase(WorkitemScheduledPhase.RUNNING);
+            return;
+        }
+        vo.setScheduledPhase(WorkitemScheduledPhase.READY);
+    }
+
     private void applyPendingDecision(WorkitemVO vo, WorkitemDO w, DispatchDO latest) {
         boolean successfulHumanHandoff = "HUMAN".equals(w.getAssigneeType())
                 && latest != null
@@ -515,9 +556,23 @@ public class WorkitemService {
 
     @Transactional
     public WorkitemVO transition(long id, long toNodeId, long tenantId, long userId) {
+        return transition(id, toNodeId, tenantId, userId, null, null);
+    }
+
+    @Transactional
+    public WorkitemVO transition(long id, long toNodeId, long tenantId, long userId,
+                                 Long expectedFromNodeId, Integer expectedVersion) {
         WorkitemDO w = workitemDao.findById(id);
-        if (w == null) {
+        if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        }
+        // The board may have changed since the user started dragging or selected a target.
+        if ((expectedFromNodeId != null && !expectedFromNodeId.equals(w.getStatusNodeId()))
+                || (expectedVersion != null && !expectedVersion.equals(w.getVersion()))) {
+            throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+        }
+        if (w.getTemplateId() == null || w.getStatusNodeId() == null) {
+            throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
         long fromNodeId = w.getStatusNodeId();
         if (transitionDao.findByTemplateFromTo(w.getTemplateId(), fromNodeId, toNodeId) == null) {
@@ -564,6 +619,8 @@ public class WorkitemService {
         writeEvent(tenantId, id, WorkitemEventType.STATUS_CHANGE.code(),
                 fromNode == null ? null : fromNode.getCode(),
                 toNode.getCode(), "AGENT", agentId);
+        eventPublisher.publishEvent(new WorkitemStatusChangedEvent(WorkitemStatusChangedEvent.ACTOR_AGENT,
+                tenantId, id, toNode.getId(), agentId));
         return toVO(workitemDao.findById(id));
     }
 
@@ -1377,9 +1434,11 @@ public class WorkitemService {
             if (latestDispatch != null) {
                 vo.setError(latestDispatch.getError());
                 vo.setExecutorName(resolveAgentName(latestDispatch.getAgentId()));
-                vo.setSubSteps(dispatchSubSteps(latestDispatch.getStatus()));
+                vo.setSubSteps(dispatchSubSteps(latestDispatch));
             }
-            if (latestDispatch != null && isFailed(latestDispatch.getStatus())) {
+            if (latestDispatch != null && DispatchStatus.CANCELED.equals(latestDispatch.getStatus())) {
+                vo.setStatus("cancelled");
+            } else if (latestDispatch != null && isFailed(latestDispatch.getStatus())) {
                 vo.setStatus("failed");
             } else if (step.getId().equals(w.getCurrentStepId())) {
                 vo.setStatus("active");
@@ -1460,12 +1519,14 @@ public class WorkitemService {
             if (latestDispatch != null) {
                 vo.setError(latestDispatch.getError());
                 vo.setExecutorName(resolveAgentName(latestDispatch.getAgentId()));
-                vo.setSubSteps(dispatchSubSteps(latestDispatch.getStatus()));
+                vo.setSubSteps(dispatchSubSteps(latestDispatch));
             }
             vo.setDurationMs(runtimeState.durationOf(step));
             String runtimeStatus = runtimeState.statusOf(step);
             if (runtimeStatus != null && runtimeState.isCurrent(step) && latestAgentDispatch != null) {
-                if (DispatchStatus.PAUSED.equals(latestAgentDispatch.getStatus())) {
+                if (DispatchStatus.CANCELED.equals(latestAgentDispatch.getStatus())) {
+                    runtimeStatus = "cancelled";
+                } else if (DispatchStatus.PAUSED.equals(latestAgentDispatch.getStatus())) {
                     runtimeStatus = "paused";
                 } else if (DispatchStatus.PENDING.equals(latestAgentDispatch.getStatus())
                         && "failed".equals(runtimeStatus)) {
@@ -1480,6 +1541,8 @@ public class WorkitemService {
                     ? null : runtimeState.lastEventOf(step);
             if (runtimeStatus != null && !completedAgentWorkflow) {
                 vo.setStatus(runtimeStatus);
+            } else if (latestDispatch != null && DispatchStatus.CANCELED.equals(latestDispatch.getStatus())) {
+                vo.setStatus("cancelled");
             } else if (latestDispatch != null && DispatchStatus.PAUSED.equals(latestDispatch.getStatus())) {
                 vo.setStatus("paused");
             } else if (latestDispatch != null && isFailed(latestDispatch.getStatus())) {
@@ -1809,6 +1872,7 @@ public class WorkitemService {
         if (hasActive) {
             return "active";
         }
+        if (steps.stream().anyMatch(s -> "cancelled".equals(s.getStatus()))) return "cancelled";
         boolean hasFailed = steps.stream().anyMatch(s -> "failed".equals(s.getStatus()));
         boolean hasDone = steps.stream().anyMatch(s -> "done".equals(s.getStatus()));
         if (hasFailed && !hasActive) {
@@ -1891,7 +1955,7 @@ public class WorkitemService {
             DispatchAttemptVO vo = new DispatchAttemptVO();
             vo.setDispatchId(d.getId());
             vo.setExecutorName(resolveAgentName(d.getAgentId()));
-            vo.setStatus(runtimeFailed ? DispatchStatus.FAILED : d.getStatus());
+            vo.setStatus(runtimeFailed && !DispatchStatus.CANCELED.equals(d.getStatus()) ? DispatchStatus.FAILED : d.getStatus());
             vo.setResumeMode(d.getResumeMode());
             boolean executorFailover = DispatchStatus.PENDING.equals(d.getStatus())
                     && latestEvent != null
@@ -1968,7 +2032,8 @@ public class WorkitemService {
         return event.getEventType();
     }
 
-    private List<SubStepVO> dispatchSubSteps(String dispatchStatus) {
+    private List<SubStepVO> dispatchSubSteps(DispatchDO dispatch) {
+        String dispatchStatus = dispatch.getStatus();
         if (DispatchStatus.PENDING.equals(dispatchStatus)) {
             return List.of(
                     subStep("启动交付", "done"),
@@ -2033,11 +2098,18 @@ public class WorkitemService {
                     subStep("执行完成", "done")
             );
         }
+        if (DispatchStatus.CANCELED.equals(dispatchStatus)) return List.of(subStep("本次执行已取消", "cancelled"));
         if (isFailed(dispatchStatus)) {
+            if (dispatch.getExecutorId() == null) {
+                return List.of(
+                        subStep("启动交付", "done"),
+                        subStep("未派发到客户端", "failed")
+                );
+            }
             return List.of(
                     subStep("启动交付", "done"),
                     subStep("准备执行上下文", "done"),
-                    subStep("客户端已接单", "done"),
+                    subStep("已分配执行器", "done"),
                     subStep("执行失败", "failed")
             );
         }

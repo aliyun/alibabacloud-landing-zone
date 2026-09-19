@@ -26,7 +26,12 @@ public class AgentSdlcResolver {
         this.stepDao = stepDao;
     }
 
-    /** Returns the agent's own SDLC id (online version first, else any version), or null. */
+    /**
+     * Returns the SDLC id of the agent's current effective version (agent.online_version_id), or null.
+     * 一旦存在生效版本，严格以该版本的 SDLC 为准：即使其 sdlcId 为空(已解除引用)也不回退历史版本，
+     * 避免历史引用被隐式恢复，与 SDLC 删除占用校验(AgentVersionDao.listAgentIdsBySdlcId)口径一致。
+     * 仅当数字人从未发布(无生效版本)时，才回退到其任一版本的 SDLC 绑定。
+     */
     public Long resolveSdlcId(long tenantId, long agentId) {
         AgentDO agent = agentDao.findById(agentId);
         if (agent == null || !Long.valueOf(tenantId).equals(agent.getTenantId())) {
@@ -35,9 +40,11 @@ public class AgentSdlcResolver {
         if (agent.getOnlineVersionId() != null) {
             AgentVersionDO online = agentVersionDao.findById(agent.getOnlineVersionId());
             if (online != null && Long.valueOf(tenantId).equals(online.getTenantId())
-                    && Long.valueOf(agentId).equals(online.getAgentId()) && online.getSdlcId() != null) {
+                    && Long.valueOf(agentId).equals(online.getAgentId())) {
                 return online.getSdlcId();
             }
+            // 生效版本指针指向的记录不可用(缺失/跨租户/非本数字人)时不回退历史版本，视为无 SDLC 绑定。
+            return null;
         }
         List<AgentVersionDO> versions = agentVersionDao.listByAgent(agentId);
         if (versions != null) {

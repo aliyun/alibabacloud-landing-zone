@@ -111,6 +111,7 @@ function adjustMetrics(metrics: InsightMetrics, scale: number, workerId: string)
   const tokenScale = scale * taskRatio;
   const penalty = workerId ? (seed(workerId) % 8) : 0;
   return {
+    // cost 是真实数据通路（credits/token 直接来自后端聚合），不参与 seed 缩放与估算，禁止在这里改写。
     cost: metrics.cost,
     efficiency: {
       completionRate: clamp(metrics.efficiency.completionRate - penalty + (scale > 1 ? 2 : -1)),

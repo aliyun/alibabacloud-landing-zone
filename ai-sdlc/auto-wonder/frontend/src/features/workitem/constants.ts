@@ -4,12 +4,26 @@ export const workTypeMap: Record<string, { color: string; label: string }> = {
   BUG: { color: 'red', label: '缺陷' },
 };
 
+/**
+ * 优先级展示映射，与创建表单 P0～P3（紧急/高/中/低）语义一致：
+ * 列表、看板、详情共用，存储值直接映射中文标签，不再单独显示数字。
+ */
 export const priorityMap: Record<number, { color: string; label: string }> = {
-  1: { color: '#ff4d4f', label: 'P1' },
-  2: { color: '#fa8c16', label: 'P2' },
-  3: { color: '#1890ff', label: 'P3' },
-  4: { color: '#8c8c8c', label: 'P4' },
+  0: { color: '#ff4d4f', label: '紧急' },
+  1: { color: '#fa8c16', label: '高' },
+  2: { color: '#1890ff', label: '中' },
+  3: { color: '#8c8c8c', label: '低' },
 };
+
+export const UNKNOWN_PRIORITY: { color: string; label: string } = {
+  color: '#8c8c8c',
+  label: '未知优先级',
+};
+
+/** 未知优先级值显示「未知优先级」，不映射为低优先级、不改数据。 */
+export function getPriorityMeta(priority: number): { color: string; label: string } {
+  return priorityMap[priority] ?? UNKNOWN_PRIORITY;
+}
 
 export interface StatusColumn {
   key: string;

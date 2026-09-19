@@ -64,10 +64,15 @@ public class ArtifactController {
     public ResponseEntity<byte[]> preview(@PathVariable("id") Long id) {
         try {
             ArtifactService.PreviewContent content = artifactService.getPreviewContent(id, currentWorkspaceId());
-            return ResponseEntity.ok()
+            ResponseEntity.BodyBuilder builder = ResponseEntity.ok()
                     .contentType(contentType(content.getName()))
-                    .header("X-Content-Type-Options", "nosniff")
-                    .body(content.getBytes());
+                    .header("X-Content-Type-Options", "nosniff");
+            if (isHtml(content.getName())) {
+                // 直接访问端点时以 CSP sandbox 渲染（无 allow-* 令牌，脚本与同源访问全部禁用），
+                // 防止任意 HTML 在主站同源环境执行；应用内预览走前端 sandbox iframe + blob URL。
+                builder.header("Content-Security-Policy", "sandbox");
+            }
+            return builder.body(content.getBytes());
         } catch (BizException ex) {
             return ResponseEntity.status(statusFor(ex.getCode()))
                     .contentType(MediaType.TEXT_PLAIN)
@@ -98,6 +103,9 @@ public class ArtifactController {
             case "md":
             case "markdown":
                 return MediaType.valueOf("text/markdown;charset=UTF-8");
+            case "html":
+            case "htm":
+                return MediaType.valueOf("text/html;charset=UTF-8");
             case "json":
                 return MediaType.APPLICATION_JSON;
             case "jsonl":
@@ -139,6 +147,11 @@ public class ArtifactController {
             return HttpStatus.NOT_FOUND;
         }
         return HttpStatus.BAD_REQUEST;
+    }
+
+    private boolean isHtml(String name) {
+        String ext = extension(name);
+        return "html".equals(ext) || "htm".equals(ext);
     }
 
     private String extension(String name) {

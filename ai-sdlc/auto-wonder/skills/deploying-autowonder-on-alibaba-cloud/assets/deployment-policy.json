@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "regions": [
+    "cn-zhangjiakou",
+    "cn-hangzhou",
+    "cn-shanghai",
+    "cn-beijing"
+  ],
+  "ecs": {
+    "cpu": 2,
+    "memoryGiB": 4,
+    "architecture": "X86",
+    "preferred": "ecs.c8a.large",
+    "systemDisk": "cloud_essd",
+    "systemDiskGiB": 60,
+    "familyLevel": "EnterpriseLevel",
+    "defaultImagePrefix": "aliyun_3_"
+  },
+  "rds": {
+    "engine": "MySQL",
+    "version": "8.0",
+    "categories": [
+      "HighAvailability",
+      "cluster"
+    ],
+    "storageTypes": [
+      "cloud_essd"
+    ],
+    "storageGiB": 100,
+    "cpu": 2,
+    "memoryGiB": 4
+  },
+  "redis": {
+    "engine": "Redis",
+    "version": "7.0",
+    "edition": "Community",
+    "nodeType": "double",
+    "architecture": "standard",
+    "capacityMb": 1024
+  },
+  "billing": {
+    "strategy": "subscription-first",
+    "purchasePeriodMonths": 1,
+    "autoRenew": true,
+    "autoRenewPeriodMonths": 1,
+    "payAsYouGoExceptions": [
+      "ALB",
+      "OSS",
+      "SLS"
+    ]
+  }
+}

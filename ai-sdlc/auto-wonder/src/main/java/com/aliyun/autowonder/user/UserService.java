@@ -55,8 +55,9 @@ public class UserService {
         user.setPasswordHash(PasswordEncoderUtil.encode(req.getPassword()));
         user.setStatus(0);
         userDao.insert(user);
-        // D3: the platform's first active user is its admin. Idempotent — a no-op once any
-        // admin exists — so registering later users never changes who administers.
+        // New-install initialization: the first active user registered on a platform that has
+        // no admin yet becomes the platform admin. A no-op once any admin exists, so later
+        // registrations never change the roster and a demoted first user is never re-granted.
         systemAdminService.ensureSystemAdmin();
 
         UserVO vo = new UserVO();
@@ -143,6 +144,7 @@ public class UserService {
         vo.setUsername(user.getUsername());
         vo.setNickname(user.getNickname());
         vo.setEmail(user.getEmail());
+        vo.setIsAdmin(Integer.valueOf(1).equals(user.getIsAdmin()));
         return vo;
     }
 }

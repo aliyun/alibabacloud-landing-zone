@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  Button, Space, Modal, Form, Input, Popconfirm, message, Tag, List, Select, Spin, Popover, Empty, Pagination,
+  Button, Space, Modal, Form, Input, Popconfirm, message, Tag, List, Select, Spin, Popover, Empty, Pagination, Switch,
 } from 'antd';
 import { PlusOutlined, TeamOutlined, EditOutlined, DeleteOutlined, UserAddOutlined, EyeOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  listSquads, createSquad, updateSquad, deleteSquad,
+  listSquads, createSquad, updateSquad, deleteSquad, getSquad,
   getSquadMembers, addSquadMember, removeSquadMember,
 } from './api';
 import { listAgents } from '@/features/agent/api';
@@ -28,11 +29,51 @@ export function SquadListPage() {
   const [addAgentId, setAddAgentId] = useState<number | undefined>(undefined);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailSquad, setDetailSquad] = useState<Squad | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data, isLoading } = useQuery({
     queryKey: ['squads', pageNum, pageSize],
     queryFn: () => listSquads({ pageNum, pageSize }),
   });
+
+  // Squad tags on the agent / SDLC / executor pages link here as /squads?squadId=<id>; there is no
+  // per-squad route, so the param drives this Modal. The list is paginated, so the target can sit on
+  // any page: resolve it by id instead of searching the loaded rows. The param is consumed up front,
+  // otherwise a stale one reopens the Modal every time the user changes page.
+  const [deepLinkSquadId, setDeepLinkSquadId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const raw = searchParams.get('squadId');
+    if (raw === null) return;
+    const consumed = new URLSearchParams(searchParams);
+    consumed.delete('squadId');
+    setSearchParams(consumed, { replace: true });
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      setDeepLinkSquadId(parsed);
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Keyed like detailSquadFull below so the deep link and the Modal address the same cache entry.
+  const { data: deepLinkSquad, isError: deepLinkFailed } = useQuery({
+    queryKey: ['squad-detail', deepLinkSquadId],
+    queryFn: () => getSquad(deepLinkSquadId!),
+    enabled: deepLinkSquadId !== null,
+  });
+
+  useEffect(() => {
+    if (deepLinkSquadId === null) return;
+    if (deepLinkSquad) {
+      setDetailSquad(deepLinkSquad);
+      setDetailOpen(true);
+      setDeepLinkSquadId(null);
+      return;
+    }
+    if (deepLinkFailed) {
+      message.warning(`小队 #${deepLinkSquadId} 不存在或当前账号无权访问`);
+      setDeepLinkSquadId(null);
+    }
+  }, [deepLinkSquadId, deepLinkSquad, deepLinkFailed]);
 
   const { data: members = [], isLoading: membersLoading } = useQuery({
     queryKey: ['squad-members', membersSquadId],
@@ -43,6 +84,13 @@ export function SquadListPage() {
   const { data: detailMembers = [], isLoading: detailLoading } = useQuery({
     queryKey: ['squad-detail-members', detailSquad?.id],
     queryFn: () => getSquadMembers(detailSquad!.id),
+    enabled: detailOpen && !!detailSquad,
+  });
+
+  // Only GET /api/squads/{id} derives the SDLC flows and executors the squad owns; the list rows omit them.
+  const { data: detailSquadFull } = useQuery({
+    queryKey: ['squad-detail', detailSquad?.id],
+    queryFn: () => getSquad(detailSquad!.id),
     enabled: detailOpen && !!detailSquad,
   });
 
@@ -61,7 +109,10 @@ export function SquadListPage() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, data: d }: { id: number; data: { name?: string; description?: string } }) => updateSquad(id, d),
+    mutationFn: ({ id, data: d }: {
+      id: number;
+      data: { name?: string; description?: string; ownerId?: number | null; debugLogEnabled?: boolean };
+    }) => updateSquad(id, d),
     onSuccess: () => { invalidateSquads(); setFormOpen(false); setEditingSquad(null); form.resetFields(); message.success('已保存'); },
   });
 
@@ -91,7 +142,11 @@ export function SquadListPage() {
   const openEdit = (squad: Squad) => {
     accessCommand('READ_WRITE', '编辑小队', () => {
       setEditingSquad(squad);
-      form.setFieldsValue({ name: squad.name, description: squad.description });
+      form.setFieldsValue({
+        name: squad.name,
+        description: squad.description,
+        debugLogEnabled: !!squad.debugLogEnabled,
+      });
       setFormOpen(true);
     });
   };
@@ -112,7 +167,18 @@ export function SquadListPage() {
     const values = await form.validateFields();
     accessCommand('READ_WRITE', editingSquad ? '编辑小队' : '新建小队', () => {
       if (editingSquad) {
-        updateMut.mutate({ id: editingSquad.id, data: values });
+        // 后端 update 混合 PUT/PATCH 语义：name/description/owner_id 无条件覆盖，
+        // 只有 debug_log_enabled 走 COALESCE。必须整对象提交，否则切开关会把
+        // owner_id 抹成 null（name 是非空列，漏发会直接 500）。
+        updateMut.mutate({
+          id: editingSquad.id,
+          data: {
+            name: values.name ?? editingSquad.name,
+            description: values.description ?? editingSquad.description,
+            ownerId: editingSquad.ownerId ?? null,
+            debugLogEnabled: !!values.debugLogEnabled,
+          },
+        });
       } else {
         createMut.mutate(values);
       }
@@ -124,6 +190,8 @@ export function SquadListPage() {
   );
   const roleStats = buildRoleStats(detailMembers);
   const sdlcGroups = buildSdlcGroups(detailMembers);
+  const detailExecutors = detailSquadFull?.executors ?? [];
+  const detailSdlcs = detailSquadFull?.sdlcs ?? [];
   const squads = data?.list ?? [];
   const memberTotal = squads.reduce((sum, squad) => sum + (squad.memberCount ?? 0), 0);
   const executorOnlineTotal = squads.reduce((sum, squad) => sum + (squad.executorOnlineCount ?? 0), 0);
@@ -163,7 +231,12 @@ export function SquadListPage() {
                       <span>{index + 1}</span>
                     </div>
                     <div className="squad-card-title-area">
-                      <div className="squad-card-title">{squad.name}</div>
+                      <div className="squad-card-title">
+                        {squad.name}
+                        {squad.debugLogEnabled ? (
+                          <Tag color="orange" style={{ marginLeft: 6 }}>Debug</Tag>
+                        ) : null}
+                      </div>
                       <div className="squad-card-description">{squad.description || '暂无描述'}</div>
                     </div>
                   </div>
@@ -221,6 +294,16 @@ export function SquadListPage() {
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} placeholder="描述该小队的业务方向和职责" />
           </Form.Item>
+          {editingSquad ? (
+            <Form.Item
+              name="debugLogEnabled"
+              label="Debug 日志收集"
+              valuePropName="checked"
+              extra="开启后，该小队数字人每轮执行的全量日志将自动压缩上传，保留 60 天（下一轮生效）"
+            >
+              <Switch data-testid="debug-log-switch" />
+            </Form.Item>
+          ) : null}
         </Form>
       </Modal>
 
@@ -246,18 +329,20 @@ export function SquadListPage() {
                 <Space>
                   <Tag color="cyan">{detailMembers.length || detailSquad?.memberCount || 0} 位成员</Tag>
                   <Tag color="green">{roleStats.length} 类角色</Tag>
+                  <Tag color="blue">{detailSdlcs.length || detailSquad?.sdlcCount || 0} 个 SDLC</Tag>
                 </Space>
               </Space>
             </Space>
           </div>
 
           <div style={{ padding: 24 }}>
-            {detailLoading ? <Spin /> : detailMembers.length === 0 ? (
-              <Empty description="暂无成员，请先在成员管理中添加数字员工" />
-            ) : (
+            {detailLoading ? <Spin /> : (
               <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 0.65fr', gap: 18 }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: '#374151', marginBottom: 12 }}>数字人阵容</div>
+                  {detailMembers.length === 0 ? (
+                    <Empty description="暂无成员，请先在成员管理中添加数字员工" />
+                  ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
                     {detailMembers.map((member, index) => (
                       <Popover
@@ -292,6 +377,7 @@ export function SquadListPage() {
                       </Popover>
                     ))}
                   </div>
+                  )}
                 </div>
 
                 <div>
@@ -335,6 +421,30 @@ export function SquadListPage() {
                             </div>
                           ))}
                         </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#374151', marginTop: 20, marginBottom: 6 }}>关联执行器</div>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {detailExecutors.length === 0 ? (
+                      <span style={{ color: '#94a3b8' }}>暂无执行器</span>
+                    ) : detailExecutors.map((executor) => (
+                      <div key={executor.id} style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 8,
+                        border: '1px solid #e5e7eb',
+                        borderRadius: 8,
+                        padding: '8px 12px',
+                        background: '#fff',
+                      }}>
+                        <div>
+                          <div style={{ fontWeight: 700, color: '#111827' }}>{executor.name}</div>
+                          <div style={{ fontSize: 12, color: '#6b7280' }}>{executor.agentName || '未知 Agent'}</div>
+                        </div>
+                        <Tag color={executor.status === 'ONLINE' ? 'green' : 'default'}>{executor.status}</Tag>
                       </div>
                     ))}
                   </div>

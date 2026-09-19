@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/shared/api/client';
-import { getRuntimeActivities } from './api';
+import { getArtifactDownloadUrl, getRuntimeActivities } from './api';
 
 vi.mock('@/shared/api/client', () => ({
   apiClient: {
@@ -43,5 +43,23 @@ describe('workitem API', () => {
       '/api/dispatches/302/runtime-trace/activities',
       { signal: controller.signal },
     );
+  });
+
+  it('returns an http presigned download URL unchanged', async () => {
+    const url = 'http://172.19.133.124:9000/b/k?X-Amz-Expires=600&X-Amz-Signature=s';
+    vi.mocked(apiClient.get).mockResolvedValue({ data: url } as never);
+
+    await expect(getArtifactDownloadUrl(7)).resolves.toBe(url);
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/artifacts/7/download');
+  });
+
+  it('returns an https presigned download URL unchanged', async () => {
+    const url = 'https://172.19.133.124:9000/b/k?X-Amz-Expires=600&X-Amz-Signature=s';
+    vi.mocked(apiClient.get).mockResolvedValue({ data: url } as never);
+
+    await expect(getArtifactDownloadUrl(7)).resolves.toBe(url);
+
+    expect(apiClient.get).toHaveBeenCalledWith('/api/artifacts/7/download');
   });
 });

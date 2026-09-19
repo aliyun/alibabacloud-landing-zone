@@ -62,7 +62,12 @@ public class ScheduledTaskRunDeliveryProgressService {
             AgentDO agent = agentDao.findById(agentId);
             if (agent != null) agentProgress.setAgentName(agent.getName());
         }
-        agentProgress.setStatus(resolveAgentProgressStatus(steps));
+        agentProgress.setStatus(switch (run.getStatus()) {
+            case "CANCELED" -> "cancelled";
+            case "FAILED" -> "failed";
+            case "SUCCEEDED" -> "finished";
+            default -> resolveAgentProgressStatus(steps);
+        });
         agentProgress.setSteps(steps);
         enrichUsage(tenantId, dispatches, agentProgress);
 
@@ -182,7 +187,10 @@ public class ScheduledTaskRunDeliveryProgressService {
 
         if (hasCompleted) return "done";
         if (hasFailed) return "failed";
+        if ("CANCELED".equals(run.getStatus())) return "cancelled";
         if (hasStarted) {
+            if ("FAILED".equals(run.getStatus())) return "failed";
+            if ("SUCCEEDED".equals(run.getStatus())) return "done";
             String runStatus = run.getStatus();
             if ("PAUSED".equals(runStatus)) return "paused";
             return "active";

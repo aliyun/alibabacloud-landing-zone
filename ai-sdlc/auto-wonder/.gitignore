@@ -70,3 +70,11 @@ src/main/resources/static/
 # Python bytecode from Skill test runs
 __pycache__/
 *.py[cod]
+
+# Private, disposable deployment recovery cache
+/.operations-cache/
+/deployments/
+/upgrade-info/
+
+# Shared, disposable Skill dependencies (never deployment state)
+/skills/.autowonder-tools/

@@ -22,6 +22,8 @@ public class DispatchAssignmentListener {
         this.dispatchService = dispatchService;
     }
 
+    // Do not reuse the just-committed transaction's connection for recovery state writes.
+    @org.springframework.scheduling.annotation.Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onWorkitemAssigned(WorkitemAssignedEvent e) {
         if (e.getSdlcStepId() == null || e.getAgentId() == null) {

@@ -8,8 +8,12 @@ import java.util.List;
 public interface SkillDao {
     void insert(SkillDO skill);
     SkillDO findById(@Param("id") Long id);
-    List<SkillDO> list(@Param("type") String type,
+    SkillDO findByIdForUpdate(@Param("id") Long id);
+    List<SkillDO> list(@Param("tenantId") Long tenantId, @Param("type") String type,
+                       @Param("categoryIds") List<Long> categoryIds, @Param("uncategorized") boolean uncategorized,
                        @Param("offset") int offset, @Param("limit") int limit);
+    long count(@Param("tenantId") Long tenantId, @Param("type") String type,
+               @Param("categoryIds") List<Long> categoryIds, @Param("uncategorized") boolean uncategorized);
     int update(@Param("id") Long id, @Param("tenantId") Long tenantId,
                @Param("name") String name, @Param("type") String type,
                @Param("installSpec") String installSpec,

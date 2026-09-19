@@ -12,5 +12,6 @@ public class AgentRepoPermDO {
     private Long agentVersionId;
     private Long repoId;
     private String permLevel;
+    private String allowedBranchPatterns;
     private Date gmtCreate;
 }

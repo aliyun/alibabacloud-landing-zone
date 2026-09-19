@@ -1,4 +1,5 @@
 import { classifyWorkitemStatus } from './constants';
+import { displayNameWithoutId } from './nameDisplay';
 import type { Workitem } from '@/shared/types/workitem';
 
 /**
@@ -11,7 +12,7 @@ import type { Workitem } from '@/shared/types/workitem';
 export interface DecisionGroup {
   /** 分组键：assigneeType:assigneeRef，未指派统一为 'null:null' */
   key: string;
-  /** 分组展示名：assigneeDisplayName || assigneeName || '未指派' */
+  /** 分组展示名：去除编号后缀的 assigneeDisplayName || assigneeName || '未指派' */
   label: string;
   items: Workitem[];
 }
@@ -39,7 +40,7 @@ function assigneeKey(item: Workitem): string {
 }
 
 function assigneeLabel(item: Workitem): string {
-  return item.assigneeDisplayName || item.assigneeName || UNASSIGNED_LABEL;
+  return displayNameWithoutId(item.assigneeDisplayName, item.assigneeName) ?? UNASSIGNED_LABEL;
 }
 
 /**

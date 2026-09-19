@@ -35,4 +35,24 @@ class DispatchRuntimeEventDaoContractTest {
         assertTrue(sql.contains("ORDER BY id ASC"));
         assertFalse(sql.contains("COALESCE(seq, id)"));
     }
+
+    @Test
+    void dispatchAfterSeqCursorRequiresTenantIsolationAndStrictlyGreaterSeq() throws Exception {
+        String xml = new String(getClass().getResourceAsStream(
+                "/mapping/DispatchRuntimeEventDao.xml").readAllBytes(), StandardCharsets.UTF_8);
+        int start = xml.indexOf("id=\"listByDispatchAfterSeq\"");
+        assertTrue(start >= 0, "listByDispatchAfterSeq select must exist");
+        int end = xml.indexOf("</select>", start);
+        assertTrue(end > start, "listByDispatchAfterSeq select must be closed");
+        String sql = xml.substring(start, end);
+        String normalized = sql.replace("&gt;", ">").replace("&lt;", "<");
+
+        assertTrue(normalized.contains("tenant_id = #{tenantId}"));
+        assertTrue(normalized.contains("dispatch_id = #{dispatchId}"));
+        assertTrue(normalized.contains("seq IS NULL OR seq > #{afterSeq}"));
+        assertFalse(normalized.contains("seq >= #{afterSeq}"),
+                "afterSeq cursor must be strictly greater, otherwise reconnect re-delivers the cursor row");
+        assertTrue(normalized.contains("ORDER BY COALESCE(seq, id) ASC, id ASC"));
+        assertFalse(sql.contains("${"));
+    }
 }

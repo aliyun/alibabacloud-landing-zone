@@ -41,6 +41,9 @@ public interface DispatchDao {
                                  @Param("agentVersionId") Long agentVersionId,
                                  @Param("modifierId") Long modifierId);
 
+    /** Freezes the squad debug switch onto the row at packaging time (source-aware schema only). */
+    int markDebugLogEnabled(@Param("id") Long id, @Param("tenantId") Long tenantId);
+
     /** All dispatches on the same workitem, oldest first. */
     List<DispatchDO> listByWorkitem(@Param("tenantId") Long tenantId,
                                     @Param("workitemId") Long workitemId);
@@ -81,6 +84,14 @@ public interface DispatchDao {
                                @Param("beforeEpochMillis") long beforeEpochMillis,
                                @Param("limit") int limit);
 
+    List<DispatchDO> listByExecutorAndStatuses(@Param("executorId") Long executorId,
+                                                @Param("statuses") List<String> statuses,
+                                                @Param("limit") int limit);
+
+    /** Pause predecessors whose durable state proves WAITING_FOR_PAUSE may be released. */
+    List<DispatchDO> listReleasedPausePredecessors(@Param("executorId") Long executorId,
+                                                   @Param("limit") int limit);
+
     /**
      * In-flight dispatches of one workspace, oldest first, for the logical-delete linkage (D5).
      * Caller supplies the status set so pauseable and non-pauseable rows are each one query.
@@ -106,6 +117,9 @@ public interface DispatchDao {
                        @Param("since") Date since);
 
     long countActiveByExecutor(@Param("executorId") Long executorId);
+
+    /** Distinct dispatch slots occupied by active rows or an outstanding stop intent. */
+    List<Long> listCapacityOccupyingIds(@Param("executorId") Long executorId);
 
     List<DispatchDO> listOldestPendingByAgent(@Param("agentId") Long agentId,
                                                @Param("limit") int limit);

@@ -20,13 +20,17 @@ import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.evolution.EvolutionMode;
+import com.aliyun.autowonder.environment.EnvironmentVariableDO;
+import com.aliyun.autowonder.environment.EnvironmentVariableDao;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.memory.MemoryDO;
 import com.aliyun.autowonder.memory.MemoryScopeResolver;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
+import com.aliyun.autowonder.squad.SquadAttributionService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,15 +45,32 @@ public class AgentService {
     private final AgentRepoPermDao repoPermDao;
     private final AgentSkillDao skillDao;
     private final AgentMemoryRefDao memoryRefDao;
+    private final AgentEnvironmentVariableRefDao environmentVariableRefDao;
+    private final EnvironmentVariableDao environmentVariableDao;
     private final WorkspaceDao workspaceDao;
     private final ExecutorDao executorDao;
     private final ExecutorRegistry executorRegistry;
     private final SkillDao capabilityDao;
     private MemoryScopeResolver memoryScopeResolver;
+    private SquadAttributionService squadAttributionService;
 
     @Autowired(required = false)
     public void setMemoryScopeResolver(MemoryScopeResolver memoryScopeResolver) {
         this.memoryScopeResolver = memoryScopeResolver;
+    }
+
+    @Autowired(required = false)
+    public void setSquadAttributionService(SquadAttributionService squadAttributionService) {
+        this.squadAttributionService = squadAttributionService;
+    }
+
+    public AgentService(AgentDao agentDao, AgentVersionDao versionDao,
+                        AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
+                        AgentMemoryRefDao memoryRefDao, WorkspaceDao workspaceDao,
+                        ExecutorDao executorDao, ExecutorRegistry executorRegistry,
+                        SkillDao capabilityDao) {
+        this(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
+                executorDao, executorRegistry, capabilityDao, null, null);
     }
 
     @Autowired
@@ -57,7 +78,9 @@ public class AgentService {
                         AgentRepoPermDao repoPermDao, AgentSkillDao skillDao,
                         AgentMemoryRefDao memoryRefDao, WorkspaceDao workspaceDao,
                         ExecutorDao executorDao, ExecutorRegistry executorRegistry,
-                        SkillDao capabilityDao) {
+                        SkillDao capabilityDao,
+                        AgentEnvironmentVariableRefDao environmentVariableRefDao,
+                        EnvironmentVariableDao environmentVariableDao) {
         this.agentDao = agentDao;
         this.versionDao = versionDao;
         this.repoPermDao = repoPermDao;
@@ -67,6 +90,8 @@ public class AgentService {
         this.executorDao = executorDao;
         this.executorRegistry = executorRegistry;
         this.capabilityDao = capabilityDao;
+        this.environmentVariableRefDao = environmentVariableRefDao;
+        this.environmentVariableDao = environmentVariableDao;
     }
 
     AgentService(AgentDao agentDao, AgentVersionDao versionDao,
@@ -86,6 +111,7 @@ public class AgentService {
         agent.setName(req.getName().trim());
         agent.setAvatarUrl(req.getAvatarUrl());
         agent.setStatus("DRAFT");
+        agent.setKind("STANDARD");
         agent.setLatestVersionNo(1);
         agent.setCreatorId(userId);
         agent.setVersion(0);
@@ -110,21 +136,20 @@ public class AgentService {
         return toVO(agent);
     }
 
-    public AgentVO get(long id) {
-        AgentDO agent = agentDao.findById(id);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
-        return toSummaryVO(agent);
+    public AgentVO get(long id, long tenantId) {
+        return toSummaryVO(findAgentInTenant(id, tenantId));
     }
 
-    public List<AgentVO> list(Long tenantId, String status, int page, int size) {
+    public List<AgentVO> list(Long tenantId, String status, String kind, List<Long> squadIds, int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = Math.min(size < 1 ? 20 : size, 100);
         int offset = (p - 1) * s;
         List<AgentVO> result = new ArrayList<>();
-        for (AgentDO a : agentDao.list(tenantId, status, offset, s)) {
+        for (AgentDO a : agentDao.list(tenantId, status, kind, squadIds, offset, s)) {
             result.add(toSummaryVO(a));
+        }
+        if (squadAttributionService != null) {
+            squadAttributionService.fillAgentSquads(tenantId, result);
         }
         return result;
     }
@@ -135,7 +160,10 @@ public class AgentService {
 
     @Transactional
     public AgentVersionVO editConfig(long agentId, UpdateConfigRequest req, long tenantId, long userId) {
-        AgentDO agent = findAgentInTenant(agentId, tenantId);
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
+        if (isPlatform(agent) && req.getSdlcId() != null) {
+            throw new BizException(ErrorCode.AGENT_PLATFORM_LOCKED);
+        }
         AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
         String identityJson = fieldProvided(req.getProvidedFields(), "evolutionMode")
                 ? identityJsonWithEvolutionMode(draft.getIdentityJson(), req.getEvolutionMode())
@@ -175,12 +203,12 @@ public class AgentService {
 
     @Transactional
     public AgentVO updateAgent(UpdateAgentRequest req, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(req.getId());
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
-        if (!Long.valueOf(tenantId).equals(agent.getTenantId())) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
+        AgentDO agent = lockAgentInTenant(req.getId(), tenantId);
+
+        if (isPlatform(agent)
+                && ((fieldProvided(req.getProvidedFields(), "name") && req.getName() != null)
+                    || (fieldProvided(req.getProvidedFields(), "avatarUrl") && req.getAvatarUrl() != null))) {
+            throw new BizException(ErrorCode.AGENT_PLATFORM_LOCKED);
         }
 
         if (fieldProvided(req.getProvidedFields(), "name") && req.getName() != null) {
@@ -189,6 +217,16 @@ public class AgentService {
             }
             int rows = agentDao.updateName(agent.getId(), tenantId, req.getName().trim(),
                     agent.getVersion(), userId);
+            if (rows == 0) {
+                throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
+            }
+            agent = agentDao.findById(agent.getId());
+        }
+
+        if (fieldProvided(req.getProvidedFields(), "avatarUrl") && req.getAvatarUrl() != null) {
+            String avatarUrl = req.getAvatarUrl().trim();
+            int rows = agentDao.updateAvatarUrl(agent.getId(), tenantId,
+                    avatarUrl.isEmpty() ? null : avatarUrl, agent.getVersion(), userId);
             if (rows == 0) {
                 throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
             }
@@ -227,15 +265,12 @@ public class AgentService {
 
     @Transactional
     public AgentVO submit(long agentId, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
         if (agent.getEditingVersionId() == null) {
             throw new BizException(ErrorCode.AGENT_NOT_DRAFT);
         }
         AgentVersionDO draft = versionDao.findById(agent.getEditingVersionId());
-        if (draft == null || !"DRAFT".equals(draft.getStatus())) {
+        if (!isVersionForAgent(draft, agent, tenantId) || !"DRAFT".equals(draft.getStatus())) {
             throw new BizException(ErrorCode.AGENT_NOT_DRAFT);
         }
         reconcileApplicableMemories(agentId, tenantId, draft);
@@ -250,32 +285,25 @@ public class AgentService {
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
-        return toVO(agentDao.findById(agentId));
+        return toSummaryVO(agentDao.findById(agentId));
     }
 
     @Transactional
     public AgentVO approve(long agentId, long tenantId, long userId, String comment) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
-        if (!Long.valueOf(tenantId).equals(agent.getTenantId())) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
         if (agent.getEditingVersionId() == null) {
             throw new BizException(ErrorCode.AGENT_NOT_PENDING);
         }
         AgentVersionDO pending = versionDao.findById(agent.getEditingVersionId());
-        if (pending == null || !"PENDING_REVIEW".equals(pending.getStatus())) {
-            throw new BizException(ErrorCode.AGENT_NOT_PENDING);
-        }
-        if (!Long.valueOf(tenantId).equals(pending.getTenantId())) {
+        if (!isVersionForAgent(pending, agent, tenantId)
+                || !"PENDING_REVIEW".equals(pending.getStatus())) {
             throw new BizException(ErrorCode.AGENT_NOT_PENDING);
         }
         if (pending.getCreatorId() != null && pending.getCreatorId().equals(userId)
                 && !canApproveOwnVersion(tenantId, userId)) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
+        validateEnvironmentVariableRefs(tenantId, pending.getId());
         String identityJson = buildIdentityJson(agent, pending);
         int rows = versionDao.updateStatus(pending.getId(), tenantId, "APPROVED",
                 userId, comment, identityJson, pending.getVersion(), userId);
@@ -288,7 +316,7 @@ public class AgentService {
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
-        return toVO(agentDao.findById(agentId));
+        return toSummaryVO(agentDao.findById(agentId));
     }
 
     private boolean isTenantOwner(long tenantId, long userId) {
@@ -308,15 +336,13 @@ public class AgentService {
 
     @Transactional
     public AgentVO reject(long agentId, long tenantId, long userId, String comment) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
         if (agent.getEditingVersionId() == null) {
             throw new BizException(ErrorCode.AGENT_NOT_PENDING);
         }
         AgentVersionDO pending = versionDao.findById(agent.getEditingVersionId());
-        if (pending == null || !"PENDING_REVIEW".equals(pending.getStatus())) {
+        if (!isVersionForAgent(pending, agent, tenantId)
+                || !"PENDING_REVIEW".equals(pending.getStatus())) {
             throw new BizException(ErrorCode.AGENT_NOT_PENDING);
         }
         int rows = versionDao.updateStatus(pending.getId(), tenantId, "REJECTED",
@@ -331,33 +357,31 @@ public class AgentService {
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
-        return toVO(agentDao.findById(agentId));
+        return toSummaryVO(agentDao.findById(agentId));
     }
 
     @Transactional
     public AgentVO rollback(long agentId, int targetVersionNo, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
         AgentVersionDO target = versionDao.findByAgentAndNo(agentId, targetVersionNo);
-        if (target == null || !"APPROVED".equals(target.getStatus())) {
+        if (!isVersionForAgent(target, agent, tenantId) || !"APPROVED".equals(target.getStatus())) {
             throw new BizException(ErrorCode.AGENT_ROLLBACK_TARGET_INVALID);
         }
+        validateEnvironmentVariableRefs(tenantId, target.getId());
         int rows = agentDao.updateStatus(agent.getId(), tenantId, "ONLINE",
                 target.getId(), agent.getEditingVersionId(), agent.getLatestVersionNo(),
                 agent.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
-        return toVO(agentDao.findById(agentId));
+        return toSummaryVO(agentDao.findById(agentId));
     }
 
     @Transactional
     public AgentVO offline(long agentId, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
+        if (isPlatform(agent)) {
+            throw new BizException(ErrorCode.AGENT_PLATFORM_NO_OFFLINE);
         }
         if (!"ONLINE".equals(agent.getStatus())) {
             throw new BizException(ErrorCode.AGENT_NOT_ONLINE);
@@ -368,15 +392,12 @@ public class AgentService {
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
-        return toVO(agentDao.findById(agentId));
+        return toSummaryVO(agentDao.findById(agentId));
     }
 
     @Transactional
     public AgentVO online(long agentId, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
         if (!"OFFLINE".equals(agent.getStatus())) {
             throw new BizException(ErrorCode.AGENT_NOT_OFFLINE);
         }
@@ -385,23 +406,24 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_ONLINE_NO_APPROVED_VERSION);
         }
         AgentVersionDO target = approved.get(0);
+        if (!isVersionForAgent(target, agent, tenantId)) {
+            throw new BizException(ErrorCode.AGENT_ONLINE_NO_APPROVED_VERSION);
+        }
+        validateEnvironmentVariableRefs(tenantId, target.getId());
         int rows = agentDao.updateStatus(agent.getId(), tenantId, "ONLINE",
                 target.getId(), agent.getEditingVersionId(), agent.getLatestVersionNo(),
                 agent.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
-        return toVO(agentDao.findById(agentId));
+        return toSummaryVO(agentDao.findById(agentId));
     }
 
     @Transactional
     public void delete(long agentId, long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
-        if (!Long.valueOf(tenantId).equals(agent.getTenantId())) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
+        if (isPlatform(agent)) {
+            throw new BizException(ErrorCode.AGENT_PLATFORM_NO_DELETE);
         }
         if ("ONLINE".equals(agent.getStatus())) {
             throw new BizException(ErrorCode.AGENT_ONLINE_NO_DELETE);
@@ -410,6 +432,9 @@ public class AgentService {
             skillDao.deleteByVersion(v.getId());
             repoPermDao.deleteByVersion(v.getId());
             memoryRefDao.deleteByVersion(v.getId());
+            if (environmentVariableRefDao != null) {
+                environmentVariableRefDao.deleteByVersion(tenantId, v.getId());
+            }
         }
         versionDao.softDeleteByAgent(agentId, tenantId, userId);
         int rows = agentDao.softDelete(agentId, tenantId, agent.getVersion(), userId);
@@ -418,11 +443,8 @@ public class AgentService {
         }
     }
 
-    public List<AgentVersionSummaryVO> listVersions(long agentId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null) {
-            throw new BizException(ErrorCode.AGENT_NOT_FOUND);
-        }
+    public List<AgentVersionSummaryVO> listVersions(long agentId, long tenantId) {
+        findAgentInTenant(agentId, tenantId);
         List<AgentVersionSummaryVO> result = new ArrayList<>();
         for (AgentVersionDO v : versionDao.listByAgent(agentId)) {
             AgentVersionSummaryVO sv = new AgentVersionSummaryVO();
@@ -436,7 +458,7 @@ public class AgentService {
         return result;
     }
 
-    public AgentVersionVO getVersion(long agentId, int versionNo) {
+    private AgentVersionVO getVersion(long agentId, int versionNo) {
         AgentVersionDO v = versionDao.findByAgentAndNo(agentId, versionNo);
         if (v == null) {
             throw new BizException(ErrorCode.AGENT_VERSION_NOT_FOUND);
@@ -451,9 +473,18 @@ public class AgentService {
 
     @Transactional
     public void addRepoPerm(long agentId, RepoPermRequest req, long tenantId, long userId) {
-        AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
-        if (repoPermDao.listByVersion(draft.getId()).stream()
-                .anyMatch(existing -> existing.getRepoId().equals(req.getRepoId()))) {
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
+        rejectPlatformRepoConfig(agent);
+        String allowedBranchPatterns = req.getAllowedBranchPatterns() == null
+                ? null
+                : BranchPatternPolicy.encode(req.getAllowedBranchPatterns());
+        AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
+        AgentRepoPermDO existing = repoPermDao.listByVersion(draft.getId()).stream()
+                .filter(item -> item.getRepoId().equals(req.getRepoId()))
+                .findFirst().orElse(null);
+        if (existing != null) {
+            mergeRepoPerm(existing, req, allowedBranchPatterns, tenantId, draft.getId());
+            updateRepoPermOrThrow(existing);
             return;
         }
         AgentRepoPermDO perm = new AgentRepoPermDO();
@@ -461,13 +492,54 @@ public class AgentService {
         perm.setAgentVersionId(draft.getId());
         perm.setRepoId(req.getRepoId());
         perm.setPermLevel(req.getPermLevel() == null ? "READ" : req.getPermLevel());
-        repoPermDao.insert(perm);
+        perm.setAllowedBranchPatterns(allowedBranchPatterns);
+        try {
+            repoPermDao.insert(perm);
+        } catch (DuplicateKeyException race) {
+            // A locking read is a current read under InnoDB REPEATABLE READ, so it
+            // can see the concurrently committed row even after the earlier list
+            // query established a consistent-read snapshot.
+            AgentRepoPermDO winner = repoPermDao.findByVersionAndRepoForUpdate(
+                    draft.getId(), req.getRepoId(), tenantId);
+            if (winner == null) {
+                throw race;
+            }
+            mergeRepoPerm(winner, req, allowedBranchPatterns, tenantId, draft.getId());
+            updateRepoPermOrThrow(winner);
+        }
+    }
+
+    private void mergeRepoPerm(AgentRepoPermDO permission, RepoPermRequest req,
+                               String allowedBranchPatterns, long tenantId, long versionId) {
+        permission.setTenantId(tenantId);
+        permission.setAgentVersionId(versionId);
+        if (req.getPermLevel() != null) {
+            permission.setPermLevel(req.getPermLevel());
+        }
+        if (req.getAllowedBranchPatterns() != null) {
+            permission.setAllowedBranchPatterns(allowedBranchPatterns);
+        }
+    }
+
+    private void updateRepoPermOrThrow(AgentRepoPermDO permission) {
+        if (repoPermDao.update(permission) != 1) {
+            throw new BizException(ErrorCode.CONFLICT, "仓库权限已被修改，请刷新后重试");
+        }
     }
 
     @Transactional
     public void removeRepoPerm(long agentId, long repoId, long tenantId, long userId) {
-        AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
+        rejectPlatformRepoConfig(agent);
+        AgentVersionDO draft = ensureDraft(agent, tenantId, userId);
         repoPermDao.deleteByVersionAndRepo(draft.getId(), repoId, tenantId);
+    }
+
+    /** 平台智能体默认拥有全量仓库只读权限，仓库配置对页面与 MCP 均不可修改。 */
+    private void rejectPlatformRepoConfig(AgentDO agent) {
+        if (isPlatform(agent)) {
+            throw new BizException(ErrorCode.AGENT_PLATFORM_REPO_LOCKED);
+        }
     }
 
     @Transactional
@@ -475,13 +547,13 @@ public class AgentService {
         if (req == null || req.getSkillId() == null) {
             throw new BizException(ErrorCode.SKILL_NOT_FOUND);
         }
+        AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
         if (capabilityDao != null) {
             SkillDO capability = capabilityDao.findById(req.getSkillId());
             if (capability == null || capability.getTenantId() == null || !capability.getTenantId().equals(tenantId)) {
                 throw new BizException(ErrorCode.SKILL_NOT_FOUND);
             }
         }
-        AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
         if (skillDao.listByVersion(draft.getId()).stream()
                 .anyMatch(existing -> existing.getSkillId().equals(req.getSkillId()))) {
             return;
@@ -520,17 +592,82 @@ public class AgentService {
     }
 
     @Transactional
+    public void addEnvironmentVariableRef(long agentId, long environmentVariableId,
+                                          long tenantId, long userId) {
+        AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
+        EnvironmentVariableDO variable = environmentVariableDao.findActiveByIdForUpdate(
+                tenantId, environmentVariableId);
+        if (variable == null) {
+            throw new BizException(ErrorCode.ENVIRONMENT_VARIABLE_NOT_FOUND);
+        }
+        if (environmentVariableRefDao.exists(tenantId, draft.getId(), environmentVariableId)) {
+            return;
+        }
+        AgentEnvironmentVariableRefDO ref = new AgentEnvironmentVariableRefDO();
+        ref.setTenantId(tenantId);
+        ref.setAgentVersionId(draft.getId());
+        ref.setEnvironmentVariableId(environmentVariableId);
+        try {
+            environmentVariableRefDao.insert(ref);
+        } catch (DuplicateKeyException ignored) {
+            // Concurrent identical mounts are idempotent under the unique key.
+        }
+    }
+
+    @Transactional
+    public void removeEnvironmentVariableRef(long agentId, long environmentVariableId,
+                                             long tenantId, long userId) {
+        AgentVersionDO draft = ensureDraftForEdit(agentId, tenantId, userId);
+        environmentVariableRefDao.delete(tenantId, draft.getId(), environmentVariableId);
+    }
+
+    public List<AgentEnvironmentVariableRefVO> listEnvironmentVariableRefs(long agentId,
+                                                                            long tenantId) {
+        AgentDO agent = findAgentInTenant(agentId, tenantId);
+        Long versionId = agent.getOnlineVersionId() != null
+                ? agent.getOnlineVersionId() : agent.getEditingVersionId();
+        if (versionId == null) {
+            return List.of();
+        }
+        return environmentVariableRefDao.listMetadataByVersion(tenantId, versionId);
+    }
+
+    private void validateEnvironmentVariableRefs(long tenantId, long agentVersionId) {
+        if (environmentVariableRefDao == null || environmentVariableDao == null) {
+            return;
+        }
+        if (environmentVariableRefDao.countInvalidByVersion(tenantId, agentVersionId) > 0) {
+            throw new BizException(ErrorCode.ENVIRONMENT_VARIABLE_REFERENCE_INVALID);
+        }
+        List<AgentEnvironmentVariableRefDO> refs = environmentVariableRefDao.listByVersion(
+                tenantId, agentVersionId);
+        if (refs == null) {
+            return;
+        }
+        for (AgentEnvironmentVariableRefDO ref : refs) {
+            if (environmentVariableDao.findActiveByIdForUpdate(
+                    tenantId, ref.getEnvironmentVariableId()) == null) {
+                throw new BizException(ErrorCode.ENVIRONMENT_VARIABLE_REFERENCE_INVALID);
+            }
+        }
+    }
+
+    @Transactional
     public void attachReviewedMemory(long agentId, long memoryId, String source,
                                      long tenantId, long userId) {
-        AgentDO agent = agentDao.findById(agentId);
-        if (agent == null || agent.getTenantId() == null || agent.getTenantId() != tenantId
-                || agent.getOnlineVersionId() == null) {
+        AgentDO agent;
+        try {
+            agent = lockAgentInTenant(agentId, tenantId);
+        } catch (BizException notFound) {
+            return;
+        }
+        if (agent.getOnlineVersionId() == null) {
             return;
         }
         AgentVersionDO target = null;
         if (agent.getEditingVersionId() != null) {
             AgentVersionDO editing = versionDao.findById(agent.getEditingVersionId());
-            if (editing != null && ("DRAFT".equals(editing.getStatus())
+            if (isVersionForAgent(editing, agent, tenantId) && ("DRAFT".equals(editing.getStatus())
                     || "PENDING_REVIEW".equals(editing.getStatus()))) {
                 target = editing;
             }
@@ -607,8 +744,18 @@ public class AgentService {
     }
 
     private AgentVersionDO ensureDraftForEdit(long agentId, long tenantId, long userId) {
-        AgentDO agent = findAgentInTenant(agentId, tenantId);
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
         return ensureDraft(agent, tenantId, userId);
+    }
+
+    /**
+     * Mutation lock order is agent row, agent version state, then dependent rows (environment
+     * variables in ascending id order). Every lifecycle and edit transaction enters here before
+     * inspecting state, so submit/approve cannot race a subtable mutation into a frozen version.
+     */
+    private AgentDO lockAgentInTenant(long agentId, long tenantId) {
+        agentDao.lockByIdForUpdate(tenantId, agentId);
+        return findAgentInTenant(agentId, tenantId);
     }
 
     private AgentDO findAgentInTenant(long agentId, long tenantId) {
@@ -617,6 +764,16 @@ public class AgentService {
             throw new BizException(ErrorCode.AGENT_NOT_FOUND);
         }
         return agent;
+    }
+
+    private boolean isVersionForAgent(AgentVersionDO version, AgentDO agent, long tenantId) {
+        return version != null
+                && Long.valueOf(tenantId).equals(version.getTenantId())
+                && agent.getId().equals(version.getAgentId());
+    }
+
+    private boolean isPlatform(AgentDO agent) {
+        return "PLATFORM".equals(agent.getKind());
     }
 
     private String buildIdentityJson(AgentDO agent, AgentVersionDO v) {
@@ -670,9 +827,10 @@ public class AgentService {
     private AgentVersionDO ensureDraft(AgentDO agent, long tenantId, long userId) {
         if (agent.getEditingVersionId() != null) {
             AgentVersionDO existing = versionDao.findById(agent.getEditingVersionId());
-            if (existing != null && "DRAFT".equals(existing.getStatus())) {
+            if (isVersionForAgent(existing, agent, tenantId) && "DRAFT".equals(existing.getStatus())) {
                 return existing;
             }
+            throw new BizException(ErrorCode.AGENT_NOT_DRAFT);
         }
         AgentVersionDO source = null;
         if (agent.getOnlineVersionId() != null) {
@@ -714,6 +872,7 @@ public class AgentService {
             copy.setAgentVersionId(targetVersionId);
             copy.setRepoId(p.getRepoId());
             copy.setPermLevel(p.getPermLevel());
+            copy.setAllowedBranchPatterns(p.getAllowedBranchPatterns());
             repoPermDao.insert(copy);
         }
         for (AgentSkillDO s : skillDao.listByVersion(sourceVersionId)) {
@@ -730,6 +889,16 @@ public class AgentService {
             copy.setMemoryId(m.getMemoryId());
             copy.setSource(m.getSource());
             memoryRefDao.insert(copy);
+        }
+        if (environmentVariableRefDao != null) {
+            for (AgentEnvironmentVariableRefDO ref : environmentVariableRefDao.listByVersion(
+                    tenantId, sourceVersionId)) {
+                AgentEnvironmentVariableRefDO copy = new AgentEnvironmentVariableRefDO();
+                copy.setTenantId(tenantId);
+                copy.setAgentVersionId(targetVersionId);
+                copy.setEnvironmentVariableId(ref.getEnvironmentVariableId());
+                environmentVariableRefDao.insert(copy);
+            }
         }
     }
 
@@ -758,6 +927,7 @@ public class AgentService {
                 AgentVersionVO.RepoPermItem item = new AgentVersionVO.RepoPermItem();
                 item.setRepoId(p.getRepoId());
                 item.setPermLevel(p.getPermLevel());
+                item.setAllowedBranchPatterns(BranchPatternPolicy.decode(p.getAllowedBranchPatterns()));
                 repoPerms.add(item);
             }
         }
@@ -785,6 +955,11 @@ public class AgentService {
             }
         }
         vo.setMemoryRefs(memoryRefs);
+        if (environmentVariableRefDao != null && v.getTenantId() != null) {
+            List<AgentEnvironmentVariableRefVO> environmentVariables =
+                    environmentVariableRefDao.listMetadataByVersion(v.getTenantId(), v.getId());
+            vo.setEnvironmentVariables(environmentVariables == null ? List.of() : environmentVariables);
+        }
         return vo;
     }
 
@@ -793,6 +968,7 @@ public class AgentService {
         vo.setId(a.getId());
         vo.setName(a.getName());
         vo.setAvatarUrl(a.getAvatarUrl());
+        vo.setKind(a.getKind());
         vo.setStatus(a.getStatus());
         vo.setOnlineVersionId(a.getOnlineVersionId());
         vo.setEditingVersionId(a.getEditingVersionId());
@@ -804,19 +980,26 @@ public class AgentService {
 
     private AgentVO toSummaryVO(AgentDO a) {
         AgentVO vo = toVO(a);
-        Long versionId = a.getOnlineVersionId() != null ? a.getOnlineVersionId() : a.getEditingVersionId();
-        if (versionId != null) {
-            AgentVersionDO version = versionDao.findById(versionId);
-            if (version != null) {
-                vo.setRoleName(version.getRoleName());
-                vo.setRoleCode(version.getRoleCode());
-                vo.setBusinessBackground(version.getBusinessBackground());
-                vo.setResponsibilities(version.getResponsibilities());
-                vo.setRepoPermCount(sizeOf(repoPermDao.listByVersion(versionId)));
-                vo.setSkillCount(sizeOf(skillDao.listByVersion(versionId)));
-                vo.setMemoryCount(sizeOf(memoryRefDao.listByVersion(versionId)));
+        AgentVersionDO display = resolveDisplayVersion(a);
+        if (display != null) {
+            vo.setRoleName(display.getRoleName());
+            vo.setRoleCode(display.getRoleCode());
+            vo.setBusinessBackground(display.getBusinessBackground());
+            vo.setResponsibilities(display.getResponsibilities());
+            vo.setSdlcId(display.getSdlcId());
+            vo.setEvolutionMode(evolutionModeFromIdentityJson(display.getIdentityJson()).name());
+            vo.setRepoPermCount(sizeOf(repoPermDao.listByVersion(display.getId())));
+            vo.setSkillCount(sizeOf(skillDao.listByVersion(display.getId())));
+            vo.setMemoryCount(sizeOf(memoryRefDao.listByVersion(display.getId())));
+            if (environmentVariableRefDao != null && a.getTenantId() != null) {
+                List<AgentEnvironmentVariableRefVO> environmentVariables =
+                        environmentVariableRefDao.listMetadataByVersion(a.getTenantId(), display.getId());
+                vo.setEnvironmentVariables(environmentVariables == null ? List.of() : environmentVariables);
             }
         }
+        AgentVersionDO draft = findDraftVersion(a);
+        vo.setHasDraft(draft != null);
+        vo.setDraftVersionNo(draft == null ? null : draft.getVersionNo());
         int total = 0;
         int online = 0;
         if (a.getTenantId() != null && a.getId() != null) {
@@ -833,6 +1016,34 @@ public class AgentService {
         vo.setExecutorTotalCount(total);
         vo.setExecutorOnlineCount(online);
         return vo;
+    }
+
+    /**
+     * Published values stay authoritative for display; an unpublished draft is surfaced through
+     * hasDraft/draftVersionNo rather than mixed into the online values.
+     */
+    private AgentVersionDO resolveDisplayVersion(AgentDO a) {
+        if (a.getOnlineVersionId() != null) {
+            AgentVersionDO online = versionDao.findById(a.getOnlineVersionId());
+            if (online != null) {
+                return online;
+            }
+        }
+        // offline() clears online_version_id so handoff routing stops; fall back to the same
+        // APPROVED version online() restores, keeping displayed values stable across offline/online.
+        List<AgentVersionDO> approved = versionDao.listApprovedByAgent(a.getId());
+        if (approved != null && !approved.isEmpty()) {
+            return approved.get(0);
+        }
+        return a.getEditingVersionId() == null ? null : versionDao.findById(a.getEditingVersionId());
+    }
+
+    private AgentVersionDO findDraftVersion(AgentDO a) {
+        if (a.getEditingVersionId() == null) {
+            return null;
+        }
+        AgentVersionDO editing = versionDao.findById(a.getEditingVersionId());
+        return editing != null && "DRAFT".equals(editing.getStatus()) ? editing : null;
     }
 
     private int sizeOf(List<?> rows) {

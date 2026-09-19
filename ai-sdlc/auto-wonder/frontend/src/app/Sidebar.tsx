@@ -20,6 +20,7 @@ import {
   CompassOutlined,
   MessageOutlined,
   ExperimentOutlined,
+  KeyOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { MenuProps } from 'antd';
@@ -91,6 +92,8 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: <TeamOutlined />,
         aliases: ['/settings/members-roles', '/settings/roles'],
       },
+      { key: '/settings/backups', label: '项目配置备份', icon: <HistoryOutlined /> },
+      { key: '/settings/environment-variables', label: '环境变量', icon: <KeyOutlined /> },
       { key: '/settings', label: '系统设置', icon: <SettingOutlined />, hidden: !SETTINGS_MENU_ENABLED },
     ],
   },

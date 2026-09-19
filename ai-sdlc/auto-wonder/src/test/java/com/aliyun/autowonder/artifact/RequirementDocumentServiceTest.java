@@ -344,9 +344,22 @@ class RequirementDocumentServiceTest {
     void uploadRejectsUnsafeOrUnsupportedFilenames() {
         assertThrows(BizException.class, () -> service.uploadMcp(3L, "../spec.md",
                 "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
-        assertThrows(BizException.class, () -> service.uploadMcp(3L, "archive.zip",
-                "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
+        for (String filename : new String[]{"app.exe", "run.sh", "lib.jar", "data.csv",
+                "sheet.xlsx", "slide.pptx", "archive.tar.gz", "no-extension"}) {
+            BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
+                    "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null), filename);
+            assertEquals("10001", ex.getCode());
+            assertTrue(ex.getMessage().contains(".docx") && ex.getMessage().contains(".zip"),
+                    "rejection message should list the supported whitelist, got: " + ex.getMessage());
+        }
         verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void supportedExtensionsKeepExistingFormatsAndAppendNewOnesInOrder() {
+        assertEquals(List.of(".md", ".markdown", ".txt", ".html", ".pdf", ".png", ".jpg", ".jpeg",
+                        ".webp", ".docx", ".doc", ".java", ".py", ".zip"),
+                RequirementDocumentService.SUPPORTED_EXTENSIONS);
     }
 
     @Test
@@ -531,6 +544,372 @@ class RequirementDocumentServiceTest {
         BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, "screen2.png",
                 pngWithSize(5 * 1024 * 1024), 100L, 7L, null));
         assertEquals("10001", ex.getCode());
+    }
+
+    @Test
+    void uploadMcpStoresJavaSourceContextWithDetectedContentType() {
+        byte[] java = "public class Sample {\n    int n = 1;\n}\n".getBytes(StandardCharsets.UTF_8);
+        service.uploadMcp(3L, "Sample.java", java, 100L, 7L, null);
+
+        assertArrayEquals(java, storage.get("artifact-bucket/t/100/workitem/3/requirements/Sample.java"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"text/x-java-source\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"CODE\"")));
+    }
+
+    @Test
+    void uploadMcpStoresPythonSourceContextWithDetectedContentType() {
+        byte[] python = "def helper():\n    return 1\n".getBytes(StandardCharsets.UTF_8);
+        service.uploadMcp(3L, "helper.py", python, 100L, 7L, null);
+
+        assertArrayEquals(python, storage.get("artifact-bucket/t/100/workitem/3/requirements/helper.py"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"text/x-python\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"CODE\"")));
+    }
+
+    @Test
+    void uploadMcpStoresDocxWordContextWithDetectedContentType() {
+        byte[] docx = TestArchives.docx("验收标准");
+        service.uploadMcp(3L, "spec.docx", docx, 100L, 7L, null);
+
+        assertArrayEquals(docx, storage.get("artifact-bucket/t/100/workitem/3/requirements/spec.docx"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\""
+                                + RequirementDocumentService.DOCX_CONTENT_TYPE + "\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"WORD\"")));
+    }
+
+    @Test
+    void uploadMcpStoresLegacyDocWordContextWithDetectedContentType() {
+        byte[] doc = TestArchives.doc();
+        service.uploadMcp(3L, "legacy.doc", doc, 100L, 7L, null);
+
+        assertArrayEquals(doc, storage.get("artifact-bucket/t/100/workitem/3/requirements/legacy.doc"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"application/msword\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"WORD\"")));
+    }
+
+    @Test
+    void uploadMcpStoresZipArchiveContextWithDetectedContentType() {
+        byte[] zip = TestArchives.zipOf("notes/readme.txt", "read me".getBytes(StandardCharsets.UTF_8));
+        service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null);
+
+        assertArrayEquals(zip, storage.get("artifact-bucket/t/100/workitem/3/requirements/assets.zip"));
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"application/zip\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"ARCHIVE\"")));
+    }
+
+    @Test
+    void uploadAcceptsZipArchiveWithoutEntries() {
+        byte[] empty = TestArchives.emptyZip();
+        service.uploadMcp(3L, "empty.zip", empty, 100L, 7L, null);
+
+        assertArrayEquals(empty, storage.get("artifact-bucket/t/100/workitem/3/requirements/empty.zip"));
+        verify(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void uploadRejectsSourceCodeWithInvalidUtf8() {
+        byte[] binary = {(byte) 0xFF, (byte) 0xFE, 0x00, 0x01};
+
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "Sample.java", binary, 100L, 7L, null));
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "helper.py", binary, 100L, 7L, null));
+
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsRenamedNonArchiveBytesUnderArchiveExtensions() {
+        byte[] text = "# Spec".getBytes(StandardCharsets.UTF_8);
+        byte[] pngBytes = PNG;
+
+        for (String filename : new String[]{"assets.zip", "spec.docx"}) {
+            assertThrows(BizException.class, () -> service.uploadMcp(3L, filename, text, 100L, 7L, null),
+                    filename + " must not accept plain text bytes");
+            assertThrows(BizException.class, () -> service.uploadMcp(3L, filename, pngBytes, 100L, 7L, null),
+                    filename + " must not accept image bytes");
+        }
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "legacy.doc", text, 100L, 7L, null));
+        assertThrows(BizException.class, () -> service.uploadMcp(3L, "legacy.doc",
+                new byte[]{(byte) 0xD0, (byte) 0xCF, 0x11}, 100L, 7L, null));
+
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsDocxZipWithoutWordDocumentEntry() {
+        byte[] plainZip = TestArchives.zipOf("readme.txt", "not a word document".getBytes(StandardCharsets.UTF_8));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "spec.docx", plainZip, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        assertTrue(ex.getMessage().contains(".docx"), "expected a .docx specific message, got: " + ex.getMessage());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsZipEntriesEscapingTheArchiveRoot() {
+        for (String entryName : new String[]{"../escape.txt", "nested/../../escape.txt",
+                "back\\slash.txt", "/absolute.txt", "C:/windows/system.txt"}) {
+            byte[] zip = TestArchives.zipOf(entryName, "payload".getBytes(StandardCharsets.UTF_8));
+
+            BizException ex = assertThrows(BizException.class,
+                    () -> service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null), entryName);
+            assertEquals("10001", ex.getCode());
+            assertFalse(ex.getMessage().contains(entryName),
+                    "entry names must not be echoed back into the error message");
+        }
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsZipWithTooManyEntries() {
+        byte[] zip = TestArchives.zipWithManyEntries(RequirementDocumentService.MAX_ZIP_ENTRIES + 1);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadAcceptsZipAtTheEntryCountLimit() {
+        byte[] zip = TestArchives.zipWithManyEntries(RequirementDocumentService.MAX_ZIP_ENTRIES);
+
+        service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null);
+
+        verify(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void uploadRejectsZipWithTooDeepDirectoryNesting() {
+        byte[] zip = TestArchives.zipWithNestedPath(RequirementDocumentService.MAX_ZIP_PATH_DEPTH + 1);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsZipBombExceedingTheInflatedSizeLimit() {
+        byte[] bomb = TestArchives.zipBomb(6, 10 * 1024 * 1024);
+        assertTrue(bomb.length < 5 * 1024 * 1024,
+                "the compressed payload must stay under the per-file limit so the inflated guard is what fires");
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "assets.zip", bomb, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsEncryptedArchiveAsUnparseable() {
+        byte[] encrypted = TestArchives.encryptedZip();
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "assets.zip", encrypted, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        assertEquals("压缩包无法解析", ex.getMessage());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsTruncatedArchiveAsUnparseable() {
+        byte[] truncated = TestArchives.truncatedZip();
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "assets.zip", truncated, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        assertEquals("压缩包无法解析", ex.getMessage());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void corruptArchiveRejectionNeverEchoesTheEntryName() {
+        byte[] truncated = TestArchives.truncatedZip();
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "spec.docx", truncated, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        assertEquals("压缩包无法解析", ex.getMessage());
+        assertFalse(ex.getMessage().contains(TestArchives.TRUNCATED_ENTRY_NAME),
+                "archive internals must not leak into the error message");
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsPayloadsMissingEachLegOfTheZipSignature() {
+        // Every payload below differs from a legal one in exactly one respect: too short, second
+        // byte not 'K', a local-header pair whose low byte is wrong, an end-of-central-directory
+        // pair whose low byte is wrong, and a central-directory header that is neither pair.
+        byte[][] payloads = {
+                {'P', 'K', 0x03},
+                {'P', 'x', 0x03, 0x04},
+                {'P', 'K', 0x03, (byte) 0x99},
+                {'P', 'K', 0x05, (byte) 0x99},
+                {'P', 'K', 0x01, 0x02},
+        };
+        for (int i = 0; i < payloads.length; i++) {
+            byte[] payload = payloads[i];
+
+            BizException ex = assertThrows(BizException.class,
+                    () -> service.uploadMcp(3L, "assets.zip", payload, 100L, 7L, null),
+                    "payload #" + i);
+
+            assertEquals("10001", ex.getCode());
+            assertEquals("文件内容与 ZIP 格式不符", ex.getMessage());
+        }
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsLegacyDocWhoseOle2MagicIsCorruptedAtAnyByte() {
+        byte[] valid = TestArchives.doc();
+        for (int index = 0; index < 8; index++) {
+            byte[] corrupted = valid.clone();
+            corrupted[index] = (byte) (corrupted[index] ^ 0xFF);
+
+            BizException ex = assertThrows(BizException.class,
+                    () -> service.uploadMcp(3L, "legacy.doc", corrupted, 100L, 7L, null),
+                    "magic byte #" + index);
+
+            assertEquals("10001", ex.getCode());
+            assertEquals("文件内容与 .doc 格式不符", ex.getMessage());
+        }
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadAcceptsDocxCarryingAnExplicitDirectoryEntry() {
+        byte[] docx = TestArchives.docxWithDirectoryEntry("验收标准");
+
+        service.uploadMcp(3L, "spec.docx", docx, 100L, 7L, null);
+
+        assertArrayEquals(docx, storage.get("artifact-bucket/t/100/workitem/3/requirements/spec.docx"));
+        verify(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void directoryEntriesCountTowardsTheArchiveEntryCap() {
+        byte[] zip = TestArchives.zipWithDirectoryEntriesAtTheEntryLimit(
+                RequirementDocumentService.MAX_ZIP_ENTRIES, 5);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null));
+
+        assertEquals("10001", ex.getCode());
+        assertEquals("压缩包条目数超过上限 " + RequirementDocumentService.MAX_ZIP_ENTRIES, ex.getMessage());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsBlankAndBackslashLedEntryNames() {
+        for (String entryName : new String[]{" ", "\\escape.txt"}) {
+            byte[] zip = TestArchives.zipOf(entryName, "payload".getBytes(StandardCharsets.UTF_8));
+
+            BizException ex = assertThrows(BizException.class,
+                    () -> service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null), entryName);
+
+            assertEquals("10001", ex.getCode());
+            assertEquals("压缩包条目名非法，疑似路径穿越", ex.getMessage());
+            assertFalse(ex.getMessage().contains(entryName),
+                    "entry names must not be echoed back into the error message");
+        }
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void uploadAcceptsEntryNameWithAnEmptyInteriorPathSegment() {
+        // Chosen semantics, pinned here to avoid future ambiguity: an empty interior segment only
+        // fails to advance the depth counter and matches none of the traversal conditions, so
+        // "a//b.txt" is accepted rather than rejected.
+        byte[] zip = TestArchives.zipOf("a//b.txt", "payload".getBytes(StandardCharsets.UTF_8));
+
+        service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null);
+
+        verify(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void uploadAcceptsZipAtTheDirectoryDepthLimit() {
+        byte[] zip = TestArchives.zipWithNestedPath(RequirementDocumentService.MAX_ZIP_PATH_DEPTH);
+
+        service.uploadMcp(3L, "assets.zip", zip, 100L, 7L, null);
+
+        verify(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void uploadAcceptsZipAtTheInflatedSizeLimit() {
+        byte[] atLimit = TestArchives.zipBomb(5, 10 * 1024 * 1024);
+        assertTrue(atLimit.length < 5 * 1024 * 1024,
+                "the compressed payload must stay under the per-file limit so the inflated guard is what binds");
+
+        service.uploadMcp(3L, "assets.zip", atLimit, 100L, 7L, null);
+
+        verify(artifactDao).insert(any(ArtifactDO.class));
+    }
+
+    @Test
+    void uploadResolvesTheExtensionFromTheLastDotOnly() {
+        // "spec." ends in a dot and ".hidden" has no suffix after its leading dot, so both resolve
+        // to an extension the whitelist does not know.
+        for (String filename : new String[]{"spec.", ".hidden"}) {
+            BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
+                    "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null), filename);
+
+            assertEquals("10001", ex.getCode());
+            assertTrue(ex.getMessage().contains(".docx") && ex.getMessage().contains(".zip"),
+                    "rejection message should list the supported whitelist, got: " + ex.getMessage());
+        }
+        verify(artifactDao, never()).insert(any());
+
+        clearInvocations(artifactDao);
+        service.uploadMcp(3L, "SPEC.MD", "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contextKind\":\"MARKDOWN\"")));
+    }
+
+    @Test
+    void uploadRejectsDotOnlyFilenamesBeforeTheExtensionIsResolved() {
+        for (String filename : new String[]{".", ".."}) {
+            BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
+                    "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null), filename);
+
+            assertEquals("10001", ex.getCode());
+        }
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void existingFormatsAreUnaffectedByTheExtendedWhitelist() {
+        service.uploadMcp(3L, "spec.md", "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"text/markdown\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"MARKDOWN\"")));
+
+        clearInvocations(artifactDao);
+        service.uploadMcp(3L, "screen.png", PNG, 100L, 7L, null);
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"image/png\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"VISUAL\"")));
+
+        clearInvocations(artifactDao);
+        service.uploadMcp(3L, "spec.pdf", "%PDF-1.4 minimal".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
+        verify(artifactDao).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"application/pdf\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"PDF\"")));
     }
 
     private static byte[] pngWithSize(int size) {

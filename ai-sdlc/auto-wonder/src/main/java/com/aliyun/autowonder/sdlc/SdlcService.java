@@ -8,16 +8,20 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 
 import com.aliyun.autowonder.sdlc.dto.*;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
+import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -31,6 +35,12 @@ public class SdlcService {
     private final WorkitemDao workitemDao;
     private final AgentVersionDao agentVersionDao;
     private final AgentDao agentDao;
+    private SquadAttributionService squadAttributionService;
+
+    @Autowired(required = false)
+    public void setSquadAttributionService(SquadAttributionService squadAttributionService) {
+        this.squadAttributionService = squadAttributionService;
+    }
 
     public SdlcService(SdlcDao sdlcDao, SdlcStepDao stepDao,
                        StatusNodeDao statusNodeDao, WorkitemDao workitemDao,
@@ -70,15 +80,40 @@ public class SdlcService {
         return toVO(s, steps);
     }
 
-    public List<SdlcVO> list(String workType, String status, int page, int size) {
+    public List<SdlcVO> list(Long tenantId, String workType, String status, List<Long> squadIds, int page, int size) {
         int p = page < 1 ? 1 : page;
         int sz = Math.min(size < 1 ? 20 : size, 100);
         int offset = (p - 1) * sz;
         List<SdlcVO> result = new ArrayList<>();
-        for (SdlcDO s : sdlcDao.list(workType, status, offset, sz)) {
+        for (SdlcDO s : sdlcDao.list(workType, status, tenantId, squadIds, offset, sz)) {
             result.add(toVO(s, null));
         }
+        fillStepCounts(result);
+        if (squadAttributionService != null) {
+            squadAttributionService.fillSdlcSquads(tenantId, result);
+        }
         return result;
+    }
+
+    // 列表 VO 的 steps 恒为 null（不拉 MEDIUMTEXT 明细），改用一次聚合查询填 stepCount，
+    // 否则前端只能按 steps 长度兜底成 0。
+    private void fillStepCounts(List<SdlcVO> vos) {
+        if (vos.isEmpty()) {
+            return;
+        }
+        List<Long> ids = new ArrayList<>(vos.size());
+        for (SdlcVO vo : vos) {
+            ids.add(vo.getId());
+        }
+        Map<Long, Integer> countById = new HashMap<>();
+        for (SdlcStepCount count : stepDao.countBySdlcIds(ids)) {
+            countById.put(count.getSdlcId(), count.getCnt());
+        }
+        for (SdlcVO vo : vos) {
+            // GROUP BY 不会给「无步骤」的 SDLC 产出记录，这里补 0 而不是留 null
+            Integer count = countById.get(vo.getId());
+            vo.setStepCount(count == null ? 0 : count);
+        }
     }
 
     @Transactional
@@ -165,6 +200,7 @@ public class SdlcService {
         String checklistJson = normalizeJson(req.getChecklistJson());
         String gatePolicyJson = normalizeJson(req.getGatePolicyJson());
         requireValidJson("checklistJson", checklistJson);
+        ChecklistDefinitionValidator.validate(checklistJson);
         requireValidJson("gatePolicyJson", gatePolicyJson);
         SdlcStepDO step = new SdlcStepDO();
         step.setTenantId(tenantId);
@@ -220,26 +256,44 @@ public class SdlcService {
         if (step == null || step.getSdlcId() != sdlcId) {
             throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
         }
-        String name = req.getName() != null ? req.getName() : step.getName();
-        String kind = req.getKind() != null ? req.getKind() : step.getKind();
-        String instructionMd = req.getInstructionMd() != null ? req.getInstructionMd() : step.getInstructionMd();
         String checklistJson = normalizeJson(req.getChecklistJson() != null ? req.getChecklistJson() : step.getChecklistJson());
         String gatePolicyJson = normalizeJson(req.getGatePolicyJson() != null ? req.getGatePolicyJson() : step.getGatePolicyJson());
         requireValidJson("checklistJson", checklistJson);
+        ChecklistDefinitionValidator.validate(checklistJson);
         requireValidJson("gatePolicyJson", gatePolicyJson);
-        Boolean required = req.getRequired() != null ? req.getRequired() : step.getRequired();
+        // 读出原行后按「请求是否携带」逐字段覆盖再整行写回：未携带的字段保留原值而不是被写成 NULL
+        if (req.getName() != null) {
+            step.setName(req.getName());
+        }
+        if (req.getKind() != null) {
+            step.setKind(req.getKind());
+        }
+        if (req.getCode() != null) {
+            step.setCode(req.getCode());
+        }
+        if (req.getHandlerType() != null) {
+            step.setHandlerType(req.getHandlerType());
+        }
+        if (req.getRequired() != null) {
+            step.setRequired(req.getRequired());
+        }
         // timeoutSeconds/retryBudget 支持显式 null 恢复未配置，请求体未携带时保持原值
-        Integer timeoutSeconds = req.isTimeoutSecondsPresent() ? req.getTimeoutSeconds() : step.getTimeoutSeconds();
-        Integer retryBudget = req.isRetryBudgetPresent() ? req.getRetryBudget() : step.getRetryBudget();
-        String code = req.getCode() != null ? req.getCode() : step.getCode();
-        String handlerType = req.getHandlerType() != null ? req.getHandlerType() : step.getHandlerType();
-        String handlerRoleRef = req.getHandlerRoleRef();
-        String statusOnEnterCode = req.getStatusOnEnterCode();
-        String onSuccess = req.getOnSuccess();
-        String onFail = req.getOnFail();
-        stepDao.update(stepId, tenantId, name, kind, instructionMd, checklistJson, gatePolicyJson,
-                required, timeoutSeconds, retryBudget, code, handlerType, handlerRoleRef,
-                statusOnEnterCode, onSuccess, onFail, userId);
+        if (req.isTimeoutSecondsPresent()) {
+            step.setTimeoutSeconds(req.getTimeoutSeconds());
+        }
+        if (req.isRetryBudgetPresent()) {
+            step.setRetryBudget(req.getRetryBudget());
+        }
+        step.setInstructionMd(mergeNullableText(req.getInstructionMd(), step.getInstructionMd()));
+        step.setHandlerRoleRef(mergeNullableText(req.getHandlerRoleRef(), step.getHandlerRoleRef()));
+        step.setStatusOnEnterCode(mergeNullableText(req.getStatusOnEnterCode(), step.getStatusOnEnterCode()));
+        step.setOnSuccess(mergeNullableText(req.getOnSuccess(), step.getOnSuccess()));
+        step.setOnFail(mergeNullableText(req.getOnFail(), step.getOnFail()));
+        step.setChecklistJson(checklistJson);
+        step.setGatePolicyJson(gatePolicyJson);
+        step.setTenantId(tenantId);
+        step.setModifierId(userId);
+        stepDao.update(step);
         SdlcStepDO updated = stepDao.findById(stepId);
         return toStepVO(updated != null ? updated : step);
     }
@@ -347,6 +401,15 @@ public class SdlcService {
         return value == null || value.isBlank() ? null : value;
     }
 
+    // 可空文本列的 PATCH 语义：请求未携带(null)保留原值，显式空白串视为清空，
+    // 与 normalizeJson 对 JSON 列「空串即清空」的既有约定一致。
+    private String mergeNullableText(String incoming, String current) {
+        if (incoming == null) {
+            return current;
+        }
+        return incoming.isBlank() ? null : incoming;
+    }
+
     // sdlc_step 的 checklist_json/gate_policy_json 是 MySQL JSON 列，
     // 非法 JSON 写入会触发 DataIntegrityViolation 并被映射为误导性的 409「数据冲突」，
     // 因此在写库前做语法校验并以参数错误（400）快速失败。
@@ -398,6 +461,7 @@ public class SdlcService {
                 svos.add(toStepVO(st));
             }
             vo.setSteps(svos);
+            vo.setStepCount(svos.size());
         }
         return vo;
     }

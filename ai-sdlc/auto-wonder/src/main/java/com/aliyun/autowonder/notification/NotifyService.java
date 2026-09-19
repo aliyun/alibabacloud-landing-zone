@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.notification;
 
 import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -73,12 +75,22 @@ public class NotifyService {
         notificationDao.markAllRead(tenantId, userId);
     }
 
+    public void delete(long notificationId, long tenantId, long userId) {
+        // 归属校验在 SQL 的 WHERE 上，0 行说明通知不存在或不属于当前用户，不能静默成功。
+        if (notificationDao.delete(notificationId, tenantId, userId) == 0) {
+            throw new BizException(ErrorCode.NOT_FOUND, "通知不存在");
+        }
+    }
+
     private boolean shouldDeliver(String channelName, NotifyPrefDO pref) {
         if (pref == null) {
             return true;
         }
         if ("inApp".equals(channelName)) {
             return pref.getInApp() == null || pref.getInApp() == 1;
+        }
+        if ("feishu".equals(channelName)) {
+            return pref.getFeishu() != null && pref.getFeishu() == 1;
         }
         if ("dingtalk".equals(channelName)) {
             return pref.getDingtalk() != null && pref.getDingtalk() == 1;

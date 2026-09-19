@@ -1,9 +1,12 @@
 package com.aliyun.autowonder.storage;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.http.SdkHttpMethod;
+import software.amazon.awssdk.http.SdkHttpRequest;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -14,8 +17,14 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -200,5 +209,50 @@ class S3ObjectStorageTest {
                 "path-style URL should embed bucket in path, was: " + url.getPath());
         assertTrue(url.getQuery().contains("X-Amz-Signature"),
                 "presigned URL should carry a SigV4 signature, was: " + url.getQuery());
+    }
+
+    @Test
+    void presignPutSignsAgainstPresignerWithRequestedDuration() {
+        S3Client serviceClient = mock(S3Client.class);
+        S3Presigner presigner = mock(S3Presigner.class);
+        PresignedPutObjectRequest presigned = PresignedPutObjectRequest.builder()
+                .httpRequest(SdkHttpRequest.builder()
+                        .protocol("https").host("minio-public.example")
+                        .method(SdkHttpMethod.PUT)
+                        .encodedPath("bucket/debug/1/k.log.gz").build())
+                .expiration(Instant.now().plus(Duration.ofMinutes(20)))
+                .signedHeaders(Map.of("host", List.of("minio-public.example")))
+                .isBrowserExecutable(false)
+                .build();
+        when(presigner.presignPutObject(any(PutObjectPresignRequest.class))).thenReturn(presigned);
+        S3ObjectStorage storage = new S3ObjectStorage(serviceClient, presigner);
+
+        String url = storage.presignPut("bucket", "debug/1/k.log.gz", Duration.ofMinutes(20));
+
+        assertEquals("https://minio-public.example/bucket/debug/1/k.log.gz", url);
+        ArgumentCaptor<PutObjectPresignRequest> cap =
+                ArgumentCaptor.forClass(PutObjectPresignRequest.class);
+        verify(presigner).presignPutObject(cap.capture());
+        verifyNoInteractions(serviceClient);
+        assertEquals(Duration.ofMinutes(20), cap.getValue().signatureDuration());
+        assertEquals("bucket", cap.getValue().putObjectRequest().bucket());
+        assertEquals("debug/1/k.log.gz", cap.getValue().putObjectRequest().key());
+    }
+
+    @Test
+    void presignPutBuildsUrlFromPublicEndpointWithSignedExpiry() {
+        // 本地真实签名（presign 不发网络请求），断言公网 endpoint + TTL 进入签名参数
+        S3ObjectStorage storage = new S3ObjectStorage(
+                "http://minio-internal.example", "https://minio-public.example", "us-east-1",
+                "test-access-key-id", "test-access-key-secret", true);
+
+        String url = storage.presignPut("bucket", "debug/200/DevAgent-run-1.log.gz",
+                Duration.ofMinutes(20));
+
+        URI uri = URI.create(url);
+        assertEquals("minio-public.example", uri.getHost());
+        assertEquals("/bucket/debug/200/DevAgent-run-1.log.gz", uri.getPath());
+        assertTrue(uri.getQuery().contains("X-Amz-Signature="));
+        assertTrue(uri.getQuery().contains("X-Amz-Expires=1200"));
     }
 }

@@ -3,12 +3,17 @@ package com.aliyun.autowonder.dispatch;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDao;
+import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunOrchestrator;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunService;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
+import com.aliyun.autowonder.scheduledtask.ScheduledTaskNotificationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -211,12 +216,12 @@ class DispatchServiceResultTest {
         DispatchDO running = at(DispatchStatus.RUNNING);
         running.setExecutorId(9L);
         when(dispatchDao.findById(500L)).thenReturn(running);
-        when(dispatchDao.listOldestPendingByAgent(400L, 1)).thenReturn(java.util.List.of());
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
         service.onResult(TENANT, 9L, 500L, true, "done", null, false);
         verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.SUCCEEDED),
                 any(), any(), any(), eq("done"), isNull(), anyInt(), anyLong());
         verify(sdlcDriver).onSuccess(TENANT, 200L, 300L);
-        verify(dispatchDao).listOldestPendingByAgent(400L, 1);
+        verify(dispatchDao).listOldestPendingByAgent(400L, 20);
         verify(auditLogService).record(argThat(record ->
                 "COMPLETE_DISPATCH".equals(record.getAction())
                         && "dispatch.succeeded".equals(record.getEventType())));
@@ -228,7 +233,7 @@ class DispatchServiceResultTest {
         DispatchDO running = at(DispatchStatus.RUNNING);
         running.setExecutorId(9L);
         when(dispatchDao.findById(500L)).thenReturn(running);
-        when(dispatchDao.listOldestPendingByAgent(400L, 1)).thenReturn(java.util.List.of());
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
 
         assertTrue(service.onResult(TENANT, 9L, 500L, true, "done", null,
                 false, true));
@@ -264,14 +269,14 @@ class DispatchServiceResultTest {
         interaction.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
         interaction.setResumeMode("CANONICAL_INTERACTION"); interaction.setExecutorId(9L);
         when(dispatchDao.findById(500L)).thenReturn(interaction);
-        when(dispatchDao.listOldestPendingByAgent(400L, 1)).thenReturn(java.util.List.of());
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
 
         assertTrue(service.onResult(TENANT, 9L, 500L, success, "reply", "err", false));
 
         verify(scheduledOrchestrator, never()).onDispatchResult(any(), anyBoolean(), any(), any());
         verify(sdlcDriver, never()).onSuccess(anyLong(), anyLong(), anyLong());
         verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
-        verify(dispatchDao).listOldestPendingByAgent(400L, 1);
+        verify(dispatchDao).listOldestPendingByAgent(400L, 20);
     }
 
     private void assertDetachedInteractionCannotAdvanceFormalSdlc(String resumeMode) {
@@ -279,7 +284,7 @@ class DispatchServiceResultTest {
         interaction.setExecutorId(9L);
         interaction.setResumeMode(resumeMode);
         when(dispatchDao.findById(500L)).thenReturn(interaction);
-        when(dispatchDao.listOldestPendingByAgent(400L, 1)).thenReturn(java.util.List.of());
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
 
         assertTrue(service.onResult(TENANT, 9L, 500L, true, "interaction reply", null, true));
 
@@ -287,7 +292,7 @@ class DispatchServiceResultTest {
                 any(), any(), any(), eq("interaction reply"), isNull(), anyInt(), anyLong());
         verify(sdlcDriver, never()).onSuccess(anyLong(), anyLong(), anyLong());
         verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
-        verify(dispatchDao).listOldestPendingByAgent(400L, 1);
+        verify(dispatchDao).listOldestPendingByAgent(400L, 20);
     }
 
     @Test
@@ -303,12 +308,48 @@ class DispatchServiceResultTest {
     }
 
     @Test
+    void failedResultWithRuntimeCategoryRecordsItInAuditDetail() {
+        DispatchDO running = at(DispatchStatus.RUNNING);
+        running.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(running);
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
+
+        assertTrue(service.onResult(TENANT, 9L, 500L, false, null,
+                "tool_hook_blocked: kind safety_denial hook jarvis-tool-safety", false, false,
+                "tool_hook_blocked"));
+
+        ArgumentCaptor<AuditLogRecord> cap = ArgumentCaptor.forClass(AuditLogRecord.class);
+        verify(auditLogService).record(cap.capture());
+        AuditLogRecord record = cap.getValue();
+        assertEquals("FAIL_DISPATCH", record.getAction());
+        assertEquals("dispatch.failed", record.getEventType());
+        assertEquals("tool_hook_blocked", record.getDetail().get("failureCategory"));
+        verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
+    void failedResultWithBlankCategoryOmitsFailureCategoryFromAuditDetail() {
+        DispatchDO running = at(DispatchStatus.RUNNING);
+        running.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(running);
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
+
+        assertTrue(service.onResult(TENANT, 9L, 500L, false, null,
+                "tests failed", false, false, "  "));
+
+        ArgumentCaptor<AuditLogRecord> cap = ArgumentCaptor.forClass(AuditLogRecord.class);
+        verify(auditLogService).record(cap.capture());
+        assertFalse(cap.getValue().getDetail().containsKey("failureCategory"));
+        verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
     void executorProviderFailureRequeuesSameDispatchWithoutFailingSdlc() {
         DispatchDO running = at(DispatchStatus.RUNNING);
         running.setExecutorId(9L);
         when(dispatchDao.findById(500L)).thenReturn(running);
         when(dispatchDao.returnOwnedActiveToPending(500L, TENANT, 9L, 0, 0L)).thenReturn(1);
-        when(dispatchDao.listOldestPendingByAgent(400L, 1)).thenReturn(java.util.List.of());
+        when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
 
         assertTrue(service.onExecutorUnavailableResult(TENANT, 9L, 500L,
                 "agent_error.provider_quota_limit", "quota exhausted"));
@@ -403,6 +444,122 @@ class DispatchServiceResultTest {
     }
 
     @Test
+    void terminalScheduledSuccessReplayCompletesRunAfterPartialFailure() {
+        assertScheduledResultReplayCompletesRun(true);
+    }
+
+    @Test
+    void terminalScheduledFailureReplayCompletesRunAfterPartialFailure() {
+        assertScheduledResultReplayCompletesRun(false);
+    }
+
+    private void assertScheduledResultReplayCompletesRun(boolean success) {
+        DispatchDO dispatch = at(DispatchStatus.RUNNING);
+        dispatch.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        dispatch.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        when(dispatchDao.updateStatus(anyLong(), anyLong(), anyString(), any(), any(),
+                any(), any(), any(), anyInt(), anyLong())).thenAnswer(invocation -> {
+                    dispatch.setResultSummary(invocation.getArgument(6));
+                    dispatch.setError(invocation.getArgument(7));
+                    return 1;
+                });
+        ScheduledTaskRunDao runDao = mock(ScheduledTaskRunDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(200L); run.setWorkspaceId(TENANT); run.setStatus("RUNNING"); run.setVersion(0);
+        when(runDao.findById(TENANT, 200L)).thenReturn(run);
+        String target = success ? "SUCCEEDED" : "FAILED";
+        String summary = success ? "durable summary" : null;
+        String error = success ? null : "durable error";
+        when(runDao.updateTerminalResult(TENANT, 200L, "RUNNING", target, summary, error, 0, 0L))
+                .thenThrow(new IllegalStateException("Run update unavailable"))
+                .thenReturn(1);
+        ScheduledTaskRunService runService = new ScheduledTaskRunService(runDao);
+        ScheduledTaskNotificationService notifications = mock(ScheduledTaskNotificationService.class);
+        runService.setObservability(notifications, null);
+        ScheduledTaskRunOrchestrator orchestrator = new ScheduledTaskRunOrchestrator(runDao, service);
+        orchestrator.setRunService(runService);
+        service.setScheduledTaskRunOrchestrator(orchestrator);
+
+        assertThrows(IllegalStateException.class,
+                () -> service.onResult(TENANT, 9L, 500L, success, summary, error));
+        assertEquals(target, dispatch.getStatus());
+        assertEquals("RUNNING", run.getStatus());
+
+        assertTrue(service.onResult(TENANT, 9L, 500L, success, "replay summary", "replay error"));
+        assertEquals(target, run.getStatus());
+        assertEquals(summary, run.getResultSummary());
+        assertEquals(error, run.getError());
+        assertTrue(service.onResult(TENANT, 9L, 500L, success, "duplicate", null));
+        verify(notifications, times(1)).status(run, error);
+        verify(runDao, times(2)).updateTerminalResult(TENANT, 200L, "RUNNING", target, summary, error, 0, 0L);
+        verify(dispatchDao, times(1)).updateStatus(anyLong(), anyLong(), anyString(), any(), any(),
+                any(), any(), any(), anyInt(), anyLong());
+        verify(auditLogService, times(1)).record(any());
+        verifyNoInteractions(sdlcDriver);
+    }
+
+    @Test
+    void concurrentTerminalWinnerAlsoReconcilesScheduledRun() {
+        DispatchDO running = at(DispatchStatus.RUNNING);
+        running.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); running.setExecutorId(9L);
+        DispatchDO winner = at(DispatchStatus.SUCCEEDED);
+        winner.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); winner.setExecutorId(9L);
+        winner.setResultSummary("persisted winner");
+        when(dispatchDao.findById(500L)).thenReturn(running, winner);
+        when(dispatchDao.updateStatus(anyLong(), anyLong(), anyString(), any(), any(),
+                any(), any(), any(), anyInt(), anyLong())).thenReturn(0);
+
+        assertTrue(service.onResult(TENANT, 9L, 500L, true, "loser", null));
+
+        verify(scheduledOrchestrator).onDispatchResult(winner, true, "persisted winner", null);
+        verifyNoInteractions(auditLogService, sdlcDriver);
+    }
+
+    @Test
+    void scheduledTerminalReplayPreservesCancellationAndOwnerFences() {
+        DispatchDO d = at(DispatchStatus.SUCCEEDED);
+        d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); d.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        assertFalse(service.onResult(TENANT, 10L, 500L, true, "foreign", null));
+        assertFalse(service.onResult(TENANT + 1, 9L, 500L, true, "foreign tenant", null));
+        assertFalse(service.onResult(TENANT, 9L, 500L, false, null, "contradictory"));
+        d.setStatus(DispatchStatus.CANCELED);
+        assertFalse(service.onResult(TENANT, 9L, 500L, true, "canceled", null));
+        d.setStatus(DispatchStatus.SUCCEEDED);
+        DispatchRecoveryService recovery = mock(DispatchRecoveryService.class);
+        service.setRecoveryService(recovery);
+        when(recovery.fenced(d)).thenReturn(true);
+        assertFalse(service.onResult(TENANT, 9L, 500L, true, "fenced", null));
+        verifyNoInteractions(scheduledOrchestrator);
+    }
+
+    @Test
+    void scheduledTerminalReplayDoesNotCompleteInteractionOrExplicitHandoff() {
+        DispatchDO d = at(DispatchStatus.SUCCEEDED);
+        d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); d.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        assertTrue(service.onResult(TENANT, 9L, 500L, true, "handoff", null, false, true));
+        d.setResumeMode("CANONICAL_INTERACTION");
+        assertTrue(service.onResult(TENANT, 9L, 500L, true, "reply", null));
+        verifyNoInteractions(scheduledOrchestrator);
+    }
+
+    @Test
+    void scheduledTerminalReplayWithPersistedHandoffCannotCompleteRunWhenFlagIsMissing() {
+        DispatchDO d = at(DispatchStatus.SUCCEEDED);
+        d.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name()); d.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        DispatchDO downstream = at(DispatchStatus.RUNNING);
+        downstream.setId(501L);
+        when(dispatchDao.findByIdempotencyKey(TENANT, "handoff:500")).thenReturn(downstream);
+
+        assertTrue(service.onResult(TENANT, 9L, 500L, true, "stale replay without handoff", null));
+
+        verifyNoInteractions(scheduledOrchestrator);
+    }
+
+    @Test
     void onResultIgnoredWhenAlreadyTerminal() {
         when(dispatchDao.findById(500L)).thenReturn(at(DispatchStatus.SUCCEEDED));
         service.onResult(TENANT, 500L, true, "dup", null);
@@ -433,6 +590,14 @@ class DispatchServiceResultTest {
         service.onAck(TENANT, 500L);
         verify(dispatchDao, never()).updateStatus(anyLong(), anyLong(), anyString(), any(),
                 any(), any(), any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void lateSuccessCannotRouteWorkflowAfterFailure() {
+        DispatchDO d = at(DispatchStatus.FAILED); d.setExecutorId(9L);
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        assertFalse(service.onResult(TENANT, 9L, 500L, true, "late", null));
+        verifyNoInteractions(sdlcDriver);
     }
 
     @Test

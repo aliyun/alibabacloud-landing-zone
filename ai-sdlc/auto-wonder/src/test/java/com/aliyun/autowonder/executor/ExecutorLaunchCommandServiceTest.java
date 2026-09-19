@@ -1,8 +1,14 @@
 package com.aliyun.autowonder.executor;
 
+import com.aliyun.autowonder.branding.PlatformBrandingDao;
+import com.aliyun.autowonder.branding.PlatformBrandingDO;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.executor.dto.ExecutorLaunchCommandVO;
+import com.aliyun.autowonder.executor.dto.ExecutorVO;
+import com.aliyun.autowonder.storage.InMemoryObjectStorage;
+import com.aliyun.autowonder.storage.OssProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,8 +22,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Locks the server-side launch command to frontend/src/features/executor/startupCommand.ts: the page
- * and the MCP tool must hand an operator the same bytes for the same inputs.
+ * The one server-side launch-command generator: the page's 启动命令 dialog and the MCP tool both call
+ * {@code buildForExecutor}, so an operator gets byte-identical commands whichever entry they use, and every launch
+ * value comes from executor.launch_config rather than from a request argument or a browser preference.
  */
 class ExecutorLaunchCommandServiceTest {
 
@@ -27,17 +34,25 @@ class ExecutorLaunchCommandServiceTest {
     private static final String PREAMBLE =
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                     + "$OutputEncoding = [System.Text.Encoding]::UTF8; ";
+    private static final long TENANT = 100L;
 
     PlatformBrandingService brandingService;
+    ExecutorService executorService;
+    ExecutorLaunchConfigService launchConfigService;
     ExecutorLaunchCommandService service;
+    ExecutorLaunchCommandService wiredService;
     Date now;
 
     @BeforeEach
     void setUp() {
         brandingService = mock(PlatformBrandingService.class);
-        when(brandingService.trustedPublicBaseUrl()).thenReturn(BASE_URL);
+        when(brandingService.effectivePublicBaseUrl()).thenReturn(BASE_URL);
         when(brandingService.recommendedRuntimeVersion()).thenReturn(RUNTIME_VERSION);
-        service = new ExecutorLaunchCommandService(brandingService);
+        // argv 组装与 quoting 不读执行器，这里显式传 null；同一个实例也用于覆盖依赖缺失时的 fail-closed 分支
+        service = new ExecutorLaunchCommandService(brandingService, null, null);
+        executorService = mock(ExecutorService.class);
+        launchConfigService = mock(ExecutorLaunchConfigService.class);
+        wiredService = new ExecutorLaunchCommandService(brandingService, executorService, launchConfigService);
         now = Date.from(ZonedDateTime.of(2026, 9, 4, 13, 45, 0, 0, ZoneId.systemDefault()).toInstant());
     }
 
@@ -51,7 +66,7 @@ class ExecutorLaunchCommandServiceTest {
                 + " --token awexec_plain"
                 + " --executor-id 9"
                 + " --provider qoder"
-                + " --memory-mode platform"
+                + " --memory-mode platform --max-tasks 5"
                 + " --model qmodel_latest"
                 + " --reasoning-effort medium"
                 + " --context-window 260000"
@@ -89,7 +104,7 @@ class ExecutorLaunchCommandServiceTest {
                         + " --token awexec_plain"
                         + " --executor-id 9"
                         + " --provider qoder"
-                        + " --memory-mode platform"
+                        + " --memory-mode platform --max-tasks 5"
                         + " --model qmodel_latest"
                         + " --reasoning-effort medium"
                         + " --context-window 260000"
@@ -148,7 +163,7 @@ class ExecutorLaunchCommandServiceTest {
                 + " --token awexec_plain"
                 + " --executor-id 9"
                 + " --provider qoder"
-                + " --memory-mode platform"
+                + " --memory-mode platform --max-tasks 5"
                 + " --token-aware-enable", vo.getCommand());
         assertNull(vo.getModel());
         assertNull(vo.getReasoningEffort());
@@ -166,7 +181,7 @@ class ExecutorLaunchCommandServiceTest {
                 + " --token awexec_plain"
                 + " --executor-id 9"
                 + " --provider claude"
-                + " --memory-mode provider-local", vo.getCommand());
+                + " --memory-mode provider-local --max-tasks 5", vo.getCommand());
         assertNull(vo.getModel());
         assertNull(vo.getReasoningEffort());
         assertNull(vo.getContextWindow());
@@ -179,6 +194,17 @@ class ExecutorLaunchCommandServiceTest {
 
         assertEquals("claude", vo.getProvider());
         assertTrue(vo.getCommand().contains("--provider claude"));
+    }
+
+    @Test
+    void missingClientKindRefusesToBuildInsteadOfGuessingTheClaudeProvider() {
+        // clientKind=null 是历史存量数据；放行会被 resolveProvider 静默解释成 claude，必须显式拒绝。
+        BizException nullKind = assertThrows(BizException.class,
+                () -> build("awexec_plain", null, "platform", "auto", "medium", "260000", "posix", false, null));
+        assertEquals(ErrorCode.EXECUTOR_CLIENT_KIND_MISSING.getCode(), nullKind.getCode());
+        BizException blankKind = assertThrows(BizException.class,
+                () -> build("awexec_plain", "  ", "platform", "auto", "medium", "260000", "posix", false, null));
+        assertEquals(ErrorCode.EXECUTOR_CLIENT_KIND_MISSING.getCode(), blankKind.getCode());
     }
 
     @Test
@@ -227,7 +253,7 @@ class ExecutorLaunchCommandServiceTest {
 
     @Test
     void missingPlatformBaseUrlIsRejected() {
-        when(brandingService.trustedPublicBaseUrl()).thenReturn(null);
+        when(brandingService.effectivePublicBaseUrl()).thenReturn(null);
 
         BizException ex = assertThrows(BizException.class, () -> build("awexec_plain", "QODER_CLI",
                 "platform", "auto", "medium", "260000", "posix", false, null));
@@ -272,6 +298,170 @@ class ExecutorLaunchCommandServiceTest {
                 ExecutorLaunchCommandService.debugLogFileName("QODER_CN_CLI", 12L, now));
         assertEquals("aw-claude-3-260904-13-45-00.log",
                 ExecutorLaunchCommandService.debugLogFileName("CLAUDE_CODE", 3L, now));
+    }
+
+    @Test
+    void launchCommandWsUrlFollowsTheBrandingDomainWithoutRestart() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService realBranding = new PlatformBrandingService(
+                dao, new InMemoryObjectStorage(), new OssProperties(),
+                "https://daily.auto-wonder.example.com", RUNTIME_VERSION, "x.x.x", false);
+        ExecutorLaunchCommandService brandedService =
+                new ExecutorLaunchCommandService(realBranding, null, null);
+        when(dao.findActive()).thenReturn(brandingRow("https://wonder.example.com"));
+
+        ExecutorLaunchCommandVO withDomain = brandedService.buildAt("awexec_plain", 9L, "QODER_CLI",
+                "platform", "auto", "medium", "260000", "posix", false, null, now);
+
+        assertEquals("wss://wonder.example.com/ws/executor", withDomain.getWsUrl());
+        assertTrue(withDomain.getCommand().contains("--ws-url wss://wonder.example.com/ws/executor"));
+
+        when(dao.findActive()).thenReturn(brandingRow(null));
+        ExecutorLaunchCommandVO cleared = brandedService.buildAt("awexec_plain", 9L, "QODER_CLI",
+                "platform", "auto", "medium", "260000", "posix", false, null, now);
+
+        assertEquals("wss://daily.auto-wonder.example.com/ws/executor", cleared.getWsUrl());
+    }
+
+    private static PlatformBrandingDO brandingRow(String domain) {
+        PlatformBrandingDO row = new PlatformBrandingDO();
+        row.setPlatformName("WonderHub");
+        row.setThemeKey("ocean-blue");
+        row.setPrimaryColor("#2563eb");
+        row.setDomain(domain);
+        return row;
+    }
+
+    @Test
+    void savedConcurrencyIsUsedInAllCommandFormats() {
+        stubStoredExecutor("QODER_CLI", "platform", "qmodel_latest", "medium", "260000");
+        launchConfigService.requireCompleteConfig(9L, TENANT).maxConcurrentDispatches = 5;
+        for (String os : new String[]{"posix", "windows"}) {
+            for (boolean debug : new boolean[]{false, true}) {
+                var vo = wiredService.buildForExecutor(9L, TENANT, os, debug, null);
+                assertEquals(5, vo.getMaxConcurrentDispatches());
+                String command = "windows".equals(os) ? decode(vo.getCommand()) : vo.getCommand();
+                assertTrue(command.contains("--max-tasks 5"), command);
+            }
+        }
+    }
+
+    // ---------- buildForExecutor：页面与 MCP 共用的唯一生成入口 ----------
+
+    private void stubStoredExecutor(String clientKind, String memoryMode, String model, String reasoningEffort,
+            String contextWindow) {
+        ExecutorVO executor = new ExecutorVO();
+        executor.setId(9L);
+        executor.setClientKind(clientKind);
+        when(executorService.getDetail(9L, TENANT)).thenReturn(executor);
+        when(executorService.getToken(9L, TENANT)).thenReturn("awexec_db");
+        ExecutorLaunchConfigService.LaunchConfig config = new ExecutorLaunchConfigService.LaunchConfig();
+        config.memoryMode = memoryMode;
+        config.model = model;
+        config.reasoningEffort = reasoningEffort;
+        config.contextWindow = contextWindow;
+        when(launchConfigService.requireCompleteConfig(9L, TENANT)).thenReturn(config);
+    }
+
+    @Test
+    void buildForExecutorGeneratesFromThePersistedConfig() {
+        stubStoredExecutor("QODER_CLI", "platform", "qmodel_latest", "medium", "260000");
+
+        ExecutorLaunchCommandVO vo = wiredService.buildForExecutor(9L, TENANT, "posix", false, null);
+
+        assertEquals("npx -y autowonder@" + RUNTIME_VERSION + " connect"
+                + " --ws-url " + WS_URL
+                + " --token awexec_db"
+                + " --executor-id 9"
+                + " --provider qoder"
+                + " --memory-mode platform --max-tasks 5"
+                + " --model qmodel_latest"
+                + " --reasoning-effort medium"
+                + " --context-window 260000"
+                + " --token-aware-enable", vo.getCommand());
+        assertEquals(9L, vo.getExecutorId());
+        assertEquals("QODER_CLI", vo.getClientKind());
+        assertEquals("qmodel_latest", vo.getModel());
+        assertEquals("medium", vo.getReasoningEffort());
+        assertEquals("260000", vo.getContextWindow());
+        assertEquals("platform", vo.getMemoryMode());
+        // Choosing an output format must never write the stored config back.
+        verify(launchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void buildForExecutorAppliesOutputOptionsWithoutTouchingTheStoredConfig() {
+        stubStoredExecutor("QODER_CN_CLI", "none", "auto", "high", "1000000");
+
+        ExecutorLaunchCommandVO vo = wiredService.buildForExecutor(9L, TENANT, "windows", true, null);
+
+        assertEquals("qodercn", vo.getProvider());
+        assertTrue(vo.isDebug());
+        assertEquals("powershell", vo.getShell());
+        assertTrue(vo.getLogFileName().matches("aw-qodercn-9-\\d{6}-\\d{2}-\\d{2}-\\d{2}\\.log"),
+                vo.getLogFileName());
+        assertTrue(vo.getCommand().startsWith("powershell -NoProfile -EncodedCommand "));
+        assertEquals(PREAMBLE + "npx -y autowonder@" + RUNTIME_VERSION + " connect"
+                        + " --ws-url " + WS_URL
+                        + " --token awexec_db"
+                        + " --executor-id 9"
+                        + " --provider qodercn"
+                        + " --memory-mode none --max-tasks 5"
+                        + " --model auto"
+                        + " --reasoning-effort high"
+                        + " --context-window 1000000"
+                        + " --token-aware-enable --debug"
+                        + " 2>&1 | Tee-Object -FilePath \"$HOME/" + vo.getLogFileName() + "\"",
+                decode(vo.getCommand()));
+        verify(launchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
+    }
+
+    @Test
+    void buildForExecutorRefusesAnExecutorThatWasNeverConfigured() {
+        stubStoredExecutor("QODER_CLI", null, null, null, null);
+        when(launchConfigService.requireCompleteConfig(9L, TENANT))
+                .thenThrow(new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_INCOMPLETE));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> wiredService.buildForExecutor(9L, TENANT, "posix", false, null));
+
+        // 未配置就是未配置：不生成一条看起来能用、实则用了系统默认值的命令
+        assertEquals("17007", ex.getCode());
+    }
+
+    @Test
+    void buildForExecutorNamesTheRotatedOutModelItRefuses() {
+        stubStoredExecutor("QODER_CLI", "platform", "removed-model", "medium", "260000");
+        when(launchConfigService.requireCompleteConfig(9L, TENANT))
+                .thenThrow(new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID,
+                        "已保存的模型 removed-model 已不可用，请重新选择并保存启动配置"));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> wiredService.buildForExecutor(9L, TENANT, "posix", false, null));
+
+        assertEquals("17006", ex.getCode());
+        assertTrue(ex.getMessage().contains("removed-model"));
+    }
+
+    @Test
+    void buildForExecutorPropagatesExecutorNotFoundBeforeReadingTheToken() {
+        when(executorService.getDetail(9L, TENANT)).thenThrow(new BizException(ErrorCode.EXECUTOR_NOT_FOUND));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> wiredService.buildForExecutor(9L, TENANT, "posix", false, null));
+
+        assertEquals("17001", ex.getCode());
+        verify(executorService, never()).getToken(anyLong(), anyLong());
+        verify(launchConfigService, never()).requireCompleteConfig(anyLong(), anyLong());
+    }
+
+    @Test
+    void buildForExecutorFailsClosedWhenTheExecutorDependenciesAreUnavailable() {
+        BizException ex = assertThrows(BizException.class,
+                () -> service.buildForExecutor(9L, TENANT, "posix", false, null));
+
+        assertEquals("10000", ex.getCode());
+        assertTrue(ex.getMessage().contains("执行器能力不可用"));
     }
 
     private ExecutorLaunchCommandVO build(String token, String clientKind, String memoryMode, String model,

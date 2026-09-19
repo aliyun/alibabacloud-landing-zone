@@ -4,7 +4,7 @@ import {
   Space, Tag, Typography,
 } from 'antd';
 import { CheckOutlined, CloseOutlined, EditOutlined } from '@ant-design/icons';
-import { usePendingReviews } from './hooks';
+import { usePendingReviews, useMemoryPendingReviewCount } from './hooks';
 import type { Memory } from './api';
 import { useMemoryReviewActions } from './useMemoryReviewActions';
 import { MemoryReviewModals } from './MemoryReviewModals';
@@ -25,12 +25,13 @@ export function MemoryReviewPage() {
   const [page, setPage] = useState(1);
 
   const { data = [], isLoading } = usePendingReviews({ page, size: PAGE_SIZE });
+  const { data: pendingTotal = 0 } = useMemoryPendingReviewCount();
   const review = useMemoryReviewActions();
 
   const listLoading = isLoading;
   const anyMutationPending = review.reviewMutation.isPending || review.updateMutation.isPending;
   const hasMore = data.length >= PAGE_SIZE;
-  const total = hasMore ? page * PAGE_SIZE + 1 : (page - 1) * PAGE_SIZE + data.length;
+  const total = pendingTotal;
 
   return (
     <Card
@@ -139,7 +140,7 @@ export function MemoryReviewPage() {
         }}
       >
         <Text type="secondary">
-          {hasMore ? '当前页已满，可能还有更多待审核记忆' : `共 ${data.length} 条待审核`}
+          {hasMore ? '当前页已满，可能还有更多待审核记忆' : `共 ${total} 条待审核`}
         </Text>
         <Pagination
           current={page}

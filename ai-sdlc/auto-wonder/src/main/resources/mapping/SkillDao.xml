@@ -14,13 +14,49 @@
     <select id="findById" resultType="com.aliyun.autowonder.skill.SkillDO">
         SELECT * FROM skill WHERE id = #{id} AND is_deleted = 0 LIMIT 1
     </select>
+    <select id="findByIdForUpdate" resultType="com.aliyun.autowonder.skill.SkillDO">
+        SELECT * FROM skill WHERE id = #{id} AND is_deleted = 0 LIMIT 1 FOR UPDATE
+    </select>
+    <!-- 分类筛选与未分类筛选互斥（服务层校验），此处只负责拼接过滤条件；
+         categoryIds 由服务层按“是否包含子分类”展开为分类 id 列表 -->
+    <sql id="categoryFilter">
+        <if test="categoryIds != null">
+            AND EXISTS (
+                SELECT 1 FROM asset_category_ref r
+                WHERE r.tenant_id = #{tenantId} AND r.asset_type = 'SKILL'
+                  AND r.asset_id = skill.id AND r.is_deleted = 0
+                  AND r.category_id IN
+                <foreach collection="categoryIds" item="categoryId" open="(" separator="," close=")">
+                    #{categoryId}
+                </foreach>
+            )
+        </if>
+        <if test="uncategorized">
+            AND NOT EXISTS (
+                SELECT 1 FROM asset_category_ref r
+                WHERE r.tenant_id = #{tenantId} AND r.asset_type = 'SKILL'
+                  AND r.asset_id = skill.id AND r.is_deleted = 0
+            )
+        </if>
+    </sql>
     <select id="list" resultType="com.aliyun.autowonder.skill.SkillDO">
         SELECT * FROM skill
         <where>
             is_deleted = 0
+            AND tenant_id = #{tenantId}
             <if test="type != null">AND type = #{type}</if>
+            <include refid="categoryFilter"/>
         </where>
         ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <select id="count" resultType="long">
+        SELECT COUNT(*) FROM skill
+        <where>
+            is_deleted = 0
+            AND tenant_id = #{tenantId}
+            <if test="type != null">AND type = #{type}</if>
+            <include refid="categoryFilter"/>
+        </where>
     </select>
     <update id="update">
         UPDATE skill SET name = #{name}, type = #{type}, install_spec = #{installSpec},

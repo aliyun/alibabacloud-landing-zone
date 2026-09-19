@@ -24,13 +24,16 @@ class WorkitemClarificationConversationControllerTest {
 
     private WorkitemClarificationConversationService service;
     private ConversationTurnEventService turnEventService;
+    private ConversationCommandsService commandsService;
     private WorkitemClarificationConversationController controller;
 
     @BeforeEach
     void setUp() {
         service = mock(WorkitemClarificationConversationService.class);
         turnEventService = mock(ConversationTurnEventService.class);
-        controller = new WorkitemClarificationConversationController(service, turnEventService);
+        commandsService = mock(ConversationCommandsService.class);
+        controller = new WorkitemClarificationConversationController(service, turnEventService,
+                commandsService);
         AutoWonderContext.get().setCurrentWorkspaceId(1L);
     }
 

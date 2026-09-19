@@ -1,7 +1,11 @@
 import type { InsightMetrics, InsightAuditItem } from './types';
 
 export const MOCK_METRICS: InsightMetrics = {
-  cost: { totalTokens: 318000, avgTokensPerTask: 13600, dailyAvg: 45200, trend: [36, 39, 42, 41, 47, 44, 46] },
+  cost: {
+    totalTokens: 318000, avgTokensPerTask: 13600, dailyAvg: 45200, trend: [36, 39, 42, 41, 47, 44, 46],
+    totalCredits: 210.35, avgCreditsPerTask: 8.76, dailyAvgCredits: 7.01,
+    creditsTrend: [2.5, 3.1, 4.2, 4.8, 5.5, 6.1, 6.9],
+  },
   efficiency: { completionRate: 76, totalTasks: 24, completedTasks: 18, avgDurationMinutes: 42, trend: [63, 66, 69, 70, 73, 74, 76] },
   stability: { successRate: 86, retryCount: 4, blockedCount: 5, trend: [91, 88, 89, 84, 87, 85, 86] },
   security: { highRiskOps: 2, complianceRate: 96.2, auditBlocks: 3, trend: [1, 2, 2, 4, 2, 3, 2] },

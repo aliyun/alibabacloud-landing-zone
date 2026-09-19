@@ -12,7 +12,7 @@ long-lived `community` branch. Follow the constraints and procedure in the
 - Community merge commit: `6db0fad6906e6892258f9ebf4ba8cc0760617f10`
 - Synchronized at: 2026-09-02 (Asia/Shanghai)
 
-**Deliberately not moved.** A newer sync — merged `origin/master`
+**Historical checkpoint (2026-09-07).** A newer sync — merged `origin/master`
 `b52cdeeea3b82316ee370e56d5533e6a8d9245b3`, merge commit
 `616b84687e15702cbc42ac677021499352037e8f`, released as v0.8.0 — is recorded in
 History below, but it is **not** the baseline. This guide requires "Never move
@@ -26,12 +26,77 @@ below), but the merge **has not landed** —
 `c3a75ae60462e3bdc93d1e9fb82041dc9d442f51`, because `616b84687` sits on the sync
 branch `aw/community-sync-b52cdeeea-20260906` awaiting the human MR gate
 (step `400361`) and `community` is protected. The three bullets above therefore
-stay authoritative until a human merges that MR; moving them now would advertise
+were kept authoritative pending that human merge; moving them then would advertise
 a synchronized baseline that `community` does not contain. Ancestry of the
 candidate was proved, not assumed: `25371cb1` is an ancestor of the community tip
 `c3a75ae6`, and both `c3a75ae6` and `b52cdeeea` are ancestors of `616b84687`.
 
 ## History
+
+### 2026-09-19: candidate sync to `d795eea3a` — verified iteration and review follow-up
+
+- Fixed upstream source: `d795eea3a8261a0fe22c2d2c8572d774699f3386`.
+- Community before sync: `b05c04c4a4c8eae7d50a7afeeddd1921e21aea17`.
+- Resumed Community baseline: `8ecab515c9cfdd4fca7323e5af7aa1ce7db511e1`.
+  The E2E submit/approve prerequisite was independently reviewed, verified and
+  merged into Community before this sync resumed. This sync preserves its E2E
+  tree exactly; it does not import master E2E files.
+- Subsequent Community target: `da378e982e548169c0894039086c1540aeae2a8c`.
+  Seven concurrent Community commits (51 paths) improve deployment inventory,
+  sanitized diagnostics, public-IP detection, administrator initialization and
+  cloud packaging/health scope. They were integrated without textual conflicts
+  in `ac723b9b836560e2e505284e62df3465b5ade9ff`; the Community E2E tree is unchanged.
+- Original master merge: `ef85bff30f2d4aa4e51ea4f91c254a8c23f347c6`;
+  prerequisite Community merge: `9bc3e212ebdd2b7e06de6bf46943324ebc38cc73`.
+- Recorded verified baseline remains `25371cb104ac019fb26674f0c495c410c01e5041`;
+  the already incorporated master ancestor is `b52cdeeea3b82316ee370e56d5533e6a8d9245b3`.
+- Sync branch: `aw/community-sync-d795eea3a-20260919`.
+- Scope from the recorded baseline: 869 commits / 1,144 changed paths.
+- Candidate version: 0.8.0 → 0.9.0 (MINOR), documented in
+  [release_v0.9.0_20260919.md](../../releases/release_v0.9.0_20260919.md).
+- Includes workspace environment variables, Feishu, platform conversations,
+  project backups, executor upgrades, capability categories and dispatch recovery.
+- Community adaptations preserve SecretCrypto and public storage, exclude BUC
+  and standalone new Aone functionality, and retain the complete pre-sync E2E
+  tree unchanged. Existing optional Aone remains disabled by default.
+- New migrations are V052–V070; published V036–V051 remain byte-identical.
+  Admin initialization requires an existing administrator and never grants one.
+- Measured iteration: clean `ef84938f2ddb05556fa245448c2e76048d335546`.
+  Maven 4,654 tests, zero failures/errors, one manual Aone skip; frontend
+  196 files/2,122 tests pass; lint zero errors/three warnings; production build
+  passes. Deploy 366 tests + 245 subtests pass (10 native Windows skips);
+  upgrade 159 tests + 88 subtests pass (12 native Windows skips). Production
+  npm audit is clear; five unchanged development-dependency findings remain.
+  Dependency/internal endpoint and strict YAML/runtime configuration checks pass.
+- E2E run `aw-e2e-ef84938f2d-e9e54d32`, image mode, dirty=false: image/startup
+  and fresh schema (84 tables) pass; 14 environment-variable/binding/backup API
+  checks pass; authenticated chain 39 PASS/0 FAIL. Ports: 7001, 39060, 63790,
+  39260, 39360. Two ERROR and six WARN records are attributed negative probes;
+  unattributed ERROR/WARN are zero. Standard final check exits zero.
+  Cleanup initially encountered a foreign task reusing 7001; after its owner
+  stopped it, standard cleanup exited zero with no containers, volumes, network
+  or listeners. Archive: `target/e2e-results/aw-e2e-ef84938f2d-e9e54d32/`;
+  external cycle-4 cleanup-resume evidence records the later successful teardown
+  separately from the raw archived earlier failure snapshot.
+- Independent iteration reviews: master product/data semantics PASS; release
+  evidence PASS; Community boundary found one Important issue in the public
+  tutorial ZIP's AppleDouble metadata. Repacked the archive with only the
+  original Skill payload (unchanged SHA-256), and a real archive regression
+  failed before the repair and passed after it. No product semantics changed.
+- Configuration review covers the union of YAML placeholders and the env example;
+  optional Java-only controls gained bindings without default changes. Intentional
+  Aone omissions follow rule 4. Deployment/upgrade retain source-derived runtime
+  0.2.163, escrow identity/environment hashes and existing-admin migration checks;
+  concurrent cloud packaging changes do not weaken local release quality gates.
+- The target integration, metadata repair and this post-review log commit require
+  a new exact-SHA quality cycle. The measured results above are explicitly scoped
+  to ef849 and are not substituted for that cycle. Its final manifest, independent
+  reports and remote identity belong to the MR evidence, outside the source tree.
+  Real cloud services, native Windows and populated production upgrades are not
+  claimed as executed. No unresolved product/data decision is deferred to CR.
+- No internal MR or GitHub PR has been created. Public output requires the
+  internal human merge gate. No tag is authorized. The verified baseline above
+  is deliberately unchanged until the required verification and merge complete.
 
 ### 2026-09-07: `25371cb1` to `b52cdeeea` — **baseline not moved yet**
 

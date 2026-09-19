@@ -39,6 +39,15 @@ public class MemoryController {
         return Result.ok(memoryService.list(currentWorkspaceId(), scope, ownerRef, type, status, page, size));
     }
 
+    @GetMapping("/count")
+    public Result<Long> count(
+            @RequestParam(value = "scope", required = false) String scope,
+            @RequestParam(value = "ownerRef", required = false) Long ownerRef,
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "status", required = false) String status) {
+        return Result.ok(memoryService.countList(currentWorkspaceId(), scope, ownerRef, type, status));
+    }
+
     @GetMapping("/grouped")
     public Result<List<MemoryGroupVO>> listGrouped(
             @RequestParam(value = "scope", required = false) String scope,
@@ -48,6 +57,15 @@ public class MemoryController {
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "10") int size) {
         return Result.ok(memoryService.listGrouped(currentWorkspaceId(), scope, ownerRef, type, status, page, size));
+    }
+
+    @GetMapping("/grouped/count")
+    public Result<Long> countGrouped(
+            @RequestParam(value = "scope", required = false) String scope,
+            @RequestParam(value = "ownerRef", required = false) Long ownerRef,
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "status", required = false) String status) {
+        return Result.ok(memoryService.countGroups(currentWorkspaceId(), scope, ownerRef, type, status));
     }
 
     @GetMapping("/{id}")

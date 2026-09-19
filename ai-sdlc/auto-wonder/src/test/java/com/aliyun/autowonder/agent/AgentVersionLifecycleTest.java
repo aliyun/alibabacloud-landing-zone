@@ -10,6 +10,7 @@ import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
+import com.aliyun.autowonder.environment.EnvironmentVariableDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -28,6 +29,7 @@ class AgentVersionLifecycleTest {
     AgentRepoPermDao repoPermDao;
     AgentSkillDao skillDao;
     AgentMemoryRefDao memoryRefDao;
+    AgentEnvironmentVariableRefDao environmentRefDao;
     WorkspaceDao workspaceDao;
     AgentService service;
 
@@ -38,9 +40,11 @@ class AgentVersionLifecycleTest {
         repoPermDao = mock(AgentRepoPermDao.class);
         skillDao = mock(AgentSkillDao.class);
         memoryRefDao = mock(AgentMemoryRefDao.class);
+        environmentRefDao = mock(AgentEnvironmentVariableRefDao.class);
         workspaceDao = mock(WorkspaceDao.class);
         service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
-                mock(ExecutorDao.class), mock(ExecutorRegistry.class));
+                mock(ExecutorDao.class), mock(ExecutorRegistry.class), null,
+                environmentRefDao, mock(EnvironmentVariableDao.class));
     }
 
     private AgentDO agentWithDraft(long agentId, long versionId) {
@@ -108,9 +112,16 @@ class AgentVersionLifecycleTest {
         online.setRoleName("old-role");
         when(agentDao.findById(10L)).thenReturn(agent);
         when(versionDao.findById(50L)).thenReturn(online);
-        when(repoPermDao.listByVersion(50L)).thenReturn(List.of());
+        AgentRepoPermDO repositoryPermission = new AgentRepoPermDO();
+        repositoryPermission.setRepoId(88L);
+        repositoryPermission.setPermLevel("WRITE");
+        repositoryPermission.setAllowedBranchPatterns("[\"release/*\"]");
+        when(repoPermDao.listByVersion(50L)).thenReturn(List.of(repositoryPermission));
         when(skillDao.listByVersion(50L)).thenReturn(List.of());
         when(memoryRefDao.listByVersion(50L)).thenReturn(List.of());
+        AgentEnvironmentVariableRefDO environmentRef = new AgentEnvironmentVariableRefDO();
+        environmentRef.setEnvironmentVariableId(77L);
+        when(environmentRefDao.listByVersion(100L, 50L)).thenReturn(List.of(environmentRef));
         when(agentDao.updateStatus(eq(10L), eq(100L), eq("ONLINE"), eq(50L),
                 eq(999L), eq(2), eq(0), eq(7L))).thenReturn(1);
         when(versionDao.updateConfig(eq(999L), eq(100L), eq("new-role"), isNull(),
@@ -130,6 +141,10 @@ class AgentVersionLifecycleTest {
         AgentVersionVO vo = service.editConfig(10L, req, 100L, 7L);
         assertNotNull(vo);
         verify(versionDao).insert(argThat((AgentVersionDO v) -> v.getVersionNo() == 2 && "DRAFT".equals(v.getStatus())));
+        verify(repoPermDao).insert(argThat((AgentRepoPermDO p) -> p.getAgentVersionId() == 999L
+                && p.getRepoId() == 88L && "[\"release/*\"]".equals(p.getAllowedBranchPatterns())));
+        verify(environmentRefDao).insert(argThat(ref -> ref.getTenantId() == 100L
+                && ref.getAgentVersionId() == 999L && ref.getEnvironmentVariableId() == 77L));
     }
 
     @Test
@@ -339,6 +354,7 @@ class AgentVersionLifecycleTest {
         AgentVersionDO pending = new AgentVersionDO();
         pending.setId(20L);
         pending.setTenantId(100L);
+        pending.setAgentId(10L);
         pending.setStatus("PENDING_REVIEW");
         pending.setCreatorId(7L);
         WorkspaceDO workspace = new WorkspaceDO();

@@ -23,13 +23,16 @@ public class RedisConfig {
                                      @Value("${spring.redis-meta.connectTimeoutMs:2000}") int connectTimeoutMs,
                                      @Value("${spring.redis-meta.socketTimeoutMs:5000}") int socketTimeoutMs,
                                      @Value("${spring.redis-meta.poolMaxTotal}") int poolMaxTotal,
+                                     @Value("${spring.redis-meta.poolMaxWaitMs:2000}") long poolMaxWaitMs,
                                      @Value("${application.env:daily}") String env) {
 
         JedisPoolConfig poolConfig = new JedisPoolConfig();
         poolConfig.setMaxTotal(poolMaxTotal);
         poolConfig.setMaxIdle(poolMaxTotal);
         poolConfig.setMinIdle(poolMaxTotal / 2);
-        poolConfig.setMaxWaitMillis(10000);
+        // Fail fast when the pool is drained: a long borrow wait turns one Redis hiccup into
+        // every-caller pile-up and exhausts the pool (35min worker stall incident).
+        poolConfig.setMaxWaitMillis(poolMaxWaitMs > 0 ? poolMaxWaitMs : 2000L);
         poolConfig.setTestOnBorrow(true);
         poolConfig.setTestOnReturn(true);
         poolConfig.setTestWhileIdle(true);

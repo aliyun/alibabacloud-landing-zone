@@ -143,15 +143,15 @@ class V037LegacyWorkitemIntegrationTest {
         workitems.insert(workitem);
         assertNotNull(workitem.getId());
         assertEquals(1, workitems.list(7L, null, null, null, null, null,
-                false, null, 7L, null, null, null, 0, 20).size());
+                false, null, 7L, null, null, null, null, 0, 20).size());
         assertEquals(1, workitems.count(7L, null, null, null, null, null,
-                false, null, 7L, null, null, null));
+                false, null, 7L, null, null, null, null));
         assertEquals(1, workitems.updateContent(workitem.getId(), 7L,
                 "legacy-updated", "updated", 0, 7L));
         assertEquals("legacy-updated", workitems.findById(workitem.getId()).getTitle());
         Tenant8Poison poison = seedTenant8Poison(workitem.getId());
         assertEquals(1, workitems.list(7L, null, null, null, null, null,
-                false, null, 7L, null, null, null, 0, 20).size());
+                false, null, 7L, null, null, null, null, 0, 20).size());
         assertEquals(0, workitems.updateContent(poison.workitemId(), 7L,
                 "cross-tenant-write", "forbidden", 0, 7L));
 
@@ -345,9 +345,9 @@ class V037LegacyWorkitemIntegrationTest {
                                           Tenant8Poison poison)
             throws Exception {
         assertEquals(1, workitems.list(7L, null, null, null, null, null,
-                true, null, 7L, null, null, null, 0, 20).size());
+                true, null, 7L, null, null, null, null, 0, 20).size());
         assertEquals(1, workitems.count(7L, null, null, null, null, null,
-                true, null, 7L, null, null, null));
+                true, null, 7L, null, null, null, null));
 
         DashboardDao dashboard = mapper(DashboardDao.class);
         assertEquals(0, dashboard.countRunningDispatches(7L));

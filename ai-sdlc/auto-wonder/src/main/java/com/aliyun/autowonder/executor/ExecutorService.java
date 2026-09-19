@@ -3,9 +3,11 @@ package com.aliyun.autowonder.executor;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.executor.dto.CreateExecutorRequest;
+import com.aliyun.autowonder.executor.dto.ExecutorUpdateVO;
 import com.aliyun.autowonder.executor.dto.ExecutorVO;
 import com.aliyun.autowonder.executor.dto.IssuedExecutorVO;
 import com.aliyun.autowonder.redis.RedisManager;
+import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.websocket.ExecutorSession;
 import com.aliyun.autowonder.websocket.PresenceManager;
 import com.aliyun.autowonder.websocket.SessionRegistry;
@@ -19,6 +21,8 @@ import javax.websocket.Session;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.OptionalInt;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -35,22 +39,41 @@ public class ExecutorService {
     private final RedisManager redisManager;
     private final PresenceManager presenceManager;
     private final SessionRegistry sessionRegistry;
+    private final ExecutorLaunchConfigService launchConfigService;
+    private SquadAttributionService squadAttributionService;
+    private ExecutorRestartService restartService;
+    private ExecutorUpdateService updateService;
+    private ProviderModelCatalogService providerModelCatalogService;
+
+    @Autowired
+    public void setRestartService(ExecutorRestartService service) { this.restartService = service; }
+
+    @Autowired
+    public void setUpdateService(ExecutorUpdateService service) { this.updateService = service; }
+
+    @Autowired(required = false)
+    public void setProviderModelCatalogService(ProviderModelCatalogService service) {
+        this.providerModelCatalogService = service;
+    }
+
+
+    @Autowired(required = false)
+    public void setSquadAttributionService(SquadAttributionService squadAttributionService) {
+        this.squadAttributionService = squadAttributionService;
+    }
 
     @Autowired
     public ExecutorService(ExecutorDao executorDao, ExecutorRegistry registry,
                            TokenService tokenService, RedisManager redisManager,
-                           PresenceManager presenceManager, SessionRegistry sessionRegistry) {
+                           PresenceManager presenceManager, SessionRegistry sessionRegistry,
+                           ExecutorLaunchConfigService launchConfigService) {
         this.executorDao = executorDao;
         this.registry = registry;
         this.tokenService = tokenService;
         this.redisManager = redisManager;
         this.presenceManager = presenceManager;
         this.sessionRegistry = sessionRegistry;
-    }
-
-    public ExecutorService(ExecutorDao executorDao, ExecutorRegistry registry,
-                           TokenService tokenService) {
-        this(executorDao, registry, tokenService, null, null, null);
+        this.launchConfigService = launchConfigService;
     }
 
     @Transactional
@@ -58,6 +81,12 @@ public class ExecutorService {
         if (req.getName() == null || req.getName().isBlank()) {
             throw new BizException(ErrorCode.EXECUTOR_NAME_REQUIRED);
         }
+        // REST 与 MCP 入口共用同一类型闸门并统一大小写：落库前拒绝空/非法类型，历史空值只存在于存量数据。
+        req.setClientKind(ExecutorLaunchOptionsService.requireCreatableClientKind(
+                req.getClientKind(), ErrorCode.EXECUTOR_CLIENT_KIND_INVALID));
+        // 先校验启动配置再落库：非法取值不能留下一个已创建的执行器和一个已签发的 Token。
+        ExecutorLaunchConfigService.LaunchConfig launchConfig = launchConfigService.resolveForCreate(req);
+
         ExecutorDO e = new ExecutorDO();
         e.setTenantId(tenantId);
         e.setAgentId(agentId);
@@ -65,6 +94,7 @@ public class ExecutorService {
         e.setStatus("OFFLINE");
         e.setClientKind(req.getClientKind());
         e.setCreatorId(userId);
+        e.setLaunchConfig(launchConfigService.toJson(launchConfig));
         executorDao.insert(e);
 
         long id = e.getId();
@@ -77,6 +107,14 @@ public class ExecutorService {
         vo.setAgentId(agentId);
         vo.setName(e.getName());
         vo.setToken(token.getPlaintext());
+        vo.setClientKind(e.getClientKind());
+        vo.setMemoryMode(launchConfig.memoryMode);
+        vo.setMaxConcurrentDispatches(launchConfig.maxConcurrentDispatches);
+        vo.setModel(launchConfig.model);
+        vo.setReasoningEffort(launchConfig.reasoningEffort);
+        vo.setContextWindow(launchConfig.contextWindow);
+        // The insert leaves config_version to its database default, so the first update carries version=1.
+        vo.setConfigVersion(1);
         return vo;
     }
 
@@ -119,7 +157,10 @@ public class ExecutorService {
         if (e == null || e.getTenantId() == null || e.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.EXECUTOR_NOT_FOUND);
         }
-        return toVO(e);
+        ExecutorVO vo = toVO(e);
+        fillModelNames(List.of(vo));
+        fillUpdates(tenantId, List.of(vo));
+        return vo;
     }
 
     public List<ExecutorVO> listByAgent(long agentId, long tenantId) {
@@ -127,15 +168,63 @@ public class ExecutorService {
         for (ExecutorDO e : executorDao.listByAgent(tenantId, agentId)) {
             result.add(toVO(e));
         }
+        fillSquads(tenantId, result);
+        fillModelNames(result);
+        fillUpdates(tenantId, result);
         return result;
     }
 
-    public List<ExecutorVO> listAll(long tenantId) {
+    public List<ExecutorVO> listAll(long tenantId, List<Long> squadIds) {
         List<ExecutorVO> result = new ArrayList<>();
-        for (ExecutorDO e : executorDao.listAll(tenantId)) {
+        for (ExecutorDO e : executorDao.listAll(tenantId, squadIds)) {
             result.add(toVO(e));
         }
+        fillSquads(tenantId, result);
+        fillModelNames(result);
+        fillUpdates(tenantId, result);
         return result;
+    }
+
+    /** Resolves catalog display names for reported model ids, one catalog read per provider. */
+    private void fillModelNames(List<ExecutorVO> result) {
+        if (providerModelCatalogService == null) {
+            return;
+        }
+        java.util.Map<String, java.util.Map<String, String>> namesByProvider = new java.util.HashMap<>();
+        for (ExecutorVO vo : result) {
+            if (vo.getModel() == null || vo.getModel().isBlank()) {
+                continue;
+            }
+            String provider = ProviderModelCatalogService.providerForClientKind(vo.getClientKind());
+            if (provider == null) {
+                continue;
+            }
+            String name = namesByProvider.computeIfAbsent(provider, this::catalogNames).get(vo.getModel());
+            if (name != null) {
+                vo.setModelName(name);
+            }
+        }
+    }
+
+    private java.util.Map<String, String> catalogNames(String provider) {
+        try {
+            java.util.Map<String, String> names = new java.util.HashMap<>();
+            for (var item : providerModelCatalogService.read(provider).getModels()) {
+                if (item.getId() != null && item.getName() != null) {
+                    names.putIfAbsent(item.getId(), item.getName());
+                }
+            }
+            return names;
+        } catch (RuntimeException exception) {
+            log.debug("model catalog lookup failed provider={}", provider, exception);
+            return java.util.Map.of();
+        }
+    }
+
+    private void fillSquads(long tenantId, List<ExecutorVO> result) {
+        if (squadAttributionService != null) {
+            squadAttributionService.fillExecutorSquads(tenantId, result);
+        }
     }
 
     @Transactional
@@ -187,7 +276,37 @@ public class ExecutorService {
         vo.setClientKind(e.getClientKind());
         vo.setLastConnectIp(e.getLastConnectIp());
         vo.setLastHeartbeat(e.getLastHeartbeat());
+        vo.setVersion(presenceManager.currentVersion(e.getId()));
+        vo.setModel(presenceManager.currentModel(e.getId()));
         vo.setGmtCreate(e.getGmtCreate());
+        vo.setLastStartedAt(e.getLastStartedAt());
+        vo.setRestartSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_RESTART_V1"));
+        vo.setUpdateRestartSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_UPDATE_RESTART_V1"));
+        if (restartService != null) vo.setRestart(restartService.status(e.getId()));
+        if (updateService != null) {
+            String target = updateService.targetVersion();
+            vo.setTargetVersion(target);
+            vo.setUpgradeSupported(updateService.supportsUpgrade(e.getId()));
+            // One comparison feeds both flags: an empty result means the versions could not be read, which
+            // is not 无需升级 — updateOne only rejects when the comparison succeeded and came out >= 0.
+            OptionalInt comparison = RuntimeVersion.compare(vo.getVersion(), target);
+            vo.setVersionComparable(comparison.isPresent());
+            vo.setUpgradeAvailable(comparison.isPresent() && comparison.getAsInt() < 0);
+        }
         return vo;
+    }
+
+    private void fillUpdates(long tenantId, List<ExecutorVO> result) {
+        if (updateService == null || result.isEmpty()) {
+            return;
+        }
+        List<Long> ids = new ArrayList<>(result.size());
+        for (ExecutorVO vo : result) {
+            ids.add(vo.getId());
+        }
+        Map<Long, ExecutorUpdateVO> updates = updateService.latestByExecutors(tenantId, ids);
+        for (ExecutorVO vo : result) {
+            vo.setUpdate(updates.get(vo.getId()));
+        }
     }
 }

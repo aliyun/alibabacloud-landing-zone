@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { BrandingConfigPage } from './BrandingConfigPage';
+import type { UpdateDingTalkImChannelParams } from './brandingApi';
 import { useAuthStore } from '@/shared/auth/store';
 
 function brandingPayload() {
@@ -148,6 +149,17 @@ describe('BrandingConfigPage', () => {
     });
   });
 
+  it('explains that the saved domain drives the outbound platform addresses', async () => {
+    renderPage();
+
+    expect(await screen.findByText(
+      '仅平台管理员可以修改平台配置。保存「部署域名」后，MCP 服务地址、执行器启动命令等对外地址会立即使用该域名；未配置时使用部署环境变量地址。',
+    )).toBeInTheDocument();
+    expect(screen.getByText(
+      '填写私有化部署后用户访问平台的域名，例如 https://wonder.example.com；保存后 MCP 服务地址、执行器启动命令等对外地址立即使用该域名',
+    )).toBeInTheDocument();
+  });
+
   it('loads dingtalk collaboration robot status', async () => {
     renderPage();
 
@@ -287,7 +299,7 @@ describe('BrandingConfigPage', () => {
         return HttpResponse.json({
           success: false,
           code: '10403',
-          message: '仅系统第一个用户可以管理品牌配置',
+          message: '仅平台管理员可以修改平台配置',
           traceId: null,
           data: null,
         });
@@ -302,7 +314,7 @@ describe('BrandingConfigPage', () => {
 
     await waitFor(() => {
       expect(updateCalls).toBe(1);
-      expect(error).toHaveBeenCalledWith('仅系统第一个用户可以管理品牌配置');
+      expect(error).toHaveBeenCalledWith('仅平台管理员可以修改平台配置');
     });
     await waitFor(() => expect(saveButton).toBeEnabled());
   });
@@ -336,7 +348,7 @@ describe('BrandingConfigPage', () => {
 
     const backButton = await screen.findByRole('button', { name: /返回首页/ });
     await waitFor(() => expect(backButton).toBeEnabled());
-    expect(screen.getByText('品牌和一致性配置')).toBeInTheDocument();
+    expect(screen.getByText('平台配置')).toBeInTheDocument();
   });
 
   it('navigates back to the platform home when the back entry is clicked', async () => {
@@ -458,4 +470,26 @@ describe('BrandingConfigPage', () => {
     expect(within(otherRow!).getByRole('button', { name: '移除' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '添加管理员' })).toBeDisabled();
   });
+});
+
+it('switches to Feishu without reusing DingTalk credentials or requiring RobotCode', async () => {
+  let saved: UpdateDingTalkImChannelParams | undefined;
+  server.use(
+    http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
+    http.get('/api/platform/im-channels', () => HttpResponse.json(imChannelsPayload())),
+    http.put('/api/platform/im-channels/feishu', async ({ request }) => {
+      saved = await request.json() as UpdateDingTalkImChannelParams;
+      return HttpResponse.json({ ...imChannelsPayload(), data: { provider: 'FEISHU', ...saved } });
+    }),
+  );
+  renderPage(); await openNotificationTab();
+  await userEvent.click(await screen.findByRole('radio', { name: '飞书' }));
+  expect(screen.queryByLabelText('RobotCode')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('App ID')).toHaveValue('');
+  expect(screen.getByLabelText('AppSecret')).toHaveValue('');
+  await userEvent.click(screen.getByRole('switch', { name: '启用飞书机器人' }));
+  await userEvent.type(screen.getByLabelText('App ID'), 'cli_test');
+  await userEvent.type(screen.getByLabelText('AppSecret'), 'feishu-secret');
+  await userEvent.click(screen.getByRole('button', { name: /保存协作通知/ }));
+  await waitFor(() => expect(saved).toEqual({ enabled: true, appKey: 'cli_test', appSecret: 'feishu-secret', robotCode: '' }));
 });

@@ -5,6 +5,10 @@ environment         = "production"
 deployment_id       = "aw-example-20260804"
 zone_a_id           = "cn-beijing-a"
 zone_b_id           = "cn-beijing-b"
+# Optional zone downgrades resolved automatically; leave unset to keep RDS/Redis
+# in the ECS zone pair. Only set when the resolver records a parameter-only downgrade.
+# rds_slave_zone_id       = "cn-beijing-c"
+# redis_secondary_zone_id = "cn-beijing-c"
 public_source_cidrs = ["203.0.113.10/32"]
 lifecycle_mode      = "persistent"
 billing_strategy              = "subscription-first"

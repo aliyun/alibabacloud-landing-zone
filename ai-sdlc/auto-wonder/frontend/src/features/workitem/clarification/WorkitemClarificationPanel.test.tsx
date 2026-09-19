@@ -756,7 +756,7 @@ describe('WorkitemClarificationPanel', () => {
     expect(view.container.querySelector('.ant-spin')).toBeNull();
   });
 
-  it('sends message on Enter key press', async () => {
+  it('sends message on Shift+Enter in the default send mode', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
@@ -771,7 +771,7 @@ describe('WorkitemClarificationPanel', () => {
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('你好，我想讨论需求');
     fireEvent.change(textarea, { target: { value: '你好' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
     await waitFor(() => expect(submitCalled).toBe(true));
   });
 
@@ -790,7 +790,7 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
     fireEvent.change(textarea, { target: { value: '请保留这条消息' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
 
     await waitFor(() => expect(textarea).toHaveValue('请保留这条消息'));
     expect(await screen.findByText('消息发送失败，请重试')).toBeInTheDocument();
@@ -861,7 +861,7 @@ describe('WorkitemClarificationPanel', () => {
     expect((await screen.findByText('需求目标')).tagName).toBe('STRONG');
   });
 
-  it('does not send on Shift+Enter and preserves input content', async () => {
+  it('does not send on plain Enter in the default send mode and preserves input content', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
@@ -875,7 +875,7 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
     fireEvent.change(textarea, { target: { value: '第一行' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
     await new Promise((r) => setTimeout(r, 100));
     expect(submitCalled).toBe(false);
     expect(textarea).toHaveValue('第一行');
@@ -895,7 +895,7 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
     fireEvent.change(textarea, { target: { value: '候选' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', isComposing: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true, isComposing: true });
     await new Promise((r) => setTimeout(r, 100));
     expect(submitCalled).toBe(false);
     expect(textarea).toHaveValue('候选');
@@ -1060,8 +1060,10 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
 
-    await waitFor(() => expect(textarea).not.toBeDisabled());
+    // 历史未知（缺陷一）：显式报错而不是空白，输入受限，也不塞引导提示词
+    expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
     expect(textarea).toHaveValue('');
+    expect(textarea).toBeDisabled();
   });
 
   it('does not render old realtime thinking after selecting a historical conversation', async () => {
@@ -1203,7 +1205,7 @@ describe('WorkitemClarificationPanel', () => {
 
     const textarea = screen.getByPlaceholderText('输入消息...');
     fireEvent.change(textarea, { target: { value: '继续历史会话' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
 
     await waitFor(() => expect(submittedUrl).toContain('/clarification-conversations/101/turns'));
   });
@@ -1392,7 +1394,7 @@ describe('WorkitemClarificationPanel', () => {
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('当前会话消息');
     fireEvent.change(textarea, { target: { value: '只属于当前会话的草稿' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
     await waitFor(() => expect(submitStarted).toBe(true));
 
     const selector = screen.getByTestId('clarification-conversation-select');
@@ -1841,6 +1843,290 @@ describe('WorkitemClarificationPanel', () => {
       await waitFor(() =>
         expect(onContextChange).toHaveBeenLastCalledWith({ agentId: 42, conversationId: 101 }),
       );
+    });
+
+    /** 缺陷二 A/B 竞态：localStorage 预填 A=42，URL 记录 B=2/会话101。恢复窗口内
+     *  先落地的是 A 的会话列表，旧代码拿它校验恢复的 101 会判「不存在」→ 清掉 →
+     *  自动选上 A 的 202，刷新后永远回不到 B 的会话。校验必须等 B 的身份与它自己
+     *  的列表就绪。 */
+    it('validates the restored conversation only after the restored agent identity settles', async () => {
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      mockSquads();
+      mockAgentDirectory([{ id: 1 }, { id: 2 }]);
+      const aConversation = makeConversation(202, '预填数字人的会话');
+      const bConversation = {
+        ...makeConversation(101, '恢复目标的历史会话'), agentId: 2, agentName: 'Agent-B',
+      };
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', ({ request }) => {
+          const agentId = new URL(request.url).searchParams.get('agentId');
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
+            data: agentId === '2' ? [bConversation] : [aConversation] });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', ({ params }) => {
+          const found = [aConversation, bConversation]
+            .find((item) => item.id === Number(params.conversationId));
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: found ?? null });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/events', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+        ),
+      );
+      const onContextChange = vi.fn();
+      const view = renderRestorable([], {
+        initialAgentId: 2, initialConversationId: 101, onContextChange,
+      });
+
+      // 窗口期内：恢复会话的历史正常展示，但身份未落定前发送必须受限
+      const textarea = await screen.findByPlaceholderText('正在恢复会话，请稍候…');
+      expect(await screen.findByText('恢复目标的历史会话')).toBeInTheDocument();
+      expect(textarea).toBeDisabled();
+
+      // 交付列表落地，URL 里的数字人 2 被认领
+      view.rerenderAgents([
+        { agentId: 1, agentName: 'Agent-A', status: 'active' },
+        { agentId: 2, agentName: 'Agent-B', status: 'active' },
+      ]);
+
+      // 最终停在 URL 记录的 B/101：预填数字人的 202 从头到尾不该出现，
+      // 也没有把恢复会话误判成不存在而清空
+      await waitFor(() =>
+        expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled());
+      expect(screen.getByText('恢复目标的历史会话')).toBeInTheDocument();
+      expect(screen.queryByText('预填数字人的会话')).toBeNull();
+      await waitFor(() => expect(onContextChange).toHaveBeenLastCalledWith({
+        agentId: 2, conversationId: 101,
+      }));
+    });
+
+    /** 缺陷二优先级：用户手动选择 > URL 恢复。恢复窗口内用户已通过小队选择器
+     *  自己选了数字人，迟到的 URL 恢复不得再把面板拽到别的数字人上。 */
+    it('lets a manual agent selection win over the URL restore arriving late', async () => {
+      mockSquads();
+      mockAgentDirectory([{ id: 1 }, { id: 2 }]);
+      const bConversation = {
+        ...makeConversation(101, '迟到恢复的会话'), agentId: 2, agentName: 'Agent-B',
+      };
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', ({ request }) => {
+          const agentId = new URL(request.url).searchParams.get('agentId');
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
+            data: agentId === '2' ? [bConversation] : [] });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', ({ params }) => {
+          const found = Number(params.conversationId) === 101 ? bConversation : null;
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: found });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/events', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+        ),
+      );
+      const view = renderRestorable([], { initialAgentId: 2 });
+
+      // 恢复窗口内：用户自己先在小队选择器里选了 42
+      const comboboxes = await screen.findAllByRole('combobox');
+      await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+      fireEvent.mouseDown(comboboxes[0]);
+      fireEvent.click(await screen.findByText('交付小队'));
+      await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+      fireEvent.mouseDown(comboboxes[1]);
+      fireEvent.click(await screen.findByText('Agent-X (AW_FS_DEV)'));
+
+      // 交付列表随后落地且包含 URL 里的 2：恢复必须让位（没有自动认领），
+      // 面板停在选人页而不是直接进入 2 号的会话
+      view.rerenderAgents([
+        { agentId: 1, agentName: 'Agent-A', status: 'active' },
+        { agentId: 2, agentName: 'Agent-B', status: 'active' },
+      ]);
+
+      expect(await screen.findByText('选择数字人')).toBeInTheDocument();
+      expect(screen.queryByText('迟到恢复的会话')).toBeNull();
+    });
+  });
+
+  describe('历史加载状态与错误反馈（工单 55411 缺陷一）', () => {
+    it('renders an explicit error and blocks sending instead of a blank history when the detail request fails', async () => {
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      mockSquads();
+      let detailCalls = 0;
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
+            data: [makeConversation(202, '不该出现的消息')] }),
+        ),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => {
+          detailCalls += 1;
+          return HttpResponse.json(
+            { success: false, code: 'BOOM', message: '加载失败', traceId: null, data: null },
+            { status: 500 },
+          );
+        }),
+      );
+
+      renderPanel([]);
+      const textarea = await screen.findByPlaceholderText('输入消息...');
+
+      expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
+      // 失败不能被渲染成「没有历史」的空白，也不是真的空会话
+      expect(screen.queryByText('暂无历史消息')).not.toBeInTheDocument();
+      expect(screen.queryByText('暂无对话')).not.toBeInTheDocument();
+      expect(textarea).toBeDisabled();
+      // 有界重试：初次请求 + 2 次自动重试，之后交给显式错误态
+      expect(detailCalls).toBe(3);
+
+      // 显式重试入口仍然可用（会再次经历失败）。antd 会给两字按钮插入空格，按容器内按钮查询。
+      fireEvent.click(within(screen.getByTestId('clarification-history-error')).getByRole('button'));
+      await waitFor(() => expect(detailCalls).toBeGreaterThan(3));
+      // 手动重试会先经历 loading 再回到错误态，等待其回归
+      expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
+    });
+
+    it('recovers the history via retry without creating a new conversation to mask the failure', async () => {
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      mockSquads();
+      const recovered = makeConversation(202, '恢复后的历史消息');
+      let createCalls = 0;
+      let detailCalls = 0;
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [recovered] }),
+        ),
+        http.post('/api/workitems/:workitemId/clarification-conversations', () => {
+          createCalls += 1;
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: recovered });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => {
+          detailCalls += 1;
+          if (detailCalls <= 3) {
+            return HttpResponse.json(
+              { success: false, code: 'BOOM', message: '加载失败', traceId: null, data: null },
+              { status: 500 },
+            );
+          }
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: recovered });
+        }),
+      );
+
+      renderPanel([]);
+
+      expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
+      fireEvent.click(within(screen.getByTestId('clarification-history-error')).getByRole('button'));
+
+      // 服务恢复后重试取回原会话历史；不允许靠自动新建会话掩盖失败
+      expect(await screen.findByText('恢复后的历史消息')).toBeInTheDocument();
+      expect(screen.queryByTestId('clarification-history-error')).toBeNull();
+      expect(createCalls).toBe(0);
+      await waitFor(() =>
+        expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled(),
+      );
+    });
+
+    it('keeps previously loaded history and shows a degraded notice when a later refresh fails', async () => {
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      mockSquads();
+      const first = makeConversation(202, '第一次加载的消息');
+      const other = makeConversation(303, '另一条会话的消息');
+      let detail202Calls = 0;
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [first, other] }),
+        ),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', ({ params }) => {
+          if (Number(params.conversationId) === 202) {
+            detail202Calls += 1;
+            if (detail202Calls === 1) {
+              return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: first });
+            }
+            return HttpResponse.json(
+              { success: false, code: 'BOOM', message: '刷新失败', traceId: null, data: null },
+              { status: 500 },
+            );
+          }
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: other });
+        }),
+      );
+
+      renderPanel([]);
+      expect(await screen.findByText('第一次加载的消息')).toBeInTheDocument();
+
+      // 切走再切回：切回触发后台刷新失败，已有内容必须保留并给出降级提示
+      const selector = screen.getByTestId('clarification-conversation-select');
+      fireEvent.mouseDown(within(selector).getByRole('combobox'));
+      fireEvent.click(await screen.findByText(/会话 #303/));
+      expect(await screen.findByText('另一条会话的消息')).toBeInTheDocument();
+
+      fireEvent.mouseDown(within(selector).getByRole('combobox'));
+      fireEvent.click(await screen.findByText(/会话 #202/));
+
+      expect(await screen.findByTestId('clarification-history-stale-notice')).toBeInTheDocument();
+      expect(screen.getByText('第一次加载的消息')).toBeInTheDocument();
+      // 有内容时是降级提示而非整页错误，且仍可继续对话
+      expect(screen.queryByTestId('clarification-history-error')).toBeNull();
+      expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled();
+    });
+
+    it('shows a list-level error with retry instead of an empty-session dead end when the list request fails', async () => {
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      mockSquads();
+      const recovered = makeConversation(202, '列表恢复后的消息');
+      let listCalls = 0;
+      let createCalls = 0;
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', () => {
+          listCalls += 1;
+          if (listCalls <= 3) {
+            return HttpResponse.json(
+              { success: false, code: 'BOOM', message: '列表加载失败', traceId: null, data: null },
+              { status: 500 },
+            );
+          }
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [recovered] });
+        }),
+        http.post('/api/workitems/:workitemId/clarification-conversations', () => {
+          createCalls += 1;
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: recovered });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: recovered }),
+        ),
+      );
+
+      renderPanel([]);
+
+      expect(await screen.findByTestId('clarification-list-error')).toBeInTheDocument();
+      // 列表失败不是「暂无对话」，也不能靠自动建新会话掩盖
+      expect(screen.queryByText('暂无对话')).not.toBeInTheDocument();
+      expect(createCalls).toBe(0);
+
+      fireEvent.click(within(screen.getByTestId('clarification-list-error')).getByRole('button'));
+      expect(await screen.findByText('列表恢复后的消息')).toBeInTheDocument();
+      expect(createCalls).toBe(0);
+    });
+
+    it('fails fast on a 404 conversation without auto-retrying and keeps the failure explicit', async () => {
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      mockSquads();
+      let detailCalls = 0;
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
+            data: [makeConversation(202, '列表里的会话')] }),
+        ),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => {
+          detailCalls += 1;
+          return HttpResponse.json(
+            { success: false, code: '10404', message: '会话不存在', traceId: null, data: null },
+            { status: 404 },
+          );
+        }),
+      );
+
+      renderPanel([]);
+
+      expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
+      // 404 重试无意义：一次请求后立即失败，按真实原因呈现
+      expect(detailCalls).toBe(1);
+      expect(screen.getByPlaceholderText('输入消息...')).toBeDisabled();
     });
   });
 

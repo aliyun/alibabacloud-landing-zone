@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.category.SkillCategoryRefDao">
+    <select id="findByAsset" resultType="com.aliyun.autowonder.category.SkillCategoryRefDO">
+        SELECT * FROM asset_category_ref
+        WHERE tenant_id = #{tenantId} AND asset_type = #{assetType} AND asset_id = #{assetId}
+              AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="listByAssets" resultType="com.aliyun.autowonder.category.SkillCategoryRefDO">
+        SELECT * FROM asset_category_ref
+        WHERE tenant_id = #{tenantId} AND asset_type = #{assetType} AND is_deleted = 0
+        <if test="assetIds != null and assetIds.size() > 0">
+            AND asset_id IN
+            <foreach collection="assetIds" item="assetId" open="(" separator="," close=")">
+                #{assetId}
+            </foreach>
+        </if>
+        <if test="assetIds == null or assetIds.size() == 0">
+            AND 1 = 0
+        </if>
+    </select>
+
+    <!-- 锁定读：与并发打标的 upsert 在 idx_tenant_category 范围锁上互斥，
+         使“删除分类前的引用检查”看到的是最新已提交数据，不留失效关联。
+         H2 不允许聚合查询带 FOR UPDATE，改为按 id 锁行，MySQL 语义等价 -->
+    <select id="listIdsByCategoryForUpdate" resultType="long">
+        SELECT id FROM asset_category_ref
+        WHERE tenant_id = #{tenantId} AND category_id = #{categoryId} AND is_deleted = 0 FOR UPDATE
+    </select>
+
+    <!-- uk_tenant_asset 兜底并发写入；重复设置相同分类时 UPDATE 落在同一行，天然幂等 -->
+    <insert id="upsert">
+        INSERT INTO asset_category_ref (tenant_id, asset_type, asset_id, category_id, creator_id, is_deleted)
+        VALUES (#{tenantId}, #{assetType}, #{assetId}, #{categoryId}, #{modifierId}, 0)
+        ON DUPLICATE KEY UPDATE
+            category_id = #{categoryId}, modifier_id = #{modifierId}, is_deleted = 0, gmt_modified = CURRENT_TIMESTAMP(3)
+    </insert>
+
+    <!-- 取消打标即物理删除：uk_tenant_asset 不留墓碑，重新打标可再次 upsert -->
+    <delete id="deleteByAsset">
+        DELETE FROM asset_category_ref
+        WHERE tenant_id = #{tenantId} AND asset_type = #{assetType} AND asset_id = #{assetId}
+    </delete>
+</mapper>

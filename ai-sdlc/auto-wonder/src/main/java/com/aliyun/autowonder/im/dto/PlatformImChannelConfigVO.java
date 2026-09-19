@@ -8,6 +8,7 @@ import lombok.Setter;
 public class PlatformImChannelConfigVO {
     private String provider;
     private boolean enabled;
+    private boolean selected;
     private String appKey;
     private String robotCode;
     private String baseUrl;

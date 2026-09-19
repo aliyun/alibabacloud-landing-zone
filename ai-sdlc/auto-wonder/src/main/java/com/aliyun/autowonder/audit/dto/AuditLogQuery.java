@@ -9,6 +9,7 @@ public class AuditLogQuery {
     private String module;
     private String action;
     private Long actorId;
+    private String actorType;
     private String targetType;
     private Long targetId;
     private String startTime;

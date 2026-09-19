@@ -27,6 +27,39 @@ import static org.mockito.Mockito.*;
 class InteractionWorkflowServiceTest {
 
     @Test
+    void releasedPausePredecessorActivatesOnlyLatestWaitingRework() {
+        DispatchDao dao = mock(DispatchDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        AgentSdlcResolver resolver = mock(AgentSdlcResolver.class);
+        WorkitemService workitemService = mock(WorkitemService.class);
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        InteractionWorkflowService service = new InteractionWorkflowService(
+                dao, dispatchService, mock(DispatchPauseService.class), resolver,
+                workitemService, publisher, transactionManager(), workitemDao());
+        DispatchDO predecessor = dispatch(102L, 40014L, DispatchStatus.CANCELED, null);
+        predecessor.setExecutorId(10L);
+        predecessor.setError("PAUSE_CONFIRMATION_MISSING: authoritative runtime inventory no longer owns dispatch");
+        DispatchDO older = dispatch(103L, 40013L, DispatchStatus.WAITING_FOR_PAUSE, "COMMENT_REWORK");
+        older.setResultSummary("waitForDispatchId=102");
+        DispatchDO latest = dispatch(104L, 40013L, DispatchStatus.WAITING_FOR_PAUSE, "COMMENT_REWORK");
+        latest.setResultSummary("waitForDispatchId=102");
+        latest.setSdlcStepId(812L);
+        when(dao.listReleasedPausePredecessors(10L, 200)).thenReturn(List.of(predecessor));
+        when(dao.listByWorkitem(100L, 50L)).thenReturn(List.of(predecessor, older, latest));
+        when(resolver.resolveSdlcId(100L, 40013L)).thenReturn(810L);
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(812L);
+        when(resolver.resolveStep(100L, 810L, "812", null)).thenReturn(step);
+        when(dispatchService.releaseInteractionRework(100L, 104L)).thenReturn(true);
+
+        service.reconcileReleasedWaiters(100L, 10L);
+
+        verify(dispatchService).cancelWaitingInteractionRework(100L, 103L);
+        verify(dispatchService).releaseInteractionRework(100L, 104L);
+        verify(publisher).publishEvent(new GuidanceDispatchQueuedEvent(100L, 104L));
+    }
+
+    @Test
     void replayForDeletedWorkitemIsTerminalNoop() {
         DispatchDao dao = mock(DispatchDao.class);
         DispatchService dispatchService = mock(DispatchService.class);

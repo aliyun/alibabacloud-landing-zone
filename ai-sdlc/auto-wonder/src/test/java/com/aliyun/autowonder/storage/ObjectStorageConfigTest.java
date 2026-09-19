@@ -1,15 +1,27 @@
 package com.aliyun.autowonder.storage;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.branding.PlatformBrandingService;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.taskpackage.PackageContext;
+import com.aliyun.autowonder.taskpackage.TaskPackageResult;
+import com.aliyun.autowonder.taskpackage.TaskPackager;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import java.io.ByteArrayInputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ObjectStorageConfigTest {
 
@@ -22,7 +34,7 @@ class ObjectStorageConfigTest {
                 "autowonder-artifacts-daily-tmp-new");
 
         assertDoesNotThrow(() -> config.taskPackager(mock(ObjectStorage.class), props,
-                "https://auto-wonder.alibaba.net"));
+                mock(PlatformBrandingService.class)));
     }
 
     @Test
@@ -33,29 +45,40 @@ class ObjectStorageConfigTest {
 
         assertThrows(IllegalStateException.class,
                 () -> config.taskPackager(mock(ObjectStorage.class), props,
-                        "https://auto-wonder.alibaba.net"));
+                        mock(PlatformBrandingService.class)));
     }
 
     @Test
-    void rejectsMissingPublicBaseUrlBeforeCreatingTaskPackager() {
-        OssProperties props = properties(
-                "autowonder-task-pkg-daily-tmp-new",
-                "autowonder-artifacts-daily-tmp-new");
+    void taskPackageMcpUrlFollowsTheBrandingDomainWithoutRestart() throws Exception {
+        PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
+        when(brandingService.effectiveMcpBaseUrl()).thenReturn("https://wonder.example.com/api/mcp");
+        InMemoryObjectStorage storage = new InMemoryObjectStorage();
+        TaskPackager packager = config.taskPackager(storage,
+                properties("autowonder-task-pkg-daily-tmp-new", "autowonder-artifacts-daily-tmp-new"),
+                brandingService);
 
-        assertThrows(IllegalStateException.class,
-                () -> config.taskPackager(mock(ObjectStorage.class), props, ""));
+        TaskPackageResult first = packager.build(baseCtx());
+        assertEquals("https://wonder.example.com/api/mcp", mcpUrlOf(storage.get(first.getOssRef())));
+
+        // 品牌设置里清空域名后，之后打出的包立即回到部署地址，无需重启
+        when(brandingService.effectiveMcpBaseUrl()).thenReturn("https://daily.auto-wonder.example.com/api/mcp");
+        TaskPackageResult second = packager.build(baseCtx());
+        assertEquals("https://daily.auto-wonder.example.com/api/mcp", mcpUrlOf(storage.get(second.getOssRef())));
     }
 
     @Test
-    void rejectsPublicBaseUrlWithQueryOrFragmentBeforeCreatingTaskPackager() {
-        OssProperties props = properties(
-                "autowonder-task-pkg-daily-tmp-new",
-                "autowonder-artifacts-daily-tmp-new");
+    void blankEffectiveMcpUrlFailsThePackageBuildInsteadOfWritingAnUnusableAddress() {
+        PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
+        when(brandingService.effectiveMcpBaseUrl()).thenReturn("  ");
+        TaskPackager packager = config.taskPackager(new InMemoryObjectStorage(),
+                properties("autowonder-task-pkg-daily-tmp-new", "autowonder-artifacts-daily-tmp-new"),
+                brandingService);
 
-        assertThrows(IllegalStateException.class,
-                () -> config.taskPackager(mock(ObjectStorage.class), props, "https://daily.example.com?x=1"));
-        assertThrows(IllegalStateException.class,
-                () -> config.taskPackager(mock(ObjectStorage.class), props, "https://daily.example.com#anchor"));
+        // 部署属性本身在 PlatformBrandingService 启动时校验（含 query/fragment），
+        // 解析结果为空时必须在打包时 fail-closed，而不是写出一个不可用的 MCP 地址
+        BizException ex = assertThrows(BizException.class, () -> packager.build(baseCtx()));
+
+        assertEquals("17020", ex.getCode());
     }
 
     @Test
@@ -92,6 +115,7 @@ class ObjectStorageConfigTest {
     void contextCreatesExactlyOneOssStorageAndNoInMemoryFallback() {
         new ApplicationContextRunner()
                 .withUserConfiguration(ObjectStorageConfig.class)
+                .withBean(PlatformBrandingService.class, () -> mock(PlatformBrandingService.class))
                 .withBean(OssProperties.class, ObjectStorageConfigTest::validProperties)
                 .withBean(S3Properties.class, S3Properties::new)
                 .withPropertyValues(
@@ -108,6 +132,7 @@ class ObjectStorageConfigTest {
     void contextCreatesExactlyOneS3StorageAndNoInMemoryFallback() {
         new ApplicationContextRunner()
                 .withUserConfiguration(ObjectStorageConfig.class)
+                .withBean(PlatformBrandingService.class, () -> mock(PlatformBrandingService.class))
                 .withBean(OssProperties.class, () -> {
                     OssProperties props = validProperties();
                     props.setEnabled(false);
@@ -181,6 +206,29 @@ class ObjectStorageConfigTest {
 
         assertEquals("oss.enabled and s3.enabled are mutually exclusive; disable one storage backend",
                 error.getMessage());
+    }
+
+    private static PackageContext baseCtx() {
+        PackageContext ctx = new PackageContext();
+        ctx.setTenantId(100L);
+        ctx.setWorkitemId(500L);
+        ctx.setDispatchId(300L);
+        ctx.setWorkitemTitle("t");
+        ctx.setWorkitemContentMd("body");
+        return ctx;
+    }
+
+    private static String mcpUrlOf(byte[] zip) throws Exception {
+        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zip))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if ("skills.json".equals(entry.getName())) {
+                    JSONObject capabilities = JSON.parseObject(new String(zis.readAllBytes()));
+                    return capabilities.getJSONArray("mcpServers").getJSONObject(0).getString("url");
+                }
+            }
+        }
+        throw new AssertionError("skills.json missing from the task package");
     }
 
     private static S3Properties s3Properties() {

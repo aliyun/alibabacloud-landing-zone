@@ -25,6 +25,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class MemoryDaoMappingTest {
 
     private static final String LIST = "com.aliyun.autowonder.memory.MemoryDao.list";
+    private static final String COUNT_LIST = "com.aliyun.autowonder.memory.MemoryDao.countList";
+    private static final String COUNT_GROUP_SUMMARIES =
+            "com.aliyun.autowonder.memory.MemoryDao.countGroupSummaries";
 
     private Configuration configuration;
 
@@ -64,11 +67,11 @@ class MemoryDaoMappingTest {
     }
 
     @Test
-    void listWithoutOptionalFiltersKeepsPreExistingSql() {
+    void listWithoutStatusHidesRejectedBeforePagination() {
         String sql = sqlFor(LIST, params(args -> { }));
 
         assertEquals("SELECT * FROM memory WHERE tenant_id = ? AND is_deleted = 0 "
-                + "ORDER BY id DESC LIMIT ?, ?", sql);
+                + "AND status <> 'REJECTED' ORDER BY id DESC LIMIT ?, ?", sql);
     }
 
     @Test
@@ -139,13 +142,13 @@ class MemoryDaoMappingTest {
     }
 
     @Test
-    void listGroupSummariesWithoutOptionalFiltersKeepsBaseSql() {
+    void listGroupSummariesExcludeRejectedByDefault() {
         String sql = sqlFor("com.aliyun.autowonder.memory.MemoryDao.listGroupSummaries",
                 groupSummaryParams(a -> { }));
 
         assertEquals("SELECT scope, owner_ref, COUNT(*) AS total, MAX(id) AS latest_id FROM memory "
                 + "WHERE tenant_id = ? AND is_deleted = 0 "
-                + "GROUP BY scope, owner_ref ORDER BY latest_id DESC LIMIT ?, ?", sql);
+                + "AND status <> 'REJECTED' GROUP BY scope, owner_ref ORDER BY latest_id DESC LIMIT ?, ?", sql);
     }
 
     @Test
@@ -195,6 +198,83 @@ class MemoryDaoMappingTest {
                 () -> "LIMIT must stay the final binding: " + names);
         assertTrue(names.stream().anyMatch(n -> n.contains("scope")),
                 () -> "foreach group keys must bind as parameters: " + names);
+    }
+
+    @Test
+    void explicitRejectedFilterKeepsAuditRecordsAccessible() {
+        String sql = sqlFor(LIST, params(a -> a.put("status", "REJECTED")));
+        assertTrue(sql.contains("AND status = ?"));
+        assertFalse(sql.contains("status <> 'REJECTED'"));
+    }
+
+    @Test
+    void countListMirrorsEveryListFilterWithoutPagination() {
+        Map<String, Object> args = countParams(a -> {
+            a.put("scope", "AGENT");
+            a.put("ownerRef", 40014L);
+            a.put("type", "PITFALL");
+            a.put("status", "ADOPTED");
+        });
+        String sql = sqlFor(COUNT_LIST, args);
+
+        assertEquals("SELECT COUNT(*) FROM memory WHERE tenant_id = ? AND is_deleted = 0 "
+                + "AND scope = ? AND owner_ref = ? AND type = ? AND status = ?", sql);
+        assertEquals(List.of("tenantId", "scope", "ownerRef", "type", "status"),
+                parameterNames(COUNT_LIST, args));
+        assertFalse(sql.contains("LIMIT"),
+                () -> "the pagination total must never be truncated by a page window: " + sql);
+    }
+
+    @Test
+    void countListWithoutStatusHidesRejectedRows() {
+        String sql = sqlFor(COUNT_LIST, countParams(a -> { }));
+
+        assertEquals("SELECT COUNT(*) FROM memory WHERE tenant_id = ? AND is_deleted = 0 "
+                + "AND status <> 'REJECTED'", sql);
+    }
+
+    @Test
+    void countListKeepsExplicitRejectedFilterCountable() {
+        String sql = sqlFor(COUNT_LIST, countParams(a -> a.put("status", "REJECTED")));
+
+        assertTrue(sql.contains("AND status = ?"), () -> sql);
+        assertFalse(sql.contains("status <> 'REJECTED'"), () -> sql);
+    }
+
+    @Test
+    void countGroupSummariesCountsRowsLeftAfterFilteringAndGrouping() {
+        Map<String, Object> args = countParams(a -> {
+            a.put("scope", "AGENT");
+            a.put("type", "RULE");
+        });
+        String sql = sqlFor(COUNT_GROUP_SUMMARIES, args);
+
+        int statusFilter = sql.indexOf("AND status <> 'REJECTED'");
+        int groupBy = sql.indexOf("GROUP BY scope, owner_ref");
+        assertTrue(sql.startsWith("SELECT COUNT(*) FROM ("), () -> sql);
+        assertTrue(sql.contains("SELECT scope, owner_ref FROM memory WHERE tenant_id = ? AND is_deleted = 0 "
+                + "AND scope = ? AND type = ? AND status <> 'REJECTED'"), () -> sql);
+        assertTrue(statusFilter > 0 && groupBy > statusFilter,
+                () -> "filters must apply before the group rows are counted: " + sql);
+        assertTrue(sql.contains("GROUP BY scope, owner_ref ) grouped_memory"), () -> sql);
+        assertFalse(sql.contains("LIMIT"),
+                () -> "the group total must count every group, not one page of them: " + sql);
+        assertEquals(List.of("tenantId", "scope", "type"), parameterNames(COUNT_GROUP_SUMMARIES, args));
+    }
+
+    @Test
+    void countGroupSummariesKeepsExplicitStatusFilter() {
+        String sql = sqlFor(COUNT_GROUP_SUMMARIES, countParams(a -> a.put("status", "PENDING")));
+
+        assertTrue(sql.contains("AND status = ?"), () -> sql);
+        assertFalse(sql.contains("status <> 'REJECTED'"), () -> sql);
+    }
+
+    private Map<String, Object> countParams(java.util.function.Consumer<Map<String, Object>> customizer) {
+        Map<String, Object> args = new HashMap<>();
+        args.put("tenantId", 100L);
+        customizer.accept(args);
+        return args;
     }
 
     private Map<String, Object> groupSummaryParams(java.util.function.Consumer<Map<String, Object>> customizer) {

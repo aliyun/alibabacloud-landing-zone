@@ -20,6 +20,8 @@ public class PackageContext {
     private String workitemContentMd;
     private String clarificationMd;          // nullable
     private String commentsMd;               // complete shared comment context, nullable
+    /** Optional per-comment snapshots for incremental readers; commentsMd remains the legacy fallback. */
+    private List<TaskComment> comments;
     /** Relevant SIDE_INTERACTION turns projected into the resumed canonical SDLC session. */
     private String interactionContextMd;     // nullable for canonical interaction rework
 
@@ -32,7 +34,7 @@ public class PackageContext {
     private Map<String, Object> repoMap;
     /** skills.json entries (nullable/empty) */
     private List<Map<String, Object>> skills;
-    /** memory entries: type -> markdown; each becomes /memory/{type}.md */
+    /** Stable memory key (mem_id_<memoryId>) -> markdown; each becomes /memory/<key>.md. */
     private Map<String, String> memory;
 
     /** sdlc.json: agent-internal workflow steps and currentStepId */

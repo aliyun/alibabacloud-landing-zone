@@ -16,6 +16,10 @@ beforeEach(() => {
   })));
 });
 
+// The live activity panel subscribes to the realtime transport for active agents; stub it so
+// renders do not open an unhandled /ws connection under msw's onUnhandledRequest:'error'.
+vi.mock('@/shared/realtime/useRealtime', () => ({ useRealtime: () => undefined }));
+
 describe('formatDuration', () => {
   it('returns empty string for null', () => {
     expect(formatDuration(null)).toBe('');
@@ -38,6 +42,45 @@ describe('formatDuration', () => {
 });
 
 describe('DeliveryProgress', () => {
+  it('expands only handoff and evidence, folding other categories and history', () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{ agentId: 41, agentName: 'RD', status: 'failed', durationMs: null, steps: [{
+        stepId: 101, name: '开发', status: 'failed', executorName: 'RD', error: null, subSteps: null, durationMs: null,
+        attempts: [301, 302].map(dispatchId => ({ dispatchId, executorName: 'RD', status: 'FAILED', startedAt: null, durationMs: null })),
+      }] }],
+    };
+    const artifacts: Artifact[] = [
+      { id: 1, dispatchId: 301, name: 'artifacts/output/deliverables/old.md', type: 'DELIVERABLE' },
+      { id: 2, dispatchId: 302, name: 'artifacts/output/deliverables/current.md', type: 'DELIVERABLE' },
+      { id: 3, dispatchId: 302, name: 'artifacts/attempts/step-101/output/deliverables/snapshot.md', type: 'SNAPSHOT' },
+      { id: 4, dispatchId: 302, name: 'artifacts/output/handoff/summary.md', type: 'HANDOFF' },
+      { id: 5, dispatchId: 302, name: 'artifacts/output/evidence/triage-report.md', type: 'EVIDENCE' },
+      { id: 6, dispatchId: 302, name: 'artifacts/output/deliverables/runtime-source-revision.json', type: 'DELIVERABLE' },
+      { id: 7, dispatchId: 302, name: 'artifacts/output/handoff/metadata.json', type: 'HANDOFF' },
+    ].map(file => ({ ...file, workitemId: 100, size: null, gmtCreate: '' }));
+    render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+    fireEvent.click(screen.getByText(/产物/));
+    expect(screen.queryByText('current.md')).not.toBeInTheDocument();
+    expect(screen.queryByText('old.md')).not.toBeInTheDocument();
+    expect(screen.queryByText('snapshot.md')).not.toBeInTheDocument();
+    expect(screen.queryByText(/优先阅读/)).not.toBeInTheDocument();
+    expect(screen.getByText('交接说明（1）')).toBeVisible();
+    expect(screen.getByText('验证证据（1）')).toBeVisible();
+    expect(screen.getByText('summary.md')).toBeVisible();
+    expect(screen.getByText('triage-report.md')).toBeVisible();
+    expect(screen.queryByText('runtime-source-revision.json')).not.toBeInTheDocument();
+    expect(screen.queryByText('metadata.json')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('执行记录（3）'));
+    expect(screen.getByText('runtime-source-revision.json')).toBeVisible();
+    expect(screen.getByText('metadata.json')).toBeVisible();
+    expect(screen.getByRole('button', { name: `预览产物 ${artifacts[2].name}` })).toBeVisible();
+    fireEvent.click(screen.getByText('第 1 次执行 · FAILED · 1 个产物'));
+    expect(screen.queryByText('old.md')).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByText('交付结果（1）')[1]);
+    expect(screen.getByText('old.md')).toBeVisible();
+  });
+
   it('renders the latest workflow plan separately from live execution status', () => {
     const progress: DeliveryProgressModel = {
       steps: [],
@@ -944,6 +987,7 @@ describe('DeliveryProgress', () => {
     fireEvent.click(screen.getAllByTestId('agent-progress-name')[0]);
     expect(screen.getAllByText(/2 artifacts/).length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByText(/产物/)[0]);
+    fireEvent.click(screen.getByText(/其他文件（/));
     expect(screen.getByText('dev-summary.md')).toBeInTheDocument();
     expect(screen.getByText('screenshot.png')).toBeInTheDocument();
   });
@@ -981,6 +1025,7 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
     fireEvent.click(screen.getByText(/产物/));
+    fireEvent.click(screen.getByText(/其他文件（/));
     fireEvent.click(screen.getByRole('button', { name: '预览产物 dev-summary.md' }));
 
     await waitFor(() => expect(fetch).toHaveBeenCalled());
@@ -1025,6 +1070,7 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
     fireEvent.click(screen.getByText(/产物/));
+    fireEvent.click(screen.getByText(/其他文件（/));
     fireEvent.click(screen.getByRole('button', { name: '下载产物 dev-summary.md' }));
 
     await waitFor(() => expect(anchorClickSpy).toHaveBeenCalledTimes(1));
@@ -1513,6 +1559,54 @@ describe('DeliveryProgress', () => {
     expect(within(progressCard).getByText(/第2次: AW代码评审工程师 · SUCCEEDED · 4分/)).toBeInTheDocument();
   });
 
+  it('mounts the live activity panel and defaults the dispatch selector to the latest attempt', async () => {
+    server.use(http.get('/api/dispatches/302/live-activity', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null,
+      data: {
+        schemaVersion: '1', dispatchId: 302, agentId: 41, workitemId: 100, sourceType: 'WORKITEM',
+        attempt: 2, dispatchStatus: 'SUCCEEDED', changed: true, lastSeq: 1,
+        lastUpdatedAt: '2026-09-02T10:00:00Z', currentAction: null,
+        actions: [{
+          eventId: 'e1', seq: 1, eventTime: '2026-09-02T10:00:00Z', eventType: 'step.completed',
+          actionType: 'SDLC_STEP', summary: '返工完成', status: 'COMPLETED', stepId: null,
+          stepKey: null, stepName: '编码', agentId: 41, dispatchId: 302, attempt: 2,
+        }],
+        totalActions: 1, truncated: false, awaitingRuntime: false,
+      },
+    })));
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{
+        agentId: 41,
+        agentName: 'AW全栈开发',
+        status: 'finished',
+        durationMs: 240_000,
+        steps: [{
+          stepId: 101,
+          name: '编码实现',
+          status: 'done',
+          executorName: 'AW全栈开发',
+          error: null,
+          subSteps: null,
+          durationMs: 240_000,
+          attempts: [
+            { dispatchId: 301, executorName: 'AW全栈开发', status: 'FAILED', error: 'provider unavailable', startedAt: null, durationMs: 120_000 },
+            { dispatchId: 302, executorName: 'AW全栈开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+          ],
+        }],
+      }],
+    };
+
+    render(<DeliveryProgress progress={progress} />);
+
+    // NB-8: retry/multi-dispatch history stays reachable and the selector defaults to the latest.
+    const liveRegion = screen.getByTestId('agent-live-activity');
+    expect(within(liveRegion).getByTestId('live-activity-dispatch-select')).toBeInTheDocument();
+    expect(within(liveRegion).getByText(/Dispatch 302（最新）/)).toBeInTheDocument();
+    // CR-1: a finished agent (realtime disabled) still shows its persisted actions.
+    expect(await within(liveRegion).findByText('返工完成')).toBeInTheDocument();
+  });
+
   it('keeps long agent names horizontal and collapses artifact files by default', () => {
     const progress: DeliveryProgressModel = {
       steps: [],
@@ -1558,6 +1652,7 @@ describe('DeliveryProgress', () => {
 
     fireEvent.click(screen.getByText(/产物/));
 
+    fireEvent.click(screen.getByText(/其他文件（/));
     expect(screen.getByText('artifact-1.md')).toBeInTheDocument();
   });
 
@@ -1704,6 +1799,17 @@ describe('DeliveryProgress terminal convergence rendering', () => {
     expect(screen.queryByText('执行中')).not.toBeInTheDocument();
   });
 
+  it.each(['FAILED', 'SUCCEEDED', 'CANCELED', 'CANCELLED'])('converges the agent card for %s', (terminal) => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      agents: [{ agentId: 41, agentName: '执行 Agent', status: 'active', durationMs: null,
+        steps: [makeStep(5, '执行步骤', 'active')] }],
+    };
+    render(<DeliveryProgress progress={progress} terminalStatus={terminal} />);
+    expect(screen.queryByText('执行中')).not.toBeInTheDocument();
+    expect(screen.getAllByText(terminal === 'FAILED' ? '失败' : terminal === 'SUCCEEDED' ? '已完成' : '已取消').length).toBeGreaterThan(0);
+  });
+
   it('still renders active steps as running for non-terminal run statuses', () => {
     render(<DeliveryProgress steps={[makeStep(1, '步骤一', 'active')]} terminalStatus="RUNNING" />);
     expect(within(screen.getByTestId('delivery-step-1')).getByText('执行中')).toBeInTheDocument();
@@ -1723,7 +1829,7 @@ describe('DeliveryProgress terminal convergence rendering', () => {
     render(<DeliveryProgress progress={progress} terminalStatus="SUCCEEDED" />);
     const stepCard = screen.getByTestId('delivery-step-5');
     expect(within(stepCard).getByText('已完成')).toBeInTheDocument();
-    expect(within(stepCard).queryByText('执行中')).not.toBeInTheDocument();
+    expect(screen.queryByText('执行中')).not.toBeInTheDocument();
   });
 });
 

@@ -4,6 +4,7 @@ import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.executor.dto.ExecutorLaunchCommandVO;
+import com.aliyun.autowonder.executor.dto.ExecutorVO;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -20,9 +21,11 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
- * Server-side port of frontend/src/features/executor/startupCommand.ts. The MCP endpoint and the
- * executor page must emit byte-identical startup commands, including shell quoting, the PowerShell
- * UTF-16LE encoded-command wrapper and the debug log file name.
+ * The one launch-command generator. The executor page's 启动命令 dialog and the MCP
+ * build_executor_launch_command tool both call {@link #buildForExecutor}, so an operator gets byte-identical
+ * commands whichever entry they use, including shell quoting, the PowerShell UTF-16LE encoded-command wrapper and
+ * the debug log file name. Every launch value comes from the persisted config; only the output format (os, debug,
+ * shell) is chosen per request, and choosing it never writes the config back.
  */
 @Service
 public class ExecutorLaunchCommandService {
@@ -41,9 +44,38 @@ public class ExecutorLaunchCommandService {
     private static final DateTimeFormatter DEBUG_TIME = DateTimeFormatter.ofPattern("HH-mm-ss");
 
     private final PlatformBrandingService brandingService;
+    private final ExecutorService executorService;
+    private final ExecutorLaunchConfigService launchConfigService;
 
-    public ExecutorLaunchCommandService(PlatformBrandingService brandingService) {
+    public ExecutorLaunchCommandService(PlatformBrandingService brandingService, ExecutorService executorService,
+            ExecutorLaunchConfigService launchConfigService) {
         this.brandingService = brandingService;
+        this.executorService = executorService;
+        this.launchConfigService = launchConfigService;
+    }
+
+    /**
+     * Generates the command for one executor from what the database holds. An executor that does not exist in this
+     * workspace, whose config was never saved, or whose saved model has rotated out is refused with the reason, so a
+     * misleading command is never handed to an operator to copy.
+     */
+    public ExecutorLaunchCommandVO buildForExecutor(long executorId, long tenantId, String os, boolean debug,
+            String shell) {
+        ExecutorService executors = requireDependency(executorService);
+        ExecutorLaunchConfigService configs = requireDependency(launchConfigService);
+        ExecutorVO executor = executors.getDetail(executorId, tenantId);
+        String token = executors.getToken(executorId, tenantId);
+        ExecutorLaunchConfigService.LaunchConfig config = configs.requireCompleteConfig(executorId, tenantId);
+        return buildAt(token, executorId, executor.getClientKind(), config.memoryMode, config.model,
+                config.reasoningEffort, config.contextWindow, os, debug, shell, new Date(),
+                ExecutorLaunchConfigService.resolveMaxConcurrentDispatches(config.maxConcurrentDispatches));
+    }
+
+    private static <T> T requireDependency(T dependency) {
+        if (dependency == null) {
+            throw new BizException(ErrorCode.SYSTEM_ERROR, "执行器能力不可用");
+        }
+        return dependency;
     }
 
     public ExecutorLaunchCommandVO build(String token, long executorId, String clientKind, String memoryMode,
@@ -55,13 +87,26 @@ public class ExecutorLaunchCommandService {
     ExecutorLaunchCommandVO buildAt(String token, long executorId, String clientKind, String memoryMode,
             String model, String reasoningEffort, String contextWindow, String os, boolean debug, String shell,
             Date now) {
+        return buildAt(token, executorId, clientKind, memoryMode, model, reasoningEffort, contextWindow,
+                os, debug, shell, now, ExecutorLaunchConfigService.DEFAULT_MAX_CONCURRENT_DISPATCHES);
+    }
+
+    ExecutorLaunchCommandVO buildAt(String token, long executorId, String clientKind, String memoryMode,
+            String model, String reasoningEffort, String contextWindow, String os, boolean debug, String shell,
+            Date now, int maxConcurrentDispatches) {
+        // 缺类型的执行器（历史数据）若放行会被 resolveProvider 静默解释成 claude，宁可明确拒绝。
+        if (clientKind == null || clientKind.isBlank()) {
+            throw new BizException(ErrorCode.EXECUTOR_CLIENT_KIND_MISSING);
+        }
+        ExecutorLaunchConfigService.resolveMaxConcurrentDispatches(maxConcurrentDispatches);
         if (token == null || token.isBlank()) {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "token 不能为空");
         }
         String resolvedOs = resolveOs(os);
         String resolvedShell = debug ? resolveShell(shell, resolvedOs) : null;
-        // buildWsUrl keeps only scheme/host/port, so the platform base URL yields the page's ws URL.
-        String publicBaseUrl = brandingService.trustedPublicBaseUrl();
+        // buildWsUrl keeps only scheme/host/port, so the effective platform base URL yields
+        // the page's ws URL, following a domain saved in the brand settings immediately.
+        String publicBaseUrl = brandingService.effectivePublicBaseUrl();
         if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
             throw new BizException(ErrorCode.SYSTEM_ERROR, "平台 MCP 地址未配置，无法生成执行器启动命令");
         }
@@ -76,7 +121,8 @@ public class ExecutorLaunchCommandService {
                 "--token", token,
                 "--executor-id", String.valueOf(executorId),
                 "--provider", provider,
-                "--memory-mode", memoryMode));
+                "--memory-mode", memoryMode,
+                "--max-tasks", String.valueOf(maxConcurrentDispatches)));
         if (qoderFamily && model != null) {
             argv.addAll(List.of("--model", model,
                     "--reasoning-effort", reasoningEffort,
@@ -109,6 +155,7 @@ public class ExecutorLaunchCommandService {
         vo.setClientKind(clientKind);
         vo.setProvider(provider);
         vo.setMemoryMode(memoryMode);
+        vo.setMaxConcurrentDispatches(maxConcurrentDispatches);
         vo.setModel(qoderFamily ? model : null);
         vo.setReasoningEffort(qoderFamily ? reasoningEffort : null);
         vo.setContextWindow(qoderFamily ? contextWindow : null);

@@ -30,7 +30,11 @@ export interface ExternalCollaboration {
   lastError: string | null;
 }
 
+/** 定时工单当前所处阶段，由后端从定时字段、最新 dispatch 与状态节点派生；非定时工单为 null。 */
+export type WorkitemScheduledPhase = 'PENDING' | 'READY' | 'RUNNING' | 'DONE';
+
 export interface Workitem {
+  executionStatus?: string | null;
   id: number;
   workType: string;
   title: string;
@@ -53,7 +57,10 @@ export interface Workitem {
   gmtModified: string;
   scheduledStartAt?: string | null;
   scheduledStartTriggeredAt?: string | null;
+  scheduledPhase?: WorkitemScheduledPhase | null;
   tags?: string[];
+  /** Whether the current user watches this workitem's progress. */
+  watched?: boolean | null;
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
   pendingDecision?: boolean | null;
@@ -123,6 +130,8 @@ export interface WorkitemDetail {
   scheduledStartAt?: string | null;
   scheduledStartTriggeredAt?: string | null;
   tags?: string[];
+  /** Whether the current user watches this workitem's progress. */
+  watched?: boolean | null;
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
   pendingDecision?: boolean | null;
@@ -150,7 +159,7 @@ export interface DeliveryStep {
   stepId: number;
   stepKey?: string | null;
   name: string;
-  status: 'done' | 'active' | 'paused' | 'pending' | 'failed' | 'reused' | 'skipped' | 'stale';
+  status: 'cancelled' | 'done' | 'active' | 'paused' | 'pending' | 'failed' | 'reused' | 'skipped' | 'stale';
   planStatus?: 'RUN' | 'REUSED' | 'SKIPPED' | null;
   sourceAttempt?: number | null;
   executorName: string | null;
@@ -175,7 +184,7 @@ export interface DispatchAttempt {
 
 export interface SubStep {
   name: string;
-  status: 'done' | 'active' | 'pending' | 'failed';
+  status: 'cancelled' | 'done' | 'active' | 'pending' | 'failed';
 }
 
 export interface UsageSummary {
@@ -204,7 +213,7 @@ export interface WorkitemUsageSummary {
 export interface AgentDeliveryProgress {
   agentId: number;
   agentName: string;
-  status: 'finished' | 'active' | 'paused' | 'pending' | 'failed';
+  status: 'cancelled' | 'finished' | 'active' | 'paused' | 'pending' | 'failed';
   durationMs: number | null;
   currentActivity?: string | null;
   steps: DeliveryStep[];
@@ -423,9 +432,11 @@ export interface TimelineItem {
   sourceExternalUrl?: string | null;
   interactions?: Array<{
     guidanceId: number;
+    dispatchId?: number;
+    executionStatus?: string;
     targetAgentId: number;
     targetAgentName: string;
-    status: 'QUEUED' | 'DELIVERED' | 'APPLIED' | 'FAILED';
+    status: 'QUEUED' | 'DELIVERED' | 'APPLIED' | 'FAILED' | 'CANCELED';
     error?: string | null;
     replyCommentId?: number | null;
     replyContent?: string | null;
@@ -449,4 +460,38 @@ export interface Artifact {
   type: string;
   size: number | null;
   gmtCreate: string;
+}
+
+export interface LiveActivityAction {
+  eventId: string | null;
+  seq: number | null;
+  eventTime: string | null;
+  eventType: string;
+  actionType: string;
+  summary: string | null;
+  status: string;
+  stepId: number | null;
+  stepKey: string | null;
+  stepName: string | null;
+  agentId: number | null;
+  dispatchId: number | null;
+  attempt: number | null;
+}
+
+export interface DispatchLiveActivity {
+  schemaVersion: string;
+  dispatchId: number;
+  agentId: number | null;
+  workitemId: number | null;
+  sourceType: string | null;
+  attempt: number | null;
+  dispatchStatus: string | null;
+  changed: boolean;
+  lastSeq: number | null;
+  lastUpdatedAt: string | null;
+  currentAction: LiveActivityAction | null;
+  actions: LiveActivityAction[];
+  totalActions: number;
+  truncated: boolean;
+  awaitingRuntime: boolean;
 }

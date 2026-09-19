@@ -5,8 +5,8 @@ import {
   HumanInterventionAlert,
   getHumanInterventionName,
   isFinishedWorkitemStatus,
-  stripAssigneeIdSuffix,
 } from './HumanInterventionBadge';
+import { stripAssigneeIdSuffix } from '../nameDisplay';
 
 describe('getHumanInterventionName', () => {
   it('returns display name for an explicitly assigned human', () => {

@@ -28,7 +28,7 @@ export const QODER_MODELS: QoderSelectOption[] = [
   { value: 'mmodel', label: 'MiniMax-M3' },
 ];
 
-export function qoderProviderForClientKind(kind?: string): ExecutorModelCatalogProvider | undefined {
+export function qoderProviderForClientKind(kind?: string | null): ExecutorModelCatalogProvider | undefined {
   if (kind === 'QODER_CLI') return 'qoder';
   if (kind === 'QODER_CN_CLI') return 'qodercn';
   return undefined;

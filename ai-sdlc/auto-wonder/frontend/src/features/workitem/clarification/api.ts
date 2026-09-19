@@ -84,6 +84,15 @@ export async function replyClarificationElicitation(
   );
 }
 
+/** 打开会话时触发带外命令探针：服务端去重后拉起执行器抓取斜杠命令，
+ *  结果经实时 acp_commands 事件回推；失败静默，下次打开重试。 */
+export async function refreshClarificationCommands(
+  workitemId: number | string,
+  conversationId: number,
+): Promise<void> {
+  await apiClient.post(`${base(workitemId)}/${conversationId}/commands/refresh`);
+}
+
 /** 现有 GET /events 只支持 afterId 且上限 200，取不全一轮，故单开按轮次端点。 */
 export async function getClarificationTurnEvents(
   workitemId: number | string,

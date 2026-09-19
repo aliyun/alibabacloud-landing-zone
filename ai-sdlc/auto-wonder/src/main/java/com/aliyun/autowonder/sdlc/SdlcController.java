@@ -37,9 +37,10 @@ public class SdlcController {
     public Result<List<SdlcVO>> list(
             @RequestParam(value = "workType", required = false) String workType,
             @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "squadIds", required = false) List<Long> squadIds,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(sdlcService.list(workType, status, page, size));
+        return Result.ok(sdlcService.list(currentWorkspaceId(), workType, status, squadIds, page, size));
     }
 
     @PutMapping("/{id}")

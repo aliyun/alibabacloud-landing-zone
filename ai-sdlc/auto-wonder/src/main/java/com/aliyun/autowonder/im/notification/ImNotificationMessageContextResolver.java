@@ -1,7 +1,6 @@
 package com.aliyun.autowonder.im.notification;
 
 import com.aliyun.autowonder.branding.PlatformBrandingService;
-import com.aliyun.autowonder.branding.dto.PlatformBrandingVO;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
@@ -62,11 +61,9 @@ public class ImNotificationMessageContextResolver {
     }
 
     private String resolveBaseUrl() {
-        PlatformBrandingVO branding = brandingService.publicConfig();
-        String domain = branding == null ? null : branding.getDomain();
-        // A blank branding domain means unconfigured; fall back to the required
-        // per-deployment autowonder.public-base-url to keep notification links clickable.
-        return hasText(domain) ? domain.trim() : brandingService.trustedPublicBaseUrl();
+        // Branding domain first, deployment autowonder.public-base-url as the fallback; the
+        // same resolution every other outbound URL uses, so links stay in sync with them.
+        return brandingService.effectivePublicBaseUrl();
     }
 
     private static boolean hasText(String value) {

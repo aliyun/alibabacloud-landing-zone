@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-DEPLOY_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../../../deploying-autowonder-on-alibaba-cloud" && pwd)
-source "$DEPLOY_SKILL_DIR/scripts/lib.sh"
+UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+source "$UPGRADE_SKILL_DIR/scripts/lib.sh"
 
 transfer_scope=${AUTOWONDER_TRANSFER_SCOPE:-}
 [[ "$transfer_scope" == deployment || "$transfer_scope" == upgrade ]] || \
@@ -16,7 +16,7 @@ Deploys through private OSS and Alibaba Cloud Assistant. Secret values belong on
 EOF
 }
 
-manifest= release_dir= env_file= unit_file="$DEPLOY_SKILL_DIR/assets/systemd/autowonder.service" unit_file_explicit=false java_archive= config_only=false stage_only=false dry_run=false
+manifest= release_dir= env_file= unit_file="$UPGRADE_SKILL_DIR/assets/systemd/autowonder.service" unit_file_explicit=false java_archive= config_only=false stage_only=false dry_run=false
 require_no_secret_args "$@"
 while (($#)); do
   case "$1" in
@@ -37,7 +37,7 @@ done
 [[ "$transfer_scope" != upgrade || "$stage_only" == true ]] || die "upgrade transfer must be stage-only"
 require_file "$manifest"; require_file "$env_file"
 if [[ -z "$release_dir" ]]; then release_dir=$(jq -r '.artifacts.releaseDirectory // empty' "$manifest"); fi
-if [[ -z ${unit_file_explicit:-} && -n "$release_dir" && -f "$release_dir/autowonder.service" ]]; then
+if [[ "$unit_file_explicit" == false && -n "$release_dir" && -f "$release_dir/autowonder.service" ]]; then
   unit_file="$release_dir/autowonder.service"
 fi
 if [[ "$config_only" == false ]]; then
@@ -52,7 +52,11 @@ if [[ "$stage_only" == true && $(jq -r '.mode // empty' "$manifest") == upgrade 
   [[ $(jq -r '.upgrade.environmentValidated // false' "$manifest") == true ]] || die "candidate upgrade environment must be validated by plan-upgrade.sh --env-file before staging"
   jq -e '
     .runtimeConfig.prepared == true and
-    .runtimeConfig.recommendedRuntimeVersion == .upgrade.targetRecommendedRuntimeVersion
+    .runtimeConfig.recommendedRuntimeVersion == .upgrade.targetRecommendedRuntimeVersion and
+    .runtimeConfig.planFingerprint == .upgrade.planFingerprint and
+    .runtimeConfig.keyGenerationId == .upgrade.keyGenerationId and
+    .runtimeConfig.envSha256 == .upgrade.environmentCandidateSha256 and
+    (.runtimeConfig.keyGenerationId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
   ' "$manifest" >/dev/null || die "target runtime environment must be prepared before staging"
   [[ $(jq -r '(.upgrade.blockedReasons // []) | length' "$manifest") == 0 ]] || die "blocked upgrade plan cannot be staged"
 fi
@@ -60,7 +64,7 @@ configure_cloud_profile "$manifest"
 region=$(json_string "$manifest" '.region'); deployment_id=$(json_string "$manifest" '.deploymentId')
 commit=$(json_string "$manifest" '.repositoryCommit'); short_commit=${commit:0:12}
 if [[ "$transfer_scope" == upgrade ]]; then
-  UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../../../upgrading-autowonder-on-alibaba-cloud" && pwd)
+  UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
   source "$UPGRADE_SKILL_DIR/scripts/upgrade-lib.sh"
   require_upgrade_approval "$manifest"
   require_current_upgrade_backup "$manifest"
@@ -88,6 +92,7 @@ jar_hash= unit_hash= schema_hash= templates_hash= migrations_hash= java_hash=
 env_hash=$(sha256_file "$env_file")
 if [[ "$stage_only" == true && $(jq -r '.mode // empty' "$manifest") == upgrade ]]; then
   [[ $(jq -r '.upgrade.environmentCandidateSha256 // empty' "$manifest") == "$env_hash" ]] || die "candidate upgrade environment changed after validation"
+  [[ $(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_SECRET_KEY_GENERATION_ID)") == "$(jq -r '.runtimeConfig.keyGenerationId' "$manifest")" ]] || die "candidate key generation checkpoint mismatch"
 fi
 if [[ "$config_only" == false ]]; then
   jar_hash=$(sha256_file "$release_dir/auto-wonder.jar"); unit_hash=$(sha256_file "$unit_file")
@@ -146,6 +151,8 @@ if [[ "$config_only" == false ]]; then
   files=("$release_dir/auto-wonder.jar" "$release_dir/autowonder-schema.sql" "$release_dir/autowonder-community-templates.sql" "$release_dir/autowonder-migrations.tar.gz" "$unit_file" "$env_file")
   if [[ -n "$java_archive" ]]; then objects+=("temurin21-linux-amd64.tar.gz"); files+=("$java_archive"); fi
 fi
+candidate_env_path="$(cd -- "$(dirname -- "$env_file")" && pwd -P)/$(basename -- "$env_file")"
+atomic_jq "$manifest" --arg path "$candidate_env_path" '.localContext.candidateEnvFile=$path'
 for idx in "${!objects[@]}"; do
   ossutil_upload "${files[$idx]}" "oss://$bucket/$prefix/${objects[$idx]}" "$control_endpoint" "$region" >/dev/null
   STAGING_TARGETS+=("oss://$bucket/$prefix/${objects[$idx]}")
@@ -155,12 +162,14 @@ run_cloud_command() {
   local instance=$1 script=$2 response invocation result status exit_code deadline encoded_script command_content
   encoded_script=$(printf '%s' "$script" | base64 | tr -d '\r\n')
   command_content="printf '%s' '$encoded_script' | base64 -d | /usr/bin/env bash"
+  require_remote_submission_settled "$manifest"
+  atomic_jq "$manifest" --arg instance "$instance" '.remoteSubmission={instanceId:$instance,status:"unknown",preparedAt:(now|todateiso8601)}'
   response=$(aliyun_cli ecs RunCommand --region "$region" --RegionId "$region" --InstanceId.1 "$instance" \
     --Type RunShellScript --Timeout 1800 --CommandContent "$command_content") || die "Cloud Assistant submission failed"
   unset encoded_script command_content
   invocation=$(cloud_assistant_invocation_id <<<"$response") || die "Cloud Assistant invocation ID missing"
   atomic_jq "$manifest" --arg id "$invocation" --arg instance "$instance" \
-    '.remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
+    '.remoteSubmission=null | .remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
   deadline=$((SECONDS + 1860))
   while ((SECONDS < deadline)); do
     sleep 2
@@ -213,6 +222,7 @@ curl --fail --silent --show-error '$env_url' -o /etc/autowonder/autowonder.env.t
 echo '$env_hash  /etc/autowonder/autowonder.env.tmp' | sha256sum -c -
 chown root:autowonder /etc/autowonder/autowonder.env.tmp && chmod 0640 /etc/autowonder/autowonder.env.tmp
 mv /etc/autowonder/autowonder.env.tmp /etc/autowonder/autowonder.env
+test "\$(sha256sum /etc/autowonder/autowonder.env | cut -d ' ' -f 1)" = '$env_hash' || { echo 'installed environment checkpoint mismatch' >&2; exit 1; }
 trap - EXIT
 EOF
 )
@@ -299,6 +309,7 @@ curl --fail --silent --show-error '$env_url' -o /etc/autowonder/autowonder.env.t
 echo '$env_hash  /etc/autowonder/autowonder.env.tmp' | sha256sum -c -
 chown root:autowonder /etc/autowonder/autowonder.env.tmp && chmod 0640 /etc/autowonder/autowonder.env.tmp
 mv /etc/autowonder/autowonder.env.tmp /etc/autowonder/autowonder.env
+test "\$(sha256sum /etc/autowonder/autowonder.env | cut -d ' ' -f 1)" = '$env_hash' || { echo 'installed environment checkpoint mismatch' >&2; exit 1; }
 trap - EXIT
 previous_unit=/opt/autowonder/releases/$short_commit/autowonder.service.previous
 if test '$transfer_scope' != upgrade && test -f /etc/systemd/system/autowonder.service && ! test -f "\$previous_unit"; then

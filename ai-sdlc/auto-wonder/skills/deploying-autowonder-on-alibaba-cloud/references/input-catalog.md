@@ -16,7 +16,6 @@ choices and do not add environment, source, tags, or backend questions.
 
 请提供部署区域，比如北京、杭州：
 阿里云账号 UID：
-组织名称：
 公网访问来源 CIDR：（填写“自动识别”或具体 CIDR）
 接入方式：（无域名 / 有域名无证书 / 有域名和证书）
 域名：（无域名时填写“无”）
@@ -27,6 +26,12 @@ Map 北京、杭州、上海、张家口 to `cn-beijing`, `cn-hangzhou`,
 `cn-shanghai`, `cn-zhangjiakou`. An ambiguous or unsupported place name
 requires correction; never guess.
 
+When 公网访问来源 CIDR is “自动识别”, run the public-IP helper and copy all
+returned `publicSourceCidrs` into the manifest without asking for confirmation.
+Use every distinct detected address as a `/32`, even if only one service succeeds
+or services report different addresses. Retry or request manual input only when
+no valid public IPv4 is returned.
+
 ## Fixed Decisions
 
 - `environment` and its required tag are always `auto-wonder-prod`.
@@ -34,13 +39,18 @@ requires correction; never guess.
   zones, HA RDS, cross-zone Redis, and a dual-zone public Application Load
   Balancer (ALB). Sizing is always the small preset. Never ask the user for
   topology, load-balancer type, or sizing.
-- Each ECS node is exactly 2 vCPU and 4 GiB memory. Prefer `ecs.c8a.large`.
+- Each ECS node is exactly 2 vCPU and 4 GiB memory; `ecs.c8a.large` is a soft preference.
   A fallback must be x86_64, provide the same 2-vCPU/4-GiB capacity, and be
   available in both selected zones. Stop instead of lowering or raising capacity.
+- Availability zones are resolved automatically from live subscription stock by
+  `scripts/resolve-zones.sh` and are never asked of the user. The two zones anchor
+  on the complete ECS/RDS/Redis/ALB combination. Standby placement must
+  follow the evidenced rules in operations-runbook.md.
 - Lifecycle is always `persistent` (formal production environment) and execution
   mode is always `unattended`. Never ask the user to choose or confirm either
-  value. Obtain one confirmation after the final deployment plan, then continue
-  automatically until a safety stop or failure.
+  value. Once required inputs are complete and validated, show the deployment
+  summary and continue automatically until a safety stop or failure. Do not
+  require a separate confirmation to start deployment or create resources.
 - Use the current workspace contents, including uncommitted or untracked
   changes. Do not inspect or validate Git information, and do not fetch, pull,
   merge, checkout, or ask for a repository/ref/commit. Git state must not block
@@ -75,8 +85,10 @@ delete the bucket, and remove the local backend directory. Retain no state copy.
 
 Application `OSS_ENDPOINT` is the regional intranet HTTPS endpoint and
 `OSS_PUBLIC_ENDPOINT` is the matching public HTTPS endpoint. Both remain
-mandatory. No-domain and domain-without-certificate scenarios use `ws://` on
-port 80; only a trusted certificate handshake satisfies `wss://` TLS acceptance.
+mandatory. Without a domain, use `http://<alb-public-ipv4>` for the application
+base URL, selecting the numerically first of the two ALB EIPs; never use the ALB
+DNS name as this default. No-domain and domain-without-certificate scenarios
+use `ws://` on port 80; only a trusted certificate handshake satisfies `wss://` TLS acceptance.
 
 ## Manifest And Review
 
@@ -85,5 +97,10 @@ the generated DeploymentId, resolved region, answers, and automatic backend
 metadata. Never store passwords, AK/SK, tokens, signed URLs,
 or administrator credentials.
 
-Show one review covering answers, fixed values, risks, cost drivers, and phases.
-After its single confirmation, unattended execution continues automatically.
+Show one review covering answers, fixed values, risks, cost drivers, and phases
+as an informational progress update, then continue unattended without waiting for
+a reply. Do not ask “请确认是否按此方案开始部署” or require “确认”. Request only
+missing or ambiguous required inputs. Respect an explicit user request for a
+review-only plan or approval checkpoint, and retain the Skill's Safety Rules.
+
+Resource selection uses assets/deployment-policy.json and live discovery. Specific SKUs are soft preferences or verified results, never questionnaire defaults. See operations-runbook.md for candidate submission, capacity and budget constraints.

@@ -17,6 +17,13 @@ public interface NotificationDao {
     int countUnread(@Param("tenantId") Long tenantId,
                     @Param("recipientId") Long recipientId);
 
+    int countByRecipient(@Param("tenantId") Long tenantId,
+                         @Param("recipientId") Long recipientId,
+                         @Param("status") String status);
+
+    int delete(@Param("id") Long id, @Param("tenantId") Long tenantId,
+               @Param("recipientId") Long recipientId);
+
     int markRead(@Param("id") Long id, @Param("tenantId") Long tenantId,
                  @Param("recipientId") Long recipientId);
 

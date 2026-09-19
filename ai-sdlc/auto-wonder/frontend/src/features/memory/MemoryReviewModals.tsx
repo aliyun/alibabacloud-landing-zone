@@ -106,7 +106,7 @@ export function MemoryReviewModals({
         cancelText="取消"
         confirmLoading={reviewPending}
       >
-        <p style={{ marginBottom: 8, color: '#666' }}>请输入驳回原因（可选）：</p>
+        <p style={{ marginBottom: 8, color: '#666' }}>驳回后将移出日常列表并停止复用，审核记录保留。请输入原因（可选）：</p>
         <Input.TextArea
           rows={4}
           value={rejectComment}

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { http, HttpResponse } from 'msw';
+import { server } from '@/test/mocks/server';
 import { RightPanel } from './RightPanel';
 import { useAuthStore } from '@/shared/auth/store';
 
@@ -449,5 +451,99 @@ describe('RightPanel refresh restore (工单 53035)', () => {
     expect(onModeChange).toHaveBeenLastCalledWith('progress');
     expect(onFullscreenChange).not.toHaveBeenCalled();
     expect(screen.queryByTestId('clarify-resize-box')).not.toBeInTheDocument();
+  });
+});
+
+describe('RightPanel page-driven mode switch (工单 53315)', () => {
+  type PanelProps = Parameters<typeof RightPanel>[0];
+
+  /** 页面级入口是通过改 URL（initialMode）驱动面板的，所以要能带着同样的 provider 重渲染。 */
+  function renderPanelRerenderable(initialProps: Partial<PanelProps> = {}) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const baseProps: PanelProps = {
+      workitemId: '1', participants: [], steps: [], artifacts: [], ...initialProps,
+    };
+    const renderWith = (props: PanelProps) => (
+      <QueryClientProvider client={queryClient}>
+        <RightPanel {...props} />
+      </QueryClientProvider>
+    );
+    const view = render(renderWith(baseProps));
+    return {
+      ...view,
+      rerenderWith: (patch: Partial<PanelProps>) => view.rerender(renderWith({ ...baseProps, ...patch })),
+    };
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  });
+
+  it('follows the page into clarify mode after mount', async () => {
+    // 「启动交付」前的澄清引导点确认后只改 URL，面板挂载早于这次点击，必须跟着切过去
+    const panel = renderPanelRerenderable({ initialMode: 'progress' });
+    expect(screen.getByRole('button', { name: /AI 需求澄清/ })).toBeInTheDocument();
+
+    panel.rerenderWith({ initialMode: 'clarify' });
+
+    expect(await screen.findByTestId('clarify-resize-box')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /返回进度/ })).toBeInTheDocument();
+  });
+
+  it('leaves clarify and drops fullscreen when the page drives it back to progress', async () => {
+    const panel = renderPanelRerenderable({ initialMode: 'clarify', initialFullscreen: true });
+    expect(await screen.findByTestId('clarify-resize-box')).toHaveStyle({ position: 'fixed' });
+
+    panel.rerenderWith({ initialMode: 'progress', initialFullscreen: false });
+
+    expect(screen.queryByTestId('clarify-resize-box')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /AI 需求澄清/ })).toBeInTheDocument();
+  });
+
+  it('keeps an internally entered clarify mode when the caller never reports mode changes', async () => {
+    // ref 守卫要守住的回归：没接 onModeChange 的调用方 initialMode 永远不变，
+    // 拿 mode 去比对会在下一次重渲染时把用户从澄清态拽回进度态
+    const panel = renderPanelRerenderable();
+
+    await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
+    expect(await screen.findByTestId('clarify-resize-box')).toBeInTheDocument();
+
+    panel.rerenderWith({ stepsLoading: true });
+
+    expect(screen.getByTestId('clarify-resize-box')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /AI 需求澄清/ })).not.toBeInTheDocument();
+  });
+});
+
+// 详情页右侧面板负责把 WatcherList 装配进来，此前没有断言证明它真的挂载并按
+// 面板的 workitemId 拉取关注人；这里用真实 useWatchers（未 mock hooks）验证装配链路。
+describe('RightPanel 关注人列表装配', () => {
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  });
+
+  it('渲染关注人列表并按面板 workitemId 拉取数据', async () => {
+    const requested: string[] = [];
+    server.use(
+      http.get('/api/workitems/:workitemId/watchers', ({ params }) => {
+        requested.push(String(params.workitemId));
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: [
+            { userId: 200, name: '林一', displayId: '20000', role: 'HUMAN', roleName: '关注人', isAgent: false, online: false, status: '0' },
+          ],
+        });
+      }),
+    );
+
+    renderPanel({ workitemId: '77' });
+
+    expect(await screen.findByTestId('workitem-watcher-list')).toBeInTheDocument();
+    await waitFor(() => expect(requested).toContain('77'));
+    expect(screen.getByText('林一')).toBeInTheDocument();
   });
 });

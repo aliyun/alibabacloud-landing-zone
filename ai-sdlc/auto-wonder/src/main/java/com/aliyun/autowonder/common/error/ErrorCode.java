@@ -66,6 +66,10 @@ public enum ErrorCode {
     AGENT_ONLINE_NO_DELETE("14009", "数字员工在线中,请先下线再删除"),
     AGENT_NOT_OFFLINE("14010", "数字员工不是下线状态,无法重新上线"),
     AGENT_ONLINE_NO_APPROVED_VERSION("14011", "没有可用的已通过版本,无法重新上线"),
+    AGENT_PLATFORM_NO_DELETE("14012", "平台智能体不可删除"),
+    AGENT_PLATFORM_NO_OFFLINE("14013", "平台智能体不可下线"),
+    AGENT_PLATFORM_LOCKED("14014", "平台智能体的名称与 SDLC 配置不可修改"),
+    AGENT_PLATFORM_REPO_LOCKED("14015", "平台智能体默认拥有全部仓库的只读权限，仓库配置不可修改"),
     // 15xxx 小队/Squad
     SQUAD_NOT_FOUND("15001", "小队不存在"),
     SQUAD_NAME_REQUIRED("15002", "小队名称不能为空"),
@@ -89,7 +93,14 @@ public enum ErrorCode {
     EXECUTOR_NAME_REQUIRED("17002", "执行器名称不能为空"),
     EXECUTOR_AGENT_MISMATCH("17003", "执行器不属于该数字员工"),
     EXECUTOR_TOKEN_NOT_RETRIEVABLE("17004", "该执行器的 Token 不可回显，请重新生成"),
+    EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT("17005", "启动配置已被修改，请刷新后重试"),
+    EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID("17006", "模型不可用，请重新选择"),
+    EXECUTOR_LAUNCH_CONFIG_INCOMPLETE("17007", "执行器启动配置不完整，请先保存启动配置后再生成命令"),
+    EXECUTOR_LAUNCH_CONFIG_OVERRIDE_REJECTED("17008",
+            "启动配置以数据库为准，不支持临时覆盖；请调用 autowonder.update_executor_launch_config 修改后再生成命令"),
+    EXECUTOR_CLIENT_KIND_INVALID("17009", "客户端类型不合法，仅支持 QODER_CLI/QODER_CN_CLI"),
     ARTIFACT_NOT_FOUND("17010", "产物不存在"),
+    EXECUTOR_CLIENT_KIND_MISSING("17011", "执行器缺少客户端类型，无法生成启动命令"),
     PACKAGE_BUILD_FAILED("17020", "任务包打包失败"),
     STORAGE_ERROR("17021", "对象存储操作失败"),
     // 1703x 调度
@@ -171,7 +182,34 @@ public enum ErrorCode {
     SYSTEM_ADMIN_TARGET_NOT_FOUND("31002", "用户不存在或已不可用"),
     SYSTEM_ADMIN_SELF_REMOVAL_FORBIDDEN("31003", "平台管理员不可移除自己"),
     SYSTEM_ADMIN_LAST_ONE_FORBIDDEN("31004", "平台管理员至少保留一名，无法移除最后一名"),
-    SYSTEM_ADMIN_TARGET_NOT_ADMIN("31005", "该用户不是平台管理员");
+    SYSTEM_ADMIN_TARGET_NOT_ADMIN("31005", "该用户不是平台管理员"),
+    // 32xxx 平台管家对话
+    // 与 ORG_NOT_FOUND_OR_NO_PERMISSION 同理：合并「不存在」和「无权访问」，
+    // 否则任何人都能拿会话 id 枚举出别人聊过什么。
+    PLATFORM_CONVERSATION_NOT_FOUND_OR_NO_PERMISSION("32001", "会话不存在或无权访问"),
+    PLATFORM_CONVERSATION_OWNER_ONLY("32002", "该操作仅会话创建者本人可执行"),
+    PLATFORM_CONVERSATION_TITLE_INVALID("32003", "会话标题不合法"),
+    PLATFORM_CONVERSATION_SHARE_INVALID("32004", "分享对象不合法"),
+    PLATFORM_CONVERSATION_ARCHIVED("32005", "会话已归档，请先恢复后再继续"),
+    PLATFORM_CONVERSATION_DELETED("32006", "会话已删除"),
+    PLATFORM_CONVERSATION_NOT_READY("32007", "平台管家尚未就绪，暂不能开始新对话"),
+    // 33xxx 工作空间环境变量
+    ENVIRONMENT_VARIABLE_NOT_FOUND("33001", "环境变量不存在"),
+    ENVIRONMENT_VARIABLE_NAME_INVALID("33002", "环境变量名称不合法"),
+    ENVIRONMENT_VARIABLE_NAME_RESERVED("33003", "环境变量名称为平台保留名称"),
+    ENVIRONMENT_VARIABLE_NAME_CONFLICT("33004", "环境变量名称已存在"),
+    ENVIRONMENT_VARIABLE_DELETE_IN_USE("33005", "环境变量被数字员工引用,无法删除"),
+    ENVIRONMENT_VARIABLE_VERSION_CONFLICT("33006", "环境变量已被修改,请重试"),
+    ENVIRONMENT_VARIABLE_VALUE_REQUIRED("33007", "环境变量值必须显式提供"),
+    ENVIRONMENT_VARIABLE_REFERENCE_INVALID("33008", "数字员工版本引用的环境变量已不存在，请先移除引用"),
+    // 34xxx 项目级能力分类
+    CATEGORY_NOT_FOUND("34001", "分类不存在"),
+    CATEGORY_NAME_REQUIRED("34002", "分类名称不能为空"),
+    CATEGORY_DUPLICATE_NAME("34003", "同一父分类下已存在此名称"),
+    CATEGORY_DELETE_IN_USE("34004", "分类下仍有子分类或能力关联，无法删除"),
+    CATEGORY_CYCLE_MOVE("34005", "分类不能移动到自身或其子分类下"),
+    CATEGORY_DEPTH_EXCEEDED("34006", "分类层级超过上限");
+
 
     private final String code;
     private final String message;

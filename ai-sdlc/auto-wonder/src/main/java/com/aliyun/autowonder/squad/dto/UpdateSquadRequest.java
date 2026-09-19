@@ -9,4 +9,5 @@ public class UpdateSquadRequest {
     private String name;
     private String description;
     private Long ownerId;
+    private Boolean debugLogEnabled;
 }

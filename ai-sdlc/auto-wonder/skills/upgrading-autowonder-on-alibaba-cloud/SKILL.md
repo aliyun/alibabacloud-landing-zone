@@ -5,9 +5,36 @@ description: Use when upgrading the software of an existing AutoWonder community
 
 # Upgrading AutoWonder On Alibaba Cloud
 
-Upgrade an existing deployment created by `$deploying-autowonder-on-alibaba-cloud`.
+Upgrade an existing AutoWonder community deployment.
 Consume its sanitized manifest and live resource inventory; never recreate cloud
 resources, ask the user to retype ECS IDs, or infer targets from names alone.
+
+## Cloud Operations State
+
+After platform bootstrap, always use `scripts/resolve-deployment.sh --search-root
+<workspace>` (native `resolve-deployment.ps1 -SearchRoot <workspace>` on Windows).
+It first discovers the dedicated **same-region operations bucket**, restores
+the complete deployment/upgrade state, then returns the working manifest.
+No local `deployments/` or `upgrade-info/` folder is needed after verified import.
+Use `--region`/`--deployment-id` (`-Region`/`-DeploymentId`) to select among
+multiple deployments; never select the first bucket arbitrarily.
+
+Only confirmed cloud absence permits existing local discovery and automatic
+initialization. Permission/network errors or corrupt/incomplete cloud records
+must stop; never overwrite cloud state with a local manifest. Import must
+retain the newer working upgrade manifest, original environment/secrets,
+actual Terraform configuration, and active/pending sealed release baselines.
+`deployment-resume-required` is an unfinished deployment, not an upgrade target.
+
+This Skill includes `scripts/operations-store.py` and
+`references/operations-state.md`. State is stored under separate `deploy/` and
+`upgrade/` prefixes in `aw-ops-...`, never in the tfstate/packages/artifacts
+buckets. It uses private encrypted objects and immutable history; **do not
+enable bucket versioning** (it disables OSS conditional no-overwrite semantics).
+Operations storage requires ossutil v2, including supported `aliyun ossutil`.
+Use checkpointed wrappers; a failed upload, stale revision, or unresolved remote
+submission blocks further mutation. Do not recreate missing original secrets,
+clear database mutation flags, or re-register a restored working manifest.
 
 `deployment.activeCommit` is the immutable active **release identity** retained
 for compatibility; a workspace deployment uses a JAR content hash, not a Git
@@ -42,6 +69,13 @@ inventory, exact-version planning, candidate environment validation, release
 staging, database migrations, rolling activation, acceptance, and upgrade
 rollback planning. Infrastructure creation, Terraform scale-out, initial schema,
 business initialization, and teardown remain in the deployment skill.
+
+Before executing `V067__platform_admin_init.sql` (or another numbered migration
+with that suffix), the database gate requires an existing user with
+`is_deleted = 0 AND is_admin = 1`. Missing administrators or a failed query stop
+migration; the upgrade never grants privileges. Resolve the administrator roster
+through a separately reviewed recovery procedure before retrying. A prior
+successful migration ledger entry retains the normal idempotent skip behavior.
 
 Run unattended by default. Do not ask the user to confirm discovery, prerequisite
 summaries, ordinary application changes, same-version redeployment, build,
@@ -79,22 +113,24 @@ migration gating, rolling activation, acceptance, and confirmed rollback
 entrypoints. Use the `.ps1` file with the same basename and phase on Windows.
 Do not substitute the Bash route on that host.
 
-Before discovery, run the sibling deployment skill's platform bootstrap. It
-detects the control host rather than inferring it from path spelling and checks
-the complete supported third-party dependency set. On macOS this is Bash, Git,
-jq, Terraform, Alibaba Cloud CLI, ossutil, OpenSSL, curl, Python 3, JDK 21, and
-Maven 3.9.9+; on Windows this is native PowerShell 5.1+, Git, jq, Terraform,
-Alibaba Cloud CLI, ossutil, `curl.exe`, Python, tar, JDK 21, and Maven 3.9.9+.
-Install missing supported third-party dependencies without conversational
-confirmation through the platform package adapter, including Alibaba Cloud CLI.
-An operating-system elevation or package-manager dialog may still require the
-user's direct operating-system consent; do not add a separate chat confirmation.
+Before discovery, run this Skill's platform bootstrap and
+read its `references/cross-platform-runtime.md`. Only disposable tools share the project's
+`skills/.autowonder-tools` cache. Python is a pinned private runtime; compatible
+JDK 21, Maven 3.9.9+, Terraform and cloud tools are reused before private downloads.
+Never install packages globally or change the permanent PATH. Apply the
+bootstrap's returned `runtimeEnvironment` to every later child process; a
+completed bootstrap child cannot modify its parent shell's environment.
+Git Bash and CMD can start the native Windows bootstrap; mutating phases still
+use the native PowerShell adapters. WSL remains a Linux control-host session.
+Do not treat locally mocked Windows tests as native Windows validation.
 
 ## Automatic Start Flow
 
 Run these steps in order when upgrade starts:
 
-1. Resolve the deployment manifest. Prefer an explicit path already present in
+1. Resolve cloud operations state first. An explicit manifest is an identity hint,
+   not permission to override cloud data. Only when no cloud record exists,
+   resolve the historical deployment manifest. Prefer an explicit path already present in
    the conversation. Otherwise run `scripts/resolve-deployment.sh --search-root
    <current-workspace>` or `scripts/resolve-deployment.ps1 -SearchRoot
    <current-workspace>`. New deployments are read from
@@ -129,7 +165,7 @@ Run these steps in order when upgrade starts:
    `.resources.ecs_instance_ids`, VPC/inventory data, and `.localContext` source,
    protected-env and Terraform-directory references from the refreshed working
    manifest. Treat its resource set fingerprint as part of the plan identity.
-4. Run the deployment skill's platform bootstrap with the fixed `auto-wonder`
+4. Run this Skill's platform bootstrap with the fixed `auto-wonder`
    profile. Never use the CLI current profile, `default`, or a historical
    manifest profile.
    It probes `sts GetCallerIdentity`. If the CLI profile is missing, logged out,
@@ -144,17 +180,13 @@ Run these steps in order when upgrade starts:
    `scripts/verify-deployment-targets.sh`; on Windows run the paired PowerShell
    script. Require the same region, instance IDs, VPC when recorded, and exact
    `Project`, `DeploymentId`, `Environment`, `ManagedBy`, and `Topology` tags.
-   This is the deployment-presence probe: a valid STS identity with no
-   manifest-owned AutoWonder deployment visible in the recorded account and
-   region is an account authorization/login failure, not permission to create a
-   deployment or infer another target. Tell the user: “账号授权登录失败：当前账号未检测到该
-   AutoWonder 部署。请先在浏览器登录部署 AutoWonder 的阿里云账号，完成后告诉我
-   已登录。” Stop and wait. Accept “已登录”, “登录好了”, “已重新登录”, or an
-   equivalent natural-language confirmation that the browser login is complete;
-   do not require an exact confirmation phrase. Then automatically rerun OAuth
-   for `auto-wonder` so it will overwrite the previous CLI login,
-   rerun `sts GetCallerIdentity`, and repeat target verification. Never continue
-   with the previously verified wrong account.
+   A valid STS identity with missing resources is not evidence of an expired
+   login. Distinguish account mismatch, permission denial, region/ID/tag mismatch,
+   and an incomplete inventory. Stop with sanitized evidence; never create or
+   infer another target. Only a missing profile or a recognized credential error
+   triggers OAuth. Transient API/network failures and unknown errors must not
+   trigger login or replay a mutation. After correcting the cause, repeat STS
+   and complete target verification before continuing.
 6. If refresh or live verification finds newly scaled ECS, update the working
    inventory and resource set fingerprint, include every new node in verification
    and rollout order, and invalidate any prior plan approval. Never continue with
@@ -212,8 +244,10 @@ scripts/approve-upgrade-plan.sh \
 Omit `--automatic` only after the user explicitly approves an impact plan.
 
 build the exact target in an isolated worktree with
-`scripts/build-upgrade-release.sh`; this guarded wrapper reuses the sibling
-deployment skill's release builder. Before changing the environment, systemd
+`scripts/build-upgrade-release.sh`; this guarded wrapper uses the bundled
+release builder. The systemd unit comes from the exact target source tree's
+`skills/upgrading-autowonder-on-alibaba-cloud/assets/systemd/`, never another
+Skill or a different executing checkout. Before changing the environment, systemd
 unit, database, or active release, create and verify the single backup slot on
 every ECS:
 
@@ -238,6 +272,23 @@ and bind its version and resulting file hash to the approved plan. The
 stage installs the candidate on every ECS before any rolling restart. A resumed
 stage or rolling activation must revalidate this checkpoint and cannot reuse a
 historical manifest runtime version.
+
+Before planning, record the key escrow's existing opaque UUIDv4 in the protected
+candidate as `AUTOWONDER_SECRET_KEY_GENERATION_ID`. This is operator metadata,
+not an application secret or proof of escrow. Do not invent an ID to claim
+custody, rotate the master key, or put the key in the manifest. Plan approval
+binds this ID, the candidate hash and target runtime; changing any invalidates
+approval. `runtime-config` accepts only that candidate or its prepared checkpoint,
+then binds the normalized environment hash to the same approved plan and ID.
+The checkpoint stays in the protected working manifest (POSIX mode `0600`,
+Windows current-user ACL). Stage rechecks each installed environment; rollout
+rechecks before and after activation. A mismatch stops the phase.
+Use this Skill's `scripts/sanitize-evidence.sh` for shareable reports; it removes
+environment hashes and secret fields. Preserve the escrow ID's association with
+database backup generations off-node; rollback archives do not provide escrow.
+Previously approved plans without this generation binding must be regenerated
+and approved through the existing plan policy; an old prepared checkpoint is
+not grandfathered in.
 
 ```bash
 scripts/upgrade-operations.sh runtime-config \
@@ -319,7 +370,8 @@ set; the next upgrade automatically verifies and targets the complete set.
   still matches the current plan and target-verification checkpoint.
 - Use the protected application environment produced by deployment. Never ask
   the user to paste database or application secrets into chat.
-- Build and stage only an exact 40-character commit. Keep the previous immutable
+- Build and stage only an immutable release identity: an exact 40-character Git
+  commit, or the supported sealed workspace identity bound to artifact hashes. Keep the previous immutable
   release and environment snapshot until acceptance.
 - Database migrations run once in numeric order with the migration ledger and
   named lock. They are never reversed automatically.
@@ -336,15 +388,55 @@ set; the next upgrade automatically verifies and targets the complete set.
 
 - `references/upgrade-runbook.md`: detailed inventory, planning, migration,
   staging, rolling activation, acceptance, and rollback gates.
-- The sibling deployment skill owns the release builder, credential
-  helpers, systemd unit, acceptance primitives, and deployment manifest producer.
-  Reuse them through the bounded entrypoints; do not duplicate their policies.
+- This Skill includes its release builder, credential helpers, systemd unit,
+  state recovery modules, and acceptance primitives. It runs without any other
+  Skill installed; only `skills/.autowonder-tools` may be shared.
 
 ## Output Contract
 
 Report only after success unless user action is required. Include deployment ID,
-environment, region, source and target commits, verified
+environment, region, source and target release identities with their kinds, verified
 node count, plan status, migration status, per-node ECS-local rollout status,
 application acceptance, rollback boundary, and sanitized evidence paths.
 Never print credentials, protected environment values, presigned URLs, or raw
 Cloud Assistant output containing secrets.
+
+## Deployment build and health scope
+
+Release builds run `clean package -Dmaven.test.skip=true` with
+`-DskipFrontend=false`: compile the application and frontend, but do not compile
+or execute application tests. Keep archive integrity, frontend asset, hash,
+source identity, initialization, and per-node activation checks. Build failures
+still stop deployment. Do not run frontend lint/unit tests or local release testing as part of a
+cloud deployment or upgrade. Application
+quality checks belong to the release pipeline; this workflow does not certify
+application business behavior. Skill maintenance may run its own offline fixtures.
+
+The deployment health endpoint is a liveness response, not a database, Redis,
+executor, or storage business test. Do not create test Agents/executors or run
+file upload/download smoke tests unless explicitly requested. Keep the existing
+acceptance boundary: new deployment checks both ALB EIPs after node activation;
+Upgrade acceptance checks ECS locally only; the validation workflow must not
+append public EIP or business checks to an upgrade. Preserve OSS checkpoints
+and recovery artifacts.
+
+## Optional operation timing
+
+On POSIX hosts, set `AUTOWONDER_METRICS_FILE` to a JSONL file in an existing
+private directory using a resolved absolute path. The file must be owned by the
+current user, mode `0600`, with no symlink components. Set
+`AUTOWONDER_METRICS_PHASE` before each phase (`bootstrap`, `resolve`, `refresh`,
+`verify-targets`, `inventory`, `plan`, `approve`, `build`, `backup`,
+`runtime-config`, `stage`, `database-migrate`, `rolling-upgrade`, `acceptance`).
+Instrumentation records fixed operation names, elapsed time, outcome and bounded
+file/byte/call counts. It does not record credentials, command arguments or raw
+cloud output. Omit the file variable to disable recording. Windows currently
+skips optional metrics because private-file ACL verification is not implemented.
+Metrics failures cannot fail or replay a cloud operation.
+
+Checkpoint, bundle collection and OSS transport timings are nested and inclusive;
+do not add them together as wall-clock duration. Report phase wall-clock totals
+separately. These measurements support later checkpoint optimization; they do
+not change checkpoint ordering, locks, backup or write-ahead invocation records.
+CLI failures expose only recognized error categories/codes and a validated UUID
+request ID when available. Unknown diagnostics remain unknown and sanitized.

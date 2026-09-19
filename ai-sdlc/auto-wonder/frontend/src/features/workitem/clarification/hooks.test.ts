@@ -15,9 +15,13 @@ import {
   useClarificationConversation,
   isClarificationReplyingStatus,
   clarificationConversationRefetchInterval,
+  clarificationQueryRetry,
+  isClarificationNonRetryableError,
   CLARIFICATION_PROCESSING_POLL_MS,
+  CLARIFICATION_QUERY_MAX_RETRY,
   type StreamedEvent,
 } from './hooks';
+import { ApiError, ErrorCodes } from '@/shared/types/common';
 import * as api from './api';
 import type { ConversationRealtimeEvent } from './types';
 
@@ -399,7 +403,7 @@ describe('useClarificationEvents 时间线与命令快照', () => {
       { wrapper, initialProps: { ptid: 10 as number | null } },
     );
 
-    expect(result.current.availableCommands).toEqual([]);
+    expect(result.current.availableCommands).toBeNull();
 
     act(() => {
       emitTurnEvent(capturedCallback!, {
@@ -408,10 +412,114 @@ describe('useClarificationEvents 时间线与命令快照', () => {
       });
     });
 
-    expect(result.current.availableCommands.map((c) => c.name)).toEqual(['quest']);
+    expect(result.current.availableCommands).toEqual([{ name: 'quest', description: '问卷' }]);
 
     rerender({ ptid: 20 });
-    expect(result.current.availableCommands.map((c) => c.name)).toEqual(['quest']);
+    expect(result.current.availableCommands).toEqual([{ name: 'quest', description: '问卷' }]);
+  });
+
+  // Fix #2 护栏：服务端直推的 acp_commands 带 turnId:0，一旦被 append 进轮次事件流，
+  // 无 processingTurnId 时（提交→重拉窗口的常态）targetTurnId 就变成 0，本轮正文
+  // 与时间线全被过滤空掉。命令必须走独立耐久态，绝不进事件流。
+  it('never appends a turnId:0 acp_commands push to the turn event stream', () => {
+    const { result } = renderHook(() => useClarificationEvents('100', 1, null), { wrapper });
+
+    act(() => {
+      emitTurnEvent(capturedCallback!, makeEvent(5, 1, 'text', '本轮回复正文'));
+    });
+    expect(result.current.streamedText).toBe('本轮回复正文');
+
+    act(() => {
+      emitTurnEvent(capturedCallback!, {
+        conversationId: 1, turnId: 0, eventSeq: 0, eventType: 'acp_commands',
+        payload: { type: 'acp_commands', data: { availableCommands: [{ name: 'quest' }] } },
+      });
+    });
+
+    // 命令进了耐久态
+    expect(result.current.availableCommands).toEqual([{ name: 'quest' }]);
+    // 但事件流/时间线没有它的痕迹：不新增 turn 0 节点，正文不被过滤掉
+    expect(result.current.streamedEvents.map((e) => e.turnId)).toEqual([5]);
+    expect(result.current.streamedEvents.some((e) => e.eventType === 'acp_commands')).toBe(false);
+    expect(result.current.streamedTurnId).toBe(5);
+    expect(result.current.streamedText).toBe('本轮回复正文');
+    expect(result.current.timeline.map((n) => n.kind)).toEqual(['text']);
+
+    // 真实轮次（turnId 非 0）的 acp_commands 同样不进事件流
+    act(() => {
+      emitTurnEvent(capturedCallback!, {
+        conversationId: 1, turnId: 5, eventSeq: 2, eventType: 'acp_commands',
+        payload: { type: 'acp_commands', data: { availableCommands: [{ name: 'commit' }] } },
+      });
+    });
+
+    expect(result.current.availableCommands).toEqual([{ name: 'commit' }]);
+    expect(result.current.streamedEvents).toHaveLength(1);
+    expect(result.current.timeline.map((n) => n.kind)).toEqual(['text']);
+    expect(result.current.streamedText).toBe('本轮回复正文');
+  });
+
+  // Fix #3 护栏：未上报（null）与上报空列表（[]）是两件事，
+  // 前者该用会话详情快照种子，后者是执行器权威结论（就是没有候选）。
+  it('distinguishes unset commands from an empty reported set', () => {
+    const { result } = renderHook(() => useClarificationEvents('100', 1, null), { wrapper });
+
+    expect(result.current.availableCommands).toBeNull();
+
+    act(() => {
+      emitTurnEvent(capturedCallback!, {
+        conversationId: 1, turnId: 0, eventSeq: 0, eventType: 'acp_commands',
+        payload: { type: 'acp_commands', data: { availableCommands: [] } },
+      });
+    });
+
+    expect(result.current.availableCommands).toEqual([]);
+  });
+
+  // 命令态是会话级耐久态：每轮流式落库触发的 resetStreamedEvents 不能把它一起清掉，
+  // 否则输入框可用时 `/` 早已没有候选（本次修复的核心回归）。
+  it('命令快照在 resetStreamedEvents 后仍存活（会话级耐久）', () => {
+    const { result } = renderHook(
+      () => useClarificationEvents('100', 7, null),
+      { wrapper },
+    );
+
+    act(() => {
+      emitTurnEvent(capturedCallback!, {
+        conversationId: 7, turnId: 1, eventSeq: 1, eventType: 'acp_commands',
+        payload: { type: 'acp_commands', data: { availableCommands: [{ name: 'quest' }] } },
+      });
+    });
+
+    expect(result.current.availableCommands).toEqual([{ name: 'quest' }]);
+
+    act(() => {
+      result.current.resetStreamedEvents();
+    });
+
+    expect(result.current.availableCommands).toEqual([{ name: 'quest' }]);
+  });
+
+  // 会话级耐久 ≠ 永久：切换会话必须把上一个会话的命令态清干净，
+  // 且清成「未上报」（null），才能回到快照种子而不是压掉种子。
+  it('切换会话时命令态重置', () => {
+    const { result, rerender } = renderHook(
+      ({ cid }: { cid: number | null }) => useClarificationEvents('100', cid, null),
+      { wrapper, initialProps: { cid: 7 as number | null } },
+    );
+
+    act(() => {
+      emitTurnEvent(capturedCallback!, {
+        conversationId: 7, turnId: 1, eventSeq: 1, eventType: 'acp_commands',
+        payload: { type: 'acp_commands', data: { availableCommands: [{ name: 'quest' }] } },
+      });
+    });
+
+    expect(result.current.availableCommands).toHaveLength(1);
+
+    rerender({ cid: 8 });
+
+    expect(result.current.availableCommands).toBeNull();
   });
 
   it('reports the streamed turn id so the panel can match persisted replies', () => {
@@ -750,5 +858,41 @@ describe('clarification replying status and polling fallback', () => {
     expect(getConversation).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
+  });
+});
+
+describe('clarificationQueryRetry（工单 55411 有界重试）', () => {
+  it('retries transient errors only up to the bounded limit', () => {
+    expect(clarificationQueryRetry(0, new Error('network down'))).toBe(true);
+    expect(clarificationQueryRetry(1, new Error('network down'))).toBe(true);
+    expect(clarificationQueryRetry(CLARIFICATION_QUERY_MAX_RETRY, new Error('network down')))
+      .toBe(false);
+    expect(clarificationQueryRetry(CLARIFICATION_QUERY_MAX_RETRY + 1, new Error('network down')))
+      .toBe(false);
+  });
+
+  it('fails immediately on client/permission business codes without retrying', () => {
+    const codes = [
+      ErrorCodes.UNAUTHORIZED,
+      ErrorCodes.NO_PERMISSION,
+      ErrorCodes.NOT_FOUND,
+      ErrorCodes.WORKSPACE_NOT_MEMBER,
+      ErrorCodes.WORKSPACE_ACCESS_INSUFFICIENT,
+      ErrorCodes.ORG_NOT_FOUND_OR_NO_PERMISSION,
+      '10001', // PARAM_INVALID：会话不存在或不属于当前工单
+    ];
+    for (const code of codes) {
+      const error = new ApiError(code, '业务错误', null);
+      expect(isClarificationNonRetryableError(error)).toBe(true);
+      expect(clarificationQueryRetry(0, error)).toBe(false);
+    }
+  });
+
+  it('treats non-ApiError errors and unknown codes as transient', () => {
+    expect(isClarificationNonRetryableError(new Error('boom'))).toBe(false);
+    expect(isClarificationNonRetryableError(null)).toBe(false);
+    const unknown = new ApiError('99999', '未知错误', null);
+    expect(isClarificationNonRetryableError(unknown)).toBe(false);
+    expect(clarificationQueryRetry(0, unknown)).toBe(true);
   });
 });

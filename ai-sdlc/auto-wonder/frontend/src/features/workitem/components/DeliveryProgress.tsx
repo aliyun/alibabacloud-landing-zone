@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
-import { Card, Typography, Space, Spin, Collapse, Tag, Tooltip, Button } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Card, Typography, Space, Spin, Collapse, Tag, Tooltip, Button, Select, ConfigProvider } from 'antd';
 import { CheckCircleFilled, CloseCircleFilled, CompressOutlined, DownloadOutlined, EyeOutlined, FileTextOutlined, FullscreenOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons';
 import type { AgentDeliveryProgress, Artifact, DeliveryProgress as DeliveryProgressModel, DeliveryStep, DispatchAttempt, ProcessGraph, ProcessGraphEdge, ProcessGraphNode, SubStep, WorkflowPlan } from '@/shared/types/workitem';
+import { artifactCategories, artifactsForReadingCategory, groupArtifactsByExecution } from '../artifactGrouping';
 import { basename } from '@/shared/lib/artifactLinking';
 import { getArtifactDownloadUrl } from '../api';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { DispatchActivityFeed } from './DispatchActivityFeed';
+import { LiveActivityPanel } from './LiveActivityPanel';
 import { RuntimeTraceDrawer } from './RuntimeTraceDrawer';
 import { TokenUsageBadge, StepTokenBadge } from './TokenUsageBadge';
 
@@ -67,6 +69,7 @@ function normalizeTerminalStatus(terminalStatus?: string | null): TerminalKind |
   if (!terminalStatus) return null;
   const value = terminalStatus.trim().toUpperCase();
   if (value === 'SUCCEEDED' || value === 'FAILED' || value === 'CANCELLED') return value;
+  if (value === 'CANCELED') return 'CANCELLED';
   if (value === 'CLOSED' || terminalStatus.trim() === '已关闭') return 'SUCCEEDED';
   return null;
 }
@@ -257,6 +260,7 @@ function AttemptActionButton({
   onPause?: (dispatchId: number) => void;
   pausingDispatchId?: number | null;
 }) {
+  if (attempt.error?.startsWith('CANCEL_REQUESTED:')) return <Tag color="warning">正在取消</Tag>;
   if (attempt.canContinue && onContinue) {
     return (
       <Button
@@ -515,6 +519,7 @@ function WorkflowPlanSummary({ plan }: { plan: WorkflowPlan }) {
 }
 
 function statusLabel(status: AgentDeliveryProgress['status']) {
+  if (status === 'cancelled') return { text: '已取消', color: 'default' };
   if (status === 'active') return { text: '执行中', color: 'processing' };
   if (status === 'paused') return { text: '已暂停', color: 'warning' };
   if (status === 'finished') return { text: '已完成', color: 'success' };
@@ -536,6 +541,47 @@ function artifactDispatchIds(agent: ConvergedAgentProgress): Set<number> {
     });
   });
   return ids;
+}
+
+// Distinct dispatch ids for an agent in step/attempt order (oldest first), so retries and
+// multi-dispatch history stay selectable instead of only exposing the latest one.
+function orderedDispatchIds(agent: ConvergedAgentProgress): number[] {
+  return Array.from(artifactDispatchIds(agent));
+}
+
+function AgentLiveActivity({ agent, live }: { agent: ConvergedAgentProgress; live: boolean }) {
+  const dispatchIds = useMemo(() => orderedDispatchIds(agent), [agent]);
+  const latest = dispatchIds.length > 0 ? dispatchIds[dispatchIds.length - 1] : null;
+  const [selected, setSelected] = useState<number | null>(latest);
+
+  useEffect(() => {
+    setSelected(latest);
+  }, [latest]);
+
+  if (dispatchIds.length === 0) return null;
+
+  const current = selected ?? latest;
+  const isLatest = current === latest;
+
+  return (
+    <div data-testid="agent-live-activity">
+      {dispatchIds.length > 1 && (
+        <Select
+          size="small"
+          variant="borderless"
+          value={current}
+          onChange={(value) => setSelected(Number(value))}
+          data-testid="live-activity-dispatch-select"
+          style={{ minWidth: 150, marginBottom: 2 }}
+          options={dispatchIds.map((id, i) => ({
+            value: id,
+            label: `Dispatch ${id}${i === dispatchIds.length - 1 ? '（最新）' : ''}`,
+          }))}
+        />
+      )}
+      <LiveActivityPanel dispatchId={current} enabled={isLatest && live} />
+    </div>
+  );
 }
 
 function artifactsForAgent(agent: ConvergedAgentProgress, artifacts: Artifact[]): Artifact[] {
@@ -716,7 +762,7 @@ async function downloadArtifact(artifact: Artifact) {
   link.remove();
 }
 
-function ArtifactGroup({
+function ArtifactRows({
   artifacts,
   loading,
   onPreview,
@@ -736,7 +782,7 @@ function ArtifactGroup({
       {artifacts.map((artifact) => (
         <Tooltip
           key={String(artifact.id)}
-          title={`${artifact.type}${artifact.size != null ? ` · ${artifact.size} bytes` : ''}`}
+          title={`${artifact.name} · ${artifact.type}${artifact.size != null ? ` · ${artifact.size} bytes` : ''}`}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
             <FileTextOutlined style={{ color: '#8c8c8c', flexShrink: 0 }} />
@@ -750,7 +796,7 @@ function ArtifactGroup({
                 whiteSpace: 'nowrap',
               }}
             >
-              {artifact.name}
+              {basename(artifact.name)}
             </Text>
             <Button
               type="text"
@@ -775,6 +821,44 @@ function ArtifactGroup({
   );
 }
 
+function ArtifactGroup({ artifacts, steps, loading, onPreview }: {
+  artifacts: Artifact[];
+  steps: ConvergedDeliveryStep[];
+  loading?: boolean;
+  onPreview: (artifact: Artifact) => void;
+}) {
+  if (loading) return <Spin size="small" />;
+  const executions = groupArtifactsByExecution(steps, artifacts);
+  if (!artifacts.length) return <Text type="secondary">无产物</Text>;
+  return <ConfigProvider theme={{
+    token: { fontSize: 12, lineHeight: 1.5 },
+    components: { Collapse: { headerPadding: '4px 0', contentPadding: '0 0 4px 12px' } },
+  }}><Collapse
+    ghost
+    size="small"
+    defaultActiveKey={executions[0] ? [String(executions[0].dispatchId)] : []}
+    items={executions.map((execution, index) => ({
+      key: String(execution.dispatchId),
+      label: <span title={`Dispatch ${execution.dispatchId}`} style={{ fontSize: 12, lineHeight: '18px', overflowWrap: 'anywhere' }}>{index === 0 ? '最近 · ' : ''}{execution.label} · {execution.artifacts.length} 个产物</span>,
+      children: execution.artifacts.length === 0 ? <Text type="secondary">本次执行暂无产物，请展开历史执行查看已有文件</Text> : <Collapse
+        ghost
+        size="small"
+        defaultActiveKey={['handoff', 'evidence']}
+        items={artifactCategories.flatMap(category => {
+          const files = artifactsForReadingCategory(execution.artifacts, category.key);
+          return files.length ? [{
+            key: category.key,
+            label: <Tooltip title={category.hint}><Text style={{ fontSize: 12 }}>{category.label}（{files.length}）</Text></Tooltip>,
+            children: <>
+              <ArtifactRows artifacts={files} onPreview={onPreview} />
+            </>,
+          }] : [];
+        })}
+      />,
+    }))}
+  /></ConfigProvider>;
+}
+
 function AgentPanel({
   agent,
   index,
@@ -796,8 +880,10 @@ function AgentPanel({
   pausingDispatchId?: number | null;
   onArtifactPreview: (artifact: Artifact) => void;
 }) {
-  const pausing = agent.steps.some(stepIsPausing);
-  const label = pausing ? { text: '暂停中', color: 'warning' } : statusLabel(agent.status);
+  const ongoing = agent.status === 'active' || agent.status === 'paused';
+  const pausing = ongoing && agent.steps.some(stepIsPausing);
+  const cancelling = ongoing && agent.steps.some(step => step.attempts?.some(attempt => attempt.error?.startsWith('CANCEL_REQUESTED:')));
+  const label = cancelling ? { text: '正在取消', color: 'warning' } : pausing ? { text: '暂停中', color: 'warning' } : statusLabel(agent.status);
   const agentArtifacts = artifactsForAgent(agent, artifacts);
   const active = agent.status === 'active' && !pausing;
   const paused = agent.status === 'paused' || pausing;
@@ -847,6 +933,7 @@ function AgentPanel({
             {agent.currentActivity}
           </Text>
         )}
+        <AgentLiveActivity agent={agent} live={active || paused} />
         <StepList steps={agent.steps} onContinue={onContinue} continuingDispatchId={continuingDispatchId} onPause={onPause} pausingDispatchId={pausingDispatchId} />
         <Collapse
           ghost
@@ -859,7 +946,7 @@ function AgentPanel({
                   产物（{agentArtifacts.length > 0 ? `${agentArtifacts.length} artifacts` : '无产物'}）
                 </Text>
               ),
-              children: <ArtifactGroup artifacts={agentArtifacts} loading={artifactsLoading} onPreview={onArtifactPreview} />,
+              children: <ArtifactGroup steps={agent.steps} artifacts={agentArtifacts} loading={artifactsLoading} onPreview={onArtifactPreview} />,
             },
           ]}
           style={{ borderRadius: 6, background: '#fafafa' }}
@@ -882,8 +969,12 @@ export function DeliveryProgress({ steps = [], progress, artifacts = [], artifac
     );
   }
 
+  const terminal = normalizeTerminalStatus(terminalStatus);
   const agents: ConvergedAgentProgress[] = (progress?.agents ?? []).map((agent) => ({
     ...agent,
+    status: terminal && (agent.status === 'active' || agent.status === 'paused')
+      ? terminal === 'SUCCEEDED' ? 'finished' : terminal === 'FAILED' ? 'failed' : 'cancelled'
+      : agent.status,
     steps: convergeStepsForTerminalStatus(agent.steps, terminalStatus),
   }));
   const displaySteps = agents.length > 0 ? [] : convergeStepsForTerminalStatus(progress?.steps ?? steps, terminalStatus);

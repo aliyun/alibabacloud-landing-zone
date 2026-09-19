@@ -30,7 +30,26 @@ class SystemSettingServiceTest {
         when(secretCrypto.decrypt(anyString())).thenAnswer(invocation ->
                 invocation.getArgument(0, String.class));
         when(secretCrypto.mask(anyString())).thenReturn("re****yz");
-        service = new SystemSettingService(settingDao, secretCrypto);
+        service = new SystemSettingService(settingDao, secretCrypto, mock(com.aliyun.autowonder.im.PlatformImChannelConfigService.class));
+    }
+
+    @Test
+    void rejectsProjectConfigForUnselectedProviderAndHidesLegacyValues() {
+        var configs = mock(com.aliyun.autowonder.im.PlatformImChannelConfigService.class);
+        when(configs.selectedProvider()).thenReturn("FEISHU");
+        service = new SystemSettingService(settingDao, secretCrypto, configs);
+        var item = new UpdateSettingsRequest.SettingItem();
+        item.setKey("dingtalk_enabled"); item.setValueJson("true");
+        var request = new UpdateSettingsRequest(); request.setItems(List.of(item));
+        assertThrows(BizException.class, () -> service.updateGroup("NOTIFY", request, 1L, 2L));
+        verify(settingDao, never()).insert(any());
+        var old = new SystemSettingDO(); old.setSettingKey("dingtalk_enabled"); old.setIsSecret(0);
+        var selected = new SystemSettingDO(); selected.setSettingKey("feishu_enabled"); selected.setIsSecret(0);
+        when(settingDao.listByGroup(1L, "NOTIFY")).thenReturn(List.of(old, selected));
+        assertEquals(List.of("feishu_enabled"), service.listByGroup("NOTIFY", 1L).stream().map(SettingVO::getKey).toList());
+        item.setKey("feishu_enabled");
+        service.updateGroup("NOTIFY", request, 1L, 2L);
+        verify(settingDao).insert(argThat(row -> row.getSettingKey().equals("feishu_enabled")));
     }
 
     @Test

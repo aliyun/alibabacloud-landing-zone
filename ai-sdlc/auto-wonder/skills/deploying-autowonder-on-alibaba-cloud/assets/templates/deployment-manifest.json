@@ -35,6 +35,7 @@
     "zoneACidr": "10.0.1.0/24",
     "zoneBCidr": "10.0.2.0/24"
   },
+  "resourceSelection": {"version": 1, "status": "candidate"},
   "resolvedInfrastructure": {
     "ecsImageId": "",
     "ecsInstanceType": "",
@@ -45,13 +46,21 @@
     "rdsCategory": "",
     "rdsStorageType": "",
     "rdsStorageGb": 0,
-    "redisInstanceClass": ""
+    "redisInstanceClass": "",
+    "zonePlan": {
+      "ecsZones": [],
+      "rds": { "primaryZone": "", "slaveZone": "" },
+      "redis": { "primaryZone": "", "secondaryZone": "" },
+      "alb": { "zones": [] },
+      "downgrades": [],
+      "resolvedBy": "",
+      "evidence": {}
+    }
   },
   "slsEnabled": true,
   "aoneEnabled": false,
   "publicEgress": false,
   "adminUsername": "admin",
-  "organizationName": "",
   "repositoryUrl": "",
   "repositoryRef": "community",
   "repositoryCommit": "",

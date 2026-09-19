@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { classifyWorkitemStatus } from '../constants';
+import { describe, it, expect, vi } from 'vitest';
+import { within, render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { WorkitemKanban } from './WorkitemKanban';
 import type { Workitem } from '@/shared/types/workitem';
@@ -95,7 +96,7 @@ describe('WorkitemKanban 待决策按人分类', () => {
       statusName: '待处理',
       sourceType: 'EXTERNAL',
       sourceProvider: 'AONE',
-      sourceUrl: 'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+      sourceUrl: 'https://aone.example.com/v2/project/2087214/req/84877007',
       creatorDisplayName: '导入人（10009）',
       sourceCreator: {
         id: 20001, provider: 'AONE', subjectId: '440501', subjectType: 'USER',
@@ -106,10 +107,11 @@ describe('WorkitemKanban 待决策按人分类', () => {
     const sourceLink = screen.getByRole('link', { name: /来自 Aone/ });
     expect(sourceLink).toHaveAttribute(
       'href',
-      'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+      'https://aone.example.com/v2/project/2087214/req/84877007',
     );
     expect(sourceLink).toHaveAttribute('target', '_blank');
-    expect(screen.getByText('来源提出人: 煊童（440501）')).toBeInTheDocument();
+    expect(screen.getByText('来源提出人: 煊童')).toBeInTheDocument();
+    expect(screen.queryByText(/440501/)).not.toBeInTheDocument();
     expect(screen.queryByText('创建者: 导入人（10009）')).not.toBeInTheDocument();
   });
 
@@ -117,6 +119,45 @@ describe('WorkitemKanban 待决策按人分类', () => {
     renderKanban({ items: [mk({ id: 11, title: '本地创建', sourceType: 'NATIVE' })] });
 
     expect(screen.queryByText(/来自 Aone/)).not.toBeInTheDocument();
+  });
+});
+
+describe('WorkitemKanban 优先级与姓名展示', () => {
+  it('renders the shared Chinese priority label with its color', () => {
+    renderKanban({ items: [mk({ id: 1, priority: 0, title: '紧急工单' })] });
+    expect(screen.getByText('紧急')).toHaveStyle({ color: '#ff4d4f' });
+  });
+
+  it('shows 未知优先级 for unknown priority values without treating them as low', () => {
+    renderKanban({ items: [mk({ id: 1, priority: 7, title: '未知优先级工单' })] });
+    expect(screen.getByText('未知优先级')).toBeInTheDocument();
+  });
+
+  it('strips id suffixes from assignee and creator names', () => {
+    renderKanban({ items: [mk({
+      id: 1,
+      title: '姓名工单',
+      assigneeType: 'AGENT',
+      assigneeRef: 40013,
+      assigneeName: 'agent-40013',
+      assigneeDisplayName: 'AW全栈开发(40013)',
+      creatorDisplayName: '蔡何（10000）',
+    })] });
+
+    expect(screen.getByText('AW全栈开发')).toBeInTheDocument();
+    expect(screen.getByText('创建者: 蔡何')).toBeInTheDocument();
+    expect(screen.queryByText(/40013/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/10000/)).not.toBeInTheDocument();
+  });
+
+  it('shows 未指派 for unassigned cards', () => {
+    renderKanban({ items: [mk({ id: 1, title: '无人工单', assigneeName: null, assigneeDisplayName: null })] });
+    expect(screen.getByText('未指派')).toBeInTheDocument();
+  });
+
+  it('falls back to 未返回 for external cards without a reporter', () => {
+    renderKanban({ items: [mk({ id: 1, title: '无提出人工单', sourceType: 'EXTERNAL', sourceCreator: undefined })] });
+    expect(screen.getByText('来源提出人: 未返回')).toBeInTheDocument();
   });
 });
 
@@ -182,5 +223,79 @@ describe('WorkitemKanban 定时执行标识', () => {
 
     expect(screen.getByText('普通工单')).toBeInTheDocument();
     expect(screen.queryByLabelText('定时执行')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('WorkitemKanban 拖拽', () => {
+  function drag(id: number, column: string) {
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(screen.getByTestId(`workitem-card-${id}`), { dataTransfer });
+    fireEvent.dragOver(screen.getByTestId(`kanban-column-${column}`), { dataTransfer });
+    fireEvent.drop(screen.getByTestId(`kanban-column-${column}`), { dataTransfer });
+  }
+
+  it('requests a move without optimistically relocating the card', () => {
+    const item = mk({ id: 1, statusName: '待处理' });
+    const onMove = vi.fn();
+    renderKanban({ items: [item], onMove });
+    drag(1, 'IN_PROGRESS');
+    expect(onMove).toHaveBeenCalledWith(item, 'IN_PROGRESS');
+    expect(screen.getByTestId('kanban-column-NEW')).toContainElement(screen.getByTestId('workitem-card-1'));
+    fireEvent.drop(screen.getByTestId('kanban-column-DONE'));
+    expect(onMove).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores same-column and external drops', () => {
+    const onMove = vi.fn();
+    renderKanban({ items: [mk({ id: 1, statusName: '待处理' })], onMove });
+    drag(1, 'NEW');
+    fireEvent.drop(screen.getByTestId('kanban-column-DONE'));
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it('supports cards grouped under a decision maker', () => {
+    const item = mk({ id: 1, pendingDecision: true });
+    const onMove = vi.fn();
+    renderKanban({ items: [item], onMove });
+    drag(1, 'DONE');
+    expect(onMove).toHaveBeenCalledWith(item, 'DONE');
+  });
+
+  it('disables dragging while a transition is being checked or saved', () => {
+    const onMove = vi.fn();
+    renderKanban({ items: [mk({ id: 1, statusName: '待处理' })], onMove, transitionBusy: true });
+    expect(screen.getByTestId('workitem-card-1')).toHaveAttribute('draggable', 'false');
+    drag(1, 'DONE');
+    expect(onMove).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorkitemKanban counts', () => {
+  it('shows full server totals above 99 even when only part of the column is loaded', () => {
+    const { container } = renderKanban({
+      items: [], columnKeys: ['NEW'], columnTotals: { NEW: 12345 },
+    });
+    expect(container.querySelector('.ant-badge-count')).toHaveTextContent('12345');
+    expect(screen.queryByText('99+')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('WorkitemKanban 排队标记', () => {
+  it('shows pending execution in the original in-progress column and clears it after dispatch', () => {
+    const item = mk({ id: 91, title: '等待执行器', statusName: '开发中', executionStatus: 'PENDING' });
+    const { rerender } = renderKanban({ items: [item] });
+    const card = screen.getByTestId('workitem-card-91');
+    expect(within(card).getByText('排队中')).toBeInTheDocument();
+    expect(within(card).getByText('开发中')).toBeInTheDocument();
+    expect(classifyWorkitemStatus(item)).toBe('IN_PROGRESS');
+    rerender(<MemoryRouter><WorkitemKanban items={[{ ...item, executionStatus: 'RUNNING' }]} /></MemoryRouter>);
+    expect(screen.queryByText('排队中')).not.toBeInTheDocument();
+  });
+
+  it('does not mark completed workitems as queued from an old dispatch', () => {
+    renderKanban({ items: [mk({ statusName: '已完成', executionStatus: 'PENDING' })] });
+    expect(screen.queryByText('排队中')).not.toBeInTheDocument();
   });
 });

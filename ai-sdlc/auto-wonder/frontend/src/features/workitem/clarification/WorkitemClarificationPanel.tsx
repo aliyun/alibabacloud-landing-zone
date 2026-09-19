@@ -40,6 +40,18 @@ import {
   readClarificationPrefill,
   writeClarificationPrefill,
 } from './prefill';
+import {
+  CLARIFICATION_SEND_MODE_KEY,
+  CLARIFICATION_SEND_MODE_QUERY_KEY,
+  DEFAULT_SEND_MODE,
+  SEND_MODE_OPTIONS,
+  parseSendMode,
+  shouldSendOnKey,
+} from './sendMode';
+import type { SendMode } from './sendMode';
+import { getMySetting, putMySetting } from '@/features/profile/userSettingApi';
+import type { UserSetting } from '@/features/profile/userSettingApi';
+import * as api from './api';
 import { listAgents } from '@/features/agent/api';
 import type { ClarifyContext } from '../clarifyView';
 import type { ClarificationElicitation, ClarificationTurn } from './types';
@@ -81,6 +93,31 @@ export function isNearScrollBottom(
 
 const clarificationBootstrapPrompt = (workitemId: string) =>
   `请通过 AutoWonder MCP 读取工单 #${workitemId}，与我进行需求澄清。`;
+
+/** 加载中/加载失败提示的居中样式：与 Empty 同视觉重量，不抢占消息流。 */
+const CLARIFICATION_LOAD_HINT_STYLE: CSSProperties = {
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'center',
+  gap: 8,
+  minHeight: 120,
+};
+
+/** 历史加载失败/降级提示（工单 55411 缺陷一）：错误可见 + 显式重试入口，
+ *  代替把失败渲染成「没有历史」的空白态。降级态用 warning 色区分整页失败。 */
+function ClarificationLoadError({ testId, description, tone = 'danger', onRetry }: {
+  testId: string;
+  description: string;
+  tone?: 'danger' | 'warning';
+  onRetry: () => void;
+}) {
+  return (
+    <div data-testid={testId} style={CLARIFICATION_LOAD_HINT_STYLE}>
+      <Typography.Text type={tone}>{description}</Typography.Text>
+      <Button size="small" onClick={onRetry}>重试</Button>
+    </div>
+  );
+}
 
 /** 交付进度状态只表示本次交付的派发状态，不能用它推断执行器在线，
  *  否则未启动过的数字人会被误标“离线”、历史澄清会话无法重入。
@@ -142,11 +179,30 @@ export function WorkitemClarificationPanel({
   const [conversationId, setConversationId] = useState<number | null>(initialConversationId ?? null);
   const conversationIdRef = useRef<number | null>(conversationId);
   conversationIdRef.current = conversationId;
+  // 创建回调的身份护栏：回调落地时核对发起时的数字人是否仍是当前数字人，
+  // 过时的创建结果不能覆盖用户此间的切换（修复要求 2）。
+  const effectiveAgentIdRef = useRef<number | null>(null);
   // 仅系统自动创建的首个会话需要引导提示。历史会话即使空白，也不能被误写入提示词。
   const bootstrapConversationIdRef = useRef<number | null>(null);
   const [inputValue, setInputValue] = useState('');
   // null = 自动模式（默认 6 行高度）；数字 = 手动固定高度（像素）
   const [inputHeight, setInputHeight] = useState<number | null>(null);
+  // 发送方式偏好（FR-005~FR-010）。初值就是默认值：偏好请求返回前按回车必须已经有
+  // 确定行为，不能出现「先按默认发、拉回来后又改口径」的抖动。
+  const [sendMode, setSendMode] = useState<SendMode>(DEFAULT_SEND_MODE);
+  const sendModeSetting = useQuery({
+    queryKey: CLARIFICATION_SEND_MODE_QUERY_KEY,
+    queryFn: () => getMySetting(CLARIFICATION_SEND_MODE_KEY),
+    staleTime: 5 * 60_000,
+  });
+  // 只在偏好首次落定（成功或失败）时水合一次。此后本地 state 是唯一事实来源，
+  // 否则窗口重新聚焦触发的后台重新拉取会把用户刚改的选择盖回服务端旧值。
+  const sendModeHydratedRef = useRef(false);
+  useEffect(() => {
+    if (sendModeHydratedRef.current || sendModeSetting.isLoading) return;
+    sendModeHydratedRef.current = true;
+    setSendMode(parseSendMode(sendModeSetting.data?.valueJson));
+  }, [sendModeSetting.isLoading, sendModeSetting.data]);
   const composingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -189,6 +245,7 @@ export function WorkitemClarificationPanel({
     : selection?.agentId && selection.agentId > 0
       ? selection.agentId
       : null;
+  effectiveAgentIdRef.current = effectiveAgentId;
 
   // 三条选人路径（列表点击 / 两级下拉 / localStorage 记忆命中）都汇聚到这个
   // 派生值上，其中记忆命中那条没有任何点击事件，所以监听跃迁而不是挂 handler。
@@ -221,6 +278,13 @@ export function WorkitemClarificationPanel({
   const convData = conversation.data;
   const isCreatingConversation = createMutation.isPending;
   const isConversationLoading = conversationId !== null && conversation.isLoading;
+  // 历史详情三态：加载中 / 成功（含确实没有消息）/ 失败。失败再细分为
+  // 还没有任何内容（整页错误 + 禁止发送）与已有内容（保留原内容 + 降级提示），
+  // 两者都不能被渲染成「没有历史」（工单 55411 缺陷一）。
+  const conversationHistoryFailed = conversationId !== null
+    && conversation.isError && convData == null;
+  const conversationHistoryStale = conversationId !== null
+    && conversation.isError && convData != null;
   const isProcessing = convData?.processingStatus === 'PROCESSING';
   // R1: 排队中（QUEUED）同样算“回复未结束”；与轮询兜底共用同一判定口径
   const isReplying = isClarificationReplyingStatus(convData?.processingStatus);
@@ -343,6 +407,12 @@ export function WorkitemClarificationPanel({
     return null;
   }, [acpInteractionSupported, timeline, restoredElicitations, settledElicitationIds]);
 
+  /** 斜杠命令候选：实时 acp_commands（耐久态）优先，会话详情带回的快照种子兜底，
+   *  这样打开会话敲 `/` 立刻有候选，不必等探针结果经 WS 回来。
+   *  null = 尚未上报 → 用种子；[] = 执行器权威结论「没有命令」→ 不能再用种子盖回去。 */
+  const seededCommands = convData?.availableCommands ?? [];
+  const slashCommands = availableCommands ?? seededCommands;
+
   // 回复期间输入框是禁用的，浏览器会把焦点从禁用元素上摘掉，恢复可用后没人归还，
   // 用户必须手动点一次才能接着打字（工单 53305）。这里在「本轮回复进行中」结束时把
   // 焦点还给输入框。触发口径不含会话加载与创建：面板首次拉取会话时输入框同样会经历
@@ -360,12 +430,45 @@ export function WorkitemClarificationPanel({
     }
   }, [replyInProgress]);
 
+  // 输入行只有在选中会话、没有问题卡片挂起、且不在禁用态时才真正存在于 DOM 里，
+  // 自动聚焦必须等这些条件同时成立（FR-004）。
+  const inputRowFocusable = !!conversationId
+    && !activeElicitation
+    && !submitMutation.isPending
+    && !isCreatingConversation
+    && !isReplying
+    && !isConversationLoading;
+
+  // 「进入面板」的计数：挂载是第 0 次，切入全屏再各算一次。RightPanel 全屏与非全屏
+  // 复用同一个实例，切全屏只是 prop 变化、不会重新挂载，靠这个计数才能覆盖 FR-002。
+  const [focusEpoch, setFocusEpoch] = useState(0);
+  const prevFullscreenRef = useRef(fullscreen);
+  useEffect(() => {
+    const wasFullscreen = prevFullscreenRef.current;
+    prevFullscreenRef.current = fullscreen;
+    if (fullscreen && !wasFullscreen) setFocusEpoch((epoch) => epoch + 1);
+  }, [fullscreen]);
+
+  // 每个 epoch 只聚焦一次，所以切换会话（FR-003）、回复结束都不会由这里再抢焦点：
+  // 输入行重新可用时 epoch 没变，effect 直接返回。回复结束的归还走上面那条 effect。
+  const focusedEpochRef = useRef(-1);
+  useEffect(() => {
+    if (focusedEpochRef.current === focusEpoch || !inputRowFocusable) return;
+    focusedEpochRef.current = focusEpoch;
+    // 推到绘制之后再聚焦：输入行刚出现时布局还没稳定，此刻聚焦会带着页面滚一次。
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusEpoch, inputRowFocusable]);
+
   const slashQuery = slashCommandQuery(inputValue);
 
   const handleSelectAgent = useCallback(
     (agentId: number) => {
       resetStreamedEvents();
       setInputValue('');
+      userSelectedAgentRef.current = true;
       setSelectedAgentId(agentId);
       setConversationId(null);
     },
@@ -376,6 +479,7 @@ export function WorkitemClarificationPanel({
     (next: SquadAgentSelection | null) => {
       resetStreamedEvents();
       setInputValue('');
+      userSelectedAgentRef.current = true;
       setSelection(next);
       setConversationId(null);
       if (next && next.agentId > 0) {
@@ -394,26 +498,6 @@ export function WorkitemClarificationPanel({
     setInputValue('');
   }, [resetStreamedEvents]);
 
-  useEffect(() => {
-    if (!conversations.data || conversationId !== null) return;
-    if (conversations.data.length > 0) {
-      setConversationId(conversations.data[0].id);
-      return;
-    }
-    if (!effectiveAgentId || createMutation.isPending) return;
-    if (autoCreateAttemptedRef.current.has(effectiveAgentId)) return;
-    autoCreateAttemptedRef.current.add(effectiveAgentId);
-    createMutation.mutate(effectiveAgentId, {
-      onSuccess: (conv) => {
-        bootstrapConversationIdRef.current = conv.id;
-        setConversationId(conv.id);
-      },
-      onError: () => {
-        message.error('自动创建会话失败，请点击「新对话」重试');
-      },
-    });
-  }, [conversations.data, conversationId, effectiveAgentId, createMutation, workitemId]);
-
   // 刷新恢复（交付数字人路径）：agents 来自轮询查询，挂载当帧往往还是空数组，
   // 只靠 useState 初值认 initialAgentId 会漏掉这一路径，必须等列表落地后补一次。
   // 且只认列表里真实存在的 id：数字人被换掉后，URL 里的旧 id 不该把面板钉死。
@@ -422,39 +506,86 @@ export function WorkitemClarificationPanel({
   // 就被抹掉，刷新后退化成选人页（CR53035-001）。
   const restoredAgentIdRef = useRef<number | null>(initialAgentId ?? null);
   const restoredAgentAppliedRef = useRef(false);
+  // 优先级（缺陷二）：用户手动选择 > URL 恢复 > localStorage 预填 > 自动选择。
+  // 恢复窗口内用户已经自己选了数字人时，迟到的 URL 恢复不得再覆盖用户的选择。
+  const userSelectedAgentRef = useRef(false);
   useEffect(() => {
     if (restoredAgentAppliedRef.current) return;
     const restoredAgentId = restoredAgentIdRef.current;
     if (!hasDeliveryAgents || restoredAgentId == null) return;
     restoredAgentAppliedRef.current = true;
-    if (agents.some((agent) => agent.agentId === restoredAgentId)) {
+    if (!userSelectedAgentRef.current
+        && agents.some((agent) => agent.agentId === restoredAgentId)) {
       setSelectedAgentId(restoredAgentId);
     }
   }, [hasDeliveryAgents, agents]);
+
+  // 数字人恢复落定前，effectiveAgentId 要么是 null，要么是 localStorage 预填的
+  // 小队数字人（与交付 agentId 不同域）。这一窗口里它名下的会话列表不能代表
+  // 恢复目标：拿它校验恢复的 conversationId 会把合法会话误判成「不存在」，
+  // 拿它自动选择/自动创建会把预填数字人的会话钉在恢复目标身上（缺陷二 A/B 竞态）。
+  // 所有「系统代用户做决定」的动作都要等身份落定；用户手动选择不受此限。
+  const agentRestorePending = restoredAgentIdRef.current != null
+    && !restoredAgentAppliedRef.current;
+
+  useEffect(() => {
+    if (agentRestorePending) return;
+    if (!conversations.data || conversationId !== null) return;
+    if (conversations.data.length > 0) {
+      setConversationId(conversations.data[0].id);
+      return;
+    }
+    if (!effectiveAgentId || createMutation.isPending) return;
+    if (autoCreateAttemptedRef.current.has(effectiveAgentId)) return;
+    autoCreateAttemptedRef.current.add(effectiveAgentId);
+    const mutatedAgentId = effectiveAgentId;
+    createMutation.mutate(mutatedAgentId, {
+      onSuccess: (conv) => {
+        // 过时的创建回调不能覆盖当前选择：创建期间用户切了数字人或手动选了会话。
+        if (effectiveAgentIdRef.current !== mutatedAgentId) return;
+        if (conversationIdRef.current !== null) return;
+        bootstrapConversationIdRef.current = conv.id;
+        setConversationId(conv.id);
+      },
+      onError: () => {
+        message.error('自动创建会话失败，请点击「新对话」重试');
+      },
+    });
+  }, [conversations.data, conversationId, effectiveAgentId, createMutation, workitemId,
+    agentRestorePending]);
+
+  // 打开会话即补一次带外命令探针：详情里的快照只保证秒显，命令可能早已过期。
+  // 每个 conversationId 只打一次（重渲染/详情重拉/StrictMode 双调用都不能重复打），
+  // fire-and-forget：失败静默，结果经实时 acp_commands 事件回推，下次打开再试。
+  const commandsProbedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!conversationId || commandsProbedRef.current === conversationId) return;
+    if (!convData?.acpInteractionSupported) return; // 仅 ACP 执行器才探针
+    commandsProbedRef.current = conversationId;
+    api.refreshClarificationCommands(workitemId, conversationId).catch(() => {});
+  }, [conversationId, convData?.acpInteractionSupported, workitemId]);
 
   // 刷新恢复（会话）：URL 可能来自书签或旧链接，会话也许已删除或已换了数字人。
   // 等会话列表落地后校验一次，不合法就清空，让上面的自动选择逻辑接手，
   // 否则刷新后会卡在一个永远拉不到内容的空会话上。
   // 只认挂载当帧从 URL 读到的那个 id：外层会随本面板的上报把新会话写回 URL，
   // 若跟着活的 prop 走，刚自动创建的会话会被一份还没刷新的旧列表判成“不存在”而清掉。
+  // 校验必须绑定恢复目标的身份与它自己的列表（缺陷二）：URL 数字人还没落定时，
+  // 当前列表属于 localStorage 预填数字人，用它判定「不存在」会永久清掉合法会话；
+  // 列表加载失败同样不能当成「不存在」，留待成功后重试，期间不标记已校验。
   const restoredConversationIdRef = useRef<number | null>(initialConversationId ?? null);
   const restoredConversationCheckedRef = useRef(false);
   useEffect(() => {
     if (restoredConversationCheckedRef.current) return;
     const restoredId = restoredConversationIdRef.current;
     if (restoredId == null || conversationId !== restoredId) return;
+    if (agentRestorePending) return;
     if (!conversations.data) return;
     restoredConversationCheckedRef.current = true;
     if (!conversations.data.some((item) => item.id === restoredId)) {
       setConversationId(null);
     }
-  }, [conversations.data, conversationId]);
-
-  // 数字人恢复落定前，effectiveAgentId 要么是 null，要么是 localStorage 预填的
-  // 小队数字人（与交付 agentId 不同域）：两者写回 URL 都会抹掉/改写恢复源本身。
-  // 这一窗口只上报已落定的字段，会话照常同步，agent 等恢复落定后再补。
-  const agentRestorePending = restoredAgentIdRef.current != null
-    && !restoredAgentAppliedRef.current;
+  }, [conversations.data, conversationId, agentRestorePending]);
 
   // 把当前上下文回报给外层写回 URL。首次必须跳过「两者都还没确定」的那一帧：
   // URL 里的 agent/conversation 正是这一帧之前读出来的，回报 null 等于自己抹掉恢复源。
@@ -501,8 +632,11 @@ export function WorkitemClarificationPanel({
   const handleSend = useCallback(() => {
     const content = inputValue.trim();
     const submittedConversationId = conversationId;
-    // R2: 回复期间禁止发送
-    if (!content || !submittedConversationId || submitMutation.isPending || isReplying || isConversationLoading) return;
+    // R2: 回复期间禁止发送；历史加载失败/恢复身份未落定时禁止发送：
+    // 前者不能在未知历史上凭空对话（缺陷一），后者会话归属还没校验完就发消息
+    // 可能把消息发进错误数字人的会话（缺陷二）。
+    if (!content || !submittedConversationId || submitMutation.isPending || isReplying
+      || isConversationLoading || conversationHistoryFailed || agentRestorePending) return;
     setInputValue('');
     // R4: 自己发送消息时恢复底部跟随
     followBottomRef.current = true;
@@ -515,7 +649,8 @@ export function WorkitemClarificationPanel({
         message.error('消息发送失败，请重试');
       },
     });
-  }, [inputValue, conversationId, submitMutation, isReplying, isConversationLoading]);
+  }, [inputValue, conversationId, submitMutation, isReplying, isConversationLoading,
+    conversationHistoryFailed, agentRestorePending]);
 
   const handleCancelReply = useCallback(() => {
     const turnId = convData?.processingTurnId;
@@ -526,6 +661,24 @@ export function WorkitemClarificationPanel({
       },
     });
   }, [conversationId, convData?.processingTurnId, cancelMutation]);
+
+  // 切换发送方式：先乐观生效（按键行为与入口文案必须立刻一致），再落用户级偏好。
+  // 落库失败要连缓存一起回滚，否则界面标着「回车发送」而实际按回车只换行。
+  const handleSendModeChange = useCallback((next: SendMode) => {
+    const previous = sendMode;
+    const previousCache = queryClient.getQueryData<UserSetting>(CLARIFICATION_SEND_MODE_QUERY_KEY);
+    const valueJson = JSON.stringify(next);
+    setSendMode(next);
+    queryClient.setQueryData<UserSetting>(
+      CLARIFICATION_SEND_MODE_QUERY_KEY,
+      { key: CLARIFICATION_SEND_MODE_KEY, valueJson },
+    );
+    putMySetting(CLARIFICATION_SEND_MODE_KEY, valueJson).catch(() => {
+      setSendMode(previous);
+      queryClient.setQueryData(CLARIFICATION_SEND_MODE_QUERY_KEY, previousCache);
+      message.error('发送方式保存失败，请重试');
+    });
+  }, [sendMode, queryClient]);
 
   // R4: 仅在跟随底部时自动滚动；向上滚动离开底部后暂停跟随。
   // 用瞬时滚动（非 smooth）：流式内容持续增长时，平滑动画的中间态
@@ -697,9 +850,43 @@ export function WorkitemClarificationPanel({
               否则跟随底部/回到底部的滚动测量会落到不滚动的节点上。 */}
           <div data-testid="clarification-content-column" style={fullscreenColumnStyle}>
             {!conversationId ? (
-              <Empty description="暂无对话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              conversations.isError ? (
+                <ClarificationLoadError
+                  testId="clarification-list-error"
+                  description="会话列表加载失败，无法确认可用的澄清会话。"
+                  onRetry={() => { conversations.refetch(); }}
+                />
+              ) : (
+                <Empty description="暂无对话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              )
+            ) : conversationHistoryFailed ? (
+              <ClarificationLoadError
+                testId="clarification-history-error"
+                description="历史消息加载失败。"
+                onRetry={() => { conversation.refetch(); }}
+              />
             ) : (
               <>
+                {conversationHistoryStale && (
+                  <ClarificationLoadError
+                    testId="clarification-history-stale-notice"
+                    tone="warning"
+                    description="历史刷新失败，以下为最近一次成功加载的内容。"
+                    onRetry={() => { conversation.refetch(); }}
+                  />
+                )}
+                {isConversationLoading && turns.length === 0 && (
+                  <div
+                    data-testid="clarification-history-loading"
+                    style={CLARIFICATION_LOAD_HINT_STYLE}
+                  >
+                    <Typography.Text type="secondary">正在加载历史消息…</Typography.Text>
+                  </div>
+                )}
+                {turns.length === 0 && conversation.isSuccess && !isConversationLoading
+                  && !showReplyingIndicator && !showProcessingEvents && !awaitingAgentReply && (
+                  <Empty description="暂无历史消息" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                )}
                 {turns.map((turn, index) => (
                   <TurnBubble
                     key={turn.id}
@@ -802,7 +989,7 @@ export function WorkitemClarificationPanel({
                 minWidth: 0 让 flex 子项可收缩，否则窄视口下输入行会被撑破横向溢出 */}
             <div ref={inputWrapRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
               <SlashCommandPicker
-                commands={availableCommands}
+                commands={slashCommands}
                 query={slashQuery}
                 onSelect={(command) => {
                   // ACP 没有专门的 invoke 方法，选中命令就是把 `/name ` 当普通文本发出去
@@ -815,18 +1002,18 @@ export function WorkitemClarificationPanel({
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={(e) => {
+                  // 输入法组合期的回车是「选中候选词」，任何模式下都不能当成发送
                   if (e.nativeEvent.isComposing || composingRef.current) return;
-                  if (e.shiftKey) return;
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleSend();
-                  }
+                  if (!shouldSendOnKey(sendMode, e)) return;
+                  e.preventDefault();
+                  handleSend();
                 }}
                 onCompositionStart={() => { composingRef.current = true; }}
                 onCompositionEnd={() => { composingRef.current = false; }}
-                placeholder="输入消息..."
+                placeholder={agentRestorePending ? '正在恢复会话，请稍候…' : '输入消息...'}
                 autoSize={clarificationInputAutoSize(manualInputHeight)}
-                disabled={submitMutation.isPending || isCreatingConversation || isReplying || isConversationLoading}
+                disabled={submitMutation.isPending || isCreatingConversation || isReplying
+                  || isConversationLoading || conversationHistoryFailed || agentRestorePending}
                 style={manualInputHeight == null
                   ? {
                       width: '100%',
@@ -840,6 +1027,17 @@ export function WorkitemClarificationPanel({
                     }}
               />
             </div>
+            {/* 发送方式切换入口放在「发送 / 终止响应」三元之外：回复进行中只剩终止按钮，
+                偏好本身与当前会话无关，此时也应可切（AC-03） */}
+            <Select<SendMode>
+              size="small"
+              value={sendMode}
+              onChange={handleSendModeChange}
+              options={SEND_MODE_OPTIONS}
+              aria-label="发送方式"
+              data-testid="clarification-send-mode-select"
+              style={{ width: 136, flexShrink: 0 }}
+            />
             {showReplyingIndicator && cancelSupported && convData?.processingTurnId != null ? (
               <Button
                 danger
@@ -856,7 +1054,8 @@ export function WorkitemClarificationPanel({
                 aria-label="发送消息"
                 onClick={handleSend}
                 loading={submitMutation.isPending}
-                disabled={isCreatingConversation || isReplying || isConversationLoading || !inputValue.trim()}
+                disabled={isCreatingConversation || isReplying || isConversationLoading
+                  || conversationHistoryFailed || agentRestorePending || !inputValue.trim()}
               />
             )}
           </div>

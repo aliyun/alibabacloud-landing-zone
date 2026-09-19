@@ -20,7 +20,21 @@
         SELECT * FROM sdlc_step WHERE sdlc_id = #{sdlcId} AND is_deleted = 0
         ORDER BY step_order ASC
     </select>
-    <update id="update">
+    <!-- 列表页只需要步骤数，聚合出 count 即可，避免把 MEDIUMTEXT 的 instruction_md 整页拉回。 -->
+    <select id="countBySdlcIds" resultType="com.aliyun.autowonder.sdlc.dto.SdlcStepCount">
+        SELECT sdlc_id AS sdlcId, COUNT(*) AS cnt FROM sdlc_step
+        WHERE is_deleted = 0
+          AND sdlc_id IN
+        <!-- An empty collection would render "IN ()", a syntax error; IN (NULL) matches no row. -->
+        <choose>
+            <when test="sdlcIds != null and sdlcIds.size() > 0">
+                <foreach collection="sdlcIds" item="sdid" open="(" separator="," close=")">#{sdid}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+        GROUP BY sdlc_id
+    </select>
+    <update id="update" parameterType="com.aliyun.autowonder.sdlc.SdlcStepDO">
         UPDATE sdlc_step SET name = #{name},
             kind = #{kind}, instruction_md = #{instructionMd},
             checklist_json = #{checklistJson}, gate_policy_json = #{gatePolicyJson},

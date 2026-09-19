@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.agent.AgentEnvironmentVariableRefDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentEnvironmentVariableRefDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_environment_variable_ref
+            (tenant_id, agent_version_id, environment_variable_id)
+        VALUES
+            (#{tenantId}, #{agentVersionId}, #{environmentVariableId})
+    </insert>
+
+    <select id="exists" resultType="boolean">
+        SELECT COUNT(*) &gt; 0
+        FROM agent_environment_variable_ref
+        WHERE tenant_id = #{tenantId}
+          AND agent_version_id = #{agentVersionId}
+          AND environment_variable_id = #{environmentVariableId}
+    </select>
+
+    <delete id="delete">
+        DELETE FROM agent_environment_variable_ref
+        WHERE tenant_id = #{tenantId}
+          AND agent_version_id = #{agentVersionId}
+          AND environment_variable_id = #{environmentVariableId}
+    </delete>
+
+    <delete id="deleteByVersion">
+        DELETE FROM agent_environment_variable_ref
+        WHERE tenant_id = #{tenantId} AND agent_version_id = #{agentVersionId}
+    </delete>
+
+    <select id="listByVersion" resultType="com.aliyun.autowonder.agent.AgentEnvironmentVariableRefDO">
+        SELECT id, tenant_id, agent_version_id, environment_variable_id, gmt_create
+        FROM agent_environment_variable_ref
+        WHERE tenant_id = #{tenantId} AND agent_version_id = #{agentVersionId}
+        ORDER BY environment_variable_id, id
+    </select>
+
+    <select id="listResolutionSnapshot"
+            resultType="com.aliyun.autowonder.environment.AgentEnvironmentVariableSnapshotRow">
+        SELECT ref.tenant_id AS refTenantId,
+               ref.agent_version_id AS agentVersionId,
+               ref.environment_variable_id AS environmentVariableId,
+               ev.id AS variableId,
+               ev.tenant_id AS variableTenantId,
+               ev.name,
+               ev.credential_ref AS credentialRef
+        FROM agent_environment_variable_ref ref
+        LEFT JOIN environment_variable ev
+          ON ev.id = ref.environment_variable_id
+         AND ev.tenant_id = #{tenantId}
+         AND ev.is_deleted = 0
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.agent_version_id = #{agentVersionId}
+        ORDER BY CASE WHEN ev.id IS NULL THEN 0 ELSE 1 END,
+                 ev.name, ref.environment_variable_id, ref.id
+    </select>
+
+    <select id="listMetadataByVersion"
+            resultType="com.aliyun.autowonder.agent.AgentEnvironmentVariableRefVO">
+        SELECT ev.id, ev.name, ev.description, '**' AS `value`
+        FROM agent_environment_variable_ref ref
+        JOIN environment_variable ev
+          ON ev.id = ref.environment_variable_id
+         AND ev.tenant_id = #{tenantId}
+         AND ev.is_deleted = 0
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.agent_version_id = #{agentVersionId}
+        ORDER BY ev.name, ev.id
+    </select>
+
+    <select id="countInvalidByVersion" resultType="int">
+        SELECT COUNT(*)
+        FROM agent_environment_variable_ref ref
+        LEFT JOIN environment_variable ev
+          ON ev.id = ref.environment_variable_id
+         AND ev.tenant_id = #{tenantId}
+         AND ev.is_deleted = 0
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.agent_version_id = #{agentVersionId}
+          AND ev.id IS NULL
+    </select>
+</mapper>

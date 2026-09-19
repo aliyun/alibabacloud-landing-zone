@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { FeishuBindingPanel } from './feishu/FeishuBindingPanel';
 import { DingTalkBindingPanel } from './dingtalk/DingTalkBindingPanel';
 
 export interface ChannelDescriptor {
@@ -18,9 +19,9 @@ export const CHANNEL_REGISTRY: ChannelDescriptor[] = [
   },
   {
     key: 'FEISHU',
-    label: '飞书（待接入）',
-    enabled: false,
-    Panel: null,
+    label: '飞书',
+    enabled: true,
+    Panel: FeishuBindingPanel,
   },
   {
     key: 'SLACK',

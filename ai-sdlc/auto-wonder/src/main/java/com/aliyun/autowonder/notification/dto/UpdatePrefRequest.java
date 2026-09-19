@@ -15,5 +15,6 @@ public class UpdatePrefRequest {
         private String type;
         private boolean inApp;
         private boolean dingtalk;
+        private boolean feishu;
     }
 }

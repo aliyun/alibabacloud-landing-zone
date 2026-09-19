@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -156,4 +157,29 @@ class DispatchCompensationTaskTest {
         verify(dispatchService).runPending(3L);
         verify(redisManager).releaseLock(eq("dispatch:compensation:lock"), anyString());
     }
+
+    @Test
+    void onePhaseQueryFailureDoesNotAbortLaterPhases() {
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+        when(dispatchDao.listStuck(eq(List.of(DispatchStatus.PENDING)), anyLong(), anyInt()))
+                .thenThrow(new RuntimeException("pending query failed"));
+        when(dispatchDao.listStuck(eq(List.of(DispatchStatus.ACKED,
+                DispatchStatus.RUNNING)), anyLong(), anyInt()))
+                .thenReturn(List.of(row(12L, 101L, 201L, 301L, DispatchStatus.RUNNING)));
+
+        assertDoesNotThrow(task::sweep);
+
+        verify(dispatchService).onTimeout(101L, 12L);
+        verify(redisManager).releaseLock(eq("dispatch:compensation:lock"), anyString());
+    }
+
+    @Test
+    void repairsReleasedWaitersEvenWhenThereAreNoStalePausingRows() {
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+
+        task.sweep();
+
+        verify(interactionWorkflowService).reconcileReleasedWaiters();
+    }
+
 }

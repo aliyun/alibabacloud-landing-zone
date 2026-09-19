@@ -116,8 +116,8 @@ describe('MemoryReviewPage', () => {
     await userEvent.type(within(dialog).getByLabelText('记忆归属 ID'), '9');
     await userEvent.click(within(dialog).getByRole('button', { name: /确认采纳/ }));
 
-    expect(updateBody).toMatchObject({ type: 'PREFERENCE', contentMd: '统一返回 Result 包装' });
-    expect(reviewBody).toMatchObject({ decision: 'ADOPT', scope: 'SQUAD', ownerRef: 9 });
+    expect(updateBody).toBeUndefined();
+    expect(reviewBody).toMatchObject({ decision: 'ADOPT', scope: 'SQUAD', ownerRef: 9, editedType: 'PREFERENCE', editedContentMd: '统一返回 Result 包装' });
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(/编辑后采纳成功/)).toBeInTheDocument();
     expect(within(alert).getByText(/已按最新内容和类型采纳/)).toBeInTheDocument();
@@ -200,6 +200,9 @@ describe('MemoryReviewPage', () => {
   it('paginates to the next page when the current page is full', async () => {
     const requestedPages: number[] = [];
     server.use(
+      http.get('/api/memories/reviews/count', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: 21,
+      })),
       http.get('/api/memories/reviews', ({ request }) => {
         const url = new URL(request.url);
         const page = Number(url.searchParams.get('page') ?? '1');
@@ -246,7 +249,56 @@ describe('MemoryReviewPage', () => {
 
     await screen.findByText('末页记忆');
     expect(requestedPages).toContain(2);
-    expect(screen.getByText(/共 1 条待审核/)).toBeInTheDocument();
+    // 末页展示的是后端真实待审核总数，而不是当前页条数(1)或 page*size+1 的占位值(41)
+    expect(screen.getByText(/共 21 条待审核/)).toBeInTheDocument();
+    expect(screen.queryByText(/共 1 条待审核/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/共 41 条待审核/)).not.toBeInTheDocument();
+  });
+
+  it('shows the backend pending total on the first page and keeps it stable', async () => {
+    server.use(
+      http.get('/api/memories/reviews/count', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: 21,
+      })),
+      http.get('/api/memories/reviews', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: Array.from({ length: 20 }, (_, i) => ({
+          id: i + 1,
+          scope: 'ORG',
+          ownerRef: null,
+          type: 'FACT',
+          title: `待审核记忆${i + 1}`,
+          contentMd: `内容${i + 1}`,
+          status: 'PENDING',
+          source: null,
+          sourceRef: null,
+          version: 0,
+          gmtCreate: '2026-07-01T10:00:00Z',
+        })),
+      })),
+    );
+
+    renderPage();
+    await screen.findByText('待审核记忆1');
+
+    // 21 条待审核 → 2 页；旧实现第二页会显示 21 条，第三页 41 条
+    expect(screen.getByTitle('2')).toBeInTheDocument();
+    expect(screen.queryByTitle('3')).not.toBeInTheDocument();
+  });
+
+  it('shows zero pending memories for an empty review queue', async () => {
+    server.use(
+      http.get('/api/memories/reviews/count', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: 0,
+      })),
+      http.get('/api/memories/reviews', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('共 0 条待审核')).toBeInTheDocument();
   });
 
   it('keeps review commands visible but blocks them for read-only members', async () => {

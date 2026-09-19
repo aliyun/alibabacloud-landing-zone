@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ClipboardEvent as ReactClipboardEvent, DragEvent as ReactDragEvent } from 'react';
 import { Alert, Button, Card, Collapse, Form, Input, message, Select, Space, Upload } from 'antd';
 import { InboxOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
@@ -7,6 +8,16 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs, { type Dayjs } from 'dayjs';
 import { listSquads, getSquadMembers } from '@/features/squad/api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import {
+  DOCUMENT_ACCEPT_ATTRIBUTE,
+  DOCUMENT_UPLOAD_MESSAGES,
+  documentsFromDataTransfer,
+  filesFromClipboard,
+  pastedFileForUpload,
+  validateDocumentSelection,
+  type DocumentSelectionContext,
+  type DocumentSelectionVerdict,
+} from '@/shared/lib/documentUpload';
 import { useCreateScheduledTask, useUploadScheduledTaskDocuments } from './hooks';
 import { normalizeRunPolicy, RunPolicyEditor } from './components/RunPolicyEditor';
 import { ScheduleEditor } from './components/ScheduleEditor';
@@ -19,13 +30,88 @@ export function initialStatusForCreate(requestedStatus: 'ACTIVE' | 'PAUSED', doc
   return documentCount > 0 && requestedStatus === 'ACTIVE' ? 'PAUSED' : requestedStatus;
 }
 
+// ApiError extends Error, so this also covers a plain Error; trimming keeps a blank reason
+// from rendering a truncated hint such as "上传失败：".
+export function backendErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message.trim() : '';
+}
+
+export function documentSelectionContext(current: readonly UploadFile[]): DocumentSelectionContext {
+  return {
+    existingCount: current.length,
+    existingNames: current.map((item) => item.name),
+    existingTotalBytes: current.reduce((total, item) => total + (item.originFileObj?.size ?? item.size ?? 0), 0),
+  };
+}
+
+let uploadFileSequence = 0;
+
+/** Clipboard files never pass through the picker, so build the UploadFile shape antd creates for picked files. */
+export function asUploadFile(file: File): UploadFile {
+  const uid = `document-${Date.now()}-${(uploadFileSequence += 1)}`;
+  return { uid, name: file.name, size: file.size, type: file.type, originFileObj: Object.assign(file, { uid, lastModifiedDate: new Date(file.lastModified) }) };
+}
+
 export function ScheduledTaskCreatePage() {
   const navigate = useNavigate(); const accessCommand = useAccessCommand();
   const [form] = Form.useForm<CreateFormValues & { schedulePreset: string }>();
   const [files, setFiles] = useState<UploadFile[]>([]); const [selectedAgentId, setSelectedAgentId] = useState<number>();
+  // rc-upload hands the whole selection to every beforeUpload call, so caching by batch identity
+  // validates a multi-file drop once (all-or-nothing, like the workitem card) and reports one message.
+  const documentBatchRef = useRef<{ batch: readonly File[]; verdict: DocumentSelectionVerdict; reported: boolean } | null>(null);
   const squadId = Form.useWatch('squadId', form); const createTask = useCreateScheduledTask(); const uploadDocuments = useUploadScheduledTaskDocuments();
   const { data: squadsPage } = useQuery({ queryKey: ['squads', 'scheduled-task-selector'], queryFn: () => listSquads({ pageNum: 1, pageSize: 100 }) });
   const { data: members = [], isLoading: membersLoading } = useQuery({ queryKey: ['squads', squadId, 'members'], queryFn: () => getSquadMembers(squadId!), enabled: Boolean(squadId) });
+  const beforeUpload = (_file: File, batch: readonly File[]) => {
+    let verification = documentBatchRef.current;
+    if (!verification || verification.batch !== batch) {
+      verification = { batch, verdict: validateDocumentSelection(batch, documentSelectionContext(files)), reported: false };
+      documentBatchRef.current = verification;
+    }
+    const { verdict } = verification;
+    if (verdict.ok) return false;
+    if (!verification.reported) {
+      verification.reported = true;
+      message.error(verdict.message);
+    }
+    return Upload.LIST_IGNORE;
+  };
+  const handlePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
+    const pasted = filesFromClipboard(event.clipboardData);
+    // A text-only paste carries no files: leave it alone so ordinary text areas keep working.
+    if (pasted.length === 0) return;
+    event.preventDefault();
+    const renamed = pasted.map((file) => pastedFileForUpload(file));
+    const verdict = validateDocumentSelection(renamed, documentSelectionContext(files));
+    if (!verdict.ok) { message.error(verdict.message); return; }
+    setFiles((current) => [...current, ...renamed.map(asUploadFile)]);
+  };
+  // Runs in the capture phase so an invalid drop is reported with the shared copy and never reaches
+  // rc-upload, whose own accept filter would otherwise silently discard unsupported files.
+  const handleDropGuard = (event: ReactDragEvent<HTMLDivElement>) => {
+    const { files: dropped, containsDirectory } = documentsFromDataTransfer(event.dataTransfer);
+    let failure: string | null = null;
+    if (containsDirectory) {
+      failure = DOCUMENT_UPLOAD_MESSAGES.directory;
+    } else if (dropped.length === 0) {
+      failure = DOCUMENT_UPLOAD_MESSAGES.noLocalFile;
+    } else {
+      const verdict = validateDocumentSelection(dropped, documentSelectionContext(files));
+      if (!verdict.ok) failure = verdict.message;
+    }
+    if (!failure) return;
+    event.preventDefault(); event.stopPropagation();
+    message.error(failure);
+  };
+  useEffect(() => {
+    const preventDefault = (event: Event) => event.preventDefault();
+    window.addEventListener('dragover', preventDefault);
+    window.addEventListener('drop', preventDefault);
+    return () => {
+      window.removeEventListener('dragover', preventDefault);
+      window.removeEventListener('drop', preventDefault);
+    };
+  }, []);
   const submit = (values: CreateFormValues) => accessCommand('READ_WRITE', '创建定时任务', async () => {
     const runAt = values.runAtDate && values.runAtTime ? dayjs(values.runAtDate).hour(values.runAtTime.hour()).minute(values.runAtTime.minute()).second(0).millisecond(0).toISOString() : undefined;
     const requestedStatus = values.initialStatus ?? 'ACTIVE';
@@ -38,15 +124,17 @@ export function ScheduledTaskCreatePage() {
       const rawFiles: File[] = files.flatMap((file) => file.originFileObj ? [file.originFileObj] : []);
       try {
         if (rawFiles.length) await uploadDocuments.mutateAsync({ id: task.id, files: rawFiles });
-      } catch {
-        message.error('任务已保存为暂停，需求文档上传失败；请在任务详情重试上传后再启用。');
+      } catch (error) {
+        const reason = backendErrorMessage(error);
+        message.error(`任务已保存为暂停，需求文档上传失败${reason ? `：${reason}` : ''}；请在任务详情重试上传后再启用。`);
         navigate(`/scheduled-tasks/${task.id}`);
         return;
       }
       if (requestedStatus === 'ACTIVE' && initialStatus === 'PAUSED') {
         try { await transitionScheduledTask(task.id, 'enable', task.version); }
-        catch {
-          message.error('需求文档已上传，但启用失败；任务仍为暂停状态，请在任务详情重试启用。');
+        catch (error) {
+          const reason = backendErrorMessage(error);
+          message.error(`需求文档已上传，但启用失败${reason ? `：${reason}` : ''}；任务仍为暂停状态，请在任务详情重试启用。`);
           navigate(`/scheduled-tasks/${task.id}`);
           return;
         }
@@ -63,7 +151,7 @@ export function ScheduledTaskCreatePage() {
     {(() => { const selectedMember = members.find((member) => member.agentId === Number(selectedAgentId)); return selectedMember ? <Alert type="info" showIcon message={`${selectedMember.agentName} 将按 ${selectedMember.sdlcName || '未绑定 SDLC（直接接受调度指令）'} 执行`} description={selectedMember.sdlcSteps?.length ? selectedMember.sdlcSteps.map((step) => `${step.stepOrder}. ${step.name}`).join(' → ') : undefined} style={{ marginBottom: 16 }} /> : null; })()}
     <Form.Item label="时区"><Input value="Asia/Shanghai" disabled /></Form.Item><ScheduleEditor timezone="Asia/Shanghai" />
     <Collapse items={[{ key: 'policy', label: '运行策略与连续会话设置', children: <RunPolicyEditor /> }]} />
-    <Form.Item label="需求文档" style={{ marginTop: 24 }} extra="任务创建成功后自动上传，并随每次运行冻结。"><Upload.Dragger multiple beforeUpload={() => false} fileList={files} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">点击或拖拽上传需求文档</p></Upload.Dragger></Form.Item>
+    <Form.Item label="需求文档" style={{ marginTop: 24 }} extra="任务创建成功后自动上传，并随每次运行冻结。"><div data-testid="scheduled-task-document-dropzone" aria-label="需求文档上传区（支持点击、拖拽或粘贴）" tabIndex={0} onPaste={handlePaste} onDropCapture={handleDropGuard} style={{ outline: 'none' }}><Upload.Dragger multiple accept={DOCUMENT_ACCEPT_ATTRIBUTE} beforeUpload={beforeUpload} fileList={files} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">点击或拖拽上传需求文档，也可 Ctrl/Cmd+V 粘贴截图</p></Upload.Dragger></div></Form.Item>
     <Space><Button type="primary" htmlType="submit" loading={createTask.isPending} onClick={() => form.setFieldValue('initialStatus', 'ACTIVE')}>创建并启用</Button><Button htmlType="submit" loading={createTask.isPending} onClick={() => form.setFieldValue('initialStatus', 'PAUSED')}>保存为暂停</Button><Button onClick={() => navigate('/scheduled-tasks')}>取消</Button></Space>
   </Form></Card>;
 }

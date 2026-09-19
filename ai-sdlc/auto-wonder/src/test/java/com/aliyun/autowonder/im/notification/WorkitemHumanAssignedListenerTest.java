@@ -58,6 +58,20 @@ class WorkitemHumanAssignedListenerTest {
     }
 
     @Test
+    void selectedFeishuUsesFeishuIdentityAndPersistsProviderInQueueKey() {
+        Fixture fixture = new Fixture();
+        when(fixture.channelConfigService.selectedProvider()).thenReturn("FEISHU");
+        when(fixture.channelConfigService.isReady("FEISHU")).thenReturn(true);
+        when(fixture.identityService.find(99L, "FEISHU")).thenReturn(identity());
+        fixture.listener.onWorkitemHumanAssigned(event());
+        ArgumentCaptor<ImNotificationTask> task = ArgumentCaptor.forClass(ImNotificationTask.class);
+        verify(fixture.queue).enqueue(task.capture());
+        assertEquals("9001:FEISHU:99", task.getValue().notificationKey());
+        assertEquals("FEISHU", task.getValue().provider());
+        verify(fixture.identityService, never()).find(99L, "DINGTALK");
+    }
+
+    @Test
     void missingIdentityOrChannelSkipsQueue() {
         Fixture missingIdentity = new Fixture();
         when(missingIdentity.identityService.find(99L, "DINGTALK")).thenReturn(null);
@@ -135,6 +149,7 @@ class WorkitemHumanAssignedListenerTest {
     private static class Fixture {
         final UserImIdentityService identityService = mock(UserImIdentityService.class);
         final PlatformImChannelConfigService channelConfigService = mock(PlatformImChannelConfigService.class);
+        { when(channelConfigService.selectedProvider()).thenReturn("DINGTALK"); }
         final ImNotificationQueue queue = mock(ImNotificationQueue.class);
         final WorkitemHumanAssignedListener listener =
                 new WorkitemHumanAssignedListener(identityService, channelConfigService, queue);

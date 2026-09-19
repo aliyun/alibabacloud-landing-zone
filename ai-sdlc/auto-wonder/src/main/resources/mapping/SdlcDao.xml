@@ -23,6 +23,22 @@
             is_deleted = 0
             <if test="workType != null">AND work_type = #{workType}</if>
             <if test="status != null">AND status = #{status}</if>
+            <!-- tenantId scopes only the squad subquery; the sdlc list itself stays workspace-agnostic -->
+            <if test="squadIds != null and squadIds.size() > 0">
+                AND id IN (
+                    SELECT av.sdlc_id FROM agent_version av
+                    JOIN agent a ON a.online_version_id = av.id AND a.is_deleted = 0
+                    JOIN squad_member sm ON sm.agent_id = a.id
+                    <!-- Aligns with SquadDao.listByIds, which never lends a soft-deleted squad its name. -->
+                    JOIN squad s ON s.id = sm.squad_id AND s.is_deleted = 0
+                    WHERE av.is_deleted = 0 AND av.sdlc_id IS NOT NULL
+                    <if test="tenantId != null">
+                        AND av.tenant_id = #{tenantId} AND a.tenant_id = #{tenantId} AND sm.tenant_id = #{tenantId}
+                    </if>
+                    AND sm.squad_id IN
+                    <foreach collection="squadIds" item="sqid" open="(" separator="," close=")">#{sqid}</foreach>
+                )
+            </if>
         </where>
         ORDER BY id DESC LIMIT #{offset}, #{limit}
     </select>

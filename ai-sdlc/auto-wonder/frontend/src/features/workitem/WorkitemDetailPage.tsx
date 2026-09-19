@@ -1,3 +1,4 @@
+import { RecoveryControls } from './components/RecoveryControls';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Empty, List, Modal, Spin, Result, Button, Space, Tag, Typography } from 'antd';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -6,7 +7,7 @@ import { useTemplateDetail } from '@/features/statemachine/hooks';
 import {
   useWorkitem, useUnifiedTimeline, useParticipants, useMentionCandidates,
   useDeliveryProgress, useClarification, useArtifacts, useRequirementDocuments, useTransitionWorkitem, useSyncExternalWorkitem,
-  useUpdateWorkitemContent, useDeleteWorkitem,
+  useUpdateWorkitemContent, useDeleteWorkitem, useToggleWatch,
 } from './hooks';
 import { WorkitemHeader } from './components/WorkitemHeader';
 import { WorkitemMeta } from './components/WorkitemMeta';
@@ -14,6 +15,7 @@ import { ScheduledStartControl } from './components/ScheduledStartControl';
 import { HumanInterventionAlert } from './components/HumanInterventionBadge';
 import { WorkitemActionBar } from './components/WorkitemActionBar';
 import { StartDeliveryModal } from './components/StartDeliveryModal';
+import { ClarifyReminderModal } from './components/ClarifyReminderModal';
 import { AssignHumanModal } from './components/AssignHumanModal';
 import { WorkitemContent } from './components/WorkitemContent';
 import { RequirementDocumentsCard } from './components/RequirementDocumentsCard';
@@ -26,6 +28,7 @@ import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { AI_CLARIFICATION_ENABLED } from './featureFlags';
 import { isSameClarifyView, readClarifyView, writeClarifyView } from './clarifyView';
 import type { ClarifyContext, ClarifyView } from './clarifyView';
+import { isClarifyReminderSuppressed, suppressClarifyReminder } from './clarifyReminderPreference';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { CLARIFICATION_THEME } from './clarification/theme';
 
@@ -37,12 +40,21 @@ export function WorkitemDetailPage() {
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
   const [deliveryOpen, setDeliveryOpen] = useState(false);
+  const [clarifyReminderOpen, setClarifyReminderOpen] = useState(false);
+  // localStorage 不是响应式的：挂载时读一次进 state，本次会话内勾选后立刻生效，不必刷新页面
+  const [clarifyReminderSuppressed, setClarifyReminderSuppressed] = useState(isClarifyReminderSuppressed);
   const [assignHumanOpen, setAssignHumanOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  // Router 导航可以延后提交。同帧的全屏/会话上报必须累积到尚未提交的 URL，
+  // 否则后一次上报会用旧 searchParams 覆盖前一次变更。
+  const clarifySearchRef = useRef({ committed: searchParams, pending: searchParams });
+  if (clarifySearchRef.current.committed !== searchParams) {
+    clarifySearchRef.current = { committed: searchParams, pending: searchParams };
+  }
   // 澄清视图状态挂在 URL 上：刷新后仍停在原工单的原澄清会话并恢复全屏态（工单 53035）
   const clarifyView = readClarifyView(searchParams);
   const panelMode = clarifyView.mode;
@@ -55,11 +67,13 @@ export function WorkitemDetailPage() {
   // 依赖 react-router 按 location.search 记忆化的 searchParams：交付进度在轮询，
   // 但轮询不改 search，回调标识因此稳定，澄清面板的上下文上报 effect 不会被无谓地反复触发。
   const updateClarifyView = useCallback((patch: Partial<ClarifyView>) => {
-    const next = writeClarifyView(searchParams, patch);
-    if (isSameClarifyView(readClarifyView(next), readClarifyView(searchParams))) return;
+    const current = clarifySearchRef.current.pending;
+    const next = writeClarifyView(current, patch);
+    if (isSameClarifyView(readClarifyView(next), readClarifyView(current))) return;
+    clarifySearchRef.current.pending = next;
     // replace：刷新能恢复即可，不该让每次进出澄清都往浏览历史里塞一条
     setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [setSearchParams]);
   const handleClarifyContextChange = useCallback(
     (context: Partial<ClarifyContext>) => updateClarifyView(context),
     [updateClarifyView],
@@ -74,6 +88,7 @@ export function WorkitemDetailPage() {
   const transitionMutation = useTransitionWorkitem();
   const externalSyncMutation = useSyncExternalWorkitem();
   const deleteMutation = useDeleteWorkitem();
+  const watchMutation = useToggleWatch();
   const { data: timeline = [], isLoading: timelineLoading } = useUnifiedTimeline(id || '');
   const { data: participants = [], isLoading: participantsLoading } = useParticipants(id || '');
   const { data: mentionCandidates = participants } = useMentionCandidates(id || '', mentionQuery);
@@ -92,6 +107,37 @@ export function WorkitemDetailPage() {
 
   const handleClarifyConfirm = () => {
     queryClient.invalidateQueries({ queryKey: ['workitem', id, 'clarification'] });
+  };
+  const hasSdlc = workitem.sdlcId != null;
+  // 澄清材料就是左栏「澄清材料 (AI 生成)」卡片的数据源：有内容即视为已完成澄清
+  const clarificationDone = Boolean(clarification?.contentMd?.trim());
+  // 需求文档已经就位，说明需求信息不缺，没必要再引导去澄清（工单 54819）
+  const hasRequirementDocuments = requirementDocuments.length > 0;
+  // 只在「首次启动交付 + 尚未完成澄清 + 没有需求文档 + 用户没说过别再提醒」时引导（工单 53315 / 54819）；
+  // 按钮已变成「重新指派」说明不是首次
+  const shouldRemindClarify = AI_CLARIFICATION_ENABLED
+    && !hasSdlc && !clarificationDone && !hasRequirementDocuments && !clarifyReminderSuppressed;
+  const handleStartDeliveryClick = () => accessCommand(
+    'READ_WRITE',
+    hasSdlc ? '重新指派工单' : '启动工单交付',
+    // 引导弹窗只是插在原流程前面：跳过就照旧打开启动交付弹窗
+    () => (shouldRemindClarify ? setClarifyReminderOpen(true) : setDeliveryOpen(true)),
+  );
+  // 只有跳过和去澄清算用户做了决定，关闭图标不算，所以落偏好收在这一个入口（工单 54819）
+  const rememberClarifyReminderChoice = (rememberChoice: boolean) => {
+    if (!rememberChoice) return;
+    suppressClarifyReminder();
+    setClarifyReminderSuppressed(true);
+  };
+  const handleGoClarify = (rememberChoice: boolean) => {
+    rememberClarifyReminderChoice(rememberChoice);
+    setClarifyReminderOpen(false);
+    accessCommand('READ_WRITE', '发起 AI 需求澄清', () => updateClarifyView({ mode: 'clarify' }));
+  };
+  const handleSkipClarifyReminder = (rememberChoice: boolean) => {
+    rememberClarifyReminderChoice(rememberChoice);
+    setClarifyReminderOpen(false);
+    setDeliveryOpen(true);
   };
   // 宽度上限保证左栏工单正文区至少保留 480px 可用宽度
   const clarifyMaxWidth = Math.max(
@@ -135,6 +181,7 @@ export function WorkitemDetailPage() {
             title={workitem.title}
             statusName={workitem.statusName ?? null}
             workType={workitem.workType}
+            workitemId={workitem.id}
             origin={workitem.origin}
             scheduledStartAt={workitem.scheduledStartAt}
             scheduledStartTriggeredAt={workitem.scheduledStartTriggeredAt}
@@ -157,12 +204,11 @@ export function WorkitemDetailPage() {
             scheduledStartAt={workitem.scheduledStartAt}
           />
           <WorkitemActionBar
-            hasSdlc={workitem.sdlcId != null}
-            onStartDelivery={() => accessCommand(
-              'READ_WRITE',
-              workitem.sdlcId != null ? '重新指派工单' : '启动工单交付',
-              () => setDeliveryOpen(true),
-            )}
+            hasSdlc={hasSdlc}
+            watched={!!workitem.watched}
+            onToggleWatch={() => watchMutation.mutate({ id, watched: !!workitem.watched })}
+            watchLoading={watchMutation.isPending}
+            onStartDelivery={handleStartDeliveryClick}
             onAssignHuman={() => accessCommand(
               'READ_WRITE',
               '指派工单给真人',
@@ -180,6 +226,7 @@ export function WorkitemDetailPage() {
             deleteDisabled={workitem.deletable === false}
             deleteDisabledReason={workitem.deletableReason}
           />
+          <RecoveryControls workitemId={id} />
           <WorkitemContent
             title={workitem.title}
             contentMd={workitem.contentMd}
@@ -263,10 +310,16 @@ export function WorkitemDetailPage() {
         />
       </div>
 
+      <ClarifyReminderModal
+        open={clarifyReminderOpen}
+        onConfirm={handleGoClarify}
+        onSkip={handleSkipClarifyReminder}
+        onClose={() => setClarifyReminderOpen(false)}
+      />
       <StartDeliveryModal
         open={deliveryOpen}
         workitemId={id}
-        hasSdlc={workitem.sdlcId != null}
+        hasSdlc={hasSdlc}
         onClose={() => setDeliveryOpen(false)}
       />
       <AssignHumanModal

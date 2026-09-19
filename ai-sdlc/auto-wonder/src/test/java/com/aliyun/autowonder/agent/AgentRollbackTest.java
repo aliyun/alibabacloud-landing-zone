@@ -49,6 +49,7 @@ class AgentRollbackTest {
         agent.setVersion(2);
         AgentVersionDO target = new AgentVersionDO();
         target.setId(20L);
+        target.setTenantId(100L);
         target.setAgentId(10L);
         target.setVersionNo(1);
         target.setStatus("APPROVED");
@@ -108,6 +109,7 @@ class AgentRollbackTest {
     void offline_non_online_throws() {
         AgentDO agent = new AgentDO();
         agent.setId(10L);
+        agent.setTenantId(100L);
         agent.setStatus("DRAFT");
         when(agentDao.findById(10L)).thenReturn(agent);
         BizException ex = assertThrows(BizException.class, () -> service.offline(10L, 100L, 7L));
@@ -126,6 +128,7 @@ class AgentRollbackTest {
         agent.setVersion(3);
         AgentVersionDO latestApproved = new AgentVersionDO();
         latestApproved.setId(20L);
+        latestApproved.setTenantId(100L);
         latestApproved.setAgentId(10L);
         latestApproved.setVersionNo(2);
         latestApproved.setStatus("APPROVED");
@@ -148,6 +151,7 @@ class AgentRollbackTest {
     void online_non_offline_throws() {
         AgentDO agent = new AgentDO();
         agent.setId(10L);
+        agent.setTenantId(100L);
         agent.setStatus("ONLINE");
         when(agentDao.findById(10L)).thenReturn(agent);
         BizException ex = assertThrows(BizException.class, () -> service.online(10L, 100L, 7L));
@@ -158,6 +162,7 @@ class AgentRollbackTest {
     void online_without_approved_version_throws() {
         AgentDO agent = new AgentDO();
         agent.setId(10L);
+        agent.setTenantId(100L);
         agent.setStatus("OFFLINE");
         when(agentDao.findById(10L)).thenReturn(agent);
         when(versionDao.listApprovedByAgent(10L)).thenReturn(List.of());
@@ -169,6 +174,7 @@ class AgentRollbackTest {
     void listVersions_returns_summaries() {
         AgentDO agent = new AgentDO();
         agent.setId(10L);
+        agent.setTenantId(100L);
         when(agentDao.findById(10L)).thenReturn(agent);
         AgentVersionDO v1 = new AgentVersionDO();
         v1.setId(20L);
@@ -177,8 +183,22 @@ class AgentRollbackTest {
         v1.setRoleName("coder");
         when(versionDao.listByAgent(10L)).thenReturn(List.of(v1));
 
-        List<AgentVersionSummaryVO> result = service.listVersions(10L);
+        List<AgentVersionSummaryVO> result = service.listVersions(10L, 100L);
         assertEquals(1, result.size());
         assertEquals(Integer.valueOf(1), result.get(0).getVersionNo());
+    }
+
+    @Test
+    void listVersions_rejects_agent_from_another_tenant() {
+        AgentDO agent = new AgentDO();
+        agent.setId(10L);
+        agent.setTenantId(200L);
+        when(agentDao.findById(10L)).thenReturn(agent);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.listVersions(10L, 100L));
+
+        assertEquals("14001", error.getCode());
+        verify(versionDao, never()).listByAgent(anyLong());
     }
 }

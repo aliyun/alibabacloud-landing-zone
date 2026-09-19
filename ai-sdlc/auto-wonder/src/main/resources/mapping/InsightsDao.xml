@@ -10,6 +10,14 @@
           <if test="agentId != null">AND agent_id = #{agentId}</if>
     </select>
 
+    <select id="countTotalCredits" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(credits), 0)
+        FROM dispatch_ai_usage
+        WHERE tenant_id = #{tenantId}
+          AND usage_at >= #{since}
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+    </select>
+
     <select id="countWorkitems" resultType="int">
         SELECT COUNT(*) FROM workitem WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND gmt_create >= #{since}
     </select>
@@ -79,6 +87,16 @@
 
     <select id="dailyTokenTrend" resultType="java.util.Map">
         SELECT DATE(usage_at) as day, COALESCE(SUM(total_tokens), 0) as tokens
+        FROM dispatch_ai_usage
+        WHERE tenant_id = #{tenantId} AND usage_at >= #{since}
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+        GROUP BY DATE(usage_at)
+        ORDER BY day DESC
+        LIMIT 7
+    </select>
+
+    <select id="dailyCreditsTrend" resultType="java.util.Map">
+        SELECT DATE(usage_at) as day, COALESCE(SUM(credits), 0) as credits
         FROM dispatch_ai_usage
         WHERE tenant_id = #{tenantId} AND usage_at >= #{since}
           <if test="agentId != null">AND agent_id = #{agentId}</if>

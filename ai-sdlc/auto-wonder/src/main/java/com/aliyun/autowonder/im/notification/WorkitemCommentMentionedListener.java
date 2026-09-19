@@ -13,7 +13,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class WorkitemCommentMentionedListener {
     private static final Logger log = LoggerFactory.getLogger(WorkitemCommentMentionedListener.class);
-    private static final String PROVIDER = "DINGTALK";
 
     private final UserImIdentityService identityService;
     private final PlatformImChannelConfigService channelConfigService;
@@ -29,26 +28,28 @@ public class WorkitemCommentMentionedListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = false)
     public void onWorkitemCommentMentioned(WorkitemCommentMentionedEvent event) {
+        String provider = "UNKNOWN";
         try {
+            provider = channelConfigService.selectedProvider();
             log.info("IM comment mention notification published tenantId={} workitemId={} commentId={} "
                             + "recipientUserId={} provider={}",
-                    event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), PROVIDER);
-            UserImIdentityDO identity = identityService.find(event.recipientUserId(), PROVIDER);
+                    event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), provider);
+            UserImIdentityDO identity = identityService.find(event.recipientUserId(), provider);
             if (identity == null || !hasText(identity.getExternalUserId())) {
                 log.info("IM comment mention notification skipped missing identity tenantId={} workitemId={} "
                                 + "commentId={} recipientUserId={} provider={}",
-                        event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), PROVIDER);
+                        event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), provider);
                 return;
             }
-            if (!channelConfigService.isReady(PROVIDER)) {
+            if (!channelConfigService.isReady(provider)) {
                 log.info("IM comment mention notification skipped channel not ready tenantId={} workitemId={} "
                                 + "commentId={} recipientUserId={} provider={}",
-                        event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), PROVIDER);
+                        event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), provider);
                 return;
             }
 
             ImNotificationTask task = new ImNotificationTask(
-                    "COMMENT_MENTION:" + event.commentId() + ":" + PROVIDER + ":" + event.recipientUserId(),
+                    "COMMENT_MENTION:" + event.commentId() + ":" + provider + ":" + event.recipientUserId(),
                     event.commentId(),
                     event.tenantId(),
                     event.workitemId(),
@@ -64,23 +65,23 @@ public class WorkitemCommentMentionedListener {
             try {
                 queue.enqueue(task);
             } catch (Exception e) {
-                logFailure(event, "enqueue-failed", e);
+                logFailure(event, provider, "enqueue-failed", e);
                 return;
             }
             log.info("IM comment mention notification queued tenantId={} workitemId={} commentId={} "
                             + "recipientUserId={} provider={}",
-                    event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), PROVIDER);
+                    event.tenantId(), event.workitemId(), event.commentId(), event.recipientUserId(), provider);
         } catch (Exception e) {
-            logFailure(event, "failed", e);
+            logFailure(event, provider, "failed", e);
         }
     }
 
-    private static void logFailure(WorkitemCommentMentionedEvent event, String reason, Exception failure) {
+    private static void logFailure(WorkitemCommentMentionedEvent event, String provider, String reason, Exception failure) {
         AlreadyLoggedException safe = AlreadyLoggedException.from(failure);
         log.error("IM comment mention notification {} tenantId={} workitemId={} commentId={} "
                         + "recipientUserId={} provider={}",
                 reason, event.tenantId(), event.workitemId(), event.commentId(),
-                event.recipientUserId(), PROVIDER, safe);
+                event.recipientUserId(), provider, safe);
     }
 
     private static boolean hasText(String value) {

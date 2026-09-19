@@ -72,11 +72,29 @@ export function useUploadScheduledTaskDocuments() {
   });
 }
 
+export function useDeleteScheduledTaskDocument() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, artifactId }: { id: number; artifactId: number }) => api.deleteScheduledTaskDocument(id, artifactId),
+    onSuccess: (_data, variables) => { message.success('附件已删除'); client.invalidateQueries({ queryKey: ['scheduled-tasks', variables.id, 'documents'] }); },
+  });
+}
+
 export function useScheduledTaskRunParticipants(runId?: number) {
   return useQuery({
     queryKey: ['scheduled-task-run', runId, 'participants'],
     queryFn: () => api.getScheduledTaskRunParticipants(runId!),
     enabled: Boolean(runId),
+  });
+}
+
+/** 仅在评论框进入 @ 候选态时拉取，避免未使用 @ 的页面断言被额外请求干扰；查询透传给后端以便召回默认 limit 之外的成员。 */
+export function useScheduledTaskRunMentionCandidates(runId?: number, q?: string | null, enabled = false) {
+  return useQuery({
+    queryKey: ['scheduled-task-run', runId, 'mention-candidates', q || ''],
+    queryFn: () => api.getScheduledTaskRunMentionCandidates(runId!, q || undefined),
+    enabled: Boolean(runId) && enabled,
+    staleTime: 60_000,
   });
 }
 

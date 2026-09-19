@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
@@ -31,8 +32,7 @@ public class WorkitemCliDownloadTokenService {
     public static final String PURPOSE = "workitem-requirement-download";
     public static final String TOKEN_ENV_NAME = "AUTOWONDER_DOWNLOAD_TOKEN";
     public static final Duration TOKEN_TTL = Duration.ofMinutes(30);
-    public static final List<String> SUPPORTED_EXTENSIONS =
-            List.of(".md", ".markdown", ".txt", ".html", ".pdf", ".png", ".jpg", ".jpeg", ".webp");
+    public static final List<String> SUPPORTED_EXTENSIONS = RequirementDocumentService.SUPPORTED_EXTENSIONS;
 
     private final JwtService jwtService;
     private final WorkitemDao workitemDao;
@@ -71,7 +71,7 @@ public class WorkitemCliDownloadTokenService {
         vo.setTokenType("Bearer");
         vo.setExpiresInSeconds(TOKEN_TTL.getSeconds());
         vo.setExpiresAt(Instant.ofEpochSecond(now + TOKEN_TTL.getSeconds()).toString());
-        vo.setServerUrl(brandingService.trustedPublicBaseUrl());
+        vo.setServerUrl(brandingService.effectivePublicBaseUrl());
         vo.setRuntimeVersion(brandingService.recommendedRuntimeVersion());
         vo.setTokenEnvName(TOKEN_ENV_NAME);
         vo.setCommand(posixCommand(token, workitemId));
@@ -102,7 +102,7 @@ public class WorkitemCliDownloadTokenService {
     /** One-line command template used in MCP tool descriptions; carries no token. */
     public String commandTemplate() {
         return "npx -y autowonder@" + brandingService.recommendedRuntimeVersion()
-                + " workitem download --server-url " + brandingService.trustedPublicBaseUrl()
+                + " workitem download --server-url " + brandingService.effectivePublicBaseUrl()
                 + " --workitem-id <workitem-id>"
                 + " --file <name-or-id> --output-dir <dir> --json";
     }
@@ -114,7 +114,7 @@ public class WorkitemCliDownloadTokenService {
     private String posixCommand(String token, long workitemId) {
         return "export " + TOKEN_ENV_NAME + "=" + posixQuote(token) + "\n\n"
                 + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem download \\\n"
-                + "  --server-url " + posixQuote(brandingService.trustedPublicBaseUrl()) + " \\\n"
+                + "  --server-url " + posixQuote(brandingService.effectivePublicBaseUrl()) + " \\\n"
                 + "  --workitem-id " + workitemId + " \\\n"
                 + "  --file <name-or-id> \\\n"
                 + "  --output-dir <dir> \\\n"
@@ -124,7 +124,7 @@ public class WorkitemCliDownloadTokenService {
     private String powershellCommand(String token, long workitemId) {
         return "$env:" + TOKEN_ENV_NAME + "=" + powershellQuote(token) + "\n\n"
                 + "npx -y autowonder@" + brandingService.recommendedRuntimeVersion() + " workitem download `\n"
-                + "  --server-url " + powershellQuote(brandingService.trustedPublicBaseUrl()) + " `\n"
+                + "  --server-url " + powershellQuote(brandingService.effectivePublicBaseUrl()) + " `\n"
                 + "  --workitem-id " + workitemId + " `\n"
                 + "  --file <name-or-id> `\n"
                 + "  --output-dir <dir> `\n"

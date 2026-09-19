@@ -53,6 +53,7 @@ endpoint="oss-${region}.aliyuncs.com"
 record_metadata() {
   atomic_jq "$manifest" --arg dir "$backend_dir" --arg file "$backend_file" \
     --arg bucket "$bucket" --arg key "$state_key" '
+    .localContext.terraformDirectory=(.localContext.terraformDirectory // $dir) |
     .terraform.backendDirectory=$dir |
     .terraform.stateReference=$file |
     .terraform.stateBucket=$bucket |
@@ -92,24 +93,34 @@ case "$command" in
       "$bucket" "$state_key" "$region" "$endpoint" >"$backend_file"
     chmod 600 "$backend_file"
     atomic_jq "$manifest" '.terraform.backendStatus="ready"'
+    python3 "$AUTOWONDER_OPERATIONS_CLI" initialize --manifest "$manifest" --project-root "$project_root" --allow-incomplete >/dev/null
     printf '{"phase":"terraform-backend","status":"ready"}\n'
     ;;
   destroy)
+    require_remote_submission_settled "$manifest"
     [[ $(jq -r '.terraform.mainDestroyVerified // false' "$manifest") == true ]] || die "main Terraform destroy is not verified"
     [[ $(jq -r '.terraform.stateBucket // empty' "$manifest") == "$bucket" ]] || die "state bucket metadata mismatch"
     require_command aliyun; require_command ossutil
     ensure_alicloud_profile_identity "$region"
+    actual_uid=$(jq -er '.AccountId' <<<"$AUTOWONDER_IDENTITY_JSON")
+    [[ "$actual_uid" == "$account_uid" ]] || die "Alibaba Cloud account identity mismatch"
     ossutil_preflight "$region"
+    atomic_jq "$manifest" ' .terraform.backendStatus="destroy-unknown"'
     ossutil_cli rm "oss://$bucket" --all-versions -r -f --region "$region" --endpoint "$endpoint"
     ossutil_cli rm "oss://$bucket" -m -r -f --region "$region" --endpoint "$endpoint"
-    if ossutil_cli rb --help >/dev/null 2>&1; then
-      ossutil_cli rb "oss://$bucket" --force --region "$region" --endpoint "$endpoint"
+    if [[ "$OSSUTIL_CONTRACT" == v2 ]]; then
+      ossutil_cli api delete-bucket --bucket "$bucket" --region "$region" --endpoint "$endpoint"
     else
       ossutil_cli rm "oss://$bucket" -b -f --region "$region" --endpoint "$endpoint"
     fi
+    # The final snapshot still needs backend.hcl and the actual Terraform files.
+    # Keep local recovery inputs until both cloud stores are verifiably removed.
+    atomic_jq "$manifest" '.terraform.backendStatus="destroyed"'
+    if jq -e '.operationsStore != null' "$manifest" >/dev/null; then
+      python3 "$AUTOWONDER_OPERATIONS_CLI" teardown --manifest "$manifest"
+    fi
     rm -f -- "$backend_file"
     rm -rf -- "$backend_dir/.terraform" "$backend_dir/work"
-    atomic_jq "$manifest" '.terraform.backendStatus="destroyed"'
     printf '{"phase":"terraform-backend","status":"destroyed"}\n'
     ;;
   *) die "unsupported backend command";;

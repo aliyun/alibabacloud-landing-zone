@@ -103,9 +103,9 @@ function CommentCard({
         ) : interaction.status !== 'APPLIED' ? (
           <div key={interaction.guidanceId} data-testid="comment-interaction-status"
             style={{ marginTop: 6, color: interaction.status === 'FAILED' ? '#cf1322' : '#8c8c8c', fontSize: 12 }}>
-            {interaction.status === 'FAILED'
+            {interaction.status === 'CANCELED' ? `${interaction.targetAgentName} 已取消` : interaction.status === 'FAILED'
               ? `${interaction.targetAgentName} 回复失败${interaction.error ? `：${interaction.error}` : ''}`
-              : <><Spin size="small" /> <span style={{ marginLeft: 6 }}>{interaction.targetAgentName} {interaction.status === 'QUEUED' ? '正在启动…' : '正在思考…'}</span></>}
+              : <><Spin size="small" /> <span style={{ marginLeft: 6 }}>{interaction.targetAgentName} {interaction.status === 'QUEUED' ? ({ PENDING: '排队中…', PACKAGING: '正在打包…', DISPATCHED: '等待接单…' }[interaction.executionStatus || ''] || '正在启动…') : '正在思考…'}</span></>}
           </div>
         ) : null)}
       </div>

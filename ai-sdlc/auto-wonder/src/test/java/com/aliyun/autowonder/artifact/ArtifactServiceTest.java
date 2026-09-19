@@ -79,6 +79,28 @@ class ArtifactServiceTest {
         verify(storage, never()).presignGet(anyString(), anyInt());
     }
 
+    @Test
+    void ownerAwareDownloadReturnsHttpPresignedUrlUnchanged() {
+        ArtifactDO a = artifact(1L, "WORKITEM", 3L);
+        a.setOssRef("b/k");
+        when(artifactDao.findWorkitemByTenantAndId(100L, 1L)).thenReturn(a);
+        when(storage.presignGet("b/k", 600)).thenReturn("http://172.19.133.124:9000/b/k?X-Amz-Signature=s");
+
+        assertEquals("http://172.19.133.124:9000/b/k?X-Amz-Signature=s",
+                service.getDownloadUrl(1L, new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 3L), 100L));
+    }
+
+    @Test
+    void ownerAwareDownloadReturnsHttpsPresignedUrlUnchanged() {
+        ArtifactDO a = artifact(1L, "WORKITEM", 3L);
+        a.setOssRef("b/k");
+        when(artifactDao.findWorkitemByTenantAndId(100L, 1L)).thenReturn(a);
+        when(storage.presignGet("b/k", 600)).thenReturn("https://172.19.133.124:9000/b/k?X-Amz-Signature=s");
+
+        assertEquals("https://172.19.133.124:9000/b/k?X-Amz-Signature=s",
+                service.getDownloadUrl(1L, new ArtifactOwnerRef(ExecutionSourceType.WORKITEM, 3L), 100L));
+    }
+
     private ArtifactDO artifact(long id, String sourceType, long sourceId) {
         ArtifactDO artifact = new ArtifactDO();
         artifact.setId(id);
@@ -118,6 +140,52 @@ class ArtifactServiceTest {
     }
 
     @Test
+    void retainsSameNamedFilesAcrossDispatchesButDeduplicatesAliasesWithinDispatch() {
+        ArtifactDO latest = artifact(4L, "WORKITEM", 3L);
+        latest.setDispatchId(20L);
+        latest.setName("artifacts/output/deliverables/report.md");
+        ArtifactDO alias = artifact(3L, "WORKITEM", 3L);
+        alias.setDispatchId(20L);
+        alias.setName("output/deliverables/report.md");
+        ArtifactDO historical = artifact(2L, "WORKITEM", 3L);
+        historical.setDispatchId(10L);
+        historical.setName(latest.getName());
+        when(artifactDao.listByWorkitem(100L, 3L)).thenReturn(List.of(latest, alias, historical));
+        when(artifactDao.listBySource(100L, "SCHEDULED_TASK_RUN", 3L, null)).thenReturn(List.of(latest, alias, historical));
+
+        assertEquals(List.of(4L, 2L), service.listByWorkitem(3L, 100L).stream().map(ArtifactVO::getId).toList());
+        assertEquals(List.of(4L, 2L), service.listByOwner(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 3L), 100L)
+                .stream().map(ArtifactVO::getId).toList());
+    }
+
+    @Test
+    void classifiesLegacyFilesOnReadWithoutRewritingStorage() {
+        ArtifactDO snapshot = artifact(1L, "WORKITEM", 3L);
+        snapshot.setName("artifacts/attempts/step-1/attempt-2/deliverables/report.md");
+        snapshot.setType("FILE");
+        ArtifactDO result = artifact(2L, "WORKITEM", 3L);
+        result.setName("result/runtime-result.json");
+        result.setType("FILE");
+        when(artifactDao.listByWorkitem(100L, 3L)).thenReturn(List.of(result, snapshot));
+        when(artifactDao.listByDispatch(100L, 10L)).thenReturn(List.of(result, snapshot));
+
+        assertEquals(List.of("RUNTIME", "SNAPSHOT"), service.listByWorkitem(3L, 100L).stream().map(ArtifactVO::getType).toList());
+        assertEquals(List.of("RUNTIME", "SNAPSHOT"), service.listByDispatch(10L, 100L).stream().map(ArtifactVO::getType).toList());
+        assertEquals("FILE", snapshot.getType());
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void recordClassifiesUntypedFilesWithoutRuntimeMetadata() {
+        ReportArtifactRequest req = new ReportArtifactRequest();
+        req.setWorkitemId(3L);
+        req.setName("result/runtime-result.json");
+        req.setType("FILE");
+        service.record(req, 100L);
+        verify(artifactDao).insert(argThat(a -> "RUNTIME".equals(a.getType())));
+    }
+
+    @Test
     void download_returns_presigned_url() {
         ArtifactDO a = new ArtifactDO();
         a.setId(1L); a.setTenantId(100L); a.setOssRef("b/k");
@@ -127,13 +195,13 @@ class ArtifactServiceTest {
     }
 
     @Test
-    void download_upgrades_http_presigned_url_to_https() {
+    void download_returns_http_presigned_url_unchanged() {
         ArtifactDO a = new ArtifactDO();
         a.setId(1L); a.setTenantId(100L); a.setOssRef("b/k");
         when(artifactDao.findById(1L)).thenReturn(a);
-        when(storage.presignGet("b/k", 600)).thenReturn("http://bucket.oss-cn-zhangjiakou.aliyuncs.com/k?Expires=1&Signature=s");
+        when(storage.presignGet("b/k", 600)).thenReturn("http://172.19.133.124:9000/b/k?X-Amz-Expires=600&X-Amz-Signature=s");
 
-        assertEquals("https://bucket.oss-cn-zhangjiakou.aliyuncs.com/k?Expires=1&Signature=s",
+        assertEquals("http://172.19.133.124:9000/b/k?X-Amz-Expires=600&X-Amz-Signature=s",
                 service.getDownloadUrl(1L, 100L));
     }
 
@@ -164,6 +232,53 @@ class ArtifactServiceTest {
 
         assertEquals("artifacts/output/demo.mp4", preview.getName());
         assertArrayEquals(bytes, preview.getBytes());
+    }
+
+    @Test
+    void preview_allows_html_artifacts_after_tenant_check() {
+        ArtifactDO a = new ArtifactDO();
+        a.setId(1L); a.setTenantId(100L); a.setName("requirements/plan.html"); a.setOssRef("b/k");
+        a.setSize(100L);
+        when(artifactDao.findById(1L)).thenReturn(a);
+        when(storage.get("b/k")).thenReturn("<html></html>".getBytes(StandardCharsets.UTF_8));
+
+        ArtifactService.PreviewContent preview = service.getPreviewContent(1L, 100L);
+
+        assertEquals("requirements/plan.html", preview.getName());
+        assertArrayEquals("<html></html>".getBytes(StandardCharsets.UTF_8), preview.getBytes());
+    }
+
+    @Test
+    void preview_allows_htm_and_uppercase_html_extensions() {
+        ArtifactDO htm = new ArtifactDO();
+        htm.setId(1L); htm.setTenantId(100L); htm.setName("requirements/PROTOTYPE.HTM"); htm.setOssRef("b/htm");
+        htm.setSize(100L);
+        when(artifactDao.findById(1L)).thenReturn(htm);
+        when(storage.get("b/htm")).thenReturn("<html></html>".getBytes(StandardCharsets.UTF_8));
+
+        assertNotNull(service.getPreviewContent(1L, 100L));
+
+        ArtifactDO upperHtml = new ArtifactDO();
+        upperHtml.setId(2L); upperHtml.setTenantId(100L); upperHtml.setName("requirements/PLAN.HTML"); upperHtml.setOssRef("b/html");
+        upperHtml.setSize(100L);
+        when(artifactDao.findById(2L)).thenReturn(upperHtml);
+        when(storage.get("b/html")).thenReturn("<html></html>".getBytes(StandardCharsets.UTF_8));
+
+        assertNotNull(service.getPreviewContent(2L, 100L));
+    }
+
+    @Test
+    void preview_large_html_throws_without_reading_storage() {
+        ArtifactDO a = new ArtifactDO();
+        a.setId(1L); a.setTenantId(100L); a.setName("requirements/big.html");
+        a.setSize(20L * 1024L * 1024L + 1L);
+        a.setOssRef("b/k");
+        when(artifactDao.findById(1L)).thenReturn(a);
+
+        BizException ex = assertThrows(BizException.class, () -> service.getPreviewContent(1L, 100L));
+
+        assertEquals("10001", ex.getCode());
+        verify(storage, never()).get(anyString());
     }
 
     @Test

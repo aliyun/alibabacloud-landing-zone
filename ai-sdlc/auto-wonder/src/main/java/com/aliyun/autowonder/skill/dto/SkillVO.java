@@ -22,4 +22,6 @@ public class SkillVO {
     private Date gmtModified;
     private Long modifierId;
     private String modifierName;
+    private Long categoryId;
+    private String categoryPath;
 }

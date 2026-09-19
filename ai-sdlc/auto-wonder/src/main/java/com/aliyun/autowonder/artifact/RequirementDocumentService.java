@@ -20,17 +20,22 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class RequirementDocumentService {
@@ -42,7 +47,14 @@ public class RequirementDocumentService {
     private static final long MAX_TOTAL_BYTES = 20L * 1024L * 1024L;
     private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
 
-    private enum ContextKind { MARKDOWN, TEXT, VISUAL, PDF }
+    /** Archive guards for .zip and .docx; entry cap matches SkillPackageService.MAX_ENTRIES. */
+    static final int MAX_ZIP_ENTRIES = 500;
+    static final long MAX_ZIP_INFLATED_BYTES = 50L * 1024L * 1024L;
+    static final int MAX_ZIP_PATH_DEPTH = 20;
+    private static final String DOCX_REQUIRED_ENTRY = "word/document.xml";
+    private static final Pattern DRIVE_LETTER_ENTRY = Pattern.compile("^[A-Za-z]:");
+
+    private enum ContextKind { MARKDOWN, TEXT, CODE, VISUAL, PDF, WORD, ARCHIVE }
 
     private record ContextFileType(String contentType, ContextKind contextKind) { }
 
@@ -54,6 +66,55 @@ public class RequirementDocumentService {
             new ContextFileType("text/html", ContextKind.TEXT);
     private static final ContextFileType PDF_TYPE =
             new ContextFileType("application/pdf", ContextKind.PDF);
+    private static final ContextFileType PNG_TYPE =
+            new ContextFileType("image/png", ContextKind.VISUAL);
+    private static final ContextFileType JPEG_TYPE =
+            new ContextFileType("image/jpeg", ContextKind.VISUAL);
+    private static final ContextFileType WEBP_TYPE =
+            new ContextFileType("image/webp", ContextKind.VISUAL);
+    static final String DOCX_CONTENT_TYPE =
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    private static final ContextFileType DOCX_TYPE =
+            new ContextFileType(DOCX_CONTENT_TYPE, ContextKind.WORD);
+    private static final ContextFileType DOC_TYPE =
+            new ContextFileType("application/msword", ContextKind.WORD);
+    private static final ContextFileType JAVA_TYPE =
+            new ContextFileType("text/x-java-source", ContextKind.CODE);
+    private static final ContextFileType PYTHON_TYPE =
+            new ContextFileType("text/x-python", ContextKind.CODE);
+    private static final ContextFileType ZIP_TYPE =
+            new ContextFileType("application/zip", ContextKind.ARCHIVE);
+
+    /**
+     * Single source of truth for the attachment whitelist: extension (lowercase, no dot) to content
+     * type plus the context kind that decides how the bytes are validated and how the dispatch
+     * runtime tells a digital worker to read the file. Insertion order is user-facing, it backs
+     * {@link #SUPPORTED_EXTENSIONS} in every MCP, CLI and web surface.
+     */
+    private static final Map<String, ContextFileType> TYPES_BY_EXTENSION = buildTypesByExtension();
+
+    public static final List<String> SUPPORTED_EXTENSIONS = TYPES_BY_EXTENSION.keySet().stream()
+            .map(extension -> "." + extension)
+            .toList();
+
+    private static Map<String, ContextFileType> buildTypesByExtension() {
+        Map<String, ContextFileType> types = new LinkedHashMap<>();
+        types.put("md", MARKDOWN_TYPE);
+        types.put("markdown", MARKDOWN_TYPE);
+        types.put("txt", PLAIN_TEXT_TYPE);
+        types.put("html", HTML_TYPE);
+        types.put("pdf", PDF_TYPE);
+        types.put("png", PNG_TYPE);
+        types.put("jpg", JPEG_TYPE);
+        types.put("jpeg", JPEG_TYPE);
+        types.put("webp", WEBP_TYPE);
+        types.put("docx", DOCX_TYPE);
+        types.put("doc", DOC_TYPE);
+        types.put("java", JAVA_TYPE);
+        types.put("py", PYTHON_TYPE);
+        types.put("zip", ZIP_TYPE);
+        return Collections.unmodifiableMap(types);
+    }
 
     private final ArtifactDao artifactDao;
     private final WorkitemDao workitemDao;
@@ -375,47 +436,108 @@ public class RequirementDocumentService {
     }
 
     private ContextFileType fileTypeFor(String filename) {
+        ContextFileType type = TYPES_BY_EXTENSION.get(extensionOf(filename));
+        if (type == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "不支持的文件格式，仅支持 " + String.join("、", SUPPORTED_EXTENSIONS));
+        }
+        return type;
+    }
+
+    private static String extensionOf(String filename) {
         String lower = filename.toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
-            return MARKDOWN_TYPE;
-        }
-        if (lower.endsWith(".txt")) {
-            return PLAIN_TEXT_TYPE;
-        }
-        if (lower.endsWith(".html")) {
-            return HTML_TYPE;
-        }
-        if (lower.endsWith(".pdf")) {
-            return PDF_TYPE;
-        }
-        if (lower.endsWith(".png")) {
-            return new ContextFileType("image/png", ContextKind.VISUAL);
-        }
-        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-            return new ContextFileType("image/jpeg", ContextKind.VISUAL);
-        }
-        if (lower.endsWith(".webp")) {
-            return new ContextFileType("image/webp", ContextKind.VISUAL);
-        }
-        throw new BizException(ErrorCode.PARAM_INVALID);
+        int dot = lower.lastIndexOf('.');
+        return dot < 0 || dot == lower.length() - 1 ? "" : lower.substring(dot + 1);
     }
 
     private void validateBytes(byte[] bytes, ContextFileType type) {
         if (bytes == null || bytes.length > MAX_FILE_BYTES) {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
-        if (type.contextKind() == ContextKind.MARKDOWN || type.contextKind() == ContextKind.TEXT) {
-            validateTextBytes(bytes);
+        switch (type.contextKind()) {
+            case MARKDOWN, TEXT, CODE -> validateTextBytes(bytes);
+            case PDF -> requireSignature(hasPdfSignature(bytes), "文件内容与 PDF 格式不符");
+            case VISUAL -> requireSignature(hasImageSignature(type.contentType(), bytes),
+                    "文件内容与图片格式不符");
+            case WORD -> validateWordBytes(bytes, type.contentType());
+            case ARCHIVE -> validateZipBytes(bytes, null);
+            // Exhaustive today; an explicit default keeps a future ContextKind from failing open.
+            default -> throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+    }
+
+    /**
+     * .docx is an OOXML ZIP container, so it gets the same archive guards and must carry
+     * word/document.xml; a renamed plain ZIP is rejected as format forgery. .doc is legacy OLE2.
+     * Neither path ever parses or runs document macros.
+     */
+    private void validateWordBytes(byte[] bytes, String contentType) {
+        if (DOCX_CONTENT_TYPE.equals(contentType)) {
+            validateZipBytes(bytes, DOCX_REQUIRED_ENTRY);
             return;
         }
-        if (type.contextKind() == ContextKind.PDF) {
-            if (!hasPdfSignature(bytes)) {
-                throw new BizException(ErrorCode.PARAM_INVALID);
+        requireSignature(hasOle2Signature(bytes), "文件内容与 .doc 格式不符");
+    }
+
+    private static void requireSignature(boolean valid, String message) {
+        if (!valid) {
+            throw new BizException(ErrorCode.PARAM_INVALID, message);
+        }
+    }
+
+    private void validateZipBytes(byte[] bytes, String requiredEntry) {
+        requireSignature(hasZipSignature(bytes), "文件内容与 ZIP 格式不符");
+        int entries = 0;
+        long inflated = 0;
+        boolean foundRequired = requiredEntry == null;
+        byte[] buffer = new byte[8192];
+        try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (++entries > MAX_ZIP_ENTRIES) {
+                    throw new BizException(ErrorCode.PARAM_INVALID,
+                            "压缩包条目数超过上限 " + MAX_ZIP_ENTRIES);
+                }
+                validateZipEntryName(entry.getName());
+                if (requiredEntry != null && requiredEntry.equals(entry.getName())) {
+                    foundRequired = true;
+                }
+                if (entry.isDirectory()) {
+                    continue;
+                }
+                int read;
+                while ((read = zis.read(buffer)) >= 0) {
+                    inflated += read;
+                    if (inflated > MAX_ZIP_INFLATED_BYTES) {
+                        throw new BizException(ErrorCode.PARAM_INVALID,
+                                "压缩包解压后大小超过上限 " + (MAX_ZIP_INFLATED_BYTES / 1024L / 1024L) + "MB");
+                    }
+                }
             }
-            return;
+        } catch (IOException | IllegalArgumentException e) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "压缩包无法解析");
         }
-        if (!hasImageSignature(type.contentType(), bytes)) {
-            throw new BizException(ErrorCode.PARAM_INVALID);
+        if (!foundRequired) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "文件内容与 .docx 格式不符");
+        }
+    }
+
+    /** Same entry-name rules as SkillPackageService, plus a directory depth cap. */
+    private static void validateZipEntryName(String name) {
+        if (name == null || name.isBlank() || name.startsWith("/") || name.startsWith("\\")
+                || name.contains("..") || name.contains("\\")
+                || DRIVE_LETTER_ENTRY.matcher(name).find()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "压缩包条目名非法，疑似路径穿越");
+        }
+        int depth = 0;
+        for (String segment : name.split("/")) {
+            if (!segment.isEmpty()) {
+                depth++;
+            }
+        }
+        if (depth > MAX_ZIP_PATH_DEPTH) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "压缩包目录层级超过上限 " + MAX_ZIP_PATH_DEPTH);
         }
     }
 
@@ -434,6 +556,21 @@ public class RequirementDocumentService {
         return bytes.length >= 5
                 && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F'
                 && bytes[4] == '-';
+    }
+
+    /** Accepts both a local file header and a bare end-of-central-directory (empty archive). */
+    private boolean hasZipSignature(byte[] bytes) {
+        return bytes.length >= 4
+                && bytes[0] == 'P' && bytes[1] == 'K'
+                && ((bytes[2] == 3 && bytes[3] == 4) || (bytes[2] == 5 && bytes[3] == 6));
+    }
+
+    private boolean hasOle2Signature(byte[] bytes) {
+        return bytes.length >= 8
+                && bytes[0] == (byte) 0xD0 && bytes[1] == (byte) 0xCF
+                && bytes[2] == (byte) 0x11 && bytes[3] == (byte) 0xE0
+                && bytes[4] == (byte) 0xA1 && bytes[5] == (byte) 0xB1
+                && bytes[6] == (byte) 0x1A && bytes[7] == (byte) 0xE1;
     }
 
     private boolean hasImageSignature(String contentType, byte[] bytes) {

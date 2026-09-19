@@ -8,6 +8,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,7 +17,6 @@ import java.util.Objects;
 @Service
 public class SystemAdminService {
 
-    private static final String BRANDING_ADMIN_DENIED = "仅系统第一个用户可以管理品牌配置";
     private static final String SYSTEM_ADMIN_DENIED_PREFIX = "仅平台管理员可以";
     private static final String SELF_REMOVAL_DENIED = "平台管理员不可移除自己";
     private static final String LAST_ADMIN_DENIED = "平台管理员至少保留一名，无法移除最后一名";
@@ -28,33 +28,17 @@ public class SystemAdminService {
         this.userDao = userDao;
     }
 
-    public boolean isFirstActiveUser(Long userId) {
-        if (userId == null) {
-            return false;
-        }
-        return Objects.equals(userDao.findFirstActiveUserId(), userId);
-    }
-
-    public void requireFirstActiveUser(Long userId, String action) {
-        if (!isFirstActiveUser(userId)) {
-            throw new BizException(ErrorCode.NO_PERMISSION, BRANDING_ADMIN_DENIED);
-        }
-    }
-
     /**
-     * Platform admin (D3): the {@code user.is_admin} flag. The first-active-user fallback
-     * keeps a legacy database usable when neither the upgrade migration nor the startup
-     * self-heal has run yet, so an upgrade can never lock everyone out of the recycle bin.
+     * Platform admin (D3): the {@code user.is_admin} flag and nothing else. The legacy
+     * first-active-user fallback was removed so a demoted first user loses every platform
+     * privilege immediately and no restart, login, or upgrade can restore it.
      */
     public boolean isSystemAdmin(Long userId) {
         if (userId == null) {
             return false;
         }
         UserDO user = userDao.findById(userId);
-        if (user != null && Integer.valueOf(1).equals(user.getIsAdmin())) {
-            return true;
-        }
-        return isFirstActiveUser(userId);
+        return user != null && Integer.valueOf(1).equals(user.getIsAdmin());
     }
 
     public void requireSystemAdmin(Long userId, String action) {
@@ -64,9 +48,11 @@ public class SystemAdminService {
     }
 
     /**
-     * Marks the first active user as platform admin when the platform has none. Idempotent
-     * and race-safe: concurrent callers all resolve the same lowest active id, and
-     * {@code markSystemAdmin} carries an {@code is_admin = 0} guard.
+     * New-install initialization: when the first active user registers on a platform that has
+     * no platform admin yet, that user becomes one. Idempotent and race-safe: concurrent
+     * callers all resolve the same lowest active id, and {@code markSystemAdmin} carries an
+     * {@code is_admin = 0} guard. Once any admin exists the roster is authoritative and
+     * registration order never re-grants anything.
      *
      * @return true when this call performed the promotion
      */
@@ -79,6 +65,32 @@ public class SystemAdminService {
             return false;
         }
         return userDao.markSystemAdmin(firstActiveUserId) == 1;
+    }
+
+    /**
+     * One-shot upgrade migration for legacy databases that never had a platform admin
+     * granted (Community V050 created the column but its UPDATE never ran, or the flag column was
+     * added by a restored backup). Recognition of completion lives in the
+     * {@code platform_admin_init} marker row, so the migration runs at most once per
+     * database and never re-grants a first user whose admin flag was later revoked.
+     * Once the marker exists this method is a single SELECT, and a database with the
+     * marker but zero admins is reported by {@link SystemAdminBootstrap} instead of
+     * being silently healed.
+     */
+    @Transactional
+    public boolean ensurePlatformAdminInitialized() {
+        if (userDao.isPlatformAdminInitDone()) {
+            return false;
+        }
+        boolean promoted = false;
+        if (userDao.countSystemAdmins() == 0) {
+            Long firstActiveUserId = userDao.findFirstActiveUserId();
+            if (firstActiveUserId != null) {
+                promoted = userDao.markSystemAdmin(firstActiveUserId) == 1;
+            }
+        }
+        userDao.markPlatformAdminInitDone();
+        return promoted;
     }
 
     /**

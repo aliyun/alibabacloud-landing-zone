@@ -98,10 +98,12 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
             placeholder={squadId ? '选择小队成员' : '请先选择小队'}
             disabled={!squadId}
             loading={membersLoading}
-            options={members.map((member: SquadMember) => ({
-              value: member.agentId,
-              label: member.roleCode ? `${member.agentName} (${member.roleCode})` : member.agentName,
-            }))}
+            options={members
+              .filter((member: SquadMember) => member.agentKind !== 'PLATFORM')
+              .map((member: SquadMember) => ({
+                value: member.agentId,
+                label: member.roleCode ? `${member.agentName} (${member.roleCode})` : member.agentName,
+              }))}
           />
         </Form.Item>
         <Form.Item name="scheduledStartAt" label="计划执行时间（可选）">

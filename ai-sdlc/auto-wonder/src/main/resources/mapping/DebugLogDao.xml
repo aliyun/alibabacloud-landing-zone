@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.debuglog.DebugLogDao">
+
+    <resultMap id="debugLogMap" type="com.aliyun.autowonder.debuglog.DebugLogDO">
+        <id column="id" property="id"/>
+        <result column="gmt_create" property="gmtCreate"/>
+        <result column="gmt_modified" property="gmtModified"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="source_type" property="sourceType"/>
+        <result column="source_id" property="sourceId"/>
+        <result column="dispatch_id" property="dispatchId"/>
+        <result column="agent_id" property="agentId"/>
+        <result column="agent_version_id" property="agentVersionId"/>
+        <result column="run_no" property="runNo"/>
+        <result column="dispatch_status" property="dispatchStatus"/>
+        <result column="object_key" property="objectKey"/>
+        <result column="size_bytes" property="sizeBytes"/>
+        <result column="sha256" property="sha256"/>
+        <result column="truncated" property="truncated"/>
+        <result column="upload_channel" property="uploadChannel"/>
+        <result column="status" property="status"/>
+        <result column="error_message" property="errorMessage"/>
+    </resultMap>
+
+    <sql id="cols">
+        id, gmt_create, gmt_modified, tenant_id, source_type, source_id, dispatch_id, agent_id,
+        agent_version_id, run_no, dispatch_status, object_key, size_bytes, sha256, truncated,
+        upload_channel, status, error_message
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.debuglog.DebugLogDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO debug_log
+            (tenant_id, source_type, source_id, dispatch_id, agent_id, agent_version_id,
+             run_no, dispatch_status, object_key, size_bytes, sha256, truncated,
+             upload_channel, status, error_message)
+        VALUES
+            (#{tenantId}, #{sourceType}, #{sourceId}, #{dispatchId}, #{agentId}, #{agentVersionId},
+             #{runNo}, #{dispatchStatus}, #{objectKey}, #{sizeBytes}, #{sha256}, #{truncated},
+             #{uploadChannel}, #{status}, #{errorMessage})
+    </insert>
+
+    <select id="findByDispatchId" resultMap="debugLogMap">
+        SELECT <include refid="cols"/> FROM debug_log
+        WHERE dispatch_id = #{dispatchId}
+        LIMIT 1
+    </select>
+
+    <update id="updateOnIssue">
+        UPDATE debug_log
+        SET run_no = #{runNo},
+            object_key = #{objectKey},
+            size_bytes = #{sizeBytes},
+            sha256 = #{sha256},
+            truncated = #{truncated},
+            dispatch_status = #{dispatchStatus},
+            status = 'PENDING',
+            error_message = NULL
+        WHERE id = #{id} AND status &lt;&gt; 'UPLOADED'
+    </update>
+
+    <!-- UPLOADED 终态单调守卫（S9）：迟到的重复 TASK_RESULT / 并发对账不得把 UPLOADED 回退成
+         FAILED；FAILED→UPLOADED（补传成功）仍允许。error_message 无条件覆写：UPLOADED 行可携带
+         收尾注记（协议契约），消费方不得以 error 非空推断失败。 -->
+    <update id="updateOnResult">
+        UPDATE debug_log
+        SET status = #{status},
+            <if test="uploadChannel != null">upload_channel = #{uploadChannel},</if>
+            <if test="sizeBytes != null">size_bytes = #{sizeBytes},</if>
+            <if test="sha256 != null">sha256 = #{sha256},</if>
+            <if test="truncated != null">truncated = #{truncated},</if>
+            <if test="dispatchStatus != null">dispatch_status = #{dispatchStatus},</if>
+            error_message = #{errorMessage}
+        WHERE id = #{id} AND status &lt;&gt; 'UPLOADED'
+    </update>
+
+    <select id="listForQuery" resultMap="debugLogMap">
+        SELECT <include refid="cols"/> FROM debug_log
+        WHERE tenant_id = #{tenantId}
+          AND source_type = #{sourceType}
+          AND source_id = #{sourceId}
+          <if test="agentId != null">AND agent_id = #{agentId}</if>
+          <if test="since != null">AND gmt_create &gt;= #{since}</if>
+        ORDER BY run_no ASC, id ASC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="listPendingOlderThan" resultMap="debugLogMap">
+        SELECT <include refid="cols"/> FROM debug_log
+        WHERE status = 'PENDING'
+          AND gmt_modified &lt; FROM_UNIXTIME(#{beforeEpochMillis} / 1000)
+        ORDER BY gmt_modified ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="markReconciled">
+        UPDATE debug_log
+        SET status = #{status},
+            error_message = #{errorMessage}
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+</mapper>

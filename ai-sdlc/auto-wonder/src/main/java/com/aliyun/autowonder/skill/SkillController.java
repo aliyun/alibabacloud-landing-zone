@@ -1,8 +1,11 @@
 package com.aliyun.autowonder.skill;
 
+import com.aliyun.autowonder.category.CategoryService;
+import com.aliyun.autowonder.category.dto.BatchSkillCategoryResultVO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
@@ -14,6 +17,7 @@ import com.aliyun.autowonder.skill.dto.SkillPackageInspectVO;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
 import com.alibaba.fastjson.JSON;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -23,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 @RestController
@@ -33,12 +38,15 @@ public class SkillController {
     private final SkillService skillService;
     private final SkillPackageService skillPackageService;
     private final SkillConnectionTestService skillConnectionTestService;
+    private final CategoryService categoryService;
 
     public SkillController(SkillService skillService, SkillPackageService skillPackageService,
-                           SkillConnectionTestService skillConnectionTestService) {
+                           SkillConnectionTestService skillConnectionTestService,
+                           CategoryService categoryService) {
         this.skillService = skillService;
         this.skillPackageService = skillPackageService;
         this.skillConnectionTestService = skillConnectionTestService;
+        this.categoryService = categoryService;
     }
 
     @PostMapping
@@ -128,11 +136,57 @@ public class SkillController {
     }
 
     @GetMapping
-    public Result<List<SkillVO>> list(
+    public Result<PageResult<SkillVO>> list(
             @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "includeDescendants", defaultValue = "true") boolean includeDescendants,
+            @RequestParam(value = "uncategorized", defaultValue = "false") boolean uncategorized,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(skillService.list(type, page, size));
+        return Result.ok(skillService.listPage(currentWorkspaceId(), type, categoryId,
+                includeDescendants, uncategorized, page, size));
+    }
+
+    // 打标是独立于技能内容的关联操作：请求体必须显式携带 categoryId 字段，
+    // JSON null 表示取消打标，字段缺失视为参数错误（与 MCP set_skill_category 语义一致）
+    @PutMapping("/{id}/category")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "设置能力分类")
+    public Result<Long> setCategory(@PathVariable("id") Long id, @RequestBody JsonNode body) {
+        if (body == null || !body.has("categoryId")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "缺少 categoryId 参数");
+        }
+        Long categoryId = requireCategoryId(body);
+        return Result.ok(categoryService.setSkillCategory(id, categoryId, currentWorkspaceId(), currentUserId()));
+    }
+
+    @PostMapping("/category/batch")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "批量设置能力分类")
+    public Result<List<BatchSkillCategoryResultVO>> batchSetCategory(@RequestBody JsonNode body) {
+        if (body == null || !body.has("skillIds") || !body.get("skillIds").isArray()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "缺少 skillIds 参数");
+        }
+        List<Long> skillIds = new ArrayList<>();
+        for (JsonNode node : body.get("skillIds")) {
+            if (!node.isIntegralNumber() || !node.canConvertToLong() || node.asLong() <= 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "skillIds 必须是数字数组");
+            }
+            skillIds.add(node.asLong());
+        }
+        Long categoryId = requireCategoryId(body);
+        return Result.ok(categoryService.batchSetSkillCategory(skillIds, categoryId,
+                currentWorkspaceId(), currentUserId()));
+    }
+
+    private Long requireCategoryId(JsonNode body) {
+        if (body == null || !body.has("categoryId")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "缺少 categoryId 参数");
+        }
+        JsonNode node = body.get("categoryId");
+        if (node.isNull()) return null;
+        if (!node.isIntegralNumber() || !node.canConvertToLong() || node.asLong() <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "categoryId 必须是正整数或 null");
+        }
+        return node.asLong();
     }
 
     @PutMapping("/{id}")

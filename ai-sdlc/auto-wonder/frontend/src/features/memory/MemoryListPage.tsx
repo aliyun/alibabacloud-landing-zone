@@ -3,7 +3,10 @@ import { Card, Tag, Space, Select, Button, Modal, Form, Input, InputNumber, Popc
 import { PlusOutlined, EditOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { theme } from 'antd';
-import { useMemoryList, useMemoryGroups, useCreateMemory, useUpdateMemory, useDeleteMemory } from './hooks';
+import {
+  useMemoryList, useMemoryGroups, useMemoryCount, useMemoryGroupCount,
+  useCreateMemory, useUpdateMemory, useDeleteMemory,
+} from './hooks';
 import type { Memory, MemoryGroup, CreateMemoryParams, UpdateMemoryParams } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { useAgent, useAgentList } from '@/features/agent/hooks';
@@ -25,7 +28,7 @@ const typeOptions = [
 const statusConfig: Record<string, { color: string; text: string }> = {
   ADOPTED: { color: 'success', text: '已采纳' },
   PENDING: { color: 'processing', text: '待审核' },
-  REJECTED: { color: 'error', text: '已驳回' },
+  REJECTED: { color: 'error', text: '已驳回（历史记录）' },
 };
 
 function formatMcpProvenance(sourceRef: string | null): string | null {
@@ -75,6 +78,9 @@ export function MemoryListPage() {
   const groupsQuery = useMemoryGroups(
     view === 'BY_AGENT' ? { page, size, scope, ownerRef, type, status } : undefined,
   );
+  const listFilters = { scope, ownerRef, type, status };
+  const { data: timelineTotal = 0 } = useMemoryCount(listFilters);
+  const { data: groupedTotal = 0 } = useMemoryGroupCount(view === 'BY_AGENT' ? listFilters : undefined);
   const groups = groupsQuery.data ?? [];
   const { data: orgAgents = [], isLoading: orgAgentsLoading } = useAgentList(1, 100);
   const groupedMemories = useMemo(() => groups.flatMap((g) => g.memories), [groups]);
@@ -172,7 +178,8 @@ export function MemoryListPage() {
 
   const activeLength = view === 'BY_AGENT' ? groups.length : data.length;
   const listLoading = view === 'BY_AGENT' ? groupsQuery.isLoading : isLoading;
-  const total = activeLength >= size ? page * size + 1 : (page - 1) * size + activeLength;
+  // 分页总数取后端同条件计数：时间线视图是记忆条数，按员工视图翻的是分组，故取分组数。
+  const total = view === 'BY_AGENT' ? groupedTotal : timelineTotal;
 
   const renderStatus = (value: string) => (
     <Tag color={statusConfig[value]?.color}>{statusConfig[value]?.text || value}</Tag>
@@ -260,7 +267,7 @@ export function MemoryListPage() {
           <Button key="edit" type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(memory)}>编辑</Button>,
           <Popconfirm
             key="delete"
-            title="确认删除此记忆？"
+            title="确认删除此记忆并移除员工绑定？"
             open={confirmDeleteId === memory.id}
             onOpenChange={(open) => {
               if (!open) {

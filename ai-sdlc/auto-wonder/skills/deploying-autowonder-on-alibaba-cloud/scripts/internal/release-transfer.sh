@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-DEPLOY_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../../../deploying-autowonder-on-alibaba-cloud" && pwd)
+DEPLOY_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 source "$DEPLOY_SKILL_DIR/scripts/lib.sh"
 
 transfer_scope=${AUTOWONDER_TRANSFER_SCOPE:-}
@@ -37,7 +37,7 @@ done
 [[ "$transfer_scope" != upgrade || "$stage_only" == true ]] || die "upgrade transfer must be stage-only"
 require_file "$manifest"; require_file "$env_file"
 if [[ -z "$release_dir" ]]; then release_dir=$(jq -r '.artifacts.releaseDirectory // empty' "$manifest"); fi
-if [[ -z ${unit_file_explicit:-} && -n "$release_dir" && -f "$release_dir/autowonder.service" ]]; then
+if [[ "$unit_file_explicit" == false && -n "$release_dir" && -f "$release_dir/autowonder.service" ]]; then
   unit_file="$release_dir/autowonder.service"
 fi
 if [[ "$config_only" == false ]]; then
@@ -58,7 +58,7 @@ configure_cloud_profile "$manifest"
 region=$(json_string "$manifest" '.region'); deployment_id=$(json_string "$manifest" '.deploymentId')
 commit=$(json_string "$manifest" '.repositoryCommit'); short_commit=${commit:0:12}
 if [[ "$transfer_scope" == upgrade ]]; then
-  UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../../../upgrading-autowonder-on-alibaba-cloud" && pwd)
+  UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
   source "$UPGRADE_SKILL_DIR/scripts/upgrade-lib.sh"
   require_upgrade_approval "$manifest"
 fi
@@ -152,12 +152,14 @@ run_cloud_command() {
   local instance=$1 script=$2 response invocation result status exit_code deadline encoded_script command_content
   encoded_script=$(printf '%s' "$script" | base64 | tr -d '\r\n')
   command_content="printf '%s' '$encoded_script' | base64 -d | /usr/bin/env bash"
+  require_remote_submission_settled "$manifest"
+  atomic_jq "$manifest" --arg instance "$instance" '.remoteSubmission={instanceId:$instance,status:"unknown",preparedAt:(now|todateiso8601)}'
   response=$(aliyun_cli ecs RunCommand --region "$region" --RegionId "$region" --InstanceId.1 "$instance" \
     --Type RunShellScript --Timeout 1800 --CommandContent "$command_content") || die "Cloud Assistant submission failed"
   unset encoded_script command_content
   invocation=$(cloud_assistant_invocation_id <<<"$response") || die "Cloud Assistant invocation ID missing"
   atomic_jq "$manifest" --arg id "$invocation" --arg instance "$instance" \
-    '.remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
+    '.remoteSubmission=null | .remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
   deadline=$((SECONDS + 1860))
   while ((SECONDS < deadline)); do
     sleep 2

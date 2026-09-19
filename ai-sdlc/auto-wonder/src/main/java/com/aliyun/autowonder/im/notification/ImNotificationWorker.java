@@ -18,13 +18,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
 public class ImNotificationWorker implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(ImNotificationWorker.class);
-    private static final String PROVIDER = "DINGTALK";
 
     private final ImNotificationQueue queue;
+    private final ImNotificationPreferenceService preferenceService;
     private final ImNotificationFormatter formatter;
     private final UserImIdentityService identityService;
     private final PlatformImChannelConfigService channelConfigService;
@@ -33,6 +34,8 @@ public class ImNotificationWorker implements DisposableBean {
     private final ImNotificationMessageContextResolver contextResolver;
     private final ExecutorService sendExecutor;
     private final Semaphore sendPermits;
+    private final AtomicInteger consecutivePollFailures = new AtomicInteger();
+    private final AtomicInteger consecutiveRecoveryFailures = new AtomicInteger();
 
     public ImNotificationWorker(ImNotificationQueue queue,
                                 ImNotificationFormatter formatter,
@@ -40,8 +43,10 @@ public class ImNotificationWorker implements DisposableBean {
                                 PlatformImChannelConfigService channelConfigService,
                                 ImProviderRegistry providerRegistry,
                                 ImNotificationProperties properties,
-                                ImNotificationMessageContextResolver contextResolver) {
+                                ImNotificationMessageContextResolver contextResolver,
+                                ImNotificationPreferenceService preferenceService) {
         this.queue = queue;
+        this.preferenceService = preferenceService;
         this.formatter = formatter;
         this.identityService = identityService;
         this.channelConfigService = channelConfigService;
@@ -60,16 +65,52 @@ public class ImNotificationWorker implements DisposableBean {
     public void pollNew() {
         try {
             pollOnce();
+            consecutivePollFailures.set(0);
         } catch (Exception e) {
-            log.error("IM notification poll new failed", e);
+            int failures = consecutivePollFailures.incrementAndGet();
+            long delayMs = backoffDelayMs(failures, properties.getPollDelayMs(), properties.getMaxBackoffMs());
+            log.error("IM notification poll new failed, backing off {}ms before next poll "
+                    + "(consecutiveFailures={})", delayMs, failures, e);
+            sleepBeforeRetry(delayMs);
         }
     }
 
     public void recoverStale() {
         try {
             recoverOnce();
+            consecutiveRecoveryFailures.set(0);
         } catch (Exception e) {
-            log.error("IM notification recovery failed", e);
+            int failures = consecutiveRecoveryFailures.incrementAndGet();
+            long delayMs = backoffDelayMs(failures, properties.getRecoveryDelayMs(), properties.getMaxBackoffMs());
+            log.error("IM notification recovery failed, backing off {}ms before next recovery "
+                    + "(consecutiveFailures={})", delayMs, failures, e);
+            sleepBeforeRetry(delayMs);
+        }
+    }
+
+    static long backoffDelayMs(int consecutiveFailures, long baseDelayMs, long maxDelayMs) {
+        if (consecutiveFailures <= 0) {
+            return 0L;
+        }
+        if (consecutiveFailures == 1) {
+            return Math.max(baseDelayMs, 0L);
+        }
+        int shift = Math.min(consecutiveFailures - 1, 30);
+        long delayMs = baseDelayMs << shift;
+        if (delayMs <= 0) {
+            return Math.max(maxDelayMs, 0L);
+        }
+        return Math.min(delayMs, Math.max(maxDelayMs, 0L));
+    }
+
+    private void sleepBeforeRetry(long delayMs) {
+        if (delayMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(delayMs);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -147,15 +188,21 @@ public class ImNotificationWorker implements DisposableBean {
 
     private void processWithMdc(ImNotificationEnvelope envelope) {
         if (!envelope.isValid()) {
-            log.error("IM notification malformed payload dropped messageId={} reason={}",
-                    envelope.messageId(), safeValue(envelope.errorReason()));
+            log.error("IM notification malformed payload dropped messageId={} reason={} payloadSummary={}",
+                    envelope.messageId(), safeValue(envelope.errorReason()),
+                    safeValue(envelope.payloadSummary()));
+            retainInDlq(envelope, safeValue(envelope.errorReason()));
             queue.ack(envelope.messageId());
             return;
         }
         ImNotificationTask task = envelope.task();
+        String provider = task.provider();
         if (envelope.deliveryCount() > properties.getMaxAttempts()) {
+            String reason = "exceeded max attempts: deliveryCount=" + envelope.deliveryCount()
+                    + " maxAttempts=" + properties.getMaxAttempts();
             log.error("IM notification drop after max attempts messageId={} notificationKey={} deliveryCount={}",
                     envelope.messageId(), task.notificationKey(), envelope.deliveryCount());
+            retainInDlq(envelope, reason);
             queue.ack(envelope.messageId());
             return;
         }
@@ -172,16 +219,20 @@ public class ImNotificationWorker implements DisposableBean {
                 envelope.deliveryCount(), enqueueToDequeueMs);
 
         try {
-            UserImIdentityDO identity = identityService.find(task.recipientUserId(), PROVIDER);
+            if (preferenceService.isDisabled(task.tenantId(), task.recipientUserId(), task.notificationType(), provider)) {
+                queue.ack(envelope.messageId());
+                return;
+            }
+            UserImIdentityDO identity = identityService.find(task.recipientUserId(), provider);
             if (identity == null || !hasText(identity.getExternalUserId())) {
                 log.warn("IM notification skipped missing identity messageId={} notificationKey={} recipientUserId={}",
                         envelope.messageId(), task.notificationKey(), task.recipientUserId());
                 queue.ack(envelope.messageId());
                 return;
             }
-            if (!channelConfigService.isReady(PROVIDER)) {
+            if (!channelConfigService.isReady(provider)) {
                 log.warn("IM notification skipped channel not ready messageId={} notificationKey={} provider={}",
-                        envelope.messageId(), task.notificationKey(), PROVIDER);
+                        envelope.messageId(), task.notificationKey(), provider);
                 queue.ack(envelope.messageId());
                 return;
             }
@@ -190,8 +241,8 @@ public class ImNotificationWorker implements DisposableBean {
             String markdown = formatter.format(context, task);
 
             long providerStartMs = System.currentTimeMillis();
-            providerRegistry.require(PROVIDER).send(new ImSendCommand(
-                    PROVIDER,
+            providerRegistry.require(provider).send(new ImSendCommand(
+                    provider,
                     identity.getExternalUserId(),
                     messageTitle(task),
                     markdown));
@@ -202,27 +253,36 @@ public class ImNotificationWorker implements DisposableBean {
             log.info("IM notification delivered messageId={} notificationKey={} requestId={} "
                             + "provider={} providerLatencyMs={} queueLatencyMs={}",
                     envelope.messageId(), task.notificationKey(), safeValue(task.requestId()),
-                    PROVIDER, providerLatencyMs, enqueueToDequeueMs);
+                    provider, providerLatencyMs, enqueueToDequeueMs);
         } catch (ImDeliveryException e) {
             SafeImNotificationDeliveryException safe = SafeImNotificationDeliveryException.from(e);
             if (e.isRetryable()) {
                 log.error("IM notification delivery retryable failure messageId={} notificationKey={} "
                                 + "provider={} deliveryCount={} deliveryRetryable={} providerCode={} "
                                 + "providerRequestId={}",
-                        envelope.messageId(), task.notificationKey(), PROVIDER, envelope.deliveryCount(),
+                        envelope.messageId(), task.notificationKey(), provider, envelope.deliveryCount(),
                         e.isRetryable(), safeValue(e.getProviderCode()),
                         safeValue(e.getProviderRequestId()), safe);
                 return;
             }
             log.error("IM notification delivery permanent failure messageId={} notificationKey={} "
                             + "provider={} deliveryRetryable={} providerCode={} providerRequestId={}",
-                    envelope.messageId(), task.notificationKey(), PROVIDER, e.isRetryable(),
+                    envelope.messageId(), task.notificationKey(), provider, e.isRetryable(),
                     safeValue(e.getProviderCode()), safeValue(e.getProviderRequestId()), safe);
             queue.ack(envelope.messageId());
         } catch (Exception e) {
             AlreadyLoggedException safe = AlreadyLoggedException.from(e);
             log.error("IM notification processing failed messageId={} notificationKey={}",
                     envelope.messageId(), task.notificationKey(), safe);
+        }
+    }
+
+    private void retainInDlq(ImNotificationEnvelope envelope, String reason) {
+        try {
+            queue.sendToDlq(envelope, reason);
+        } catch (Exception e) {
+            log.error("IM notification DLQ write failed messageId={} reason={}",
+                    safeMessageId(envelope), safeValue(reason), e);
         }
     }
 

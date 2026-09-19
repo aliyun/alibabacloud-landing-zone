@@ -7,7 +7,7 @@ import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
-import com.aliyun.autowonder.dispatch.ExecutorSelector;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
 import com.aliyun.autowonder.integration.dingtalk.DingTalkSourceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,9 +47,6 @@ public class AgentConversationService {
 
     private static final String API_MODE_SUFFIX =
             "\n\n重要:你在API模式下运行,不能使用AskUserQuestion等交互工具。直接用文字提问和回复。";
-    private static final String CLARIFICATION_MODE_SUFFIX =
-            "\n\n当前是工单需求澄清会话。遵循身份配置完成澄清；仅在用户明确确认最终方案后上传产物。"
-                    + "用户要求重写时，先清理本次澄清上传的旧产物，再上传新版。";
     private static final int CONVERSATION_LOCK_TIMEOUT_SECONDS = 10;
     private static final long STALE_TURN_REDELIVERY_AFTER_MILLIS = 5 * 60 * 1000L;
     private static final int STALE_TURN_RECOVERY_BATCH_SIZE = 100;
@@ -67,11 +64,11 @@ public class AgentConversationService {
     private final AgentConversationDao convDao;
     private final AgentConversationTurnDao turnDao;
     private final ConversationTransport transport;
-    private final ExecutorSelector executorSelector;
     private final AgentDao agentDao;
     private final AgentVersionDao agentVersionDao;
     private final ConversationChannelSinkRegistry sinkRegistry;
     private final ConversationRuntimePresence runtimePresence;
+    private final ConversationExecutorRouter executorRouter;
     private TransactionTemplate failureTransactionTemplate;
     private ConversationBrowserEventPublisher browserEventPublisher;
     private ConversationElicitationService conversationElicitationService;
@@ -86,24 +83,26 @@ public class AgentConversationService {
 
     @Autowired
     public AgentConversationService(AgentConversationDao convDao, AgentConversationTurnDao turnDao,
-            ConversationTransport transport, ExecutorSelector executorSelector, AgentDao agentDao,
+            ConversationTransport transport, AgentDao agentDao,
             AgentVersionDao agentVersionDao, ConversationChannelSinkRegistry sinkRegistry,
-            ConversationRuntimePresence runtimePresence) {
+            ConversationRuntimePresence runtimePresence,
+            ConversationExecutorRouter executorRouter) {
         this.convDao = convDao;
         this.turnDao = turnDao;
         this.transport = transport;
-        this.executorSelector = executorSelector;
         this.agentDao = agentDao;
         this.agentVersionDao = agentVersionDao;
         this.sinkRegistry = sinkRegistry;
         this.runtimePresence = runtimePresence;
+        this.executorRouter = executorRouter;
     }
 
     public AgentConversationService(AgentConversationDao convDao, AgentConversationTurnDao turnDao,
-            ConversationTransport transport, ExecutorSelector executorSelector, AgentDao agentDao,
-            AgentVersionDao agentVersionDao, ConversationChannelSinkRegistry sinkRegistry) {
-        this(convDao, turnDao, transport, executorSelector, agentDao, agentVersionDao,
-                sinkRegistry, null);
+            ConversationTransport transport, AgentDao agentDao,
+            AgentVersionDao agentVersionDao, ConversationChannelSinkRegistry sinkRegistry,
+            ConversationExecutorRouter executorRouter) {
+        this(convDao, turnDao, transport, agentDao, agentVersionDao,
+                sinkRegistry, null, executorRouter);
     }
 
     @Autowired
@@ -170,11 +169,13 @@ public class AgentConversationService {
     private PendingDispatch createConversationAndFirstDispatch(Long tenantId, Long agentId,
             String channel, String channelConversationId, String content, String externalMsgId,
             String sourceContext) {
-        Long executorId = executorSelector.select(agentId, null);
+        ExecutorSelection selection = selectExecutor(tenantId, agentId, null);
+        Long executorId = selection.executorId();
         if (executorId == null) {
             throw new IllegalStateException("no online executor for agent " + agentId);
         }
-        AgentIdentitySnapshot identity = resolveIdentity(agentId, channel, executorId);
+        AgentIdentitySnapshot identity = resolveIdentity(selection.agentVersionId(), channel,
+                executorId);
         AgentConversationDO conv = new AgentConversationDO();
         conv.setTenantId(tenantId);
         conv.setAgentId(agentId);
@@ -196,21 +197,14 @@ public class AgentConversationService {
 
     private PendingDispatch insertAndPrepareDispatch(Long tenantId, Long agentId, String content,
             String externalMsgId, String sourceContext, AgentConversationDO conv) {
-        Long preferredExecutorId = conv != null ? conv.getExecutorId() : null;
-        Long executorId = executorSelector.select(agentId, preferredExecutorId);
-        if (executorId == null) {
-            throw new IllegalStateException("no online executor for agent " + agentId);
-        }
-        if (!executorId.equals(conv.getExecutorId())) {
-            conv.setExecutorId(executorId);
-            convDao.updateExecutor(tenantId, conv.getId(), executorId);
-        }
+        ExecutorSelection selection = selectAndBindExecutor(tenantId, conv);
         AgentConversationTurnDO turn = insertInboundTurn(tenantId, conv.getId(), content,
                 externalMsgId, sourceContext, STATUS_PROCESSING);
         if (!recordProcessingDispatchAttempt(tenantId, conv.getId(), turn.getId())) {
             return null;
         }
-        AgentIdentitySnapshot identity = refreshConversationIdentity(tenantId, conv);
+        AgentIdentitySnapshot identity = refreshConversationIdentity(tenantId, conv,
+                selection.agentVersionId());
         return new PendingDispatch(conv, turn.getId(), content, sourceContext, identity.systemPrompt(),
                 currentRequestId(), 1);
     }
@@ -655,16 +649,30 @@ public class AgentConversationService {
                 return new PostCommitEffects(null,
                         nextQueuedDispatch(stale.getTenantId(), conv));
             }
+            ExecutorSelection selection;
+            try {
+                selection = trySelectExecutor(stale.getTenantId(), conv.getAgentId(),
+                        conv.getExecutorId());
+            } catch (ExecutorProtocolCompatibilityException compatibilityFailure) {
+                deferSelectionCompatibilityFailure(stale.getTenantId(), conv, current,
+                        STATUS_PROCESSING, compatibilityFailure);
+                return null;
+            }
+            if (selection == null) {
+                return null;
+            }
             if (!claimStaleDispatchAttempt(stale.getTenantId(),
                     stale.getConversationId(), stale.getId(), cutoff)) {
                 return null;
             }
+            bindSelectedExecutor(stale.getTenantId(), conv, selection);
             // 重投等于换了一个执行器进程，它侧的挂起 requestId 已经没有了。
             cancelPendingElicitations(stale.getTenantId(), stale.getConversationId(),
                     stale.getId());
             log.info("conversation stale turn redeliver conversationId={} turnId={} executorId={}",
                     stale.getConversationId(), stale.getId(), conv.getExecutorId());
-            AgentIdentitySnapshot identity = refreshConversationIdentity(stale.getTenantId(), conv);
+            AgentIdentitySnapshot identity = refreshConversationIdentity(stale.getTenantId(), conv,
+                    selection.agentVersionId());
             AgentConversationTurnDO reloaded = turnDao.findByConversationTurn(
                     stale.getTenantId(), stale.getConversationId(), current.getId());
             int attempt = reloaded != null && reloaded.getDispatchAttempt() != null
@@ -683,6 +691,17 @@ public class AgentConversationService {
         if (next == null) {
             return null;
         }
+        ExecutorSelection selection;
+        try {
+            selection = trySelectExecutor(tenantId, conv.getAgentId(), conv.getExecutorId());
+        } catch (ExecutorProtocolCompatibilityException compatibilityFailure) {
+            deferSelectionCompatibilityFailure(tenantId, conv, next, STATUS_QUEUED,
+                    compatibilityFailure);
+            return null;
+        }
+        if (selection == null) {
+            return null;
+        }
         int rows = turnDao.updateStatusIfCurrent(tenantId, next.getId(), STATUS_QUEUED,
                 STATUS_PROCESSING, null);
         if (rows != 1) {
@@ -691,7 +710,9 @@ public class AgentConversationService {
         if (!recordProcessingDispatchAttempt(tenantId, conv.getId(), next.getId())) {
             return null;
         }
-        AgentIdentitySnapshot identity = refreshConversationIdentity(tenantId, conv);
+        bindSelectedExecutor(tenantId, conv, selection);
+        AgentIdentitySnapshot identity = refreshConversationIdentity(tenantId, conv,
+                selection.agentVersionId());
         return new PendingDispatch(conv, next.getId(), next.getContent(), next.getSourceContext(),
                 identity.systemPrompt(), next.getRequestId(), 1);
     }
@@ -1032,8 +1053,8 @@ public class AgentConversationService {
     }
 
     private AgentIdentitySnapshot refreshConversationIdentity(Long tenantId,
-            AgentConversationDO conv) {
-        AgentIdentitySnapshot identity = resolveIdentity(conv.getAgentId(), conv.getChannel(),
+            AgentConversationDO conv, Long agentVersionId) {
+        AgentIdentitySnapshot identity = resolveIdentity(agentVersionId, conv.getChannel(),
                 conv.getExecutorId());
         if (!identity.agentVersionId().equals(conv.getAgentVersionId())) {
             if (convDao.updateAgentVersion(tenantId, conv.getId(), identity.agentVersionId()) != 1) {
@@ -1045,15 +1066,71 @@ public class AgentConversationService {
         return identity;
     }
 
-    private AgentIdentitySnapshot resolveIdentity(Long agentId, String channel, Long executorId) {
+    private ExecutorSelection selectExecutor(Long tenantId, Long agentId,
+            Long preferredExecutorId) {
+        ExecutorSelection selection = trySelectExecutor(tenantId, agentId, preferredExecutorId);
+        if (selection == null) {
+            throw new IllegalStateException("no online executor for agent " + agentId);
+        }
+        return selection;
+    }
+
+    private ExecutorSelection trySelectExecutor(Long tenantId, Long agentId,
+            Long preferredExecutorId) {
         AgentDO agent = agentDao.findById(agentId);
         if (agent == null || agent.getOnlineVersionId() == null) {
             throw new IllegalStateException("agent has no online version: " + agentId);
         }
-        AgentVersionDO v = agentVersionDao.findById(agent.getOnlineVersionId());
+        Long executorId = executorRouter.select(tenantId, agentId, agent.getOnlineVersionId(),
+                preferredExecutorId);
+        return executorId == null ? null
+                : new ExecutorSelection(executorId, agent.getOnlineVersionId());
+    }
+
+    private ExecutorSelection selectAndBindExecutor(Long tenantId, AgentConversationDO conv) {
+        ExecutorSelection selection = selectExecutor(tenantId, conv.getAgentId(),
+                conv.getExecutorId());
+        bindSelectedExecutor(tenantId, conv, selection);
+        return selection;
+    }
+
+    private void bindSelectedExecutor(Long tenantId, AgentConversationDO conv,
+            ExecutorSelection selection) {
+        Long executorId = selection.executorId();
+        if (!executorId.equals(conv.getExecutorId())) {
+            conv.setExecutorId(executorId);
+            convDao.updateExecutor(tenantId, conv.getId(), executorId);
+        }
+    }
+
+    private void deferSelectionCompatibilityFailure(Long tenantId, AgentConversationDO conv,
+            AgentConversationTurnDO turn, String expectedStatus,
+            ExecutorProtocolCompatibilityException failure) {
+        String error = "conversation executor compatibility failed: " + failure.getMessage();
+        runAfterCommit(() -> {
+            Runnable finalizeTarget = () -> {
+                if (STATUS_QUEUED.equals(expectedStatus)) {
+                    turnDao.updateStatusIfCurrent(tenantId, turn.getId(), STATUS_QUEUED,
+                            "FAILED", error);
+                } else {
+                    turnDao.updateInboundStatusIfProcessing(tenantId, conv.getId(), turn.getId(),
+                            "FAILED", error);
+                }
+            };
+            if (failureTransactionTemplate != null) {
+                failureTransactionTemplate.executeWithoutResult(status -> finalizeTarget.run());
+            } else {
+                finalizeTarget.run();
+            }
+        });
+    }
+
+    private AgentIdentitySnapshot resolveIdentity(Long agentVersionId, String channel,
+            Long executorId) {
+        AgentVersionDO v = agentVersionDao.findById(agentVersionId);
         if (v == null) {
             throw new IllegalStateException("online agent version is missing: "
-                    + agent.getOnlineVersionId());
+                    + agentVersionId);
         }
         StringBuilder sb = new StringBuilder();
         appendIf(sb, "角色", v.getRoleName());
@@ -1063,18 +1140,17 @@ public class AgentConversationService {
         appendIf(sb, "身份", v.getIdentityJson());
         if (sb.length() == 0) {
             throw new IllegalStateException("online agent version has no identity prompt: "
-                    + agent.getOnlineVersionId());
+                    + agentVersionId);
         }
         // Agent 具备结构化提问能力时不再禁止交互工具：它的提问会经 elicitation/create
         // 变成前端卡片，用户可以真的回答。老版本执行器没有这条通路，禁令必须保留，
         // 否则 Agent 的提问会掉进黑洞 —— 用户看不到问题，Agent 也等不到回答。
-        if (!supportsAcpInteraction(executorId)) {
+        ConversationMode mode = ConversationMode.of(channel);
+        if (mode.oneWay() || !supportsAcpInteraction(executorId)) {
             sb.append(API_MODE_SUFFIX);
         }
-        if ("WORKITEM_CLARIFICATION".equals(channel)) {
-            sb.append(CLARIFICATION_MODE_SUFFIX);
-        }
-        return new AgentIdentitySnapshot(agent.getOnlineVersionId(), sb.toString());
+        sb.append(mode.promptSuffix());
+        return new AgentIdentitySnapshot(agentVersionId, sb.toString());
     }
 
     private boolean supportsAcpInteraction(Long executorId) {
@@ -1094,6 +1170,9 @@ public class AgentConversationService {
     }
 
     private record AgentIdentitySnapshot(Long agentVersionId, String systemPrompt) {
+    }
+
+    private record ExecutorSelection(Long executorId, Long agentVersionId) {
     }
 
     private record PostCommitEffects(PendingChannelReply channelReply, PendingDispatch dispatch) {

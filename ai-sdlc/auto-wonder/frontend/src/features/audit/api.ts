@@ -20,6 +20,7 @@ export interface AuditLogFilters {
   module?: string;
   action?: string;
   actorId?: number;
+  actorType?: string;
   targetType?: string;
   targetId?: number;
   startTime?: string;

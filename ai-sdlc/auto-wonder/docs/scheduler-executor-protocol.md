@@ -214,10 +214,12 @@ sequenceDiagram
   "attempt": 1,
   "downloadUrl": "https://oss.example/presigned/....zip",
   "md5": "3bb338675acb7bd6fb050e6415a3d3a6",
-  "size": 20481
+  "size": 20481,
+  "debugLog": { "enabled": true, "maxBytes": 209715200 }
 }
 ```
 - **执行器动作**：`wsclient.DecodeDispatch` → `AssignmentFromDispatch`（数值 id 转字符串，`provider` 取本地配置）→ 组装 `dispatch.DispatchAssignment` → 回 `TASK_ACK` → 落地 assignment 文件 → `executeAssignment`（据 `downloadUrl` 下载、`tenant/workitem/dispatch/attempt` 建 capsule 目录）。
+- **debugLog 段（可选）**：仅当 dispatch 行打包时冻结了 `debug_log_enabled=1` **且**执行器心跳 `protocolFeatures` 声明了 `DEBUG_LOG_V1` 时下发（`WsDispatchTransport.buildFrame` → `applyDebugLogDirective`）；能力探测异常只降级为不下发（warn `reason=DEBUG_LOG_NEGOTIATE_ERROR`），绝不影响 `TASK_DISPATCH` 帧下发。`maxBytes` 为单轮日志硬上限（缺省 200MB=209715200），超限由 runtime 截断并回报 `truncated=true`。未下发时帧内无 `debugLog` 键，老 runtime 完全无感。收到 `enabled=true` 后，runtime 在轮结束收尾阶段调用 `POST /api/daemon/dispatches/{dispatchId}/debug-log-upload?token={executorToken}` 申请直传签发（见 §5.8），全程 best-effort，不影响 TASK_RESULT 语义。
 
 > 说明：客户端下载前必须知道 `tenantId/workitemId/attempt/dispatchId`（建 capsule）+ `downloadUrl`+`md5`（取包）。身份/技能/记忆/sdlc/roster 全部在**包内**（见 §6）。
 
@@ -237,13 +239,14 @@ sequenceDiagram
 
 ### 5.4 上行：`TASK_RESULT`（执行器→服务端）
 ```json
-{ "type": "TASK_RESULT", "dispatchId": 300001, "success": true, "resultSummary": "已完成并产出交付物", "error": "" }
+{ "type": "TASK_RESULT", "dispatchId": 300001, "success": true, "resultSummary": "已完成并产出交付物", "error": "", "debugLog": { "status": "UPLOADED", "channel": "DIRECT", "sizeBytes": 123, "sha256": "<64hex>", "truncated": false, "error": null } }
 ```
 - **触发**：执行结束。`success = (RunState == completed)`；失败时 `error` 带失败信息。
 - **服务端动作**：`onResult`：置 `SUCCEEDED/FAILED` → 调 `SdlcDriver.onSuccess/onFail` 得 `DriveResult` → `act()`：
   - `ENQUEUE` → `enqueue + runPending`（**排下一棒**）
   - `RETRY` → 同步同工单同步 attempt+1（预算内）
   - `STOP` → 结束
+- **debugLog 段（可选，best-effort）**：`InboundFrameRouter.recordDebugLogReport` 在 `onResult` 之后、`accepted` 判定之前调用 `DebugLogService.recordTaskResultReport`，把 `debug_log` 行收敛为 UPLOADED/FAILED（insert-or-update，记录 `channel`/`sizeBytes`/`sha256`/`truncated`/`error`；`channel` 走 DIRECT/RELAY 白名单，`status=UPLOADED` 时 `error` 可非空——Writer Close 收尾注记，消费方不得据此推断失败）。放在 `accepted` 判定之前使重复投递（行已终态）同样能收尾。该段是纯辅助路径：dispatch 不存在、未开启 debug 或归属（tenant/executor）不符时静默 return；`status` 非 UPLOADED/FAILED 时 warn（`reason=DEBUG_LOG_REPORT_BAD_STATUS`）；dispatch 未终态且无既有行时 warn（`reason=DEBUG_LOG_REPORT_DISPATCH_NOT_TERMINAL`），均不影响结果链路；解析或落库失败只记 warn（`reason=DEBUG_LOG_REPORT_IGNORED`），不影响结果确认与 ACK。
 
 ### 5.5 上行：`TASK_HANDOFF`（执行器→服务端）—— 交接下一跳
 ```json
@@ -264,9 +267,9 @@ sequenceDiagram
 
 ### 5.6 上行：`HEARTBEAT`（执行器→服务端）
 ```json
-{ "type": "HEARTBEAT" }
+{ "type": "HEARTBEAT", "protocolFeatures": ["TASK_PACKAGE_SIGNATURE_V1", "DEBUG_LOG_V1"] }
 ```
-- **服务端动作**：`PresenceManager.heartbeat` 刷新 `exec:online`/`exec:route` TTL(90s)。
+- **服务端动作**：`PresenceManager.heartbeat` 刷新 `exec:online`/`exec:route` TTL(90s)。`protocolFeatures` 中的能力位（含 `DEBUG_LOG_V1`）由 `PresenceManager` 记录（`exec:protocol-features:{executorId}`，TTL 90s、随心跳刷新），作为 TASK_DISPATCH 是否下发 `debugLog` 段的协商依据。
 
 ### 5.7 上行：`ARTIFACT_UPLOADED`（执行器→服务端）—— Phase 2 沉淀通道
 ```json
@@ -280,6 +283,18 @@ sequenceDiagram
 - **服务端动作**：`ArtifactService.record`（落 `ArtifactDO`）。
 - **状态**：服务端 handler 已就绪；**客户端上传逻辑属 Phase 2**（当前主环不发此帧）。
 
+### 5.8 debug 日志直传签发（HTTP，executor token）
+
+`POST /api/daemon/dispatches/{dispatchId}/debug-log-upload?token={executorToken}`（`DebugLogUploadController`）
+
+- **触发**：runtime 轮结束（SUCCEEDED/FAILED/TIMEOUT/CANCELED 一律上传）gzip+sha256 之后。
+- **鉴权**：query `token`（executor 静态 token），经 `DaemonUploadAuthenticator.authenticateDetailed` 同款链校验（dispatchId → executor → TokenService.validate）。
+- **请求体**：`{"sizeBytes":123,"sha256":"<64hex>","truncated":false,"dispatchStatus":"SUCCEEDED"}`（`dispatchStatus` ∈ SUCCEEDED/FAILED/TIMEOUT/CANCELED）。
+- **200**：`{"objectKey":"debug/123/DevAgent-run-1.log.gz","uploadUrl":"https://...","expiresAt":"2026-09-04T12:34:56Z","alreadyUploaded":false}`；已 UPLOADED 时 `uploadUrl:null, expiresAt:null, alreadyUploaded:true`（幂等）。服务端此刻计算 `run_no`、生成 canonical `objectKey`、登记 `debug_log(PENDING)` 并 `presignPut`（公网 endpoint、TTL 20 分钟）；runtime 随后对 `uploadUrl` 直接 HTTP PUT（Content-Type: application/gzip），403/过期可重新申请一次。
+- **错误**（校验次序固定 404→403→409→422→400，runtime 对 4xx 的分类依赖该次序，不可重排）：400 请求体非法（`dispatchStatus` 不在枚举、`sizeBytes` 为负、`sha256` 非裸 64 位 hex）；403 token/归属不符；404 dispatch 不存在；409 dispatch 未到终态；422 该 dispatch 未开启 debug；503 签发失败（DB/OSS 异常，响应体单键 `error`，不泄存储细节）。runtime 按状态码分类处理（best-effort，绝不影响派发/结果链路）：4xx→业务拒绝，记 `error` 后终止，不重试、不中转；5xx/网络不可达→重试签发一次，仍失败则降级走 artifacts 中转通道。
+- **中转兜底**：直传网络不可达时复用既有产物中转通道 `POST /api/daemon/dispatches/{id}/artifacts?token=`（`DaemonArtifactController`），文件路径 `debug/{roleCode}-{dispatchId}.log.gz`，filesMetadata 带 sha256+sizeBytes；服务端 `classify` 识别 `debug/` 前缀 → `DEBUG_LOG` 类型、跳过审计，并把存储 key 重排为与直传一致的 canonical objectKey（回执走既有逐文件 ACCEPTED/REJECTED 机制，未开启 debug 的 dispatch 回 `DEBUG_LOG_DISABLED`）。
+- **对账**：`debug_log` 行停留 PENDING 超 24h 由服务端定时任务（`DebugLogReconciliationTask`）收敛——`storage.exists` 为真 → UPLOADED，否则 FAILED。
+
 ### 信号总表
 
 | 帧 | 方向 | 触发 | 服务端处理 | 状态副作用 |
@@ -287,7 +302,7 @@ sequenceDiagram
 | `TASK_DISPATCH` | 下行 | dispatch 进入 DISPATCHED | — | — |
 | `TASK_ACK` | 上行 | 收到派发 | `onAck` | DISPATCHED→ACKED |
 | `TASK_PROGRESS` | 上行 | runtime event | `onProgress` | ACKED→RUNNING |
-| `TASK_RESULT` | 上行 | 执行结束 | `onResult`+`SdlcDriver` | →SUCCEEDED/FAILED + 排下一棒 |
+| `TASK_RESULT` | 上行 | 执行结束 | `onResult`+`SdlcDriver`+debugLog 段落库（可选） | →SUCCEEDED/FAILED + 排下一棒 |
 | `TASK_HANDOFF` | 上行 | 结束后有 handoff 产物 | `HandoffService` | 真人→停/数字人→记录 |
 | `HEARTBEAT` | 上行 | 周期(≈30s) | `PresenceManager` | 刷新在线 TTL |
 | `ARTIFACT_UPLOADED` | 上行 | 产物上传后(Phase 2) | `ArtifactService` | 落 ArtifactDO |

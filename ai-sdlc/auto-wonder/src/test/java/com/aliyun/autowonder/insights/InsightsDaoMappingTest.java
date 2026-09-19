@@ -26,6 +26,15 @@ class InsightsDaoMappingTest {
     }
 
     @Test
+    void mappingContainsCreditsAggregationQueries() throws IOException {
+        String xml = Files.readString(Path.of("src/main/resources/mapping/InsightsDao.xml"));
+        assertTrue(xml.contains("id=\"countTotalCredits\""));
+        assertTrue(xml.contains("id=\"dailyCreditsTrend\""));
+        assertTrue(xml.contains("SUM(credits)"));
+        assertTrue(xml.contains("GROUP BY DATE(usage_at)"));
+    }
+
+    @Test
     void migrationContainsParticipationIndexes() throws IOException {
         String migration = Files.readString(
                 Path.of("docs/migration/V037__human_agent_participation_indexes.sql"));

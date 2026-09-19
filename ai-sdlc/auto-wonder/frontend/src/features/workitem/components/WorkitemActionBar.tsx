@@ -1,14 +1,17 @@
 import { Button, Space, Tooltip } from 'antd';
-import { SwapOutlined, UserSwitchOutlined, CommentOutlined, RocketOutlined, SyncOutlined, DeleteOutlined, UserAddOutlined } from '@ant-design/icons';
+import { SwapOutlined, UserSwitchOutlined, CommentOutlined, RocketOutlined, SyncOutlined, DeleteOutlined, UserAddOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 
 interface WorkitemActionBarProps {
   hasSdlc?: boolean;
+  watched?: boolean;
   onStartDelivery?: () => void;
   onAssignHuman?: () => void;
   onTransition?: () => void;
   onAddComment?: () => void;
   onSyncExternal?: () => void;
   onDelete?: () => void;
+  onToggleWatch?: () => void;
+  watchLoading?: boolean;
   syncExternalLoading?: boolean;
   deleteLoading?: boolean;
   deleteDisabled?: boolean;
@@ -17,12 +20,15 @@ interface WorkitemActionBarProps {
 
 export function WorkitemActionBar({
   hasSdlc,
+  watched,
   onStartDelivery,
   onAssignHuman,
   onTransition,
   onAddComment,
   onSyncExternal,
   onDelete,
+  onToggleWatch,
+  watchLoading,
   syncExternalLoading,
   deleteLoading,
   deleteDisabled,
@@ -30,7 +36,19 @@ export function WorkitemActionBar({
 }: WorkitemActionBarProps) {
   return (
     <div data-testid="workitem-action-bar" style={{ background: '#f5f5f5', borderRadius: 8, padding: '12px 0' }}>
-      <Space>
+      <Space wrap>
+        <Button
+          data-testid="workitem-watch-toggle"
+          type={watched ? 'primary' : 'default'}
+          ghost={watched}
+          icon={watched ? <StarFilled /> : <StarOutlined />}
+          aria-label={watched ? '取消关注工单' : '关注工单'}
+          style={watched ? { background: '#ff6a00', borderColor: '#ff6a00' } : undefined}
+          onClick={onToggleWatch}
+          loading={watchLoading}
+        >
+          {watched ? '已关注' : '关注'}
+        </Button>
         <Button
           type="primary"
           icon={hasSdlc ? <UserSwitchOutlined /> : <RocketOutlined />}

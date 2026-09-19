@@ -19,6 +19,19 @@ history, not in the published community tree.
 - `docs/mcp-memory-management.md`: MCP memory tools.
 - `docs/mcp-skill-package-upload.md`: MCP Skill package tools.
 - `docs/autowonder-s3-storage.md`: optional standard S3 backend configuration.
+- `docs/checklist-applicability.md`: conditional checklist execution contract.
+- `docs/context-material-contract.md`: runtime context material contract.
+- `docs/dispatch-runtime-authoritative-recovery.md`: dispatch recovery rollout.
+- `docs/executor-restart-controls.md`: executor restart operations.
+- `docs/feishu-channel.md`: optional public Feishu integration.
+- `docs/legacy-checkpoint-compatibility.md`: checkpoint recovery compatibility.
+- `docs/mcp/runtime-trace.md`: runtime trace API operations.
+- `docs/memory-audit-cleanup.md`: memory maintenance operations.
+- `docs/platform-im-notifications.md`: notification operations.
+- `docs/platform-intelligence.md`: platform intelligence configuration.
+- `docs/project-backup.md`: project configuration backup contract.
+- `docs/community/environment-variable-operations.md`: encrypted environment variables and upgrade safeguards.
+- `docs/community/runtime-configuration.md`: optional runtime tuning and deployment configuration bindings.
 - `docs/community/README.md`: community runtime entry point.
 - `docs/community/application.env.example`: runtime configuration inventory.
 - `docs/community/docker-compose.dependencies.yml`: local dependencies.

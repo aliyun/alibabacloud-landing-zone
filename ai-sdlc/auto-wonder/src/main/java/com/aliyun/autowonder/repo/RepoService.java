@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.repo;
 
 import com.aliyun.autowonder.agent.AgentRepoPermDao;
+import com.aliyun.autowonder.agent.AgentRepoRefDO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.repo.dto.*;
@@ -117,8 +118,9 @@ public class RepoService {
         if (repo == null) {
             throw new BizException(ErrorCode.REPO_NOT_FOUND);
         }
-        if (agentRepoPermDao.countByRepoId(id, tenantId) > 0) {
-            throw new BizException(ErrorCode.REPO_DELETE_IN_USE);
+        List<AgentRepoRefDO> activeRefs = agentRepoPermDao.listActiveRefsByRepoId(id, tenantId);
+        if (!activeRefs.isEmpty()) {
+            throw new BizException(ErrorCode.REPO_DELETE_IN_USE, describeActiveRefs(activeRefs));
         }
         int rows = repoDao.softDelete(id, tenantId, repo.getVersion(), userId);
         if (rows == 0) {
@@ -126,6 +128,24 @@ public class RepoService {
         }
         conclusionDao.deleteByRepoId(id, tenantId);
         relationDao.deleteByRepoId(id, tenantId);
+    }
+
+    private String describeActiveRefs(List<AgentRepoRefDO> refs) {
+        StringBuilder detail = new StringBuilder();
+        for (AgentRepoRefDO ref : refs) {
+            if (detail.length() > 0) {
+                detail.append("；");
+            }
+            String name = ref.getAgentName() == null || ref.getAgentName().isBlank()
+                    ? "数字员工" : ref.getAgentName();
+            detail.append(name).append("(#").append(ref.getAgentId()).append(") ")
+                    .append(AgentRepoRefDO.TYPE_ONLINE.equals(ref.getRefType()) ? "在线版本" : "编辑草稿");
+            if (ref.getVersionNo() != null) {
+                detail.append(" v").append(ref.getVersionNo());
+            }
+        }
+        return "仓库仍被数字员工引用,无法删除:" + detail
+                + "。请先在对应版本解除该仓库权限,或发布解除后的新版本再删除仓库。";
     }
 
     public void startScan(long id, long tenantId, long userId) {

@@ -6,6 +6,7 @@ import com.aliyun.autowonder.insights.participation.HumanAgentParticipationRawEv
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.math.BigDecimal;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +15,8 @@ import java.util.Map;
 public interface InsightsDao {
 
     long countTotalTokens(@Param("tenantId") long tenantId, @Param("since") Date since, @Param("agentId") Long agentId);
+
+    BigDecimal countTotalCredits(@Param("tenantId") long tenantId, @Param("since") Date since, @Param("agentId") Long agentId);
 
     int countWorkitems(@Param("tenantId") long tenantId, @Param("since") Date since);
 
@@ -38,6 +41,8 @@ public interface InsightsDao {
     int countAuditBlocks(@Param("tenantId") long tenantId, @Param("since") Date since);
 
     List<Map<String, Object>> dailyTokenTrend(@Param("tenantId") long tenantId, @Param("since") Date since, @Param("agentId") Long agentId);
+
+    List<Map<String, Object>> dailyCreditsTrend(@Param("tenantId") long tenantId, @Param("since") Date since, @Param("agentId") Long agentId);
 
     List<InsightAuditItemVO> listAuditItems(@Param("tenantId") long tenantId,
                                             @Param("riskLevel") String riskLevel,

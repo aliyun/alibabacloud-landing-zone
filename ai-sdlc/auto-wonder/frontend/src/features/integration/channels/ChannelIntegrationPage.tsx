@@ -1,14 +1,17 @@
-import { useState } from 'react';
-import { Card, Empty, Space, Tabs, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { getPlatformImChannels, PLATFORM_IM_CHANNELS_QUERY_KEY, selectedImProvider } from '@/features/platform/brandingApi';
+import { Alert, Card, Empty, Space, Spin, Tabs, Typography } from 'antd';
 import { CHANNEL_REGISTRY } from './channelRegistry';
 
 const { Text, Title } = Typography;
 
 export function ChannelIntegrationPage() {
-  const firstEnabled = CHANNEL_REGISTRY.find((c) => c.enabled)?.key ?? CHANNEL_REGISTRY[0]?.key;
-  const [activeKey, setActiveKey] = useState(firstEnabled);
+  const channelsQuery = useQuery({ queryKey: PLATFORM_IM_CHANNELS_QUERY_KEY, queryFn: getPlatformImChannels });
+  if (channelsQuery.isLoading) return <Spin />;
+  if (channelsQuery.isError) return <Alert type="error" message="协作通知渠道加载失败，请刷新重试" />;
+  const activeKey = selectedImProvider(channelsQuery.data ?? []);
 
-  const items = CHANNEL_REGISTRY.map((channel) => ({
+  const items = CHANNEL_REGISTRY.filter((channel) => channel.key === activeKey).map((channel) => ({
     key: channel.key,
     label: channel.label,
     disabled: !channel.enabled,
@@ -26,12 +29,12 @@ export function ChannelIntegrationPage() {
         <Space direction="vertical" size={4} style={{ width: '100%' }}>
           <Title level={4} style={{ margin: 0 }}>消息渠道集成</Title>
           <Text type="secondary">
-            把数字人接入到消息渠道,群成员 @数字人 即可对话。当前支持钉钉,后续接入飞书、Slack。
+            把数字人接入到消息渠道,群成员 @数字人 即可对话。渠道跟随平台协作通知设置，当前使用{activeKey === 'FEISHU' ? '飞书' : '钉钉'}。
           </Text>
         </Space>
       </Card>
       <Card>
-        <Tabs activeKey={activeKey} onChange={setActiveKey} items={items} />
+        <Tabs activeKey={activeKey} items={items} />
       </Card>
     </Space>
   );

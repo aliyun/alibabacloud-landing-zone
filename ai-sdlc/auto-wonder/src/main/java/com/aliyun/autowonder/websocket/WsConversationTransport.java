@@ -7,10 +7,14 @@ import com.aliyun.autowonder.conversation.ConversationCapabilityService;
 import com.aliyun.autowonder.conversation.ConversationCapabilitySnapshot;
 import com.aliyun.autowonder.conversation.ConversationTransport;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
+import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.util.Map;
 
 @Component
 public class WsConversationTransport implements ConversationTransport {
@@ -18,17 +22,28 @@ public class WsConversationTransport implements ConversationTransport {
     private final SessionRegistry sessionRegistry;
     private final RedisManager redisManager;
     private final ConversationCapabilityService capabilityService;
+    private final AgentEnvironmentVariableResolver environmentVariableResolver;
+    private final PresenceManager presenceManager;
 
     public WsConversationTransport(SessionRegistry sessionRegistry, RedisManager redisManager) {
-        this(sessionRegistry, redisManager, null);
+        this(sessionRegistry, redisManager, null, null, null);
+    }
+
+    public WsConversationTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
+            ConversationCapabilityService capabilityService) {
+        this(sessionRegistry, redisManager, capabilityService, null, null);
     }
 
     @Autowired
     public WsConversationTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
-            ConversationCapabilityService capabilityService) {
+            ConversationCapabilityService capabilityService,
+            AgentEnvironmentVariableResolver environmentVariableResolver,
+            PresenceManager presenceManager) {
         this.sessionRegistry = sessionRegistry;
         this.redisManager = redisManager;
         this.capabilityService = capabilityService;
+        this.environmentVariableResolver = environmentVariableResolver;
+        this.presenceManager = presenceManager;
     }
 
     @Override
@@ -64,7 +79,24 @@ public class WsConversationTransport implements ConversationTransport {
         frame.put("capabilityHash", capability.capabilityHash());
         frame.put("mcpToken", capability.mcpToken());
         frame.put("mcpSecrets", capability.mcpSecrets());
+        Map<String, String> environmentVariables = environmentVariableResolver == null
+                ? Map.of()
+                : environmentVariableResolver.resolve(conv.getTenantId(), capability.agentVersionId());
+        requireEnvironmentVariableProtocol(conv.getExecutorId(), environmentVariables);
+        frame.put("environmentVariables", environmentVariables);
         deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
+    }
+
+    private void requireEnvironmentVariableProtocol(long executorId,
+            Map<String, String> environmentVariables) {
+        if (environmentVariables.isEmpty()) {
+            return;
+        }
+        if (presenceManager == null || !presenceManager.supportsProtocolFeature(
+                executorId, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1)) {
+            throw new ExecutorProtocolCompatibilityException(
+                    WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1);
+        }
     }
 
     @Override
@@ -91,6 +123,15 @@ public class WsConversationTransport implements ConversationTransport {
         deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
     }
 
+    @Override
+    public void sendCommandsProbe(AgentConversationDO conv) {
+        if (conv.getExecutorId() == null) {
+            throw new IllegalArgumentException("conversation must have a bound executor");
+        }
+        deliverToExecutor(conv.getExecutorId(),
+                buildCommandsProbeFrame(conv.getExecutorId(), conv.getId()).toJSONString());
+    }
+
     /**
      * 与执行器 daemon/wsclient.ConversationElicitationReplyFrame 逐字段对齐的帧构造。
      * 抽成静态方法是为了让契约测试不必搭 WS 环境就能断言字段名。
@@ -113,6 +154,15 @@ public class WsConversationTransport implements ConversationTransport {
         if (answerJson != null && !answerJson.isBlank()) {
             frame.put("content", JSON.parseObject(answerJson));
         }
+        return frame;
+    }
+
+    /** 静态、可单测：探针帧只带路由所需的 executorId + conversationId（cwd 由执行器派生）。 */
+    public static JSONObject buildCommandsProbeFrame(Long executorId, Long conversationId) {
+        JSONObject frame = new JSONObject(true);
+        frame.put("type", "CONVERSATION_COMMANDS_PROBE");
+        frame.put("executorId", executorId);
+        frame.put("conversationId", conversationId);
         return frame;
     }
 

@@ -8,6 +8,7 @@ import lombok.Setter;
 public class ReviewRequest {
     private String decision;
     private String editedContentMd;
+    private String editedType;
     private String comment;
     private String scope;
     private Long ownerRef;

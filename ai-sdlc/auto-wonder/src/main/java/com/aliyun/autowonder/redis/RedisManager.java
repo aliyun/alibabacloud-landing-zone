@@ -333,6 +333,21 @@ public class RedisManager extends AbstractRedisManager {
         }
     }
 
+    /** Atomically replaces a set snapshot and its TTL; an empty snapshot removes the key. */
+    public void replaceSetWithExpire(String key, java.util.Collection<String> members,
+            long expireSeconds) {
+        String script = "redis.call('del', KEYS[1]); "
+                + "if #ARGV > 1 then "
+                + "for i = 2, #ARGV do redis.call('sadd', KEYS[1], ARGV[i]) end; "
+                + "redis.call('expire', KEYS[1], ARGV[1]); end; return 1";
+        java.util.List<String> args = new java.util.ArrayList<>();
+        args.add(String.valueOf(expireSeconds));
+        if (members != null) {
+            args.addAll(members);
+        }
+        eval(script, java.util.List.of(key), args);
+    }
+
     public void setWithExpire(String key, String value, long expireSec) {
         try (Jedis jedis = jedisPool.getResource()) {
             jedis.set(key, value, SetParams.setParams().ex(expireSec));

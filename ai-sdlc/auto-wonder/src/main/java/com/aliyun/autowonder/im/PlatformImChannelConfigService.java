@@ -31,8 +31,17 @@ public class PlatformImChannelConfigService {
     public List<PlatformImChannelConfigVO> list(long userId) {
         try {
             List<PlatformImChannelConfigVO> result = new ArrayList<>();
-            for (PlatformImChannelConfigDO config : configDao.listActive()) {
-                result.add(toVO(config));
+            String selected = selectedProvider();
+            for (ImProviderType type : ImProviderType.values()) {
+                PlatformImChannelConfigDO config = configDao.findByProvider(type.getKey());
+                if (config == null) {
+                    config = new PlatformImChannelConfigDO();
+                    config.setProvider(type.getKey());
+                    config.setEnabled(0);
+                }
+                PlatformImChannelConfigVO vo = toVO(config);
+                vo.setSelected(selected.equals(type.getKey()));
+                result.add(vo);
             }
             return result;
         } catch (AlreadyLoggedException e) {
@@ -53,7 +62,23 @@ public class PlatformImChannelConfigService {
 
     @Transactional
     public PlatformImChannelConfigVO updateDingTalk(long userId, UpdateDingTalkChannelRequest request) {
-        String provider = ImProviderType.DINGTALK.getKey();
+        return update(userId, "DINGTALK", request);
+    }
+
+    public String selectedProvider() {
+        String selected = configDao.selectedProvider();
+        return selected == null ? "DINGTALK" : ImProviderType.normalize(selected);
+    }
+
+    public void requireSelected(String provider) {
+        if (!selectedProvider().equals(ImProviderType.normalize(provider))) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请使用平台当前选择的 IM 渠道");
+        }
+    }
+
+    @Transactional
+    public PlatformImChannelConfigVO update(long userId, String provider, UpdateDingTalkChannelRequest request) {
+        provider = ImProviderType.normalize(provider);
         try {
             if (request == null) {
                 throw new BizException(ErrorCode.PARAM_INVALID, "请求不能为空");
@@ -76,16 +101,21 @@ public class PlatformImChannelConfigService {
             next.setBaseUrl(baseUrl);
             next.setCreatorId(userId);
             next.setModifierId(userId);
+            configDao.lockSelection();
             configDao.upsert(next);
             PlatformImChannelConfigDO saved = configDao.findByProvider(provider);
             PlatformImChannelConfigDO effective = saved == null ? next : saved;
             if (effective.getEnabled() == 1 && !isComplete(effective)) {
                 throw new BizException(ErrorCode.IM_CHANNEL_NOT_READY);
             }
+            configDao.disableOthers(provider, userId);
+            configDao.selectProvider(provider);
             boolean secretConfigured = hasText(effective.getCredentialRef());
             log.info("IM notification platform config updated provider={} enabled={} secretConfigured={} operatorId={}",
                     provider, effective.getEnabled() == 1, secretConfigured, userId);
-            return toVO(effective);
+            PlatformImChannelConfigVO vo = toVO(effective);
+            vo.setSelected(true);
+            return vo;
         } catch (AlreadyLoggedException e) {
             throw e;
         } catch (BizException e) {
@@ -107,6 +137,7 @@ public class PlatformImChannelConfigService {
     public PlatformImChannelConfigDO findEnabled(String provider) {
         String normalizedProvider = ImProviderType.normalize(provider);
         try {
+            if (!selectedProvider().equals(normalizedProvider)) return null;
             PlatformImChannelConfigDO config = configDao.findByProvider(normalizedProvider);
             return config != null && Integer.valueOf(1).equals(config.getEnabled()) ? config : null;
         } catch (AlreadyLoggedException e) {
@@ -154,7 +185,7 @@ public class PlatformImChannelConfigService {
     private static boolean isComplete(PlatformImChannelConfigDO config) {
         return hasText(config.getAppKey())
                 && hasText(config.getCredentialRef())
-                && hasText(config.getRobotCode());
+                && ("FEISHU".equals(config.getProvider()) || hasText(config.getRobotCode()));
     }
 
     private static PlatformImChannelConfigVO toVO(PlatformImChannelConfigDO config) {

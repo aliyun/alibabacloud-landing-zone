@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.storage;
 
+import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.taskpackage.TaskPackager;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.StringUtils;
@@ -41,10 +41,10 @@ public class ObjectStorageConfig {
 
     @Bean
     public TaskPackager taskPackager(ObjectStorage objectStorage, OssProperties props,
-                                     @Value("${autowonder.public-base-url:}") String publicBaseUrl) {
+                                     PlatformBrandingService brandingService) {
         validateConfiguredBuckets(props);
         require("oss.task-pkg-bucket or oss.bucket", props.resolveTaskPkgBucket());
-        return new TaskPackager(objectStorage, props.resolveTaskPkgBucket(), publicBaseUrl);
+        return new TaskPackager(objectStorage, props.resolveTaskPkgBucket(), brandingService::effectiveMcpBaseUrl);
     }
 
     private static void validateRequiredProperties(OssProperties props) {

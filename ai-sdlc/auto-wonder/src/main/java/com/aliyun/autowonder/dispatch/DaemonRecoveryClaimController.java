@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.artifact.DaemonUploadAuthenticator;
+import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -9,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Set;
 
 @RestController
@@ -23,17 +26,20 @@ public class DaemonRecoveryClaimController {
 
     private final DaemonUploadAuthenticator authenticator;
     private final DispatchDao dispatchDao;
+    private final AgentEnvironmentVariableResolver environmentVariableResolver;
 
     public DaemonRecoveryClaimController(DaemonUploadAuthenticator authenticator,
-            DispatchDao dispatchDao) {
+            DispatchDao dispatchDao,
+            AgentEnvironmentVariableResolver environmentVariableResolver) {
         this.authenticator = authenticator;
         this.dispatchDao = dispatchDao;
+        this.environmentVariableResolver = environmentVariableResolver;
     }
 
     @PostMapping("/dispatches/{dispatchId}/recovery-claim")
     public ResponseEntity<?> claim(@PathVariable long dispatchId,
             @RequestParam("token") String token) {
-        if (!authenticator.authenticate(dispatchId, token).isSuccess()) {
+        if (!authenticator.authenticate(dispatchId, token).isSuccess() || authenticator.isMutationFenced(dispatchId)) {
             return ResponseEntity.status(401).build();
         }
         DispatchDO dispatch = dispatchDao.findById(dispatchId);
@@ -48,8 +54,15 @@ public class DaemonRecoveryClaimController {
                     "allowed", false,
                     "error", "dispatch is no longer recoverable"));
         }
-        return ResponseEntity.ok(Map.of(
-                "allowed", true,
-                "status", dispatch.getStatus()));
+        Map<String, String> environmentVariables = dispatch.getAgentVersionId() == null
+                ? Map.of()
+                : environmentVariableResolver.resolve(dispatch.getTenantId(), dispatch.getAgentVersionId());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("allowed", true);
+        body.put("status", dispatch.getStatus());
+        body.put("environmentVariables", environmentVariables);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(body);
     }
 }

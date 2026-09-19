@@ -47,7 +47,32 @@ describe('AppLayout', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps the header on public help without platform navigation or workspace refresh', async () => {
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/help?workspaceId=99']}>
+        <Routes>
+          <Route element={<AppLayout helpCenter />}>
+            <Route path="/help" element={<h1>帮助正文</h1>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { name: '帮助正文' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '返回平台' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '帮助中心' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /登\s*录/ })).toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /菜单/ })).not.toBeInTheDocument();
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(refreshCurrentMembership).not.toHaveBeenCalled());
+  });
+
   it('builds workspace-aware header context for nested routes', () => {
+    expect(buildHeaderContext('/settings/environment-variables', '星云工坊')).toEqual({
+      workspaceName: '星云工坊',
+      sectionTitle: '系统设置',
+      pageTitle: '环境变量',
+    });
     expect(buildHeaderContext('/settings/roles', '星云工坊')).toEqual({
       workspaceName: '星云工坊',
       sectionTitle: '系统设置',

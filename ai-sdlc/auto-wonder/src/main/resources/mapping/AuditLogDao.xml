@@ -15,6 +15,9 @@
             tenant_id = #{tenantId}
             <if test="module != null">AND module = #{module}</if>
             <if test="action != null">AND action = #{action}</if>
+            <if test="actorType != null and actorType != ''">
+                AND JSON_UNQUOTE(JSON_EXTRACT(CASE WHEN JSON_VALID(detail_json) THEN detail_json ELSE '{}' END, '$.actorType')) = #{actorType}
+            </if>
             <if test="actorId != null">AND actor_id = #{actorId}</if>
             <if test="targetType != null">AND target_type = #{targetType}</if>
             <if test="targetId != null">AND target_id = #{targetId}</if>

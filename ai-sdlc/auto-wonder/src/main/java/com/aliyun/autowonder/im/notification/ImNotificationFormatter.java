@@ -30,7 +30,7 @@ public class ImNotificationFormatter {
                     + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
                     + "**申请人**：" + safeText(task.actorDisplayName()) + "\n"
                     + "**申请权限**：" + accessLevelLabel(task.commentContentMd()) + "\n\n"
-                    + "[去审批](" + normalizedBaseUrl + "/settings/members?tab=requests)";
+                    + "[去审批](" + memberReviewUrl(normalizedBaseUrl, context.tenantId()) + ")";
         }
         if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED.equals(task.notificationType())) {
             if (OUTCOME_APPROVED.equals(task.sourceType())) {
@@ -56,6 +56,15 @@ public class ImNotificationFormatter {
 
     private static String workitemUrl(String baseUrl, long workitemId, long tenantId) {
         return baseUrl + "/workitems/" + workitemId + "?workspaceId=" + tenantId;
+    }
+
+    /**
+     * {@code tab=requests} selects the pending-approval pane; {@code workspaceId} makes AppLayout
+     * switch to the workspace the request belongs to first and is stripped afterwards, keeping
+     * {@code tab}. Same convention as the workitem and scheduled-task-run links above.
+     */
+    private static String memberReviewUrl(String baseUrl, long tenantId) {
+        return baseUrl + "/settings/members?tab=requests&workspaceId=" + tenantId;
     }
 
     private static String scheduledTaskRunUrl(String baseUrl, long runId, long tenantId) {

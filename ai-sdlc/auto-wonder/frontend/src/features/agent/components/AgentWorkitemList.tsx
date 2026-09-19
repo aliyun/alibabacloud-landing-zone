@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Table, Tag, Segmented, Empty, Typography } from 'antd';
 import { Link } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
-import { workTypeMap, priorityMap, classifyWorkitemStatus } from '@/features/workitem/constants';
+import { workTypeMap, getPriorityMeta, classifyWorkitemStatus } from '@/features/workitem/constants';
 import type { Workitem } from '@/shared/types/workitem';
 
 interface AgentWorkitemListProps {
@@ -48,9 +48,9 @@ export function AgentWorkitemList({ workitems, loading }: AgentWorkitemListProps
     },
     { title: '状态', dataIndex: 'statusName', width: 120, render: (s: string | null) => s || '-' },
     {
-      title: '优先级', dataIndex: 'priority', width: 80,
+      title: '优先级', dataIndex: 'priority', width: 90,
       render: (p: number) => {
-        const m = priorityMap[p] || priorityMap[3];
+        const m = getPriorityMeta(p);
         return <Typography.Text style={{ color: m.color }}>{m.label}</Typography.Text>;
       },
     },

@@ -39,6 +39,7 @@ spring:
     connectTimeoutMs: ${REDIS_CONNECT_TIMEOUT_MS:1000}
     socketTimeoutMs: ${REDIS_SOCKET_TIMEOUT_MS:1000}
     poolMaxTotal: ${REDIS_POOL_MAX_TOTAL:100}
+    poolMaxWaitMs: ${REDIS_POOL_MAX_WAIT_MS:2000}
 
 autowonder:
   ai:

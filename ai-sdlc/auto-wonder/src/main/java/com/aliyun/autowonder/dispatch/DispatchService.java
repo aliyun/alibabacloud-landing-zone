@@ -9,11 +9,14 @@ import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDO;
 import com.aliyun.autowonder.agent.AgentVersionDao;
+import com.aliyun.autowonder.agent.AgentEnvironmentVariableRefDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.debuglog.DebugLogService;
 import com.aliyun.autowonder.evolution.EvolutionTelemetryEvidenceLiteService;
 import com.aliyun.autowonder.evolution.EvolutionTrialAssignmentLiteService;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.environment.EnvironmentSnapshotResolutionException;
 import com.aliyun.autowonder.util.MojibakeDetector;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.storage.ObjectStorageException;
@@ -68,9 +71,20 @@ public class DispatchService {
     private final ExecutorRegistry executorRegistry;
     private final EvolutionTelemetryEvidenceLiteService telemetryEvidenceService;
 	private final EvolutionTrialAssignmentLiteService trialAssignmentService;
+    private AgentEnvironmentVariableRefDao environmentVariableRefDao;
     private ScheduledTaskRunService scheduledTaskRunService;
     private ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator;
     private ScheduledTaskNotificationService scheduledTaskNotificationService;
+    private DebugLogService debugLogService;
+    private DispatchLiveActivityPublisher liveActivityPublisher;
+    private DispatchRecoveryService recoveryService;
+    @Autowired
+    public void setRecoveryService(DispatchRecoveryService service) { this.recoveryService = service; }
+
+    private void insertDispatch(DispatchDO d) {
+        if (recoveryService != null) recoveryService.insert(d); else dispatchDao.insert(d);
+    }
+
 
     @Autowired
     public void setScheduledTaskRunService(ScheduledTaskRunService scheduledTaskRunService) {
@@ -82,6 +96,14 @@ public class DispatchService {
     }
     @Autowired(required = false)
     public void setScheduledTaskNotificationService(ScheduledTaskNotificationService service) { this.scheduledTaskNotificationService = service; }
+    @Autowired(required = false)
+    public void setDebugLogService(DebugLogService debugLogService) { this.debugLogService = debugLogService; }
+    @Autowired(required = false)
+    public void setLiveActivityPublisher(DispatchLiveActivityPublisher publisher) { this.liveActivityPublisher = publisher; }
+    @Autowired
+    public void setEnvironmentVariableRefDao(AgentEnvironmentVariableRefDao dao) {
+        this.environmentVariableRefDao = dao;
+    }
 
     private static final Set<String> EXECUTOR_FAILURE_CATEGORIES = Set.of(
             "agent_error.provider_auth_or_access",
@@ -226,7 +248,7 @@ public class DispatchService {
         d.setModifierId(creatorId);
         d.setVersion(0);
         try {
-            dispatchDao.insert(d);
+            insertDispatch(d);
             log.info("dispatch enqueued dispatchId={} workitemId={} stepId={} agentId={} attempt={}",
                     d.getId(), sourceId, sdlcStepId, agentId, attempt);
             return d;
@@ -314,7 +336,7 @@ public class DispatchService {
         d.setModifierId(userId);
         d.setVersion(0);
         try {
-            dispatchDao.insert(d);
+            insertDispatch(d);
             log.info("assignment dispatch enqueued dispatchId={} workitemId={} stepId={} agentId={} attempt={}",
                     d.getId(), workitemId, sdlcStepId, agentId, attempt);
             return d;
@@ -358,7 +380,7 @@ public class DispatchService {
         d.setModifierId(userId);
         d.setVersion(0);
         try {
-            dispatchDao.insert(d);
+            insertDispatch(d);
             log.info("handoff dispatch enqueued dispatchId={} sourceDispatchId={} attempt={}",
                     d.getId(), sourceDispatchId, attempt);
             return d;
@@ -404,7 +426,7 @@ public class DispatchService {
         d.setWorkitemId(runId); d.setSdlcStepId(stepId); d.setAgentId(agentId); d.setStatus(DispatchStatus.PENDING);
         d.setAttempt(attempt); d.setIdempotencyKey(idem); d.setDeliverySourceDispatchId(sourceDispatchId);
         d.setCreatorId(userId); d.setModifierId(userId); d.setVersion(0);
-        try { dispatchDao.insert(d); return d; }
+        try { insertDispatch(d); return d; }
         catch (DuplicateKeyException race) { DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem); if (winner == null) throw race; return winner; }
     }
 
@@ -428,7 +450,7 @@ public class DispatchService {
         d.setResumeFromDispatchId(sourceDispatchId);
         d.setResumeMode(degraded ? "DEGRADED_CONTINUOUS" : "CONTINUOUS");
         d.setCreatorId(userId); d.setModifierId(userId); d.setVersion(0);
-        try { dispatchDao.insert(d); return d; }
+        try { insertDispatch(d); return d; }
         catch (DuplicateKeyException race) {
             DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) throw race;
@@ -557,7 +579,7 @@ public class DispatchService {
         interaction.setModifierId(userId);
         interaction.setVersion(0);
         try {
-            dispatchDao.insert(interaction);
+            insertDispatch(interaction);
         } catch (DuplicateKeyException race) {
             DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) {
@@ -590,7 +612,7 @@ public class DispatchService {
         interaction.setModifierId(userId);
         interaction.setVersion(0);
         try {
-            dispatchDao.insert(interaction);
+            insertDispatch(interaction);
         } catch (DuplicateKeyException race) {
             DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) throw race;
@@ -637,7 +659,7 @@ public class DispatchService {
         rework.setModifierId(userId);
         rework.setVersion(0);
         try {
-            dispatchDao.insert(rework);
+            insertDispatch(rework);
         } catch (DuplicateKeyException race) {
             DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
             if (winner == null) {
@@ -707,11 +729,15 @@ public class DispatchService {
                 || current.executionSourceType() != ExecutionSourceType.WORKITEM
                 || !DispatchStatus.PAUSE_FAILED.equals(current.getStatus())
                 || current.getExecutorId() == null
-                || executorRegistry.isDispatchActive(current.getExecutorId(), dispatchId)) {
+                || executorRegistry.isDispatchOwnedOrUnknown(current.getExecutorId(), dispatchId)) {
             return false;
         }
-        return transition(current, DispatchStatus.CANCELED, null, null, null, null,
-                DispatchFailureReason.COMMENT_REWORK);
+        String reason = current.getError() != null
+                && current.getError().startsWith(DispatchFailureReason.PAUSE_CONFIRMATION_MISSING + ":")
+                ? current.getError()
+                : DispatchFailureReason.PAUSE_CONFIRMATION_MISSING
+                    + ": 执行器权威清单已释放该任务，但平台未收到有效暂停检查点";
+        return transition(current, DispatchStatus.CANCELED, null, null, null, null, reason);
     }
 
     /** Cancel a not-yet-delivered main dispatch before a comment rework replaces it. */
@@ -746,7 +772,7 @@ public class DispatchService {
      */
     public DispatchDO continueDispatch(long workspaceId, long workitemId, long sourceDispatchId,
             long userId) {
-        String lockKey = "dispatch:continue:" + sourceDispatchId;
+        String lockKey = "dispatch:continue:" + workspaceId + ":" + workitemId;
         String lockOwner = UUID.randomUUID().toString();
         if (!redisManager.tryAcquireLock(lockKey, lockOwner, LOCK_TTL_MS)) {
             throw new BizException(ErrorCode.CONFLICT, "恢复请求正在处理中");
@@ -758,6 +784,9 @@ public class DispatchService {
                     || source.getWorkitemId() != workitemId) {
                 throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
             }
+            if (recoveryService != null) recoveryService.requireOpen(source);
+            DispatchDO alreadyRetried = dispatchDao.findByIdempotencyKey(workspaceId, "continue:" + sourceDispatchId);
+            if (alreadyRetried != null) return alreadyRetried;
             List<DispatchDO> workerDispatches = dispatchDao.listByWorkitem(workspaceId, workitemId).stream()
                     .filter(item -> java.util.Objects.equals(item.getAgentId(), source.getAgentId()))
                     .toList();
@@ -797,6 +826,9 @@ public class DispatchService {
             if (existing != null) {
                 return existing;
             }
+            if (recoveryService != null && !DispatchStatus.isTerminal(target.getStatus()) && !DispatchStatus.PAUSED.equals(target.getStatus())) {
+                throw new BizException(ErrorCode.CONFLICT, "请先取消或强制结束旧执行，再重试");
+            }
             if (!canContinue(target, System.currentTimeMillis())) {
                 throw new BizException(ErrorCode.CONFLICT, "当前执行仍在线或已成功，不能继续");
             }
@@ -817,12 +849,12 @@ public class DispatchService {
             recovery.setAttempt((maxAttempt == null ? 0 : maxAttempt) + 1);
             recovery.setIdempotencyKey(idem);
             recovery.setResumeFromDispatchId(target.getId());
-            recovery.setResumeMode("RECOVERY");
+            recovery.setResumeMode(isInteractionDispatch(target) ? "CANONICAL_INTERACTION" : "RECOVERY");
             recovery.setCreatorId(userId);
             recovery.setModifierId(userId);
             recovery.setVersion(0);
             try {
-                dispatchDao.insert(recovery);
+                insertDispatch(recovery);
             } catch (DuplicateKeyException race) {
                 DispatchDO winner = dispatchDao.findByIdempotencyKey(workspaceId, idem);
                 if (winner == null) {
@@ -868,6 +900,7 @@ public class DispatchService {
     public boolean mayRouteHandoff(long workspaceId, long executorId, long dispatchId) {
         DispatchDO dispatch = loadInboundRow(workspaceId, executorId, dispatchId);
         return dispatch != null && DispatchStatus.SUCCEEDED.equals(dispatch.getStatus())
+                && (recoveryService == null || !recoveryService.fenced(dispatch))
                 && !isInteractionDispatch(dispatch);
     }
 
@@ -896,53 +929,100 @@ public class DispatchService {
                 return false;
             }
             long workspaceId = d.getTenantId();
+            if (recoveryService != null) {
+                if (recoveryService.fenced(d)) return false;
+                if (!recoveryService.ready(d)) return false;
+            }
 
             AgentDO agent = agentDao.findById(d.getAgentId());
             if (agent == null || workspaceId != agent.getTenantId()) {
-                log.info("dispatch pending dispatchId={} reason=AGENT_NOT_PUBLISHED", d.getId());
+                failAndDrive(d, DispatchWaitingReason.AGENT_NOT_PUBLISHED.error());
                 return false;
             }
             boolean scheduledRun = d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN;
-            Long selectedVersionId = scheduledRun ? d.getAgentVersionId() : agent.getOnlineVersionId();
+            boolean versionAlreadyFrozen = d.getAgentVersionId() != null;
+            if (scheduledRun && !versionAlreadyFrozen) {
+                failAndDrive(d, frozenVersionErrorPrefix(true)
+                        + "frozen agent version is missing");
+                return false;
+            }
+            Long selectedVersionId = versionAlreadyFrozen
+                    ? d.getAgentVersionId() : agent.getOnlineVersionId();
             if (selectedVersionId == null || selectedVersionId <= 0) {
-                if (scheduledRun) {
-                    failAndDrive(d, "SCHEDULED_TASK_INVALID_STATE(30005): frozen agent version is missing");
+                if (scheduledRun || versionAlreadyFrozen) {
+                    failAndDrive(d, frozenVersionErrorPrefix(scheduledRun)
+                            + "frozen agent version is missing");
+                    return false;
                 } else {
-                    log.info("dispatch pending dispatchId={} reason=AGENT_NOT_PUBLISHED", d.getId());
+                    failAndDrive(d, DispatchWaitingReason.AGENT_NOT_PUBLISHED.error());
                 }
                 return false;
             }
             AgentVersionDO version = agentVersionDao.findById(selectedVersionId);
             if (version == null || workspaceId != version.getTenantId()
                     || !Objects.equals(version.getAgentId(), d.getAgentId())) {
-                if (scheduledRun) {
-                    failAndDrive(d, "SCHEDULED_TASK_INVALID_STATE(30005): frozen agent version is invalid");
+                if (scheduledRun || versionAlreadyFrozen) {
+                    failAndDrive(d, frozenVersionErrorPrefix(scheduledRun)
+                            + "frozen agent version is invalid");
+                } else {
+                    failAndDrive(d, DispatchWaitingReason.AGENT_VERSION_NOT_FOUND.error());
                 }
-                log.info("dispatch pending dispatchId={} reason=AGENT_VERSION_NOT_FOUND", d.getId());
                 return false;
             }
 
             String capacityLockKey = "dispatch:agent-capacity:" + d.getAgentId();
             String capacityLockOwner = UUID.randomUUID().toString();
             if (!redisManager.tryAcquireLock(capacityLockKey, capacityLockOwner, CAPACITY_LOCK_TTL_MS)) {
-                log.info("dispatch pending dispatchId={} reason=CAPACITY_LOCK_BUSY", d.getId());
+                if (recoveryService != null) recoveryService.waiting(d, DispatchWaitingReason.CAPACITY_LOCK_BUSY.name());
+                    log.info("dispatch pending dispatchId={} reason=CAPACITY_LOCK_BUSY", d.getId());
                 return false;
             }
             Long executorId;
             try {
                 Long preferredExecutorId = preferredResumeExecutor(d);
-                if ("CONTINUOUS".equals(d.getResumeMode()) && preferredExecutorId != null) {
-                    // Do not fall through to a different executor: its local provider session is invalid.
-                    executorId = executorSelector.selectStrict(d.getAgentId(), preferredExecutorId);
-                } else if (isInteractionDispatch(d)) {
-                    executorId = executorSelector.selectForInteraction(d.getAgentId(), preferredExecutorId);
-                } else {
-                    executorId = preferredExecutorId == null
-                            ? executorSelector.select(d.getAgentId())
-                            : executorSelector.select(d.getAgentId(), preferredExecutorId);
+                String requiredFeature = hasEnvironmentBindings(workspaceId, version.getId())
+                        ? ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1 : null;
+                DispatchWaitingReason selectionFailure = null;
+                try {
+                    if ("CONTINUOUS".equals(d.getResumeMode()) && preferredExecutorId != null) {
+                        // Do not fall through to a different executor: its local provider session is invalid.
+                        executorId = requiredFeature == null
+                                ? executorSelector.selectStrict(d.getAgentId(), preferredExecutorId)
+                                : executorSelector.selectStrict(d.getAgentId(), preferredExecutorId,
+                                        requiredFeature);
+                    } else if (isInteractionDispatch(d)) {
+                        executorId = requiredFeature == null
+                                ? executorSelector.selectForInteraction(d.getAgentId(), preferredExecutorId)
+                                : executorSelector.selectForInteraction(d.getAgentId(), preferredExecutorId,
+                                        requiredFeature);
+                    } else if (requiredFeature == null) {
+                        executorId = preferredExecutorId == null
+                                ? executorSelector.select(d.getAgentId())
+                                : executorSelector.select(d.getAgentId(), preferredExecutorId);
+                    } else {
+                        executorId = executorSelector.select(d.getAgentId(), preferredExecutorId,
+                                requiredFeature);
+                    }
+                } catch (ExecutorProtocolCompatibilityException compatibilityFailure) {
+                    failAndDrive(d, compatibilityFailure.getMessage());
+                    return false;
+                } catch (RuntimeException selectionError) {
+                    log.error("executor selection failed dispatchId={} agentId={}",
+                            d.getId(), d.getAgentId(), selectionError);
+                    executorId = null;
+                    selectionFailure = DispatchWaitingReason.SELECTION_INTERNAL_ERROR;
                 }
                 if (executorId == null) {
-                    log.info("dispatch pending dispatchId={} reason=NO_EXECUTOR_CAPACITY", d.getId());
+                    DispatchWaitingReason reason = selectionFailure != null
+                            ? selectionFailure : executorSelector.unavailableReason(d.getAgentId());
+                    if (reason == DispatchWaitingReason.SELECTION_INTERNAL_ERROR) {
+                        failAndDrive(d, reason.error());
+                    } else if (reason.retryable()) {
+                        if (recoveryService != null) recoveryService.waiting(d, reason.name());
+                    } else {
+                        failAndDrive(d, reason.error());
+                    }
+                    log.info("dispatch not scheduled dispatchId={} reason={}", d.getId(), reason);
                     return false;
                 }
                 if ("SIDE_INTERACTION".equals(d.getResumeMode())
@@ -962,6 +1042,8 @@ public class DispatchService {
             }
             d.setAgentVersionId(version.getId());
             d.setExecutorId(executorId);
+
+            freezeDebugLogFlag(d, workspaceId);
 
             TaskPackageResult pkg;
             try {
@@ -984,7 +1066,9 @@ public class DispatchService {
                             d.getId(), reason, packagingFailure);
                     failAndDrive(d, reason);
                 } else {
-                    returnPackagingToPending(d.getTenantId(), d.getId());
+                    if (recoveryService == null) returnPackagingToPending(d.getTenantId(), d.getId());
+                    else if (!recoveryService.retryPackaging(d, rootFailureMessage(packagingFailure)))
+                        failAndDrive(d, "TASK_PACKAGE_RETRIES_EXHAUSTED: " + rootFailureMessage(packagingFailure));
                 }
                 throw packagingFailure;
             }
@@ -994,8 +1078,15 @@ public class DispatchService {
             }
             try {
                 transport.dispatch(d, pkg);
+            } catch (EnvironmentSnapshotResolutionException resolutionFailure) {
+                failAndDrive(d, "ENVIRONMENT_SNAPSHOT_INVALID: " + resolutionFailure.getMessage());
+                return false;
+            } catch (ExecutorProtocolCompatibilityException compatibilityFailure) {
+                failAndDrive(d, compatibilityFailure.getMessage());
+                return false;
             } catch (Exception sendFailure) {
-                onBusy(d.getTenantId(), executorId, d.getId());
+                // Delivery may already have reached Runtime. Keep ownership until
+                // ACK/result or timeout reconciliation; only TASK_BUSY proves rejection.
                 throw sendFailure;
             }
             return true;
@@ -1004,6 +1095,48 @@ public class DispatchService {
             return false;
         } finally {
             redisManager.releaseLock(lockKey, lockOwner);
+        }
+    }
+
+    private boolean hasEnvironmentBindings(long workspaceId, long agentVersionId) {
+        if (environmentVariableRefDao == null) {
+            return false;
+        }
+        var refs = environmentVariableRefDao.listByVersion(workspaceId, agentVersionId);
+        return refs != null && !refs.isEmpty();
+    }
+
+    private String frozenVersionErrorPrefix(boolean scheduledRun) {
+        return scheduledRun ? "SCHEDULED_TASK_INVALID_STATE(30005): "
+                : "DISPATCH_FROZEN_AGENT_VERSION_INVALID: ";
+    }
+
+    /**
+     * 打包时把小队 debug 开关冻结到 dispatch 行（设计文档 §4.1：判定发生在派发打包时，
+     * 下一轮生效）。best-effort：判定或写入失败只记 warn，绝不阻断核心派发链路。
+     *
+     * <p>写入受 {@code status = 'PACKAGING'} 守卫；rows==0 表示守卫拒绝（补偿重排队/终态竞态），
+     * 此时内存 flag 必须保持不置位——组帧只看内存对象，若与 DB 不一致会对 debug_log_enabled=0
+     * 的行下发 enabled=true，runtime 直传签发会被服务端 422 拒。
+     */
+    private void freezeDebugLogFlag(DispatchDO d, long workspaceId) {
+        if (debugLogService == null) {
+            return;
+        }
+        try {
+            if (debugLogService.enabledForAgent(workspaceId, d.getAgentId())) {
+                int rows = dispatchDao.markDebugLogEnabled(d.getId(), workspaceId);
+                if (rows == 0) {
+                    log.warn("debug log freeze matched no row dispatchId={} agentId={} "
+                                    + "reason=DEBUG_LOG_FREEZE_NO_ROW", d.getId(), d.getAgentId());
+                    return;
+                }
+                d.setDebugLogEnabled(true);
+                log.info("dispatch debug log frozen dispatchId={} agentId={}", d.getId(), d.getAgentId());
+            }
+        } catch (RuntimeException freezeFailure) {
+            log.warn("debug log freeze skipped dispatchId={} reason=DEBUG_LOG_FREEZE_ERROR",
+                    d.getId(), freezeFailure);
         }
     }
 
@@ -1045,13 +1178,22 @@ public class DispatchService {
     /** Fill currently available capacity from the durable oldest-first PENDING queue. */
     public void drainPending(long agentId) {
         while (true) {
-            java.util.List<DispatchDO> pending = dispatchDao.listOldestPendingByAgent(agentId, 1);
+            java.util.List<DispatchDO> pending = dispatchDao.listOldestPendingByAgent(agentId, 20);
             if (pending == null || pending.isEmpty()) {
                 return;
             }
-            if (!runPending(pending.get(0).getId())) {
-                return;
+            boolean progressed = false;
+            for (DispatchDO queued : pending) {
+                if (runPending(queued.getId())) {
+                    progressed = true;
+                    continue;
+                }
+                DispatchDO after = dispatchDao.findById(queued.getId());
+                if (after == null || !DispatchStatus.PENDING.equals(after.getStatus())) {
+                    progressed = true;
+                }
             }
+            if (!progressed) return;
         }
     }
 
@@ -1072,10 +1214,11 @@ public class DispatchService {
     /** Optimistic transition; refreshes local version on success. Returns false on version conflict. */
     boolean transition(DispatchDO d, String status, Long agentVersionId, Long executorId,
             String packageOssRef, String resultSummary, String error) {
-        int rows = dispatchDao.updateStatus(d.getId(), d.getTenantId(), status,
+        int rows = recoveryService == null ? dispatchDao.updateStatus(d.getId(), d.getTenantId(), status,
                 agentVersionId, executorId, packageOssRef, resultSummary,
-                truncateCodePoints(error, MAX_ERROR_CHARS),
-                d.getVersion(), SYSTEM_USER_ID);
+                truncateCodePoints(error, MAX_ERROR_CHARS), d.getVersion(), SYSTEM_USER_ID)
+                : recoveryService.transition(d, status, agentVersionId, executorId, packageOssRef,
+                        resultSummary, truncateCodePoints(error, MAX_ERROR_CHARS));
         if (rows == 0) {
             log.info("dispatch transition lost race dispatchId={} targetStatus={}", d.getId(), status);
             return false;
@@ -1086,10 +1229,23 @@ public class DispatchService {
         return true;
     }
 
+    public void onUnacknowledgedTimeout(DispatchDO d) {
+        if (!DispatchStatus.DISPATCHED.equals(d.getStatus())) return;
+        if (transition(d, DispatchStatus.TIMEOUT, null, null, null, null,
+                "DISPATCH_ACK_TIMEOUT: 接单确认超时，旧执行已隔离，请确认外部操作后重试")
+                && !isInteractionDispatch(d) && d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN)
+            completeScheduledRun(d, false, null, "DISPATCH_ACK_TIMEOUT");
+    }
+
+    public void failPackagingDeadline(DispatchDO d) {
+        failAndDrive(d, "TASK_PACKAGE_RETRIES_EXHAUSTED: 打包重试次数已耗尽");
+    }
+
     private void failAndDrive(DispatchDO d, String reason) {
         if (!transition(d, DispatchStatus.FAILED, null, null, null, null, reason)) {
             return; // lost optimistic race; the winner drives
         }
+        if (isInteractionDispatch(d)) return;
         if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
             completeScheduledRun(d, false, null, reason);
         } else {
@@ -1237,6 +1393,16 @@ public class DispatchService {
         }
         event.setEventTime(detail.getDate("eventTime"));
         runtimeEventDao.insert(event);
+        if (liveActivityPublisher != null) {
+            // Best-effort realtime fan-out: the event is already durable, so a publish failure must
+            // not fail ingestion and make the runtime retry an event that is already recorded.
+            try {
+                liveActivityPublisher.publish(d, event);
+            } catch (RuntimeException e) {
+                log.warn("dispatch live activity publish skipped dispatchId={} eventId={}: {}",
+                        d.getId(), event.getEventId(), e.getMessage());
+            }
+        }
         if (scheduledTaskNotificationService != null && d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
             scheduledTaskNotificationService.runtime(d.getTenantId(), d.getWorkitemId());
         }
@@ -1371,7 +1537,15 @@ public class DispatchService {
     public boolean onResult(long workspaceId, Long executorId, long dispatchId, boolean success,
             String resultSummary, String error, boolean workflowChanged,
             boolean explicitHandoff) {
-        log.info("dispatch onResult dispatchId={} success={}", dispatchId, success);
+        return onResult(workspaceId, executorId, dispatchId, success, resultSummary, error,
+                workflowChanged, explicitHandoff, null);
+    }
+
+    public boolean onResult(long workspaceId, Long executorId, long dispatchId, boolean success,
+            String resultSummary, String error, boolean workflowChanged,
+            boolean explicitHandoff, String failureCategory) {
+        log.info("dispatch onResult dispatchId={} success={} failureCategory={}",
+                dispatchId, success, failureCategory);
         DispatchDO d = loadInboundRow(workspaceId, executorId, dispatchId);
         if (d == null) {
             return false;
@@ -1381,23 +1555,27 @@ public class DispatchService {
                 || DispatchStatus.PAUSE_FAILED.equals(d.getStatus())) {
             return false;
         }
+        if (DispatchStatus.CANCELED.equals(d.getStatus()) || (recoveryService != null && recoveryService.fenced(d))) return false;
         if (DispatchStatus.isTerminal(d.getStatus())) {
-            return true;
+            return reconcileTerminalResult(d, success, explicitHandoff);
         }
         String terminal = success ? DispatchStatus.SUCCEEDED : DispatchStatus.FAILED;
         if (!transition(d, terminal, null, null, null, resultSummary, error)) {
             DispatchDO winner = loadInboundRow(workspaceId, executorId, dispatchId);
-            return winner != null && DispatchStatus.isTerminal(winner.getStatus());
+            return reconcileTerminalResult(winner, success, explicitHandoff);
         }
 		if (success && executorId != null && executorRegistry != null) {
 			executorRegistry.markProviderAvailable(executorId);
 		}
+        JSONObject resultDetail = new JSONObject()
+                .fluentPut("success", success)
+                .fluentPut("resultSummary", resultSummary)
+                .fluentPut("error", error);
+        if (failureCategory != null && !failureCategory.isBlank()) {
+            resultDetail.fluentPut("failureCategory", failureCategory);
+        }
         recordAgentAudit(d, success ? "COMPLETE_DISPATCH" : "FAIL_DISPATCH",
-                success ? "dispatch.succeeded" : "dispatch.failed", "runtime.result",
-                new JSONObject()
-                        .fluentPut("success", success)
-                        .fluentPut("resultSummary", resultSummary)
-                        .fluentPut("error", error));
+                success ? "dispatch.succeeded" : "dispatch.failed", "runtime.result", resultDetail);
         recordEvolutionTelemetryEvidence(d, success, resultSummary, error);
         // Run guidance is a detached conversational turn.  It shares the Run
         // owner solely for packaging/audit; it must not advance or terminalize
@@ -1444,6 +1622,28 @@ public class DispatchService {
         act(d, next);
         if (d.getAgentId() != null) {
             drainPending(d.getAgentId());
+        }
+        return true;
+    }
+
+    private boolean reconcileTerminalResult(DispatchDO dispatch, boolean success, boolean explicitHandoff) {
+        if (dispatch == null || !(success ? DispatchStatus.SUCCEEDED : DispatchStatus.FAILED).equals(dispatch.getStatus())
+                || (recoveryService != null && recoveryService.fenced(dispatch))) {
+            return false;
+        }
+        if (dispatch.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN
+                && !isInteractionDispatch(dispatch)
+                && !(success && (explicitHandoff
+                    || findHandoffBySource(dispatch.getTenantId(), dispatch.getId()) != null))) {
+            // Dispatch is durable before the Run transaction. A retry must finish
+            // that transaction using persisted data before acknowledging the result.
+            // RunService's terminal CAS makes repeated completion side effects idempotent.
+            if (scheduledTaskRunOrchestrator != null) {
+                scheduledTaskRunOrchestrator.onDispatchResult(dispatch, success,
+                        dispatch.getResultSummary(), dispatch.getError());
+            } else {
+                completeScheduledRun(dispatch, success, dispatch.getResultSummary(), dispatch.getError());
+            }
         }
         return true;
     }
@@ -1642,6 +1842,9 @@ public class DispatchService {
         int rows = dispatchDao.returnDispatchedToPending(d.getId(), workspaceId, executorId,
                 d.getVersion(), SYSTEM_USER_ID);
         if (rows == 1) {
+            if (recoveryService != null) {
+                recoveryService.waiting(d, DispatchWaitingReason.EXECUTOR_AT_CAPACITY.name(), 2_000L);
+            }
             log.info("dispatch returned to pending dispatchId={} executorId={} reason=AT_CAPACITY",
                     dispatchId, executorId);
             return true;
@@ -1708,7 +1911,11 @@ public class DispatchService {
         if (!transition(d, DispatchStatus.TIMEOUT, null, null, null, null, DispatchFailureReason.TIMEOUT)) {
             return;
         }
-        sdlcDriver.onFail(workspaceId, d.getWorkitemId(), d.getSdlcStepId());
+        if (!isInteractionDispatch(d)) {
+            if (d.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN)
+                completeScheduledRun(d, false, null, DispatchFailureReason.TIMEOUT);
+            else sdlcDriver.onFail(workspaceId, d.getWorkitemId(), d.getSdlcStepId());
+        }
         if (d.getAgentId() != null) {
             drainPending(d.getAgentId());
         }

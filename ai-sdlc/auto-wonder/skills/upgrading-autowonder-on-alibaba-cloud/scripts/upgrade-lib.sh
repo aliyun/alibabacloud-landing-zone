@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 UPGRADE_SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-UPGRADE_DEPLOY_SKILL_DIR=$(cd -- "$UPGRADE_SCRIPT_DIR/../../deploying-autowonder-on-alibaba-cloud" && pwd)
-declare -F die >/dev/null 2>&1 || source "$UPGRADE_DEPLOY_SKILL_DIR/scripts/lib.sh"
+UPGRADE_SKILL_DIR=$(cd -- "$UPGRADE_SCRIPT_DIR/.." && pwd)
+declare -F die >/dev/null 2>&1 || source "$UPGRADE_SCRIPT_DIR/lib.sh"
 
 current_resource_set_fingerprint() {
   local manifest=$1 recorded material
@@ -21,8 +21,8 @@ current_resource_set_fingerprint() {
 resolve_upgrade_project_source_dir() {
   local supplied=$1 root marker project
   root=$(cd -- "$supplied" && pwd)
-  marker="skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/autowonder.service"
-  if [[ -f "$root/$marker" ]]; then
+  marker="src/main/resources/application.yml"
+  if [[ -f "$root/$marker" && -f "$root/VERSION" && -f "$root/pom.xml" ]]; then
     printf '%s\n' "$root"
     return 0
   fi
@@ -31,7 +31,7 @@ resolve_upgrade_project_source_dir() {
     [[ -f "$project/VERSION" && -f "$project/pom.xml" ]] && candidates+=("$project")
   done < <(
     find "$root" -type f -path "*/$marker" \
-      -not -path '*/.git/*' -not -path '*/target/*' -not -path '*/node_modules/*' \
+      -not -path '*/.git/*' -not -path '*/target/*' -not -path '*/node_modules/*' -not -path '*/skills/*' -not -path '*/.agents/*' \
       -print | sed "s#/$marker\$##"
   )
   case ${#candidates[@]} in

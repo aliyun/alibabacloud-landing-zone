@@ -143,7 +143,8 @@ public class DispatchPauseService {
             return false;
         }
         return dispatchDao.failStalePausing(stale.getId(), stale.getTenantId(), beforeEpochMillis,
-                "暂停确认超时，请重试暂停；若执行器已离线，可选择继续恢复",
+                DispatchFailureReason.PAUSE_CONFIRMATION_MISSING
+                        + ": 暂停确认超时，平台未收到有效暂停检查点",
                 SYSTEM_USER_ID) == 1;
     }
 

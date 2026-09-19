@@ -1,20 +1,25 @@
 package com.aliyun.autowonder.storage;
 
+import com.aliyun.oss.HttpMethod;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSException;
+import com.aliyun.oss.model.GeneratePresignedUrlRequest;
 import com.aliyun.oss.model.OSSObject;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -47,6 +52,21 @@ class AliyunOssObjectStorageTest {
         String url = storage.presignGet("bucket/object", 600);
 
         assertEquals("https://bucket.oss-cn-shanghai.aliyuncs.com/object?signature=test", url);
+        verify(publicClient).generatePresignedUrl(any());
+        verifyNoInteractions(serviceClient);
+    }
+
+    @Test
+    void presignUpgradesHttpUrlToHttpsWithoutChangingSignature() throws MalformedURLException {
+        OSS serviceClient = mock(OSS.class);
+        OSS publicClient = mock(OSS.class);
+        when(publicClient.generatePresignedUrl(any()))
+                .thenReturn(new URL("http://bucket.oss-cn-beijing.aliyuncs.com/object?Expires=1&Signature=test"));
+        AliyunOssObjectStorage storage = new AliyunOssObjectStorage(serviceClient, publicClient);
+
+        String url = storage.presignGet("bucket/object", 600);
+
+        assertEquals("https://bucket.oss-cn-beijing.aliyuncs.com/object?Expires=1&Signature=test", url);
         verify(publicClient).generatePresignedUrl(any());
         verifyNoInteractions(serviceClient);
     }
@@ -113,5 +133,31 @@ class AliyunOssObjectStorageTest {
         ObjectStorageException ex = assertThrows(ObjectStorageException.class,
                 () -> storage.get("bucket/key"));
         assertNull(ex.getErrorCode());
+    }
+
+    @Test
+    void presignPutUsesPublicClientWithPutMethodAndTtl() throws Exception {
+        OSS serviceClient = mock(OSS.class);
+        OSS publicClient = mock(OSS.class);
+        when(publicClient.generatePresignedUrl(any()))
+                .thenReturn(new URL("https://bucket.oss-cn-shanghai.aliyuncs.com/debug/1/k.log.gz?sig=put"));
+        AliyunOssObjectStorage storage = new AliyunOssObjectStorage(serviceClient, publicClient);
+
+        long before = System.currentTimeMillis();
+        String url = storage.presignPut("bucket", "debug/1/k.log.gz", Duration.ofMinutes(20));
+        long after = System.currentTimeMillis();
+
+        assertEquals("https://bucket.oss-cn-shanghai.aliyuncs.com/debug/1/k.log.gz?sig=put", url);
+        ArgumentCaptor<GeneratePresignedUrlRequest> cap =
+                ArgumentCaptor.forClass(GeneratePresignedUrlRequest.class);
+        verify(publicClient).generatePresignedUrl(cap.capture());
+        verifyNoInteractions(serviceClient);
+        GeneratePresignedUrlRequest req = cap.getValue();
+        assertEquals("bucket", req.getBucketName());
+        assertEquals("debug/1/k.log.gz", req.getKey());
+        assertEquals(HttpMethod.PUT, req.getMethod());
+        long expiry = req.getExpiration().getTime();
+        assertTrue(expiry >= before + 20 * 60_000L && expiry <= after + 20 * 60_000L,
+                "expiration must be ~20 minutes out");
     }
 }

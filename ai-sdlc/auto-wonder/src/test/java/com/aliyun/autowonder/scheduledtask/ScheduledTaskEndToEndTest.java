@@ -134,6 +134,11 @@ class ScheduledTaskEndToEndTest {
         try (Connection connection = fixture.open("scheduled_idempotency_migrated")) {
             fixture.createPreV037LegacyTables(connection);
             fixture.applyFile(connection, "docs/migration/V041__scheduled_task.sql");
+            // V049 adds debug_log_enabled to dispatch; createPreV037LegacyTables has no squad table
+            // so we apply only the dispatch column here (minimal addition for source-aware cols fragment).
+            try (Statement stmt = connection.createStatement()) {
+                stmt.executeUpdate("ALTER TABLE dispatch ADD COLUMN debug_log_enabled TINYINT NOT NULL DEFAULT 0 AFTER resume_mode");
+            }
             assertLegacyWinnerIsReturnedByProductionEnqueue("scheduled_idempotency_migrated");
         }
 
@@ -221,6 +226,10 @@ class ScheduledTaskEndToEndTest {
         try (Connection connection = fixture.open(database)) {
             fixture.createPreV037LegacyTables(connection);
             fixture.applyFile(connection, "docs/migration/V041__scheduled_task.sql");
+            // Minimal V049 dispatch column: no squad table in createPreV037LegacyTables.
+            try (Statement stmt = connection.createStatement()) {
+                stmt.executeUpdate("ALTER TABLE dispatch ADD COLUMN debug_log_enabled TINYINT NOT NULL DEFAULT 0 AFTER resume_mode");
+            }
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("INSERT INTO dispatch(tenant_id, source_type, workitem_id, agent_id, sdlc_step_id, idempotency_key) VALUES ("
                         + workspaceId + ", 'WORKITEM', " + workitemId + ", 9, " + stepId + ", '" + prefixedKey + "')");

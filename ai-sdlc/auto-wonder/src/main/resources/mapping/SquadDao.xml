@@ -10,11 +10,24 @@
     <select id="findById" resultType="com.aliyun.autowonder.squad.SquadDO">
         SELECT * FROM squad WHERE id = #{id} AND is_deleted = 0 LIMIT 1
     </select>
+    <select id="listByIds" resultType="com.aliyun.autowonder.squad.SquadDO">
+        SELECT * FROM squad
+        WHERE is_deleted = 0 AND id IN
+        <!-- An empty collection would render "IN ()", a syntax error; IN (NULL) matches no row. -->
+        <choose>
+            <when test="ids != null and ids.size() > 0">
+                <foreach collection="ids" item="sid" open="(" separator="," close=")">#{sid}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+        ORDER BY id ASC
+    </select>
     <select id="list" resultType="com.aliyun.autowonder.squad.SquadDO">
         SELECT * FROM squad WHERE is_deleted = 0 AND status = 0 ORDER BY id DESC LIMIT #{offset}, #{limit}
     </select>
     <update id="update">
         UPDATE squad SET name = #{name}, description = #{description}, owner_id = #{ownerId},
+            debug_log_enabled = COALESCE(#{debugLogEnabled}, debug_log_enabled),
             version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
@@ -22,4 +35,13 @@
         UPDATE squad SET is_deleted = 1, status = 1, version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
+    <select id="countDebugEnabledByAgent" resultType="int">
+        SELECT COUNT(*) FROM squad_member m
+        JOIN squad s ON s.id = m.squad_id
+        WHERE m.agent_id = #{agentId}
+          AND m.tenant_id = #{tenantId}
+          AND s.tenant_id = #{tenantId}
+          AND s.is_deleted = 0
+          AND s.debug_log_enabled = 1
+    </select>
 </mapper>

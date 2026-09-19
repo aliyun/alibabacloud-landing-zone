@@ -151,7 +151,7 @@ describe('WorkspaceSelectPage', () => {
 
     renderPageWithLocation();
 
-    await userEvent.click(await screen.findByRole('button', { name: /品牌配置/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /平台配置/ }));
 
     await waitFor(() => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/workspaces/branding');

@@ -21,7 +21,8 @@ export interface UpdatePlatformBrandingParams {
 }
 
 export interface PlatformImChannel {
-  provider: 'DINGTALK' | string;
+  provider: 'DINGTALK' | 'FEISHU' | string;
+  selected?: boolean;
   enabled: boolean;
   appKey: string;
   robotCode: string;
@@ -43,7 +44,7 @@ export const DEFAULT_BRANDING: PlatformBranding = {
   primaryColor: '#f97316',
   domain: null,
   mcpBaseUrl: '',
-  recommendedRuntimeVersion: '0.2.152',
+  recommendedRuntimeVersion: '0.2.163',
   deploymentVersion: 'x.x.x',
   communityEdition: false,
   canManage: false,
@@ -89,6 +90,16 @@ export async function getPlatformImChannels(): Promise<PlatformImChannel[]> {
 export async function updateDingTalkImChannel(params: UpdateDingTalkImChannelParams): Promise<PlatformImChannel> {
   const resp = await apiClient.put<PlatformImChannel>('/api/platform/im-channels/dingtalk', params);
   return resp.data;
+}
+
+export async function updateFeishuImChannel(params: UpdateDingTalkImChannelParams): Promise<PlatformImChannel> {
+  const resp = await apiClient.put<PlatformImChannel>('/api/platform/im-channels/feishu', params);
+  return resp.data;
+}
+
+export function selectedImProvider(channels: PlatformImChannel[]): string {
+  return channels.find((channel) => channel.selected)?.provider
+    ?? channels.find((channel) => channel.enabled)?.provider ?? 'DINGTALK';
 }
 
 export async function uploadBrandingLogo(file: File): Promise<{ logoUrl: string }> {

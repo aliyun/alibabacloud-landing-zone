@@ -8,7 +8,6 @@ import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.guidance.GuidanceService;
-import com.aliyun.autowonder.integration.AoneWorkitemRefreshService;
 import com.aliyun.autowonder.workitem.dto.AddCommentRequest;
 import com.aliyun.autowonder.workitem.dto.AssignRequest;
 import com.aliyun.autowonder.workitem.dto.CommentVO;
@@ -21,6 +20,7 @@ import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
 import com.aliyun.autowonder.workitem.dto.TransitionRequest;
 import com.aliyun.autowonder.workitem.dto.UpdateContentRequest;
 import com.aliyun.autowonder.workitem.dto.UpdateTagsRequest;
+import com.aliyun.autowonder.workitem.dto.WatchStateVO;
 import com.aliyun.autowonder.workitem.dto.WorkitemVO;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,14 +41,14 @@ import java.util.List;
 public class WorkitemController {
 
     private final WorkitemService workitemService;
-    private final AoneWorkitemRefreshService aoneWorkitemRefreshService;
     private final GuidanceService guidanceService;
+    private final WorkitemWatcherService workitemWatcherService;
 
-    public WorkitemController(WorkitemService workitemService, AoneWorkitemRefreshService aoneWorkitemRefreshService,
-            GuidanceService guidanceService) {
+    public WorkitemController(WorkitemService workitemService, GuidanceService guidanceService,
+            WorkitemWatcherService workitemWatcherService) {
         this.workitemService = workitemService;
-        this.aoneWorkitemRefreshService = aoneWorkitemRefreshService;
         this.guidanceService = guidanceService;
+        this.workitemWatcherService = workitemWatcherService;
     }
 
     @PostMapping
@@ -59,8 +59,9 @@ public class WorkitemController {
 
     @GetMapping("/{id}")
     public Result<WorkitemVO> get(@PathVariable("id") Long id) {
-        refreshExternalWorkitemIfWritable(id);
-        return Result.ok(workitemService.get(id));
+        WorkitemVO workitem = workitemService.get(id);
+        workitemWatcherService.applyWatchState(workitem, currentWorkspaceId(), currentUserId());
+        return Result.ok(workitem);
     }
 
     @GetMapping
@@ -74,10 +75,14 @@ public class WorkitemController {
             @RequestParam(value = "mineScope", required = false) String mineScope,
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "tag", required = false) String tag,
+            @RequestParam(value = "scheduledStart", required = false) String scheduledStart,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(workitemService.list(workType, statusNodeId, statusCategory, assigneeType, assigneeRef,
-                pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, tag, page, size));
+        PageResult<WorkitemVO> result = workitemService.list(workType, statusNodeId, statusCategory, assigneeType,
+                assigneeRef, pendingDecisionOnly, mineScope, currentWorkspaceId(), currentUserId(), keyword, tag,
+                scheduledStart, page, size);
+        workitemWatcherService.applyWatchState(result.getList(), currentWorkspaceId(), currentUserId());
+        return Result.ok(result);
     }
 
     @PostMapping("/{id}/transition")
@@ -86,7 +91,8 @@ public class WorkitemController {
         if (req.getToNodeId() == null) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
-        return Result.ok(workitemService.transition(id, req.getToNodeId(), currentWorkspaceId(), currentUserId()));
+        return Result.ok(workitemService.transition(id, req.getToNodeId(), currentWorkspaceId(), currentUserId(),
+                req.getFromNodeId(), req.getExpectedVersion()));
     }
 
     @PutMapping("/{id}/assignee")
@@ -138,7 +144,6 @@ public class WorkitemController {
 
     @GetMapping("/{id}/comments")
     public Result<List<CommentVO>> listComments(@PathVariable("id") Long id) {
-        refreshExternalWorkitemIfWritable(id);
         return Result.ok(workitemService.listComments(id));
     }
 
@@ -149,7 +154,6 @@ public class WorkitemController {
 
     @GetMapping("/{id}/unified-timeline")
     public Result<List<TimelineItemVO>> unifiedTimeline(@PathVariable("id") Long id) {
-        refreshExternalWorkitemIfWritable(id);
         List<TimelineItemVO> timeline = workitemService.getUnifiedTimeline(id);
         guidanceService.attachInteractionStatuses(currentWorkspaceId(), id, timeline);
         return Result.ok(timeline);
@@ -172,12 +176,21 @@ public class WorkitemController {
         return Result.ok(workitemService.getMentionCandidates(id, currentWorkspaceId(), q, limit));
     }
 
-    private void refreshExternalWorkitemIfWritable(Long workitemId) {
-        WorkspaceAccessLevel accessLevel = AutoWonderContext.get().getWorkspaceAccessLevel();
-        if (accessLevel != null && accessLevel.allows(WorkspaceAccessLevel.READ_WRITE)) {
-            aoneWorkitemRefreshService.refreshIfLinked(
-                    workitemId, currentWorkspaceId(), currentUserId());
-        }
+    /** 关注工单进展。关注是个人订阅，不授予任何工单写权限，因此沿用类级 READ_ONLY。 */
+    @PostMapping("/{id}/watch")
+    public Result<WatchStateVO> watch(@PathVariable("id") Long id) {
+        return Result.ok(workitemWatcherService.follow(id, currentWorkspaceId(), currentUserId()));
+    }
+
+    /** 取消关注。与关注一样幂等，取消不存在的关注返回未关注状态。 */
+    @DeleteMapping("/{id}/watch")
+    public Result<WatchStateVO> unwatch(@PathVariable("id") Long id) {
+        return Result.ok(workitemWatcherService.unfollow(id, currentWorkspaceId(), currentUserId()));
+    }
+
+    @GetMapping("/{id}/watchers")
+    public Result<List<ParticipantVO>> watchers(@PathVariable("id") Long id) {
+        return Result.ok(workitemWatcherService.listWatchers(id, currentWorkspaceId()));
     }
 
     private long currentUserId() {

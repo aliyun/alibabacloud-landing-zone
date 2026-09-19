@@ -77,6 +77,31 @@ unexpected `ERROR` or `WARN` records. A nonzero exit, `VERDICT=FAIL`, or failing
 
 ## Diagnose a failure
 
+### Optional real Qoder task dispatch
+
+Use an already-injected `QODER_PERSONAL_ACCESS_TOKEN`; never print it, put it in
+arguments, or save it to a file. Install the pinned `autowonder@0.2.163` package
+into an isolated temporary npm prefix with `--ignore-scripts`, and set
+`AW_E2E_RUNTIME_PACKAGE` to that prefix's `node_modules/autowonder` directory.
+The installed `qodercli` must be on PATH. No global runtime configuration is used.
+
+```bash
+./e2e-tests/verify.sh --check --with-runtime --project-root "$(pwd -P)"
+```
+
+This opt-in check requires a real online executor, successful task dispatch and
+downloaded artifact validation; missing prerequisites fail rather than skip.
+`QODER_TOKEN_REQUIRED`, `QODER_CLI_REQUIRED`, and `RUNTIME_PACKAGE_REQUIRED` identify
+missing prerequisites. `RUNTIME_VERSION_MISMATCH` requires the pinned package.
+The daemon's own version self-check must pass (`RUNTIME_SELF_CHECK_FAILED` otherwise).
+The positive scenario targets Community 0.9.0 or later: 0.8.0 forcibly changes
+HTTP S3 download URLs to HTTPS and therefore fails the strict artifact-download
+assertion with the local HTTP MinIO fixture. Do not rewrite the URL to hide this.
+The check leaves existing host runtime lock files untouched and removes only the
+new lock owned by its own child. Runtime stdout/stderr are discarded; evidence
+contains object IDs, assertion results and the artifact digest, not session data.
+Run the normal lifecycle cleanup after recording results.
+
 The first screen identifies `FAILED_PHASE`, `FAILURE_KIND`, root-cause summary,
 and exact evidence paths. Start with `failure-report.txt`, then use the phase:
 
