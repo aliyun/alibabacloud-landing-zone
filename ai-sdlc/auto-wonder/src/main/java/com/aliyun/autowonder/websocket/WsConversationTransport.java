@@ -10,6 +10,8 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
 import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -18,6 +20,8 @@ import java.util.Map;
 
 @Component
 public class WsConversationTransport implements ConversationTransport {
+
+    private static final ObjectMapper FRAME_MAPPER = new ObjectMapper();
 
     private final SessionRegistry sessionRegistry;
     private final RedisManager redisManager;
@@ -84,7 +88,14 @@ public class WsConversationTransport implements ConversationTransport {
                 : environmentVariableResolver.resolve(conv.getTenantId(), capability.agentVersionId());
         requireEnvironmentVariableProtocol(conv.getExecutorId(), environmentVariables);
         frame.put("environmentVariables", environmentVariables);
-        deliverToExecutor(conv.getExecutorId(), frame.toJSONString());
+        // The runtime expects plain JSON maps, not Fastjson references for shared empty maps.
+        final String payload;
+        try {
+            payload = FRAME_MAPPER.writeValueAsString(frame);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("WebSocket conversation frame serialization failed", e);
+        }
+        deliverToExecutor(conv.getExecutorId(), payload);
     }
 
     private void requireEnvironmentVariableProtocol(long executorId,

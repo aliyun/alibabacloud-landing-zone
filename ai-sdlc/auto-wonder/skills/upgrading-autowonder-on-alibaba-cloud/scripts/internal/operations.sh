@@ -11,7 +11,7 @@ operation_scope=${AUTOWONDER_OPERATION_SCOPE:-}
 
 usage() { cat <<'EOF'
 Usage: initialize-and-verify.sh SUBCOMMAND --manifest FILE [options]
-Subcommands: upgrade-inventory, upgrade-backup, rollback-upgrade, database, database-migrate, runtime-config, rolling-start, rolling-upgrade, business-init, acceptance, handoff
+Subcommands: upgrade-inventory, upgrade-backup, rollback-upgrade, maintenance-stop, database, database-migrate, runtime-config, rolling-start, rolling-upgrade, business-init, acceptance, handoff
 Options: --env-file FILE --terraform-dir DIR --handoff-file FILE --acceptance-evidence FILE --confirm-received --confirm-migrations --confirm-rolling-compatible --confirm-rollback
 Secrets are read from protected files; they are never accepted as argument values.
 EOF
@@ -20,7 +20,7 @@ EOF
 subcommand=${1:-}; [[ -n "$subcommand" ]] || { usage >&2; exit 2; }; shift
 case "$operation_scope:$subcommand" in
   deployment:database|deployment:runtime-config|deployment:rolling-start|deployment:business-init|deployment:acceptance|deployment:handoff) ;;
-  upgrade:upgrade-inventory|upgrade:upgrade-backup|upgrade:rollback-upgrade|upgrade:database-migrate|upgrade:runtime-config|upgrade:rolling-upgrade|upgrade:acceptance) ;;
+  upgrade:upgrade-inventory|upgrade:upgrade-backup|upgrade:maintenance-stop|upgrade:rollback-upgrade|upgrade:database-migrate|upgrade:runtime-config|upgrade:rolling-upgrade|upgrade:acceptance) ;;
   *) die "operation is outside the selected skill boundary" ;;
 esac
 manifest= env_file= terraform_dir= handoff_file= acceptance_evidence= confirm_received=false confirm_migrations=false confirm_rolling_compatible=false confirm_rollback=false
@@ -132,6 +132,69 @@ export MYSQL_PWD="$SPRING_DATASOURCE_PASSWORD"
 REMOTE_DB_PRELUDE
 )
 
+maintenance_check_script() {
+  local plan
+  plan=$(jq -er '.upgrade.planFingerprint | select(test("^[0-9a-f]{64}$"))' "$manifest")
+  cat <<EOF
+set -euo pipefail
+test "\$(cat /opt/autowonder/maintenance-plan)" = '$plan'
+test "\$(systemctl show -p ActiveState --value autowonder.service)" = inactive
+test "\$(systemctl show -p MainPID --value autowonder.service)" = 0
+test -z "\$(ss -ltnH 'sport = :7001')"
+printf 'MAINTENANCE_STATUS=stopped\n'
+EOF
+}
+require_maintenance_checkpoint() {
+  jq -e '
+    .upgrade as $u | ($u.maintenance // {}) as $m |
+    $u.executionMode == "maintenance" and $m.status == "stopped" and
+    $m.planFingerprint == $u.planFingerprint and
+    ($m.instanceIds | sort) == ((.resources.ecs_instance_ids // .resources.ecsInstanceIds) | [.[]] | sort)
+  ' "$manifest" >/dev/null || die "maintenance checkpoint must cover approved plan and every target"
+}
+maintenance_passed_node() {
+  jq -e --arg node "$1" '
+    .rollingUpgrade.planFingerprint == .upgrade.planFingerprint and
+    .rollingUpgrade.targetCommit == .upgrade.toCommit and
+    ([.rollingUpgrade.nodes[]? | select(.instanceId == $node and .status == "passed")] | length) == 1
+  ' "$manifest" >/dev/null
+}
+maintenance_passed_script() {
+  local plan jar env unit
+  plan=$(jq -er '.upgrade.planFingerprint' "$manifest")
+  jar=$(jq -er '.deployment.lastRun.jarSha256' "$manifest")
+  env=$(jq -er '.deployment.lastRun.envSha256' "$manifest")
+  unit=$(jq -er '.deployment.lastRun.unitSha256' "$manifest")
+  cat <<EOF
+set -euo pipefail
+target=/opt/autowonder/releases/$short_commit
+test "\$(cat /opt/autowonder/maintenance-plan)" = '$plan'
+test "\$(readlink -f /opt/autowonder/current)" = "\$target"
+test "\$(sha256sum "\$target/auto-wonder.jar" | cut -d ' ' -f 1)" = '$jar'
+test "\$(sha256sum /etc/autowonder/autowonder.env | cut -d ' ' -f 1)" = '$env'
+test "\$(sha256sum /etc/systemd/system/autowonder.service | cut -d ' ' -f 1)" = '$unit'
+systemctl is-active --quiet autowonder.service
+test -n "\$(ss -ltnH 'sport = :7001')"
+test "\$(curl --fail --silent --connect-timeout 2 --max-time 5 http://127.0.0.1:7001/checkpreload.htm)" = success
+curl --fail --silent --connect-timeout 2 --max-time 5 http://127.0.0.1:7001/api/platform/branding/public >/dev/null
+printf 'ROLLING_STATUS=passed\nPREVIOUS_RELEASE=%s\nACTIVE_RELEASE=%s\n' "\$target" "\$target"
+EOF
+}
+
+verify_maintenance_nodes() {
+  require_maintenance_checkpoint
+  local node result
+  for node in "${instances[@]}"; do
+    if [[ ${1:-} == allow-passed ]] && maintenance_passed_node "$node"; then
+      result=$(run_cloud "$node" "$(maintenance_passed_script)")
+      jq -er '.output' <<<"$result" | grep -qx 'ROLLING_STATUS=passed' || die "previous target node failed live verification"
+      continue
+    fi
+    result=$(run_cloud "$node" "$(maintenance_check_script)")
+    jq -er '.output' <<<"$result" | grep -qx 'MAINTENANCE_STATUS=stopped' || die "maintenance node verification failed"
+  done
+}
+
 case "$subcommand" in
   upgrade-inventory)
     atomic_jq "$manifest" '.upgradeInventory={status:"checking",nodes:[]}'
@@ -170,6 +233,7 @@ printf "ACTIVE_RELEASE=%s\nJAR_SHA256=%s\nMIGRATIONS_SHA256=%s\n" "$release" "$j
     backup_plan=$(jq -er '.upgrade.planFingerprint | select(test("^[0-9a-f]{64}$"))' "$manifest")
     backup_from=$(jq -er '.upgrade.fromCommit | select(test("^[0-9a-f]{40}$"))' "$manifest")
     backup_nodes='[]'
+    backup_normalizer=$(cat "$UPGRADE_SKILL_DIR/scripts/remote/normalize_backup.py")
     for instance in "${instances[@]}"; do
       expected_backup_sha=$(jq -r --arg plan "$backup_plan" --arg instance "$instance" '
         .upgrade.rollbackBackup | select(.planFingerprint == $plan) |
@@ -179,6 +243,10 @@ printf "ACTIVE_RELEASE=%s\nJAR_SHA256=%s\nMIGRATIONS_SHA256=%s\n" "$release" "$j
 plan='$backup_plan'
 expected_release='${backup_from:0:12}'
 expected_sha='$expected_backup_sha'
+normalize_legacy_backup() { python3 - \"\$1\" <<'PY_BACKUP_COMPAT'
+$backup_normalizer
+PY_BACKUP_COMPAT
+}
 "'backup_archive=/opt/autowonder/upgrade-rollback-backup.tar.gz
 backup_tmp="$backup_archive.tmp.$$"
 backup_dir=$(mktemp -d /opt/autowonder/.upgrade-backup.XXXXXX)
@@ -189,13 +257,16 @@ if test -n "$expected_sha"; then
   test -f "$backup_archive"
   test "$(sha256sum "$backup_archive" | awk "{print \$1}")" = "$expected_sha"
 fi
-if test -f "$backup_archive" && test "$(tar -xOf "$backup_archive" ./plan-fingerprint 2>/dev/null || true)" = "$plan"; then
+if test -f "$backup_archive"; then
   tar -xzf "$backup_archive" -C "$verify_dir"
+  normalize_legacy_backup "$verify_dir"
   (cd "$verify_dir" && sha256sum -c CHECKSUMS >/dev/null)
-  test "$(cat "$verify_dir/release-name")" = "$expected_release"
-  backup_sha=$(sha256sum "$backup_archive" | awk "{print \$1}")
-  printf "BACKUP_STATUS=passed\nBACKUP_SHA256=%s\nACTIVE_RELEASE=%s\n" "$backup_sha" "$expected_release"
-  exit 0
+  if test "$(cat "$verify_dir/plan-fingerprint")" = "$plan"; then
+    test "$(cat "$verify_dir/release-name")" = "$expected_release"
+    backup_sha=$(sha256sum "$backup_archive" | awk "{print \$1}")
+    printf "BACKUP_STATUS=passed\nBACKUP_SHA256=%s\nACTIVE_RELEASE=%s\n" "$backup_sha" "$expected_release"
+    exit 0
+  fi
 fi
 # An existing checkpoint may be reused, never silently replaced.
 test -z "$expected_sha"
@@ -238,10 +309,15 @@ printf "BACKUP_STATUS=passed\nBACKUP_SHA256=%s\nACTIVE_RELEASE=%s\n" "$backup_sh
     require_current_upgrade_backup "$manifest"
     require_unmutated_database_for_rollback "$manifest"
     rollback_nodes='[]'
+    backup_normalizer=$(cat "$UPGRADE_SKILL_DIR/scripts/remote/normalize_backup.py")
     for instance in "${instances[@]}"; do
       expected_backup_sha=$(jq -er --arg instance "$instance" '.upgrade.rollbackBackup.nodes[] | select(.instanceId == $instance) | .sha256' "$manifest")
       if ! result=$(run_cloud "$instance" "set -euo pipefail
 expected_sha='$expected_backup_sha'
+normalize_legacy_backup() { python3 - \"\$1\" <<'PY_BACKUP_COMPAT'
+$backup_normalizer
+PY_BACKUP_COMPAT
+}
 "'backup_archive=/opt/autowonder/upgrade-rollback-backup.tar.gz
 test -f "$backup_archive"
 test "$(sha256sum "$backup_archive" | awk "{print \$1}")" = "$expected_sha"
@@ -249,6 +325,7 @@ restore_dir=$(mktemp -d /opt/autowonder/.upgrade-restore.XXXXXX)
 cleanup() { rm -rf "$restore_dir"; }
 trap cleanup EXIT
 tar -xzf "$backup_archive" -C "$restore_dir"
+normalize_legacy_backup "$restore_dir"
 (cd "$restore_dir" && sha256sum -c CHECKSUMS >/dev/null)
 release_name=$(cat "$restore_dir/release-name")
 case "$release_name" in (*[!0-9a-f]*|"") exit 1;; esac
@@ -294,16 +371,26 @@ exit 1'); then
         '. + [{instanceId:$instance,invocationId:$invocation,activeRelease:$release,status:"passed"}]' <<<"$rollback_nodes")
     done
     atomic_jq "$manifest" --argjson nodes "$rollback_nodes" \
-      '.upgrade.rollback={status:"passed",nodes:$nodes,confirmed:true,completedAt:(now|todateiso8601)} | .deployment.activeCommit=.upgrade.fromCommit | .upgradeInventory.status="stale" | .phase="rollback" | .status="ready"'
+      '.upgrade.rollback={status:"passed",nodes:$nodes,confirmed:true,completedAt:(now|todateiso8601)} | .deployment.activeCommit=.upgrade.fromCommit |
+       ((if .upgrade.previousReleaseBaseline.releaseId == .upgrade.fromCommit then .upgrade.previousReleaseBaseline
+         elif .deployment.activeReleaseBaseline.releaseId == .upgrade.fromCommit then .deployment.activeReleaseBaseline else null end) as $previous |
+        if $previous != null then .deployment.activeReleaseBaseline=$previous | .releaseVersion=$previous.releaseVersion |
+          .source=$previous.source | .artifacts=$previous.artifacts else . end) |
+       ((.localContext.previousActiveEnvFile // .localContext.activeEnvFile) as $activeEnv |
+        if $activeEnv != null then .localContext.activeEnvFile=$activeEnv |
+          .localContext.protectedEnvFile=$activeEnv else . end) | (if (.upgrade.previousRepositoryUrl // "") != "" then .repositoryUrl=.upgrade.previousRepositoryUrl else . end) | .upgradeInventory.status="stale" | .phase="rollback" | .status="ready"'
     ;;
   runtime-config)
     require_file "$env_file"; require_mode_600 "$env_file"; require_command openssl; require_command terraform
     chmod 600 "$manifest"
+    if [[ $(jq -r '.mode // empty' "$manifest") == upgrade ]]; then
+      active_env=$(jq -er '.localContext.activeEnvFile // .localContext.protectedEnvFile // empty' "$manifest") || die "active protected environment is required"
+      python3 -B "$SCRIPT_DIR/../upgrade_plan.py" check-candidate --original-env-file "$active_env" --env-file "$env_file" || die "candidate master key continuity check failed"
+    fi
     candidate_hash=$(sha256_file "$env_file")
     jq -e --arg hash "$candidate_hash" '
       .upgrade.environmentPlanSha256 == $hash or
       (.runtimeConfig.planFingerprint == .upgrade.planFingerprint and
-       .runtimeConfig.keyGenerationId == .upgrade.keyGenerationId and
        .runtimeConfig.envSha256 == $hash)
     ' "$manifest" >/dev/null || die "candidate environment differs from the approved plan or prepared checkpoint"
     [[ -d "$terraform_dir" ]] || die "runtime-config requires --terraform-dir"
@@ -318,8 +405,7 @@ exit 1'); then
         else
           (all($environment.required[];
             type == "string" and test("^[A-Z][A-Z0-9_]*$"))) and
-          (($environment.required | unique | length) == ($environment.required | length)) and
-          (($environment.required - $environment.added) | length == 0)
+          (($environment.required | unique | length) == ($environment.required | length))
         end
       ' "$manifest" >/dev/null ||
         die "upgrade environment requirement contract is missing or invalid; regenerate the upgrade plan"
@@ -424,9 +510,6 @@ exit 1'); then
     [[ "$master_key" =~ ^[A-Za-z0-9+/]{43}=$ ]] || die "master key must be strict single-line Base64"
     [[ $(printf '%s' "$master_key" | decode_b64 | wc -c | tr -d ' ') == 32 ]] || die "master key must decode to 32 bytes"
     unset master_key
-    key_generation_id=$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_SECRET_KEY_GENERATION_ID)")
-    [[ "$key_generation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || die "protected candidate requires the escrow key generation UUIDv4"
-    [[ "$key_generation_id" == "$(jq -r '.upgrade.keyGenerationId // empty' "$manifest")" ]] || die "key generation differs from the approved plan"
     public_base_url=$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_PUBLIC_BASE_URL)")
     [[ "$public_base_url" =~ ^https?://[^[:space:]]+$ ]] || die "AUTOWONDER_PUBLIC_BASE_URL must be an absolute HTTP(S) URL"
     unset public_base_url
@@ -442,10 +525,9 @@ exit 1'); then
     atomic_jq "$manifest" --arg version "$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_RUNTIME_RECOMMENDED_VERSION)")" \
       --arg applicationVersion "$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_VERSION)")" \
       --arg envHash "$(sha256_file "$env_file")" \
-      --arg generation "$key_generation_id" \
       --arg envFile "$(cd -- "$(dirname -- "$env_file")" && pwd -P)/$(basename -- "$env_file")" \
       --arg terraformDir "$(cd -- "$terraform_dir" && pwd -P)" \
-      '.runtimeConfig={prepared:true,fileMode:"0600",valuesValidated:true,recommendedRuntimeVersion:$version,applicationVersion:$applicationVersion,applicationCredentialSource:"terraform-sensitive-outputs",envSha256:$envHash,keyGenerationId:$generation,planFingerprint:.upgrade.planFingerprint}
+      '.runtimeConfig={prepared:true,fileMode:"0600",valuesValidated:true,recommendedRuntimeVersion:$version,applicationVersion:$applicationVersion,applicationCredentialSource:"terraform-sensitive-outputs",envSha256:$envHash,planFingerprint:.upgrade.planFingerprint}
        | .localContext.protectedEnvFile=$envFile | .localContext.terraformDirectory=$terraformDir
        | (if .mode == "upgrade" then .upgrade.environmentValidated=true | .upgrade.environmentCandidateSha256=$envHash else . end)
        | .phase="runtime-config" | .status="prepared"'
@@ -479,9 +561,27 @@ test \"\$template_count\" = 4
 printf 'TABLE_COUNT=%s\\nTEMPLATE_COUNT=%s\\nPOSTCHECK=passed\\n' \"\$count\" \"\$template_count\"")
     atomic_jq "$manifest" --arg invocation "$(jq -r '.invocationId' <<<"$post")" '.database.postcheck=true | .database.postcheckInvocationId=$invocation | .phase="database" | .status="initialized"'
     ;;
+  maintenance-stop)
+    [[ $(jq -r '.upgrade.executionMode // empty' "$manifest") == maintenance ]] || die "approved maintenance execution mode is required"
+    require_current_upgrade_staging "$manifest"
+    require_current_upgrade_backup "$manifest"
+    plan=$(jq -er '.upgrade.planFingerprint | select(test("^[0-9a-f]{64}$"))' "$manifest")
+    atomic_jq "$manifest" '.upgrade.maintenance={status:"stopping",planFingerprint:.upgrade.planFingerprint,instanceIds:((.resources.ecs_instance_ids // .resources.ecsInstanceIds) | [.[]])}'
+    for instance in "${instances[@]}"; do
+      result=$(run_cloud "$instance" "set -euo pipefail
+systemctl stop autowonder.service
+printf '%s\\n' '$plan' > /opt/autowonder/maintenance-plan
+$(maintenance_check_script)")
+      jq -er '.output' <<<"$result" | grep -qx 'MAINTENANCE_STATUS=stopped' || die "maintenance stop failed"
+    done
+    atomic_jq "$manifest" '.upgrade.maintenance.status="stopped"'
+    verify_maintenance_nodes
+    ;;
   database-migrate)
+    require_current_upgrade_staging "$manifest"
     [[ $(jq -r '.mode // empty' "$manifest") == upgrade ]] || die "database migration requires upgrade mode"
     [[ $(jq -r '(.upgrade.blockedReasons // []) | length' "$manifest") == 0 ]] || die "upgrade plan has blocking findings"
+    [[ $(jq -r '.upgrade.databaseMigration.status // empty' "$manifest") != running && $(jq -r '.upgrade.databaseMigration.status // empty' "$manifest") != failed ]] || die "interrupted or failed migration requires reviewed recovery"
     pending=$(jq -c '(.upgrade.pendingMigrations // []) | sort_by(.version)' "$manifest")
     pending_count=$(jq 'length' <<<"$pending")
     if [[ "$pending_count" == 0 ]]; then
@@ -493,14 +593,28 @@ printf 'TABLE_COUNT=%s\\nTEMPLATE_COUNT=%s\\nPOSTCHECK=passed\\n' \"\$count\" \"
       .upgrade.databaseBackup.status == "verified" and
       (.upgrade.databaseBackup.backupId | type == "string" and length > 0) and
       (.upgrade.databaseBackup.rdsInstanceId == (.resources.rds_instance_id // .resources.rds.instance_id)) and
-      ((now - (.upgrade.databaseBackup.verifiedEpoch // 0)) <= 86400)
+      (.upgrade.databaseBackup.planFingerprint == .upgrade.planFingerprint) and
+      (.upgrade.planFingerprint | type == "string" and length > 0) and
+      (.upgrade.databaseBackup.verifiedEpoch | type == "number") and
+      (.upgrade.databaseBackup.verifiedEpoch <= now) and
+      ((now - .upgrade.databaseBackup.verifiedEpoch) <= 86400) and
+      ((try (.upgrade.databaseBackup.completedAt | fromdateiso8601) catch 0) as $completed |
+        $completed <= now and (now - $completed) <= 604800)
     ' "$manifest" >/dev/null || die "recent live-verified database backup evidence for this RDS instance is required"
-    [[ $(jq '[.upgrade.pendingMigrations[].riskOperations[]? | select(. == "DROP" or . == "TRUNCATE" or . == "RENAME")] | length' "$manifest") == 0 ]] || die "destructive migration detected; a maintenance workflow is required instead of rolling activation"
-    [[ "$confirm_rolling_compatible" == true ]] || die "explicit active-version compatibility confirmation is required"
+    if [[ $(jq -r '.upgrade.executionMode // "rolling"' "$manifest") == maintenance ]]; then
+      verify_maintenance_nodes
+    else
+      [[ $(jq '[.upgrade.pendingMigrations[].riskOperations[]? | select(. == "DROP" or . == "TRUNCATE" or . == "RENAME")] | length' "$manifest") == 0 ]] || die "destructive migration detected; a maintenance workflow is required instead of rolling activation"
+      [[ "$confirm_rolling_compatible" == true ]] || die "explicit active-version compatibility confirmation is required"
+    fi
     [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die "target commit must be an exact SHA"
-    atomic_jq "$manifest" '.upgrade.migrationApproved=true | .upgrade.databaseMutationStarted=true | .upgrade.databaseCompatibility={status:"rolling-compatible",rollingAllowed:true,destructive:false} | .upgrade.databaseMigration={status:"running",applied:[]}'
+    atomic_jq "$manifest" '.upgrade.migrationApproved=true | .upgrade.databaseMutationStarted=true | (if .upgrade.executionMode == "maintenance" then .upgrade.databaseCompatibility.status="maintenance" | .upgrade.databaseCompatibility.rollingAllowed=false else .upgrade.databaseCompatibility={status:"rolling-compatible",rollingAllowed:true,destructive:false} end) | .upgrade.databaseMigration={status:"running",applied:[]}'
 
+
+    maintenance_prelude=
+    if [[ $(jq -r '.upgrade.executionMode // "rolling"' "$manifest") == maintenance ]]; then maintenance_prelude=$(maintenance_check_script); fi
     migration_remote="$remote_db_prelude
+$maintenance_prelude
 release=/opt/autowonder/releases/$short_commit
 test -d \"\$release/migration\"
 mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" <<'SQL'
@@ -515,7 +629,7 @@ CREATE TABLE IF NOT EXISTS autowonder_schema_history (
   error_message VARCHAR(512) NULL
 );
 SQL
-coproc MIGRATION_LOCK { mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" --batch --skip-column-names \"\$database\"; }
+coproc MIGRATION_LOCK { mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" --batch --skip-column-names --unbuffered --skip-reconnect \"\$database\"; }
 lock_in=\${MIGRATION_LOCK[1]}; lock_out=\${MIGRATION_LOCK[0]}; lock_pid=\$MIGRATION_LOCK_PID
 printf '%s\n' \"SELECT GET_LOCK('autowonder-community-migration', 30);\" >&\"\$lock_in\"
 IFS= read -r -t 35 -u \"\$lock_out\" lock_acquired
@@ -548,10 +662,13 @@ else
     admin_count=\$(mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" -Nse 'SELECT COUNT(*) FROM user WHERE is_deleted = 0 AND is_admin = 1' \"\$database\")
     [[ \"\$admin_count\" =~ ^[0-9]+$ ]] && test \"\$admin_count\" -gt 0 || { echo 'migration requires an existing system administrator; explicit recovery is required' >&2; exit 1; }
   fi
+  kill -0 \"\$lock_pid\"
+    mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" -e \"INSERT INTO autowonder_schema_history(migration_version,filename,checksum,source_commit,success,error_message) VALUES($version,'$filename','$expected_sha','$commit',0,'migration started; completion unverified')\"
   started=\$(date +%s)
   if mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" < \"\$file\"; then
+    kill -0 \"\$lock_pid\"
     elapsed=\$(( (\$(date +%s) - started) * 1000 ))
-    mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" -e \"INSERT INTO autowonder_schema_history(migration_version,filename,checksum,source_commit,execution_ms,success) VALUES($version,'$filename','$expected_sha','$commit',\$elapsed,1)\"
+    mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" -e \"UPDATE autowonder_schema_history SET success=1,error_message=NULL,execution_ms=\$elapsed WHERE migration_version=$version AND checksum='$expected_sha'\"
   else
     elapsed=\$(( (\$(date +%s) - started) * 1000 ))
     mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" -e \"INSERT INTO autowonder_schema_history(migration_version,filename,checksum,source_commit,execution_ms,success,error_message) VALUES($version,'$filename','$expected_sha','$commit',\$elapsed,0,'migration command failed') ON DUPLICATE KEY UPDATE success=0,error_message='migration command failed'\" || true
@@ -573,25 +690,44 @@ printf 'MIGRATIONS_APPLIED=%s\\n' '$pending_count'"
   rolling-upgrade)
     [[ $(jq -r '.mode // empty' "$manifest") == upgrade ]] || die "rolling upgrade requires upgrade mode"
     [[ $(jq -r '(.upgrade.blockedReasons // []) | length' "$manifest") == 0 ]] || die "upgrade plan has blocking findings"
-    [[ $(jq -r '.deployment.lastRun.mode // empty' "$manifest") == stage-only ]] || die "stage-only release must be installed before rolling upgrade"
+    require_current_upgrade_staging "$manifest"
     jq -e '
       .runtimeConfig.prepared == true and
       .runtimeConfig.recommendedRuntimeVersion == .upgrade.targetRecommendedRuntimeVersion and
       .runtimeConfig.planFingerprint == .upgrade.planFingerprint and
-      .runtimeConfig.keyGenerationId == .upgrade.keyGenerationId and
-      (.runtimeConfig.keyGenerationId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")) and
       .runtimeConfig.envSha256 == .deployment.lastRun.envSha256
     ' "$manifest" >/dev/null || die "target runtime environment checkpoint is incomplete or stale"
     migration_status=$(jq -r '.upgrade.databaseMigration.status // empty' "$manifest")
     [[ "$migration_status" == passed || "$migration_status" == not-required ]] || die "database migration checkpoint is incomplete"
     if [[ "$migration_status" == passed ]]; then
-      [[ $(jq -r '.upgrade.databaseCompatibility.rollingAllowed // false' "$manifest") == true ]] || die "database compatibility does not allow rolling activation"
+      if [[ $(jq -r '.upgrade.executionMode // "rolling"' "$manifest") == maintenance ]]; then
+        verify_maintenance_nodes allow-passed
+      else
+        [[ $(jq -r '.upgrade.databaseCompatibility.rollingAllowed // false' "$manifest") == true ]] || die "database compatibility does not allow rolling activation"
+      fi
     fi
     expected_jar=$(jq -er '.artifacts.jar.sha256 | select(test("^[0-9a-f]{64}$"))' "$manifest") || die "target JAR checksum is missing"
     expected_env=$(jq -er '.runtimeConfig.envSha256 | select(test("^[0-9a-f]{64}$"))' "$manifest") || die "protected environment checkpoint is missing"
-    invocation_json='[]'; node_json='[]'
+    previous_rollout=$(jq -c '.rollingUpgrade // {}' "$manifest")
+    invocation_json='[]'
+    node_json=$(jq -c '
+      .upgrade as $u | (.resources.ecs_instance_ids // .resources.ecsInstanceIds | [.[]]) as $targets |
+      if .rollingUpgrade.planFingerprint == $u.planFingerprint and .rollingUpgrade.targetCommit == $u.toCommit
+      then [.rollingUpgrade.nodes[]? | select(.status == "passed" and (.instanceId as $id | $targets | index($id)))]
+      else [] end
+    ' "$manifest")
     for instance in "${instances[@]}"; do
+      maintenance_prelude=
+      if [[ $(jq -r '.upgrade.executionMode // "rolling"' "$manifest") == maintenance ]]; then
+        if jq -e --arg node "$instance" --arg plan "$(jq -r '.upgrade.planFingerprint' "$manifest")" --arg target "$commit" '.planFingerprint == $plan and .targetCommit == $target and ([.nodes[]? | select(.instanceId == $node and .status == "passed")] | length) == 1' <<<"$previous_rollout" >/dev/null; then
+          maintenance_prelude="$(maintenance_passed_script)
+exit 0"
+        else
+          maintenance_prelude=$(maintenance_check_script)
+        fi
+      fi
       result=$(run_cloud "$instance" "set -euo pipefail
+$maintenance_prelude
 target=/opt/autowonder/releases/$short_commit
 test \"\$(sha256sum /etc/autowonder/autowonder.env | cut -d ' ' -f 1)\" = '$expected_env' || { echo 'installed environment checkpoint mismatch' >&2; exit 1; }
 test -f \"\$target/auto-wonder.jar\" || { echo 'expected target release is not staged' >&2; exit 1; }
@@ -627,14 +763,21 @@ exit 0")
       [[ "$rollout_status" == passed || "$rollout_status" == failed ]] || die "rolling upgrade result is invalid"
       invocation_json=$(jq --arg id "$invocation" '. + [$id]' <<<"$invocation_json")
       node_json=$(jq --arg id "$invocation" --arg instance "$instance" --arg previous "$previous" --arg status "$rollout_status" --arg resolution "$resolution_required" \
-        '. + [{instanceId:$instance,invocationId:$id,previousRelease:$previous,status:$status,resolutionRequired:(if $resolution == "" then null else $resolution end)}]' <<<"$node_json")
+        'map(select(.instanceId != $instance)) + [{instanceId:$instance,invocationId:$id,previousRelease:$previous,status:$status,resolutionRequired:(if $resolution == "" then null else $resolution end)}]' <<<"$node_json")
       atomic_jq "$manifest" --argjson ids "$invocation_json" --argjson nodes "$node_json" --arg status "$rollout_status" \
-        '.rollingUpgrade={status:$status,invocationIds:$ids,nodes:$nodes,nodeOrder:"sequential",targetCommit:.repositoryCommit} | .phase="application" | .status=(if $status == "passed" then "running" else "failed" end)'
+        '.rollingUpgrade={status:$status,planFingerprint:.upgrade.planFingerprint,invocationIds:$ids,nodes:$nodes,nodeOrder:"sequential",targetCommit:.repositoryCommit} | .phase="application" | .status=(if $status == "passed" then "running" else "failed" end)'
       [[ "$rollout_status" == passed ]] || die "node activation failed; stopped without remediation; read-only diagnosis and explicit human confirmation are required"
     done
     atomic_jq "$manifest" --argjson ids "$invocation_json" --argjson nodes "$node_json" \
-      '.rollingUpgrade={status:"passed",invocationIds:$ids,nodes:$nodes,nodeOrder:"sequential",targetCommit:.repositoryCommit} |
+      '.rollingUpgrade={status:"passed",planFingerprint:.upgrade.planFingerprint,invocationIds:$ids,nodes:$nodes,nodeOrder:"sequential",targetCommit:.repositoryCommit} |
+       (if .deployment.activeReleaseBaseline.releaseId == .upgrade.fromCommit and .upgrade.previousReleaseBaseline == null
+        then .upgrade.previousReleaseBaseline=.deployment.activeReleaseBaseline else . end) |
+       .deployment.activeReleaseBaseline={releaseId:.repositoryCommit,releaseVersion:.releaseVersion,source:.source,artifacts:.artifacts} |
+       (if .localContext.candidateEnvFile != null then
+          (if .localContext.previousActiveEnvFile == null then .localContext.previousActiveEnvFile=.localContext.activeEnvFile else . end) |
+          .localContext.activeEnvFile=.localContext.candidateEnvFile else . end) |
        .deployment.activeCommit=.repositoryCommit | .deployment.acceptedCommit=.repositoryCommit |
+       (if (.upgrade.sourceRepositoryUrl // "") != "" then .repositoryUrl=.upgrade.sourceRepositoryUrl else . end) |
        .deployment.acceptedAt=(now|todateiso8601) | .upgradeInventory.status="stale" |
        .acceptance={health:"passed",ecsLocalHealth:"passed"} | .phase="acceptance" | .status="accepted"'
     ;;

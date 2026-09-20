@@ -92,7 +92,7 @@ class UpgradePolicyTest(unittest.TestCase):
         ]:
             self.assertIn(term, policy)
 
-    def test_upgrade_target_is_automatic_master_latest_without_ancestry_gate(self):
+    def test_upgrade_target_uses_discovered_default_branch_without_ancestry_gate(self):
         skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         runbook = (SKILL_ROOT / "references" / "upgrade-runbook.md").read_text(
             encoding="utf-8"
@@ -100,12 +100,12 @@ class UpgradePolicyTest(unittest.TestCase):
         policy = " ".join(f"{skill}\n{runbook}".split()).lower()
 
         for term in [
-            "fetch `origin/master`",
+            "discover the recorded repository default branch",
             "isolated clean detached worktree",
             "worktree at the exact fetched commit",
             "preserve a dirty, ahead, or divergent local branch unchanged",
             "never merge, rebase, reset, or build it",
-            "never ask the user for a target git ref",
+            "an explicitly authorized source repository change remains bound to the same deployment",
             "commit equality is the only version-availability check",
             "do not block because of git ancestry",
         ]:

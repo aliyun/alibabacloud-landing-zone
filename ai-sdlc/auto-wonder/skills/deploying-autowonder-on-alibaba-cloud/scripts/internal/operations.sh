@@ -310,8 +310,7 @@ exit 1'); then
         else
           (all($environment.required[];
             type == "string" and test("^[A-Z][A-Z0-9_]*$"))) and
-          (($environment.required | unique | length) == ($environment.required | length)) and
-          (($environment.required - $environment.added) | length == 0)
+          (($environment.required | unique | length) == ($environment.required | length))
         end
       ' "$manifest" >/dev/null ||
         die "upgrade environment requirement contract is missing or invalid; regenerate the upgrade plan"

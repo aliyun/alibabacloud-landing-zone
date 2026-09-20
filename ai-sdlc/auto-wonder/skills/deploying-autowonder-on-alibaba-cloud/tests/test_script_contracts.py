@@ -490,6 +490,59 @@ esac
             self.assertEqual(b'reviewed-plan', (work / 'reviewed.tfplan').read_bytes())
             self.assertEqual({'status': 'pending'}, json.loads(manifest.read_text())['teardownPreparation'])
 
+    def test_existing_update_requires_human_hash_before_terraform_submission(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / 'manifest.json')
+            work, binary = root / 'tf', root / 'bin'
+            work.mkdir(); binary.mkdir()
+            applied = root / 'applied'
+            terraform = binary / 'terraform'
+            terraform.write_text('#!/usr/bin/env bash\nset -eu\n'
+                'for arg in "$@"; do case "$arg" in -out=*) printf plan > "${arg#-out=}";; esac; done\n'
+                'if [[ "$*" == *" apply "* ]]; then touch ' + shlex.quote(str(applied)) + '; fi\n')
+            terraform.chmod(0o700)
+            self.adaptive_fixture(manifest, binary, work)
+            data = json.loads(manifest.read_text())
+            data['mode'] = 'new'
+            data['deployment'] = {'acceptedAt': '2026-01-01'}
+            manifest.write_text(json.dumps(data))
+            plan_path = work / 'fixture-plan.json'
+            plan = json.loads(plan_path.read_text())
+            plan['resource_changes'].append({'address': 'alicloud_alb_server_group.app',
+                'type': 'alicloud_alb_server_group', 'mode': 'managed',
+                'change': {'actions': ['update'], 'before': {'id': 'sg-a', 'servers': []},
+                           'after': {'id': 'sg-a', 'servers': [{'server_id': 'i-a'}]}}})
+            plan_path.write_text(json.dumps(plan))
+            env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                       AUTOWONDER_TERRAFORM_CONFIG_DIR=str(root / 'config'))
+            script = ['bash', str(ROOT / 'scripts/terraform-stage.sh')]
+            options = ['--manifest', str(manifest), '--work-dir', str(work)]
+            result = subprocess.run(script + ['plan'] + options, env=env, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertIn('"updateConfirmationRequired": true', result.stdout)
+            fingerprint = json.loads(manifest.read_text())['terraform']['planFingerprint']
+            command = script + ['apply'] + options + ['--approved-plan-sha256', fingerprint]
+            for extra in ([], ['--confirmed-update-plan-sha256', 'b' * 64]):
+                result = subprocess.run(command + extra, env=env, capture_output=True, text=True)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn('update-confirmation-required', result.stdout)
+                self.assertFalse(applied.exists())
+                self.assertFalse(json.loads(manifest.read_text())['terraform'].get('pendingOperation'))
+            result = subprocess.run(command + ['--confirmed-update-plan-sha256', fingerprint],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertTrue(applied.exists())
+            # The same in-place update is automatic during an unfinished new install.
+            applied.unlink()
+            data = json.loads(manifest.read_text())
+            data.pop('deployment')
+            data['terraform'].pop('existingDeployment')
+            manifest.write_text(json.dumps(data))
+            result = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            self.assertTrue(applied.exists())
+
     def test_terraform_apply_requires_matching_plan_hash(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -996,9 +1049,9 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             data["resources"]["package_bucket"] = "packages-example"
             data["repositoryCommit"] = "a" * 40
             manifest.write_text(json.dumps(data))
-            env_file = self.write_env(root / "autowonder.env")
-            env_file.write_text(env_file.read_text()
-                                + "AUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n")
+            key = {"AUTOWONDER_SECRET_MASTER_KEY": "c3ludGhldGljLW1hc3Rlci1rZXktMzItYnl0ZXMteHg="}
+            env_file = self.write_env(root / "autowonder.env", key)
+            active_env = self.write_env(root / "active.env", key)
             release = root / "release"
             release.mkdir()
             for name in (
@@ -1014,16 +1067,15 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             unit.write_bytes((ROOT / "assets/systemd/autowonder.service").read_bytes()
                              + b"\n# sealed target release\n")
             data = json.loads(manifest.read_text())
+            data.setdefault("localContext", {})["activeEnvFile"] = str(active_env)
             data["upgrade"] = {
                 "blockedReasons": [], "environmentContractChecked": True,
                 "environmentValidated": True, "targetRecommendedRuntimeVersion": "0.2.152",
                 "environmentCandidateSha256": hashlib.sha256(env_file.read_bytes()).hexdigest(),
-                "keyGenerationId": "985bc0a7-5abf-4fc7-a612-2549c5a7848d",
             }
             data["runtimeConfig"] = {
                 "prepared": True, "recommendedRuntimeVersion": "0.2.152",
                 "envSha256": data["upgrade"]["environmentCandidateSha256"],
-                "keyGenerationId": data["upgrade"]["keyGenerationId"],
             }
             data["artifacts"]["systemdUnit"] = {
                 "sha256": hashlib.sha256(unit.read_bytes()).hexdigest(), "source": "target-source",
@@ -1210,6 +1262,18 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
         self.assertIn('authority=${connection%%/*}', text)
         self.assertIn('database=${connection#*/}', text)
 
+    def record_current_upgrade_staging(self, manifest):
+        data=json.loads(manifest.read_text())
+        data["upgrade"].update(environmentCandidateSha256="c"*64,targetRecommendedRuntimeVersion="0.2.152")
+        data["artifacts"]={"jar":{"sha256":"d"*64},"systemdUnit":{"sha256":"e"*64}}
+        manifest.write_text(json.dumps(data))
+        self.approve_upgrade(manifest)
+        data=json.loads(manifest.read_text())
+        plan=data["upgrade"]["planFingerprint"]
+        data["runtimeConfig"]={"prepared":True,"recommendedRuntimeVersion":"0.2.152","envSha256":"c"*64,"planFingerprint":plan}
+        data.setdefault("deployment",{})["lastRun"]={"mode":"stage-only","planFingerprint":plan,"targetCommit":data["upgrade"]["toCommit"],"jarSha256":"d"*64,"unitSha256":"e"*64,"envSha256":"c"*64,"instanceIds":list(data["resources"]["ecs_instance_ids"].values())}
+        manifest.write_text(json.dumps(data))
+
     def test_database_migration_requires_confirmation_and_verified_backup(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -1229,6 +1293,7 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             }
             manifest.write_text(json.dumps(data))
             env = self.prepare_upgrade(manifest)
+            self.record_current_upgrade_staging(manifest)
             command = [
                 str(UPGRADE_ROOT / "scripts/upgrade-operations.sh"),
                 "database-migrate", "--manifest", str(manifest),
@@ -1279,6 +1344,7 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             }
             manifest.write_text(json.dumps(data))
             env = self.prepare_upgrade(manifest)
+            self.record_current_upgrade_staging(manifest)
 
             result = subprocess.run([
                 str(UPGRADE_ROOT / "scripts/upgrade-operations.sh"),
@@ -1335,19 +1401,9 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
 
             not_staged = subprocess.run(command, text=True, capture_output=True, env=env)
             self.assertNotEqual(0, not_staged.returncode)
-            self.assertIn("stage-only release", not_staged.stderr)
+            self.assertIn("verified staging must match current plan", not_staged.stderr)
 
-            data = json.loads(manifest.read_text())
-            data["deployment"] = {"lastRun": {"mode": "stage-only", "envSha256": "c" * 64}}
-            data["runtimeConfig"] = {"prepared": True, "recommendedRuntimeVersion": "0.2.152", "envSha256": "c" * 64}
-            data["upgrade"]["targetRecommendedRuntimeVersion"] = "0.2.152"
-            data["upgrade"]["keyGenerationId"] = "985bc0a7-5abf-4fc7-a612-2549c5a7848d"
-            data["runtimeConfig"]["keyGenerationId"] = data["upgrade"]["keyGenerationId"]
-            manifest.write_text(json.dumps(data))
-            self.approve_upgrade(manifest)
-            data = json.loads(manifest.read_text())
-            data["runtimeConfig"]["planFingerprint"] = data["upgrade"]["planFingerprint"]
-            manifest.write_text(json.dumps(data))
+            self.record_current_upgrade_staging(manifest)
             no_migration_checkpoint = subprocess.run(command, text=True, capture_output=True, env=env)
             self.assertNotEqual(0, no_migration_checkpoint.returncode)
             self.assertIn("database migration checkpoint", no_migration_checkpoint.stderr)

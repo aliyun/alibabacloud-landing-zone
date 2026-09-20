@@ -283,7 +283,7 @@ def collect(manifest_path, project_root, allow_incomplete=False):
     artifacts_seen = {}
     discard = {'operationsBundle', 'operationsStore', 'planPath', 'logFile', 'logPath', 'stdoutFile', 'stderrFile', 'evidenceDirectory', 'cacheDirectory', 'signedUrl', 'presignedUrl', 'profilePath', 'profileFile', 'handoffFile', 'planJsonPath'}
     directory_keys = {'sourceDirectory', 'projectRoot', 'deploymentDirectory', 'infoDirectory', 'outputDirectory'}
-    file_keys = {'protectedEnvFile', 'candidateEnvFile', 'activeEnvFile', 'environmentFile', 'envFile', 'tfvarsFile', 'secretsFile', 'backendConfigFile', 'stateFile', 'localStateFile', 'stateReference', 'systemdFile', 'systemdUnitFile'}
+    file_keys = {'protectedEnvFile', 'candidateEnvFile', 'activeEnvFile', 'previousActiveEnvFile', 'environmentFile', 'envFile', 'tfvarsFile', 'secretsFile', 'backendConfigFile', 'stateFile', 'localStateFile', 'stateReference', 'systemdFile', 'systemdUnitFile'}
 
     def walk(value, trail=()):
         if isinstance(value, list):
@@ -292,6 +292,17 @@ def collect(manifest_path, project_root, allow_incomplete=False):
             return
         if not isinstance(value, dict):
             return
+        # Earlier Windows releases nested filename-keyed build evidence and used
+        # `directory`; normalize that producer shape before collecting or mapping.
+        if trail == ('upgrade', 'release') and 'artifacts' in value:
+            if 'directory' in value:
+                value['releaseDirectory'] = value.pop('directory')
+            if 'releaseDirectory' in value:
+                for key, name in (('jar', 'auto-wonder.jar'), ('schema', 'autowonder-schema.sql'),
+                                  ('templates', 'autowonder-community-templates.sql'),
+                                  ('migrations', 'autowonder-migrations.tar.gz'), ('systemdUnit', 'autowonder.service')):
+                    if name in value['artifacts']:
+                        value[key] = dict(value['artifacts'][name], name=name)
         if 'releaseDirectory' in value:
             if any(not isinstance(value.get(key), dict) for key in ('jar', 'migrations')):
                 raise BundleError('Sealed release is missing JAR or migration metadata')

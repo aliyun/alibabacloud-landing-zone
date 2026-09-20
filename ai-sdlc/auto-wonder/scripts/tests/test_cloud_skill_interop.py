@@ -89,11 +89,7 @@ class IndependentSkillInteropTests(unittest.TestCase):
         self.manifest = self.consumer / 'upgrade-info/manifest.json'
         self.sealed = self.consumer / 'upgrade-info/sealed'
         candidate = self.consumer / 'upgrade-info/candidate.env'
-        # Simulate the existing protected escrow record restored with this
-        # deployment. Real operators must reuse, not invent, its generation ID.
-        candidate.write_text('EXAMPLE_VALUE=fixture\n'
-                             'AUTOWONDER_SECRET_KEY_GENERATION_ID='
-                             '985bc0a7-5abf-4fc7-a612-2549c5a7848d\n', encoding='utf-8')
+        candidate.write_text('EXAMPLE_VALUE=fixture\n', encoding='utf-8')
         candidate.chmod(0o600)
         nodes = [{'instanceId': 'i-fixture', 'vpcId': 'vpc-fixture'}]
         tags = {'Project': 'AutoWonder', 'DeploymentId': 'interop', 'Environment': 'test',

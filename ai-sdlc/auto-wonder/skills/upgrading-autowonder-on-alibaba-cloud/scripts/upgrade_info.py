@@ -474,7 +474,17 @@ def run_command(command: List[str], environment: Dict[str, str], output_file: Op
                 stderr=subprocess.PIPE,
             )
     if result.returncode != 0:
-        raise UpgradeInfoError("Terraform command failed during protected inventory refresh")
+        # Terraform stderr may contain protected backend values or signed URLs.
+        # Emit only a fixed category, never any excerpt of the original text.
+        diagnostic = (result.stderr or "").lower()
+        category = "unclassified failure"
+        if any(value in diagnostic for value in ("client.timeout", "timed out", "timeout exceeded", "context deadline exceeded")):
+            category = "network timeout; check provider registry or mirror connectivity"
+        elif "checksum" in diagnostic and any(value in diagnostic for value in ("doesn't match", "does not match", "mismatch")):
+            category = "provider checksum mismatch; review the dependency lock file"
+        elif any(value in diagnostic for value in ("failed to query available provider", "failed to install provider", "failed to retrieve authentication checksums")):
+            category = "provider retrieval failure; check provider registry or mirror connectivity"
+        raise UpgradeInfoError("Terraform command failed during protected inventory refresh (" + category + ")")
 
 
 def run_terraform_output(project_root: Path, discovery: Dict[str, Any]) -> Dict[str, Any]:
@@ -492,6 +502,9 @@ def run_terraform_output(project_root: Path, discovery: Dict[str, Any]) -> Dict[
         terraform_data.mkdir(mode=0o700)
         environment = dict(os.environ)
         environment["TF_DATA_DIR"] = str(terraform_data)
+        import runpy
+        configure = runpy.run_path(str(Path(__file__).with_name("terraform_runtime.py")))["configure"]
+        environment = configure(environment, temporary)
         init_command = [
             "terraform", "-chdir=" + str(terraform_dir), "init", "-reconfigure", "-input=false",
             "-force-copy",

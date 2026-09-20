@@ -35,7 +35,7 @@ class RepositoryTrustTest(unittest.TestCase):
     def test_atomic_writers_protect_empty_temp_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'protected'
-            original = 'OLD=value\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n'
+            original = 'OLD=value\n'
             path.write_text(original)
             calls = []
             def reject_protection(source, target):

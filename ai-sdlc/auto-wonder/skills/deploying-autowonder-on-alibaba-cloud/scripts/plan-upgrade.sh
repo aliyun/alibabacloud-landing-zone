@@ -79,7 +79,7 @@ collect_env_contract() {
       awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true
   done < <(git -C "$source_dir" ls-tree -r --name-only "$commit" -- .)
   cut -f1 "$raw" | LC_ALL=C sort -u | while IFS= read -r key; do
-    [[ -n "$key" ]] || continue
+    [[ -n "$key" && "$key" != ANTHROPIC_AUTH_TOKEN ]] || continue
     key_file=$(mktemp); TEMP_FILES+=("$key_file")
     awk -F '\t' -v wanted="$key" '$1 == wanted {print $2}' "$raw" | LC_ALL=C sort -u >"$key_file"
     printf '%s\t%s\n' "$key" "$(sha256_file "$key_file")" >>"$output"
@@ -123,7 +123,7 @@ upgrade_requires_env_key() {
 
 if [[ -n "$env_file" ]]; then
   while IFS= read -r key; do
-    [[ -n "$key" ]] || continue
+    [[ -n "$key" && "$key" != ANTHROPIC_AUTH_TOKEN ]] || continue
     upgrade_requires_env_key "$key" || continue
     raw=$(env_raw_value "$env_file" "$key")
     if [[ -z "$raw" || "$raw" == "''" || "$raw" == '""' ]]; then

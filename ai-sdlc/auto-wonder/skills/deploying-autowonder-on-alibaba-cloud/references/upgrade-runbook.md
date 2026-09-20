@@ -43,12 +43,13 @@ reconfigure, replace, restart, or otherwise mutate any user deployment resource
 outside that plan. Never substitute teardown, new-deployment, or ad hoc repair
 commands for an upgrade step.
 
-If execution differs from the plan, a probe fails, state becomes uncertain, or a
-new operation appears necessary, stop at once. Limit investigation to read-only
-diagnostics and sanitized evidence collection. Do not retry or roll back
-automatically and do not attempt to solve the anomaly. Show the current state,
-impact, evidence, and decision options to the user. Resume only after a revised
-plan, renewed risk review, and explicit human confirmation.
+For local script defects and host compatibility failures within the approved
+operation, follow the canonical Skill's Automatic Script And Host Compatibility
+Repair policy: diagnose, minimally repair, verify and resume without a new
+confirmation. For uncertain remote outcomes, pause mutation and reconcile
+invocation records and actual state before retrying. Never blindly replay a
+non-idempotent operation. A changed resource/database boundary, additional cloud
+operation or rollback requires a revised plan and explicit confirmation.
 
 ## Deterministic Command Route
 

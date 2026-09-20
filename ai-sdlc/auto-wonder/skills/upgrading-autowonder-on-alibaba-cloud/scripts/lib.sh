@@ -2,6 +2,11 @@
 set -euo pipefail
 
 umask 077
+AUTOWONDER_RUNTIME_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/runtime-env.sh"
+if [[ -f "$AUTOWONDER_RUNTIME_HELPER" ]]; then
+  source "$AUTOWONDER_RUNTIME_HELPER"
+  if declare -F autowonder_restore_runtime_environment >/dev/null; then autowonder_restore_runtime_environment; fi
+fi
 AUTOWONDER_OPERATIONS_CLI="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/operations-store.py"
 TEMP_FILES=()
 TEMP_DIRS=()
@@ -383,6 +388,9 @@ initialize_runtime_terraform() {
   cp -- "$backend_source" "$private_dir/backend.hcl"
   chmod 600 "$private_dir/backend.hcl"
   export TF_DATA_DIR="$private_dir/terraform-data"
+  TF_CLI_CONFIG_FILE=$("${AUTOWONDER_PYTHON:-python3}" "${AUTOWONDER_OPERATIONS_CLI%/*}/terraform_runtime.py" --config-dir "$private_dir") ||
+    die "cannot prepare private Terraform provider configuration"
+  export TF_CLI_CONFIG_FILE
   unset TF_WORKSPACE
   if ! terraform -chdir="$terraform_dir" init -reconfigure -input=false \
     -backend-config="$private_dir/backend.hcl" >"$private_dir/init.log" 2>&1; then

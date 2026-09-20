@@ -94,6 +94,44 @@ only when the plan contains database migrations, destructive or rolling-
 incompatible changes, an unexpected target/resource change, rollback, or a
 repair outside the current plan. Never roll back automatically.
 
+## Automatic Script And Host Compatibility Repair
+
+For Skill script defects or host compatibility errors, diagnose, apply the
+smallest local repair, verify it, and continue without confirmation when the
+operation and authorization remain unchanged, including resumed workflows.
+
+- Capture sanitized failure evidence and determine whether the command failed
+  locally before submission or may already have changed remote state. For an
+  unknown outcome, reconcile invocation IDs, OSS checkpoints and live state
+  before replaying anything; never blindly repeat apply, migration or restart.
+- Fix the actual cause in the executing Skill copy or task-local tool setup.
+  Prefer existing native adapters and shared helpers. On Windows check
+  PowerShell edition/version, native process exit codes, argument quoting,
+  paths with spaces/non-ASCII characters, separators, UTF-8/BOM/CRLF, file ACLs,
+  temporary files and executable discovery. Use native PowerShell/Python for
+  local control; Linux shell payloads run on ECS, not through local Git Bash.
+- Use the private toolchain and process-scoped configuration for missing tools,
+  compatible runtime selection, proxy or mirror issues. Preserve version and
+  checksum verification; do not globally change execution policy or weaken
+  TLS checks, ACLs, identity checks or deployment safety gates.
+- A missing/broken native adapter may be repaired using the existing phase
+  contract and shared policy. Verify parsing, command construction, exit/error
+  handling and postconditions locally before any cloud mutation. Never replace
+  it with an unverified ad hoc cloud command or shell translation.
+- Keep the target release, resource set, secrets, database scope and approved
+  operation unchanged. Preserve backups, progress and authoritative OSS state.
+  Revalidate plan bindings and relevant focused checks, then resume at the
+  failed idempotent boundary; do not restart the whole workflow or erase state.
+- Each further attempt must follow new evidence or a verified change. Do not
+  loop on the same failure. Escalate only when required external login/access,
+  missing original data, unresolved remote state, a changed operation scope or
+  inability to verify the repair prevents safe progress. Explain the concrete
+  blocker and request only the missing input/authorization.
+
+Record the cause, repaired files, verification, retries and remaining limits in
+the final report. Keep fixes reviewable; do not silently commit/push Skill
+changes or claim mocked Windows checks are native Windows validation.
+
 ## Platform Selection
 
 Detect the control host before running scripts. On macOS/Linux use the `.sh`
@@ -103,9 +141,10 @@ on Windows. Both routes use the same
 manifest fields, phase gates, exact commits, node order, and evidence contract.
 
 The upgrade planner and remote Linux payload follow one platform-neutral policy.
-If a native Windows adapter for a mutating phase is absent,
-stop before that phase and report the missing adapter; do not translate a shell
-command ad hoc or weaken a gate.
+If a native Windows adapter for a mutating phase is absent or broken, repair
+and verify it under Automatic Script And Host Compatibility Repair before
+running that phase. Stop only if equivalent behavior cannot be verified; do not
+translate a shell command ad hoc or weaken a gate.
 
 This bundle includes native Windows discovery, target verification, planning,
 approval, build, backup, runtime-config, staging, RDS-backup verification,
@@ -154,7 +193,11 @@ Run these steps in order when upgrade starts:
    adapter) before cloud verification or planning. The refresh entrypoint must
    normalize `cloudProfile` to the dedicated `auto-wonder` CLI profile, validate
    STS through the deployment bootstrap, and load that profile's credentials
-   before initializing Terraform; never rely on ambient credentials. Reuse the recorded parsing
+   before initializing Terraform; never rely on ambient credentials. Use a temporary
+   process-scoped provider mirror configuration when no explicit Terraform CLI
+   configuration is supplied; preserve provider locks and checksum checks. Apply
+   the same rule to each independent runtime-config initialization, since refresh
+   subprocess settings do not persist into later phases. Reuse the recorded parsing
    rule, but always refresh Terraform outputs so newly scaled ECS nodes cannot be
    missed. Support local state and OSS remote state. Historical backend files may
    contain credentials: use a private temporary copy for Terraform initialization,
@@ -202,27 +245,27 @@ Run these steps in order when upgrade starts:
    `jarSha256` and `migrationsSha256` from the active release. Stop when nodes
    disagree in identity or content, an archive is missing, or the manifest
    identity differs. A workspace baseline must match these live artifact hashes.
-9. Never ask the user for a target Git ref. Fetch `origin/master`, verify that
-   `origin` matches the manifest repository, and use an isolated clean detached
-   worktree pinned to that exact remote commit. Resolve the AutoWonder project
-   directory with `resolve_upgrade_project_source_dir`; never assume the detached
-   worktree root is the project root. If local `master` has divergent
-   commits or tracked changes, preserve it unchanged; do not merge, rebase, reset,
-   or use it as the release source. Compare the remote commit with the reconciled active commit before
-   running `scripts/plan-upgrade.sh`. Commit equality is the only
-   version-availability check: if they are identical, report that the deployment
-   is already the latest version and skip planning, approval, build, staging,
-   migration, and activation unless the user explicitly requests a same-version
-   redeployment. For that request, pass `--force-redeploy` to the planner and
-   preserve every normal plan, approval, backup, staging, activation, and
-   acceptance gate. If they differ, run the planner normally. Do not block
-   because of Git ancestry and do not ask for a branch, tag, or commit.
-   For a workspace release, retain the active content identity and let the
-   planner recover its environment/migration baseline from hash-verified sealed
-   artifacts. An empty historical `repositoryUrl` is accepted only for the
-   explicit AutoWonder repository allowlist in the shared planner; never trust
-   an arbitrary local `origin`. A missing historical artifact is a blocked
-   recovery condition, not permission to change the active identity or skip DDL.
+9. Lock the selected deployment ID throughout source preparation and planning.
+   Never select another deployment because its repository matches this computer.
+   Run `python scripts/prepare-upgrade-source.py --manifest "$MANIFEST"
+   --workspace <current-workspace> --deployment-id <selected-id>` (use the
+   bootstrapped Python). It prepares an isolated detached checkout from the
+   recorded repository, discovering its default branch; current-directory Git
+   provenance is not deployment identity. Use returned `sourceDirectory` and
+   `targetRef` with `plan-upgrade.sh --target-ref <ref>` or `-TargetRef` on Windows.
+   No original computer or original checkout is required. Preserve the user's
+   working files; do not reset, merge or clean them to prepare a release.
+   If the historical URL is absent or the release source has moved, establish
+   the trusted repository explicitly. Use `--repository-url` and
+   `--allow-repository-change` only for an authorized source transition and pass
+   the same options to the planner; this transition is included in impact review.
+   Do not silently replace the historical URL. Normal planning supports a sealed
+   workspace baseline upgrading to a target Git release: historical source.kind
+   workspace is NOT a reason to pass --workspace-current-content. That flag is
+   reserved for explicitly requested same-version no-Git validation.
+   Missing old artifacts require recovery, not changing the active identity or
+   erasing migration history. Equal exact Git identities mean already-latest
+   unless forced redeployment was requested; semver equality alone is not proof.
 10. Generate one consolidated plan covering source commits, changed features,
    environment keys, migrations and DDL risk, backup/compatibility gates, build,
    node order, acceptance, rollback boundary, and the plan fingerprint. When
@@ -258,11 +301,21 @@ scripts/upgrade-operations.sh upgrade-backup --manifest "$MANIFEST"
 Keep exactly one backup archive per ECS at
 `/opt/autowonder/upgrade-rollback-backup.tar.gz`. A retry of the same plan reuses
 the original verified archive; a new plan replaces it atomically only after
-the active release and replacement checksums validate. Staging and rollback
+the active release and replacement checksums validate. Legacy POSIX and Windows
+archives must be validated before reuse across hosts; missing metadata is never
+a reason to discard the original same-plan backup. Staging and rollback
 require backup coverage of every target, bound to the current plan. Rollback
 also checks the recorded archive SHA-256 before restoring any files.
-Validate the candidate protected
-environment file with:
+The planner creates an independent protected candidate by default and records
+`localContext.candidateEnvFile`; use that path for runtime-config and staging.
+An explicit `--env-file` must be a separate file, never the original environment
+or its symlink/hardlink. Do not move or overwrite the active protected file.
+Validate every required variable in the target environment contract, including
+existing variables whose defaults were removed. Nested Spring fallbacks are
+required only when the outer value and its preceding alternatives are absent.
+Spring defaults and fallback semantics determine whether additions are required;
+do not copy every optional default into the candidate just to satisfy a gate.
+The candidate receives the exact target application VERSION and runtime version.
 
 On every upgrade, derive `autowonder.runtime.recommended-version` from the exact
 target source `src/main/resources/application.yml`, update
@@ -273,22 +326,29 @@ stage installs the candidate on every ECS before any rolling restart. A resumed
 stage or rolling activation must revalidate this checkpoint and cannot reuse a
 historical manifest runtime version.
 
-Before planning, record the key escrow's existing opaque UUIDv4 in the protected
-candidate as `AUTOWONDER_SECRET_KEY_GENERATION_ID`. This is operator metadata,
-not an application secret or proof of escrow. Do not invent an ID to claim
-custody, rotate the master key, or put the key in the manifest. Plan approval
-binds this ID, the candidate hash and target runtime; changing any invalidates
-approval. `runtime-config` accepts only that candidate or its prepared checkpoint,
-then binds the normalized environment hash to the same approved plan and ID.
-The checkpoint stays in the protected working manifest (POSIX mode `0600`,
-Windows current-user ACL). Stage rechecks each installed environment; rollout
-rechecks before and after activation. A mismatch stops the phase.
+Retain the existing master key in the protected environment; do not replace it
+when restoring an old local deployment or cloud state. Compare the actual
+candidate key to the protected active environment at planning and execution;
+reject a missing or changed key without printing either value. No key-generation UUID
+or manual registration is required. Historical metadata is inert and does not
+need to be removed from environment files or immutable OSS history.
+Plan approval binds the candidate hash and target runtime. `runtime-config`
+accepts only that candidate or its prepared checkpoint, then binds the
+normalized environment hash to the same approved plan. The checkpoint stays
+in the protected working manifest (POSIX mode `0600`, Windows current-user ACL).
+Stage rechecks each installed environment; rollout rechecks before and after
+activation. A mismatch stops the phase.
 Use this Skill's `scripts/sanitize-evidence.sh` for shareable reports; it removes
-environment hashes and secret fields. Preserve the escrow ID's association with
-database backup generations off-node; rollback archives do not provide escrow.
-Previously approved plans without this generation binding must be regenerated
-and approved through the existing plan policy; an old prepared checkpoint is
-not grandfathered in.
+environment hashes and secret fields. Keep protected recoverable copies of the
+original environment with the matching database backups.
+
+When replacing a Skill during an upgrade, restore and reconcile the existing
+execution state first. A plan fingerprint mismatch requires regeneration and
+approval under the existing policy before further changes; never rewrite an old
+approval to make it valid. For a planning-only interruption, regenerate the plan
+with the preserved environment. If database migration or node activation has
+started, retain progress and rollback backups and reconcile the live state
+before choosing resume or rollback; do not reset it by blindly planning again.
 
 ```bash
 scripts/upgrade-operations.sh runtime-config \
@@ -350,7 +410,9 @@ Terraform inventory refresh must preserve at least:
 - `source.baseline` with its release identity, sealed artifact hashes,
   environment contract and migration checksums; preserve the previous active
   baseline during an unfinished upgrade even if the target build replaces
-  `source` and `artifacts`.
+  `source` and `artifacts`. Promote the target active baseline only after all
+  nodes pass acceptance, retaining the prior baseline and environment for rollback.
+  A historical baseline from a different release cannot override the active version.
 
 Planned Terraform scale-out remains a deployment operation. After its inventory
 refresh and node initialization complete, the manifest contains the expanded ECS

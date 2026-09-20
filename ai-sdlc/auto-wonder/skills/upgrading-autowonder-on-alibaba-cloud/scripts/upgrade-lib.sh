@@ -187,3 +187,20 @@ refresh_and_require_upgrade_approval() {
   refresh_target_verification "$manifest"
   require_upgrade_approval "$manifest"
 }
+
+require_current_upgrade_staging() {
+  jq -e '
+    .upgrade as $u | .deployment.lastRun as $s |
+    .runtimeConfig as $r |
+    $s.mode == "stage-only" and $s.planFingerprint == $u.planFingerprint and
+    $s.targetCommit == $u.toCommit and $s.targetCommit == .repositoryCommit and
+    ($s.jarSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    $s.jarSha256 == .artifacts.jar.sha256 and
+    ($s.unitSha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    $s.unitSha256 == .artifacts.systemdUnit.sha256 and
+    $r.prepared == true and $r.planFingerprint == $u.planFingerprint and
+    $r.recommendedRuntimeVersion == $u.targetRecommendedRuntimeVersion and
+    $s.envSha256 == $u.environmentCandidateSha256 and $s.envSha256 == $r.envSha256 and
+    ($s.instanceIds | sort) == ((.resources.ecs_instance_ids // .resources.ecsInstanceIds) | [.[]] | sort)
+  ' "$1" >/dev/null || die "verified staging must match current plan, target, artifacts, environment and every ECS"
+}
