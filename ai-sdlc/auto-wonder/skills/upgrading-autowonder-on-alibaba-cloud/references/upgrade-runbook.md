@@ -182,10 +182,11 @@ subsequent plan to compare the target release against itself. Once database
 mutation has started, an unfinished upgrade must resume its existing reviewed
 plan; replanning must not erase the migration checkpoint or permit rollback.
 
-If a historical manifest has an empty `repositoryUrl`, only the repository
-allowlist in `scripts/upgrade_plan.py` is accepted: the official
-`aliyun/alibabacloud-landing-zone` repository. An internal repository is not
-implicitly trusted when the historical repository URL is absent. SSH
+If a historical manifest has an empty `repositoryUrl`, the default allowlist
+remains conservative. A verified internal repository or repository migration
+can be selected explicitly with --repository-url and --allow-repository-change
+after authorization; the exact source is then bound to the upgrade plan. Never
+change the deployment target to find a matching local repository. SSH
 and HTTPS spellings normalize to the same identity. All Git command failures
 stop planning; an unsuccessful diff is never an empty migration result.
 
@@ -329,12 +330,13 @@ requirements are satisfied.
 
 - Treat the active deployed commit and the local source commit as separate
   facts. Record both before synchronizing the repository.
-- Never ask the user for a target Git ref. Fetch `origin/master`, verify that
-  `origin` matches the manifest repository, and create an isolated clean detached
-  worktree at the exact fetched commit. Preserve a dirty, ahead, or divergent
+- Discover the recorded repository default branch (or use an explicitly selected
+  ref), verify its identity, and create an isolated clean detached worktree at
+  the exact fetched commit. An explicitly authorized source repository change
+  remains bound to the same deployment and is recorded in the plan. Preserve a dirty, ahead, or divergent
   local branch unchanged; never merge, rebase, reset, or build it. The planner
-  accepts that detached remote-master worktree and still rejects tracked changes.
-- Compare the reconciled active commit with the pulled `origin/master` commit
+  accepts that detached target worktree and still rejects tracked changes.
+- Compare the reconciled active commit with the fetched target commit
   before producing an upgrade plan. Commit equality is the only
   version-availability check. If they match, report that the deployment is
   already the latest version and skip planning, approval, build, staging,
@@ -342,7 +344,7 @@ requirements are satisfied.
   same-version redeployment, run the planner with `--force-redeploy`; the plan
   records that intent and retains all normal mutation gates. If they differ,
   continue planning. Do not block
-  because of Git ancestry between the active deployment and `origin/master`.
+  because of Git ancestry between the active deployment and the target commit.
 - Build with the frontend enabled and reject a JAR without `static/index.html`
   and compiled static assets.
 - Write and validate environment changes before starting the target release.
@@ -366,7 +368,7 @@ Record a sanitized upgrade evidence directory containing:
 
 Abort when active nodes report different release commits, repository identity
 validation fails, the isolated target worktree has tracked changes or is not
-pinned to the exact fetched `origin/master`, the target commit is unavailable,
+pinned to the exact fetched target commit, the target commit is unavailable,
 or the target architecture is not Linux x86_64. Preserve the operator's local
 branch and working tree; their divergence is not an upgrade blocker. Explicit
 same-version workspace validation follows its separate no-Git route above.
@@ -383,7 +385,9 @@ include:
    template, deployment manifest, systemd unit, and Skill scripts at both commits;
    parse `KEY=...` declarations only from the env template and `${KEY...}`
    references from other sources; never treat Shell assignments as application
-   environment variables;
+   environment variables. Control-host script references are informational;
+   application configuration, environment templates and systemd units define
+   required candidate values;
 4. added, removed, or default-changed variables and the source file for each;
 5. added, modified, or deleted `docs/migration/*.sql` files;
 6. changes to ports, health probes, OSS/SLS endpoints, credentials, Java/Node/
@@ -400,7 +404,11 @@ or application rollback compatibility cannot be established.
 Create a root-readable snapshot of `/etc/autowonder/autowonder.env` before any
 change. Merge only reviewed keys into a candidate file, preserve unchanged
 secrets, reject placeholder values, and run the same preflight validation used
-for a new deployment. The candidate must contain every newly required variable.
+for a new deployment. Validate all target-required variables, including an
+existing key whose default disappeared; evaluate nested fallbacks against the
+candidate values. Compare `AUTOWONDER_SECRET_MASTER_KEY` to the preserved active
+environment and reject a missing or changed key without exposing its value.
+No key-generation UUID is required.
 Record its SHA-256 after final validation and require the staged file to match it.
 
 For every upgrade, read `autowonder.runtime.recommended-version` from the exact
@@ -447,6 +455,28 @@ active-version-incompatible DDL requires a maintenance window and must not use
 normal rolling activation.
 
 Execute confirmed migrations once, in numeric order, from one controlled node.
+For plans whose fingerprinted `upgrade.executionMode` is `maintenance`, finish
+release staging and verified backups, then run `upgrade-operations.sh
+maintenance-stop --manifest "$MANIFEST"` (PowerShell: `upgrade-operations.ps1
+maintenance-stop -Manifest $Manifest`). This stops every verified ECS application
+service and records the approved plan and complete target set. It does not drain
+running agent work: agree the interruption window and let active work settle
+before entering maintenance. `database-migrate --confirm-migrations` then
+rechecks every service is inactive, has no main process, and has no port 7001
+listener before applying SQL. The rolling-compatibility flag is not used in this
+mode. `rolling-upgrade` subsequently starts target nodes sequentially with the
+existing per-node acceptance checks; the database remains marked non-rolling.
+An interrupted migration requires reviewed recovery. Activation may resume only
+when previously passed nodes still match the approved target, artifacts and live
+health checks, while all remaining nodes remain stopped for the same plan. Neither
+the old application nor failed SQL is automatically retried. Do not edit
+risk classifications, stop evidence, or `rollingAllowed` to bypass these gates.
+
+`DROP INDEX` requires maintenance review but does not delete application rows.
+For the V052–V070 batch, also review V059's expanded retry uniqueness, V062's
+invalidation of old conversation tokens, and the existing administrator required
+before V067 records initialization. A successful health endpoint cannot establish
+that a usable platform administrator exists.
 Record version, filename, SHA-256, target commit, start/end time, and result in a
 database table named `autowonder_schema_history`. The migration runner creates
 this ledger when absent and serializes execution with the MySQL named lock
@@ -457,13 +487,14 @@ failure and do not activate the target release.
 
 ## Phase 5: Build And Stage
 
-Build the exact target worktree with `-DskipFrontend=false`. Run backend tests,
-frontend tests/lint/build, this Skill's tests, internal-reference scans, and
-the existing release sealing checks. Record the target commit and artifact
-SHA-256 values in the deployment manifest.
-Use the builder's installed Node runtime for separate frontend tests and lint.
-Do not switch to a global Node with a different architecture: optional native
-dependencies were installed for the build runtime's architecture.
+Build the exact target worktree with `-DskipFrontend=false` and
+`-Dmaven.test.skip=true`; frontend assets remain part of the release build.
+By default do not run backend tests, frontend tests/lint, Docker checks, or
+business workflows during a customer upgrade. Those are separate source-release
+verification tasks only when explicitly requested. Retain artifact integrity and
+release sealing checks, recording the exact commit and SHA-256 values in the
+manifest. When repairing this Skill, run the relevant Skill regression tests
+locally; they are not application acceptance gates.
 
 Before any ECS environment, systemd unit, database, or active-release mutation,
 run `upgrade-backup`. It creates exactly one backup archive per ECS at
@@ -541,3 +572,14 @@ the source-aware planner and regenerate the plan. It reads `KEY=...` only from
 `application.env.example` and reads only explicit `${KEY...}` references from
 scripts and configuration. Never add Shell-local names to the protected runtime
 environment or delete blocked reasons manually.
+
+## Ignored CLI authentication setting
+
+`ANTHROPIC_AUTH_TOKEN` is outside this Skill's managed environment contract.
+Ignore it in current source, environment examples and historical sealed baselines:
+do not list it as added, removed, changed or required, request it from the user,
+or block deployment/upgrade because it is absent or empty. Preserve an existing
+protected environment value unchanged; do not generate, rotate or delete it.
+If an older planner already recorded this key as a blocking requirement, generate
+a fresh plan with the current planner and follow normal plan approval/binding.
+Do not edit sealed history or reuse an approval for a changed plan.

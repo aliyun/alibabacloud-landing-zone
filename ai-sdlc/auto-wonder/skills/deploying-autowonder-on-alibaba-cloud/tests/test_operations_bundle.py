@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -80,6 +81,37 @@ class BundleTest(unittest.TestCase):
         self.assertTrue(data['operationsBundle']['localStateRequiresMigration'])
         self.assertEqual((tf / 'terraform.tfstate').read_text(), '{"serial":42}')
         self.assertEqual(restored.stat().st_mode & 0o777, 0o600)
+
+    def test_legacy_environment_roundtrip_through_oss_preserves_master_key(self):
+        from test_operations_store import MemoryOss
+        scripts = SCRIPT.parent
+        sys.path.insert(0, str(scripts))
+        self.addCleanup(lambda: sys.path.remove(str(scripts)))
+        spec = importlib.util.spec_from_file_location('legacy_roundtrip', scripts / 'operations-store.py')
+        coordinator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(coordinator)
+        cloud = MemoryOss()
+        manager = coordinator.OperationsState(cloud)
+        self.data['accountUid'] = cloud.account_id
+        self.data['region'] = cloud.region
+        self.save()
+        identity = {k: self.data[k] for k in ('deploymentId', 'accountUid', 'region')}
+        identity['bucket'] = 'aw-ops-fixture'
+        cloud.account_id = identity['accountUid']
+        cloud.region = identity['region']
+        original = b'AUTOWONDER_SECRET_MASTER_KEY=c3ludGhldGljLW1hc3Rlci1rZXktMzItYnl0ZXMteHg=\nAUTOWONDER_JWT_SECRET=synthetic-jwt\n'
+        (self.root / 'application.env').write_bytes(original)
+        (self.root / 'candidate.env').write_bytes(original)
+        bundle = bundle_module.collect(self.manifest, self.root)
+        current = manager.commit(identity, bundle, None)
+        self.assertTrue(current['runtimeSecretsRecorded'])
+        shutil.rmtree(self.root)
+        restored_bundle, _ = manager.download(identity)
+        restored = bundle_module.restore(restored_bundle, Path(self.temp.name) / 'oss-restored')
+        data = json.loads(restored.read_text())
+        self.assertEqual(original, Path(data['localContext']['protectedEnvFile']).read_bytes())
+        self.assertEqual(original, Path(data['upgrade']['candidateEnvFile']).read_bytes())
+        self.assertTrue(data['upgrade']['databaseMutationStarted'])
 
     def test_bad_artifact_hash_fails_even_incomplete(self):
         (self.root / 'release/auto-wonder.jar').write_text('bad')

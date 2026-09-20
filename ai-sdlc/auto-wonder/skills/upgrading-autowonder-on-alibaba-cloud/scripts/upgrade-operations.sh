@@ -16,7 +16,7 @@ case ${1:-} in
     [[ -n "$manifest" && -f "$manifest" ]] || die "upgrade inventory requires --manifest FILE"
     refresh_target_verification "$manifest"
     ;;
-  upgrade-backup|rollback-upgrade|database-migrate|rolling-upgrade|runtime-config|acceptance)
+  upgrade-backup|rollback-upgrade|maintenance-stop|database-migrate|rolling-upgrade|runtime-config|acceptance)
     manifest=
     previous=
     for argument in "$@"; do

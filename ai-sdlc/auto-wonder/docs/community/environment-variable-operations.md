@@ -39,15 +39,14 @@ Legacy conversation credentials missing agent/version identity must be reissued.
 
 Keep an off-node protected copy of the encryption key with access controls,
 audit, ownership and retention covering every recoverable database backup.
-Associate each backup with an opaque key-generation identifier in protected
-operations state. Set `AUTOWONDER_SECRET_KEY_GENERATION_ID` in the protected
-candidate environment to the existing escrow record's UUIDv4; do not invent a
-new identifier to bypass missing key provenance. This operations metadata is not
-a Platform encryption setting and contains no key material. Regenerate and approve
-an upgrade plan when the generation, candidate environment or target runtime changes.
-The identifier selects the escrowed key; it alone does not
-prove that a node has installed the approved configuration. Validate the installed
-protected environment checkpoint after staging and after activation.
+Preserve the original protected environment, including its master key, with the
+matching database backups. Deployment and upgrade operations can save and
+restore these files through protected OSS operations state. No key-generation
+UUID or manual registration is required; existing historical metadata can
+remain without affecting upgrade decisions. Plan approval binds the candidate
+environment and target runtime. Regenerate and approve the plan if these change.
+Validate the installed protected environment checkpoint after staging and after
+activation; never replace the master key merely because a local file is missing.
 
 Project configuration backups include encrypted references, never decrypted
 values. A database or project backup without its matching encryption key is not

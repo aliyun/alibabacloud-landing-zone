@@ -6,6 +6,42 @@ $script:AutoWonderUpgradeScripts = Join-Path $PSScriptRoot '..'
 
 $script:AutoWonderOperationsCli = Join-Path $PSScriptRoot '..\operations-store.py'
 
+# Restore already verified private tools in this process; never bootstrap/download.
+function Restore-AutoWonderRuntimeEnvironment {
+    $architecture = $env:PROCESSOR_ARCHITEW6432
+    if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
+    $arch = switch ($architecture) { 'AMD64' { 'x86_64' } 'ARM64' { 'arm64' } default { return } }
+    $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../..'))
+    $tools = Join-Path $root 'skills/.autowonder-tools'
+    $lock = Join-Path $PSScriptRoot '../runtime-lock.tsv'
+    if (-not (Test-Path -LiteralPath $tools) -or -not (Test-Path -LiteralPath $lock)) { return }
+    foreach ($line in (Get-Content -LiteralPath $lock)) {
+        if (-not $line -or $line.StartsWith('#')) { continue }
+        $row = $line.Split("`t")
+        if ($row.Count -ne 8 -or $row[1] -ne 'windows' -or $row[2] -ne $arch) { continue }
+        $command = switch ($row[0]) { 'python' { 'python' } 'jdk' { 'java' } 'maven' { 'mvn' } default { $row[0] } }
+        if (Get-Command $command -ErrorAction SilentlyContinue) { continue }
+        $target = Join-Path $tools "$($row[0])/$($row[3])/windows-$arch"
+        $binary = Join-Path $target $row[7]
+        $marker = Join-Path $target '.verified'
+        if (-not (Test-Path -LiteralPath $binary -PathType Leaf) -or -not (Test-Path -LiteralPath $marker -PathType Leaf)) { continue }
+        $safe = $true
+        $parent = Get-Item -LiteralPath $binary -Force
+        while ($parent -and $parent.FullName.StartsWith($tools, [StringComparison]::OrdinalIgnoreCase)) {
+            if ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint) { $safe = $false; break }
+            $parent = if ($parent -is [IO.DirectoryInfo]) { $parent.Parent } else { $parent.Directory }
+        }
+        if (-not $safe) { continue }
+        $expected = "$($row[5])`n$((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant())`n"
+        if ([IO.File]::ReadAllText($marker).Replace("`r`n", "`n") -ne $expected) { continue }
+        if ($row[0] -eq 'python') { $env:PATH = (Split-Path -Parent $binary) + [IO.Path]::PathSeparator + $env:PATH }
+        else { $env:PATH = $env:PATH + [IO.Path]::PathSeparator + (Split-Path -Parent $binary) }
+        if ($row[0] -eq 'python') { $env:AUTOWONDER_PYTHON = $binary; $env:PYTHONUTF8 = '1'; $env:PYTHONDONTWRITEBYTECODE = '1' }
+        if ($row[0] -eq 'jdk') { $env:JAVA_HOME = Split-Path -Parent (Split-Path -Parent $binary) }
+    }
+}
+Restore-AutoWonderRuntimeEnvironment
+
 function Invoke-OperationsStore {
     param([string]$Path, [ValidateSet('checkpoint', 'assert-current')][string]$Action)
     if (-not (Test-Path -LiteralPath $Path)) { return }

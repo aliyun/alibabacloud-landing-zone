@@ -47,16 +47,21 @@ if ($workspaceContent) {
     $dirty=@(& git -C $SourceDirectory status --porcelain --untracked-files=normal)
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) { throw 'Target worktree changed during build' }
 }
+$previousOutputEncoding=$OutputEncoding
+try {
+    $OutputEncoding=New-Object System.Text.UTF8Encoding($false)
+    $releaseFieldsJson=($build | ConvertTo-Json -Depth 50 -Compress) | & $python -B (Join-Path $PSScriptRoot 'windows_release.py') --source-dir $SourceDirectory
+    $releaseFieldsExitCode=$LASTEXITCODE
+} finally { $OutputEncoding=$previousOutputEncoding }
+if ($releaseFieldsExitCode -ne 0) { throw 'Release metadata generation failed' }
+$releaseFields=ConvertTo-Hashtable (($releaseFieldsJson -join [Environment]::NewLine) | ConvertFrom-Json)
 Update-JsonFileAtomic $Manifest {param($document)
-    $document.upgrade.release=@{commit=$target;directory=$OutputDirectory;planFingerprint=$document.upgrade.planFingerprint;artifacts=$artifacts;builtAt=[DateTime]::UtcNow.ToString('o')}
+    $document.upgrade.release=@{commit=$target;releaseDirectory=$OutputDirectory;planFingerprint=$document.upgrade.planFingerprint;artifacts=$artifacts;builtAt=[DateTime]::UtcNow.ToString('o')}
     $document.repositoryCommit=$target
     $document.source=@{kind='git';releaseId=$target;gitValidation='required'}
     if ($workspaceContent) { $document.source=@{kind='workspace';releaseId=$target;gitValidation='disabled';contentIdentity='sha256-file-set'} }
-    if (-not $document['artifacts']) { $document.artifacts=@{} }
-    $document.artifacts.releaseDirectory=$OutputDirectory
-    $document.artifacts.jar=@{name='auto-wonder.jar';sha256=$artifacts['auto-wonder.jar'].sha256;size=$artifacts['auto-wonder.jar'].size}
-    $document.artifacts.migrations=@{name='autowonder-migrations.tar.gz';sha256=$artifacts['autowonder-migrations.tar.gz'].sha256;size=$artifacts['autowonder-migrations.tar.gz'].size}
-    $document.artifacts.systemdUnit=@{name='autowonder.service';sha256=$artifacts['autowonder.service'].sha256;source='target-source'}
+    $document.releaseVersion=$releaseFields.releaseVersion
+    $document.artifacts=$releaseFields.artifacts
     $document.phase='upgrade-build';$document.status='built';$document
 }
 & $python -B (Join-Path $PSScriptRoot 'upgrade_plan.py') seal --manifest $Manifest --source-dir $SourceDirectory

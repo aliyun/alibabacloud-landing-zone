@@ -67,11 +67,15 @@ not the ALB DNS name. An explicitly supplied environment URL is preserved.
 
 ## Administrator And Secrets
 
-The first username is `admin`; its generated password is handed to the user once
-and immediately rotated. Neither manifest nor report is a recovery store. Follow
+The first username is `admin`; include it together with the actual generated
+initial password in the first successful deployment's final chat report, and
+ask the user to change the password after login. Earlier tool output does not
+replace final delivery. Neither manifest nor saved report is a recovery store. Follow
 the product's authenticated administrator recovery procedure and rotate affected
-credentials if access is lost. Never extract passwords, AK/SK, JWT material,
-master keys, Terraform state, presigned URLs, or executor tokens into chat/logs.
+credentials if access is lost. The initial admin handoff is the only chat
+exception; never extract other passwords, AK/SK, JWT material, master keys,
+Terraform state, presigned URLs, or executor tokens into chat/logs. Never put
+the admin password into logs or saved/sanitized reports either.
 
 ## Domain And TLS
 

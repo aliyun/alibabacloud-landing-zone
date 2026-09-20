@@ -212,6 +212,78 @@ def resolve(manifest_path, region_override=None, candidate_file=None):
                   'errors':selection['errors']}, 0 if selection['status']=='verified' else (3 if selection['status']=='needs-agent' else 4))
 
 
+def intended_nodes(data):
+    zones = data['availabilityZones']
+    nodes = data.get('targetEcsNodes', {'zone_a': zones[0], 'zone_b': zones[1]})
+    if (not isinstance(nodes, dict) or nodes.get('zone_a') != zones[0] or nodes.get('zone_b') != zones[1]
+            or any(not isinstance(k, str) or not k or not k.replace('_', '').isalnum() or v not in zones for k, v in nodes.items())
+            or not set((data.get('resources') or {}).get('ecs_instance_ids', {})).issubset(nodes)):
+        raise InventoryError('invalid-target-ecs-nodes')
+    return nodes
+
+
+def price_intended_nodes(data, result, policy):
+    nodes = intended_nodes(data)
+    prices = {row['zone']: row['price'] for row in result['evidence']['ecs']}
+    extra = [zone for name, zone in nodes.items() if name not in ('zone_a', 'zone_b')]
+    result['corePrice']['amount'] += sum(prices[zone]['amount'] for zone in extra)
+    budget = policy.get('budget')
+    if budget and (result['corePrice']['currency'] != budget['currency']
+                   or result['corePrice']['amount'] > budget['monthlyLimit']):
+        raise InventoryError('target-ecs-nodes-exceed-budget')
+
+
+def non_purchase_changes(data, plan, kind):
+    rows = [r for r in plan.get('resource_changes', []) if r.get('type') == kind and r.get('mode') != 'data']
+    if not rows: return False
+    resources = data.get('resources') or {}
+    ids = {'alicloud_instance': list((resources.get('ecs_instance_ids') or {}).values()),
+           'alicloud_db_instance': [(resources.get('rds') or {}).get('instance_id')],
+           'alicloud_kvstore_instance': [(resources.get('redis') or {}).get('instance_id')],
+           'alicloud_alb_load_balancer': [resources.get('load_balancer_id') or resources.get('alb_id')]}.get(kind, [])
+    # Restrict the exception to metadata changes. Any other changed field needs fresh purchasing evidence.
+    metadata = {'tags', 'instance_name', 'description', 'load_balancer_name'}
+    for row in rows:
+        change = row['change']
+        if change['actions'] == ['no-op']: continue
+        before, after = change.get('before') or {}, change.get('after') or {}
+        if (change['actions'] != ['update'] or not before.get('id') or before['id'] not in ids
+                or after.get('id') != before['id'] or change.get('after_unknown')
+                or {k:v for k,v in before.items() if k not in metadata} != {k:v for k,v in after.items() if k not in metadata}):
+            return False
+    return True
+
+
+def acl_changes(data, changes):
+    entries = [r for r in changes if r.get('mode') != 'data' and r.get('type') == 'alicloud_alb_acl_entry_attachment']
+    if not entries: return set()
+    acl = next((r for r in changes if r.get('address') == 'alicloud_alb_acl.public_sources'), None)
+    acl_change = (acl or {}).get('change', {})
+    acl_id = (acl_change.get('before') or {}).get('id')
+    after_id = (acl_change.get('after') or {}).get('id')
+    allowed, final = set(), []
+    for row in entries:
+        change = row['change']; before, after = change.get('before') or {}, change.get('after') or {}
+        entry = after.get('entry') or before.get('entry')
+        if row.get('address') != 'alicloud_alb_acl_entry_attachment.public_sources[' + json.dumps(entry) + ']':
+            raise InventoryError('plan-acl-entry-address-mismatch')
+        if 'delete' in change['actions']:
+            if (change['actions'] not in (['delete'], ['delete','create'], ['create','delete'])
+                    or not acl_id or acl_id != after_id or acl_change.get('actions') not in (['no-op'], ['update'])
+                    or before.get('acl_id') != acl_id or (after and after.get('acl_id') != acl_id)):
+                raise InventoryError('plan-acl-deletion-not-owned')
+            if before.get('entry') != entry:
+                raise InventoryError('plan-acl-entry-address-mismatch')
+            allowed.add(row['address'])
+        if after:
+            if after.get('acl_id') != after_id:
+                raise InventoryError('plan-acl-entry-owner-mismatch')
+            final.append(after.get('entry'))
+    if sorted(final) != sorted(set(data['publicSourceCidrs'])):
+        raise InventoryError('plan-acl-final-cidrs-mismatch')
+    return allowed
+
+
 def validate(manifest_path, plan_path=None):
     data = load_manifest(manifest_path)
     assert_settled(data)
@@ -223,11 +295,12 @@ def validate(manifest_path, plan_path=None):
         plan = json.loads(Path(plan_path).read_text())
         validate_plan(data, plan, bind_selection=False)
         query_data['_existingPlanTypes'] = [kind for kind in ('alicloud_instance','alicloud_db_instance','alicloud_kvstore_instance','alicloud_alb_load_balancer')
-                                           if all(r['change']['actions'] == ['no-op'] for r in plan['resource_changes'] if r.get('type') == kind)]
+                                           if non_purchase_changes(data, plan, kind)]
     inventory = collect_inventory(query_data, policy)
     result = validate_candidate(candidate, inventory, policy, existing_constraints(data))
     if result['status'] != 'verified':
         return _emit({'status':'invalid','errors':result.get('errors',[]),'checks':result['checks']},4)
+    price_intended_nodes(data, result, policy)
     selection = data.get('resourceSelection', {})
     selection.update(version=1, policy=policy, status='verified', selected=candidate, evidence=result['evidence'], checks=result['checks'],
                      corePrice=result['corePrice'], evidenceSha256=digest(result['evidence']),
@@ -250,6 +323,7 @@ def expected_tfvars(data):
                            ('rds_category','rdsCategory'),('rds_storage_type','rdsStorageType'),('rds_storage_gb','rdsStorageGb'),
                            ('redis_instance_class','redisInstanceClass')]:
         values[target] = ri[source]
+    values['ecs_nodes'] = intended_nodes(data)
     values['rds_slave_zone_id'] = ri['zonePlan']['rds']['slaveZone']
     values['redis_secondary_zone_id'] = ri['zonePlan']['redis']['secondaryZone']
     return values
@@ -261,7 +335,7 @@ def expected_resources(data):
                system_disk_size=60, instance_charge_type='PrePaid', period=1, period_unit='Month',
                renewal_status='AutoRenewal', auto_renew_period=1, internet_max_bandwidth_out=0)
     return {
-        'alicloud_instance':[dict(ecs, availability_zone=v['zone_a_id']), dict(ecs, availability_zone=v['zone_b_id'])],
+        'alicloud_instance':[dict(ecs, availability_zone=zone) for zone in intended_nodes(data).values()],
         'alicloud_db_instance':[dict(engine='MySQL', engine_version='8.0', instance_type=v['rds_instance_type'],
                                     instance_storage=v['rds_storage_gb'], db_instance_storage_type=v['rds_storage_type'],
                                     category=v['rds_category'], instance_charge_type='Prepaid', period=1,
@@ -274,6 +348,32 @@ def expected_resources(data):
         'alicloud_vpc':[dict(cidr_block=v['vpc_cidr'])],
         'alicloud_alb_load_balancer':[dict(address_type='Internet', address_allocated_mode='Fixed', load_balancer_edition='Basic')],
     }
+
+
+def update_review(data, plan):
+    updates = [r['address'] for r in plan.get('resource_changes', [])
+               if r.get('mode') != 'data' and (r.get('change', {}).get('actions') == ['update']
+                   or (r.get('type') == 'alicloud_alb_acl_entry_attachment' and 'delete' in r.get('change', {}).get('actions', []))
+                   or (r.get('type') == 'alicloud_instance' and r.get('change', {}).get('actions') == ['create'] and len(intended_nodes(data)) > 2))]
+    deployment, business = data.get('deployment') or {}, data.get('business') or {}
+    completed = ((data.get('terraform') or {}).get('existingDeployment')
+                 or deployment.get('acceptedAt') or deployment.get('acceptedCommit')
+                 or business.get('handoffConfirmed') or business.get('handoffDisplayed')
+                 or (data.get('acceptance') or {}).get('health') == 'passed'
+                 or data.get('status') == 'accepted'
+                 or any(p.get('phase') == 'acceptance' and p.get('status') == 'accepted'
+                        for p in data.get('phases', [])))
+    new_installation = data.get('mode') == 'new' and not completed and not data.get('upgrade')
+    return {'existingDeployment': not new_installation, 'updatedResources': updates,
+            'updateConfirmationRequired': bool(updates) and (not new_installation or len(intended_nodes(data)) > 2
+                or any('delete' in r.get('change', {}).get('actions', []) for r in plan.get('resource_changes', [])))}
+
+
+def validate_update_approval(data, plan, fingerprint, confirmed_fingerprint):
+    review = update_review(data, plan)
+    if review['updateConfirmationRequired'] and (not fingerprint or confirmed_fingerprint != fingerprint):
+        raise InventoryError('update-confirmation-required: report update details and obtain user confirmation for this exact plan')
+    return review
 
 
 def validate_plan(data, plan, bind_selection=True):
@@ -289,15 +389,21 @@ def validate_plan(data, plan, bind_selection=True):
             raise InventoryError('plan-input-mismatch:' + key)
     changes = plan.get('resource_changes')
     if not isinstance(changes, list): raise InventoryError('missing-plan-resources')
+    allowed_acl = acl_changes(data, changes)
+    if 'targetEcsNodes' in data:
+        actual_nodes = {r.get('address'): (r.get('change', {}).get('after') or {}).get('availability_zone')
+                        for r in changes if r.get('mode') != 'data' and r.get('type') == 'alicloud_instance'}
+        if actual_nodes != {'alicloud_instance.app[' + json.dumps(k) + ']': v for k,v in intended_nodes(data).items()}:
+            raise InventoryError('plan-target-ecs-nodes-mismatch')
     actual = {}
     for resource in changes:
         if resource.get('mode') == 'data': continue
         change = resource['change']
-        # This deployment path may finish creating resources, never mutate existing ones.
-        if change.get('actions') not in (['create'], ['no-op']):
+        # Updates are reviewable; existing deployments require explicit approval at apply.
+        if change.get('actions') not in (['create'], ['no-op'], ['update']) and resource.get('address') not in allowed_acl:
             raise InventoryError('plan-changes-existing-resource')
         kind, after = resource['type'], change.get('after') or {}
-        if kind == 'alicloud_kvstore_instance' and change['actions'] == ['no-op'] and after.get('node_type') == 'double':
+        if kind == 'alicloud_kvstore_instance' and change['actions'] in (['no-op'], ['update']) and after.get('node_type') == 'double':
             after = dict(after, node_type='MASTER_SLAVE')
         if kind in ('alicloud_nat_gateway','alicloud_eip','alicloud_eip_address'):
             raise InventoryError('plan-adds-forbidden-network-resource')
@@ -352,14 +458,16 @@ def check_plan(manifest_path, plan_path, work, verify=False):
             raise InventoryError('saved-plan-binding-changed-replan')
     else:
         data.setdefault('terraform', {})['selectionBinding'] = binding
+        # Planning overwrites phase/status; retain historical classification across replans.
+        data['terraform']['existingDeployment'] = update_review(data, plan)['existingDeployment']
         save_manifest(manifest_path, data)
-    return _emit({'status':'valid','stage':'plan-binding'},0)
+    return _emit({'status':'valid','stage':'plan-binding', **update_review(data, plan)},0)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Discover and validate a complete HA resource combination')
     sub = parser.add_subparsers(dest='command', required=True)
-    for command in ('resolve','validate','discover','check-plan','check-binding'):
+    for command in ('resolve','validate','discover','check-plan','check-binding','check-update-approval'):
         child = sub.add_parser(command)
         child.add_argument('--manifest', required=True)
         if command == 'resolve':
@@ -369,9 +477,11 @@ def main(argv=None):
             child.add_argument('--plan-json')
         if command == 'discover':
             child.add_argument('--output', required=True)
-        if command in ('check-plan','check-binding'):
+        if command in ('check-plan','check-binding','check-update-approval'):
             child.add_argument('--plan-json', required=True)
             child.add_argument('--work-dir', required=True)
+        if command == 'check-update-approval':
+            child.add_argument('--confirmed-update-plan-sha256', default='')
     args = parser.parse_args(argv)
     try:
         if args.command == 'discover':
@@ -382,6 +492,13 @@ def main(argv=None):
             return _emit({'status':'complete' if inventory['complete'] else 'needs-agent','errors':inventory['unknown']},0 if inventory['complete'] else 3)
         if args.command == 'resolve':
             return resolve(args.manifest,args.region,args.candidate)
+        if args.command == 'check-update-approval':
+            data = load_manifest(args.manifest)
+            plan = json.loads(Path(args.plan_json).read_text())
+            validate_plan(data, plan)
+            fingerprint = hashlib.sha256((Path(args.work_dir) / 'reviewed.tfplan').read_bytes()).hexdigest()
+            return _emit({'status': 'valid', **validate_update_approval(
+                data, plan, fingerprint, args.confirmed_update_plan_sha256)}, 0)
         if args.command in ('check-plan','check-binding'):
             return check_plan(args.manifest,args.plan_json,args.work_dir,args.command=='check-binding')
         return validate(args.manifest,args.plan_json)

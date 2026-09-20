@@ -74,9 +74,12 @@ stage formats, initializes, validates, and saves an immutable plan plus its hash
 Reject wildcard application permissions, public SSH, absent tags, same-zone HA,
 secret defaults, or unexpected destroy/replace actions. Complete the machine
 review, including cost drivers and the live pricing check. If no safety stop is
-triggered, automatically approve the exact saved-plan fingerprint and continue
-directly to apply. Do not ask the user to confirm the Terraform plan. Do not emit
-an intermediate message claiming that a final mandatory review is coming.
+triggered for a new installation (including partial-apply retries), automatically
+approve the exact saved-plan fingerprint and continue directly to apply.
+For existing-deployment updates, follow the Terraform Update Policy below:
+report the detailed before/after changes and obtain explicit user confirmation
+for this exact plan before apply. For new installations, do not announce an
+additional mandatory user review.
 
 **Output:** plan file and `terraform.planFingerprint` in the manifest.
 
@@ -89,11 +92,76 @@ mirror only after verifying the official archive checksum. Point Terraform at
 that mirror through a deployment-local CLI config; do not modify system DNS or
 commit the provider binary. Reuse the verified mirror on retries.
 
+## Terraform Update Policy
+
+New installations, including reconciled partial-apply retries, may include
+`update` actions as well as `create` and `no-op`. After machine review, apply
+within the authorized deployment scope without another user confirmation.
+This permission covers real updates as well as provider-computed normalization;
+it does not relax ownership, topology, billing, access, or delete/replace guards.
+
+Existing-deployment operations and upgrades require explicit user confirmation
+before any Terraform `update`. Generate and validate the complete saved plan
+first. Report every updated resource's address/type and identity, each changed
+attribute's before/after values (redact secrets), computed/unknown values,
+reason, and expected service, data, security and cost impact. Include the exact
+plan SHA-256. If impact is unknown, state that uncertainty. Even an apparently
+computed-only update must be reported and confirmed for an existing deployment.
+Never print raw plan JSON/state or sensitive values to produce this report.
+
+`check-plan` reports `updatedResources` and `updateConfirmationRequired`.
+Only after the user explicitly confirms that reported plan, pass
+`--confirmed-update-plan-sha256 <hash>` together with
+`--approved-plan-sha256 <hash>` to `bash scripts/terraform-stage.sh apply`.
+The machine-approved hash alone is not human confirmation. A changed plan
+requires a fresh report and confirmation; a previous upgrade approval is usable
+only if it explicitly covered these exact updates and this plan fingerprint.
+No reply or a refusal means do not apply. Keep the reviewed plan for follow-up.
+
+Automatic new-installation permission requires `mode: new` and no acceptance,
+handoff, or upgrade evidence. Keep `mode: new` when resuming that unfinished
+installation. The plan persists `terraform.existingDeployment` once an existing
+environment is identified, so later phase/status changes do not erase it.
+Resource IDs from a partial apply alone do not
+make the installation an existing deployment. Accepted/handed-off environments
+remain existing deployments even if their historical manifest says `mode: new`;
+missing or ambiguous mode also requires confirmation for updates. Preserve that
+history and set the actual operations/upgrade mode before planning maintenance.
+Never relabel maintenance as a new installation to bypass confirmation.
+
+For explicitly authorized ECS scale-out, record `targetEcsNodes` in the manifest
+as a map from Terraform node key to one of the two selected availability zones,
+for example `{"zone_a":"cn-beijing-a","zone_b":"cn-beijing-b","worker_3":"cn-beijing-a"}`.
+Use the actual selected zones. Keep every recorded node key and the original HA
+pair; all nodes retain the selected instance, image, disk and billing policy.
+The default remains two nodes. The generated tfvars and saved-plan binding include
+this exact collection; extra keys, changed zones, replacements and reductions are
+blocked. Fresh purchasing evidence and a quote counting every target node are
+required for additions. Report the added nodes and total cost and obtain exact-plan
+confirmation through the same `--confirmed-update-plan-sha256` flag before apply.
+Changing the manifest alone is not user authorization.
+
+To remove or replace obsolete public client IPs, first record the authorized final
+`publicSourceCidrs`, then generate the complete refreshed plan. Only entries under
+`alicloud_alb_acl_entry_attachment.public_sources` belonging to the unchanged
+ACL may be deleted or replaced. The final entry set must exactly match the manifest.
+Report removed and added CIDRs and their access impact, then obtain exact-plan
+confirmation. Other resource deletion and replacement remain blocked.
+
+Metadata-only updates (tags, names and descriptions) can use the existing selected
+resource evidence without requiring a retired SKU to be currently on sale. An
+update qualifies only when its refreshed plan preserves a recorded resource ID and
+all non-metadata attributes. Creates and changes to purchase-related attributes
+still require fresh inventory. Normal plan approval and ownership checks apply.
+
 ## Phase 3: Terraform Apply
 
 Run `scripts/terraform-stage.sh apply --manifest <file> --work-dir <dir>
---approved-plan-sha256 <hash>`. Apply only the reviewed saved plan. Then run the
-inventory command, reconcile IDs without publishing them, verify zones, tags,
+--approved-plan-sha256 <hash>`. For an existing deployment containing updates,
+add `--confirmed-update-plan-sha256 <hash>` only after the user confirms the
+detailed update report for that saved plan. Missing or stale confirmation is
+blocked before Terraform submission. Apply only the reviewed saved plan. Then
+run the inventory command, reconcile IDs without publishing them, verify zones, tags,
 protection, listener sources, private endpoints, and application RAM scope.
 Uncommitted or untracked workspace changes must not block Terraform apply.
 
@@ -261,10 +329,17 @@ For TLS acceptance, the HTTPS health request must succeed with curl's default
 certificate-chain and hostname verification. Merely choosing the certificate
 scenario or opening TCP port 80 is not evidence.
 
-Display the `admin` username and generated password once directly to the user,
-outside reports and logs, then require password rotation. Include manifest path,
-resource summary, URLs, hashes, pending actions, rollback boundary, log paths,
-and support commands without secrets.
+For the first successful deployment, put username `admin` and the actual generated
+initial password together in the final chat report, with the login URL and a
+password-change reminder. A prior handoff command output or `handoffDisplayed`
+flag does not replace this final user-visible delivery. Use the existing handoff
+result or protected file when the one-time command already ran; do not regenerate
+credentials. Do not say "already displayed above", mask the password, or give
+only a file path. Keep the protected handoff file until explicit receipt
+confirmation, then run `handoff --confirm-received`. This chat-only exception
+does not apply to later maintenance/upgrades, rotated passwords, other secrets,
+or saved/sanitized reports and logs. Include resource summary, URLs, hashes,
+pending actions, rollback boundary, log paths, and support commands as usual.
 
 After all deployment statuses and the administrator handoff are complete, ask
 once for the credential export preference:
@@ -276,7 +351,8 @@ once for the credential export preference:
 Before exporting values, show a secret-name inventory covering the administrator,
 database application account, application OSS/SLS RAM credential, SecretCrypto
 master key, and JWT secret. Exclude the operator's pre-existing Alibaba Cloud
-credential chain. Never print values to chat or place them in the manifest,
+credential chain. Apart from the initial admin password handoff above, never
+print secret values to chat or place them in the manifest,
 sanitized report, shell history, or logs. Confirm successful import at the chosen
 destination before deleting any temporary handoff material.
 
@@ -372,9 +448,11 @@ for a fresh deployment. No inventory check claims to reserve stock.
 
 `terraform-stage.sh plan` refreshes Terraform state and produces a local plan,
 then verifies current selection facts, actual plan variables, core resources,
-zones, subscription settings, capacity, and absence of deletion/replacement or
-updates to existing resources. It binds selection, inputs/configuration, core
-quote and the exact binary plan fingerprint. Normal machine review remains
+zones, subscription settings, capacity, and absence of deletion/replacement.
+Updates are allowed during planning: new installations may apply them after
+machine review; existing-deployment operations/upgrades require a detailed update
+report and user confirmation bound to the saved plan hash before apply. It binds
+selection, inputs/configuration, core quote and the exact binary plan fingerprint. Normal machine review remains
 required. `apply` checks that binding, refreshes facts for resources being
 created, and checks the binding again before submission. Changed inputs or
 quotes require a new plan. Never apply a different plan with an old fingerprint.
@@ -392,3 +470,36 @@ is explanatory evidence, not a cache for future purchases. Binary Terraform
 plans are deliberately not in OSS: re-plan on the new computer before applying.
 Pending/unknown Terraform operations still require reconciliation first; never
 clear their marker merely to retry creation.
+
+## Ignored CLI authentication setting
+
+`ANTHROPIC_AUTH_TOKEN` is outside this Skill's managed environment contract.
+Ignore it in current source, environment examples and historical sealed baselines:
+do not list it as added, removed, changed or required, request it from the user,
+or block deployment/upgrade because it is absent or empty. Preserve an existing
+protected environment value unchanged; do not generate, rotate or delete it.
+If an older planner already recorded this key as a blocking requirement, generate
+a fresh plan with the current planner and follow normal plan approval/binding.
+Do not edit sealed history or reuse an approval for a changed plan.
+
+## Read-only discovery API pacing
+
+The shared `resource_inventory.py` request boundary spaces repeated calls to the
+same service/action by at least 0.3 seconds after the previous call completes.
+Different SKU, zone-pair and region parameters share that API's pacing; different
+APIs remain independent. Failed calls and retries also participate. The first
+call is immediate, elapsed time counts toward the gap, and cache hits do not
+issue additional requests. This applies to discovery, preflight and plan/apply
+purchase-fact validation on both POSIX and Windows.
+
+Recognized throttling keeps the three-attempt limit and 1/2-second exponential
+backoff, adding 0-0.3 seconds of random jitter to each retry. Backoff counts toward
+the API gap. Permission, account-limit and unavailable-resource errors remain
+non-retryable. The 600-second discovery budget and fail-closed evidence checks
+remain unchanged; do not interpret exhausted retries as empty stock.
+
+Pacing is process-local for the serial discovery collector, not an account-wide
+quota coordinator. Other processes/hosts can still cause throttling. It does not
+throttle Terraform provider mutations, software upgrades or application runtime.
+56 consecutive same-API calls add about 16.5 seconds of pacing when no other
+work/backoff fills the gaps. No price parameters or selection rules change.

@@ -14,11 +14,11 @@ GENERATION = "985bc0a7-5abf-4fc7-a612-2549c5a7848d"
 
 
 class EnvironmentCheckpointTests(unittest.TestCase):
-    def test_plan_fingerprint_binds_generation_runtime_and_environment(self):
+    def test_plan_fingerprint_binds_runtime_and_environment(self):
         spec = importlib.util.spec_from_file_location('checkpoint_plan', SCRIPTS / 'upgrade_plan.py')
         policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(policy)
-        data = {'upgrade': {'keyGenerationId': GENERATION, 'targetRecommendedRuntimeVersion': '1.2.3',
+        data = {'upgrade': {'targetRecommendedRuntimeVersion': '1.2.3',
                             'environmentPlanSha256': 'a' * 64, 'environmentSha256': 'a' * 64}}
         before = policy.fingerprint(data)
         for key in tuple(data['upgrade']):
@@ -26,20 +26,32 @@ class EnvironmentCheckpointTests(unittest.TestCase):
             changed['upgrade'][key] = 'changed'
             self.assertNotEqual(before, policy.fingerprint(changed), key)
 
-    def test_planning_requires_generation_before_writing_candidate(self):
+    def test_historical_generation_metadata_does_not_affect_new_fingerprint(self):
+        spec = importlib.util.spec_from_file_location('legacy_checkpoint', SCRIPTS / 'upgrade_plan.py')
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        data = {'upgrade': {'environmentPlanSha256': 'a' * 64,
+                            'targetRecommendedRuntimeVersion': '1.2.3'}}
+        expected = policy.fingerprint(data)
+        for legacy in ('', 'old-record', GENERATION):
+            data['upgrade']['keyGenerationId'] = legacy
+            data['runtimeConfig'] = {'keyGenerationId': legacy}
+            self.assertEqual(expected, policy.fingerprint(data))
+
+    def test_planning_preserves_secrets_without_requiring_generation(self):
         spec = importlib.util.spec_from_file_location('checkpoint_candidate', SCRIPTS / 'upgrade_plan.py')
         policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(policy)
-        original = self.env.read_text()
-        self.env.write_text(original.replace('AUTOWONDER_SECRET_KEY_GENERATION_ID=' + GENERATION + '\n', ''))
-        before = self.env.read_bytes()
-        with self.assertRaises(policy.PlanError):
-            policy.candidate_env(self.env, '2.0.0')
-        self.assertEqual(before, self.env.read_bytes())
-        self.env.write_text(original)
-        values, digest = policy.candidate_env(self.env, '2.0.0')
-        self.assertEqual(GENERATION, values['AUTOWONDER_SECRET_KEY_GENERATION_ID'])
-        self.assertEqual(hashlib.sha256(self.env.read_bytes()).hexdigest(), digest)
+        for legacy in (None, '', 'legacy-non-uuid', GENERATION):
+            with self.subTest(legacy=legacy):
+                original = 'AUTOWONDER_SECRET_MASTER_KEY=protected-canary\n'
+                if legacy is not None:
+                    original += 'AUTOWONDER_SECRET_KEY_GENERATION_ID=' + legacy + '\n'
+                self.env.write_text(original)
+                values, sha = policy.candidate_env(self.env, '2.0.0')
+                self.assertEqual(original + 'AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=2.0.0\n', self.env.read_text())
+                self.assertEqual('protected-canary', values['AUTOWONDER_SECRET_MASTER_KEY'])
+                self.assertEqual(hashlib.sha256(self.env.read_bytes()).hexdigest(), sha)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -52,11 +64,10 @@ class EnvironmentCheckpointTests(unittest.TestCase):
         exec(compile(source, "upgrade_remote.py", "exec"), self.ns)
         self.env = self.root / "candidate.env"
         self.env.write_text("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=1.2.3\n"
-                            "AUTOWONDER_SECRET_KEY_GENERATION_ID=" + GENERATION + "\n"
                             "AUTOWONDER_SECRET_MASTER_KEY=protected-canary\n")
         self.sha = hashlib.sha256(self.env.read_bytes()).hexdigest()
         self.ns.update(ENV=self.env, APP=self.root, REQUEST={
-            "runtime": "1.2.3", "keyGenerationId": GENERATION, "envSha": self.sha,
+            "runtime": "1.2.3", "envSha": self.sha,
             "target": "b" * 40, "backupSha": "c" * 64,
         })
 
@@ -69,9 +80,9 @@ class EnvironmentCheckpointTests(unittest.TestCase):
         self.assertNotIn(self.sha, str(error.exception))
         self.assertNotIn("protected-canary", str(error.exception))
 
-    def test_environment_checkpoint_binds_runtime_and_generation(self):
+    def test_environment_checkpoint_binds_runtime_and_hash(self):
         self.assertIn("verify_environment", self.ns)
-        for key in ("runtime", "keyGenerationId"):
+        for key in ("runtime", "envSha"):
             with self.subTest(key=key):
                 previous = self.ns["REQUEST"][key]
                 self.ns["REQUEST"][key] = "other"

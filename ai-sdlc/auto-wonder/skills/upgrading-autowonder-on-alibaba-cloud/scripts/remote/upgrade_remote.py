@@ -70,15 +70,44 @@ def extract(archive, destination, prefix=None):
                 target.chmod(member.mode & 0o777)
 
 
+def backup_metadata(destination):
+    """Read both historic formats and validate before reuse or replacement."""
+    metadata_file = destination / "metadata.json"
+    if metadata_file.is_file():
+        metadata = json.loads(metadata_file.read_text())
+    else:
+        checksums = {}
+        for line in (destination / "CHECKSUMS").read_text().splitlines():
+            match = re.fullmatch(r"([0-9a-f]{64}) [ *](.+)", line)
+            require(match is not None, "Invalid backup checksum inventory")
+            name = Path(match[2]).as_posix()
+            require(name not in checksums, "Duplicate backup checksum entry")
+            checksums[name] = match[1]
+        metadata = {"plan": (destination / "plan-fingerprint").read_text().strip(),
+                    "release": (destination / "release-name").read_text().strip(),
+                    "checksums": checksums}
+        require({"plan-fingerprint", "release-name"} <= set(checksums), "Incomplete backup identity checksums")
+    require(re.fullmatch(r"[0-9a-f]{64}", metadata["plan"]) is not None, "Invalid backup plan")
+    require(re.fullmatch(r"[0-9a-f]{12}", metadata["release"]) is not None, "Invalid backup release")
+    checksums = metadata["checksums"]
+    require({"autowonder.env", "autowonder.service", "release/auto-wonder.jar"} <= set(checksums), "Incomplete backup snapshot")
+    for name, sha in checksums.items():
+        path = Path(name)
+        require(not path.is_absolute() and ".." not in path.parts, "Unsafe backup checksum path")
+        require(re.fullmatch(r"[0-9a-f]{64}", sha) is not None and digest(destination / path) == sha,
+                "Backup content checksum mismatch")
+    actual = {path.relative_to(destination).as_posix() for path in destination.rglob("*") if path.is_file()}
+    require(actual - {"metadata.json", "CHECKSUMS"} <= set(checksums), "Incomplete backup checksum inventory")
+    return metadata
+
+
 def verify_backup(destination, expected_sha=None):
     if expected_sha:
         require(digest(BACKUP) == expected_sha, "Backup archive checksum mismatch")
     extract(BACKUP, destination)
-    metadata = json.loads((destination / "metadata.json").read_text())
-    require(metadata["plan"] == REQUEST["plan"] and metadata["target"] == REQUEST["target"], "Backup belongs to a different plan")
+    metadata = backup_metadata(destination)
+    require(metadata["plan"] == REQUEST["plan"] and metadata.get("target", REQUEST["target"]) == REQUEST["target"], "Backup belongs to a different plan")
     require(metadata["release"] == REQUEST["from"][:12], "Backup source release mismatch")
-    for name, sha in metadata["checksums"].items():
-        require(digest(destination / name) == sha, "Backup content checksum mismatch")
     return metadata
 
 
@@ -88,7 +117,7 @@ def backup():
         if BACKUP.exists():
             # Repeating backup after stage must not overwrite the original environment.
             extract(BACKUP, work / "existing")
-            existing = json.loads((work / "existing/metadata.json").read_text())
+            existing = backup_metadata(work / "existing")
             if existing["plan"] == REQUEST["plan"]:
                 verify_backup(work / "verified")
                 print("BACKUP_SHA256=" + digest(BACKUP))
@@ -101,13 +130,20 @@ def backup():
         shutil.copytree(str(active), str(snapshot / "release"))
         shutil.copyfile(str(ENV), str(snapshot / "autowonder.env"))
         shutil.copyfile(str(UNIT), str(snapshot / "autowonder.service"))
-        metadata = {"plan": REQUEST["plan"], "target": REQUEST["target"], "release": active.name,
+        (snapshot / "plan-fingerprint").write_text(REQUEST["plan"] + "\n")
+        (snapshot / "release-name").write_text(active.name + "\n")
+        metadata = {"schemaVersion": 1, "plan": REQUEST["plan"], "target": REQUEST["target"], "release": active.name,
                     "checksums": {str(path.relative_to(snapshot)): digest(path) for path in snapshot.rglob("*") if path.is_file()}}
         (snapshot / "metadata.json").write_text(json.dumps(metadata, sort_keys=True))
+        # POSIX readers use these markers and sha256sum; retain JSON for old
+        # Windows readers. Both representations describe the same snapshot.
+        (snapshot / "CHECKSUMS").write_text("".join(
+            digest(path) + "  ./" + path.relative_to(snapshot).as_posix() + "\n"
+            for path in sorted(snapshot.rglob("*")) if path.is_file() and path.name != "CHECKSUMS"))
         archive = work / "backup.tar.gz"
         with tarfile.open(str(archive), "w:gz") as package:
             for path in sorted(snapshot.iterdir()):
-                package.add(str(path), arcname=path.name)
+                package.add(str(path), arcname=("./" + path.name if path.name in ("plan-fingerprint", "release-name", "CHECKSUMS") else path.name))
         verified = work / "verify"
         extract(archive, verified)
         for name, sha in metadata["checksums"].items():
@@ -189,13 +225,26 @@ def verify_environment(path):
     require(digest(path) == REQUEST["envSha"], "Installed environment checkpoint mismatch")
     values = read_environment(path)
     require(values.get("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION") == REQUEST["runtime"], "Environment runtime checkpoint mismatch")
-    generation = REQUEST.get("keyGenerationId", "")
-    require(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", generation) is not None,
-            "Escrow key generation ID must be an opaque UUIDv4")
-    require(values.get("AUTOWONDER_SECRET_KEY_GENERATION_ID") == generation, "Environment generation checkpoint mismatch")
+
+
+def maintenance_verify():
+    marker = APP / 'maintenance-plan'
+    require(marker.is_file() and marker.read_text().strip() == REQUEST['plan'], 'Maintenance plan marker mismatch')
+    require(command(['systemctl', 'show', '-p', 'ActiveState', '--value', 'autowonder.service']).strip() == b'inactive', 'Maintenance requires an inactive service')
+    require(command(['systemctl', 'show', '-p', 'MainPID', '--value', 'autowonder.service']).strip() == b'0', 'Maintenance service still has a process')
+    require(not command(['ss', '-ltnH', 'sport = :7001']).strip(), 'Maintenance listener remains active')
+    print('MAINTENANCE_STATUS=stopped')
+
+
+def maintenance_stop():
+    command(['systemctl', 'stop', 'autowonder.service'])
+    (APP / 'maintenance-plan').write_text(REQUEST['plan'] + '\n')
+    maintenance_verify()
 
 
 def migrate():
+    if REQUEST.get('maintenance'):
+        maintenance_verify()
     migrations = sorted(REQUEST["migrations"], key=lambda item: item["version"])
     release = APP / "releases" / REQUEST["target"][:12] / "migration"
     seen = set()
@@ -282,12 +331,22 @@ def activate(target):
 
 
 def rollout():
+    if REQUEST.get('maintenance'):
+        if REQUEST.get('resumePassed'):
+            require((APP / 'maintenance-plan').read_text().strip() == REQUEST['plan'], 'Maintenance plan marker mismatch')
+        else:
+            maintenance_verify()
     with tempfile.TemporaryDirectory(prefix=".upgrade-backup-check-", dir=str(APP)) as temporary:
         verify_backup(Path(temporary), REQUEST["backupSha"])
     target = APP / "releases" / REQUEST["target"][:12]
     require(digest(target / "auto-wonder.jar") == REQUEST["jarSha"], "Target JAR checksum mismatch")
     verify_environment(ENV)
     require(digest(UNIT) == REQUEST["unitSha"], "Staged systemd unit changed before activation")
+    if REQUEST.get('resumePassed'):
+        require((APP / 'current').resolve() == target, 'Previously passed node no longer runs the target')
+        health()
+        print("ROLLOUT_COMMIT=" + REQUEST["target"])
+        return
     activate(target)
     verify_environment(ENV)
     print("ROLLOUT_COMMIT=" + REQUEST["target"])
@@ -326,6 +385,7 @@ try:
         require(re.fullmatch(r"[0-9a-f]{40}", REQUEST["target"]) is not None, "Invalid target commit")
         require(re.fullmatch(r"[0-9a-f]{64}", REQUEST["plan"]) is not None, "Invalid plan fingerprint")
     {"upgrade-inventory": inventory, "upgrade-backup": backup, "stage-upgrade": stage,
+     "maintenance-stop": maintenance_stop, "maintenance-verify": maintenance_verify,
      "database-migrate": migrate, "rolling-upgrade": rollout, "rollback-upgrade": rollback}[REQUEST["operation"]]()
 except RuntimeError as error:
     print(str(error), file=sys.stderr)

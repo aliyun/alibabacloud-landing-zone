@@ -61,6 +61,44 @@ default), then resolve cloud operations state. On Windows use
 `scripts/windows/bootstrap-control-host.ps1` and native Python; Git Bash may
 launch the forwarding bootstrap, but must not execute POSIX deployment logic.
 
+## Automatic Script And Host Compatibility Repair
+
+For Skill script defects or host compatibility errors, diagnose, apply the
+smallest local repair, verify it, and continue without confirmation when the
+operation and authorization remain unchanged, including resumed workflows.
+
+- Capture sanitized failure evidence and determine whether the command failed
+  locally before submission or may already have changed remote state. For an
+  unknown outcome, reconcile invocation IDs, OSS checkpoints and live state
+  before replaying anything; never blindly repeat apply, migration or restart.
+- Fix the actual cause in the executing Skill copy or task-local tool setup.
+  Prefer existing native adapters and shared helpers. On Windows check
+  PowerShell edition/version, native process exit codes, argument quoting,
+  paths with spaces/non-ASCII characters, separators, UTF-8/BOM/CRLF, file ACLs,
+  temporary files and executable discovery. Use native PowerShell/Python for
+  local control; Linux shell payloads run on ECS, not through local Git Bash.
+- Use the private toolchain and process-scoped configuration for missing tools,
+  compatible runtime selection, proxy or mirror issues. Preserve version and
+  checksum verification; do not globally change execution policy or weaken
+  TLS checks, ACLs, identity checks or deployment safety gates.
+- A missing/broken native adapter may be repaired using the existing phase
+  contract and shared policy. Verify parsing, command construction, exit/error
+  handling and postconditions locally before any cloud mutation. Never replace
+  it with an unverified ad hoc cloud command or shell translation.
+- Keep the target release, resource set, secrets, database scope and approved
+  operation unchanged. Preserve backups, progress and authoritative OSS state.
+  Revalidate plan bindings and relevant focused checks, then resume at the
+  failed idempotent boundary; do not restart the whole workflow or erase state.
+- Each further attempt must follow new evidence or a verified change. Do not
+  loop on the same failure. Escalate only when required external login/access,
+  missing original data, unresolved remote state, a changed operation scope or
+  inability to verify the repair prevents safe progress. Explain the concrete
+  blocker and request only the missing input/authorization.
+
+Record the cause, repaired files, verification, retries and remaining limits in
+the final report. Keep fixes reviewable; do not silently commit/push Skill
+changes or claim mocked Windows checks are native Windows validation.
+
 ## Build And Runtime Environment
 
 Invoke every POSIX entrypoint explicitly through `bash`, for example
@@ -148,9 +186,10 @@ reason over them, and submit `resolve --candidate FILE`. Do not directly write
 `verified` or bypass unknown checks. Missing evidence is not proof of no stock.
 Do not ask the user to find zones in the console or re-confirm a compliant plan.
 Plan/apply must use `terraform-stage.sh`, which binds the exact plan to verified
-selection and configuration, refreshes purchase facts before apply, and refuses
-changes to existing resources. OSS remains the recovery source on a new computer;
-new selection metadata travels with the existing manifest checkpoint. Restoring
+selection and configuration, refreshes purchase facts before apply, and enforces
+the update policy in `references/operations-runbook.md`: new installs/retries allow updates;
+existing operations/upgrades require detailed changes and user confirmation of the exact plan.
+OSS recovery retains selection metadata in the existing manifest checkpoint. Restoring
 a completed environment does not trigger reselection. Read the runbook's
 adaptive-selection section for supported standby changes and API limits.
 Use the current workspace contents exactly as they exist, including uncommitted
@@ -236,7 +275,9 @@ Stop and report sanitized evidence when:
 - safe recovery requires guessing, broadening access, or printing Terraform state.
 
 Use the local Alibaba Cloud credential chain. Keep secrets out of command lines,
-Git, manifest, Cloud Assistant output, proxy/application logs, and reports.
+Git, manifest, Cloud Assistant output, proxy/application logs, and saved reports.
+The first-deployment admin handoff in the final chat response is the sole
+password-display exception, as specified in Output Contract.
 Use only the dedicated Alibaba Cloud CLI profile `auto-wonder`; never use the
 CLI current profile or `default`. At the start of every deployment workflow,
 probe STS with `auto-wonder`. If the profile is missing or its identity has
@@ -354,12 +395,12 @@ operations in the recorded order. Do not clean up, delete, recreate, resize,
 reconfigure, replace, restart, or otherwise mutate user deployment resources
 unless that exact action is included in the approved plan.
 
-On any unexpected result, failed probe, uncertain state, or newly discovered
-change, stop immediately. Perform read-only diagnostics and collect sanitized
-evidence only. Do not retry, roll back, broaden permissions, change resources, or
-attempt a repair autonomously. Present the evidence, risk, and choices to the
-user; any additional mutation requires a revised plan and explicit human
-confirmation.
+For script defects and host compatibility failures within the approved operation,
+follow Automatic Script And Host Compatibility Repair: use read-only diagnostics, repair, verify
+and continue. If the remote outcome is uncertain, pause mutation and reconcile
+it first. A changed resource/database boundary, additional cloud operation or
+rollback requires a revised plan and explicit confirmation; local compatibility
+repairs alone do not require another confirmation.
 
 Before upgrade work, inspect the current context, manifest, and protected
 environment file for prerequisites. ECS instance IDs are required before remote
@@ -430,10 +471,24 @@ Report these statuses separately: **Infrastructure ready**, **Application ready*
 **Business initialized**, **Release accepted**, and **TLS accepted**. Never count
 plaintext port 80 as TLS. Mark checks completed, pending, degraded, or failed;
 include exact source/hash, topology, URLs, evidence references, rollback boundary,
-and next actions without live secret or identity data.
+and next actions. Saved/sanitized reports must exclude live secret and identity
+data; the final chat response has the narrow administrator handoff exception below.
 
-At final handoff display username `admin` and its generated password exactly once
-to the user, outside the manifest/report/logs, and require immediate rotation.
+After a successful first deployment, the final user-visible chat report MUST
+include an Administrator credentials section containing the username `admin`
+and its actual generated initial password together, plus the login URL and a
+reminder to change the password after signing in. Read the credentials from
+this deployment's protected handoff file/output. Do not substitute masked text,
+a file path, or "already displayed above" for the password. Tool/command output
+and `.business.handoffDisplayed` do not prove delivery in the final chat response.
+If handoff already ran, use its result or read the still-protected handoff file;
+do not rerun the one-time command, reset the account, or generate another password.
+Only this initial admin password may appear in the final chat report; never copy
+it into the manifest, saved deployment-report.json/Markdown, logs, Git, or other
+evidence. Keep the handoff file until the user confirms receipt, then use
+`handoff --confirm-received` to remove it. Do not redisplay credentials during
+later maintenance/upgrades or show an old password after rotation. If the actual
+initial credential is unavailable, report incomplete delivery; never invent it.
 Only after deployment status and administrator handoff are complete, ask once for
 the user's credential export preference: no export (default), encrypted local bundle,
 or external secret manager. Never export other credentials before an

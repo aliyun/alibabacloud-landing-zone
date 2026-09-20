@@ -76,10 +76,155 @@ class PlanBindingTests(unittest.TestCase):
             if change=='unknown': q['resource_changes'][0]['change']['after']['image_id']=None
             with self.subTest(change=change), self.assertRaises(rz.InventoryError): rz.validate_plan(m,q)
 
-    def test_existing_resource_update_is_not_an_automatic_replan(self):
-        m,p=self.fixture()
-        p['resource_changes'][0]['change'].update(actions=['update'],before={'id':'existing'})
-        with self.assertRaises(rz.InventoryError): rz.validate_plan(m,p)
+    def update_fixture(self):
+        m, p = self.fixture()
+        m['mode'] = 'new'
+        p['resource_changes'].append({
+            'address': 'alicloud_alb_server_group.app', 'type': 'alicloud_alb_server_group',
+            'mode': 'managed', 'change': {'actions': ['update'],
+                'before': {'id': 'sg-existing', 'servers': [{'server_id': 'i-a', 'weight': 50}]},
+                'after': {'id': 'sg-existing', 'servers': [{'server_id': 'i-a', 'weight': 100}]}}})
+        return m, p
+
+    def test_new_deployment_and_partial_resume_allow_updates(self):
+        m, p = self.update_fixture()
+        for resources in ({}, {'ecs_instance_ids': {'zone_a': 'i-a', 'zone_b': 'i-b'}}):
+            m['resources'] = resources
+            m['resourceSelection']['selectionSha256'] = rz.digest({
+                'policy': rz.effective_policy(m), 'selected': rz.candidate_from_manifest(m),
+                'existing': rz.existing_constraints(m)})
+            rz.validate_plan(m, p)
+            rz.validate_update_approval(m, p, 'a' * 64, '')
+
+    def test_existing_updates_can_be_planned_but_need_exact_confirmation_to_apply(self):
+        for evidence in ({'mode': 'upgrade'}, {'mode': 'operations'}, {'mode': None},
+                         {'deployment': {'acceptedAt': '2026-01-01'}},
+                         {'business': {'handoffConfirmed': True}},
+                         {'acceptance': {'health': 'passed'}}, {'upgrade': {'toCommit': 'abc'}},
+                         {'terraform': {'existingDeployment': True}}):
+            m, p = self.update_fixture()
+            m.update(evidence)
+            rz.validate_plan(m, p)
+            for confirmation in ('', 'b' * 64):
+                with self.subTest(evidence=evidence, confirmation=confirmation):
+                    with self.assertRaisesRegex(rz.InventoryError, 'update-confirmation-required'):
+                        rz.validate_update_approval(m, p, 'a' * 64, confirmation)
+            rz.validate_update_approval(m, p, 'a' * 64, 'a' * 64)
+
+    def test_plan_preserves_existing_classification_when_status_is_overwritten(self):
+        from unittest.mock import patch
+        m, p = self.update_fixture()
+        m['status'] = 'accepted'
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            (work / 'reviewed.tfplan').write_bytes(b'plan')
+            plan_path = work / 'plan.json'
+            plan_path.write_text(json.dumps(p))
+            with patch.object(rz, 'load_manifest', return_value=m), patch.object(rz, 'save_manifest'):
+                rz.check_plan(work / 'manifest.json', plan_path, work)
+            self.assertTrue(m['terraform']['existingDeployment'])
+            m['status'] = 'awaiting-machine-review'
+            with self.assertRaisesRegex(rz.InventoryError, 'update-confirmation-required'):
+                rz.validate_update_approval(m, p, 'a' * 64, '')
+
+    def test_new_deployment_computed_servers_update_is_allowed(self):
+        m, p = self.update_fixture()
+        change = p['resource_changes'][-1]['change']
+        change['before'] = copy.deepcopy(change['after'])
+        change['before']['servers'][0]['status'] = 'Available'
+        change['after_unknown'] = {'servers': [{'status': True}]}
+        rz.validate_plan(m, p)
+        rz.validate_update_approval(m, p, 'a' * 64, '')
+
+    def test_existing_noop_needs_no_update_confirmation(self):
+        m, p = self.fixture()
+        rz.validate_update_approval(m, p, 'a' * 64, '')
+
+    def test_updates_still_obey_resource_and_action_guards(self):
+        m, p = self.update_fixture()
+        for actions in (['delete'], ['delete', 'create'], ['create', 'delete']):
+            p['resource_changes'][-1]['change']['actions'] = actions
+            with self.assertRaises(rz.InventoryError): rz.validate_plan(m, p)
+        p['resource_changes'][-1]['change']['actions'] = ['update']
+        p['resource_changes'][0]['change']['after']['instance_type'] = 'unapproved-size'
+        with self.assertRaises(rz.InventoryError): rz.validate_plan(m, p)
+
+    def test_explicit_scaleout_targets_are_bound_and_require_confirmation(self):
+        m, p = self.fixture()
+        m['targetEcsNodes'] = {'zone_a': m['availabilityZones'][0], 'zone_b': m['availabilityZones'][1],
+                               'worker_3': m['availabilityZones'][0]}
+        p['variables']['ecs_nodes'] = {'value': m['targetEcsNodes']}
+        for index, row in enumerate(p['resource_changes'][:2]):
+            row['address'] = 'alicloud_instance.app["zone_' + ('a' if index == 0 else 'b') + '"]'
+        extra = copy.deepcopy(p['resource_changes'][0])
+        extra['address'] = 'alicloud_instance.app["worker_3"]'
+        p['resource_changes'].append(extra)
+        rz.validate_plan(m, p)
+        with self.assertRaisesRegex(rz.InventoryError, 'update-confirmation-required'):
+            rz.validate_update_approval(m, p, 'a' * 64, '')
+        rz.validate_update_approval(m, p, 'a' * 64, 'a' * 64)
+        extra['address'] = 'alicloud_instance.app["unapproved"]'
+        with self.assertRaises(rz.InventoryError): rz.validate_plan(m, p)
+
+    def test_scaleout_quote_counts_each_intended_node_and_enforces_budget(self):
+        m, _ = self.fixture()
+        m['targetEcsNodes'] = {'zone_a': 'a', 'zone_b': 'b', 'third': 'a'}
+        result = {'corePrice': {'amount': 100, 'currency': 'CNY'}, 'evidence': {'ecs': [
+            {'zone': 'a', 'price': {'amount': 10, 'currency': 'CNY'}},
+            {'zone': 'b', 'price': {'amount': 20, 'currency': 'CNY'}}]}}
+        rz.price_intended_nodes(m, result, {})
+        self.assertEqual(result['corePrice']['amount'], 110)
+        result['corePrice']['amount'] = 100
+        with self.assertRaisesRegex(rz.InventoryError, 'budget'):
+            rz.price_intended_nodes(m, result, {'budget': {'monthlyLimit': 105, 'currency': 'CNY'}})
+
+    def test_acl_removal_is_scoped_to_owned_acl_and_final_cidrs(self):
+        m, p = self.fixture()
+        p['resource_changes'].append({'address': 'alicloud_alb_acl.public_sources', 'type': 'alicloud_alb_acl',
+            'change': {'actions': ['no-op'], 'before': {'id': 'acl-owned'}, 'after': {'id': 'acl-owned'}}})
+        for cidr, actions in [('1.2.3.4/32', ['no-op']), ('5.6.7.8/32', ['delete'])]:
+            value = {'acl_id': 'acl-owned', 'entry': cidr}
+            p['resource_changes'].append({'address': 'alicloud_alb_acl_entry_attachment.public_sources[' + json.dumps(cidr) + ']',
+                'type': 'alicloud_alb_acl_entry_attachment', 'change': {'actions': actions,
+                'before': value, 'after': value if actions == ['no-op'] else None}})
+        rz.validate_plan(m, p)
+        with self.assertRaisesRegex(rz.InventoryError, 'update-confirmation-required'):
+            rz.validate_update_approval(m, p, 'a' * 64, '')
+        rz.validate_update_approval(m, p, 'a' * 64, 'a' * 64)
+        p['resource_changes'][-1]['change']['before']['acl_id'] = 'acl-foreign'
+        with self.assertRaises(rz.InventoryError): rz.validate_plan(m, p)
+        p['resource_changes'][-1]['change']['before']['acl_id'] = 'acl-owned'
+        p['resource_changes'][-2]['change']['after']['entry'] = '0.0.0.0/0'
+        with self.assertRaises(rz.InventoryError): rz.validate_plan(m, p)
+
+    def test_acl_replacement_keeps_final_set_and_unrelated_deletes_blocked(self):
+        m, p = self.fixture()
+        p['resource_changes'].append({'address': 'alicloud_alb_acl.public_sources', 'type': 'alicloud_alb_acl',
+            'change': {'actions': ['no-op'], 'before': {'id': 'acl-owned'}, 'after': {'id': 'acl-owned'}}})
+        value = {'acl_id': 'acl-owned', 'entry': '1.2.3.4/32'}
+        p['resource_changes'].append({'address': 'alicloud_alb_acl_entry_attachment.public_sources["1.2.3.4/32"]',
+            'type': 'alicloud_alb_acl_entry_attachment', 'change': {'actions': ['delete', 'create'],
+            'before': value, 'after': dict(value, description='new')}})
+        rz.validate_plan(m, p)
+        with self.assertRaisesRegex(rz.InventoryError, 'update-confirmation-required'):
+            rz.validate_update_approval(m, p, 'a' * 64, '')
+        p['resource_changes'][0]['change']['actions'] = ['delete']
+        with self.assertRaises(rz.InventoryError): rz.validate_plan(m, p)
+
+    def test_tag_update_of_recorded_instance_does_not_require_stock(self):
+        m, p = self.fixture()
+        m['resources']['ecs_instance_ids'] = {'zone_a': 'i-a', 'zone_b': 'i-b'}
+        for index, row in enumerate(p['resource_changes'][:2]):
+            row['change']['actions'] = ['update']
+            row['change']['after']['id'] = ['i-a', 'i-b'][index]
+            row['change']['before'] = copy.deepcopy(row['change']['after'])
+            row['change']['after']['tags'] = {'owner': 'new'}
+        self.assertTrue(rz.non_purchase_changes(m, p, 'alicloud_instance'))
+        p['resource_changes'][0]['change']['after']['instance_type'] = 'other'
+        self.assertFalse(rz.non_purchase_changes(m, p, 'alicloud_instance'))
+        p['resource_changes'][0]['change']['after']['instance_type'] = p['resource_changes'][0]['change']['before']['instance_type']
+        p['resource_changes'][0]['change']['before']['id'] = 'i-foreign'
+        self.assertFalse(rz.non_purchase_changes(m, p, 'alicloud_instance'))
 
     def test_binding_detects_manifest_and_configuration_changes(self):
         m,p=self.fixture()
@@ -106,6 +251,30 @@ class PlanBindingTests(unittest.TestCase):
             for row in p['resource_changes']: row['change']['actions']=['no-op']
             # Resource IDs become known after a partial apply; a new plan must rebind them.
             m['resources']={'ecs_instance_ids':{'zone_a':'i-existing-a','zone_b':'i-existing-b'}}
+            path.write_text(json.dumps(m)); plan=Path(td)/'plan.json'; plan.write_text(json.dumps(p))
+            def query(region,service,action,params):
+                self.assertEqual(action,'GetCallerIdentity')
+                return {'AccountId':m['accountUid']}
+            with patch.object(inventory,'request',side_effect=query):
+                self.assertEqual(rz.validate(path,plan),0)
+    def test_metadata_update_validates_with_no_in_sale_catalogue(self):
+        from unittest.mock import patch
+        import resource_inventory as inventory
+        import test_resolve_zones as cloud
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/'manifest.json'
+            m,p=self.fixture()
+            _, policy, facts=fixtures.CandidateTests().fixture()
+            verdict=rz.validate_candidate(m['resourceSelection']['selected'],facts,policy,{})
+            m['resourceSelection'].update(evidence=verdict['evidence'],corePrice=verdict['corePrice'])
+            for row in p['resource_changes']: row['change']['actions']=['no-op']
+            # Resource IDs become known after a partial apply; a new plan must rebind them.
+            m['resources']={'ecs_instance_ids':{'zone_a':'i-existing-a','zone_b':'i-existing-b'}}
+            for index, row in enumerate(p['resource_changes'][:2]):
+                row['change']['actions'] = ['update']
+                row['change']['after']['id'] = ['i-existing-a', 'i-existing-b'][index]
+                row['change']['before'] = copy.deepcopy(row['change']['after'])
+                row['change']['after']['tags'] = {'owner': 'new'}
             path.write_text(json.dumps(m)); plan=Path(td)/'plan.json'; plan.write_text(json.dumps(p))
             def query(region,service,action,params):
                 self.assertEqual(action,'GetCallerIdentity')

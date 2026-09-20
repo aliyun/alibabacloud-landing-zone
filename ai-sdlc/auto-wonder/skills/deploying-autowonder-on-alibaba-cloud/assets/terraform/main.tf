@@ -236,7 +236,7 @@ locals {
     Topology     = "multi-az-ha"
   }
   tags = merge(var.common_tags, local.system_tags)
-  ecs_nodes = {
+  default_ecs_nodes = {
     zone_a = {
       zone       = var.zone_a_id
       vswitch_id = alicloud_vswitch.zone_a.id
@@ -246,6 +246,10 @@ locals {
       vswitch_id = alicloud_vswitch.zone_b.id
     }
   }
+  ecs_nodes = var.ecs_nodes == null ? local.default_ecs_nodes : { for name, zone in var.ecs_nodes : name => {
+    zone       = zone
+    vswitch_id = zone == var.zone_a_id ? alicloud_vswitch.zone_a.id : alicloud_vswitch.zone_b.id
+  } }
   logstores = {
     system   = alicloud_log_store.system.logstore_name
     business = alicloud_log_store.business.logstore_name
@@ -726,4 +730,10 @@ output "application_access_key_secret" {
 
 output "expected_tags" {
   value = local.tags
+}
+
+variable "ecs_nodes" {
+  description = "Explicit intended ECS node keys and selected availability zones; default is the initial HA pair."
+  type        = map(string)
+  default     = null
 }

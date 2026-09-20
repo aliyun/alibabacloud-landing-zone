@@ -7,18 +7,22 @@ source "$SCRIPT_DIR/upgrade-lib.sh"
 usage() { cat <<'EOF'
 Usage: plan-upgrade.sh --manifest FILE --source-dir DIR
        [--remote NAME] [--current-commit SHA] [--env-file FILE] [--force-redeploy]
-       [--workspace-current-content] [--baseline-dir DIR]
-Analyzes exact remote master from either a fast-forwardable local master or a clean
-detached worktree already pinned to remote master. It never merges divergent history.
+       [--workspace-current-content] [--baseline-dir DIR] [--target-ref BRANCH]
+       [--repository-url URL --allow-repository-change]
+Analyzes the exact selected remote ref from a clean matching source checkout.
+Use prepare-upgrade-source.py to discover the repository default branch.
 EOF
 }
 
-manifest= source_dir= target_ref=master remote=origin current_commit= env_file= force_redeploy=false workspace_current_content=false baseline_dir=
+manifest= source_dir= target_ref=master remote=origin current_commit= env_file= force_redeploy=false workspace_current_content=false baseline_dir= repository_url= allow_repository_change=false
 require_no_secret_args "$@"
 while (($#)); do
   case "$1" in
     --manifest) manifest=${2:-}; shift 2;;
     --source-dir) source_dir=${2:-}; shift 2;;
+    --target-ref) target_ref=${2:-}; shift 2;;
+    --repository-url) repository_url=${2:-}; shift 2;;
+    --allow-repository-change) allow_repository_change=true; shift;;
     --remote) remote=${2:-}; shift 2;;
     --current-commit) current_commit=${2:-}; shift 2;;
     --env-file) env_file=${2:-}; shift 2;;
@@ -47,7 +51,9 @@ if [[ -n $(jq -r '.upgradeInfo.resourceSetFingerprint // empty' "$manifest") ]];
     die "active release inventory resource set is stale"
 fi
 require_command python3
-arguments=(plan --manifest "$manifest" --source-dir "$source_dir" --remote "$remote")
+arguments=(plan --manifest "$manifest" --source-dir "$source_dir" --remote "$remote" --target-ref "$target_ref")
+[[ -z "$repository_url" ]] || arguments+=(--repository-url "$repository_url")
+[[ "$allow_repository_change" != true ]] || arguments+=(--allow-repository-change)
 [[ "$workspace_current_content" != true ]] || arguments+=(--workspace-current-content)
 [[ -z "$baseline_dir" ]] || arguments+=(--baseline-dir "$baseline_dir")
 [[ -z "$current_commit" ]] || arguments+=(--current-commit "$current_commit")

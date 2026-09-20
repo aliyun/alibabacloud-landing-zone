@@ -34,6 +34,7 @@ class UpgradePlanTest(unittest.TestCase):
             "autowonder:\n  runtime:\n"
             "    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.138}\n",
         )
+        self.write("VERSION", "0.5.0\n")
         self.write("docs/community/application.env.example", "OLD_ENV=\n")
         self.write("docs/migration/README.md", "migration contract\n")
         self.git("add", ".")
@@ -63,7 +64,7 @@ class UpgradePlanTest(unittest.TestCase):
     def manifest(self):
         path = self.root / "manifest.json"
         protected_env = self.root / "autowonder.env"
-        protected_env.write_text("OLD_ENV=old\nNEW_REQUIRED=configured\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n", encoding="utf-8")
+        protected_env.write_text("AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nOLD_ENV=old\nNEW_REQUIRED=configured\n", encoding="utf-8")
         protected_env.chmod(0o600)
         nodes = [{"instanceId": "i-a", "vpcId": "vpc-1"}]
         tags = {
@@ -121,11 +122,6 @@ class UpgradePlanTest(unittest.TestCase):
         return path
 
     def run_plan(self, manifest, *extra):
-        # Plan fixtures model an operator-provided, already escrowed generation.
-        env_path = (Path(extra[extra.index('--env-file') + 1]) if '--env-file' in extra
-                    else Path(json.loads(Path(manifest).read_text()).get('localContext', {}).get('protectedEnvFile', '')))
-        if env_path.is_file() and 'AUTOWONDER_SECRET_KEY_GENERATION_ID=' not in env_path.read_text():
-            env_path.write_text(env_path.read_text() + '\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n')
         return subprocess.run(
             [
                 "bash",
@@ -282,6 +278,69 @@ class UpgradePlanTest(unittest.TestCase):
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertEqual(identity, json.loads(manifest.read_text())["upgrade"]["fromCommit"])
 
+    def test_old_generation_bound_approval_requires_replanning(self):
+        manifest, _ = self.workspace_manifest()
+        self.publish_target()
+        result = self.run_plan(manifest)
+        self.assertEqual(0, result.returncode, result.stderr)
+        data = json.loads(manifest.read_text())
+        self.assertNotIn('keyGenerationId', data['upgrade'])
+        # Reproduce the previous fingerprint schema without running old code.
+        upgrade = data['upgrade']
+        keys = ('fromCommit toCommit targetRef remote forceRedeploy commits changedFiles environment '
+                'pendingMigrations blockedReasons confirmationRequired environmentContractChecked '
+                'environmentPlanSha256 targetRecommendedRuntimeVersion keyGenerationId').split()
+        upgrade['keyGenerationId'] = 'legacy-registration'
+        material = {key: upgrade.get(key) for key in keys}
+        material['databaseDestructive'] = upgrade.get('databaseCompatibility', {}).get('destructive')
+        material['targetVerificationFingerprint'] = upgrade.get('targetVerification', {}).get('fingerprint')
+        for key in ('resourceSetFingerprint', 'sourceBaseline', 'sourceMode', 'environmentSha256'):
+            if upgrade.get(key):
+                material[key] = upgrade[key]
+        if 'resourceIdentity' in upgrade:
+            material['resourceIdentity'] = upgrade['resourceIdentity']
+            material['actualResourceIdentity'] = upgrade['resourceIdentity']
+        old = hashlib.sha256((json.dumps(material, sort_keys=True, ensure_ascii=False,
+                                        separators=(',', ':')) + '\n').encode()).hexdigest()
+        self.assertNotEqual(old, upgrade['planFingerprint'])
+        upgrade['planFingerprint'] = old
+        upgrade['approval'] = {'status': 'approved', 'fingerprint': old}
+        manifest.write_text(json.dumps(data))
+        approved = subprocess.run(['bash', str(APPROVE), '--manifest', str(manifest),
+                                   '--fingerprint', old], text=True, capture_output=True)
+        self.assertNotEqual(0, approved.returncode)
+        self.assertIn('fingerprint', approved.stderr)
+        result = self.run_plan(manifest)
+        self.assertEqual(0, result.returncode, result.stderr)
+        fresh = json.loads(manifest.read_text())['upgrade']
+        self.assertNotIn('keyGenerationId', fresh)
+        self.assertEqual('pending', fresh['approval']['status'])
+
+    def test_explicit_main_ref_uses_detached_source(self):
+        target, _ = self.publish_target()
+        self.git('checkout', '--detach', target)
+        self.git('push', 'origin', 'HEAD:refs/heads/main')
+        manifest = self.manifest()
+        result = self.run_plan(manifest, '--target-ref', 'main')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual('main', json.loads(manifest.read_text())['upgrade']['targetRef'])
+
+    def test_repository_transition_is_explicit_and_bound_to_same_deployment(self):
+        self.publish_target()
+        manifest = self.manifest()
+        data = json.loads(manifest.read_text())
+        data['repositoryUrl'] = 'https://example.invalid/previous.git'
+        manifest.write_text(json.dumps(data))
+        rejected = self.run_plan(manifest, '--repository-url', str(self.remote))
+        self.assertNotEqual(0, rejected.returncode)
+        result = self.run_plan(manifest, '--repository-url', str(self.remote), '--allow-repository-change')
+        self.assertEqual(0, result.returncode, result.stderr)
+        after = json.loads(manifest.read_text())
+        self.assertEqual(data['deploymentId'], after['deploymentId'])
+        self.assertEqual(data['repositoryUrl'], after['repositoryUrl'])
+        self.assertEqual(str(self.remote), after['upgrade']['sourceRepositoryUrl'])
+        self.assertTrue(after['upgrade']['confirmationRequired'])
+
     def test_baseline_identity_change_invalidates_plan_fingerprint(self):
         manifest, _ = self.workspace_manifest()
         self.publish_target()
@@ -341,6 +400,13 @@ class UpgradePlanTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         plan = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(target, self.git("rev-parse", "HEAD").stdout.strip())
+        original = Path(plan['localContext']['protectedEnvFile'])
+        candidate = Path(plan['localContext']['candidateEnvFile'])
+        self.assertNotEqual(original, candidate)
+        self.assertEqual("AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nOLD_ENV=old\nNEW_REQUIRED=configured\n", original.read_text())
+        self.assertIn("AUTOWONDER_VERSION=0.5.0\n", candidate.read_text())
+        self.assertIn("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.138\n", candidate.read_text())
+        self.assertEqual(hashlib.sha256(candidate.read_bytes()).hexdigest(), plan['upgrade']['environmentPlanSha256'])
         self.assertEqual("master", plan["upgrade"]["targetRef"])
         self.assertEqual("upgrade", plan["mode"])
         self.assertEqual(self.old_commit, plan["upgrade"]["fromCommit"])
@@ -377,7 +443,7 @@ class UpgradePlanTest(unittest.TestCase):
         manifest.write_text(json.dumps(data), encoding="utf-8")
         env_file = Path(data["localContext"]["protectedEnvFile"])
         env_file.write_text(
-            "OLD_ENV=old\nNEW_REQUIRED=configured\n"
+            "AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nOLD_ENV=old\nNEW_REQUIRED=configured\n"
             "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.138\n",
             encoding="utf-8",
         )
@@ -389,6 +455,8 @@ class UpgradePlanTest(unittest.TestCase):
         self.assertEqual(target, planned["upgrade"]["toCommit"])
         self.assertEqual("0.3.7", planned["upgrade"]["targetRecommendedRuntimeVersion"])
         self.assertEqual("0.3.7", planned["recommendedRuntimeVersion"])
+        self.assertIn("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.2.138\n", env_file.read_text())
+        env_file = Path(planned["localContext"]["candidateEnvFile"])
         self.assertIn(
             "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.3.7\n",
             env_file.read_text(encoding="utf-8"),
@@ -640,7 +708,7 @@ esac
         self.publish_target()
         manifest = self.manifest()
         env_file = self.root / "candidate.env"
-        env_file.write_text("NEW_REQUIRED=configured\n", encoding="utf-8")
+        env_file.write_text("AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nNEW_REQUIRED=configured\n", encoding="utf-8")
         env_file.chmod(0o600)
 
         result = self.run_plan(manifest, "--env-file", str(env_file))
@@ -670,7 +738,7 @@ esac
         self.git("push", "origin", "master")
         self.git("reset", "--hard", self.old_commit)
         env_file = self.root / "candidate.env"
-        env_file.write_text("OLD_ENV=configured\n", encoding="utf-8")
+        env_file.write_text("AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nOLD_ENV=configured\n", encoding="utf-8")
         env_file.chmod(0o600)
         manifest = self.manifest()
 
@@ -688,7 +756,7 @@ esac
     def test_disabled_s3_environment_does_not_block_oss_upgrade(self):
         self.publish_s3_target()
         env_file = self.root / "candidate.env"
-        env_file.write_text("OLD_ENV=configured\n", encoding="utf-8")
+        env_file.write_text("AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nOLD_ENV=configured\n", encoding="utf-8")
         env_file.chmod(0o600)
         manifest = self.manifest()
 
@@ -703,7 +771,7 @@ esac
     def test_enabled_s3_requires_endpoint_and_credentials(self):
         self.publish_s3_target()
         env_file = self.root / "candidate.env"
-        env_file.write_text("OLD_ENV=configured\nS3_ENABLED=true\n", encoding="utf-8")
+        env_file.write_text("AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nOLD_ENV=configured\nS3_ENABLED=true\n", encoding="utf-8")
         env_file.chmod(0o600)
         manifest = self.manifest()
 
@@ -745,7 +813,7 @@ printf '%s' "${REAL_SCRIPT_ENV:-}"
         self.git("reset", "--hard", self.old_commit)
         env_file = self.root / "candidate.env"
         env_file.write_text(
-            "DECLARED_ENV=configured\nREAL_SCRIPT_ENV=configured\n",
+            "AUTOWONDER_SECRET_MASTER_KEY=synthetic-master\nDECLARED_ENV=configured\nREAL_SCRIPT_ENV=configured\n",
             encoding="utf-8",
         )
         env_file.chmod(0o600)
@@ -919,7 +987,7 @@ autowonder:
     def test_plans_upgrade_from_monorepo_project_subdirectory(self):
         product = self.source / "ai-sdlc" / "auto-wonder"
         product.mkdir(parents=True)
-        self.git("mv", "src", "docs", str(product))
+        self.git("mv", "src", "docs", "VERSION", str(product))
         self.git("commit", "-m", "move project into monorepo")
         self.git("push", "origin", "master")
         self.old_commit = self.git("rev-parse", "HEAD").stdout.strip()

@@ -69,7 +69,7 @@ class WindowsUpgradeExecutionTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         artifacts = self.root / "artifacts"
         artifacts.mkdir()
-        contents = {"auto-wonder.jar": "new jar", "autowonder-schema.sql": "schema", "autowonder-community-templates.sql": "templates", "autowonder.service": "new unit", "autowonder.env": "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=1.2.3\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\nNEW_SETTING=complete-candidate\n"}
+        contents = {"auto-wonder.jar": "new jar", "autowonder-schema.sql": "schema", "autowonder-community-templates.sql": "templates", "autowonder.service": "new unit", "autowonder.env": "AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=1.2.3\nNEW_SETTING=complete-candidate\n"}
         for name, content in contents.items():
             (artifacts / name).write_text(content)
         migration = artifacts / "migration"
@@ -78,7 +78,7 @@ class WindowsUpgradeExecutionTests(unittest.TestCase):
         with tarfile.open(artifacts / "autowonder-migrations.tar.gz", "w:gz") as archive:
             archive.add(migration, arcname="migration")
         objects = [{"name": file.name, "sha256": hashlib.sha256(file.read_bytes()).hexdigest(), "url": file.as_uri()} for file in artifacts.iterdir() if file.is_file()]
-        return {"objects": objects, "backupSha": hashlib.sha256((self.app / "upgrade-rollback-backup.tar.gz").read_bytes()).hexdigest(), "envSha": hashlib.sha256((artifacts / "autowonder.env").read_bytes()).hexdigest(), "runtime": "1.2.3", "keyGenerationId": "985bc0a7-5abf-4fc7-a612-2549c5a7848d"}
+        return {"objects": objects, "backupSha": hashlib.sha256((self.app / "upgrade-rollback-backup.tar.gz").read_bytes()).hexdigest(), "envSha": hashlib.sha256((artifacts / "autowonder.env").read_bytes()).hexdigest(), "runtime": "1.2.3"}
 
     def test_backup_contains_release_and_protected_files_and_is_retry_safe(self):
         result = self.run_payload("upgrade-backup.sh")
@@ -212,7 +212,6 @@ else:
         self.assertIn("Invoke-UpgradeOss", stage)
         self.assertIn("Get-FileSha256", stage)
         build = (SCRIPTS / "build-upgrade-release.ps1").read_text()
-        self.assertIn("target-source", build)
         self.assertIn("autowonder.service", build)
 
     def test_migration_payload_checks_checksum_before_database_mutation(self):

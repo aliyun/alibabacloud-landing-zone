@@ -46,6 +46,11 @@ Assistant output.
 After `scripts/sanitize-evidence.sh`, fail closed if a forbidden pattern remains.
 Never emit a partially sanitized report.
 
+These evidence rules apply to saved/shared reports. The first successful
+deployment's final chat response must separately include `admin` and its actual
+initial password as the administrator handoff required by SKILL.md. Command
+output alone is not final delivery. Do not persist that password in evidence.
+
 ## Release Rollback
 
 For an upgrade, first check `.upgrade.databaseMigration` and the recorded

@@ -22,6 +22,7 @@ class UpgradePlanTest(unittest.TestCase):
         self.git("config", "user.email", "upgrade-test@example.invalid")
         self.git("config", "user.name", "Upgrade Test")
         self.write("src/main/resources/application.yml", "service:\n  value: ${OLD_ENV:old}\n")
+        self.write("VERSION", "0.5.0\n")
         self.write("docs/community/application.env.example", "OLD_ENV=\n")
         self.write("docs/migration/README.md", "migration contract\n")
         self.git("add", ".")
@@ -222,6 +223,27 @@ class UpgradePlanTest(unittest.TestCase):
             ],
             plan["upgrade"]["blockedReasons"],
         )
+
+    def test_cli_auth_token_is_ignored_in_historical_and_target_contracts(self):
+        self.write('docs/community/application.env.example', 'OLD_ENV=\nANTHROPIC_AUTH_TOKEN=historical-placeholder\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'historical optional CLI credential')
+        self.old_commit = self.git('rev-parse', 'HEAD').stdout.strip()
+        self.write('docs/community/application.env.example', 'OLD_ENV=\nANTHROPIC_AUTH_TOKEN=\n')
+        self.write('src/main/resources/application-local.yml', 'token: ${ANTHROPIC_AUTH_TOKEN:}\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'change optional CLI credential example')
+        self.git('push', 'origin', 'community')
+        self.git('reset', '--hard', self.old_commit)
+        env_file = self.root / 'candidate.env'
+        env_file.write_text('OLD_ENV=configured\n')
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+        result = self.run_plan(manifest, '--env-file', str(env_file))
+        self.assertEqual(0, result.returncode, result.stderr)
+        upgrade = json.loads(manifest.read_text())['upgrade']
+        self.assertNotIn('ANTHROPIC_AUTH_TOKEN', json.dumps(upgrade['environment']))
+        self.assertEqual([], upgrade['blockedReasons'])
 
     def test_shell_locals_are_not_application_environment_contract(self):
         self.write(

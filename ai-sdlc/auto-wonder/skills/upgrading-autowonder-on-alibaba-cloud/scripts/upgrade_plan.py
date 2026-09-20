@@ -93,11 +93,11 @@ def fingerprint(data):
     upgrade = data['upgrade']
     keys = ('fromCommit toCommit targetRef remote forceRedeploy commits changedFiles environment '
             'pendingMigrations blockedReasons confirmationRequired environmentContractChecked '
-            'environmentPlanSha256 targetRecommendedRuntimeVersion keyGenerationId').split()
+            'environmentPlanSha256 targetRecommendedRuntimeVersion').split()
     material = {key: upgrade.get(key) for key in keys}
     material['databaseDestructive'] = upgrade.get('databaseCompatibility', {}).get('destructive')
     material['targetVerificationFingerprint'] = upgrade.get('targetVerification', {}).get('fingerprint')
-    for key in ('resourceSetFingerprint', 'sourceBaseline', 'sourceMode', 'environmentSha256'):
+    for key in ('resourceSetFingerprint', 'sourceBaseline', 'sourceMode', 'environmentSha256', 'sourceRepositoryUrl', 'previousRepositoryUrl', 'executionMode'):
         if upgrade.get(key):
             material[key] = upgrade[key]
     if 'resourceIdentity' in upgrade:
@@ -173,21 +173,61 @@ def workspace_files(root):
             for path in (root / folder).rglob('*') if path.is_file() and relevant(path.relative_to(root).as_posix())}
 
 
+def spring_tokens(text, parents=()):
+    """Read balanced placeholders, including nested Spring fallback expressions."""
+    position = 0
+    while True:
+        start = text.find('${', position)
+        if start < 0:
+            return
+        end, depth = start + 2, 1
+        while end < len(text) and depth:
+            if text.startswith('${', end):
+                depth += 1
+                end += 2
+                continue
+            if text[end] == '}':
+                depth -= 1
+            end += 1
+        if depth:
+            return
+        token = text[start + 2:end - 1]
+        key, separator, fallback = token.partition(':')
+        if re.fullmatch('[A-Z][A-Z0-9_]*', key):
+            yield key, token, bool(separator), fallback, parents
+            yield from spring_tokens(fallback, parents + (key,))
+        position = end
+
+
+# CLI authentication is outside the deployment/upgrade environment contract.
+# Preserve existing protected values, but ignore this key even in sealed history.
+IGNORED_ENVIRONMENT_KEYS = frozenset({'ANTHROPIC_AUTH_TOKEN'})
+
+
 def environment(files):
     contract = {}
     for path, contents in files.items():
         if not contract_path(path):
             continue
         text = contents.decode('utf-8')
-        tokens = re.findall(r'\$\{([A-Z][A-Z0-9_]*(?::[^}]*)?)\}', text)
-        if path == 'docs/community/application.env.example':
-            tokens += re.findall(r'^([A-Z][A-Z0-9_]*=.*)$', text, re.M)
-        for token in tokens:
-            key = re.split('[:=]', token, maxsplit=1)[0]
-            entry = {'tokenSha256': digest(token.encode()), 'source': path, 'shellOptionalDefault': token.startswith(key + ':-')}
+        spring = path.startswith('src/main/resources/')
+        for key, token, has_default, fallback, parents in spring_tokens(text):
+            entry = {'tokenSha256': digest(token.encode()), 'source': path,
+                     'shellOptionalDefault': token.startswith(key + ':-')}
+            if spring:
+                # These empty defaults have application-level fallback/optional semantics.
+                # Unknown legacy consumers may enforce nonempty values outside Spring.
+                entry['springFallbackParents'] = list(parents)
+                entry['springOptionalDefault'] = has_default and (bool(fallback) or key in {'OSS_BACKUP_BUCKET', 'OSS_PUBLIC_ENDPOINT', 'S3_PUBLIC_ENDPOINT', 'SLS_TOPIC', 'SLS_SOURCE', 'AUTOWONDER_AONE_WEB_BASE_URL'})
             if entry not in contract.setdefault(key, []):
                 contract[key].append(entry)
-    return {key: sorted(entries, key=lambda x: (x['tokenSha256'], x['source'])) for key, entries in sorted(contract.items())}
+        if path == 'docs/community/application.env.example':
+            for token in re.findall(r'^([A-Z][A-Z0-9_]*=.*)$', text, re.M):
+                key = token.split('=', 1)[0]
+                contract.setdefault(key, []).append({'tokenSha256': digest(token.encode()), 'source': path,
+                                                     'shellOptionalDefault': False})
+    return {key: sorted(entries, key=lambda x: (x['tokenSha256'], x['source'])) for key, entries in sorted(contract.items())
+            if key not in IGNORED_ENVIRONMENT_KEYS}
 
 
 def migrations(files):
@@ -306,8 +346,34 @@ def recommended_runtime(files):
     raise PlanError('Target recommended runtime version must have a semantic-version default')
 
 
-def candidate_env(path, runtime):
-    lines = path.read_text(encoding='utf-8-sig').splitlines()
+def prepare_candidate(original, requested):
+    original = Path(original) if original else None
+    candidate = Path(requested) if requested else (original.with_name(original.stem + '.candidate.env') if original else None)
+    if candidate is None:
+        raise PlanError('protected environment file is required to prepare a candidate')
+    if original and (candidate.resolve() == original.resolve() or
+                     (candidate.exists() and original.exists() and os.path.samefile(candidate, original))):
+        raise PlanError('candidate environment must be independent of the original protected environment')
+    if candidate.is_symlink():
+        raise PlanError('candidate environment must not be a symbolic link')
+    if not requested:
+        if not original.is_file():
+            raise PlanError('original protected environment file is required')
+        fd, name = tempfile.mkstemp(prefix=candidate.name + '.', dir=candidate.parent)
+        try:
+            with os.fdopen(fd, 'wb') as stream:
+                protect_temp_acl(original, name)
+                stream.write(original.read_bytes())
+            os.replace(name, candidate)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+    check_candidate(original, candidate)
+    return candidate
+
+
+def read_environment(path):
+    lines = Path(path).read_text(encoding='utf-8-sig').splitlines()
     if any(re.search(r'[`;]|\$\(', line) for line in lines):
         raise PlanError('candidate environment file contains executable shell syntax')
     values = {}
@@ -320,10 +386,27 @@ def candidate_env(path, runtime):
         if match[1] in values:
             raise PlanError('candidate environment file contains duplicate keys')
         values[match[1]] = match[2].strip().strip('"\'')
-    if not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', values.get('AUTOWONDER_SECRET_KEY_GENERATION_ID', '')):
-        raise PlanError('candidate requires the existing escrow key generation UUIDv4 before approval')
-    updated = [line for line in lines if not line.startswith('AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=')]
-    updated.append('AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=' + runtime)
+    return lines, values
+
+
+def check_candidate(original, candidate):
+    if not original or not Path(original).is_file():
+        raise PlanError('original protected environment is required for master key continuity')
+    original_values = read_environment(original)[1]
+    candidate_values = read_environment(candidate)[1]
+    key = 'AUTOWONDER_SECRET_MASTER_KEY'
+    if not original_values.get(key) or original_values[key] != candidate_values.get(key):
+        raise PlanError('candidate master key must match the active protected environment')
+
+
+def candidate_env(path, runtime, version=None):
+    lines, values = read_environment(path)
+    managed = {'AUTOWONDER_RUNTIME_RECOMMENDED_VERSION': runtime}
+    if version is not None:
+        managed['AUTOWONDER_VERSION'] = version
+    updated = [line for line in lines if line.split('=', 1)[0] not in managed]
+    updated.extend(key + '=' + value for key, value in managed.items())
+    values.update(managed)
     contents = ('\n'.join(updated) + '\n').encode()
     atomic_write(path, contents)
     return values, digest(contents)
@@ -331,22 +414,41 @@ def candidate_env(path, runtime):
 
 def analyze(old_environment, old_migrations, target_files, values):
     new_environment = environment(target_files)
-    old_keys, new_keys = set(old_environment), set(new_environment)
+    old_keys = set(old_environment) - IGNORED_ENVIRONMENT_KEYS
+    new_keys = set(new_environment) - IGNORED_ENVIRONMENT_KEYS
     added = sorted(new_keys - old_keys)
     # A key's meaning follows its tokens, not the paths declaring it.
     tokens = lambda entries: sorted({entry['tokenSha256'] for entry in entries})
     changed = sorted(key for key in old_keys & new_keys if tokens(old_environment[key]) != tokens(new_environment[key]))
-    managed = {'AUTOWONDER_SECRET_MASTER_KEY', 'AUTOWONDER_JWT_SECRET', 'AUTOWONDER_PUBLIC_BASE_URL',
-               'AUTOWONDER_RUNTIME_RECOMMENDED_VERSION', 'AUTOWONDER_VERSION', 'S3_ENABLED', 'S3_PUBLIC_ENDPOINT', 'S3_REGION'}
+    defaults = {}
+    for path, contents in target_files.items():
+        if path.startswith('src/main/resources/'):
+            for key, token, has_default, fallback, parents in spring_tokens(contents.decode('utf-8')):
+                if has_default and not parents and '${' not in fallback:
+                    defaults[key] = fallback
+    enabled = lambda key, default: values.get(key, defaults.get(key, default)).lower() == 'true'
+    sls_required = {'SLS_ENDPOINT', 'SLS_PROJECT', 'SLS_SYS_LOGSTORE', 'SLS_BIZ_LOGSTORE',
+                    'SLS_METRIC_LOGSTORE', 'SLS_ACCESS_KEY_ID', 'SLS_ACCESS_KEY_SECRET'}
     required = []
-    for key in added:
-        if key in managed:
+    for key in sorted(new_keys):
+        if key in {'S3_ENDPOINT', 'S3_ACCESS_KEY_ID', 'S3_ACCESS_KEY_SECRET'} and not enabled('S3_ENABLED', 'false'):
             continue
-        if key in {'S3_ENDPOINT', 'S3_ACCESS_KEY_ID', 'S3_ACCESS_KEY_SECRET'} and values.get('S3_ENABLED', '').lower() != 'true':
+        if key in sls_required and not enabled('AUTOWONDER_SLS_ENABLED', 'false'):
             continue
-        if any(not (entry['source'].startswith('skills/') and '/scripts/' in entry['source'] and
+        if key in {'OSS_ENDPOINT', 'OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET'} and not enabled('OSS_ENABLED', 'true'):
+            continue
+        # Control-host scripts run outside the ECS application's environment.
+        # Keep their references in the change report, but derive required runtime
+        # values from application config, env templates and systemd units only.
+        entries = [entry for entry in new_environment[key]
+                   if not (entry['source'].startswith('skills/') and '/scripts/' in entry['source'])]
+        # Examples document assignments; explicit Spring defaults define behavior.
+        if any('springOptionalDefault' in entry for entry in entries):
+            entries = [entry for entry in entries if entry['source'] != 'docs/community/application.env.example']
+        entries = [entry for entry in entries if not any(parent in values for parent in entry.get('springFallbackParents', []))]
+        if any(not entry.get('springOptionalDefault', False) and not (entry['source'].startswith('skills/') and '/scripts/' in entry['source'] and
                        entry['source'].endswith('.sh') and entry['shellOptionalDefault'])
-               for entry in new_environment[key]):
+               for entry in entries):
             required.append(key)
     blocked = ['required environment value missing: ' + key for key in required if not values.get(key)]
     new_migrations = migrations(target_files)
@@ -372,9 +474,11 @@ def analyze(old_environment, old_migrations, target_files, values):
         version = int(match[1])
         if version <= maximum:
             blocked.append('new migration version is not greater than published versions: ' + str(version))
-        risks = sorted(set(re.findall(r'\b(ALTER|DROP|TRUNCATE|RENAME|CREATE|UPDATE|DELETE|INSERT)\b', target_files[path].decode('utf-8').upper())))
-        pending.append(dict(version=version, file=path, sha256=new_migrations[path], riskOperations=risks))
-    destructive = any(set(item['riskOperations']) & {'DROP', 'TRUNCATE', 'RENAME'} for item in pending)
+        import runpy
+        policy = runpy.run_path(str(Path(__file__).with_name('migration_policy.py')))
+        risks = policy['classify_sql'](target_files[path].decode('utf-8'))
+        pending.append(dict(version=version, file=path, sha256=new_migrations[path], **risks))
+    destructive = any(item['destructive'] for item in pending)
     return dict(environment=dict(added=added, removed=sorted(old_keys-new_keys), changed=changed, required=required),
                 pendingMigrations=sorted(pending, key=lambda x: x['version']), blockedReasons=sorted(set(blocked)),
                 confirmationRequired=bool(pending), databaseCompatibility=dict(
@@ -443,10 +547,19 @@ def plan(args, data):
     if inventory.get('status') != 'verified' or inventory.get('activeCommit') != active:
         raise PlanError('verified active release inventory does not match the active release identity')
     workspace_mode = args.workspace_current_content
+    target_ref = getattr(args, 'target_ref', None) or 'master'
+    repository_changed = False
+    source_repository = None
     if workspace_mode:
         if not args.force_redeploy:
             raise PlanError('current-workspace planning is only permitted for an explicit forced redeployment')
-        saved_version = data.get('deployment', {}).get('activeReleaseBaseline', {}).get('releaseVersion') or data.get('releaseVersion') or data.get('source', {}).get('baseline', {}).get('releaseVersion')
+        saved = data.get('deployment', {}).get('activeReleaseBaseline', {})
+        source_baseline = data.get('source', {}).get('baseline', {})
+        saved_version = (saved.get('releaseVersion') if saved.get('releaseId') == active else None)
+        if not saved_version and source_baseline.get('releaseId') == active:
+            saved_version = source_baseline.get('releaseVersion')
+        if not saved_version and data.get('repositoryCommit') == active:
+            saved_version = data.get('releaseVersion')
         version_file = root / 'VERSION'
         if not saved_version or not version_file.is_file() or version_file.read_text().strip() != saved_version:
             raise PlanError('same-version redeployment requires the recorded active release version')
@@ -460,20 +573,27 @@ def plan(args, data):
         if git(root, 'status', '--porcelain', '--untracked-files=no').strip():
             raise PlanError('source has tracked changes')
         branch = git(root, 'branch', '--show-current').decode().strip()
-        if branch not in ('', 'master'):
-            raise PlanError('source must be local master or a detached remote-master worktree before planning')
-        check_repository(git(root, 'remote', 'get-url', args.remote).decode().strip(), data.get('repositoryUrl'))
-        git(root, 'fetch', args.remote, 'master')
+        git(root, 'check-ref-format', '--branch', target_ref)
+        if branch not in ('', target_ref):
+            raise PlanError('source must be the selected branch or a detached target worktree before planning')
+        source_repository = git(root, 'remote', 'get-url', args.remote).decode().strip()
+        requested_repository = getattr(args, 'repository_url', None)
+        if requested_repository:
+            check_repository(source_repository, requested_repository)
+        repository_changed = normalize_url(source_repository) != normalize_url(data.get('repositoryUrl') or '')
+        if not (requested_repository and getattr(args, 'allow_repository_change', False)):
+            check_repository(source_repository, data.get('repositoryUrl'))
+        git(root, 'fetch', args.remote, 'refs/heads/' + target_ref + ':refs/remotes/' + args.remote + '/' + target_ref)
         if branch:
             try:
-                git(root, 'merge', '--ff-only', 'refs/remotes/' + args.remote + '/master')
+                git(root, 'merge', '--ff-only', 'refs/remotes/' + args.remote + '/' + target_ref)
             except PlanError:
                 raise PlanError('local master diverges from remote master; preserve it and plan from a clean detached remote-master worktree')
-        target = git(root, 'rev-parse', 'refs/remotes/' + args.remote + '/master^{commit}').decode().strip()
+        target = git(root, 'rev-parse', 'refs/remotes/' + args.remote + '/' + target_ref + '^{commit}').decode().strip()
         if git(root, 'rev-parse', 'HEAD^{commit}').decode().strip() != target:
             raise PlanError('planning worktree does not match the fetched remote master commit')
         if active == target and not args.force_redeploy:
-            print(json.dumps(dict(status='already-latest', activeCommit=active, targetCommit=target, targetRef='master')))
+            print(json.dumps(dict(status='already-latest', activeCommit=active, targetCommit=target, targetRef=target_ref)))
             return
         target_files = git_files(root, target)
         try:
@@ -493,35 +613,44 @@ def plan(args, data):
         else:
             old_environment, old_migrations, baseline = artifact_evidence(data, Path(args.manifest), active, args.baseline_dir)
             changed_files, commits = [], []
-    env_path = Path(args.env_file or data.get('localContext', {}).get('protectedEnvFile', ''))
+    version = (root / 'VERSION').read_text().strip() if workspace_mode else git(root, 'show', target + ':./VERSION').decode().strip()
+    if not re.fullmatch(SEMVER, version):
+        raise PlanError('Target VERSION must be a semantic version')
+    original_env = data.get('localContext', {}).get('activeEnvFile') or data.get('localContext', {}).get('protectedEnvFile')
+    env_path = prepare_candidate(original_env, args.env_file)
     if not env_path.is_file():
         raise PlanError('candidate protected environment file is required before an upgrade plan can be approved')
     if os.name != 'nt' and env_path.stat().st_mode & 0o077:
         raise PlanError('candidate protected environment file must have mode 600')
     runtime = recommended_runtime(target_files)
-    values, env_hash = candidate_env(env_path, runtime)
+    values, env_hash = candidate_env(env_path, runtime, version)
     findings = analyze(old_environment, old_migrations, target_files, values)
+    if repository_changed:
+        findings['confirmationRequired'] = True
     verification = data['upgrade']['targetVerification']
-    if baseline['kind'] == 'sealed-artifacts':
+    if baseline['kind'] == 'sealed-artifacts' or data.get('repositoryCommit') == active:
         saved = data.setdefault('deployment', {}).get('activeReleaseBaseline', {})
         if saved.get('releaseId') != active:
             data['deployment']['activeReleaseBaseline'] = dict(releaseId=active, releaseVersion=data.get('releaseVersion'), source=data.get('source', {}), artifacts=data.get('artifacts', {}))
-    data.update(mode='upgrade', repositoryRef='master', repositoryCommit=target, recommendedRuntimeVersion=runtime,
+    data.update(mode='upgrade', repositoryRef=target_ref, repositoryCommit=target, recommendedRuntimeVersion=runtime,
                 acceptance={}, phase='upgrade-plan', status='blocked' if findings['blockedReasons'] else 'planned')
-    data['upgrade'] = dict(fromCommit=active, toCommit=target, sourceBaseline=baseline, targetRef='master', remote=args.remote,
+    data['upgrade'] = dict(fromCommit=active, toCommit=target, sourceBaseline=baseline, targetRef=target_ref, remote=args.remote,
         forceRedeploy=args.force_redeploy, commits=commits, changedFiles=changed_files, **findings,
         environmentContractChecked=True, environmentPlanSha256=env_hash, environmentSha256=env_hash,
-        keyGenerationId=values['AUTOWONDER_SECRET_KEY_GENERATION_ID'],
         environmentValidated=False, targetRecommendedRuntimeVersion=runtime, resourceSetFingerprint=resource_fingerprint(data),
         resourceIdentity=resource_identity(data),
         databaseBackup={'status': 'pending'}, migrationApproved=False, approval={'status': 'pending'},
         planStatus=data['status'], targetVerification=verification)
+    if not workspace_mode:
+        data['upgrade'].update(sourceRepositoryUrl=source_repository, previousRepositoryUrl=data.get('repositoryUrl', ''))
+    data['upgrade']['executionMode'] = 'maintenance' if any(item.get('maintenanceRequired') for item in findings['pendingMigrations']) else 'rolling'
     if workspace_mode:
         data['repositoryRef'] = 'workspace-current-content'
         data['upgrade'].update(sourceMode='workspace-current-content', targetRef='workspace-current-content', remote='none')
     data['upgrade']['planFingerprint'] = fingerprint(data)
-    if args.env_file:
-        data.setdefault('localContext', {})['candidateEnvFile'] = str(Path(args.env_file).resolve())
+    data.setdefault('localContext', {})['activeEnvFile'] = str(Path(original_env).resolve())
+    data['localContext']['candidateEnvFile'] = str(env_path.resolve())
+    data['localContext'].pop('previousActiveEnvFile', None)
     save(args.manifest, data)
     if findings['blockedReasons']:
         raise PlanError('upgrade plan is blocked; inspect sanitized manifest findings')
@@ -532,17 +661,24 @@ def plan(args, data):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['plan', 'seal', 'fingerprint', 'target-fingerprint', 'content-identity', 'resolve-source'])
+    parser.add_argument('command', choices=['plan', 'seal', 'fingerprint', 'target-fingerprint', 'content-identity', 'resolve-source', 'check-candidate'])
     parser.add_argument('--manifest')
     parser.add_argument('--source-dir')
     parser.add_argument('--env-file')
+    parser.add_argument('--original-env-file')
     parser.add_argument('--remote', default='origin')
+    parser.add_argument('--target-ref')
+    parser.add_argument('--repository-url')
+    parser.add_argument('--allow-repository-change', action='store_true')
     parser.add_argument('--current-commit')
     parser.add_argument('--baseline-dir')
     parser.add_argument('--force-redeploy', action='store_true')
     parser.add_argument('--workspace-current-content', action='store_true')
     args = parser.parse_args()
     try:
+        if args.command == 'check-candidate':
+            check_candidate(args.original_env_file, args.env_file)
+            return 0
         if args.command == 'resolve-source':
             print(resolve_source(Path(args.source_dir).resolve()))
             return 0

@@ -6,7 +6,7 @@ $data=Refresh-ApprovedUpgradeTargets -Manifest $Manifest
 Assert-ApprovedUpgradePlan $data; Assert-VerifiedUpgradeTargets $data; Assert-UpgradeBackupCoverage $data
 Assert-UpgradeCandidate $data $EnvFile
 if (-not $data['runtimeConfig'] -or -not $data.runtimeConfig.prepared -or $data.runtimeConfig.candidateSha256 -ne $data.upgrade.environmentSha256) { throw 'Target runtimeConfig must be prepared before staging' }
-if ($data.runtimeConfig.planFingerprint -ne $data.upgrade.planFingerprint -or $data.runtimeConfig.keyGenerationId -ne (Get-UpgradeKeyGeneration $EnvFile)) { throw 'Protected environment generation checkpoint is stale' }
+if ($data.runtimeConfig.planFingerprint -ne $data.upgrade.planFingerprint) { throw 'Protected environment checkpoint is stale' }
 $targetRecommendedRuntimeVersion=[string]$data.upgrade.targetRecommendedRuntimeVersion
 $planFingerprint=[string]$data.upgrade.planFingerprint
 $release=$data.upgrade['release']
@@ -47,7 +47,6 @@ try {
         Assert-UpgradeBackupCoverage $data
         $request=New-UpgradeRemoteRequest $data 'stage-upgrade'
         $request.envSha=[string]$data.upgrade.environmentSha256;$request.runtime=$targetRecommendedRuntimeVersion
-        $request.keyGenerationId=[string]$data.runtimeConfig.keyGenerationId
         $request.backupSha=Get-UpgradeBackupSha $data $instanceId
         $request.objects=@($objects | ForEach-Object { @{name=$_.name;sha256=$_.sha256;url=(Invoke-UpgradeOss $session sign "oss://$bucket/$prefix/$($_.name)" $runtime)} })
         $result=Invoke-UpgradePayload $data $instanceId $request -ManifestPath $Manifest

@@ -54,9 +54,7 @@ if [[ "$stage_only" == true && $(jq -r '.mode // empty' "$manifest") == upgrade 
     .runtimeConfig.prepared == true and
     .runtimeConfig.recommendedRuntimeVersion == .upgrade.targetRecommendedRuntimeVersion and
     .runtimeConfig.planFingerprint == .upgrade.planFingerprint and
-    .runtimeConfig.keyGenerationId == .upgrade.keyGenerationId and
-    .runtimeConfig.envSha256 == .upgrade.environmentCandidateSha256 and
-    (.runtimeConfig.keyGenerationId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))
+    .runtimeConfig.envSha256 == .upgrade.environmentCandidateSha256
   ' "$manifest" >/dev/null || die "target runtime environment must be prepared before staging"
   [[ $(jq -r '(.upgrade.blockedReasons // []) | length' "$manifest") == 0 ]] || die "blocked upgrade plan cannot be staged"
 fi
@@ -67,6 +65,8 @@ if [[ "$transfer_scope" == upgrade ]]; then
   UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
   source "$UPGRADE_SKILL_DIR/scripts/upgrade-lib.sh"
   require_upgrade_approval "$manifest"
+  active_env=$(jq -er '.localContext.activeEnvFile // .localContext.protectedEnvFile // empty' "$manifest") || die "active protected environment is required"
+  python3 -B "$SCRIPT_DIR/../upgrade_plan.py" check-candidate --original-env-file "$active_env" --env-file "$env_file" || die "candidate master key continuity check failed"
   require_current_upgrade_backup "$manifest"
 fi
 bucket=$(jq -er '.resources.package_bucket // .resources.packageBucket // empty' "$manifest") || die "package bucket missing from inventory"
@@ -92,7 +92,6 @@ jar_hash= unit_hash= schema_hash= templates_hash= migrations_hash= java_hash=
 env_hash=$(sha256_file "$env_file")
 if [[ "$stage_only" == true && $(jq -r '.mode // empty' "$manifest") == upgrade ]]; then
   [[ $(jq -r '.upgrade.environmentCandidateSha256 // empty' "$manifest") == "$env_hash" ]] || die "candidate upgrade environment changed after validation"
-  [[ $(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_SECRET_KEY_GENERATION_ID)") == "$(jq -r '.runtimeConfig.keyGenerationId' "$manifest")" ]] || die "candidate key generation checkpoint mismatch"
 fi
 if [[ "$config_only" == false ]]; then
   jar_hash=$(sha256_file "$release_dir/auto-wonder.jar"); unit_hash=$(sha256_file "$unit_file")
@@ -335,5 +334,5 @@ mode=full
 if [[ "$config_only" == true ]]; then mode=config-only
 elif [[ "$stage_only" == true ]]; then mode=stage-only; fi
 atomic_jq "$manifest" --argjson invocations "$(printf '%s\n' "${invocations[@]}" | jq -R . | jq -s .)" \
-  --arg prefix "$prefix" --arg mode "$mode" --arg envHash "$env_hash" '.phase="deploy" | .status="installed" | .deployment.lastRun={mode:$mode,invocationIds:$invocations,stagingPrefix:$prefix,stagingCleaned:true,envSha256:$envHash,credentialTransport:"time-limited private intranet presign",transportExceptionRecorded:true}'
+  --arg prefix "$prefix" --arg mode "$mode" --arg envHash "$env_hash" --arg unitHash "$unit_hash" --arg jarHash "$jar_hash" '.phase="deploy" | .status="installed" | .deployment.lastRun={mode:$mode,planFingerprint:.upgrade.planFingerprint,targetCommit:.repositoryCommit,jarSha256:$jarHash,unitSha256:$unitHash,instanceIds:((.resources.ecs_instance_ids // .resources.ecsInstanceIds) | [.[]]),invocationIds:$invocations,stagingPrefix:$prefix,stagingCleaned:true,envSha256:$envHash,credentialTransport:"time-limited private intranet presign",transportExceptionRecorded:true}'
 log "release installed on ${#instances[@]} node(s); private staging objects removed"

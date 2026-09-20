@@ -6,8 +6,12 @@ import com.aliyun.autowonder.conversation.ConversationCapabilitySnapshot;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
@@ -182,6 +186,46 @@ class WsConversationTransportTest {
         assertTrue(payload.getValue().contains("\"environmentVariables\":{}"));
         verify(presence, never()).supportsProtocolFeature(
                 9L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true,true", "true,false", "false,true", "false,false"})
+    void sendsLiteralEnvironmentAndSecretObjectsWithoutJsonReferences(
+            boolean emptySecrets, boolean emptyEnvironment) throws Exception {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        WsConversationTransport envTransport = new WsConversationTransport(
+                sessionRegistry, redisManager, capabilityService, resolver, presence);
+        AgentConversationDO conv = conversation();
+        Map<String, String> secrets = emptySecrets ? Map.of() : Map.of("test-ref", "synthetic-secret");
+        Map<String, String> environment = emptyEnvironment ? Map.of() : Map.of("TEST_VALUE", "中文\n\"quoted\"");
+        when(capabilityService.prepare(eq(conv), anyLong())).thenReturn(
+                new ConversationCapabilitySnapshot(50L, "https://oss/cap.zip", "abc123", "abc123",
+                        "synthetic-token", secrets));
+        when(resolver.resolve(1L, 50L)).thenReturn(environment);
+        when(presence.supportsProtocolFeature(
+                9L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1)).thenReturn(true);
+
+        envTransport.send(conv, 11L, "first", "SYS", 1);
+        conv.setCliSessionRef("resumed-session");
+        envTransport.send(conv, 12L, "follow-up", "SYS", 2);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager, times(2)).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        // Read plain wire JSON: Fastjson parsing would resolve $ref and hide the defect.
+        ObjectMapper reader = new ObjectMapper();
+        for (String wire : payload.getAllValues()) {
+            JsonNode frame = reader.readTree(wire);
+            assertEquals(reader.valueToTree(secrets), frame.get("mcpSecrets"));
+            assertEquals(reader.valueToTree(environment), frame.get("environmentVariables"));
+            assertFalse(wire.contains("\"$ref\""));
+            assertEquals("CONVERSATION_TURN", frame.get("type").asText());
+            assertEquals(9L, frame.get("executorId").asLong());
+        }
+        JsonNode resumed = reader.readTree(payload.getAllValues().get(1));
+        assertEquals("resumed-session", resumed.get("cliSessionRef").asText());
+        assertEquals(12L, resumed.get("turnId").asLong());
+        assertEquals(2, resumed.get("dispatchAttempt").asInt());
     }
 
     private AgentConversationDO conversation() {

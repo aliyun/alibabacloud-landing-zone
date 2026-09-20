@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/lib.sh"
 usage() { cat <<'EOF'
 Usage:
   terraform-stage.sh plan --manifest FILE --work-dir DIR
-  terraform-stage.sh apply --manifest FILE --work-dir DIR --approved-plan-sha256 HASH
+  terraform-stage.sh apply --manifest FILE --work-dir DIR --approved-plan-sha256 HASH [--confirmed-update-plan-sha256 HASH]
   terraform-stage.sh inventory --manifest FILE --work-dir DIR
   terraform-stage.sh destroy-plan --manifest FILE --work-dir DIR [--confirmation-file FILE]
   terraform-stage.sh destroy-apply --manifest FILE --work-dir DIR --approved-plan-sha256 HASH
@@ -17,13 +17,14 @@ EOF
 
 [[ ${1:-} == --help || ${1:-} == -h ]] && { usage; exit 0; }
 command=${1:-}; [[ -n "$command" ]] || { usage >&2; exit 2; }; shift
-manifest= work_dir= approved= confirmation=
+manifest= work_dir= approved= confirmation= confirmed_update=
 require_no_secret_args "$@"
 while (($#)); do
   case "$1" in
     --manifest) manifest=${2:-}; shift 2;;
     --work-dir) work_dir=${2:-}; shift 2;;
     --approved-plan-sha256) approved=${2:-}; shift 2;;
+    --confirmed-update-plan-sha256) confirmed_update=${2:-}; shift 2;;
     --confirmation-file) confirmation=${2:-}; shift 2;;
     --help|-h) usage; exit 0;;
     *) die "unknown argument";;
@@ -84,6 +85,7 @@ write_tfvars() {
        vpc_cidr:.network.vpcCidr,zone_a_cidr:.network.zoneACidr,zone_b_cidr:.network.zoneBCidr,
        ecs_image_id:.resolvedInfrastructure.ecsImageId,
        ecs_instance_type:.resolvedInfrastructure.ecsInstanceType,
+       ecs_nodes:(.targetEcsNodes // {zone_a:.availabilityZones[0],zone_b:.availabilityZones[1]}),
        rds_instance_type:.resolvedInfrastructure.rdsInstanceType,
        rds_category:.resolvedInfrastructure.rdsCategory,
        rds_storage_type:.resolvedInfrastructure.rdsStorageType,
@@ -142,6 +144,8 @@ case "$command" in
     "${AUTOWONDER_PYTHON:-python3}" "$SCRIPT_DIR/resolve_zones.py" check-binding --manifest "$manifest" --plan-json "$plan_json" --work-dir "$work_dir"
     "${AUTOWONDER_PYTHON:-python3}" "$SCRIPT_DIR/resolve_zones.py" validate --manifest "$manifest" --plan-json "$plan_json"
     "${AUTOWONDER_PYTHON:-python3}" "$SCRIPT_DIR/resolve_zones.py" check-binding --manifest "$manifest" --plan-json "$plan_json" --work-dir "$work_dir"
+    # Separate human approval from the machine-approved plan hash used for new installs.
+    "${AUTOWONDER_PYTHON:-python3}" "$SCRIPT_DIR/resolve_zones.py" check-update-approval --manifest "$manifest" --plan-json "$plan_json" --work-dir "$work_dir" --confirmed-update-plan-sha256 "$confirmed_update"
     atomic_jq "$manifest" '.terraform.pendingOperation="apply" | .phase="infrastructure" | .status="unknown"'
     terraform -chdir="$work_dir" apply "$plan_path"
     atomic_jq "$manifest" '.terraform.pendingOperation=null'

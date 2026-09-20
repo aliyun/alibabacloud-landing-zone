@@ -492,6 +492,9 @@ def run_terraform_output(project_root: Path, discovery: Dict[str, Any]) -> Dict[
         terraform_data.mkdir(mode=0o700)
         environment = dict(os.environ)
         environment["TF_DATA_DIR"] = str(terraform_data)
+        import runpy
+        configure = runpy.run_path(str(Path(__file__).with_name("terraform_runtime.py")))["configure"]
+        environment = configure(environment, temporary)
         init_command = [
             "terraform", "-chdir=" + str(terraform_dir), "init", "-reconfigure", "-input=false",
             "-force-copy",

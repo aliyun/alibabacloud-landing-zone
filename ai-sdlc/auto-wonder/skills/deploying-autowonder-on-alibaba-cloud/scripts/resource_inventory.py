@@ -7,6 +7,7 @@ import copy
 from datetime import datetime, timezone
 import json
 import math
+import random
 import re
 import subprocess
 import time
@@ -16,15 +17,33 @@ class InventoryError(ValueError):
     pass
 
 
+# Discovery is serial. Share pacing across all parameters/regions of an API in
+# this process; separate deployment processes still share the cloud account quota.
+REQUEST_INTERVAL_SECONDS = 0.3
+_request_completed_at = {}
+
+
 def request(region, service, action, params):
     args = ['aliyun', service, action, '--region', region, '--profile', 'auto-wonder']
     for key, value in params.items():
         if value is not None:
             args += ['--' + key, str(value).lower() if isinstance(value, bool) else str(value)]
+    api = (service, action)
     for attempt in range(3):
+        completed = _request_completed_at.get(api)
+        if completed is not None:
+            remaining = REQUEST_INTERVAL_SECONDS - (time.monotonic() - completed)
+            if remaining > 0:
+                time.sleep(remaining)
         category = 'api-error'
+        throttled = False
         try:
-            result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            try:
+                result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            finally:
+                # Failed calls and timeouts consume quota too. Retry backoff counts
+                # toward the gap instead of adding another unconditional sleep.
+                _request_completed_at[api] = time.monotonic()
             if result.returncode == 0:
                 try:
                     data = json.loads(result.stdout)
@@ -35,6 +54,7 @@ def request(region, service, action, params):
                 return data
             # Inspect diagnostics only in memory; never echo signed requests.
             diagnostic = (result.stderr + result.stdout).lower()
+            throttled = 'throttl' in diagnostic
             if any(word in diagnostic for word in ('forbidden', 'accessdenied', 'unauthorized')):
                 category = 'permission'
             elif any(word in diagnostic for word in ('throttl', 'timeout', 'temporarily', 'internalerror', 'serviceunavailable')):
@@ -49,7 +69,7 @@ def request(region, service, action, params):
             raise InventoryError('cli-unavailable') from None
         if category not in ('transient', 'timeout') or attempt == 2:
             raise InventoryError(category)
-        time.sleep(2 ** attempt)
+        time.sleep(2 ** attempt + (random.uniform(0, REQUEST_INTERVAL_SECONDS) if throttled else 0))
 
 
 def rows(data, key, wrapper=None):
