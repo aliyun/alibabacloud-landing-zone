@@ -8,6 +8,7 @@ import { server } from '@/test/mocks/server';
 import { createAppRoutes } from '@/app/router';
 import { useAuthStore } from '@/shared/auth/store';
 import { USER_IM_IDENTITIES_QUERY_KEY } from './profileApi';
+import type { UpdateDingTalkIdentityParams } from './profileApi';
 import { ProfileSettingsPage } from './ProfileSettingsPage';
 import { MCP_PERMISSION_HINT } from '@/features/open-platform/McpTokenSettingsPanel';
 
@@ -508,4 +509,28 @@ describe('ProfileSettingsPage', () => {
       expect(router.state.location.search).toBe('?tab=mcp');
     });
   });
+});
+
+it('edits and tests the platform-selected Feishu identity', async () => {
+  let saved: UpdateDingTalkIdentityParams | undefined;
+  let tests = 0;
+  server.use(
+    http.get('/api/users/me/im-identities', () => HttpResponse.json(identityPayload({ provider: 'FEISHU', externalUserId: saved?.externalUserId ?? 'fs-user' }))),
+    http.put('/api/users/me/im-identities/feishu', async ({ request }) => {
+      saved = await request.json() as UpdateDingTalkIdentityParams;
+      return HttpResponse.json({ ...identityPayload(), data: { provider: 'FEISHU', ...saved } });
+    }),
+    http.post('/api/users/me/im-identities/feishu/test', () => { tests++; return HttpResponse.json(mcpPayload(null)); }),
+  );
+  renderPage();
+  const input = await screen.findByLabelText('飞书工号');
+  expect(screen.queryByLabelText('钉钉工号')).not.toBeInTheDocument();
+  expect(screen.getByText(/不是员工编号或 open_id/)).toBeInTheDocument();
+  await userEvent.clear(input); await userEvent.type(input, 'fs-new');
+  expect(screen.getByRole('button', { name: /发送测试/ })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: /保存/ }));
+  await waitFor(() => expect(saved).toEqual({ externalUserId: 'fs-new' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: /发送测试/ })).toBeEnabled());
+  await userEvent.click(screen.getByRole('button', { name: /发送测试/ }));
+  await waitFor(() => expect(tests).toBe(1));
 });

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.agent.dto;
 
+import com.aliyun.autowonder.agent.AgentEnvironmentVariableRefVO;
 import lombok.Getter;
 import lombok.Setter;
 import java.util.Date;
@@ -29,12 +30,14 @@ public class AgentVersionVO {
     private List<RepoPermItem> repoPerms;
     private List<SkillItem> skills;
     private List<MemoryRefItem> memoryRefs;
+    private List<AgentEnvironmentVariableRefVO> environmentVariables;
 
     @Getter
     @Setter
     public static class RepoPermItem {
         private Long repoId;
         private String permLevel;
+        private List<String> allowedBranchPatterns;
     }
 
     @Getter

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.environment.EnvironmentVariableDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.environment.EnvironmentVariableDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO environment_variable
+            (tenant_id, name, credential_ref, description, creator_id, modifier_id, is_deleted, version)
+        VALUES
+            (#{tenantId}, #{name}, #{credentialRef}, #{description}, #{creatorId}, #{modifierId}, 0, 0)
+    </insert>
+
+    <select id="listActive" resultType="com.aliyun.autowonder.environment.EnvironmentVariableDO">
+        SELECT id, tenant_id, name, description, gmt_create, gmt_modified,
+               creator_id, modifier_id, is_deleted, version
+        FROM environment_variable
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        ORDER BY name, id
+    </select>
+
+    <select id="findActiveById" resultType="com.aliyun.autowonder.environment.EnvironmentVariableDO">
+        SELECT id, tenant_id, name, credential_ref, description, gmt_create, gmt_modified,
+               creator_id, modifier_id, is_deleted, version
+        FROM environment_variable
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <select id="findActiveByIdForUpdate" resultType="com.aliyun.autowonder.environment.EnvironmentVariableDO">
+        SELECT id, tenant_id, name, credential_ref, description, gmt_create, gmt_modified,
+               creator_id, modifier_id, is_deleted, version
+        FROM environment_variable
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+        LIMIT 1 FOR UPDATE
+    </select>
+
+    <select id="findActiveByNameIgnoreCase" resultType="com.aliyun.autowonder.environment.EnvironmentVariableDO">
+        SELECT id, tenant_id, name, description, gmt_create, gmt_modified,
+               creator_id, modifier_id, is_deleted, version
+        FROM environment_variable
+        WHERE tenant_id = #{tenantId} AND LOWER(name) = LOWER(#{name}) AND is_deleted = 0
+        LIMIT 1
+    </select>
+
+    <update id="updateMetadata">
+        UPDATE environment_variable
+        SET name = #{name}, description = #{description}, modifier_id = #{modifierId},
+            version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0 AND version = #{version}
+    </update>
+
+    <update id="updateWithValue">
+        UPDATE environment_variable
+        SET name = #{name}, description = #{description}, credential_ref = #{credentialRef},
+            modifier_id = #{modifierId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0 AND version = #{version}
+    </update>
+
+    <update id="softDelete">
+        UPDATE environment_variable
+        SET is_deleted = id, modifier_id = #{modifierId}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0 AND version = #{version}
+    </update>
+
+    <select id="listActiveReferences"
+            resultType="com.aliyun.autowonder.environment.EnvironmentVariableReference">
+        SELECT a.id AS agentId,
+               a.name AS agentName,
+               av.id AS agentVersionId,
+               av.version_no AS versionNo,
+               CASE WHEN a.online_version_id = av.id THEN 'ONLINE' ELSE 'EDITING' END AS refType
+        FROM agent_environment_variable_ref ref
+        JOIN agent_version av ON av.id = ref.agent_version_id AND av.tenant_id = #{tenantId}
+        JOIN agent a ON a.id = av.agent_id AND a.tenant_id = #{tenantId}
+        WHERE ref.tenant_id = #{tenantId}
+          AND ref.environment_variable_id = #{environmentVariableId}
+          AND a.is_deleted = 0
+          AND av.is_deleted = 0
+          AND (a.online_version_id = av.id OR a.editing_version_id = av.id)
+        ORDER BY a.id, av.version_no
+    </select>
+</mapper>

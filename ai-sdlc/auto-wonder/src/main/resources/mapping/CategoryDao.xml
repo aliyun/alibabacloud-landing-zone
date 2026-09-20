@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.category.CategoryDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.category.CategoryDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO asset_category (tenant_id, parent_id, name, description,
+                                    creator_id, is_deleted, version)
+        VALUES (#{tenantId}, #{parentId}, #{name}, #{description},
+                #{creatorId}, 0, 0)
+    </insert>
+
+    <select id="findByIdAndTenant" resultType="com.aliyun.autowonder.category.CategoryDO">
+        SELECT * FROM asset_category WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0 LIMIT 1
+    </select>
+
+    <!-- 删除/打标/移动都先锁分类行本身：写事务之间在行级串行，
+         配合 FOR UPDATE 的当前读，REPEATABLE_READ 快照读不会漏掉并发提交的关联 -->
+    <select id="findByIdAndTenantForUpdate" resultType="com.aliyun.autowonder.category.CategoryDO">
+        SELECT * FROM asset_category WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0 LIMIT 1 FOR UPDATE
+    </select>
+
+    <select id="listByTenant" resultType="com.aliyun.autowonder.category.CategoryDO">
+        SELECT * FROM asset_category WHERE tenant_id = #{tenantId} AND is_deleted = 0
+        ORDER BY name ASC, id ASC
+    </select>
+
+    <!-- 同级判重的锁定读：顶级分类 parent_id 为 NULL，uk_tenant_parent_name 对 NULL 不去重，
+         写路径必须靠范围锁串行化并发同名创建 -->
+    <select id="findSiblingByNameForUpdate" resultType="com.aliyun.autowonder.category.CategoryDO">
+        SELECT * FROM asset_category
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          <choose>
+              <when test="parentId != null">AND parent_id = #{parentId}</when>
+              <otherwise>AND parent_id IS NULL</otherwise>
+          </choose>
+          AND name = #{name}
+        LIMIT 1 FOR UPDATE
+    </select>
+
+    <!-- 锁定读：并发“在待删分类下新建子分类”会被 idx_tenant_parent 上的范围锁阻塞，删除后不再悬挂 parent_id。
+         H2 不允许聚合查询带 FOR UPDATE，改为按 id 锁行，MySQL 语义等价 -->
+    <select id="listChildIdsForUpdate" resultType="long">
+        SELECT id FROM asset_category
+        WHERE tenant_id = #{tenantId} AND parent_id = #{parentId} AND is_deleted = 0 FOR UPDATE
+    </select>
+
+    <update id="update">
+        UPDATE asset_category
+        SET parent_id = #{parentId}, name = #{name}, description = #{description},
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+
+    <!-- 删除仅允许作用于空节点（无子分类、无资产关联），空节点无墓碑名称占用问题，物理删除即可 -->
+    <delete id="delete">
+        DELETE FROM asset_category WHERE id = #{id} AND tenant_id = #{tenantId}
+    </delete>
+</mapper>

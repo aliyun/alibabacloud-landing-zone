@@ -10,6 +10,7 @@ public final class DispatchFailureReason {
     public static final String TIMEOUT = "TIMEOUT";
     public static final String MANUAL_CONTINUE = "MANUAL_CONTINUE";
     public static final String COMMENT_REWORK = "COMMENT_REWORK";
+    public static final String PAUSE_CONFIRMATION_MISSING = "PAUSE_CONFIRMATION_MISSING";
 
     private DispatchFailureReason() {}
 }

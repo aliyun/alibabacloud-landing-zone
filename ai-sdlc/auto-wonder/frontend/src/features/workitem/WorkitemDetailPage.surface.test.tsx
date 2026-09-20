@@ -1,16 +1,25 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { WorkitemDetailPage } from './WorkitemDetailPage';
 import { useAuthStore } from '@/shared/auth/store';
+import { BRANDING_QUERY_KEY } from '@/features/platform/brandingApi';
+import { copyTextToClipboard } from '@/shared/lib/clipboard';
 
 /** 为什么单独开一个文件而不是加进 WorkitemDetailPage.test.tsx：
  *  那个文件 57 个用例共用一套 msw handler 与轮询，跑同一提交会随机红 2~21 条
  *  （master 上同样如此），把「右栏白底」这条唯一的守卫放进去等于让它随机失效。
- *  这里只留一个用例、只发一轮静态请求、不进 clarify 模式，因此是确定性的。 */
+ *  这里只留静态请求、不进 clarify 模式的用例，因此是确定性的。 */
+
+// 拦库函数而不是 stub navigator.clipboard——降级分支已由 shared/lib/clipboard.test.ts 覆盖。
+vi.mock('@/shared/lib/clipboard', () => ({
+  copyTextToClipboard: vi.fn().mockResolvedValue(true),
+}));
+
+const copyMock = vi.mocked(copyTextToClipboard);
 
 const mockWorkitem = {
   id: '1', workType: 'REQ', title: '跨境支付重构', contentMd: '# 背景',
@@ -35,12 +44,31 @@ function surfaceHandlers() {
     http.get('/api/workitems/1/clarification', () => ok(null)),
     http.get('/api/workitems/1/artifacts', () => ok([])),
     http.get('/api/workitems/1/requirement-documents', () => ok([])),
+    // 详情页首屏会渲染 RecoveryControls，它拉 /recovery；漏了它 msw 会以 error 策略
+    // 抛未处理请求拒绝，vitest 记为 unhandled error 并提示可能造成假阳性。
+    http.get('/api/workitems/1/recovery', () => ok({ closed: false, executions: [] })),
   ];
+}
+
+/** 私有化部署的品牌配置：分享链接必须落在这个域名上，而不是代码里的内网默认值。 */
+function privateDeploymentBrandingHandler() {
+  return http.get('/api/platform/branding/public', () => ok({
+    platformName: 'AutoWonder',
+    logoUrl: '/logo.png',
+    themeKey: 'aliyun-orange',
+    primaryColor: '#f97316',
+    domain: 'https://wonder.example.com',
+    mcpBaseUrl: 'https://wonder.example.com/api/mcp',
+    recommendedRuntimeVersion: '0.2.152',
+    deploymentVersion: 'x.x.x',
+    communityEdition: false,
+    canManage: false,
+  }));
 }
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={['/workitems/1']}>
         <Routes>
@@ -49,10 +77,12 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 }
 
 describe('WorkitemDetailPage right panel surface', () => {
   beforeEach(() => {
+    copyMock.mockClear();
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
@@ -71,5 +101,22 @@ describe('WorkitemDetailPage right panel surface', () => {
     expect(panel).toHaveStyle({ background: '#ffffff' });
     // jsdom 不会规范化 rgba() 里的空格，toHaveStyle 的简写比对会因此失配，直接比字面串。
     expect(panel.style.borderLeft).toBe('1px solid rgba(0,0,0,0.06)');
+  });
+
+  it('copies the deployment link of the workitem from the top-right share entry', async () => {
+    server.use(...surfaceHandlers(), privateDeploymentBrandingHandler());
+    const { queryClient } = renderPage();
+
+    expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
+    // 品牌数据落缓存后再点：早一步点击会走 origin 兜底，断言就成了时序赌博
+    await waitFor(() => expect(queryClient.getQueryData(BRANDING_QUERY_KEY))
+      .toMatchObject({ domain: 'https://wonder.example.com' }));
+
+    fireEvent.click(screen.getByTestId('workitem-share-button'));
+
+    expect(copyMock).toHaveBeenCalledWith('https://wonder.example.com/workitems/1 《跨境支付重构》');
+    // 把 ✓ 反馈的状态更新冲掉，免得 act 警告漏到下一个用例
+    await act(async () => {});
+    expect(screen.getByTestId('workitem-share-button')).toHaveTextContent('已复制');
   });
 });

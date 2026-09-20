@@ -15,6 +15,14 @@ import static org.mockito.Mockito.*;
 
 class InboundFrameRouterConversationTest {
 
+    private static String heartbeat(String conversationIds) {
+        return "{\"type\":\"HEARTBEAT\",\"maxConcurrentDispatches\":1,"
+                + "\"protocolFeatures\":[\"dispatch_inventory_v1\"],"
+                + "\"runningDispatchIds\":[],\"ownedDispatchIds\":[],"
+                + "\"runningConversationTurnIds\":" + conversationIds + ","
+                + "\"dispatchInventoryReady\":true}";
+    }
+
     private final DispatchService dispatchService = mock(DispatchService.class);
     private final ArtifactService artifactService = mock(ArtifactService.class);
     private final PresenceManager presenceManager = mock(PresenceManager.class);
@@ -45,10 +53,10 @@ class InboundFrameRouterConversationTest {
     @Test
     void heartbeatRecoversStaleConversationTurnsForExecutor() {
         ExecutorSession es = new ExecutorSession(9L, 3L, 1L, mock(Session.class));
-        when(presenceManager.heartbeat(eq(9L), eq(3L), eq(1), any())).thenReturn(true);
-        String frame = "{\"type\":\"HEARTBEAT\",\"runningConversationTurnIds\":[55]}";
+        when(presenceManager.publishHeartbeat(anyLong(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(PresenceManager.SessionMutationResult.APPLIED);
 
-        router.route(es, frame);
+        router.route(es, heartbeat("[55]"));
 
         verify(convSvc).recoverStaleTurnsForExecutor(1L, 9L, java.util.Set.of(55L));
     }
@@ -57,22 +65,27 @@ class InboundFrameRouterConversationTest {
     void firstHeartbeatAfterReplacementImmediatelyRecoversInactiveTurns() {
         ExecutorSession es = new ExecutorSession(9L, 3L, 1L, mock(Session.class));
         es.markReplacementRecoveryPending();
-        when(presenceManager.heartbeat(eq(9L), eq(3L), eq(1), any())).thenReturn(true);
+        when(presenceManager.publishHeartbeat(anyLong(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(PresenceManager.SessionMutationResult.APPLIED);
 
-        router.route(es, "{\"type\":\"HEARTBEAT\",\"runningConversationTurnIds\":[]}");
+        router.route(es, heartbeat("[]"));
 
         verify(convSvc).recoverInactiveTurnsForReplacedExecutor(1L, 9L, java.util.Set.of());
         verify(convSvc, never()).recoverStaleTurnsForExecutor(anyLong(), anyLong(), any());
     }
 
     @Test
-    void legacyHeartbeatDoesNotRecoverConversationTurnsWithoutRuntimeActivityReport() {
+    void legacyHeartbeatRemainsCompatibleWithoutInventingConversationActivity() throws Exception {
         ExecutorSession es = new ExecutorSession(9L, 3L, 1L, mock(Session.class));
-        when(presenceManager.heartbeat(9L, 3L, 1)).thenReturn(true);
+        when(presenceManager.publishHeartbeat(anyLong(), anyLong(), any(), any(), any(), any(), any()))
+                .thenReturn(PresenceManager.SessionMutationResult.APPLIED);
 
         router.route(es, "{\"type\":\"HEARTBEAT\"}");
 
         verify(convSvc, never()).recoverStaleTurnsForExecutor(anyLong(), anyLong(), any());
+        verify(presenceManager).publishHeartbeat(eq(9L), eq(3L), isNull(), any(),
+                isNull(), isNull(), isNull());
+        verify(es.getSession(), never()).close();
     }
 
     @Test

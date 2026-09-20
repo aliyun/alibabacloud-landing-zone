@@ -37,17 +37,23 @@ public class PlatformSkillCatalog {
                     "List AutoWonder projects available to the token owner before selecting an MCP workspace.",
                     List.of("autowonder.list_projects")),
             skill("autowonder-skill-manager", "CODEX_SKILL", "AutoWonder Skill Manager",
-                    "Manage skills, MCP server records and plugin records, upload Skill packages, and install reusable AutoWonder platform skills.",
+                    "Manage skills, MCP server records and plugin records, upload Skill packages, install reusable "
+                            + "AutoWonder platform skills, and organize skills with project-level categories.",
                     List.of("autowonder.list_platform_skills", "autowonder.install_platform_skill",
                             "autowonder.create_skill", "autowonder.list_skills", "autowonder.get_skill",
                             "autowonder.update_skill", "autowonder.delete_skill",
                             "autowonder.inspect_skill_package", "autowonder.upload_skill_package",
-                            "autowonder.create_skill_from_package", "autowonder.update_skill_package")),
+                            "autowonder.create_skill_from_package", "autowonder.update_skill_package",
+                            "autowonder.list_categories", "autowonder.get_category",
+                            "autowonder.create_category", "autowonder.update_category",
+                            "autowonder.delete_category", "autowonder.set_skill_category",
+                            "autowonder.batch_set_skill_category")),
             skill("autowonder-scheduled-task-operator", "CODEX_SKILL", "AutoWonder Scheduled Task Operator",
-                    "Create, inspect, update and transition 7x24 scheduled tasks and their runs through MCP tools.",
+                    "Create, inspect, update, delete and transition 7x24 scheduled tasks and their runs through MCP tools.",
                     List.of("autowonder.create_scheduled_task", "autowonder.list_scheduled_tasks",
                             "autowonder.get_scheduled_task", "autowonder.update_scheduled_task",
-                            "autowonder.transition_scheduled_task", "autowonder.get_scheduled_task_run",
+                            "autowonder.transition_scheduled_task", "autowonder.delete_scheduled_task",
+                            "autowonder.get_scheduled_task_run", "autowonder.list_scheduled_task_runs",
                             "autowonder.add_scheduled_task_run_comment"))
     );
 

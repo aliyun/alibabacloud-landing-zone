@@ -14,6 +14,7 @@ import com.aliyun.autowonder.memory.MemoryDO;
 import com.aliyun.autowonder.memory.MemoryScopeResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 
@@ -40,6 +41,7 @@ class AgentSubTableTest {
         memoryRefDao = mock(AgentMemoryRefDao.class);
         workspaceDao = mock(WorkspaceDao.class);
 		capabilityDao = mock(SkillDao.class);
+		when(repoPermDao.update(any())).thenReturn(1);
         service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 mock(ExecutorDao.class), mock(ExecutorRegistry.class), capabilityDao);
     }
@@ -57,6 +59,7 @@ class AgentSubTableTest {
         AgentVersionDO v = new AgentVersionDO();
         v.setId(versionId);
         v.setTenantId(100L);
+        v.setAgentId(10L);
         v.setStatus("DRAFT");
         v.setVersion(0);
         return v;
@@ -69,10 +72,89 @@ class AgentSubTableTest {
         RepoPermRequest req = new RepoPermRequest();
         req.setRepoId(300L);
         req.setPermLevel("WRITE");
+        req.setAllowedBranchPatterns(List.of("release/*", "develop", "release/*"));
 
         service.addRepoPerm(10L, req, 100L, 7L);
         verify(repoPermDao).insert(argThat((AgentRepoPermDO p) ->
-                p.getAgentVersionId() == 20L && p.getRepoId() == 300L && "WRITE".equals(p.getPermLevel())));
+                p.getAgentVersionId() == 20L && p.getRepoId() == 300L && "WRITE".equals(p.getPermLevel())
+                        && "[\"release/*\",\"develop\"]".equals(p.getAllowedBranchPatterns())));
+    }
+
+    @Test
+    void addRepoPerm_updates_existing_draft_binding() {
+        when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+        when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
+        AgentRepoPermDO existing = new AgentRepoPermDO();
+        existing.setRepoId(300L);
+        when(repoPermDao.listByVersion(20L)).thenReturn(List.of(existing));
+        RepoPermRequest req = new RepoPermRequest();
+        req.setRepoId(300L);
+        req.setPermLevel("WRITE");
+        req.setAllowedBranchPatterns(List.of("feature/*"));
+
+        service.addRepoPerm(10L, req, 100L, 7L);
+
+        verify(repoPermDao).update(argThat(p -> p.getTenantId() == 100L
+                && p.getAgentVersionId() == 20L && p.getRepoId() == 300L
+                && "WRITE".equals(p.getPermLevel())
+                && "[\"feature/*\"]".equals(p.getAllowedBranchPatterns())));
+        verify(repoPermDao, never()).insert(any());
+    }
+
+    @Test
+    void legacyDuplicateRequestPreservesExistingPermissionAndBranchPatterns() {
+        when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+        when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
+        AgentRepoPermDO existing = new AgentRepoPermDO();
+        existing.setRepoId(300L);
+        existing.setPermLevel("WRITE");
+        existing.setAllowedBranchPatterns("[\"release/*\"]");
+        when(repoPermDao.listByVersion(20L)).thenReturn(List.of(existing));
+        RepoPermRequest legacyRequest = new RepoPermRequest();
+        legacyRequest.setRepoId(300L);
+
+        service.addRepoPerm(10L, legacyRequest, 100L, 7L);
+
+        verify(repoPermDao).update(argThat(p -> "WRITE".equals(p.getPermLevel())
+                && "[\"release/*\"]".equals(p.getAllowedBranchPatterns())));
+    }
+
+    @Test
+    void concurrentInsertRaceReloadsAndUpdatesWinningBinding() {
+        when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+        when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
+        AgentRepoPermDO winner = new AgentRepoPermDO();
+        winner.setRepoId(300L);
+        winner.setPermLevel("READ");
+        when(repoPermDao.listByVersion(20L)).thenReturn(List.of());
+        when(repoPermDao.findByVersionAndRepoForUpdate(20L, 300L, 100L)).thenReturn(winner);
+        doThrow(new DuplicateKeyException("insert race")).when(repoPermDao).insert(any());
+        RepoPermRequest request = new RepoPermRequest();
+        request.setRepoId(300L);
+        request.setPermLevel("WRITE");
+        request.setAllowedBranchPatterns(List.of("release/*"));
+
+        service.addRepoPerm(10L, request, 100L, 7L);
+
+        verify(repoPermDao).update(argThat(p -> "WRITE".equals(p.getPermLevel())
+                && "[\"release/*\"]".equals(p.getAllowedBranchPatterns())));
+        verify(repoPermDao).findByVersionAndRepoForUpdate(20L, 300L, 100L);
+    }
+
+    @Test
+    void concurrentDeleteDuringUpdateReturnsConflict() {
+        when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+        when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
+        AgentRepoPermDO existing = new AgentRepoPermDO();
+        existing.setRepoId(300L);
+        existing.setPermLevel("READ");
+        when(repoPermDao.listByVersion(20L)).thenReturn(List.of(existing));
+        when(repoPermDao.update(any())).thenReturn(0);
+        RepoPermRequest request = new RepoPermRequest();
+        request.setRepoId(300L);
+        request.setPermLevel("WRITE");
+
+        assertThrows(BizException.class, () -> service.addRepoPerm(10L, request, 100L, 7L));
     }
 
     @Test
@@ -125,6 +207,8 @@ class AgentSubTableTest {
 
 	@Test
 	void addSkill_rejects_capability_from_another_tenant() {
+		when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+		when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
 		SkillDO capability = new SkillDO();
 		capability.setId(400L);
 		capability.setTenantId(999L);
@@ -135,7 +219,7 @@ class AgentSubTableTest {
 		BizException ex = assertThrows(BizException.class, () -> service.addSkill(10L, req, 100L, 7L));
 
 		assertEquals("22001", ex.getCode());
-		verifyNoInteractions(agentDao, versionDao, skillDao);
+		verify(skillDao, never()).insert(any());
 	}
 
     @Test
@@ -252,5 +336,36 @@ class AgentSubTableTest {
         when(versionDao.findById(20L)).thenReturn(draftVersion(20L));
         service.removeRepoPerm(10L, 300L, 100L, 7L);
         verify(repoPermDao).deleteByVersionAndRepo(20L, 300L, 100L);
+    }
+
+    @Test
+    void addRepoPerm_rejected_for_platform_agent() {
+        when(agentDao.findById(10L)).thenReturn(platformAgentWithDraft(10L, 20L));
+        RepoPermRequest req = new RepoPermRequest();
+        req.setRepoId(300L);
+        req.setPermLevel("WRITE");
+
+        BizException ex = assertThrows(BizException.class, () -> service.addRepoPerm(10L, req, 100L, 7L));
+
+        assertEquals("14015", ex.getCode());
+        verify(repoPermDao, never()).insert(any(AgentRepoPermDO.class));
+        verify(versionDao, never()).insert(any(AgentVersionDO.class));
+    }
+
+    @Test
+    void removeRepoPerm_rejected_for_platform_agent() {
+        when(agentDao.findById(10L)).thenReturn(platformAgentWithDraft(10L, 20L));
+
+        BizException ex = assertThrows(BizException.class, () -> service.removeRepoPerm(10L, 300L, 100L, 7L));
+
+        assertEquals("14015", ex.getCode());
+        verify(repoPermDao, never()).deleteByVersionAndRepo(anyLong(), anyLong(), anyLong());
+        verify(versionDao, never()).insert(any(AgentVersionDO.class));
+    }
+
+    private AgentDO platformAgentWithDraft(long agentId, long versionId) {
+        AgentDO a = agentWithDraft(agentId, versionId);
+        a.setKind("PLATFORM");
+        return a;
     }
 }

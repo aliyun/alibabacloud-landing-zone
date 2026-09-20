@@ -1,4 +1,5 @@
 .auth-entry-page {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
   gap: 34px;
@@ -207,4 +208,10 @@
   .auth-entry-workflow {
     grid-template-columns: 1fr;
   }
+}
+
+.auth-entry-help { position: absolute; top: 16px; right: 24px; z-index: 1; }
+@media (max-width: 980px) {
+  .auth-entry-page { padding-top: 64px; }
+  .auth-entry-help { right: 16px; }
 }

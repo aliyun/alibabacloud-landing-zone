@@ -5,10 +5,14 @@ import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchTransport;
 import com.aliyun.autowonder.dispatch.DispatchCheckpointService;
 import com.aliyun.autowonder.dispatch.ResumeDescriptor;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolFeatures;
+import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.mcp.DispatchMcpTokenService;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
+import com.aliyun.autowonder.websocket.frame.DebugLogDirective;
 import com.aliyun.autowonder.websocket.frame.TaskDispatchFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +27,11 @@ public class WsDispatchTransport implements DispatchTransport {
     static final String TASK_PACKAGE_SIGNATURE_V1 = "TASK_PACKAGE_SIGNATURE_V1";
     static final String TASK_PACKAGE_HOOKS_V1 = "TASK_PACKAGE_HOOKS_V1";
     static final String TASK_PACKAGE_TOOL_HOOKS_V1 = "TASK_PACKAGE_TOOL_HOOKS_V1";
+    static final String DEBUG_LOG_V1 = "DEBUG_LOG_V1";
+    public static final String AGENT_ENVIRONMENT_VARIABLES_V1 =
+            ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1;
+    /** 单轮 debug 日志硬上限 200MB（协议契约缺省值，runtime 超限截断并上报 truncated=true）。 */
+    static final long DEBUG_LOG_MAX_BYTES = 209_715_200L;
 
     private final SessionRegistry sessionRegistry;
     private final RedisManager redisManager;
@@ -31,12 +40,14 @@ public class WsDispatchTransport implements DispatchTransport {
     private final DispatchMcpTokenService dispatchMcpTokenService;
     private final PresenceManager presenceManager;
     private final SecretCrypto secretCrypto;
+    private final AgentEnvironmentVariableResolver environmentVariableResolver;
 
     @Autowired
     public WsDispatchTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
             NodeIdentity nodeIdentity, DispatchCheckpointService checkpointService,
             DispatchMcpTokenService dispatchMcpTokenService, PresenceManager presenceManager,
-            SecretCrypto secretCrypto) {
+            SecretCrypto secretCrypto,
+            AgentEnvironmentVariableResolver environmentVariableResolver) {
         this.sessionRegistry = sessionRegistry;
         this.redisManager = redisManager;
         this.nodeIdentity = nodeIdentity;
@@ -44,28 +55,31 @@ public class WsDispatchTransport implements DispatchTransport {
         this.dispatchMcpTokenService = dispatchMcpTokenService;
         this.presenceManager = presenceManager;
         this.secretCrypto = secretCrypto;
+        this.environmentVariableResolver = environmentVariableResolver;
     }
 
     WsDispatchTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
             NodeIdentity nodeIdentity, DispatchCheckpointService checkpointService,
             DispatchMcpTokenService dispatchMcpTokenService) {
-        this(sessionRegistry, redisManager, nodeIdentity, checkpointService, dispatchMcpTokenService, null, null);
+        this(sessionRegistry, redisManager, nodeIdentity, checkpointService, dispatchMcpTokenService,
+                null, null, null);
     }
 
     WsDispatchTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
             NodeIdentity nodeIdentity, DispatchCheckpointService checkpointService,
             DispatchMcpTokenService dispatchMcpTokenService, PresenceManager presenceManager) {
-        this(sessionRegistry, redisManager, nodeIdentity, checkpointService, dispatchMcpTokenService, presenceManager, null);
+        this(sessionRegistry, redisManager, nodeIdentity, checkpointService, dispatchMcpTokenService,
+                presenceManager, null, null);
     }
 
     WsDispatchTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
             NodeIdentity nodeIdentity) {
-        this(sessionRegistry, redisManager, nodeIdentity, null, null, null, null);
+        this(sessionRegistry, redisManager, nodeIdentity, null, null, null, null, null);
     }
 
     WsDispatchTransport(SessionRegistry sessionRegistry, RedisManager redisManager,
             NodeIdentity nodeIdentity, DispatchCheckpointService checkpointService) {
-        this(sessionRegistry, redisManager, nodeIdentity, checkpointService, null, null, null);
+        this(sessionRegistry, redisManager, nodeIdentity, checkpointService, null, null, null, null);
     }
 
     @Override
@@ -163,6 +177,7 @@ public class WsDispatchTransport implements DispatchTransport {
         f.setPackageRefreshPath("/api/daemon/dispatches/" + dispatch.getId() + "/package-url");
         f.setArtifactUploadPath("/api/daemon/dispatches/" + dispatch.getId() + "/artifacts");
         f.setCheckpointUploadPath("/api/daemon/dispatches/" + dispatch.getId() + "/checkpoint");
+        applyDebugLogDirective(f, dispatch);
         if (dispatchMcpTokenService != null) {
             f.setDispatchMcpToken(dispatchMcpTokenService.issue(dispatch));
         }
@@ -188,6 +203,44 @@ public class WsDispatchTransport implements DispatchTransport {
             f.setResumeCheckpointSeq(resume.checkpointSeq());
             f.setResumeCheckpointCandidates(resume.checkpointCandidates());
         }
+        java.util.Map<String, String> environmentVariables = environmentVariableResolver == null
+                ? java.util.Map.of()
+                : environmentVariableResolver.resolve(dispatch.getTenantId(), dispatch.getAgentVersionId());
+        requireEnvironmentVariableProtocol(dispatch.getExecutorId(), environmentVariables);
+        f.setEnvironmentVariables(environmentVariables);
         return f;
+    }
+
+    private void requireEnvironmentVariableProtocol(long executorId,
+            java.util.Map<String, String> environmentVariables) {
+        if (environmentVariables.isEmpty()) {
+            return;
+        }
+        if (presenceManager == null || !presenceManager.supportsProtocolFeature(
+                executorId, AGENT_ENVIRONMENT_VARIABLES_V1)) {
+            throw new ExecutorProtocolCompatibilityException(AGENT_ENVIRONMENT_VARIABLES_V1);
+        }
+    }
+
+    /**
+     * best-effort：仅当 dispatch 冻结开关为 TRUE 且 executor 心跳声明了 DEBUG_LOG_V1 时下发
+     * debugLog 段（老 runtime 无该键，行为不变）。能力探测/组装的任何异常只降级为不下发 + warn，
+     * 绝不影响 TASK_DISPATCH 帧下发。
+     */
+    private void applyDebugLogDirective(TaskDispatchFrame f, DispatchDO dispatch) {
+        if (!Boolean.TRUE.equals(dispatch.getDebugLogEnabled()) || presenceManager == null) {
+            return;
+        }
+        try {
+            if (presenceManager.supportsProtocolFeature(dispatch.getExecutorId(), DEBUG_LOG_V1)) {
+                DebugLogDirective debugLog = new DebugLogDirective();
+                debugLog.setEnabled(true);
+                debugLog.setMaxBytes(DEBUG_LOG_MAX_BYTES);
+                f.setDebugLog(debugLog);
+            }
+        } catch (RuntimeException e) {
+            log.warn("debug log directive skipped dispatchId={} executorId={} reason=DEBUG_LOG_NEGOTIATE_ERROR",
+                    dispatch.getId(), dispatch.getExecutorId(), e);
+        }
     }
 }

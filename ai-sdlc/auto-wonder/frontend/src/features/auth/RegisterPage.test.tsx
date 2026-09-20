@@ -14,7 +14,7 @@ function renderRegister() {
 describe('RegisterPage', () => {
   it('renders registration form inside the product command center landing', () => {
     renderRegister();
-    expect(screen.getByText('AutoWonder · Agent SDLC')).toBeInTheDocument();
+    expect(screen.getByText('AutoWonder · AI Native SDLC Platform')).toBeInTheDocument();
     expect(screen.getByText('登录后，把工单交给数字员工小队')).toBeInTheDocument();
     expect(screen.getByText('创建 AutoWonder 账号')).toBeInTheDocument();
     expect(screen.getByLabelText(/用户名/)).toBeInTheDocument();

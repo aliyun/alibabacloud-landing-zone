@@ -4,10 +4,12 @@ import com.aliyun.autowonder.conversation.AgentConversationDO;
 import com.aliyun.autowonder.conversation.ConversationCapabilityService;
 import com.aliyun.autowonder.conversation.ConversationCapabilitySnapshot;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -80,7 +82,8 @@ class WsConversationTransportTest {
         conv.setTenantId(1L);
         conv.setExecutorId(9L);
         conv.setAgentId(3L);
-        conv.setAgentVersionId(50L);
+        // The capability snapshot is the effective per-turn version and may supersede this value.
+        conv.setAgentVersionId(49L);
         when(sessionRegistry.findByExecutorId(9L)).thenReturn(null);
         when(capabilityService.prepare(conv, 11L)).thenReturn(snapshot());
 
@@ -114,6 +117,81 @@ class WsConversationTransportTest {
         assertTrue(frame.contains("\"conversationId\":5"));
         assertTrue(frame.contains("\"turnId\":11"));
         verifyNoInteractions(capabilityService);
+    }
+
+    @Test
+    void resolvesLatestCompleteEnvironmentSnapshotForEveryTurn() {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        WsConversationTransport envTransport = new WsConversationTransport(
+                sessionRegistry, redisManager, capabilityService, resolver, presence);
+        AgentConversationDO conv = conversation();
+        when(sessionRegistry.findByExecutorId(9L)).thenReturn(null);
+        when(capabilityService.prepare(eq(conv), anyLong())).thenReturn(snapshot());
+        when(resolver.resolve(1L, 50L))
+                .thenReturn(Map.of("TOKEN", "first"), Map.of("TOKEN", "updated"));
+        when(presence.supportsProtocolFeature(
+                9L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1)).thenReturn(true);
+
+        envTransport.send(conv, 11L, "one", "SYS", 1);
+        envTransport.send(conv, 12L, "two", "SYS", 1);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager, times(2)).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL),
+                payload.capture());
+        assertEquals("first", com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(0))
+                .getJSONObject("environmentVariables").getString("TOKEN"));
+        assertEquals("updated", com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(1))
+                .getJSONObject("environmentVariables").getString("TOKEN"));
+        verify(resolver, times(2)).resolve(1L, 50L);
+    }
+
+    @Test
+    void rejectsNonEmptyConversationSnapshotOnUnsupportedExecutor() {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        WsConversationTransport envTransport = new WsConversationTransport(
+                sessionRegistry, redisManager, capabilityService, resolver, presence);
+        AgentConversationDO conv = conversation();
+        when(capabilityService.prepare(conv, 11L)).thenReturn(snapshot());
+        when(resolver.resolve(1L, 50L)).thenReturn(Map.of("TOKEN", "secret-value"));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> envTransport.send(conv, 11L, "one", "SYS", 1));
+
+        assertTrue(error.getMessage().contains(WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1));
+        assertFalse(error.getMessage().contains("secret-value"));
+        verify(redisManager, never()).publish(anyString(), anyString());
+    }
+
+    @Test
+    void sendsExplicitEmptyConversationSnapshotToLegacyExecutor() {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        WsConversationTransport envTransport = new WsConversationTransport(
+                sessionRegistry, redisManager, capabilityService, resolver, presence);
+        AgentConversationDO conv = conversation();
+        when(sessionRegistry.findByExecutorId(9L)).thenReturn(null);
+        when(capabilityService.prepare(conv, 11L)).thenReturn(snapshot());
+        when(resolver.resolve(1L, 50L)).thenReturn(Map.of());
+
+        envTransport.send(conv, 11L, "one", "SYS", 1);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        assertTrue(payload.getValue().contains("\"environmentVariables\":{}"));
+        verify(presence, never()).supportsProtocolFeature(
+                9L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1);
+    }
+
+    private AgentConversationDO conversation() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(5L);
+        conv.setTenantId(1L);
+        conv.setExecutorId(9L);
+        conv.setAgentId(3L);
+        conv.setAgentVersionId(50L);
+        return conv;
     }
 
     private ConversationCapabilitySnapshot snapshot() {

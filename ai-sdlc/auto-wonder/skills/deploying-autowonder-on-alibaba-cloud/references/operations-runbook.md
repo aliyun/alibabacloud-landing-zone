@@ -34,8 +34,12 @@ ad hoc cloud mutations.
 zones, and local credential chain. New deployments use fixed
 environment `auto-wonder-prod` and mandatory remote state.
 
-Resolve image and ECS/RDS/Redis SKUs with read-only inventory and price APIs,
-then record them in the manifest. Run `scripts/preflight.sh --manifest <file>
+Run `scripts/resolve-zones.sh --manifest <file>` to discover the image,
+ECS/RDS/Redis specifications, zones and prices as a complete combination before
+preflight. On `needs-agent`, use the adaptive candidate protocol below; submit
+`resolve --candidate FILE` rather than manually marking a manifest verified.
+Never ask the user to look up zones in the console.
+Run `scripts/preflight.sh --manifest <file>
 --source-dir <repo>`. It validates tools, account identity, region, resolved
 x86_64 inputs, two distinct zones, CIDRs, tags, and topology. Do not inspect or
 validate Git information for a new deployment.
@@ -49,7 +53,7 @@ requirement, invalid CIDR, or a secret-bearing manifest.
 
 **Output:** reconciled preflight evidence and resolved non-secret inputs.
 
-After preflight approval run `scripts/terraform-backend.sh prepare --manifest
+After preflight checks pass, automatically run `scripts/terraform-backend.sh prepare --manifest
 <file>`. It computes the fixed bucket, key, and absolute backend path, creates or
 exactly reconciles the private bucket, and records a ready checkpoint. Never ask
 the user for backend coordinates or adopt a mismatched bucket.
@@ -93,6 +97,15 @@ inventory command, reconcile IDs without publishing them, verify zones, tags,
 protection, listener sources, private endpoints, and application RAM scope.
 Uncommitted or untracked workspace changes must not block Terraform apply.
 
+If a Terraform operation is pending, infrastructure/destroy status is unknown,
+or the working directory contains `errored.tfstate`, stop all Terraform stages.
+Preserve the reviewed plans, manifest, emergency state, and a private remote-state
+snapshot. Refresh credentials, then independently reconcile state lineage,
+serials, resource ownership, and the observed cloud result under explicit review.
+Do not force-push state, unlock, replay apply, or delete the emergency state merely
+to bypass the guard. Clear unresolved markers only after reconciliation is verified;
+then create and review a fresh plan before any further mutation.
+
 **Output:** infrastructure inventory and **Infrastructure ready** candidate.
 
 ## Phase 4: Immutable Build And Transfer
@@ -124,6 +137,11 @@ and application AK/SK only in a protected session. Encode the env file with
 key: it is required to read persisted `enc:v1:` values. `runtime-config` must
 write `AUTOWONDER_PUBLIC_BASE_URL` into this file. It derives a missing value
 from manifest `applicationBaseUrl`, while preserving an explicit domain/TLS URL.
+For no-domain deployments, Terraform inventory sets this default to `http://`
+plus the numerically first of the two ALB public IPv4 addresses returned by
+`GetLoadBalancerAttribute`, and records both in
+`resources.alb_public_ipv4_addresses`. It stops if addresses cannot be resolved
+and validated; it must not fall back to the ALB DNS name.
 It also derives `autowonder.runtime.recommended-version` from the exact pending
 source `src/main/resources/application.yml`, records the resolved value as
 manifest `recommendedRuntimeVersion`, and replaces any stale
@@ -183,17 +201,33 @@ Execute this phase with `initialize-and-verify.sh rolling-start`.
 
 ## Phase 7: Business Initialization
 
-Run the initialization portion of `scripts/initialize-and-verify.sh`. Generate a
-strong random password for `admin`, create the first user and requested
-organization, and verify the user owns and administers it. If records already
-exist, reconcile them; do not blindly create duplicates.
+Run `scripts/initialize-and-verify.sh business-init` to create only `admin`.
+Do not ask for an organization name or create a workspace. The user creates one
+through the existing workspace screen after login. Database/system templates remain required.
 
-Keep the password only in the protected process until the final one-time handoff.
+Persist deployment-bound credentials at `/etc/autowonder/admin-bootstrap.json`
+(root-owned, mode 0600) on the first ECS before registration, under an exclusive lock.
+On conflict, verify the saved credentials only for recovery. If verification fails,
+stop and preserve the account; never delete or reset an admin based on missing organization
+membership. A completed manifest reuses its protected local handoff file without registering again.
+The remote recovery file remains sensitive; deliver credentials through the existing encrypted
+handoff and tell the user to change the initial password. Legacy organization fields are ignored,
+not used to delete existing organizations or create new ones.
+
 **Output:** **Business initialized** candidate.
 
 ## Phase 8: Acceptance
 
-Run `scripts/initialize-and-verify.sh` acceptance checks:
+Run `scripts/initialize-and-verify.sh acceptance --manifest FILE`. The current
+deployment-scoped entrypoint checks exactly two distinct ALB public IPv4
+addresses and requires `/checkpreload.htm` to return `success` on each. It then
+records `health=passed`, `albPublicIpv4Health=passed`, and `status=accepted`.
+This is script acceptance; it does not establish extended acceptance or TLS.
+`--acceptance-evidence` and `AUTOWONDER_RUNTIME_PROBE` are not reached by this
+scoped entrypoint and have no effect.
+
+When extended acceptance is requested, perform and retain independent evidence
+for all ten checks below; these are not automatically executed by the script:
 
 - application-level RDS and Redis write/read plus persistence after restart;
 - AutoWonder requirement-file OSS upload/read/presign/delete;
@@ -208,16 +242,20 @@ Run `scripts/initialize-and-verify.sh` acceptance checks:
 Security-group listings are control-plane evidence; use real data-plane probes.
 If SLS reports `IndexConfigNotExist`, cursor movement is degraded evidence, not
 a reason to mutate an existing store. New Terraform stores should have indexes.
-Record each deep check as `passed`, `degraded`, `failed`, or `pending`; a rerun
-must merge with completed evidence. Release acceptance remains partial while the
-real packaged runtime WebSocket probe is pending.
+Record each deep check as `passed`, `degraded`, `failed`, or `pending` in separate
+extended-acceptance evidence. The script preserves existing manifest fields but
+does not rerun or import these checks. Extended acceptance remains partial while
+any required check, including the real packaged runtime WebSocket probe, is
+pending; this does not change the script acceptance status.
 
 ## Phase 9: Handoff
 
 Run `scripts/sanitize-evidence.sh` before publishing the report. Separate
 Infrastructure ready, Application ready, Business initialized, Release accepted,
 and TLS accepted. Pending DNS or TLS does not erase lower-level success, but
-plaintext `ws://` on port 80 can never satisfy TLS acceptance.
+plaintext `ws://` on port 80 can never satisfy TLS acceptance. Label the current
+script result as ALB public IPv4 acceptance; claim extended acceptance only when
+its separate ten-check evidence passes. The scoped script does not verify TLS.
 
 For TLS acceptance, the HTTPS health request must succeed with curl's default
 certificate-chain and hostname verification. Merely choosing the certificate
@@ -248,4 +286,109 @@ In staged mode ask only whether to start the next recorded phase. In unattended
 new-deployment mode, automatically approve a machine-reviewed safe Terraform
 plan and continue directly to apply, stopping on any safety condition. A
 completed mutation is never repeated until its postcondition proves it did not
-finish. Teardown is always a separate mode and confirmation.
+finish. Teardown is a separate authorized scope; reuse explicit authorization
+already covering this deployment instead of requesting it again.
+
+Before `destroy-plan`, verify ownership and the reviewed impact, then run
+`bash scripts/prepare-teardown.sh --manifest FILE --confirmation-file FILE`;
+the confirmation file must contain `DESTROY <deploymentId>`. This prepares only
+reviewed deletion-protection/retention changes, preserves production defaults,
+and does not perform subscription refunds. Complete exact-resource BSS
+unsubscription for prepaid resources before the main destroy. Review the saved
+destroy plan and run `destroy-apply` with its exact fingerprint. After verified
+main destruction, backend cleanup automatically deletes the tfstate bucket and
+all its versions plus the dedicated operations bucket. Preserve recovery state
+if destruction fails or its outcome is uncertain.
+
+## Adaptive resource selection and model candidates
+
+`assets/deployment-policy.json` is the source for the supported product shapes.
+New deployments snapshot it into `resourceSelection.policy`; ordinary OSS
+restore and application operations do not run a new selection. SKU names and
+zones come from live APIs. ECS stays enterprise-class x86 2 vCPU/4 GiB per node;
+RDS stays MySQL 8 HA, 2 vCPU/4 GiB and 100 GiB ESSD; Redis stays
+community Redis 7, standard primary/replica, 1 GiB. An out-of-policy capacity requires a separately authorized policy change. Monthly subscriptions and auto-renew are unchanged.
+The default image family remains Alibaba Cloud Linux 3; the collector checks
+system-image availability and compatibility with each instance type. It does
+not automatically upgrade OS, database, CLI, or Terraform provider versions.
+
+Run these using the bootstrap's private Python environment and auto-wonder
+profile. Region and account UID must already be recorded in the manifest.
+
+```bash
+bash scripts/resolve-zones.sh --manifest "$manifest"
+# If selection needs investigation, obtain temporary read-only normalized facts:
+bash scripts/resolve-zones.sh discover --manifest "$manifest" --output "$inventory"
+# The Agent may submit a JSON candidate; it cannot mark itself verified:
+bash scripts/resolve-zones.sh resolve --manifest "$manifest" --candidate "$candidate"
+```
+
+A candidate has exactly `availabilityZones` and `resolvedInfrastructure`, with
+the latter containing `ecsInstanceType`, `ecsImageId`, `ecsVcpus`, `ecsMemoryGiB`,
+`rdsInstanceType`, `rdsCategory`, `rdsStorageType`, `rdsStorageGb`,
+`redisInstanceClass`, and `zonePlan`. Copy the structure from a resolver result;
+choose only items supported by the freshly collected facts. The `zonePlan`
+contains ECS/ALB zones, RDS primary/slave zones, Redis primary/secondary zones,
+`downgrades` (empty unless Redis secondary uses a third zone), and
+`resolvedBy: "inventory"`. No shell fragments, inferred SKU IDs, or fabricated
+evidence are accepted. Resolve queries again and independently validates the
+candidate; the Agent must not directly edit `verified`, evidence, or hashes.
+
+Selection prefers a complete cross-product combination, then comparable core
+subscription price, shared zones and the ECS soft preference. A named preferred
+SKU never overrides HA, capacity, disk, image, billing or existing-resource
+constraints. Redis can use an evidenced third standby zone without another
+switch; RDS discovery currently proves the two network-bearing zones only. A
+third RDS zone whose placement needs additional network evidence is a maintenance
+boundary, not permission to invent compatibility or create a third switch.
+
+Exit codes are 0 success, 2 malformed/missing input, 3 needs-agent (including
+incomplete facts), and 4 blocked/invalid. Unknown fields required by the supported
+API shape, permission failures, failed/repeated pages and missing quotes are
+never treated as sold-out stock or successful checks. Read-only transient calls
+have at most three attempts. Discovery is bounded; incomplete discovery does
+not prove that the whole region lacks resources. At most three resolve attempts
+are checkpointed per planning run; do not reset this counter to hide a failure.
+After exhaustion diagnose the cause and document a new planning run explicitly.
+
+The Agent may issue additional **read-only** CLI queries and consult current
+[Alibaba API documentation](https://api.aliyun.com/), then submit a supported
+candidate. A new product/API shape that the adapter cannot validate requires a
+maintenance change, not an in-session bypass of the validator. No extra user
+confirmation is needed for a compliant candidate within the authorized scope.
+
+Prices are original first-month core subscription quotes; promotional trade
+prices are evidence only. They are not renewal guarantees or a full monthly bill:
+ALB, OSS and SLS usage charges are excluded. If an existing user-approved budget
+is supplied, record `budget: {"scope":"core-subscriptions", "currency":"CNY",
+"monthlyLimit":123}` (use the actual approved amount). Other budget scopes cannot
+be declared satisfied by a partial quote. Do not invent a budget. Catalogues do
+not reserve stock; final ordering still checks quotas, account restrictions and
+placement. RDS pairs use both live HA zone offers and the official CreateDBInstance
+rule: distinct primary/secondary zones with the two VSwitches in matching order.
+The manifest records that rule as placement evidence. This is not an order
+precheck: CreateDBInstance DryRun needs actual network IDs which do not yet exist
+for a fresh deployment. No inventory check claims to reserve stock.
+
+`terraform-stage.sh plan` refreshes Terraform state and produces a local plan,
+then verifies current selection facts, actual plan variables, core resources,
+zones, subscription settings, capacity, and absence of deletion/replacement or
+updates to existing resources. It binds selection, inputs/configuration, core
+quote and the exact binary plan fingerprint. Normal machine review remains
+required. `apply` checks that binding, refreshes facts for resources being
+created, and checks the binding again before submission. Changed inputs or
+quotes require a new plan. Never apply a different plan with an old fingerprint.
+For existing products whose refreshed plan proves `no-op`, their stored shape
+is retained without requiring them to remain on sale. A historical partial
+deployment without selection evidence may need read-only reconciliation before
+it can satisfy the new creation gate; daily operations on completed deployments
+remain on their existing paths.
+
+A new computer recovers `resourceSelection` with the existing OSS manifest,
+secrets, backend coordinates and sealed artifacts through `operations-store.py
+resolve`. No old local directory is required. Selection writes use the existing
+revision check and checkpoint; upload failure stops progress. Inventory history
+is explanatory evidence, not a cache for future purchases. Binary Terraform
+plans are deliberately not in OSS: re-plan on the new computer before applying.
+Pending/unknown Terraform operations still require reconciliation first; never
+clear their marker merely to retry creation.

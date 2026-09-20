@@ -22,6 +22,12 @@ public interface UserDao {
 
     long countSystemAdmins();
 
+    /** Completion marker for the one-shot platform-admin init migration (platform_admin_init row). */
+    boolean isPlatformAdminInitDone();
+
+    /** Idempotent INSERT of the one-shot migration completion marker. */
+    int markPlatformAdminInitDone();
+
     /** Idempotent: the {@code is_admin = 0} guard makes a repeat call a no-op. */
     int markSystemAdmin(@Param("id") Long id);
 

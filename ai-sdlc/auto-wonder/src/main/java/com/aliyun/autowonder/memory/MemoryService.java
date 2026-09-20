@@ -187,6 +187,10 @@ public class MemoryService {
         return result;
     }
 
+    public long countList(long tenantId, String scope, Long ownerRef, String type, String status) {
+        return memoryDao.countList(tenantId, scope, ownerRef, type, status);
+    }
+
     public long countPendingReviews(long tenantId) {
         return memoryDao.countPendingByTenant(tenantId);
     }
@@ -225,6 +229,10 @@ public class MemoryService {
             result.add(group);
         }
         return result;
+    }
+
+    public long countGroups(long tenantId, String scope, Long ownerRef, String type, String status) {
+        return memoryDao.countGroupSummaries(tenantId, scope, ownerRef, type, status);
     }
 
     private Map<Long, String> resolveAgentNames(long tenantId, List<MemoryGroupSummaryDO> summaries) {
@@ -313,25 +321,35 @@ public class MemoryService {
         return get(id);
     }
 
+    @Transactional
     public void delete(long id, long tenantId, long userId) {
         MemoryDO m = memoryDao.findById(id);
-        if (m == null) {
+        if (m == null || !Objects.equals(m.getTenantId(), tenantId)) {
             throw new BizException(ErrorCode.MEMORY_NOT_FOUND);
-        }
-        if (agentMemoryRefDao.countByMemoryId(id, tenantId) > 0) {
-            throw new BizException(ErrorCode.MEMORY_DELETE_IN_USE);
         }
         int rows = memoryDao.softDelete(id, tenantId, m.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.MEMORY_VERSION_CONFLICT);
         }
+        // Remove live bindings atomically; historical dispatch packages remain immutable.
+        agentMemoryRefDao.deleteByMemoryId(id, tenantId);
+        MemoryReviewDO audit = new MemoryReviewDO();
+        audit.setTenantId(tenantId);
+        audit.setMemoryId(id);
+        audit.setReviewerId(userId);
+        audit.setDecision("DELETE");
+        audit.setComment("软删除记忆并移除员工绑定；历史执行快照保持不变");
+        memoryReviewDao.insert(audit);
     }
 
     @Transactional
     public void review(long memoryId, ReviewRequest req, long tenantId, long userId) {
         MemoryDO m = memoryDao.findById(memoryId);
-        if (m == null) {
+        if (m == null || !Objects.equals(m.getTenantId(), tenantId)) {
             throw new BizException(ErrorCode.MEMORY_NOT_FOUND);
+        }
+        if (!"ADOPT".equals(req.getDecision()) && !"REJECT".equals(req.getDecision())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "decision 必须为 ADOPT 或 REJECT");
         }
         if (!"PENDING".equals(m.getStatus())) {
             throw new BizException(ErrorCode.MEMORY_NOT_PENDING);
@@ -355,6 +373,16 @@ public class MemoryService {
             if (effectiveScope == null || (!"ORG".equals(effectiveScope) && effectiveOwnerRef == null)) {
                 throw new BizException(ErrorCode.PARAM_INVALID);
             }
+        }
+        if ("ADOPT".equals(req.getDecision()) && req.getEditedType() != null
+                && !Objects.equals(req.getEditedType(), m.getType())) {
+            int updated = memoryDao.update(memoryId, tenantId, m.getTitle(), m.getContentMd(),
+                    req.getEditedType(), m.getVersion(), userId);
+            if (updated == 0) {
+                throw new BizException(ErrorCode.MEMORY_VERSION_CONFLICT);
+            }
+            m.setVersion(m.getVersion() + 1);
+            m.setType(req.getEditedType());
         }
         int rows = memoryDao.updateStatus(memoryId, tenantId, newStatus, editedContent,
                 promotedScope, promotedOwnerRef, m.getVersion(), userId);

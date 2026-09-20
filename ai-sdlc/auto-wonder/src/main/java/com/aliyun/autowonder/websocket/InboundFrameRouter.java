@@ -8,12 +8,15 @@ import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.conversation.AgentConversationService;
+import com.aliyun.autowonder.conversation.ConversationCommandsService;
 import com.aliyun.autowonder.conversation.ConversationTurnEventService;
+import com.aliyun.autowonder.debuglog.DebugLogService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.dispatch.HandoffResult;
 import com.aliyun.autowonder.dispatch.HandoffService;
 import com.aliyun.autowonder.executor.ExecutorService;
+import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
 import com.aliyun.autowonder.executor.ProviderModelCatalogService;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.guidance.InteractionWorkflowService;
@@ -47,6 +50,15 @@ public class InboundFrameRouter {
     private ScheduledTaskCapabilityGuard capabilityGuard;
     private ConversationTurnEventService conversationTurnEventService;
     private ProviderModelCatalogService providerModelCatalogService;
+    private ConversationCommandsService conversationCommandsService;
+    private DebugLogService debugLogService;
+    private com.aliyun.autowonder.executor.ExecutorRestartService restartService;
+    @Autowired
+    public void setRestartService(com.aliyun.autowonder.executor.ExecutorRestartService service) { this.restartService = service; }
+    private com.aliyun.autowonder.executor.ExecutorUpdateService updateService;
+    @Autowired
+    public void setUpdateService(com.aliyun.autowonder.executor.ExecutorUpdateService service) { this.updateService = service; }
+
 
     @Autowired(required = false)
     public void setConversationTurnEventService(ConversationTurnEventService service) {
@@ -54,8 +66,18 @@ public class InboundFrameRouter {
     }
 
     @Autowired(required = false)
+    public void setConversationCommandsService(ConversationCommandsService conversationCommandsService) {
+        this.conversationCommandsService = conversationCommandsService;
+    }
+
+    @Autowired(required = false)
     public void setProviderModelCatalogService(ProviderModelCatalogService service) {
         this.providerModelCatalogService = service;
+    }
+
+    @Autowired(required = false)
+    public void setDebugLogService(DebugLogService service) {
+        this.debugLogService = service;
     }
 
     @Autowired
@@ -131,6 +153,15 @@ public class InboundFrameRouter {
                 pauseService, guidanceService, null, null, null, null, null);
     }
 
+    private com.aliyun.autowonder.dispatch.DispatchRecoveryService recovery;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRecovery(com.aliyun.autowonder.dispatch.DispatchRecoveryService service) { recovery = service; }
+    private com.aliyun.autowonder.dispatch.DispatchRuntimeReconciler runtimeReconciler;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRuntimeReconciler(com.aliyun.autowonder.dispatch.DispatchRuntimeReconciler value) {
+        runtimeReconciler = value;
+    }
+
     public void route(ExecutorSession es, String message) {
         JSONObject json;
         try {
@@ -146,43 +177,94 @@ public class InboundFrameRouter {
         if (type == null) {
             return;
         }
+        long incomingDispatchId = json.getLongValue("dispatchId");
+        if (recovery != null && incomingDispatchId > 0 && recovery.cancelRequested(es.getTenantId(), incomingDispatchId)) {
+            boolean stopped = ("TASK_PAUSED".equals(type) || "TASK_RESULT".equals(type))
+                    && recovery.onStopped(es.getTenantId(), es.getExecutorId(), incomingDispatchId);
+            sendResultAck(es, incomingDispatchId, stopped);
+            return;
+        }
         DispatchBoundary durableBoundary = resolveDispatchBoundary(es, json, type);
+        if (recovery != null && durableBoundary != null && recovery.cancelRequested(es.getTenantId(), durableBoundary.dispatchId())) {
+            sendResultAck(es, durableBoundary.dispatchId(), false);
+            return;
+        }
         ArtifactOwnerRef durableOwner = durableBoundary == null ? null : durableBoundary.owner();
         switch (type) {
+            case "EXECUTOR_RESTART_RESULT":
+                if (restartService != null) restartService.onResult(es, json);
+                break;
+            case "EXECUTOR_UPGRADE_RESULT":
+                if (updateService != null) updateService.onUpgradeResult(es, json);
+                break;
             case "HEARTBEAT":
                 log.info("inbound HEARTBEAT executorId={}", es.getExecutorId());
                 java.util.Set<Long> activeConversationTurnIds = activeConversationTurnIds(json);
                 java.util.List<String> protocolFeatures = protocolFeatures(json);
-                boolean alive;
-                if (activeConversationTurnIds == null) {
-                    alive = presenceManager.heartbeat(es.getExecutorId(), es.getAgentId(),
-                            es.getMaxConcurrentDispatches());
-                } else if (protocolFeatures == null) {
-                    alive = presenceManager.heartbeat(es.getExecutorId(), es.getAgentId(),
-                            es.getMaxConcurrentDispatches(), activeConversationTurnIds);
-                } else {
-                    alive = presenceManager.heartbeat(es.getExecutorId(), es.getAgentId(),
-                            es.getMaxConcurrentDispatches(), activeConversationTurnIds, protocolFeatures);
-                }
-                if (!alive) {
-                    log.warn("heartbeat rejected for deleted executor {}; closing session",
-                            es.getExecutorId());
+                boolean inventoryProtocol = protocolFeatures != null
+                        && protocolFeatures.contains("dispatch_inventory_v1");
+                ExecutorDispatchSnapshot dispatchSnapshot = null;
+                if (inventoryProtocol) {
                     try {
-                        es.getSession().close();
-                    } catch (Exception closeEx) {
-                        log.warn("failed to close session for deleted executor {}",
-                                es.getExecutorId(), closeEx);
+                        dispatchSnapshot = dispatchSnapshot(es, json);
+                        activeConversationTurnIds = dispatchSnapshot.runningConversationTurnIds();
+                    } catch (IllegalArgumentException invalidInventory) {
+                        String protocolError = "EXECUTOR_PROTOCOL_INCOMPATIBLE: " + invalidInventory.getMessage();
+                        log.warn("executor dispatch inventory rejected executorId={} reason={}",
+                                es.getExecutorId(), invalidInventory.getMessage());
+                        presenceManager.recordProtocolError(es.getExecutorId(), es.getAgentId(),
+                                es.getSession().getId(), protocolError);
+                        closeSession(es);
+                        break;
                     }
+                } else {
+                    java.util.List<Long> legacyRunning = runningDispatchIds(json);
+                    java.util.Set<Long> running = legacyRunning == null
+                            ? java.util.Set.of() : new java.util.LinkedHashSet<>(legacyRunning);
+                    dispatchSnapshot = new ExecutorDispatchSnapshot(es.getSession().getId(),
+                            es.getMaxConcurrentDispatches(), false, false, running, running,
+                            activeConversationTurnIds, java.util.Set.of(), null, System.currentTimeMillis());
+                }
+                PresenceManager.SessionMutationResult heartbeatResult =
+                        presenceManager.publishHeartbeat(es.getExecutorId(), es.getAgentId(),
+                                es.getSession().getId(), dispatchSnapshot, protocolFeatures,
+                                json.getString("version"), json.getString("model"));
+                if (heartbeatResult == PresenceManager.SessionMutationResult.DELETED
+                        || heartbeatResult == PresenceManager.SessionMutationResult.STALE_SESSION) {
+                    log.warn("heartbeat rejected executorId={} result={}; closing session",
+                            es.getExecutorId(), heartbeatResult);
+                    closeSession(es);
                     break;
                 }
-                presenceManager.refreshSession(es.getExecutorId(), es.getSession().getId());
+                if (heartbeatResult == PresenceManager.SessionMutationResult.RETRY) {
+                    log.warn("heartbeat publication deferred executorId={} sessionId={}",
+                            es.getExecutorId(), es.getSession().getId());
+                    break;
+                }
+                if (restartService != null) restartService.onHeartbeat(es, json);
+                if (updateService != null) {
+                    // Runs after recordVersion so the upgrade check reads the version just stored.
+                    // Auxiliary to liveness: a failed check must not cost the executor its heartbeat.
+                    try {
+                        updateService.onHeartbeat(es, json);
+                    } catch (Exception updateEx) {
+                        log.warn("executor upgrade heartbeat hook failed executorId={}",
+                                es.getExecutorId(), updateEx);
+                    }
+                }
                 if (executorService != null) {
                     executorService.persistHeartbeatIfNeeded(es.getExecutorId(), es.getTenantId());
                 }
                 java.util.List<Long> reportedRunningDispatchIds = runningDispatchIds(json);
                 dispatchService.renewActiveLeases(es.getTenantId(), es.getExecutorId(),
                         reportedRunningDispatchIds);
-                drainScheduler.request(es.getAgentId());
+                if (dispatchSnapshot != null && dispatchSnapshot.inventoryReady()
+                        && dispatchSnapshot.inventoryError() == null && runtimeReconciler != null) {
+                    runtimeReconciler.request(es.getTenantId(), es.getExecutorId(), es.getAgentId(),
+                            es.getSession().getId());
+                } else {
+                    drainScheduler.request(es.getAgentId());
+                }
                 if (agentConversationService != null && activeConversationTurnIds != null) {
                     if (es.consumeReplacementRecoveryPending()) {
                         agentConversationService.recoverInactiveTurnsForReplacedExecutor(
@@ -220,7 +302,10 @@ public class InboundFrameRouter {
                 String failureScope = json.getString("failureScope");
                 if (!success && DispatchService.isExecutorFailureCategory(failureCategory)) {
                     failureScope = "EXECUTOR";
-                } else if (!success) {
+                } else if (!success && (failureCategory == null || failureCategory.isBlank())) {
+                    // Heuristic fallback for runtimes predating structured failure metadata. A
+                    // runtime-declared category such as tool_hook_blocked is the first causal
+                    // failure and must never be relabelled as executor infrastructure failover.
                     String classified = ExecutorFailureClassifier.classify(json.getString("error"));
                     if (classified != null) {
                         failureCategory = classified;
@@ -282,13 +367,19 @@ public class InboundFrameRouter {
                                 json.getString("resultSummary"),
                                 json.getString("error"),
                                 Boolean.TRUE.equals(json.getBoolean("workflowChanged")),
-                                true)
+                                true,
+                                failureCategory)
                         : dispatchService.onResult(es.getTenantId(), es.getExecutorId(),
                                 json.getLongValue("dispatchId"),
                                 success,
                                 json.getString("resultSummary"),
                                 json.getString("error"),
-                                Boolean.TRUE.equals(json.getBoolean("workflowChanged")));
+                                Boolean.TRUE.equals(json.getBoolean("workflowChanged")),
+                                false,
+                                failureCategory);
+                // debugLog 段收尾放在 accepted 判定之前：重复投递（accepted=false，行已终态）
+                // 同样能收敛 debug_log 行（outbox 重发场景，S9）。
+                recordDebugLogReport(es, json, durableOwner);
                 if (!accepted) {
                     // The authenticated runtime cannot make a stale/foreign result valid by retrying.
                     // ACK the terminal disposition so it can delete the durable outbox record.
@@ -393,6 +484,13 @@ public class InboundFrameRouter {
                             json.getString("payloadFragment"));
                 }
                 break;
+            case "CONVERSATION_COMMANDS_RESULT":
+                if (conversationCommandsService != null) {
+                    conversationCommandsService.onResult(es.getTenantId(), es.getExecutorId(),
+                            json.getLongValue("conversationId"), json.getString("status"),
+                            json.getString("commands"), json.getString("error"));
+                }
+                break;
             case "MCP_CONNECTION_TEST_RESULT":
                 if (runtimeMcpConnectionTestService != null) {
                     runtimeMcpConnectionTestService.complete(es.getTenantId(), es.getExecutorId(),
@@ -483,6 +581,64 @@ public class InboundFrameRouter {
     private record DispatchBoundary(long dispatchId, ArtifactOwnerRef owner) {
     }
 
+    private ExecutorDispatchSnapshot dispatchSnapshot(ExecutorSession es, JSONObject json) {
+        Object capacityValue = json.get("maxConcurrentDispatches");
+        if (!(capacityValue instanceof Number capacityNumber)
+                || capacityNumber.intValue() < 1 || capacityNumber.intValue() > 50) {
+            throw new IllegalArgumentException("INVALID_MAX_CONCURRENT_DISPATCHES");
+        }
+        Object readyValue = json.get("dispatchInventoryReady");
+        if (!(readyValue instanceof Boolean ready)) {
+            throw new IllegalArgumentException("DISPATCH_INVENTORY_READY_MISSING");
+        }
+        java.util.Set<Long> running = requiredLongSet(json, "runningDispatchIds", 50);
+        java.util.Set<Long> owned = requiredLongSet(json, "ownedDispatchIds", 1000);
+        java.util.Set<Long> conversations = requiredLongSet(json, "runningConversationTurnIds", 50);
+        String inventoryError = json.getString("dispatchInventoryError");
+        boolean overflow = "OWNED_DISPATCH_LIMIT_EXCEEDED".equals(inventoryError);
+        if (overflow) {
+            if (ready || !owned.equals(running)) {
+                throw new IllegalArgumentException("INVALID_DISPATCH_INVENTORY_OVERFLOW");
+            }
+        } else {
+            if (inventoryError != null && !inventoryError.isBlank()) {
+                throw new IllegalArgumentException("UNKNOWN_DISPATCH_INVENTORY_ERROR");
+            }
+            if (!owned.containsAll(running)) {
+                throw new IllegalArgumentException("RUNNING_DISPATCH_NOT_OWNED");
+            }
+        }
+        return new ExecutorDispatchSnapshot(es.getSession().getId(), capacityNumber.intValue(), true, ready,
+                running, owned, conversations, java.util.Set.of(), inventoryError,
+                System.currentTimeMillis());
+    }
+
+    private java.util.Set<Long> requiredLongSet(JSONObject json, String field, int maxSize) {
+        Object value = json.get(field);
+        if (!(value instanceof com.alibaba.fastjson.JSONArray raw)) {
+            throw new IllegalArgumentException(field + "_MISSING");
+        }
+        if (raw.size() > maxSize) {
+            throw new IllegalArgumentException(field + "_TOO_LARGE");
+        }
+        java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
+        for (Object element : raw) {
+            if (!(element instanceof Number number) || number.longValue() <= 0
+                    || !ids.add(number.longValue())) {
+                throw new IllegalArgumentException(field + "_INVALID");
+            }
+        }
+        return java.util.Set.copyOf(ids);
+    }
+
+    private void closeSession(ExecutorSession es) {
+        try {
+            es.getSession().close();
+        } catch (Exception closeEx) {
+            log.warn("failed to close executor session executorId={}", es.getExecutorId(), closeEx);
+        }
+    }
+
     private java.util.List<Long> runningDispatchIds(JSONObject json) {
         if (!json.containsKey("runningDispatchIds")) {
             return null;
@@ -553,6 +709,25 @@ public class InboundFrameRouter {
             if (id != null && id > 0) {
                 ids.add(id);
             }
+        }
+    }
+
+    /** debugLog 段收尾是纯辅助路径：任何解析/落库失败只记 warn，不影响 TASK_RESULT 语义。 */
+    private void recordDebugLogReport(ExecutorSession es, JSONObject json, ArtifactOwnerRef owner) {
+        if (debugLogService == null || owner == null) {
+            return;
+        }
+        long dispatchId = json.getLongValue("dispatchId");
+        try {
+            JSONObject debugLog = json.getJSONObject("debugLog");
+            if (debugLog == null) {
+                return;
+            }
+            debugLogService.recordTaskResultReport(es.getTenantId(), es.getExecutorId(),
+                    dispatchId, debugLog);
+        } catch (RuntimeException e) {
+            log.warn("debug log report ignored dispatchId={} reason=DEBUG_LOG_REPORT_IGNORED",
+                    dispatchId, e);
         }
     }
 

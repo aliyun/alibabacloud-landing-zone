@@ -27,7 +27,7 @@ if jq -e . "$input" >/dev/null 2>&1; then
   jq '
     def sensitive_key:
       ascii_downcase | gsub("[-_.]"; "") |
-      test("^(password|passwordhash|secret|accesskey|accesskeyid|accesskeysecret|masterkey|jwt|jwtsecret|token|authorization|presignedurl|credential|commandoutput)$");
+      test("^(password|passwordhash|secret|accesskey|accesskeyid|accesskeysecret|masterkey|jwt|jwtsecret|token|authorization|presignedurl|credential|commandoutput|envsha256|environmentsha256|environmentplansha256|candidatesha256|lastenvironmentsha256|environmentcandidatesha256|autowondersecretmasterkey)$");
     def identifying_key: ascii_downcase | test("(^|_)(uid|accountid|instanceid|invocationid|publicip|privateip|bucket|project|endpoint|address|resourceid)(_|$)");
     walk(
       if type == "object" then
@@ -48,6 +48,7 @@ if jq -e . "$input" >/dev/null 2>&1; then
   ' "$input" >"$tmp" || die "structured evidence sanitization failed"
 else
   sed -E \
+    -e '/(envSha256|environmentSha256|environmentPlanSha256|environmentCandidateSha256|candidateSha256|lastEnvironmentSha256|AUTOWONDER_SECRET_MASTER_KEY)[=:]/Id' \
     -e 's#https?://[^[:space:]]+#https://[REDACTED]#g' \
     -e 's#([0-9]{1,3}\.){3}[0-9]{1,3}#[REDACTED]#g' \
     -e 's#(password|secret|authorization|token)[=:][^ ,;]+#[REDACTED]#Ig' \

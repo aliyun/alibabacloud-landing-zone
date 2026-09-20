@@ -109,7 +109,7 @@ export class RealtimeClient {
   }
 
   private isServerSubscriptionChannel(channel: string): boolean {
-    return channel.startsWith('conversation:') || channel.startsWith('scheduled-run:');
+    return channel.startsWith('conversation:') || channel.startsWith('scheduled-run:') || channel.startsWith('dispatch:');
   }
 
   private sendServerSubscribe(channel: string) {

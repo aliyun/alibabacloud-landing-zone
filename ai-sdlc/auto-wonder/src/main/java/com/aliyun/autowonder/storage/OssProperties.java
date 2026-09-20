@@ -25,6 +25,8 @@ public class OssProperties {
     private String artifactBucket;
     /** user uploaded skill packages */
     private String skillBucket;
+    /** Project configuration archives; falls back to artifactBucket / bucket. */
+    private String backupBucket;
 
     public String resolveTaskPkgBucket() {
         return resolve(taskPkgBucket);

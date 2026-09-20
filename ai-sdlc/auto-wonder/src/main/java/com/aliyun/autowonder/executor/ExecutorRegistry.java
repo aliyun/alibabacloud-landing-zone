@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class ExecutorRegistry {
@@ -25,6 +26,30 @@ public class ExecutorRegistry {
 
     public ExecutorRegistry(RedisManager redisManager) {
         this.redisManager = redisManager;
+    }
+
+    public Optional<ExecutorDispatchSnapshot> currentDispatchSnapshot(long executorId) {
+        try {
+            Object value = redisManager.get(ExecutorDispatchSnapshot.key(executorId));
+            if (!(value instanceof ExecutorDispatchSnapshot snapshot)) {
+                return Optional.empty();
+            }
+            String currentSession = redisManager.getString("exec:session:" + executorId);
+            return currentSession != null && currentSession.equals(snapshot.sessionId())
+                    && !redisManager.exists(ExecutorDispatchSnapshot.closedSessionKey(
+                            executorId, currentSession))
+                    ? Optional.of(snapshot) : Optional.empty();
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Unknown/not-ready inventories fail closed; only a complete absence proves release. */
+    public boolean isDispatchOwnedOrUnknown(long executorId, long dispatchId) {
+        return currentDispatchSnapshot(executorId)
+                .filter(snapshot -> snapshot.inventoryReady() && snapshot.inventoryError() == null)
+                .map(snapshot -> snapshot.ownedDispatchIds().contains(dispatchId))
+                .orElse(true);
     }
 
     public static String onlineKey(long executorId) {
@@ -73,6 +98,15 @@ public class ExecutorRegistry {
         }
     }
 
+    /** True only when the latest heartbeat explicitly reported a dispatch collection. */
+    public boolean hasReportedRunningDispatches(long executorId) {
+        try {
+            return redisManager.get(runningDispatchesKey(executorId)) instanceof Collection<?>;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public boolean isDispatchActive(long executorId, long dispatchId) {
         try {
             Object value = redisManager.get(runningDispatchesKey(executorId));
@@ -90,7 +124,8 @@ public class ExecutorRegistry {
     /** True if the executor has a live online heartbeat entry in Redis. */
     public boolean isOnline(long executorId) {
         try {
-            return redisManager.exists(onlineKey(executorId));
+            return redisManager.exists(onlineKey(executorId))
+                    && currentDispatchSnapshot(executorId).isPresent();
         } catch (Exception e) {
             return false;
         }

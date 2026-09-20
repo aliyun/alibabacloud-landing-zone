@@ -127,19 +127,27 @@ public class AuthFilter extends OncePerRequestFilter {
                 }
                 WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(
                         payload.getCurrentWorkspaceId(), payload.getUserId());
-                if (member == null
-                        || !Integer.valueOf(0).equals(member.getIsDeleted())
-                        || !Integer.valueOf(0).equals(member.getStatus())) {
+                boolean activeMember = member != null
+                        && Integer.valueOf(0).equals(member.getIsDeleted())
+                        && Integer.valueOf(0).equals(member.getStatus());
+                if (activeMember) {
+                    try {
+                        ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.valueOf(member.getAccessLevel()));
+                        ctx.setWorkspaceMember(member);
+                    } catch (IllegalArgumentException | NullPointerException e) {
+                        writeFailure(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+                                ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
+                        return;
+                    }
+                } else if (isPlatformAdmin(payload.getUserId())) {
+                    // A platform admin does not have to be a member of the workspace: ADMIN is the
+                    // highest WorkspaceAccessLevel, so every @RequireWorkspaceAccess guard passes
+                    // through this single branch. The flag is read from the database on every
+                    // request, so a revoked admin loses cross-workspace access immediately.
+                    ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.ADMIN);
+                } else {
                     writeFailure(response, HttpServletResponse.SC_FORBIDDEN,
                             ErrorCode.WORKSPACE_NOT_MEMBER);
-                    return;
-                }
-                try {
-                    ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.valueOf(member.getAccessLevel()));
-                    ctx.setWorkspaceMember(member);
-                } catch (IllegalArgumentException | NullPointerException e) {
-                    writeFailure(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-                            ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
                     return;
                 }
             }
@@ -149,8 +157,17 @@ public class AuthFilter extends OncePerRequestFilter {
         }
     }
 
+    private boolean isPlatformAdmin(Long userId) {
+        UserDO user = userDao.findById(userId);
+        return user != null && Integer.valueOf(1).equals(user.getIsAdmin());
+    }
+
     private boolean isWhitelisted(HttpServletRequest request) {
         String path = request.getRequestURI();
+        if ("POST".equalsIgnoreCase(request.getMethod())
+                && "/api/integrations/feishu/callback".equals(path)) {
+            return true;
+        }
         if (WHITELIST_EXACTS.contains(path) || DINGTALK_CALLBACK_PATH.equals(path)) {
             return true;
         }

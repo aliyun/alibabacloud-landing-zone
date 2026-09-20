@@ -16,6 +16,18 @@
     <select id="listByAgent" resultType="com.aliyun.autowonder.squad.SquadMemberDO">
         SELECT * FROM squad_member WHERE agent_id = #{agentId}
     </select>
+    <select id="listByAgentIds" resultType="com.aliyun.autowonder.squad.SquadMemberDO">
+        SELECT * FROM squad_member
+        WHERE tenant_id = #{tenantId} AND agent_id IN
+        <!-- An empty collection would render "IN ()", a syntax error; IN (NULL) matches no row. -->
+        <choose>
+            <when test="agentIds != null and agentIds.size() > 0">
+                <foreach collection="agentIds" item="aid" open="(" separator="," close=")">#{aid}</foreach>
+            </when>
+            <otherwise>(NULL)</otherwise>
+        </choose>
+        ORDER BY agent_id, squad_id
+    </select>
     <select id="findBySquadAndAgent" resultType="com.aliyun.autowonder.squad.SquadMemberDO">
         SELECT * FROM squad_member WHERE squad_id = #{squadId} AND agent_id = #{agentId} LIMIT 1
     </select>

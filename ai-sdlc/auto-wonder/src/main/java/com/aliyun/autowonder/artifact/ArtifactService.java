@@ -38,7 +38,7 @@ public class ArtifactService {
         a.setWorkitemId(owner.sourceId());
         a.setDispatchId(req.getDispatchId());
         a.setName(req.getName());
-        a.setType(req.getType());
+        a.setType(ArtifactClassification.resolve(req.getType(), req.getName()));
         a.setOssRef(req.getOssRef());
         a.setSize(req.getSize());
         a.setMetaJson(req.getMetaJson());
@@ -59,7 +59,8 @@ public class ArtifactService {
             if (!isUserVisible(a)) {
                 continue;
             }
-            latestByLogicalName.putIfAbsent(logicalName(a.getName()), a);
+            // Deduplicate aliases only within one execution, retaining historical rounds.
+            latestByLogicalName.putIfAbsent(a.getDispatchId() + ":" + logicalName(a.getName()), a);
         }
         List<ArtifactVO> result = new ArrayList<>();
         for (ArtifactDO artifact : latestByLogicalName.values()) {
@@ -101,12 +102,12 @@ public class ArtifactService {
 
     public String getDownloadUrl(long id, long workspaceId) {
         ArtifactDO a = findByTenantAndId(id, workspaceId);
-        return forceHttps(storage.presignGet(a.getOssRef(), DOWNLOAD_TTL_SECONDS));
+        return storage.presignGet(a.getOssRef(), DOWNLOAD_TTL_SECONDS);
     }
 
     public String getDownloadUrl(long id, ArtifactOwnerRef owner, long workspaceId) {
         ArtifactDO artifact = findOwnedArtifact(id, owner, workspaceId);
-        return forceHttps(storage.presignGet(artifact.getOssRef(), DOWNLOAD_TTL_SECONDS));
+        return storage.presignGet(artifact.getOssRef(), DOWNLOAD_TTL_SECONDS);
     }
 
     public PreviewContent getPreviewContent(long id, long workspaceId) {
@@ -149,13 +150,6 @@ public class ArtifactService {
         return new PreviewContent(a.getName(), bytes);
     }
 
-    private String forceHttps(String url) {
-        if (url != null && url.startsWith("http://")) {
-            return "https://" + url.substring("http://".length());
-        }
-        return url;
-    }
-
     private boolean isPreviewable(String name) {
         String ext = extension(name);
         switch (ext) {
@@ -166,6 +160,8 @@ public class ArtifactService {
             case "json":
             case "jsonl":
             case "csv":
+            case "html":
+            case "htm":
             case "png":
             case "jpg":
             case "jpeg":
@@ -201,7 +197,7 @@ public class ArtifactService {
         vo.setWorkitemId(a.getWorkitemId());
         vo.setDispatchId(a.getDispatchId());
         vo.setName(a.getName());
-        vo.setType(a.getType());
+        vo.setType(ArtifactClassification.resolve(a.getType(), a.getName()));
         vo.setSize(a.getSize());
         vo.setGmtCreate(a.getGmtCreate());
         return vo;

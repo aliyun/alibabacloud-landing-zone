@@ -16,6 +16,9 @@ public interface MemoryDao {
                         @Param("keyword") String keyword,
                         @Param("visibleAgentRef") Long visibleAgentRef,
                         @Param("offset") int offset, @Param("limit") int limit);
+    int countList(@Param("tenantId") Long tenantId, @Param("scope") String scope,
+                  @Param("ownerRef") Long ownerRef,
+                  @Param("type") String type, @Param("status") String status);
     int update(@Param("id") Long id, @Param("tenantId") Long tenantId,
                @Param("title") String title, @Param("contentMd") String contentMd,
                @Param("type") String type,
@@ -34,6 +37,11 @@ public interface MemoryDao {
                                                   @Param("status") String status,
                                                   @Param("offset") int offset,
                                                   @Param("limit") int limit);
+    int countGroupSummaries(@Param("tenantId") Long tenantId,
+                            @Param("scope") String scope,
+                            @Param("ownerRef") Long ownerRef,
+                            @Param("type") String type,
+                            @Param("status") String status);
     List<MemoryDO> listByGroups(@Param("tenantId") Long tenantId,
                                 @Param("groups") List<MemoryGroupSummaryDO> groups,
                                 @Param("type") String type,

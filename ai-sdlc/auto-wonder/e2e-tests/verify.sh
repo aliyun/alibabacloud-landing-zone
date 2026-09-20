@@ -14,7 +14,7 @@ Usage:
   e2e-tests/verify.sh --start --project-root PATH [--mode image] [--keep-on-failure] [--no-install] [--startup-timeout SECONDS]
   e2e-tests/verify.sh --status --project-root PATH
   e2e-tests/verify.sh --logs [--follow] --project-root PATH
-  e2e-tests/verify.sh --check --project-root PATH
+  e2e-tests/verify.sh --check [--with-runtime] --project-root PATH
   e2e-tests/verify.sh --stop --project-root PATH
   e2e-tests/verify.sh --clean-up --project-root PATH
 
@@ -30,6 +30,7 @@ keep_on_failure=0
 follow_logs=0
 startup_timeout=180
 bootstrap_install=1
+with_runtime=0
 
 set_operation() {
   [[ -z "$operation" ]] || {
@@ -45,6 +46,7 @@ while [[ "$#" -gt 0 ]]; do
     --status) set_operation status; shift ;;
     --logs) set_operation logs; shift ;;
     --check) set_operation check; shift ;;
+    --with-runtime) with_runtime=1; shift ;;
     --stop) set_operation stop; shift ;;
     --clean-up) set_operation clean-up; shift ;;
     --project-root)
@@ -65,6 +67,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 [[ -n "$operation" ]] || { printf 'FATAL: choose a lifecycle operation\n' >&2; usage >&2; exit 2; }
+[[ "$with_runtime" == 0 || "$operation" == check ]] || { printf 'FATAL: --with-runtime requires --check\n' >&2; exit 2; }
 [[ -n "$project_root" ]] || { printf 'FATAL: --project-root is required\n' >&2; exit 2; }
 [[ "$mode" == "image" ]] || { printf 'FATAL: only --mode image is supported\n' >&2; exit 2; }
 [[ "$startup_timeout" =~ ^[1-9][0-9]*$ ]] || { printf 'FATAL: startup timeout must be a positive integer\n' >&2; exit 2; }
@@ -440,6 +443,10 @@ run_check() {
   local app_start=0 file_start=0
   load_current
   aw_e2e_init_runtime
+  if [[ "$with_runtime" == 1 ]] && ! python3 "$AW_PROJECT_ROOT/e2e-tests/runtime_dispatch.py" --preflight; then
+    print_failure CHECK_RUNTIME RUNTIME_PREFLIGHT_FAILED "Real runtime prerequisites are not satisfied"
+    return 1
+  fi
   if [[ -f "$AW_RUN_DIR/log-checkpoint.env" ]]; then
     # Contains integer line counts written by this script.
     # shellcheck disable=SC1090
@@ -455,6 +462,12 @@ run_check() {
     AW_E2E_FILE_LOG="$AW_LOG_DIR/auto-wonder.log" \
       "$AW_PROJECT_ROOT/e2e-tests/authchain.sh"; then
     print_failure CHECK_AUTHENTICATED AUTHENTICATED_CHECK_FAILED "Authenticated community smoke chain failed"
+    return 1
+  fi
+  if [[ "$with_runtime" == 1 ]] && ! python3 "$AW_PROJECT_ROOT/e2e-tests/runtime_dispatch.py" \
+    --run --state-dir "$AW_RUN_DIR" --base-url "http://127.0.0.1:$RESOLVED_APP_PORT" \
+    --storage-origin "http://127.0.0.1:$RESOLVED_MINIO_PORT"; then
+    print_failure CHECK_RUNTIME RUNTIME_CHECK_FAILED "Real executor dispatch check failed"
     return 1
   fi
   if ! AW_E2E_APP_LOG="$AW_LOG_DIR/spring-boot-console.log" \
@@ -489,7 +502,7 @@ run_cleanup() {
   [[ -f "$AW_RESULT_JSON" ]] && cp "$AW_RESULT_JSON" "$archive/result.json"
   [[ -f "$AW_RUN_DIR/failure-report.txt" ]] && cp "$AW_RUN_DIR/failure-report.txt" "$archive/failure-report.txt"
   mkdir -p "$archive/checks/responses"
-  for report in schema-verification.txt probes.txt authchain.txt log-scan-attributed.txt; do
+  for report in schema-verification.txt probes.txt authchain.txt log-scan-attributed.txt runtime-dispatch.json; do
     [[ -f "$AW_RUN_DIR/$report" ]] && cp "$AW_RUN_DIR/$report" "$archive/checks/$report"
   done
   for redacted in "$AW_RUN_DIR/authchain"/redacted-*.json; do

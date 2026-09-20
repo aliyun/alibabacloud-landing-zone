@@ -1,6 +1,6 @@
 import { apiClient } from '@/shared/api/client';
 import type { Artifact, Comment, Workitem } from '@/shared/types/workitem';
-import type { CreateScheduledTaskBody, OffsetPage, ScheduledTask, ScheduledTaskCapability, ScheduledTaskListQuery, ScheduledTaskRun, UpdateScheduledTaskBody } from './types';
+import type { CreateScheduledTaskBody, OffsetPage, ScheduledRunCommentBody, ScheduledRunMentionCandidate, ScheduledTask, ScheduledTaskCapability, ScheduledTaskListQuery, ScheduledTaskRun, UpdateScheduledTaskBody } from './types';
 
 export async function getScheduledTaskCapability(): Promise<ScheduledTaskCapability> {
   const resp = await apiClient.get<ScheduledTaskCapability>('/api/capabilities/scheduled-task');
@@ -58,11 +58,17 @@ export async function listScheduledTaskRuns(id: number, size = 20, offset = 0): 
 
 export async function getScheduledTaskRun(id: number): Promise<ScheduledTaskRun> { const resp = await apiClient.get<ScheduledTaskRun>(`/api/scheduled-task-runs/${id}`); return resp.data; }
 export async function getScheduledTaskRunComments(id: number): Promise<Comment[]> { const resp = await apiClient.get<Comment[]>(`/api/scheduled-task-runs/${id}/comments`); return resp.data; }
-export async function addScheduledTaskRunComment(id: number, contentMd: string): Promise<Comment> { const resp = await apiClient.post<Comment>(`/api/scheduled-task-runs/${id}/comments`, { contentMd }); return resp.data; }
+export async function addScheduledTaskRunComment(id: number, body: ScheduledRunCommentBody): Promise<Comment> { const resp = await apiClient.post<Comment>(`/api/scheduled-task-runs/${id}/comments`, body); return resp.data; }
+export async function getScheduledTaskRunMentionCandidates(id: number, q?: string, limit = 50): Promise<ScheduledRunMentionCandidate[]> {
+  const params: Record<string, unknown> = { limit };
+  if (q) params.q = q;
+  const resp = await apiClient.get<ScheduledRunMentionCandidate[]>(`/api/scheduled-task-runs/${id}/mention-candidates`, { params });
+  return resp.data;
+}
 export async function getScheduledTaskRunArtifacts(id: number): Promise<Artifact[]> { const resp = await apiClient.get<Artifact[]>(`/api/scheduled-task-runs/${id}/artifacts`); return resp.data; }
 export async function getScheduledTaskRunEvents(id: number): Promise<ScheduledRunEvent[]> { const resp = await apiClient.get<ScheduledRunEvent[]>(`/api/scheduled-task-runs/${id}/events`); return resp.data; }
 export async function getDerivedWorkitems(id: number): Promise<Workitem[]> { const resp = await apiClient.get<Workitem[]>(`/api/scheduled-task-runs/${id}/derived-workitems`); return resp.data; }
-export async function transitionScheduledTaskRun(id: number, action: 'pause' | 'resume' | 'cancel', version: number): Promise<ScheduledTaskRun> { const resp = await apiClient.post<ScheduledTaskRun>(`/api/scheduled-task-runs/${id}/${action}`, undefined, { params: { version } }); return resp.data; }
+export async function transitionScheduledTaskRun(id: number, action: 'pause' | 'resume' | 'cancel', version: number, force?: boolean): Promise<ScheduledTaskRun> { const params: Record<string, unknown> = { version }; if (force) params.force = true; const resp = await apiClient.post<ScheduledTaskRun>(`/api/scheduled-task-runs/${id}/${action}`, undefined, { params }); return resp.data; }
 
 export interface ScheduledRunEvent { id: number; eventType?: string; type?: string; payload?: string | Record<string, unknown> | null; gmtCreate?: string; }
 

@@ -5,6 +5,7 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
+import com.aliyun.autowonder.debuglog.DebugLogService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskNotificationService;
@@ -29,6 +30,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HexFormat;
+import java.security.MessageDigest;
 
 @RestController
 @RequestMapping("/api/daemon")
@@ -52,6 +55,8 @@ public class DaemonArtifactController {
     private ScheduledTaskRunDao scheduledTaskRunDao;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ScheduledTaskNotificationService scheduledTaskNotificationService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DebugLogService debugLogService;
 
     @Autowired
     public DaemonArtifactController(DaemonUploadAuthenticator authenticator,
@@ -99,7 +104,7 @@ public class DaemonArtifactController {
 
         log.info("artifact upload request dispatchId={} fileCount={}", dispatchId, files.length);
         DaemonUploadAuthenticator.AuthResult auth = authenticator.authenticate(dispatchId, token);
-        if (!auth.isSuccess()) {
+        if (!auth.isSuccess() || authenticator.isMutationFenced(dispatchId)) {
             log.info("artifact upload auth failed dispatchId={}", dispatchId);
             return ResponseEntity.status(401).build();
         }
@@ -145,9 +150,34 @@ public class DaemonArtifactController {
             // Daemon uploads under the artifact root (e.g. artifacts/output/<typed-dir>/...);
             // typed-dir classification and memory ingest match on the logical path.
             String logical = logicalPath(path);
+            boolean debugLogFile = isDebugLog(logical);
+            // Publication names remain canonical, while receipts identify bytes
+            // that later uploads to the same name must never overwrite.
+            String storageKey = prefix + "objects/sha256/"
+                    + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)) + "/" + path;
+            DebugLogService.RelayTarget relayTarget = null;
+            if (debugLogFile) {
+                try {
+                    relayTarget = debugLogService == null ? null
+                            : debugLogService.relayTarget(auth.getTenantId(), dispatchId);
+                } catch (RuntimeException relayLookupFailure) {
+                    // best-effort：前置判定异常视同不接受，只 REJECT 该文件，不拖垮同批其他产物
+                    log.warn("debug log relay lookup failed dispatchId={} path={}", dispatchId, path,
+                            relayLookupFailure);
+                    relayTarget = null;
+                }
+                if (relayTarget == null) {
+                    log.warn("rejected debug log relay dispatch={} path={}", dispatchId, path);
+                    fileReceipts.add(rejectedFile(i, path, files[i].getSize(),
+                            "DEBUG_LOG_DISABLED", null));
+                    continue;
+                }
+                // key 重排：中转产物与直传签发落在完全相同的 canonical objectKey（设计文档 §4.6）
+                storageKey = relayTarget.objectKey();
+            }
             StoredObject so;
             try {
-                so = storage.put(artifactBucket, prefix + path, bytes);
+                so = storage.put(artifactBucket, storageKey, bytes);
             } catch (RuntimeException uploadFailure) {
                 log.error("artifact upload unavailable dispatchId={}", dispatchId, uploadFailure);
                 return ResponseEntity.status(503).body(Map.of("error", "artifact upload temporarily unavailable"));
@@ -169,7 +199,7 @@ public class DaemonArtifactController {
                 scheduledTaskNotificationService.artifact(auth.getTenantId(), auth.getWorkitemId());
             }
             usageService.ingestArtifact(auth.getTenantId(), auth.getWorkitemId(), dispatchId, artifactId, path, so.getOssRef(), bytes);
-            if (!isTelemetry(logical)) {
+            if (!isTelemetry(logical) && !debugLogFile) {
                 recordArtifactAudit(auth, dispatchId, path, classify(logical), so.getSize());
             }
             Map<String, Object> accepted = new LinkedHashMap<>();
@@ -178,7 +208,19 @@ public class DaemonArtifactController {
             accepted.put("status", "ACCEPTED");
             accepted.put("sizeBytes", files[i].getSize());
             accepted.put("ossRef", so.getOssRef());
+            accepted.put("remoteRef", so.getOssRef());
             fileReceipts.add(accepted);
+            if (debugLogFile) {
+                try {
+                    debugLogService.recordRelayUpload(auth.getTenantId(), dispatchId,
+                            relayTarget.objectKey(), relayTarget.runNo(), so.getSize(),
+                            metadataEntry(metadata, i));
+                } catch (RuntimeException relayRecordFailure) {
+                    // best-effort：登记失败不影响 ACCEPTED 回执，行由对账任务/TASK_RESULT 收尾
+                    log.warn("debug log relay record failed dispatchId={} key={}",
+                            dispatchId, storageKey, relayRecordFailure);
+                }
+            }
 
             if (evolutionMode.acceptsRuntimeDelta() && "learning_delta/memory_delta.json".equals(logical)) {
                 log.info("artifact memory_delta ingested dispatchId={} agentId={}", dispatchId, auth.getAgentId());
@@ -287,16 +329,23 @@ public class DaemonArtifactController {
     }
 
     static String classify(String path) {
-        if (path.startsWith("deliverables/")) return "DELIVERABLE";
-        if (path.startsWith("patches/")) return "PATCH";
-        if (path.startsWith("evidence/")) return "EVIDENCE";
-        if (path.startsWith("handoff/")) return "HANDOFF";
-        if (path.startsWith("learning_delta/")) return "LEARNING";
-        return "FILE";
+        return ArtifactClassification.classify(path);
     }
 
     static boolean isTelemetry(String logicalPath) {
         return logicalPath != null && (logicalPath.startsWith("observability/")
                 || logicalPath.contains("/observability/"));
+    }
+
+    /** 中转 debug 文件固定为 debug/{roleCode}-{dispatchId}.log.gz（协议契约），只认 logical 前缀。 */
+    static boolean isDebugLog(String logicalPath) {
+        return logicalPath != null && logicalPath.startsWith("debug/");
+    }
+
+    private static JSONObject metadataEntry(JSONArray metadata, int index) {
+        if (metadata == null || index >= metadata.size()) {
+            return null;
+        }
+        return metadata.getJSONObject(index);
     }
 }

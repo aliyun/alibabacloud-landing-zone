@@ -22,7 +22,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -80,7 +83,9 @@ public class SquadService {
         for (SquadMemberDO m : memberDao.listBySquad(id)) {
             agentIds.add(m.getAgentId());
         }
-        return toVO(squad, agentIds);
+        SquadVO vo = toVO(squad, agentIds);
+        fillSdlcsAndExecutors(vo, squad, agentIds);
+        return vo;
     }
 
     public List<SquadVO> list(int page, int size) {
@@ -104,7 +109,7 @@ public class SquadService {
             throw new BizException(ErrorCode.SQUAD_NAME_REQUIRED);
         }
         int rows = squadDao.update(id, tenantId, req.getName(), req.getDescription(),
-                req.getOwnerId(), squad.getVersion(), userId);
+                req.getOwnerId(), req.getDebugLogEnabled(), squad.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.CONFLICT);
         }
@@ -200,6 +205,7 @@ public class SquadService {
             AgentDO agent = agentMap.get(m.getAgentId());
             if (agent != null) {
                 vo.setAgentName(agent.getName());
+                vo.setAgentKind(agent.getKind());
                 if (agent.getOnlineVersionId() != null) {
                     AgentVersionDO version = versionMap.get(agent.getOnlineVersionId());
                     if (version != null) {
@@ -241,6 +247,7 @@ public class SquadService {
         vo.setDescription(s.getDescription());
         vo.setOwnerId(s.getOwnerId());
         vo.setVersion(s.getVersion());
+        vo.setDebugLogEnabled(Boolean.TRUE.equals(s.getDebugLogEnabled()));
         vo.setGmtCreate(s.getGmtCreate());
         vo.setMemberAgentIds(memberAgentIds);
         vo.setMemberCount(memberCount);
@@ -310,6 +317,70 @@ public class SquadService {
         vo.setExecutorTotalCount(executorTotal);
         vo.setExecutorOnlineCount(executorOnline);
         return vo;
+    }
+
+    private void fillSdlcsAndExecutors(SquadVO vo, SquadDO squad, List<Long> memberAgentIds) {
+        Long tenantId = squad.getTenantId();
+        List<Long> agentIds = memberAgentIds == null ? List.of() : memberAgentIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (tenantId == null || agentIds.isEmpty()) {
+            vo.setSdlcs(List.of());
+            vo.setExecutors(List.of());
+            return;
+        }
+
+        List<SquadVO.ExecutorSummaryVO> executors = new ArrayList<>();
+        for (ExecutorDO e : executorDao.listByAgentIds(tenantId, agentIds)) {
+            SquadVO.ExecutorSummaryVO executorVO = new SquadVO.ExecutorSummaryVO();
+            executorVO.setId(e.getId());
+            executorVO.setAgentId(e.getAgentId());
+            executorVO.setAgentName(e.getAgentName());
+            executorVO.setName(e.getName());
+            executorVO.setStatus(e.getId() != null && executorRegistry.isOnline(e.getId()) ? "ONLINE" : "OFFLINE");
+            executorVO.setClientKind(e.getClientKind());
+            executorVO.setLastHeartbeat(e.getLastHeartbeat());
+            executors.add(executorVO);
+        }
+        // Both derived sections of this VO sort by id ascending, so neither order depends on the
+        // DAO's own list order (listByAgentIds is id DESC).
+        executors.sort(Comparator.comparing(SquadVO.ExecutorSummaryVO::getId));
+        vo.setExecutors(executors);
+
+        List<SquadVO.SdlcSummaryVO> sdlcs = new ArrayList<>();
+        Set<Long> sdlcIds = onlineSdlcIds(tenantId, agentIds);
+        if (!sdlcIds.isEmpty()) {
+            for (SdlcDO s : sdlcDao.listByIds(sdlcIds)) {
+                SquadVO.SdlcSummaryVO sdlcVO = new SquadVO.SdlcSummaryVO();
+                sdlcVO.setId(s.getId());
+                sdlcVO.setName(s.getName());
+                sdlcVO.setWorkType(s.getWorkType());
+                sdlcVO.setStatus(s.getStatus());
+                sdlcs.add(sdlcVO);
+            }
+        }
+        sdlcs.sort(Comparator.comparing(SquadVO.SdlcSummaryVO::getId));
+        vo.setSdlcs(sdlcs);
+    }
+
+    private Set<Long> onlineSdlcIds(Long tenantId, List<Long> agentIds) {
+        Set<Long> versionIds = new HashSet<>();
+        for (AgentDO agent : agentDao.listByIds(tenantId, agentIds)) {
+            if (agent.getOnlineVersionId() != null) {
+                versionIds.add(agent.getOnlineVersionId());
+            }
+        }
+        if (versionIds.isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> sdlcIds = new LinkedHashSet<>();
+        for (AgentVersionDO v : agentVersionDao.listByIds(tenantId, versionIds)) {
+            if (v.getSdlcId() != null) {
+                sdlcIds.add(v.getSdlcId());
+            }
+        }
+        return sdlcIds;
     }
 
     private List<SquadMemberVO.SdlcStepSummaryVO> toSdlcStepSummaries(List<SdlcStepDO> steps) {

@@ -55,6 +55,18 @@ variable "zone_b_id" {
   type        = string
 }
 
+variable "rds_slave_zone_id" {
+  description = "Optional RDS standby zone; empty falls back to zone_b_id. Only set when the resolver downgrades the RDS standby out of the ECS zone pair."
+  type        = string
+  default     = ""
+}
+
+variable "redis_secondary_zone_id" {
+  description = "Optional Redis secondary zone; empty falls back to zone_b_id. Only set when the resolver downgrades the Redis replica out of the ECS zone pair."
+  type        = string
+  default     = ""
+}
+
 variable "public_source_cidrs" {
   description = "Public client CIDRs allowed to reach AutoWonder through ALB."
   type        = list(string)
@@ -144,7 +156,6 @@ variable "ecs_image_id" {
 variable "ecs_instance_type" {
   description = "Verified x86_64 ECS instance type with exactly 2 vCPU and 4 GiB available in both zones; prefer ecs.c8a.large."
   type        = string
-  default     = "ecs.c8a.large"
 }
 
 variable "ecs_password" {
@@ -160,7 +171,6 @@ variable "ecs_password" {
 variable "rds_instance_type" {
   description = "Region-supported MySQL 8 high-availability instance class."
   type        = string
-  default     = "mysql.n2.medium.2c"
 }
 
 variable "rds_category" {
@@ -198,10 +208,9 @@ variable "rds_password" {
 variable "redis_instance_class" {
   description = "Region-supported Redis 7 primary/replica class."
   type        = string
-  default     = "redis.shard.small.ce"
   validation {
-    condition     = can(regex("^redis\\.(shard|master)", var.redis_instance_class))
-    error_message = "redis_instance_class must be a primary/replica Redis class."
+    condition     = length(trimspace(var.redis_instance_class)) > 0
+    error_message = "redis_instance_class must be selected and verified using current cloud facts."
   }
 }
 
@@ -308,6 +317,7 @@ resource "alicloud_instance" "app" {
   image_id                   = var.ecs_image_id
   instance_type              = var.ecs_instance_type
   security_groups            = [alicloud_security_group.app.id]
+  availability_zone          = each.value.zone
   vswitch_id                 = each.value.vswitch_id
   system_disk_category       = "cloud_essd"
   system_disk_size           = 60
@@ -431,7 +441,7 @@ resource "alicloud_db_instance" "main" {
   instance_name            = "${local.name_prefix}-rds"
   vswitch_id               = join(",", [alicloud_vswitch.zone_a.id, alicloud_vswitch.zone_b.id])
   zone_id                  = var.zone_a_id
-  zone_id_slave_a          = var.zone_b_id
+  zone_id_slave_a          = var.rds_slave_zone_id != "" ? var.rds_slave_zone_id : var.zone_b_id
   security_ips             = [var.vpc_cidr]
   deletion_protection      = local.persistent
   tags                     = local.tags
@@ -472,10 +482,12 @@ resource "alicloud_kvstore_instance" "main" {
   db_instance_name            = "${local.name_prefix}-redis"
   instance_class              = var.redis_instance_class
   instance_type               = "Redis"
+  node_type                   = "MASTER_SLAVE"
+  shard_count                 = 1
   engine_version              = "7.0"
   vswitch_id                  = alicloud_vswitch.zone_a.id
   zone_id                     = var.zone_a_id
-  secondary_zone_id           = var.zone_b_id
+  secondary_zone_id           = var.redis_secondary_zone_id != "" ? var.redis_secondary_zone_id : var.zone_b_id
   payment_type                = "PrePaid"
   period                      = tostring(var.purchase_period_months)
   auto_renew                  = var.auto_renew
@@ -483,9 +495,14 @@ resource "alicloud_kvstore_instance" "main" {
   password                    = var.redis_password
   security_ips                = [var.vpc_cidr]
   instance_release_protection = local.persistent
-  backup_period               = ["Friday", "Monday", "Saturday", "Sunday", "Thursday", "Tuesday", "Wednesday"]
-  backup_time                 = "03:00Z-04:00Z"
-  tags                        = local.tags
+  lifecycle {
+    # CreateInstance requires MASTER_SLAVE; provider 1.287 reads it back as double.
+    # Topology is immutable here; the plan guard still verifies the HA readback.
+    ignore_changes = [node_type]
+  }
+  backup_period = ["Friday", "Monday", "Saturday", "Sunday", "Thursday", "Tuesday", "Wednesday"]
+  backup_time   = "03:00Z-04:00Z"
+  tags          = local.tags
 }
 
 resource "alicloud_oss_bucket" "package" {

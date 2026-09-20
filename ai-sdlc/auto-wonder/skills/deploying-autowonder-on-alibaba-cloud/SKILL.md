@@ -17,6 +17,37 @@ Select the mode before any read/write workflow:
 | QA and diagnosis | answer from references and perform only authorized read-only inspection |
 | Teardown | review impact and destroy plan, then require separate destructive confirmation |
 
+## Cloud Operations State
+
+For resume, configuration changes, scale-out, and upgrade, authenticate the
+`auto-wonder` profile, then run `python3 scripts/operations-store.py resolve
+--project-root <workspace>` (`python` on Windows). Supply `--region` and
+`--deployment-id` only to select among multiple deployments. A missing local
+deployment folder is not a reason to create infrastructure or ask for passwords.
+Use the returned manifest and restored Terraform/environment paths.
+
+The authoritative recovery data lives in a **separate**, same-region private
+`aw-ops-<deploymentId>-<identityHash>` bucket. Never reuse the tfstate, packages,
+or artifacts bucket. `deploy/` and `upgrade/` share one verified `current.json`
+commit point. Immutable snapshots retain history; bucket versioning must never
+be enabled because OSS ignores conditional no-overwrite in versioned buckets.
+Only operator credentials may access this bucket; do not grant the application
+RAM user access. Operations storage requires ossutil v2; the helper also detects
+the v2 command embedded in `aliyun ossutil`.
+
+Only confirmed cloud absence triggers the existing local discovery/import
+rules. Import preserves the latest working upgrade state, original secrets,
+actual Terraform configuration, and sealed releases before continuing.
+403, timeout, corrupt objects, and missing referenced files are **blocked**, not
+permission to fall back to stale local data. See
+`references/operations-state.md` for import, recovery, and unknown outcomes.
+
+New deployment backend preparation initializes the operations bucket before
+later infrastructure changes. Manifest checkpoints write through to OSS;
+failure stops execution. `deployment-resume-required` means the cloud snapshot
+is an unfinished installation: resume deployment, not upgrade. Local folders
+are caches only after cloud initialization and successful restore validation.
+
 If a manifest exists, ask whether to resume it or create a distinct deployment.
 Never apply merely because configuration files exist. QA and diagnosis must not
 invoke mutation scripts.
@@ -25,6 +56,10 @@ At the start of every workflow, including resume paths that do not repeat
 preflight, run `bash scripts/bootstrap-control-host.sh --manifest <file>`. It
 must validate the dedicated `auto-wonder` profile through STS and complete the
 same-profile OAuth recovery before any later cloud or Terraform operation.
+When no manifest is available yet, bootstrap with `--region <region>` (or its
+default), then resolve cloud operations state. On Windows use
+`scripts/windows/bootstrap-control-host.ps1` and native Python; Git Bash may
+launch the forwarding bootstrap, but must not execute POSIX deployment logic.
 
 ## Build And Runtime Environment
 
@@ -41,13 +76,38 @@ packaging condition, not as a cloud safety failure.
 
 | Purpose | Supported environment |
 | --- | --- |
-| Source package | JDK 21 and Maven 3.9.9; Maven downloads the pinned Node.js and npm versions automatically |
+| Source package | JDK 21 and Maven 3.9.9+ in the 3.x series; Maven downloads the pinned Node.js and npm versions automatically |
 | Frontend only | Node.js 22.22.2 and npm 10.9.7 |
-| Deployment | Bash, Git, jq, Terraform 0.13.2 or later, Alibaba Cloud CLI, ossutil, OpenSSL, and curl on the control host; Windows, macOS, or Linux control host; Linux x86_64 with Java 21 on ECS |
+| Deployment | Shared private Python; Terraform 1.5+ in the 1.x series, Alibaba Cloud CLI 3.x, ossutil 2.x and jq 1.8.2+; platform prerequisites and download coverage in `references/cross-platform-runtime.md`; Linux x86_64 with Java 21 on ECS |
 
-Whenever the control host's public IP must be identified, obtain it from
-`https://whatismyipaddress.com/`. Use this site as the fixed source for local
-public IP identification.
+When a new deployment needs the control host's public IPv4, run
+`bash scripts/detect-public-ip.sh` (Windows: `scripts/windows/detect-public-ip.ps1`).
+The shared Python probe queries IPIP, ipify and MyIP over HTTPS concurrently,
+with a bounded overall deadline, while respecting the existing proxy route.
+When the user selects automatic discovery, `detected` (exit 0) means at least
+one valid public IPv4 was found. Copy the complete `publicSourceCidrs` array to
+the manifest without further confirmation: a single-source result is usable,
+and different addresses from multiple sources are all included as separate,
+deduplicated `/32` CIDRs. Do not select only the majority address. `confidence`
+and source errors are diagnostic information, not approval gates.
+`unavailable` (5) means no valid address was found; offer one retry or manual
+public IPv4/CIDR input. Validate manual input with `--ip` or `--cidr`; never
+substitute `0.0.0.0/0`. In unattended mode, no valid address blocks the affected
+step.
+Reuse an explicitly provided valid access CIDR without probing. An upgrade
+must preserve existing ingress rules unless their change is explicitly requested.
+Do not promise that any third-party IP service is always reachable in China.
+
+This Skill is self-contained: do not read scripts, templates or references from
+an installed upgrade Skill. Only `skills/.autowonder-tools` may be shared;
+recovery compatibility is carried by OSS records and sealed artifacts.
+
+Runtime initialization and verification are defined in
+`references/cross-platform-runtime.md`. Read it before selecting dependencies.
+Reuse the bootstrap's returned `runtimeEnvironment` for all subsequent child
+processes; dependencies live in the shared project cache, never in a global
+package-manager installation. CMD and Git Bash startup wrappers dispatch to
+native Windows PowerShell; WSL uses Linux dependencies.
 
 ## Initial Questionnaire
 
@@ -60,9 +120,9 @@ bucket, a backend file path, lifecycle, or execution mode. Fix the environment t
 Never ask for topology or specifications. Fix every new deployment to dual-zone
 high availability with two ECS instances in different zones, HA RDS, cross-zone
 Redis, a public dual-zone Application Load Balancer (ALB), and the small sizing
-preset. Small means exactly 2 vCPU and 4 GiB memory per ECS node. Prefer
-`ecs.c8a.large`; if it is unavailable, use only an x86_64 instance type with the
-same 2-vCPU/4-GiB capacity that is available in both selected zones. Never
+preset. Small means exactly 2 vCPU and 4 GiB memory per ECS node. Use an
+enterprise-class x86_64 type available in both zones. `ecs.c8a.large` is a soft
+preference after hard constraints and comparable core subscription prices. Never
 downgrade below or increase beyond that fixed capacity without a separately
 approved change.
 Fix billing to `subscription-first`; do not add a billing questionnaire field.
@@ -77,6 +137,22 @@ When checking zonal stock, query ECS availability by instance type only. Pass
 the resolved `InstanceType` to `DescribeAvailableResource`; do not pass CPU or
 memory parameters in the same request. Validate the required 2-vCPU/4-GiB x86_64
 shape separately from the `DescribeInstanceTypes` response.
+Availability zones are resolved automatically and never asked of the user.
+Before preflight, run `bash scripts/resolve-zones.sh --manifest <file>`.
+The resolver discovers a complete ECS/image/disk/RDS/Redis/ALB combination using
+current CLI facts and `assets/deployment-policy.json`; no SKU is a silent
+Terraform default. A preference never overrides a complete compliant combination.
+For `needs-agent`, follow the candidate protocol in
+`references/operations-runbook.md`: collect read-only facts with `discover`,
+reason over them, and submit `resolve --candidate FILE`. Do not directly write
+`verified` or bypass unknown checks. Missing evidence is not proof of no stock.
+Do not ask the user to find zones in the console or re-confirm a compliant plan.
+Plan/apply must use `terraform-stage.sh`, which binds the exact plan to verified
+selection and configuration, refreshes purchase facts before apply, and refuses
+changes to existing resources. OSS remains the recovery source on a new computer;
+new selection metadata travels with the existing manifest checkpoint. Restoring
+a completed environment does not trigger reselection. Read the runbook's
+adaptive-selection section for supported standby changes and API limits.
 Use the current workspace contents exactly as they exist, including uncommitted
 or untracked changes, and use only required system tags. For a new deployment,
 do not inspect or validate Git information and do not fetch, pull, merge, or
@@ -115,15 +191,23 @@ is absent or their regions differ.
 
 | Region presets | Ingress result before trusted TLS |
 | --- | --- |
-| `cn-zhangjiakou`, `cn-hangzhou`, `cn-shanghai`, `cn-beijing` | no domain: `ws://<alb-address>/ws/executor` |
+| `cn-zhangjiakou`, `cn-hangzhou`, `cn-shanghai`, `cn-beijing` | no domain: `ws://<alb-public-ipv4>/ws/executor` |
 | preflight must find two distinct zones for HA | domain: `ws://<domain>/ws/executor` |
 | stop rather than downgrade unavailable HA | domain plus certificate: later verify `wss://<domain>/ws/executor` |
 
 Create a **sanitized manifest** from
 `assets/templates/deployment-manifest.json`, then show one review table with all
 answers, defaults, risks, cost drivers, and phases. Never store secrets there.
-After confirmation, do not re-question configuration. A changed choice invalidates
-the plan and requires one new consolidated review.
+For a new-deployment request, complete and validate the inputs, show this table
+as an informational progress update, and continue directly into unattended
+execution. The deployment request authorizes creation within these inputs and
+fixed defaults; do not ask for another confirmation before backend preparation,
+resource creation, or Terraform apply, and never require a reply such as “确认”.
+Ask only for missing or ambiguous required inputs; stop on Safety Rules or when
+the user explicitly requests a review-only plan or an approval checkpoint.
+Do not re-question resolved configuration. A changed choice invalidates the plan:
+regenerate and re-review it against the updated inputs, then continue automatically
+within the authorized scope.
 
 New deployment uses `unattended` mode. After the saved Terraform plan passes the
 machine review, automatically approve its exact recorded fingerprint and
@@ -202,15 +286,22 @@ stopped nodes to be healthy before their activation turn.
 Generate one-time administrator passwords with a fixed complexity prefix plus
 cryptographic hex bytes. Do not truncate a random pipeline with `head` under
 `pipefail`, because the expected upstream SIGPIPE aborts business initialization.
-Create the requested organization through the current workspace API
-`POST /api/workspaces`; the legacy `/api/orgs` route is not writable.
+Create only the initial `admin`; do not request an organization name or create a workspace.
+The user creates their first workspace after signing in. Persist deployment-bound credentials
+in root-only `/etc/autowonder/admin-bootstrap.json` before registration; on a registration
+conflict verify the saved credentials without deleting or resetting the existing account.
+This recovery file is sensitive and remains protected on the first ECS; handoff transport stays encrypted and the local credential file remains mode 0600.
 
-If Terraform inventory does not expose ALB public IPv4 addresses, deployment
-acceptance resolves both zone addresses from `GetLoadBalancerAttribute`, records
-them in the manifest, and probes each address independently of user DNS.
+Terraform inventory resolves both ALB public IPv4 addresses (the ALB EIPs) from
+`GetLoadBalancerAttribute` and records them in the manifest. Without a domain,
+set `applicationBaseUrl` to `http://<ip>` using the numerically first address;
+`runtime-config` uses it as the default `AUTOWONDER_PUBLIC_BASE_URL`. Do not use
+the ALB DNS name or allocate an ECS EIP. Missing or invalid addresses stop
+inventory. Acceptance probes both addresses independently of user DNS, resolving
+them for older manifests if necessary.
 | 6. Rolling activation | `scripts/initialize-and-verify.sh rolling-start` | systemd, port 7001, public preload and branding probes ready |
-| 7. Business init | `scripts/initialize-and-verify.sh business-init` | Business initialized |
-| 8. Acceptance | `scripts/initialize-and-verify.sh acceptance` | Release accepted; TLS independently checked |
+| 7. Business init | `scripts/initialize-and-verify.sh business-init` | Initial admin created; protected credentials ready for handoff |
+| 8. Acceptance | `scripts/initialize-and-verify.sh acceptance` | Script acceptance: both ALB public IPv4 preload probes pass; extended checks and TLS reported separately |
 | 9. Handoff | `scripts/initialize-and-verify.sh handoff`; `scripts/sanitize-evidence.sh` | sanitized report and one-time credentials |
 
 Shared guards live in `scripts/lib.sh`. For a new deployment, the machine review
@@ -236,7 +327,14 @@ without pretending its content hash is a Git commit.
 Cloud Assistant invocation IDs are checkpointed immediately. After an env-only
 correction, use `deploy-via-cloud-assistant.sh --config-only`; do not upload the
 JAR, schema, systemd unit, or Java archive again. Acceptance reruns preserve
-already-passed deep checks instead of resetting them to pending.
+already-recorded deep checks instead of resetting them to pending. The current
+deployment-scoped acceptance returns `accepted` after both ALB public IPv4
+`/checkpreload.htm` responses equal `success`; it does not execute the optional
+extended ten-check acceptance or TLS verification. `--acceptance-evidence` and
+`AUTOWONDER_RUNTIME_PROBE` are not reached by this scoped entrypoint and have no
+effect. Preserved deep-check fields are historical evidence, not rerun results.
+Report script acceptance, extended acceptance, and TLS separately; see
+`references/acceptance-and-rollback.md`.
 
 The immutable release includes `autowonder-community-templates.sql`. Database
 initialization imports it after the schema and records
@@ -299,11 +397,18 @@ plan; it never reverses database migrations. Use only the reviewed restore or
 forward-fix route when the old application is not compatible with the migrated
 schema.
 
-For teardown, read `references/acceptance-and-rollback.md`, run
-`scripts/terraform-stage.sh destroy-plan`, review backups/impact/hash, and obtain
-separate confirmation before `destroy-apply`. Only after verified main destruction
-may `scripts/terraform-backend.sh destroy` remove all state versions and the state
-bucket. Do not retain the state backend after successful teardown.
+For teardown, read `references/acceptance-and-rollback.md` and verify ownership,
+backups, impact, and authorization for the exact deployment. Run
+`bash scripts/prepare-teardown.sh --manifest FILE --confirmation-file FILE` with
+`DESTROY <deploymentId>` in the confirmation file. It applies only reviewed
+protection/retention changes without changing production defaults; it does not
+perform subscription refunds. Complete exact-resource BSS unsubscription for
+prepaid resources before the main destroy. Then run
+`scripts/terraform-stage.sh destroy-plan`, review its hash, and apply that exact
+plan with `destroy-apply` under the authorized teardown scope. After verified
+main destruction, backend cleanup automatically removes all tfstate versions,
+the state bucket, and the dedicated operations bucket. Do not remove recovery
+state while destruction is failed or uncertain.
 
 ## Reference Routing
 
@@ -334,3 +439,22 @@ the user's credential export preference: no export (default), encrypted local bu
 or external secret manager. Never export other credentials before an
 explicit destination and method are selected, and never place them in chat,
 manifest, logs, or the sanitized report.
+
+## Deployment build and health scope
+
+Release builds run `clean package -Dmaven.test.skip=true` with
+`-DskipFrontend=false`: compile the application and frontend, but do not compile
+or execute application tests. Keep archive integrity, frontend asset, hash,
+source identity, initialization, and per-node activation checks. Build failures
+still stop deployment. Do not run frontend lint/unit tests or local release testing as part of a
+cloud deployment or upgrade. Application
+quality checks belong to the release pipeline; this workflow does not certify
+application business behavior. Skill maintenance may run its own offline fixtures.
+
+The deployment health endpoint is a liveness response, not a database, Redis,
+executor, or storage business test. Do not create test Agents/executors or run
+file upload/download smoke tests unless explicitly requested. Keep the existing
+acceptance boundary: new deployment checks both ALB EIPs after node activation;
+Upgrade acceptance checks ECS locally only; the validation workflow must not
+append public EIP or business checks to an upgrade. Preserve OSS checkpoints
+and recovery artifacts.

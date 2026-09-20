@@ -2,14 +2,18 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 UPGRADE_ROOT = Path(__file__).resolve().parents[1]
-DEPLOY_ROOT = UPGRADE_ROOT.parent / "deploying-autowonder-on-alibaba-cloud"
 class UpgradeSkillSplitContractTests(unittest.TestCase):
+    # Historical local discovery is now the fallback beneath the cloud resolver.
+    # Its contract stays covered here; cloud precedence/import is exercised in
+    # the deployment Skill test_operations_store.py against an in-memory OSS.
+
     def test_active_commit_prefix_can_be_resolved_from_registered_source_repository(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -70,7 +74,7 @@ class UpgradeSkillSplitContractTests(unittest.TestCase):
 
     def test_skill_bundles_do_not_depend_on_shared_directory(self):
         self.assertFalse((UPGRADE_ROOT.parent / "_shared").exists())
-        for skill_root in (UPGRADE_ROOT, DEPLOY_ROOT):
+        for skill_root in (UPGRADE_ROOT,):
             internal = skill_root / "scripts" / "internal"
             self.assertTrue((internal / "operations.sh").is_file())
             self.assertTrue((internal / "release-transfer.sh").is_file())
@@ -145,21 +149,9 @@ esac
         }))
         return path
 
-    def test_deployment_entrypoints_reject_upgrade_operations(self):
-        operation = subprocess.run(
-            ["bash", str(DEPLOY_ROOT / "scripts/initialize-and-verify.sh"), "rolling-upgrade"],
-            text=True,
-            capture_output=True,
-        )
-        staging = subprocess.run(
-            ["bash", str(DEPLOY_ROOT / "scripts/deploy-via-cloud-assistant.sh"), "--stage-only"],
-            text=True,
-            capture_output=True,
-        )
-        self.assertNotEqual(0, operation.returncode)
-        self.assertNotEqual(0, staging.returncode)
-        self.assertIn("outside the selected skill boundary", operation.stderr)
-        self.assertIn("outside the deployment skill boundary", staging.stderr)
+    def test_bundle_does_not_include_initial_deployment_entrypoints(self):
+        self.assertFalse((UPGRADE_ROOT / "scripts/initialize-and-verify.sh").exists())
+        self.assertFalse((UPGRADE_ROOT / "scripts/deploy-via-cloud-assistant.sh").exists())
 
     def test_upgrade_entrypoint_rejects_new_deployment_operations(self):
         result = subprocess.run(
@@ -201,15 +193,32 @@ esac
 """)
             (binary_dir / "python3").write_text("""#!/usr/bin/env bash
 set -euo pipefail
-[[ ${ALICLOUD_ACCESS_KEY:-} == test-id ]]
-[[ ${ALICLOUD_SECRET_KEY:-} == test-secret ]]
-[[ ${ALICLOUD_SECURITY_TOKEN:-} == test-token ]]
-[[ -s $FAKE_ALIYUN_LOG ]]
-printf '{"status":"refreshed"}\\n'
+if [[ ${1:-} == */upgrade_info.py ]]; then
+  [[ ${ALICLOUD_ACCESS_KEY:-} == test-id ]]
+  [[ ${ALICLOUD_SECRET_KEY:-} == test-secret ]]
+  [[ ${ALICLOUD_SECURITY_TOKEN:-} == test-token ]]
+  [[ -s $FAKE_ALIYUN_LOG ]]
+  printf '{"status":"refreshed"}\\n'
+else
+  exec "$FIXTURE_REAL_PYTHON" "$@"
+fi
 """)
             for binary in binary_dir.iterdir():
                 binary.chmod(0o755)
             aliyun_log = root / "aliyun.log"
+
+            # Exercise the real profile/STS flow without installing runtime tools.
+            skills = root / 'fixture-skills'
+            deploy_scripts = skills / UPGRADE_ROOT.name / 'scripts'
+            upgrade_scripts = skills / UPGRADE_ROOT.name / 'scripts'
+            deploy_scripts.mkdir(parents=True, exist_ok=True)
+            upgrade_scripts.mkdir(parents=True, exist_ok=True)
+            for name in ('bootstrap-control-host.sh', 'lib.sh', 'cloud_diagnostics.py'):
+                shutil.copyfile(UPGRADE_ROOT / 'scripts' / name, deploy_scripts / name)
+            for name in ('refresh-upgrade-info.sh', 'upgrade-lib.sh'):
+                shutil.copyfile(UPGRADE_ROOT / 'scripts' / name, upgrade_scripts / name)
+            (deploy_scripts / 'runtime-env.sh').write_text(
+                'autowonder_runtime_environment() { export AUTOWONDER_PYTHON="$FIXTURE_PYTHON" JAVA_HOME="$HOME/jdk" PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1; }\n')
 
             clean_environment = {
                 key: value for key, value in os.environ.items()
@@ -221,7 +230,7 @@ printf '{"status":"refreshed"}\\n'
             }
 
             result = subprocess.run([
-                "bash", str(UPGRADE_ROOT / "scripts" / "refresh-upgrade-info.sh"),
+                "bash", str(upgrade_scripts / "refresh-upgrade-info.sh"),
                 "--project-root", str(root),
                 "--manifest", str(manifest),
             ], text=True, capture_output=True, env={
@@ -230,6 +239,8 @@ printf '{"status":"refreshed"}\\n'
                 "HOME": str(root / "home"),
                 "ALIBABA_CLOUD_CLI_CONFIG_FILE": str(cli_config),
                 "FAKE_ALIYUN_LOG": str(aliyun_log),
+                "FIXTURE_PYTHON": str(binary_dir / "python3"),
+                "FIXTURE_REAL_PYTHON": sys.executable,
             })
 
             self.assertEqual(0, result.returncode, result.stderr)
@@ -276,7 +287,7 @@ printf '{"status":"refreshed"}\\n'
                 "deployment": {"activeCommit": "a" * 40},
             }))
             result = subprocess.run(
-                ["bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"), "--search-root", str(root)],
+                [sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate", "--project-root", str(root)],
                 text=True,
                 capture_output=True,
                 env={**os.environ, "HOME": str(root / "home")},
@@ -331,7 +342,7 @@ printf '{"status":"refreshed"}\\n'
             )
 
             result = subprocess.run(
-                ["bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"), "--search-root", str(root)],
+                [sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate", "--project-root", str(root)],
                 text=True,
                 capture_output=True,
             )
@@ -342,10 +353,10 @@ printf '{"status":"refreshed"}\\n'
                 json.loads(result.stdout)["manifest"],
             )
 
-    def test_windows_resolver_uses_the_shared_upgrade_info_core(self):
+    def test_windows_resolver_uses_the_shared_cloud_operations_core(self):
         resolver = (UPGRADE_ROOT / "scripts" / "resolve-deployment.ps1").read_text()
 
-        self.assertIn("upgrade_info.py", resolver)
+        self.assertIn("operations-store.py", resolver)
         self.assertIn("--deployment-dir", resolver)
         self.assertNotIn("convert-legacy-deployment.py", resolver)
 
@@ -366,7 +377,7 @@ printf '{"status":"refreshed"}\\n'
                     "deployment": {"activeCommit": "b" * 40},
                 }))
             result = subprocess.run(
-                ["bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"), "--search-root", str(root)],
+                [sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate", "--project-root", str(root)],
                 text=True,
                 capture_output=True,
                 env={**os.environ, "HOME": str(root / "home")},
@@ -408,8 +419,8 @@ printf '{"status":"refreshed"}\\n'
                 "deployment": {"activeCommit": "a" * 40},
             }))
             result = subprocess.run([
-                "bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"),
-                "--search-root", str(root),
+                sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate",
+                "--project-root", str(root),
             ], text=True, capture_output=True)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual("current-manifest", json.loads(result.stdout)["source"])
@@ -418,8 +429,8 @@ printf '{"status":"refreshed"}\\n'
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             result = subprocess.run([
-                "bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"),
-                "--search-root", str(root),
+                sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate",
+                "--project-root", str(root),
             ], text=True, capture_output=True)
 
             self.assertEqual(5, result.returncode)
@@ -497,8 +508,8 @@ printf '{"status":"refreshed"}\\n'
             protected_env.chmod(0o600)
 
             first = subprocess.run([
-                "bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"),
-                "--search-root", str(root),
+                sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate",
+                "--project-root", str(root),
                 "--deployment-dir", "user-provided-folder",
             ], text=True, capture_output=True)
 
@@ -518,8 +529,8 @@ printf '{"status":"refreshed"}\\n'
 
             shutil.rmtree(supplied)
             second = subprocess.run([
-                "bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"),
-                "--search-root", str(root),
+                sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate",
+                "--project-root", str(root),
             ], text=True, capture_output=True)
             self.assertEqual(0, second.returncode, second.stderr)
             self.assertEqual(str(manifest), json.loads(second.stdout)["manifest"])
@@ -554,8 +565,8 @@ printf '{"status":"refreshed"}\\n'
             }))
 
             result = subprocess.run([
-                "bash", str(UPGRADE_ROOT / "scripts/resolve-deployment.sh"),
-                "--search-root", str(root),
+                sys.executable, str(UPGRADE_ROOT / "scripts/upgrade_info.py"), "locate",
+                "--project-root", str(root),
                 "--deployment-dir", "old",
             ], text=True, capture_output=True)
 

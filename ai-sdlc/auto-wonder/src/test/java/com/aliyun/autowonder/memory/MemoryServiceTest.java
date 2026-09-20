@@ -122,16 +122,76 @@ class MemoryServiceTest {
     }
 
     @Test
-    void deleteInUseThrows() {
-        MemoryDO m = new MemoryDO();
-        m.setId(1L);
-        m.setTenantId(1L);
-        m.setVersion(0);
+    void deleteRemovesBindingsAndKeepsAudit() {
+        MemoryDO m = stored(1L, 1L, "ADOPTED", "title", "body");
         when(memoryDao.findById(1L)).thenReturn(m);
-        when(agentMemoryRefDao.countByMemoryId(1L, 1L)).thenReturn(2);
+        when(memoryDao.softDelete(1L, 1L, m.getVersion(), 2L)).thenReturn(1);
+        service.delete(1L, 1L, 2L);
+        verify(agentMemoryRefDao).deleteByMemoryId(1L, 1L);
+        verify(memoryReviewDao).insert(argThat(r -> "DELETE".equals(r.getDecision())
+                && r.getMemoryId() == 1L && r.getTenantId() == 1L));
+    }
 
-        BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
-        assertEquals(ErrorCode.MEMORY_DELETE_IN_USE.getCode(), ex.getCode());
+    @Test
+    void deleteConflictDoesNotRemoveBindings() {
+        when(memoryDao.findById(1L)).thenReturn(stored(1L, 1L, "ADOPTED", "title", "body"));
+        assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
+        verifyNoInteractions(agentMemoryRefDao, memoryReviewDao);
+    }
+
+    @Test
+    void deleteCannotRemoveAnotherTenantsMemory() {
+        when(memoryDao.findById(1L)).thenReturn(stored(1L, 9L, "ADOPTED", "title", "body"));
+        assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
+        verify(memoryDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+        verifyNoInteractions(agentMemoryRefDao, memoryReviewDao);
+    }
+
+    @Test
+    void reviewCorrectsTypeAndContentBeforeAdopting() {
+        MemoryDO memory = stored(1L, 1L, "PENDING", "title", "old content");
+        memory.setScope("ORG");
+        memory.setType("RULE");
+        int version = memory.getVersion();
+        when(memoryDao.findById(1L)).thenReturn(memory);
+        when(memoryDao.update(1L, 1L, "title", "old content", "FACT", version, 2L)).thenReturn(1);
+        when(memoryDao.updateStatus(1L, 1L, "ADOPTED", "verified content", null, null, version + 1, 2L)).thenReturn(1);
+        ReviewRequest req = new ReviewRequest();
+        req.setDecision("ADOPT");
+        req.setEditedType("FACT");
+        req.setEditedContentMd("verified content");
+        service.review(1L, req, 1L, 2L);
+        verify(memoryDao).updateStatus(1L, 1L, "ADOPTED", "verified content", null, null, version + 1, 2L);
+        verify(memoryReviewDao).insert(argThat(r -> "ADOPT".equals(r.getDecision())
+                && "verified content".equals(r.getEditedContentMd())));
+    }
+
+    @Test
+    void reviewRejectsInvalidDecisionWithoutWriting() {
+        MemoryDO memory = new MemoryDO();
+        memory.setTenantId(1L);
+        memory.setStatus("PENDING");
+        when(memoryDao.findById(1L)).thenReturn(memory);
+        for (String decision : new String[] {null, "", "ADOPTT", "ADOPTED"}) {
+            ReviewRequest req = new ReviewRequest();
+            req.setDecision(decision);
+            assertEquals(ErrorCode.PARAM_INVALID.getCode(), assertThrows(BizException.class,
+                    () -> service.review(1L, req, 1L, 2L)).getCode());
+        }
+        verify(memoryDao, never()).updateStatus(anyLong(), anyLong(), any(), any(), any(), any(), any(), anyLong());
+        verifyNoInteractions(memoryReviewDao);
+    }
+
+    @Test
+    void reviewRejectsForeignTenantWithoutWriting() {
+        MemoryDO memory = new MemoryDO();
+        memory.setTenantId(99L);
+        when(memoryDao.findById(1L)).thenReturn(memory);
+        ReviewRequest req = new ReviewRequest();
+        req.setDecision("ADOPT");
+        assertEquals(ErrorCode.MEMORY_NOT_FOUND.getCode(), assertThrows(BizException.class,
+                () -> service.review(1L, req, 1L, 2L)).getCode());
+        verifyNoInteractions(memoryReviewDao);
     }
 
     @Test
@@ -555,6 +615,33 @@ class MemoryServiceTest {
         when(memoryDao.countPendingByTenant(100L)).thenReturn(5);
         assertEquals(5, service.countPendingReviews(100L));
         verify(memoryDao).countPendingByTenant(100L);
+    }
+
+    @Test
+    void countListPassesTheActiveFiltersThroughToDao() {
+        when(memoryDao.countList(100L, "AGENT", 30L, "RULE", "ADOPTED")).thenReturn(23);
+
+        assertEquals(23L, service.countList(100L, "AGENT", 30L, "RULE", "ADOPTED"));
+
+        verify(memoryDao).countList(100L, "AGENT", 30L, "RULE", "ADOPTED");
+    }
+
+    @Test
+    void countListKeepsNullFiltersSoRejectedRowsStayExcludedByDefault() {
+        when(memoryDao.countList(100L, null, null, null, null)).thenReturn(0);
+
+        assertEquals(0L, service.countList(100L, null, null, null, null));
+
+        verify(memoryDao).countList(100L, null, null, null, null);
+    }
+
+    @Test
+    void countGroupsPassesTheActiveFiltersThroughToDao() {
+        when(memoryDao.countGroupSummaries(100L, "AGENT", 30L, null, "ADOPTED")).thenReturn(2);
+
+        assertEquals(2L, service.countGroups(100L, "AGENT", 30L, null, "ADOPTED"));
+
+        verify(memoryDao).countGroupSummaries(100L, "AGENT", 30L, null, "ADOPTED");
     }
 
     private MemoryGroupSummaryDO summary(String scope, Long ownerRef, long total, long latestId) {

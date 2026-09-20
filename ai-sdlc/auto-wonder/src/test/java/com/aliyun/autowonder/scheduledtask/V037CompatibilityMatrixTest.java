@@ -126,6 +126,7 @@ class V037CompatibilityMatrixTest {
 
             try (Connection migration = fixture.open(database)) {
                 fixture.applyFile(migration, "docs/migration/V041__scheduled_task.sql");
+                fixture.applyFile(migration, "docs/migration/V058__squad_debug_log.sql");
             }
 
             completeOrdinaryWorkitem(frozenLegacy, "after-ddl");
@@ -152,6 +153,7 @@ class V037CompatibilityMatrixTest {
         try {
             try (Connection migration = fixture.open(database)) {
                 fixture.applyFile(migration, "docs/migration/V041__scheduled_task.sql");
+                fixture.applyFile(migration, "docs/migration/V058__squad_debug_log.sql");
             }
             V037SchemaCapability sourceAwareCapability = detect(database);
             sourceAware = openNode(database, sourceAwareCapability);
@@ -368,6 +370,7 @@ class V037CompatibilityMatrixTest {
         createPreV037(database);
         try (Connection connection = fixture.open(database)) {
             fixture.applyFile(connection, "docs/migration/V041__scheduled_task.sql");
+            fixture.applyFile(connection, "docs/migration/V058__squad_debug_log.sql");
         }
     }
 

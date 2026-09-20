@@ -25,9 +25,12 @@ import com.aliyun.autowonder.squad.SquadMemberDO;
 import com.aliyun.autowonder.squad.SquadMemberDao;
 import com.aliyun.autowonder.taskpackage.PackageContext;
 import com.aliyun.autowonder.taskpackage.TaskArtifactRef;
+import com.aliyun.autowonder.taskpackage.TaskComment;
 import com.aliyun.autowonder.taskpackage.TeammateOutput;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
@@ -43,6 +46,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -74,6 +78,7 @@ public class PackageContextAssembler {
     private final AgentDao agentDao;
     private final AgentVersionDao agentVersionDao;
     private final UserDao userDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
     private final RepoDao repoDao;
     private final RepoRelationDao repoRelationDao;
     private final StatusNodeDao statusNodeDao;
@@ -87,13 +92,13 @@ public class PackageContextAssembler {
             SkillDao skillCatalogDao,
             AgentMemoryRefDao memoryRefDao, MemoryDao memoryDao, DispatchDao dispatchDao,
             ArtifactDao artifactDao, SquadMemberDao squadMemberDao, AgentDao agentDao,
-            AgentVersionDao agentVersionDao, UserDao userDao, RepoDao repoDao,
+            AgentVersionDao agentVersionDao, UserDao userDao, WorkspaceMemberDao workspaceMemberDao, RepoDao repoDao,
             RepoRelationDao repoRelationDao,
             StatusNodeDao statusNodeDao, DispatchCheckpointService checkpointService,
             ScheduledRunExecutionSubjectProvider scheduledRunProvider) {
         this(workitemDao, clarificationDao, commentDao, guidanceDao, stepDao, repoPermDao,
                 skillDao, skillCatalogDao, memoryRefDao, memoryDao, dispatchDao, artifactDao,
-                squadMemberDao, agentDao, agentVersionDao, userDao, repoDao, repoRelationDao,
+                squadMemberDao, agentDao, agentVersionDao, userDao, workspaceMemberDao, repoDao, repoRelationDao,
                 statusNodeDao, checkpointService);
         this.subjectRegistry = new ExecutionSubjectRegistry(List.of(
                 new WorkitemExecutionSubjectProvider(workitemDao, this), scheduledRunProvider));
@@ -105,7 +110,7 @@ public class PackageContextAssembler {
             SkillDao skillCatalogDao,
             AgentMemoryRefDao memoryRefDao, MemoryDao memoryDao, DispatchDao dispatchDao,
             ArtifactDao artifactDao, SquadMemberDao squadMemberDao, AgentDao agentDao,
-            AgentVersionDao agentVersionDao, UserDao userDao, RepoDao repoDao,
+            AgentVersionDao agentVersionDao, UserDao userDao, WorkspaceMemberDao workspaceMemberDao, RepoDao repoDao,
             RepoRelationDao repoRelationDao,
             StatusNodeDao statusNodeDao, DispatchCheckpointService checkpointService) {
         this.workitemDao = workitemDao;
@@ -124,6 +129,7 @@ public class PackageContextAssembler {
         this.agentDao = agentDao;
         this.agentVersionDao = agentVersionDao;
         this.userDao = userDao;
+        this.workspaceMemberDao = workspaceMemberDao;
         this.repoDao = repoDao;
         this.repoRelationDao = repoRelationDao;
         this.statusNodeDao = statusNodeDao;
@@ -150,6 +156,7 @@ public class PackageContextAssembler {
         this.agentDao = null;
         this.agentVersionDao = null;
         this.userDao = null;
+        this.workspaceMemberDao = null;
         this.repoDao = null;
         this.repoRelationDao = null;
         this.statusNodeDao = null;
@@ -197,12 +204,15 @@ public class PackageContextAssembler {
         if (c != null && tenantId == c.getTenantId()) {
             ctx.setClarificationMd(c.getContentMd());
         }
-        ctx.setCommentsMd(buildComments(tenantId, dispatch.getWorkitemId()));
+        List<TaskComment> comments = loadComments(tenantId, dispatch.getWorkitemId());
+        ctx.setComments(comments);
+        ctx.setCommentsMd(buildComments(comments));
         populateSideInteractionContext(ctx, dispatch);
         ctx.setRequirementDocuments(buildRequirementDocuments(tenantId, dispatch.getWorkitemId()));
 
         ctx.setIdentity(buildIdentity(version));
-        ctx.setRepos(buildRepos(tenantId, version.getId()));
+        ctx.setRepos(buildRepos(tenantId, version.getId(),
+                dispatch.getAgentId() == null ? null : agentDao.findById(dispatch.getAgentId())));
         ctx.setRepoMap(buildRepoMap(tenantId, ctx.getRepos()));
         ctx.setSkills(buildCapabilities(skillDao, skillCatalogDao, tenantId, version.getId()));
         ctx.setSdlc(buildSdlc(tenantId, dispatch.getSdlcStepId()));
@@ -230,23 +240,36 @@ public class PackageContextAssembler {
         return ctx;
     }
 
-    private String buildComments(long tenantId, long workitemId) {
+    private List<TaskComment> loadComments(long tenantId, long workitemId) {
         List<WorkitemCommentDO> comments = commentDao.listByWorkitem(tenantId, workitemId);
         if (comments == null || comments.isEmpty()) {
+            return List.of();
+        }
+        List<TaskComment> snapshots = new ArrayList<>();
+        for (WorkitemCommentDO comment : comments) {
+            if (comment == null || comment.getTenantId() == null || comment.getTenantId() != tenantId
+                    || comment.getId() == null || comment.getId() <= 0) {
+                continue;
+            }
+            snapshots.add(new TaskComment(comment.getId(), comment.getAuthorType(),
+                    comment.getAuthorRef(), comment.getContentMd()));
+        }
+        return snapshots;
+    }
+
+    private String buildComments(List<TaskComment> comments) {
+        if (comments.isEmpty()) {
             return null;
         }
         StringBuilder markdown = new StringBuilder("# Workitem Comments\n\n");
-        for (WorkitemCommentDO comment : comments) {
-            if (comment == null || comment.getTenantId() == null || comment.getTenantId() != tenantId) {
-                continue;
-            }
-            markdown.append("## Comment ").append(comment.getId())
-                    .append(" · ").append(comment.getAuthorType())
-                    .append(" ").append(comment.getAuthorRef()).append("\n\n")
-                    .append(comment.getContentMd() == null ? "" : comment.getContentMd().trim())
+        for (TaskComment comment : comments) {
+            markdown.append("## Comment ").append(comment.id())
+                    .append(" · ").append(comment.authorType())
+                    .append(" ").append(comment.authorRef()).append("\n\n")
+                    .append(comment.contentMd() == null ? "" : comment.contentMd().trim())
                     .append("\n\n");
         }
-        return markdown.length() == "# Workitem Comments\n\n".length() ? null : markdown.toString();
+        return markdown.toString();
     }
 
     private void populateSideInteractionContext(PackageContext ctx, DispatchDO dispatch) {
@@ -386,28 +409,35 @@ public class PackageContextAssembler {
         if (refs == null) {
             return out;
         }
-        int i = 0;
-        for (AgentMemoryRefDO ref : refs) {
-            if (i >= MAX_MEMORIES) {
+        // DAO order is unspecified. Stable selection and names prevent unchanged memories
+        // from moving between paths on every dispatch and looking like new context.
+        List<AgentMemoryRefDO> ordered = refs.stream()
+                .filter(ref -> ref != null && ref.getMemoryId() != null
+                        && ref.getMemoryId() > 0 && Long.valueOf(tenantId).equals(ref.getTenantId()))
+                .sorted(Comparator.comparing(AgentMemoryRefDO::getMemoryId))
+                .toList();
+        Set<Long> seen = new HashSet<>();
+        for (AgentMemoryRefDO ref : ordered) {
+            if (out.size() >= MAX_MEMORIES) {
                 break;
             }
-            if (ref == null || ref.getMemoryId() == null || tenantId != ref.getTenantId()) {
+            if (!seen.add(ref.getMemoryId())) {
                 continue;
             }
             MemoryDO m = memoryDao.findById(ref.getMemoryId());
-            if (m == null || tenantId != m.getTenantId()
+            if (m == null || !Long.valueOf(tenantId).equals(m.getTenantId())
                     || !"ADOPTED".equals(m.getStatus())
                     || m.getContentMd() == null || m.getContentMd().isBlank()) {
                 continue;
             }
-            out.put("mem_" + (i++), m.getContentMd());
+            out.put("mem_id_" + ref.getMemoryId(), m.getContentMd());
         }
         return out;
     }
 
     /**
      * Roster the client Agent uses to pick a hand-off target:
-     * digital teammates (members of the acting agent's squads) + task humans.
+     * digital teammates (members of the acting agent's squads) + active workspace humans.
      * AgentDO carries no role fields, so roleCode/roleName are resolved from the
      * agent's online AgentVersionDO.
      */
@@ -448,22 +478,25 @@ public class PackageContextAssembler {
 
         List<Map<String, Object>> humans = new ArrayList<>();
         if (w != null && tenantId == w.getTenantId()) {
-            Long operatorId = w.getAssignOperatorId();
-            if (operatorId != null) {
-                Map<String, Object> op = new LinkedHashMap<>();
-                op.put("userId", operatorId);
-                op.put("name", resolveUserName(operatorId));
-                op.put("relation", "指派操作人");
-                op.put("role", "需求决策人");
-                humans.add(op);
-            }
-            if ("HUMAN".equalsIgnoreCase(w.getAssigneeType()) && w.getAssigneeRef() != null
-                    && (operatorId == null || !w.getAssigneeRef().equals(operatorId))) {
-                Map<String, Object> h = new LinkedHashMap<>();
-                h.put("userId", w.getAssigneeRef());
-                h.put("name", resolveUserName(w.getAssigneeRef()));
-                h.put("relation", "assignee");
-                humans.add(h);
+            List<Long> memberIds = workspaceMemberDao.listByTenant(tenantId).stream()
+                    .map(WorkspaceMemberDO::getUserId).toList();
+            for (UserDO user : memberIds.isEmpty() ? List.<UserDO>of() : userDao.listByIds(memberIds)) {
+                if (!Integer.valueOf(0).equals(user.getStatus())) {
+                    continue;
+                }
+                Map<String, Object> human = new LinkedHashMap<>();
+                human.put("userId", user.getId());
+                human.put("name", user.getNickname() != null && !user.getNickname().isBlank()
+                        ? user.getNickname() : user.getUsername());
+                if (user.getId().equals(w.getAssignOperatorId())) {
+                    human.put("relation", "指派操作人");
+                    human.put("role", "需求决策人");
+                } else if ("HUMAN".equalsIgnoreCase(w.getAssigneeType()) && user.getId().equals(w.getAssigneeRef())) {
+                    human.put("relation", "assignee");
+                } else {
+                    human.put("relation", "空间成员");
+                }
+                humans.add(human);
             }
         }
         roster.put("humanTeammates", humans);
@@ -516,7 +549,10 @@ public class PackageContextAssembler {
         return identity;
     }
 
-    public List<Map<String, Object>> buildRepos(long tenantId, long versionId) {
+    public List<Map<String, Object>> buildRepos(long tenantId, long versionId, AgentDO agent) {
+        if (isPlatformAgent(tenantId, agent)) {
+            return buildAllTenantRepos(tenantId);
+        }
         List<Map<String, Object>> repos = new ArrayList<>();
         for (AgentRepoPermDO p : repoPermDao.listByVersion(versionId)) {
             if (tenantId != p.getTenantId()) {
@@ -526,25 +562,53 @@ public class PackageContextAssembler {
             if (repo == null || tenantId != repo.getTenantId()) {
                 continue;
             }
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("repoId", p.getRepoId());
-            m.put("name", repo.getName());
-            m.put("url", repo.getUrl());
-            if (repo.getDefaultBranch() != null && !repo.getDefaultBranch().isBlank()) {
-                m.put("ref", repo.getDefaultBranch().trim());
-            }
-            m.put("path", repo.getName());
-            boolean writable = "WRITE".equalsIgnoreCase(p.getPermLevel());
-            m.put("mode", writable ? "eager" : "lazy");
-            m.put("allowCommit", writable);
-            m.put("allowPush", writable);
-            // Bound repositories must remain cloneable on a fresh Runtime. This flag
-            // governs package-declared preparation only; it does not prohibit the
-            // worker from discovering and cloning additional task repositories.
-            m.put("allowNetwork", true);
-            repos.add(m);
+            repos.add(buildRepoEntry(repo, "WRITE".equalsIgnoreCase(p.getPermLevel()),
+                    BranchPatternPolicy.decode(p.getAllowedBranchPatterns())));
         }
         return repos;
+    }
+
+    /** 平台智能体（Chief of Staff）特权：不依赖仓库绑定，每次装配都拿到租户全量仓库的只读权限。 */
+    private List<Map<String, Object>> buildAllTenantRepos(long tenantId) {
+        List<Map<String, Object>> repos = new ArrayList<>();
+        for (RepoDO repo : repoDao.listAllByTenant(tenantId)) {
+            if (repo == null || repo.getTenantId() == null || tenantId != repo.getTenantId()) {
+                continue;
+            }
+            repos.add(buildRepoEntry(repo, false));
+        }
+        return repos;
+    }
+
+    private boolean isPlatformAgent(long tenantId, AgentDO agent) {
+        return agent != null && agent.getTenantId() != null && tenantId == agent.getTenantId()
+                && PlatformAgentSeeder.PLATFORM_KIND.equals(agent.getKind());
+    }
+
+    private Map<String, Object> buildRepoEntry(RepoDO repo, boolean writable) {
+        return buildRepoEntry(repo, writable, null);
+    }
+
+    private Map<String, Object> buildRepoEntry(RepoDO repo, boolean writable, List<String> allowedBranchPatterns) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("repoId", repo.getId());
+        m.put("name", repo.getName());
+        m.put("url", repo.getUrl());
+        if (repo.getDefaultBranch() != null && !repo.getDefaultBranch().isBlank()) {
+            m.put("ref", repo.getDefaultBranch().trim());
+        }
+        m.put("path", repo.getName());
+        m.put("mode", writable ? "eager" : "lazy");
+        m.put("allowCommit", writable);
+        m.put("allowPush", writable);
+        if (allowedBranchPatterns != null && !allowedBranchPatterns.isEmpty()) {
+            m.put("allowedBranchPatterns", allowedBranchPatterns);
+        }
+        // Bound repositories must remain cloneable on a fresh Runtime. This flag
+        // governs package-declared preparation only; it does not prohibit the
+        // worker from discovering and cloning additional task repositories.
+        m.put("allowNetwork", true);
+        return m;
     }
 
     public Map<String, Object> buildRepoMap(long tenantId, List<Map<String, Object>> boundRepos) {
@@ -755,26 +819,17 @@ public class PackageContextAssembler {
                 } else if (item instanceof Map) {
                     m.putAll((Map<String, Object>) item);
                 }
+                // A definition cannot pre-complete a new dispatch. Preserve only
+                // applicability policy; runtime owns checked/status/reason results.
+                m.put("checked", false);
+                m.remove("status");
+                m.remove("reason");
                 result.add(m);
             }
         } catch (Exception e) {
             log.warn("invalid sdlc checklist json ignored");
         }
         return result;
-    }
-
-    private String resolveUserName(Long userId) {
-        if (userId == null) {
-            return null;
-        }
-        UserDO u = userDao.findById(userId);
-        if (u == null) {
-            return null;
-        }
-        if (u.getNickname() != null && !u.getNickname().isBlank()) {
-            return u.getNickname();
-        }
-        return u.getUsername();
     }
 
     private Long parseSourceDispatchId(String idempotencyKey) {

@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Button, Card, Descriptions, Result, Space, Spin, Typography } from 'antd';
+import { Button, Card, Descriptions, Popconfirm, Result, Space, Spin, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -18,6 +18,7 @@ import { RunStatusTag } from './components/RunStatusTag';
 import { RunCommentInput } from './components/RunCommentInput';
 import { DerivedWorkitems } from './components/DerivedWorkitems';
 import { reconcileScheduledRunEvent } from './realtime';
+import type { ScheduledRunCommentBody } from './types';
 import type { TimelineItem } from '@/shared/types/workitem';
 
 const { Text } = Typography;
@@ -37,8 +38,8 @@ export function ScheduledTaskRunDetailPage() {
   const { data: participants = [], isLoading: participantsLoading } = useScheduledTaskRunParticipants(Number.isFinite(id) ? id : undefined);
   const { data: progress, isLoading: progressLoading } = useScheduledTaskRunDeliveryProgress(Number.isFinite(id) ? id : undefined);
 
-  const comment = useMutation({ mutationFn: (contentMd: string) => addScheduledTaskRunComment(id, contentMd), onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scheduled-task-run', id, 'comments'] }) });
-  const transition = useMutation({ mutationFn: (action: 'pause' | 'resume' | 'cancel') => transitionScheduledTaskRun(id, action, run.data!.version), onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scheduled-task-run', id] }) });
+  const comment = useMutation({ mutationFn: (body: ScheduledRunCommentBody) => addScheduledTaskRunComment(id, body), onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scheduled-task-run', id, 'comments'] }) });
+  const transition = useMutation({ mutationFn: ({ action, force }: { action: 'pause' | 'resume' | 'cancel'; force?: boolean }) => transitionScheduledTaskRun(id, action, run.data!.version, force), onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scheduled-task-run', id] }) });
 
   useRealtime(Number.isFinite(id) ? `scheduled-run:${id}` : null, {
     onEvent: (event) => reconcileScheduledRunEvent(queryClient, id, event),
@@ -83,9 +84,21 @@ export function ScheduledTaskRunDetailPage() {
 
           <Card size="small" title="运行摘要" style={{ marginBottom: 16 }} extra={
             <Space>
-              {active && data.status !== 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', '暂停', () => transition.mutate('pause'))}>暂停</Button> : null}
-              {data.status === 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', '恢复', () => transition.mutate('resume'))}>恢复</Button> : null}
-              {active ? <Button size="small" danger onClick={() => accessCommand('READ_WRITE', '取消', () => transition.mutate('cancel'))}>取消</Button> : null}
+              {active && data.status !== 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', '暂停', () => transition.mutate({ action: 'pause' }))}>暂停</Button> : null}
+              {data.status === 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', '恢复', () => transition.mutate({ action: 'resume' }))}>恢复</Button> : null}
+              {active ? <Button size="small" danger onClick={() => accessCommand('READ_WRITE', '取消', () => transition.mutate({ action: 'cancel' }))}>取消</Button> : null}
+              {active ? (
+                <Popconfirm
+                  title="强制取消本次运行？"
+                  description="执行器可能已离线，强制取消将直接终结本轮运行且不可恢复。"
+                  okText="确认强制取消"
+                  okButtonProps={{ danger: true }}
+                  cancelText="再想想"
+                  onConfirm={() => accessCommand('READ_WRITE', '强制取消', () => transition.mutate({ action: 'cancel', force: true }))}
+                >
+                  <Button size="small" danger>强制取消</Button>
+                </Popconfirm>
+              ) : null}
             </Space>
           }>
             <Descriptions size="small" column={3}>
@@ -113,8 +126,9 @@ export function ScheduledTaskRunDetailPage() {
 
         <div style={{ flexShrink: 0, padding: '12px 24px 16px', borderTop: '1px solid #f0f0f0' }}>
           <RunCommentInput
+            runId={Number.isFinite(id) ? id : undefined}
             loading={comment.isPending}
-            onSubmit={(value) => accessCommand('READ_WRITE', '评论本次运行', () => comment.mutate(value))}
+            onSubmit={(payload) => accessCommand('READ_WRITE', '评论本次运行', () => comment.mutate(payload))}
           />
         </div>
         <ScrollToEdgeButton containerRef={leftScrollRef} />

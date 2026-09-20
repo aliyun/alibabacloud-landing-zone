@@ -9,6 +9,7 @@ import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.agent.PlatformAgentSeeder;
 import com.aliyun.autowonder.statemachine.StatusTemplateSeeder;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
@@ -80,8 +81,8 @@ class WorkspaceServiceLifecycleTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         JwtService jwtService = new JwtService(props);
         service = new WorkspaceService(workspaceDao, workspaceMemberDao,
-                mock(StatusTemplateSeeder.class), jwtService, userDao, auditLogService,
-                systemAdminService, deletionLinkage, eventPublisher);
+                mock(StatusTemplateSeeder.class), mock(PlatformAgentSeeder.class), jwtService, userDao,
+                auditLogService, systemAdminService, deletionLinkage, eventPublisher);
 
         // Empty defaults, because both bulk helpers below feed an IN (...) list and a bare mock
         // would hand them null instead of an empty collection.
@@ -164,14 +165,51 @@ class WorkspaceServiceLifecycleTest {
     }
 
     @Test
-    void updateRejectsAPlatformAdminWhoNeverJoinedTheWorkspace() {
+    void updateIsAllowedForAPlatformAdminWhoNeverJoinedTheWorkspace() {
         when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
         when(systemAdminService.isSystemAdmin(PLATFORM_ADMIN_ID)).thenReturn(true);
+        when(workspaceDao.updateDetail(eq(WORKSPACE_ID), anyString(), anyString(), any(), any(),
+                anyInt(), anyLong())).thenReturn(1);
 
-        // D3 grants is_admin holders recycle-bin visibility over every workspace (F4), not edit
-        // rights over the ones they never joined — F1.1 names Owner and ADMIN only.
+        WorkspaceVO result = service.updateWorkspace(WORKSPACE_ID,
+                updateRequest("新名称", null, null, 3), PLATFORM_ADMIN_ID);
+
+        // D3 统一平台管理员: is_admin now grants edit rights over every workspace, not just
+        // recycle-bin visibility over the ones the admin never joined.
+        assertEquals(Boolean.FALSE, result.getIsOwner());
+        assertEquals(Boolean.TRUE, result.getCanManage());
+        verify(workspaceDao).updateDetail(WORKSPACE_ID, "新名称", "新名称", null, null, 3,
+                PLATFORM_ADMIN_ID);
+    }
+
+    @Test
+    void deleteIsAllowedForAPlatformAdminWhoNeverJoinedTheWorkspace() {
+        when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
+        when(workspaceDao.softDelete(WORKSPACE_ID, PLATFORM_ADMIN_ID)).thenReturn(1);
+        when(systemAdminService.isSystemAdmin(PLATFORM_ADMIN_ID)).thenReturn(true);
+
+        service.deleteWorkspace(WORKSPACE_ID, PLATFORM_ADMIN_ID);
+
+        verify(workspaceDao).softDelete(WORKSPACE_ID, PLATFORM_ADMIN_ID);
+        verify(eventPublisher)
+                .publishEvent(new WorkspaceDeletedEvent(WORKSPACE_ID, NAME, PLATFORM_ADMIN_ID));
+    }
+
+    @Test
+    void updateAndDeleteRejectAPlatformAdminWhoseFlagWasRevoked() {
+        when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
+        when(systemAdminService.isSystemAdmin(PLATFORM_ADMIN_ID)).thenReturn(false);
+
+        // The flag was revoked mid-session: isSystemAdmin is re-read from the user row, so the
+        // platform-admin branch grants nothing anymore and the operator is a plain non-member.
         assertCode("11006", () -> service.updateWorkspace(WORKSPACE_ID,
                 updateRequest("新名称", null, null, 3), PLATFORM_ADMIN_ID));
+        assertCode("11006", () -> service.deleteWorkspace(WORKSPACE_ID, PLATFORM_ADMIN_ID));
+
+        verify(workspaceDao, never()).updateDetail(anyLong(), anyString(), anyString(), any(), any(),
+                anyInt(), anyLong());
+        verify(workspaceDao, never()).softDelete(anyLong(), anyLong());
+        verifyNoInteractions(auditLogService);
     }
 
     @Test
@@ -942,7 +980,7 @@ class WorkspaceServiceLifecycleTest {
         return user;
     }
 
-    /** Owner and ADMIN pass; everyone else — including a platform admin — must be refused. */
+    /** Owner and ADMIN pass; everyone else — including a revoked platform admin — must be refused. */
     private static Stream<Arguments> operatorsWithoutManageRights() {
         return Stream.of(
                 Arguments.of(MEMBER_ID, WorkspaceAccessLevel.READ_WRITE),

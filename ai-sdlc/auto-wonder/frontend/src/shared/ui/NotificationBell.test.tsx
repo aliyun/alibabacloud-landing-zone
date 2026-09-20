@@ -1,160 +1,153 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import type { AxiosResponse } from 'axios';
 import { server } from '@/test/mocks/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { NotificationBell } from './NotificationBell';
-import { useAuthStore } from '@/shared/auth/store';
+import { apiClient } from '@/shared/api/client';
 
-const unreadItem = {
-  id: 1,
-  type: 'WORKITEM_ASSIGNED',
-  title: '有新工单指派给你',
-  content: 'Fix login bug',
-  link: '/workitems/42',
-  refType: 'WORKITEM',
-  refId: 42,
-  status: 'UNREAD' as const,
-  gmtCreate: '2026-08-01T10:00:00.000Z',
-};
-
-const readItem = {
-  id: 2,
-  type: 'COMMENT_MENTION',
-  title: '有人在评论中@了你',
-  content: 'Alice 在「Fix login bug」@了你：please review',
-  link: '/workitems/42',
-  refType: 'WORKITEM',
-  refId: 42,
-  status: 'READ' as const,
-  gmtCreate: '2026-07-30T08:00:00.000Z',
-};
-
-function renderBell() {
-  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+function renderBell(fetchUnread = true) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <Routes>
-          <Route path="/" element={<NotificationBell />} />
-          <Route path="/workitems/:id" element={<div data-testid="workitem-page">workitem page</div>} />
+          <Route path="/" element={<NotificationBell fetchUnread={fetchUnread} />} />
+          <Route path="/notifications" element={<div data-testid="notifications-page">notifications page</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-function mockApis(unreadCount = 1, items = [unreadItem, readItem]) {
+function mockUnreadCount(count: number) {
   server.use(
     http.get('/api/notifications/unread-count', () =>
-      HttpResponse.json({ success: true, code: '0', message: '', data: unreadCount })),
-    http.get('/api/notifications', () =>
-      HttpResponse.json({ success: true, code: '0', message: '', data: items })),
-    http.post('/api/notifications/read-all', () =>
-      HttpResponse.json({ success: true, code: '0', message: '', data: null })),
-    http.post('/api/notifications/:id/read', () =>
-      HttpResponse.json({ success: true, code: '0', message: '', data: null })),
+      HttpResponse.json({ success: true, code: '0', message: '', data: count })),
   );
 }
 
 describe('NotificationBell', () => {
-  it('shows unread count badge', async () => {
-    mockApis(3);
-    renderBell();
-    expect(await screen.findByText('3')).toBeInTheDocument();
+  it('keeps the help header notification action without requesting or polling workspace data', async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi.spyOn(apiClient, 'get');
+      renderBell(false);
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(screen.getByRole('button', { name: '通知中心' })).toBeInTheDocument();
+      expect(get).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
-
   it('renders bell icon', () => {
-    mockApis(0, []);
+    mockUnreadCount(0);
     renderBell();
     expect(screen.getByRole('img', { name: /bell/ })).toBeInTheDocument();
   });
 
-  it('shows notification list with content summary when bell is clicked', async () => {
-    mockApis(1);
+  it('shows unread count badge', async () => {
+    mockUnreadCount(3);
+    renderBell();
+    expect(await screen.findByText('3')).toBeInTheDocument();
+  });
+
+  it('hides the badge when there is nothing unread', async () => {
+    let countCalls = 0;
+    server.use(
+      http.get('/api/notifications/unread-count', () => {
+        countCalls += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', data: 0 });
+      }),
+    );
+    const { container } = renderBell();
+
+    // 先等接口真的返回 0，否则「没有角标」可能只是请求还没落地
+    await waitFor(() => expect(countCalls).toBe(1));
+    await waitFor(() => expect(container.querySelector('.ant-badge-count')).toBeNull());
+    expect(screen.getByRole('img', { name: /bell/ })).toBeInTheDocument();
+  });
+
+  it('navigates to the notification center when clicked', async () => {
+    mockUnreadCount(1);
     renderBell();
     await screen.findByText('1');
 
     await userEvent.click(screen.getByRole('img', { name: /bell/ }));
 
-    expect(await screen.findByText('有新工单指派给你')).toBeInTheDocument();
-    expect(screen.getByText('有人在评论中@了你')).toBeInTheDocument();
-    expect(screen.getByText('Fix login bug')).toBeInTheDocument();
+    expect(await screen.findByTestId('notifications-page')).toBeInTheDocument();
   });
 
-  it('shows empty state when no notifications', async () => {
-    mockApis(0, []);
+  // NB-3：铃铛必须是语义正确且可聚焦的按钮，键盘用户才能进入通知中心。
+  // Enter/Space 的激活由浏览器对原生 button 的默认行为保证，jsdom 不实现该默认动作，
+  // 故这里锁定「暴露为 button + 可聚焦 + 点击可导航」，不去模拟按键触发点击。
+  it('is exposed as a focusable button that opens the notification center', async () => {
+    mockUnreadCount(2);
     renderBell();
-    await userEvent.click(screen.getByRole('img', { name: /bell/ }));
-    expect(await screen.findByText('暂无通知')).toBeInTheDocument();
+    await screen.findByText('2');
+
+    const bell = screen.getByRole('button', { name: '通知中心' });
+    bell.focus();
+    expect(bell).toHaveFocus();
+
+    await userEvent.click(bell);
+
+    expect(await screen.findByTestId('notifications-page')).toBeInTheDocument();
   });
 
-  it('uses status field (not isRead) for read/unread styling', async () => {
-    mockApis(1);
-    renderBell();
-    await userEvent.click(screen.getByRole('img', { name: /bell/ }));
-
-    await waitFor(() => {
-      expect(screen.getByText('有新工单指派给你')).toBeInTheDocument();
-    });
-
-    const items = screen.getAllByRole('listitem');
-    const unreadListItem = items[0] as HTMLElement;
-    const readListItem = items[1] as HTMLElement;
-
-    expect(unreadListItem.style.opacity).toBe('1');
-    expect(readListItem.style.opacity).toBe('0.6');
-  });
-
-  it('calls mark-read API when clicking an unread notification', async () => {
-    const markReadSpy = vi.fn();
-    mockApis(1);
+  it('no longer opens a popover with a recent notification list', async () => {
+    let listCalls = 0;
     server.use(
-      http.post('/api/notifications/:id/read', ({ params }) => {
-        markReadSpy(params.id);
-        return HttpResponse.json({ success: true, code: '0', message: '', data: null });
+      http.get('/api/notifications/unread-count', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', data: 1 })),
+      http.get('/api/notifications', () => {
+        listCalls += 1;
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          data: { items: [], total: 0 },
+        });
       }),
     );
     renderBell();
     await screen.findByText('1');
+
     await userEvent.click(screen.getByRole('img', { name: /bell/ }));
 
-    await userEvent.click(await screen.findByText('有新工单指派给你'));
-
-    await waitFor(() => {
-      expect(markReadSpy).toHaveBeenCalledWith('1');
-    });
+    expect(await screen.findByTestId('notifications-page')).toBeInTheDocument();
+    expect(screen.queryByText('暂无通知')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /全部已读/ })).not.toBeInTheDocument();
+    expect(listCalls).toBe(0);
   });
 
-  it('navigates to notification link when clicked', async () => {
-    mockApis(1);
-    renderBell();
-    await screen.findByText('1');
-    await userEvent.click(screen.getByRole('img', { name: /bell/ }));
+  it('keeps polling the unread count every 30 seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi.spyOn(apiClient, 'get')
+        .mockResolvedValue({ data: 1 } as unknown as AxiosResponse);
+      renderBell();
+      await act(async () => {});
 
-    await userEvent.click(await screen.findByText('有新工单指派给你'));
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(get).toHaveBeenCalledWith('/api/notifications/unread-count');
 
-    await waitFor(() => {
-      expect(screen.getByTestId('workitem-page')).toBeInTheDocument();
-    });
-  });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_999);
+      });
+      expect(get).toHaveBeenCalledTimes(1);
 
-  it('marks all read and refreshes', async () => {
-    let readAllCalls = 0;
-    mockApis(2);
-    server.use(
-      http.post('/api/notifications/read-all', () => {
-        readAllCalls += 1;
-        return HttpResponse.json({ success: true, code: '0', message: '', data: null });
-      }),
-    );
-    renderBell();
-    await userEvent.click(screen.getByRole('img', { name: /bell/ }));
-    await userEvent.click(await screen.findByRole('button', { name: /全部已读/ }));
-
-    expect(readAllCalls).toBe(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(get).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
   });
 });

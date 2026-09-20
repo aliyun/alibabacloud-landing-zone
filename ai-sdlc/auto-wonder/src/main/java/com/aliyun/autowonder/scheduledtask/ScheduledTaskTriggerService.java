@@ -9,6 +9,7 @@ import com.aliyun.autowonder.agent.AgentVersionDO;
 import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.agent.AgentRepoPermDao;
 import com.aliyun.autowonder.agent.AgentRepoPermDO;
+import com.aliyun.autowonder.agent.BranchPatternPolicy;
 import com.aliyun.autowonder.agent.AgentSkillDao;
 import com.aliyun.autowonder.agent.AgentSkillDO;
 import com.aliyun.autowonder.agent.AgentMemoryRefDao;
@@ -308,8 +309,11 @@ public class ScheduledTaskTriggerService {
         List<AgentRepoPermDO> perms = repoPermDao.listByVersion(versionId); if (perms == null) return out;
         for (AgentRepoPermDO p : perms) { if (p == null || !Objects.equals(workspaceId, p.getTenantId())) continue; RepoDO r = repoDao.findById(p.getRepoId()); if (r == null || !Objects.equals(workspaceId, r.getTenantId())) continue;
             boolean writable = "WRITE".equalsIgnoreCase(p.getPermLevel());
-            out.add(map("repoId", r.getId(), "name", r.getName(), "url", r.getUrl(), "ref", r.getDefaultBranch(), "path", r.getName(),
-                    "mode", writable ? "eager" : "lazy", "allowCommit", writable, "allowPush", writable, "allowNetwork", true)); }
+            JSONObject repo = map("repoId", r.getId(), "name", r.getName(), "url", r.getUrl(), "ref", r.getDefaultBranch(), "path", r.getName(),
+                    "mode", writable ? "eager" : "lazy", "allowCommit", writable, "allowPush", writable, "allowNetwork", true);
+            List<String> allowedBranchPatterns = BranchPatternPolicy.decode(p.getAllowedBranchPatterns());
+            if (!allowedBranchPatterns.isEmpty()) repo.put("allowedBranchPatterns", allowedBranchPatterns);
+            out.add(repo); }
         return out; }
     private JSONObject frozenRepoMap(Long workspaceId, JSONArray repos) { JSONArray ids = new JSONArray(); JSONArray relations = new JSONArray(); Set<Long> seen = new HashSet<>();
         for (Object raw : repos) { JSONObject repo = (JSONObject) raw; Long id = repo.getLong("repoId"); if (id == null || !seen.add(id)) continue; ids.add(id); if (repoRelationDao == null) continue; List<RepoRelationDO> rows = repoRelationDao.listByRepoId(workspaceId, id); if (rows == null) continue; for (RepoRelationDO rel : rows) { if (rel == null || !Objects.equals(workspaceId, rel.getTenantId())) continue; relations.add(map("id", rel.getId(), "fromRepoId", rel.getFromRepoId(), "toRepoId", rel.getToRepoId(), "relationType", rel.getRelationType(), "description", rel.getDescription())); } }

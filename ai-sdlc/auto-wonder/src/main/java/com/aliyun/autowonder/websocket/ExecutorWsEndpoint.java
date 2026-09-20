@@ -65,8 +65,13 @@ public class ExecutorWsEndpoint {
         }
 
         PresenceManager presence = WsSpringContext.getBean(PresenceManager.class);
-        presence.register(auth.getExecutorId(), auth.getAgentId(), capacity);
-        presence.announceSession(auth.getExecutorId(), session.getId());
+        if (!presence.announceSession(auth.getExecutorId(), session.getId())) {
+            registry.removeBySessionId(session.getId());
+            log.warn("executor session initialization busy executorId={} sessionId={}",
+                    auth.getExecutorId(), session.getId());
+            closeQuietly(session, "session initialization busy");
+            return;
+        }
 
         String clientIp = null;
         try {
@@ -120,9 +125,8 @@ public class ExecutorWsEndpoint {
         ExecutorSession removed = registry.removeBySessionId(session.getId());
         if (removed != null) {
             PresenceManager presence = WsSpringContext.getBean(PresenceManager.class);
-            if (presence.isCurrentSession(removed.getExecutorId(), session.getId())) {
-                presence.unregister(removed.getExecutorId(), removed.getAgentId());
-            } else {
+            if (!presence.unregisterIfCurrent(removed.getExecutorId(), removed.getAgentId(),
+                    session.getId())) {
                 log.info("skip presence unregister for replaced session executorId={} sessionId={}",
                         removed.getExecutorId(), session.getId());
             }

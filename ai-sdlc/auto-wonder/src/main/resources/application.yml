@@ -35,6 +35,7 @@ oss:
   task-pkg-bucket: ${OSS_TASK_PKG_BUCKET:${OSS_BUCKET:}}
   artifact-bucket: ${OSS_ARTIFACT_BUCKET:${OSS_BUCKET:}}
   skill-bucket: ${OSS_SKILL_BUCKET:${OSS_BUCKET:}}
+  backup-bucket: ${OSS_BACKUP_BUCKET:}
 
 # S3-compatible object storage (AWS S3, MinIO, etc.). Mutually exclusive with oss.enabled.
 # endpoint is used server-side; public-endpoint signs download URLs handed to clients.
@@ -55,7 +56,10 @@ autowonder:
   # 支持环境变量 AUTOWONDER_COMMUNITY_EDITION 覆盖。
   community-edition: ${AUTOWONDER_COMMUNITY_EDITION:true}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.152}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.163}
+    # 全局自动升级开关：开启后服务端发现执行器版本落后就自动下发升级指令。默认开启；
+    # 关闭请改这里（或设同名环境变量）后重启服务端，手动与批量升级不受它影响。
+    executor-auto-update-enabled: ${AUTOWONDER_RUNTIME_EXECUTOR_AUTO_UPDATE_ENABLED:true}
   provider-model-catalog:
     refresh-fixed-delay-ms: 86400000
     refresh-lock-ttl-ms: 120000
@@ -64,6 +68,20 @@ autowonder:
     max-candidates: 3
     failure-cooldown-seconds: 300
     worker-queue-capacity: 8
+  executor-update:
+    scan-fixed-delay-ms: ${AUTOWONDER_EXECUTOR_UPDATE_SCAN_FIXED_DELAY_MS:60000}
+  debug-log:
+    reconciliation:
+      fixed-delay-ms: ${AUTOWONDER_DEBUG_LOG_RECONCILIATION_FIXED_DELAY_MS:3600000}
+  dispatch:
+    recovery:
+      package-retries: ${AUTOWONDER_DISPATCH_RECOVERY_PACKAGE_RETRIES:3}
+      retry-delay-ms: ${AUTOWONDER_DISPATCH_RECOVERY_RETRY_DELAY_MS:30000}
+  im:
+    notification:
+      dlq-stream-key: ${AUTOWONDER_IM_NOTIFICATION_DLQ_STREAM_KEY:autowonder:im-notification:dlq}
+      dlq-max-length: ${AUTOWONDER_IM_NOTIFICATION_DLQ_MAX_LENGTH:10000}
+      max-backoff-ms: ${AUTOWONDER_IM_NOTIFICATION_MAX_BACKOFF_MS:30000}
   scheduled-task:
     # Enabled by default: a fresh community install imports the complete
     # docs/autowonder-schema.sql, so the module is ready immediately. When
@@ -109,3 +127,8 @@ autowonder:
       refresh-core-pool-size: 1
       refresh-max-pool-size: 2
       refresh-queue-capacity: 20
+
+feishu:
+  inbox:
+    poll-ms: ${FEISHU_INBOX_POLL_MS:3000}
+    initial-delay-ms: ${FEISHU_INBOX_INITIAL_DELAY_MS:15000}

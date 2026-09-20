@@ -15,14 +15,14 @@ The memory tools are part of the existing built-in `autowonder` MCP server, so n
 
 | Credential | How memories are attributed | Visibility and mutation limits |
 |---|---|---|
-| Dispatch token (`awdispatch_…`, issued per dispatch) | Server derives `agentId`, `workitemId`, and `dispatchId` from the credential. Memories are always `AGENT`-scoped and owned by that agent. | Can read `SQUAD` / `ORG` memories plus its own `AGENT` memories. Can only write, update, deprecate, or delete `AGENT` memories it owns; cannot create `SQUAD` / `ORG` memories. |
+| Dispatch token (`awdispatch_…`, issued per dispatch) | Server derives `agentId`, `workitemId`, and `dispatchId` from the credential. Memories are always `AGENT`-scoped and owned by that agent. | Can read all memories in its workspace, including other agents. With workspace write access, can review, update, deprecate, or delete them. Creation still forces its own `AGENT` ownership; cannot create `SQUAD` / `ORG` memories. |
 | Long-lived token (`awmcp_…`, issued by a user) | Behaves like the `/api/memories` web path: `source=MANUAL`, `status=PENDING`, creator is the token owner. | `scope` is required and may be `AGENT`, `SQUAD`, or `ORG`. Not restricted to a single agent. |
 
-Provenance is never taken from tool arguments. A dispatch caller that passes `ownerRef` has it ignored in every scope, so an agent cannot attribute a memory to a different agent, squad, or organization. Widening a memory beyond its author is deliberately a human decision: a reviewer promotes an adopted `AGENT` memory to `SQUAD` or `ORG` through `POST /api/memories/{id}/review`. A dispatch credential that passes `scope=SQUAD` or `scope=ORG` is rejected with `27003` rather than silently downgraded, so the agent gets actionable feedback.
+Provenance is never taken from tool arguments. When calling `create_memory`, a dispatch caller that passes `ownerRef` has it ignored in every scope, so an agent cannot attribute a memory to a different agent, squad, or organization. Changing scope at adoption is a separate review decision through `autowonder.review_memory` or `POST /api/memories/{id}/review`. Both require workspace write access and record the review. A dispatch credential calling `create_memory` with `scope=SQUAD` or `scope=ORG` is rejected with `27003` rather than silently downgraded, so the agent gets actionable feedback.
 
 ## Lifecycle
 
-A memory written through MCP or the web page starts at `status=PENDING`, exactly like a learning-delta memory. It becomes reusable only after a human adopts it at `/memories/reviews` (`POST /api/memories/{id}/review`). Adoption resolves the reviewed `AGENT`, `SQUAD`, or `ORG` scope, attaches the memory to each affected digital worker's editable version, and submits draft versions for review. The memory enters future dispatch packages only after that worker version is approved. `search_memories` therefore defaults to `status=ADOPTED`.
+A memory written through MCP or the web page starts at `status=PENDING`, exactly like a learning-delta memory. It becomes reusable after adoption through `autowonder.review_memory` or the console at `/memories/reviews` (`POST /api/memories/{id}/review`). Adoption resolves the reviewed `AGENT`, `SQUAD`, or `ORG` scope, attaches the memory to each affected digital worker's editable version, and submits draft versions for review. The memory enters future dispatch packages only after that worker version is approved. `search_memories` therefore defaults to `status=ADOPTED`.
 
 Statuses: `PENDING` → `ADOPTED` or `REJECTED`. `deprecate_memory` moves a memory to `REJECTED` from any status, including `ADOPTED`.
 
@@ -103,9 +103,9 @@ Input (all fields optional):
 
 Output is `{ "items": [ <memory>, … ] }`.
 
-For a dispatch credential the visibility restriction is enforced as a SQL predicate (`scope <> 'AGENT' OR owner_ref = <callerAgentId>`) that is applied **before** `LIMIT`. Pagination therefore operates on the set the caller may actually see: another agent's `AGENT`-scoped memories can never consume a page and leave the caller with a silently empty or short result. The Java-side filter is retained only as defence in depth.
+Search is workspace-scoped and includes other agents' memories. `scope` and `ownerRef` are filters, not authorization overrides. Dispatch tokens remain pinned to their workspace; personal tokens require live workspace membership. Pagination is applied in SQL. This supports delegated batch review; it does not infer ownership counts from `list_agents.memoryCount`, which counts version bindings.
 
-Known limitation: `contentMd` is `MEDIUMTEXT` with no supporting index, so a leading-wildcard `LIKE` over content cannot use an index. This is acceptable at current memory volumes (memories are human-adopted artefacts) but will need a full-text index or a title-only match if the table grows substantially.
+Known limitation: `contentMd` is `MEDIUMTEXT` with no supporting index, so a leading-wildcard `LIKE` over content cannot use an index. This is acceptable at current memory volumes (memories are reviewed artefacts) but will need a full-text index or a title-only match if the table grows substantially.
 
 ### `autowonder.get_memory`
 
@@ -113,7 +113,7 @@ Known limitation: `contentMd` is `MEDIUMTEXT` with no supporting index, so a lea
 { "id": 10231 }
 ```
 
-Returns one memory. Cross-tenant reads report `MEMORY_NOT_FOUND` (21001); reading another agent's `AGENT`-scoped memory reports `NO_PERMISSION` (10403).
+Returns one memory. Cross-tenant reads report `MEMORY_NOT_FOUND` (21001). Other agents' memories in the same authorized workspace are readable.
 
 ### `autowonder.update_memory`
 
@@ -122,6 +122,26 @@ Returns one memory. Cross-tenant reads report `MEMORY_NOT_FOUND` (21001); readin
 ```
 
 Omitted fields keep their current value. Uses the optimistic-lock `version`, so a concurrent edit reports `MEMORY_VERSION_CONFLICT` (21004).
+
+### `autowonder.review_memory`
+
+```json
+{ "id": 10231, "decision": "ADOPT", "comment": "已逐条核对当前 master，结论仍成立" }
+```
+
+`id` and `decision` are required. Decision must be exactly `ADOPT` or `REJECT`; invalid or missing decisions fail without writing. Optional fields: `comment`, `editedContentMd`, `scope`, `ownerRef`. Scope/content edits apply only to adoption. Specifying `AGENT` or `SQUAD` requires `ownerRef`; `ORG` clears it. Omit scope to keep ownership unchanged.
+
+Returns the resulting memory row. Only `PENDING` memories can be reviewed. Uses the console's transactional review, audit, optimistic locking, and distribution workflow. Adoption does not approve the worker version: that remains a separate step before task-package injection. To retire an already adopted memory, use `deprecate_memory`.
+
+### `autowonder.count_pending_memories`
+
+```json
+{}
+```
+
+Returns `{ "count": 80 }`, the actual number of non-deleted `PENDING` memory rows across the authorized workspace, including all agents. Requires read access. Personal tokens additionally pass `workspaceId`, as for every workspace tool.
+
+For batch review: count, page through `search_memories` with `status=PENDING`, inspect facts, then review or delete each selected ID. When mutating the filtered list, collect the IDs before making changes or repeatedly fetch page 1; incrementing pages while removing pending rows can skip records. Bound memories cannot be deleted; deprecate stale adopted memories instead. This API supplies the capability; an SDLC that explicitly requires console-only review must also be updated separately before rerunning it.
 
 ### `autowonder.deprecate_memory`
 
@@ -168,4 +188,4 @@ Soft deletes the memory and returns `{ "deleted": true }`. Rejected with `MEMORY
 | `source` | `MCP` | `LEARNING_DELTA` |
 | Gating | Always ingested | Skipped when the agent's `evolutionMode=MANUAL` |
 
-Both paths write to the same `memory` table and share the same human review queue, so a team can migrate gradually.
+Both paths write to the same `memory` table and share the same review queue, so a team can migrate gradually.

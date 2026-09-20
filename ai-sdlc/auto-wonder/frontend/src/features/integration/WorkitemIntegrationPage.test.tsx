@@ -85,7 +85,7 @@ describe('WorkitemIntegrationPage', () => {
           provider: 'AONE',
           externalProjectId: '1086837',
           externalProjectName: 'Terraform - 客户问题',
-          baseUrl: 'http://aone-api.alibaba-inc.com',
+          baseUrl: 'http://aone-api.example.com',
           clientKey: 'terraform-competition-dashboard',
           credentialMasked: '***',
           regionId: '1',

@@ -3,8 +3,24 @@
 param([Parameter(Mandatory = $true)][string]$Manifest)
 
 $ErrorActionPreference = 'Stop'
-$DeploySkill = Join-Path $PSScriptRoot '..\..\deploying-autowonder-on-alibaba-cloud'
-. (Join-Path $DeploySkill 'scripts\windows\lib.ps1')
+. (Join-Path $PSScriptRoot 'windows\lib.ps1')
+
+$inventoryPython = $env:AUTOWONDER_PYTHON
+if (-not $inventoryPython) {
+    $command = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $command) { $command = Get-Command python3 -ErrorAction Stop }
+    $inventoryPython = $command.Source
+}
+function Invoke-EcsInventoryPolicy {
+    param([string]$Action, $Value, [string]$InstanceId)
+    $arguments = @('-B', (Join-Path $PSScriptRoot 'ecs_inventory.py'), $Action)
+    if ($Action -eq 'target') { $arguments += @('--instance-id', $InstanceId) }
+    try {
+        $result = ConvertTo-Json -InputObject $Value -Depth 100 -Compress | & $inventoryPython @arguments 2>&1
+    } catch { throw 'Cannot validate ECS inventory response' }
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot validate ECS inventory response' }
+    return ConvertTo-Hashtable (($result -join [Environment]::NewLine) | ConvertFrom-Json)
+}
 
 $data = Get-ManifestData -Manifest $Manifest
 function Assert-NoSecretField($Value) {
@@ -50,9 +66,7 @@ foreach ($instanceId in $instanceIds) {
     $response = Invoke-AliyunJson -Product 'ecs' -Action 'DescribeInstances' -Profile $profile -Parameters @{
         RegionId = $region; InstanceIds = (ConvertTo-Json -InputObject @($instanceId) -Compress)
     }
-    $instances = @(Get-ObjectField (Get-ObjectField $response 'Instances') 'Instance')
-    if ($instances.Count -ne 1 -or $null -eq $instances[0]) { throw 'ECS target identity mismatch' }
-    $instance = $instances[0]
+    $instance = Invoke-EcsInventoryPolicy -Action target -Value $response -InstanceId $instanceId
     if ([string]$instance['InstanceId'] -ne $instanceId) { throw 'ECS target identity mismatch' }
     $liveRegion = [string]$instance['RegionId']
     if ($liveRegion -and $liveRegion -ne $region) { throw 'ECS target region mismatch' }
@@ -72,7 +86,7 @@ foreach ($instanceId in $instanceIds) {
 
 $cloudInstanceIds = @($instanceIds)
 if ($verificationMode -ne 'identity-only') {
-    $cloudInstanceIds = @()
+    $inventoryState = $null
     $page = 1
     do {
         $response = Invoke-AliyunJson -Product 'ecs' -Action 'DescribeInstances' -Profile $profile -Parameters @{
@@ -80,11 +94,10 @@ if ($verificationMode -ne 'identity-only') {
             'Tag.1.Key' = 'Project'; 'Tag.1.Value' = 'AutoWonder'
             'Tag.2.Key' = 'DeploymentId'; 'Tag.2.Value' = $deploymentId
         }
-        $pageIds = @(Get-ObjectField (Get-ObjectField $response 'Instances') 'Instance' | ForEach-Object { [string]$_['InstanceId'] } | Where-Object { $_ })
-        $cloudInstanceIds = @($cloudInstanceIds + $pageIds | Sort-Object -Unique)
-        $total = if ($response['TotalCount']) { [int]$response['TotalCount'] } else { $cloudInstanceIds.Count }
+        $inventoryState = Invoke-EcsInventoryPolicy -Action page -Value @{response = $response; state = $inventoryState}
         $page += 1
-    } while ($cloudInstanceIds.Count -lt $total -and $pageIds.Count -eq 100)
+    } while (-not $inventoryState['done'])
+    $cloudInstanceIds = @($inventoryState['ids'] | Sort-Object)
     if ($cloudInstanceIds.Count -eq 0 -or @(Compare-Object $instanceIds $cloudInstanceIds).Count -ne 0) {
         throw 'Alibaba Cloud ECS nodes differ from Terraform inventory'
     }

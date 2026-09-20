@@ -23,7 +23,7 @@ class PlatformImChannelConfigControllerTest {
     }
 
     @Test
-    void listIsVisibleWithoutFirstActiveUserCheck() {
+    void listIsVisibleWithoutPlatformAdminCheck() {
         PlatformImChannelConfigService configService = mock(PlatformImChannelConfigService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         List<PlatformImChannelConfigVO> channels = List.of(channel());
@@ -39,7 +39,7 @@ class PlatformImChannelConfigControllerTest {
     }
 
     @Test
-    void updateDingTalkRequiresFirstActiveUser() {
+    void updateDingTalkRequiresPlatformAdmin() {
         PlatformImChannelConfigService configService = mock(PlatformImChannelConfigService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         UpdateDingTalkChannelRequest request = new UpdateDingTalkChannelRequest();
@@ -51,8 +51,25 @@ class PlatformImChannelConfigControllerTest {
 
         assertEquals(channel, controller.updateDingTalk(request).getData());
 
-        verify(systemAdminService).requireFirstActiveUser(10000L, "管理协作通知");
+        verify(systemAdminService).requireSystemAdmin(10000L, "配置协作通知");
         verify(configService).updateDingTalk(10000L, request);
+    }
+
+    @Test
+    void updateFeishuRequiresPlatformAdmin() {
+        PlatformImChannelConfigService configService = mock(PlatformImChannelConfigService.class);
+        SystemAdminService systemAdminService = mock(SystemAdminService.class);
+        UpdateDingTalkChannelRequest request = new UpdateDingTalkChannelRequest();
+        PlatformImChannelConfigVO channel = channel();
+        when(configService.update(10000L, "FEISHU", request)).thenReturn(channel);
+        AutoWonderContext.get().setUserId(10000L);
+        PlatformImChannelConfigController controller =
+                new PlatformImChannelConfigController(configService, systemAdminService);
+
+        assertEquals(channel, controller.updateFeishu(request).getData());
+
+        verify(systemAdminService).requireSystemAdmin(10000L, "配置协作通知");
+        verify(configService).update(10000L, "FEISHU", request);
     }
 
     private static PlatformImChannelConfigVO channel() {

@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.configuration;
 
 import com.aliyun.autowonder.audit.WebAuditInterceptor;
+import org.springframework.http.CacheControl;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -22,6 +23,10 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // SPA routes forward here: revalidate the entry HTML after deployments.
+        registry.addResourceHandler("/index.html")
+                .addResourceLocations("classpath:/static/")
+                .setCacheControl(CacheControl.noCache());
         registry.addResourceHandler("/**")
                 .addResourceLocations("classpath:/static/");
     }

@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.notification;
 
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -143,5 +145,24 @@ class NotifyServiceTest {
     void markAllReadDelegates() {
         service.markAllRead(1L, 10L);
         verify(notificationDao).markAllRead(1L, 10L);
+    }
+
+    @Test
+    void deletePassesTenantAndRecipientSoOwnershipIsCheckedInSql() {
+        when(notificationDao.delete(5L, 1L, 10L)).thenReturn(1);
+
+        service.delete(5L, 1L, 10L);
+
+        verify(notificationDao).delete(5L, 1L, 10L);
+    }
+
+    @Test
+    void deleteThrowsNotFoundWhenNoRowIsAffected() {
+        // DAO 返回 0 行意味着通知不存在或属于他人，静默成功会掩盖越权删除。
+        when(notificationDao.delete(5L, 1L, 10L)).thenReturn(0);
+
+        BizException ex = assertThrows(BizException.class, () -> service.delete(5L, 1L, 10L));
+
+        assertEquals(ErrorCode.NOT_FOUND.getCode(), ex.getCode());
     }
 }

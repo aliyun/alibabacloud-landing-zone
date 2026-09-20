@@ -84,6 +84,14 @@ describe('Sidebar helpers', () => {
     expect(resolveSelectedNavKey('/platform/branding')).toBe('');
   });
 
+  it('shows environment variables under config and selects its route', () => {
+    const items = buildMenuItems();
+    const configGroup = items.find((item) => item?.key === 'config-group');
+
+    expect(childKeys(configGroup)).toContain('/settings/environment-variables');
+    expect(resolveSelectedNavKey('/settings/environment-variables')).toBe('/settings/environment-variables');
+  });
+
   it('exposes the about AutoWonder page', () => {
     const items = buildMenuItems();
     const aboutGroup = items.find((item) => item?.key === 'about-group');

@@ -12,6 +12,9 @@ public interface ImNotificationQueue {
 
     void ack(String messageId);
 
+    /** Retain a dropped notification in the DLQ stream for audit and manual resend; must be called before ack. */
+    void sendToDlq(ImNotificationEnvelope envelope, String reason);
+
     boolean markDelivered(String notificationKey);
 
     boolean isDelivered(String notificationKey);

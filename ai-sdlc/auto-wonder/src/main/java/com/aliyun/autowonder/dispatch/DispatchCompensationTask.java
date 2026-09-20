@@ -40,6 +40,9 @@ public class DispatchCompensationTask {
     private final DispatchPauseService pauseService;
     private final InteractionWorkflowService interactionWorkflowService;
     private final RedisManager redisManager;
+    private DispatchRecoveryService recovery;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRecovery(DispatchRecoveryService service) { this.recovery = service; }
 
     public DispatchCompensationTask(DispatchDao dispatchDao, DispatchService dispatchService,
             DispatchPauseService pauseService, InteractionWorkflowService interactionWorkflowService,
@@ -59,18 +62,24 @@ public class DispatchCompensationTask {
         }
         try {
             log.info("compensation sweep started");
+            if (recovery != null) {
+                try {
+                    recovery.reconcile();
+                } catch (RuntimeException e) {
+                    log.warn("compensation recovery reconciliation failed", e);
+                }
+            }
             long now = System.currentTimeMillis();
-            List<DispatchDO> pending = safe(dispatchDao.listStuck(PENDING_STATES,
-                    now - PENDING_STUCK_MS, BATCH));
-            List<DispatchDO> packaging = safe(dispatchDao.listStuck(PACKAGING_STATES,
-                    now - PACKAGING_STUCK_MS, BATCH));
-            List<DispatchDO> unacknowledged = safe(dispatchDao.listStuck(UNACKNOWLEDGED_STATES,
-                    now - UNACKNOWLEDGED_STUCK_MS, BATCH));
+            List<DispatchDO> pending = loadPhase(PENDING_STATES,
+                    now - PENDING_STUCK_MS, "pending");
+            List<DispatchDO> packaging = loadPhase(PACKAGING_STATES,
+                    now - PACKAGING_STUCK_MS, "packaging");
+            List<DispatchDO> unacknowledged = loadPhase(UNACKNOWLEDGED_STATES,
+                    now - UNACKNOWLEDGED_STUCK_MS, "unacknowledged");
             long pausingCutoff = now - PAUSING_STUCK_MS;
-            List<DispatchDO> pausing = safe(dispatchDao.listStuck(PAUSING_STATES,
-                    pausingCutoff, BATCH));
-            List<DispatchDO> inflight = safe(dispatchDao.listStuck(INFLIGHT_STATES,
-                    now - INFLIGHT_STUCK_MS, BATCH));
+            List<DispatchDO> pausing = loadPhase(PAUSING_STATES, pausingCutoff, "pausing");
+            List<DispatchDO> inflight = loadPhase(INFLIGHT_STATES,
+                    now - INFLIGHT_STUCK_MS, "inflight");
             log.info("compensation found pending={} packaging={} unacknowledged={} pausing={} inflight={}",
                     pending.size(), packaging.size(), unacknowledged.size(), pausing.size(), inflight.size());
             // PENDING stuck -> re-drive (runPending only accepts PENDING rows)
@@ -85,7 +94,9 @@ public class DispatchCompensationTask {
             // eventual DISPATCHED transition loses the race, while the row can be retried.
             for (DispatchDO d : packaging) {
                 try {
-                    dispatchService.returnPackagingToPending(d.getTenantId(), d.getId());
+                    if (recovery == null) dispatchService.returnPackagingToPending(d.getTenantId(), d.getId());
+                    else if (!recovery.retryPackaging(d, "PACKAGING_DEADLINE_EXCEEDED"))
+                        dispatchService.failPackagingDeadline(d);
                 } catch (Exception e) {
                     log.warn("compensation packaging-requeue failed dispatchId={}", d.getId(), e);
                 }
@@ -94,7 +105,9 @@ public class DispatchCompensationTask {
             // durable queue instead of failing the workitem.
             for (DispatchDO d : unacknowledged) {
                 try {
-                    if (d.getExecutorId() != null) {
+                    if (recovery != null) {
+                        dispatchService.onUnacknowledgedTimeout(d);
+                    } else if (d.getExecutorId() != null) {
                         dispatchService.onBusy(d.getTenantId(), d.getExecutorId(), d.getId());
                     }
                 } catch (Exception e) {
@@ -106,6 +119,7 @@ public class DispatchCompensationTask {
             // dead zone so the user can explicitly retry pause or recover execution.
             for (DispatchDO d : pausing) {
                 try {
+                    if (recovery != null && recovery.cancelRequested(d.getTenantId(), d.getId())) continue;
                     boolean readyToFence = DispatchStatus.PAUSE_FAILED.equals(d.getStatus())
                             || pauseService.expireTimedOutPause(d, pausingCutoff);
                     if (readyToFence
@@ -115,6 +129,11 @@ public class DispatchCompensationTask {
                 } catch (Exception e) {
                     log.warn("compensation pause-expire failed dispatchId={}", d.getId(), e);
                 }
+            }
+            try {
+                interactionWorkflowService.reconcileReleasedWaiters();
+            } catch (Exception e) {
+                log.warn("compensation waiting-rework repair failed", e);
             }
             for (DispatchDO d : inflight) {
                 try {
@@ -130,5 +149,14 @@ public class DispatchCompensationTask {
 
     private static List<DispatchDO> safe(List<DispatchDO> rows) {
         return rows == null ? List.of() : rows;
+    }
+
+    private List<DispatchDO> loadPhase(List<String> states, long cutoff, String phase) {
+        try {
+            return safe(dispatchDao.listStuck(states, cutoff, BATCH));
+        } catch (RuntimeException e) {
+            log.warn("compensation {} query failed", phase, e);
+            return List.of();
+        }
     }
 }

@@ -58,6 +58,15 @@ describe('groupPendingDecisionsByAssignee', () => {
     expect(groups[0].label).toBe('未指派');
   });
 
+  it('strips id suffixes from group labels', () => {
+    const items = [
+      mk({ id: 1, pendingDecision: true, assigneeType: 'HUMAN', assigneeRef: 10, assigneeDisplayName: '淘飞(10018)' }),
+      mk({ id: 2, pendingDecision: true, assigneeType: 'AGENT', assigneeRef: 40013, assigneeDisplayName: 'AW全栈开发(40013)' }),
+    ];
+    const groups = groupPendingDecisionsByAssignee(items);
+    expect(groups.map(g => g.label).sort()).toEqual(['AW全栈开发', '淘飞']);
+  });
+
   it('keeps distinct assignees with the same display name in separate groups', () => {
     const items = [
       mk({ id: 1, pendingDecision: true, assigneeType: 'HUMAN', assigneeRef: 10, assigneeDisplayName: '同名' }),

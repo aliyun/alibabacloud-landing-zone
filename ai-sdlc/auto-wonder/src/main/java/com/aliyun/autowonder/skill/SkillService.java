@@ -3,8 +3,10 @@ package com.aliyun.autowonder.skill;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.agent.AgentSkillDao;
+import com.aliyun.autowonder.category.CategoryService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
@@ -13,6 +15,11 @@ import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataAccessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.sql.SQLException;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,6 +31,9 @@ import java.util.regex.Pattern;
 @Service
 public class SkillService {
 
+    private static final Logger log = LoggerFactory.getLogger(SkillService.class);
+    private static final Pattern MISSING_CATEGORY_TABLE = Pattern.compile("(?i)Table ['`]([^'`]*\\.)?asset_category(?:_ref)?['`] doesn't exist");
+
     private static final Pattern HTTP_HEADER_NAME = Pattern.compile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$");
     private static final Set<String> RESERVED_HEADER_NAMES = Set.of("host", "content-length", "connection", "transfer-encoding");
 
@@ -31,18 +41,25 @@ public class SkillService {
     private final AgentSkillDao agentSkillDao;
     private final UserDao userDao;
     private final SecretCrypto secretCrypto;
+    private final CategoryService categoryService;
 
     public SkillService(SkillDao skillDao, AgentSkillDao agentSkillDao, UserDao userDao) {
-        this(skillDao, agentSkillDao, userDao, null);
+        this(skillDao, agentSkillDao, userDao, null, null);
+    }
+
+    public SkillService(SkillDao skillDao, AgentSkillDao agentSkillDao, UserDao userDao,
+                        SecretCrypto secretCrypto) {
+        this(skillDao, agentSkillDao, userDao, secretCrypto, null);
     }
 
     @Autowired
     public SkillService(SkillDao skillDao, AgentSkillDao agentSkillDao, UserDao userDao,
-                        SecretCrypto secretCrypto) {
+                        SecretCrypto secretCrypto, CategoryService categoryService) {
         this.skillDao = skillDao;
         this.agentSkillDao = agentSkillDao;
         this.userDao = userDao;
         this.secretCrypto = secretCrypto;
+        this.categoryService = categoryService;
     }
 
     public SkillVO create(CreateSkillRequest req, long tenantId, long userId) {
@@ -76,19 +93,104 @@ public class SkillService {
         if (s == null) {
             throw new BizException(ErrorCode.SKILL_NOT_FOUND);
         }
-        return toVO(s);
+        SkillVO vo = toVO(s);
+        if (categoryService != null && s.getTenantId() != null) {
+            enrichCategory(List.of(vo), s.getTenantId());
+        }
+        return vo;
     }
 
-    public List<SkillVO> list(String type, int page, int size) {
+    public List<SkillVO> list(long tenantId, String type, int page, int size) {
+        return list(tenantId, type, null, false, false, page, size);
+    }
+
+    /**
+     * 分类检索：categoryId 与 uncategorized 互斥；includeDescendants 为 true 时展开子分类；
+     * 两者都不传时保持原有查询行为。
+     */
+    public List<SkillVO> list(long tenantId, String type, Long categoryId, boolean includeDescendants,
+                              boolean uncategorized, int page, int size) {
+        List<Long> categoryIds = resolveCategoryFilter(tenantId, categoryId, includeDescendants, uncategorized);
+        return listByCategoryIds(tenantId, type, categoryIds, uncategorized, page, size);
+    }
+
+    public PageResult<SkillVO> listPage(long tenantId, String type, int page, int size) {
+        return listPage(tenantId, type, null, false, false, page, size);
+    }
+
+    public PageResult<SkillVO> listPage(long tenantId, String type, Long categoryId, boolean includeDescendants,
+                                        boolean uncategorized, int page, int size) {
+        int p = Math.max(page, 1);
+        int sz = Math.min(Math.max(size, 1), 100);
+        List<Long> categoryIds = resolveCategoryFilter(tenantId, categoryId, includeDescendants, uncategorized);
+        List<SkillVO> list = listByCategoryIds(tenantId, type, categoryIds, uncategorized, p, sz);
+        long total = skillDao.count(tenantId, type, categoryIds, uncategorized);
+        return new PageResult<>(list, total, p, sz);
+    }
+
+    private List<SkillVO> listByCategoryIds(long tenantId, String type, List<Long> categoryIds,
+                                            boolean uncategorized, int page, int size) {
         int p = Math.max(page, 1);
         int sz = Math.min(Math.max(size, 1), 100);
         int offset = (p - 1) * sz;
         List<SkillVO> result = new ArrayList<>();
         Map<Long, String> userNameCache = new HashMap<>();
-        for (SkillDO s : skillDao.list(type, offset, sz)) {
+        for (SkillDO s : skillDao.list(tenantId, type, categoryIds, uncategorized, offset, sz)) {
             result.add(toVO(s, userNameCache));
         }
+        enrichCategory(result, tenantId);
         return result;
+    }
+
+    private List<Long> resolveCategoryFilter(long tenantId, Long categoryId, boolean includeDescendants,
+                                             boolean uncategorized) {
+        if (categoryId != null && uncategorized) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "分类筛选与未分类筛选互斥，不能同时使用");
+        }
+        if (categoryId == null) {
+            return null;
+        }
+        if (categoryId <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "分类 ID 不合法");
+        }
+        return includeDescendants
+                ? categoryService.categoryAndDescendantIds(tenantId, categoryId)
+                : List.of(categoryId);
+    }
+
+    private void enrichCategory(List<SkillVO> vos, long tenantId) {
+        if (categoryService == null || vos.isEmpty()) {
+            return;
+        }
+        List<Long> skillIds = new ArrayList<>(vos.size());
+        for (SkillVO vo : vos) {
+            skillIds.add(vo.getId());
+        }
+        try {
+            Map<Long, Long> categoryIds = categoryService.mapCategoryIdsByAssets(tenantId, skillIds);
+            if (categoryIds.isEmpty()) {
+                return;
+            }
+            Map<Long, String> paths = categoryService.mapCategoryPaths(tenantId);
+            for (SkillVO vo : vos) {
+                Long categoryId = categoryIds.get(vo.getId());
+                if (categoryId != null) {
+                    vo.setCategoryId(categoryId);
+                    vo.setCategoryPath(paths.get(categoryId));
+                }
+            }
+        } catch (DataAccessException ex) {
+            // 分类是展示附加信息；仅兼容 MySQL 分类表尚未创建，不吞掉其他数据库错误。
+            for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+                if (cause instanceof SQLException sql && sql.getErrorCode() == 1146
+                        && "42S02".equals(sql.getSQLState())
+                        && MISSING_CATEGORY_TABLE.matcher(String.valueOf(sql.getMessage())).find()) {
+                    log.warn("Category tables unavailable; returning skills without category metadata, tenantId={}", tenantId);
+                    return;
+                }
+            }
+            throw ex;
+        }
     }
 
     public SkillVO update(long id, UpdateSkillRequest req, long tenantId, long userId) {
@@ -171,9 +273,10 @@ public class SkillService {
 	public record PackageReference(String ossRef, String fileName, Long size, String md5) {
 	}
 
+    @Transactional
     public void delete(long id, long tenantId, long userId) {
-        SkillDO s = skillDao.findById(id);
-        if (s == null) {
+        SkillDO s = skillDao.findByIdForUpdate(id);
+        if (s == null || s.getTenantId() == null || s.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.SKILL_NOT_FOUND);
         }
         if (agentSkillDao.countBySkillId(id, tenantId) > 0) {
@@ -182,6 +285,9 @@ public class SkillService {
         int rows = skillDao.softDelete(id, tenantId, s.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.SKILL_VERSION_CONFLICT);
+        }
+        if (categoryService != null) {
+            categoryService.removeSkillCategory(id, tenantId);
         }
     }
 

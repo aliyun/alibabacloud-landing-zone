@@ -2,6 +2,7 @@ import { Alert, Tag, Tooltip } from 'antd';
 import { WarningFilled } from '@ant-design/icons';
 import type { Workitem } from '@/shared/types/workitem';
 import { classifyStatus } from '../constants';
+import { stripAssigneeIdSuffix } from '../nameDisplay';
 
 const TOOLTIP_TEXT = '当前工单已指派给真人，需要人工介入处理。';
 const ALERT_DESCRIPTION = '当前工单已指派给真人，请人工处理、补充决策，或重新指派给数字员工继续交付。';
@@ -24,12 +25,6 @@ export function isFinishedWorkitemStatus(statusName: string | null | undefined):
     s.includes('修复') || s.includes('FIXED') || s.includes('RESOLVED') ||
     s.includes('取消') || s.includes('CANCELED') || s.includes('CANCELLED')
   );
-}
-
-/** Display names may carry an employee-id suffix like "蔡何(10000)"; drop it to keep the marker compact. */
-export function stripAssigneeIdSuffix(name: string): string {
-  const stripped = name.replace(/[(（]\s*\d+\s*[)）]\s*$/, '').trim();
-  return stripped || name;
 }
 
 /** Returns the display name for the human-intervention badge, or null when it should not be shown. */

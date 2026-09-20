@@ -1,11 +1,12 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { server } from '@/test/mocks/server';
 import { useAuthStore } from '@/shared/auth/store';
-import { MembersPage } from './MembersPage';
+import { DEFAULT_MEMBERS_TAB, MembersPage, resolveMembersTab } from './MembersPage';
 
 const mockMembers = [
   {
@@ -62,14 +63,43 @@ beforeEach(() => {
   );
 });
 
-function renderPage() {
+function renderPage(initialEntry = '/settings/members') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MembersPage />
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <MembersPage />
+      </MemoryRouter>
     </QueryClientProvider>,
+  );
+}
+
+/** Router variant for cases that assert the query string a tab click writes back. */
+function renderPageWithRouter(initialEntry: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  const router = createMemoryRouter(
+    [{ path: '/settings/members', element: <MembersPage /> }],
+    { initialEntries: [initialEntry] },
+  );
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  return router;
+}
+
+// The shared test server runs with onUnhandledRequest: 'error', so every case that
+// mounts the approval pane has to stub its endpoint.
+function stubAccessRequests(data: unknown[] = []) {
+  server.use(
+    http.get('/api/workspaces/current/access-requests', () => HttpResponse.json({
+      success: true, code: '0', message: '', data, traceId: null,
+    })),
   );
 }
 
@@ -465,5 +495,71 @@ describe('MembersPage', () => {
       await screen.findAllByText('当前为读写权限，通过权限申请需要管理员权限'),
     ).toHaveLength(1);
     expect(mutateHandler).not.toHaveBeenCalled();
+  });
+
+  it('opens the approval tab directly from a notification deep link', async () => {
+    stubAccessRequests();
+    renderPage('/settings/members?tab=requests');
+
+    expect(await screen.findByRole('tab', { name: '待审批申请' }))
+      .toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '成员管理' }))
+      .toHaveAttribute('aria-selected', 'false');
+    expect(await screen.findByText('暂无待审批的申请')).toBeInTheDocument();
+  });
+
+  it('keeps the members tab selected when the entry carries no tab parameter', async () => {
+    renderPage();
+
+    await screen.findByText('admin@co.com');
+    expect(screen.getByRole('tab', { name: '成员管理' }))
+      .toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '待审批申请' }))
+      .toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('ignores an unknown tab parameter and keeps the default members tab', async () => {
+    renderPage('/settings/members?tab=bogus');
+
+    await screen.findByText('admin@co.com');
+    expect(screen.getByRole('tab', { name: '成员管理' }))
+      .toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('writes the tab choice back to the query string and preserves unrelated params', async () => {
+    const user = userEvent.setup();
+    stubAccessRequests();
+    const router = renderPageWithRouter('/settings/members?workspaceId=7');
+    const requestsTab = await screen.findByRole('tab', { name: '待审批申请' });
+    const membersTab = screen.getByRole('tab', { name: '成员管理' });
+
+    await user.click(requestsTab);
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?workspaceId=7&tab=requests');
+      // Router state changes before its React transition commits the controlled tabs.
+      // rc-tabs adds a live position announcement to the focused tab's accessible name.
+      expect(requestsTab).toBeInTheDocument();
+      expect(requestsTab).toHaveAttribute('aria-selected', 'true');
+    });
+
+    await user.click(membersTab);
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?workspaceId=7');
+      expect(membersTab).toBeInTheDocument();
+      expect(membersTab).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+});
+
+describe('resolveMembersTab', () => {
+  it('accepts only the known tab keys', () => {
+    expect(resolveMembersTab('requests')).toBe('requests');
+    expect(resolveMembersTab(DEFAULT_MEMBERS_TAB)).toBe(DEFAULT_MEMBERS_TAB);
+  });
+
+  it('falls back to the default tab for absent, empty, or unknown values', () => {
+    expect(resolveMembersTab(null)).toBe(DEFAULT_MEMBERS_TAB);
+    expect(resolveMembersTab('')).toBe(DEFAULT_MEMBERS_TAB);
+    expect(resolveMembersTab('bogus')).toBe(DEFAULT_MEMBERS_TAB);
   });
 });

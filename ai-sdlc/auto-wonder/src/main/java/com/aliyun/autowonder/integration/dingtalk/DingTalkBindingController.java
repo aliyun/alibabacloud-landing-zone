@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
+import com.aliyun.autowonder.branding.PlatformBrandingService;
+import com.aliyun.autowonder.im.PlatformImChannelConfigService;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingUpsertRequest;
@@ -8,7 +10,6 @@ import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -22,14 +23,16 @@ public class DingTalkBindingController {
 
     private final DingTalkBindingService service;
     private final DingTalkStreamClientManager streamClientManager;
-    private final String publicBaseUrl;
+    private final PlatformBrandingService brandingService;
+    private final PlatformImChannelConfigService imConfigs;
 
     public DingTalkBindingController(DingTalkBindingService service,
             DingTalkStreamClientManager streamClientManager,
-            @Value("${autowonder.public-base-url:}") String publicBaseUrl) {
+            PlatformBrandingService brandingService, PlatformImChannelConfigService imConfigs) {
         this.service = service;
         this.streamClientManager = streamClientManager;
-        this.publicBaseUrl = publicBaseUrl;
+        this.brandingService = brandingService;
+        this.imConfigs = imConfigs;
     }
 
     @GetMapping
@@ -52,6 +55,7 @@ public class DingTalkBindingController {
 
     @PostMapping
     public Result<BindingView> create(@RequestBody BindingUpsertRequest req) {
+        imConfigs.requireSelected("DINGTALK");
         Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         Long userId = AutoWonderContext.get().getUserId();
         DingtalkRobotBindingDO row = service.create(tenantId, userId, req.getAppKey(),
@@ -64,6 +68,7 @@ public class DingTalkBindingController {
 
     @PutMapping("/{id}")
     public Result<BindingView> update(@PathVariable Long id, @RequestBody BindingUpsertRequest req) {
+        imConfigs.requireSelected("DINGTALK");
         Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         Long userId = AutoWonderContext.get().getUserId();
         DingtalkRobotBindingDO oldRow = service.get(tenantId, id);
@@ -105,7 +110,8 @@ public class DingTalkBindingController {
 
     private String buildCallbackUrl(DingtalkRobotBindingDO row) {
         String token = row.getCallbackToken() == null ? "" : row.getCallbackToken();
-        return publicBaseUrl + "/api/integrations/dingtalk/callback?token=" + token;
+        return brandingService.effectivePublicBaseUrl()
+                + "/api/integrations/dingtalk/callback?token=" + token;
     }
 
     private void startStreamIfEligible(DingtalkRobotBindingDO row) {

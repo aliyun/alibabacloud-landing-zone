@@ -9,6 +9,7 @@ public interface RepoDao {
     void insert(RepoDO repo);
     RepoDO findById(@Param("id") Long id);
     List<RepoDO> list(@Param("tenantId") Long tenantId, @Param("offset") int offset, @Param("limit") int limit);
+    List<RepoDO> listAllByTenant(@Param("tenantId") Long tenantId);
     int update(@Param("id") Long id, @Param("tenantId") Long tenantId,
                @Param("name") String name, @Param("url") String url,
                @Param("defaultBranch") String defaultBranch,

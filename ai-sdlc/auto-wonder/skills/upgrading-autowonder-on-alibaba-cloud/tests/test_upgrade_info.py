@@ -266,6 +266,52 @@ esac
         self.assertIn("multiple Terraform roots", result.stderr)
         self.assertFalse((self.project / "upgrade-info").exists())
 
+    def test_refresh_preserves_real_module_alb_outputs_with_historical_discovery(self):
+        self.create_deployment()
+        located = self.locate()
+        self.assertEqual(0, located.returncode, located.stderr)
+        manifest = Path(json.loads(located.stdout)["manifest"])
+        discovery_path = manifest.parent / "discovery.json"
+        discovery = json.loads(discovery_path.read_text())
+        discovery["outputBindings"].update(albId="alb_id", albAddress="alb_dns_name")
+        discovery_path.write_text(json.dumps(discovery))
+        output = self.terraform_outputs({"zone_a_1": "i-a", "zone_b_1": "i-b"})
+        output["load_balancer_id"] = output.pop("alb_id")
+        output["load_balancer_address"] = output.pop("alb_dns_name")
+        result = self.refresh(manifest, output, self.write_fake_terraform(), self.project / "terraform.log")
+        self.assertEqual(0, result.returncode, result.stderr)
+        resources = json.loads(manifest.read_text())["resources"]
+        self.assertEqual("alb-1", resources.get("load_balancer_id"))
+        self.assertEqual("alb-1", resources.get("alb_id"))
+        self.assertEqual("alb.example.invalid", resources.get("load_balancer_address"))
+        self.assertEqual("alb.example.invalid", resources.get("alb_address"))
+        self.assertNotIn("TF-OUTPUT-SECRET", self.persisted_json() + result.stdout + result.stderr)
+
+    def test_locate_preserves_canonical_alb_identity_in_deployment_inventory(self):
+        deployment = self.create_deployment()
+        inventory_path = deployment / "terraform/inventory.json"
+        inventory = json.loads(inventory_path.read_text())
+        inventory.update(load_balancer_id="alb-1", load_balancer_address="alb.example.invalid")
+        inventory_path.write_text(json.dumps(inventory))
+        result = self.locate()
+        self.assertEqual(0, result.returncode, result.stderr)
+        manifest = Path(json.loads(result.stdout)["manifest"])
+        resources = json.loads(manifest.read_text())["resources"]
+        self.assertEqual("alb-1", resources.get("load_balancer_id"))
+        self.assertEqual("alb-1", resources.get("alb_id"))
+
+    def test_refresh_rejects_conflicting_alb_output_identities(self):
+        self.create_deployment()
+        located = self.locate()
+        self.assertEqual(0, located.returncode, located.stderr)
+        manifest = Path(json.loads(located.stdout)["manifest"])
+        original = manifest.read_bytes()
+        output = self.terraform_outputs({"zone_a_1": "i-a", "zone_b_1": "i-b"})
+        output["load_balancer_id"] = {"value": "alb-unrelated", "sensitive": False}
+        result = self.refresh(manifest, output, self.write_fake_terraform(), self.project / "terraform.log")
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual(original, manifest.read_bytes())
+
     def test_local_state_refresh_reuses_rule_and_detects_third_ecs(self):
         self.create_deployment()
         located = self.locate()

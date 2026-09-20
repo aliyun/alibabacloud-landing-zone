@@ -323,10 +323,10 @@ describe('WorkitemClarificationPanel 回复结束后的输入焦点（工单 533
       expect(document.activeElement).toBe(screen.getByPlaceholderText('输入消息...')));
   });
 
-  // 焦点只在「本轮回复结束」时归还：面板首次拉取会话时输入框同样经历一次
-  // 禁用→可用，若把它当回复结束，打开历史会话就会抢走用户当前的焦点。
-  it('打开回复早已结束的历史会话时不抢焦点', async () => {
-    const { textarea } = await renderPanelWithConversation({
+  // 新的进入面板自动聚焦合同允许首次聚焦；已完成的历史会话后台刷新
+  // 不能被当作新一轮回复结束，也不能再次抢走用户移到别处的焦点。
+  it('历史会话首次聚焦后后台刷新不再次抢焦点', async () => {
+    const { textarea, queryClient } = await renderPanelWithConversation({
       processingStatus: null,
       turns: [
         { id: 1, direction: 'IN', content: '帮我澄清需求', status: 'SUCCESS' },
@@ -336,7 +336,20 @@ describe('WorkitemClarificationPanel 回复结束后的输入焦点（工单 533
 
     await waitFor(() => expect(textarea).toBeEnabled());
     expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull();
-    expect(document.activeElement).not.toBe(textarea);
+    await waitFor(() => expect(document.activeElement).toBe(textarea));
+    const otherControl = document.createElement('button');
+    document.body.append(otherControl);
+    try {
+      otherControl.focus();
+      await act(async () => {
+        await queryClient.invalidateQueries({
+          queryKey: ['workitem', '100', 'clarification-conversation', 1],
+        });
+      });
+      expect(document.activeElement).toBe(otherControl);
+    } finally {
+      otherControl.remove();
+    }
   });
 });
 

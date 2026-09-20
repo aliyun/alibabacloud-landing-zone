@@ -20,6 +20,9 @@
     <delete id="deleteByVersion">
         DELETE FROM agent_memory_ref WHERE agent_version_id = #{agentVersionId}
     </delete>
+    <delete id="deleteByMemoryId">
+        DELETE FROM agent_memory_ref WHERE memory_id = #{memoryId} AND tenant_id = #{tenantId}
+    </delete>
     <select id="countByMemoryId" resultType="int">
         SELECT COUNT(*) FROM agent_memory_ref WHERE memory_id = #{memoryId} AND tenant_id = #{tenantId}
     </select>

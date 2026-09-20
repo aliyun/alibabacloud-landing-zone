@@ -44,6 +44,7 @@ export function useWorkitemKanbanColumns(
         queryKey: ['workitems', query],
         queryFn: () => api.listWorkitems(query),
         enabled,
+        refetchInterval: 5000,
       };
     }),
   });
@@ -243,6 +244,35 @@ export function useMentionCandidates(workitemId: number | string, query?: string
     queryKey: ['workitem', workitemId, 'mention-candidates', query || ''],
     queryFn: () => api.getMentionCandidates(workitemId, query || undefined),
     enabled: !!workitemId,
+  });
+}
+
+export function useWatchers(workitemId: number | string) {
+  return useQuery({
+    queryKey: ['workitem', workitemId, 'watchers'],
+    queryFn: () => api.getWatchers(workitemId),
+    enabled: !!workitemId,
+  });
+}
+
+/**
+ * 关注/取消关注。传入当前关注态 watched：已关注则取消，未关注则关注。
+ * 后端幂等，成功后回填详情页、关注人列表与列表页缓存。
+ */
+export function useToggleWatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, watched }: { id: number | string; watched: boolean }) =>
+      watched ? api.unwatchWorkitem(id) : api.watchWorkitem(id),
+    onSuccess: (state, variables) => {
+      message.success(state.watched ? '已关注' : '已取消关注');
+      queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
+      queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'watchers'] });
+      queryClient.invalidateQueries({ queryKey: ['workitems'] });
+    },
+    onError: (error: Error) => {
+      message.error(error.message || '操作失败');
+    },
   });
 }
 

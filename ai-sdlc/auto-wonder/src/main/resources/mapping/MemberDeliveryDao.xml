@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.insights.MemberDeliveryDao">
+    <sql id="workitemDispatchFence"><include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/></sql>
+    <select id="members" resultType="com.aliyun.autowonder.insights.MemberDeliveryService$Member">
+        SELECT m.user_id AS memberId, COALESCE(NULLIF(u.nickname,''), u.username, CONCAT('成员 #',m.user_id)) AS memberName
+        FROM org_member m LEFT JOIN user u ON u.id=m.user_id
+        WHERE m.tenant_id=#{tenantId} AND m.is_deleted=0 AND m.status=0
+    </select>
+    <select id="counts" resultType="com.aliyun.autowonder.insights.MemberDeliveryService$Counts">
+        SELECT CASE WHEN w.assignee_type='HUMAN' THEN w.assignee_ref ELSE w.assign_operator_id END AS memberId, COUNT(*) AS total,
+          SUM(CASE WHEN success.success_at &gt;= #{start} AND success.success_at &lt; #{end} THEN 1 ELSE 0 END) AS completed,
+          SUM(CASE WHEN sn.category='IN_PROGRESS' AND success.id IS NULL THEN 1 ELSE 0 END) AS inProgress,
+          SUM(CASE WHEN w.work_type='REQ' AND success.success_at &gt;= #{start} AND success.success_at &lt; #{end} THEN 1 ELSE 0 END) AS requirements
+        FROM workitem w
+        LEFT JOIN status_node sn ON sn.id=w.status_node_id AND sn.tenant_id=w.tenant_id
+        LEFT JOIN (<include refid="com.aliyun.autowonder.dashboard.DashboardDao.endToEndSuccessfulWorkitems"/>) success ON success.id=w.id
+        WHERE w.tenant_id=#{tenantId} AND w.is_deleted=0 AND (
+          (w.gmt_create &gt;= #{start} AND w.gmt_create &lt; #{end})
+          OR (success.success_at &gt;= #{start} AND success.success_at &lt; #{end})
+          OR EXISTS (SELECT 1 FROM workitem_event e WHERE e.tenant_id=w.tenant_id AND e.workitem_id=w.id
+            AND e.gmt_create &gt;= #{start} AND e.gmt_create &lt; #{end})
+          OR EXISTS (SELECT 1 FROM dispatch d WHERE d.tenant_id=w.tenant_id AND d.workitem_id=w.id AND d.is_deleted=0
+            <include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/>
+            AND d.gmt_create &lt; #{end} AND (d.gmt_modified &gt;= #{start}
+              OR d.status IN ('PENDING','PACKAGING','DISPATCHED','ACKED','RUNNING','PAUSING')))
+        )
+        GROUP BY CASE WHEN w.assignee_type='HUMAN' THEN w.assignee_ref ELSE w.assign_operator_id END
+    </select>
+</mapper>

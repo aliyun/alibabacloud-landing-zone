@@ -49,7 +49,7 @@ describe('ArtifactPreviewModal', () => {
     expectPreviewFetch();
   });
 
-  it('uses same-origin preview endpoint when download urls are cross-origin', async () => {
+  it('keeps cross-origin http download urls unchanged while previewing from same-origin', async () => {
     server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
       success: true, code: '0', message: '', traceId: null, data: 'http://oss.example/report.md',
     })));
@@ -58,7 +58,7 @@ describe('ArtifactPreviewModal', () => {
 
     expect(await screen.findByRole('heading', { name: 'Report' })).toBeInTheDocument();
     expectPreviewFetch();
-    expect(screen.getByRole('link', { name: /下载/ })).toHaveAttribute('href', 'https://oss.example/report.md');
+    expect(screen.getByRole('link', { name: /下载/ })).toHaveAttribute('href', 'http://oss.example/report.md');
   });
 
   it('previews artifacts even when download url loading fails', async () => {
@@ -156,6 +156,82 @@ describe('ArtifactPreviewModal', () => {
 
     expect(await screen.findByText('产物过大，请下载后查看')).toBeInTheDocument();
     await waitFor(() => expect(fetch).not.toHaveBeenCalled());
+  });
+
+  it('renders html artifacts in a sandboxed iframe from an authenticated preview blob', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html><body>plan</body></html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+    })));
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/plan.html',
+    })));
+
+    render(<ArtifactPreviewModal open artifact={artifact('requirements/plan.html')} onClose={() => undefined} />);
+
+    const frame = await screen.findByTestId('artifact-html-preview');
+    expect(frame).toHaveAttribute('src', 'blob:artifact-preview');
+    expect(frame).toHaveAttribute('title', 'requirements/plan.html');
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-forms allow-modals');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-top-navigation');
+    expect(frame.getAttribute('sandbox')).not.toContain('allow-popups');
+    expectPreviewFetch();
+    expect(screen.getByRole('link', { name: /下载/ })).toHaveAttribute('href', 'https://oss.example/plan.html');
+  });
+
+  it('previews htm artifacts with uppercase extensions', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html></html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+    })));
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/prototype.HTM',
+    })));
+
+    render(<ArtifactPreviewModal open artifact={artifact('requirements/prototype.HTM')} onClose={() => undefined} />);
+
+    expect(await screen.findByTestId('artifact-html-preview')).toBeInTheDocument();
+    expectPreviewFetch();
+  });
+
+  it('does not inline preview oversized html artifacts', async () => {
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/big.html',
+    })));
+
+    render(<ArtifactPreviewModal open artifact={{ ...artifact('requirements/big.html'), size: 1024 * 1024 + 1 }} onClose={() => undefined} />);
+
+    expect(await screen.findByText('产物过大，请下载后查看')).toBeInTheDocument();
+    await waitFor(() => expect(fetch).not.toHaveBeenCalled());
+    expect(screen.getByRole('link', { name: /下载/ })).toHaveAttribute('href', 'https://oss.example/big.html');
+  });
+
+  it('does not inline preview html artifacts with unknown size', async () => {
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/unknown.html',
+    })));
+
+    render(<ArtifactPreviewModal open artifact={{ ...artifact('requirements/unknown.html'), size: null }} onClose={() => undefined} />);
+
+    expect(await screen.findByText('无法确认产物大小，请下载后查看')).toBeInTheDocument();
+    await waitFor(() => expect(fetch).not.toHaveBeenCalled());
+  });
+
+  it('revokes html preview object urls when the modal is closed', async () => {
+    let resolveFetch: (response: Response) => void = () => undefined;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    })));
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/plan.html',
+    })));
+
+    const { rerender } = render(<ArtifactPreviewModal open artifact={artifact('requirements/plan.html')} onClose={() => undefined} />);
+    rerender(<ArtifactPreviewModal open={false} artifact={null} onClose={() => undefined} />);
+    resolveFetch(new Response('<html></html>', { status: 200 }));
+
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:artifact-preview'));
   });
 
   it('does not inline preview text artifacts with unknown size', async () => {

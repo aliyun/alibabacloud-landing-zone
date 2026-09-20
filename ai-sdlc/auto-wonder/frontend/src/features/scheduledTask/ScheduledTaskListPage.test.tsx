@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -21,6 +21,34 @@ function readHandlers() {
   ];
 }
 
+const TAB_STORAGE_KEY = 'autowonder.scheduled-tasks.tab';
+
+const SCHEDULED_WORKITEM = {
+  id: 1,
+  title: '定时需求A',
+  workType: 'REQ',
+  statusName: '新建',
+  priority: 2,
+  assigneeType: 'AGENT',
+  assigneeRef: 40013,
+  assigneeName: 'AW全栈开发',
+  version: 1,
+  gmtCreate: '2026-09-01',
+  gmtModified: '2026-09-01',
+  scheduledStartAt: new Date(Date.now() + 3_600_000).toISOString(),
+  scheduledPhase: 'PENDING',
+};
+
+function workitemHandler(requests: string[]) {
+  return http.get('/api/workitems', ({ request }) => {
+    requests.push(new URL(request.url).searchParams.toString());
+    return HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null,
+      data: { list: [SCHEDULED_WORKITEM], total: 1, pageNum: 1, pageSize: 20 },
+    });
+  });
+}
+
 function renderList(accessLevel: 'READ_ONLY' | 'READ_WRITE') {
   useAuthStore.setState({ accessLevel });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -36,6 +64,10 @@ async function confirmPopconfirm(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('ScheduledTaskListPage', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(TAB_STORAGE_KEY);
+  });
+
   it('renders task status, next execution and run-now action', async () => {
     server.use(
       http.get('/api/scheduled-tasks', () => HttpResponse.json({ success: true, code: '0', message: '', data: { list: [{ id: 7, name: '凌晨回归', squadId: 1, initialAgentId: 11, status: 'ACTIVE', scheduleType: 'CRON', cronExpression: '0 0 2 * * *', timezone: 'Asia/Shanghai', nextFireAt: '2026-08-12T18:00:00Z', version: 3 }], total: 41, pageNum: 0, pageSize: 20 } })),
@@ -95,5 +127,43 @@ describe('ScheduledTaskListPage', () => {
     expect(errorSpy).toHaveBeenCalledWith('当前为只读权限，删除定时任务需要读写权限');
     expect(deleteRequests).toBe(0);
     errorSpy.mockRestore();
+  });
+
+  it('keeps the existing task list on the default tab without querying scheduled workitems', async () => {
+    const requests: string[] = [];
+    server.use(...readHandlers(), workitemHandler(requests));
+
+    renderList('READ_WRITE');
+
+    expect(await screen.findByText('凌晨回归')).toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['定时任务', '定时工单']);
+    expect(screen.getByRole('tab', { name: '定时任务' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: '立即运行' })).toBeInTheDocument();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('loads scheduled workitems and remembers the tab when switching to 定时工单', async () => {
+    const user = userEvent.setup();
+    const requests: string[] = [];
+    server.use(...readHandlers(), workitemHandler(requests));
+
+    renderList('READ_WRITE');
+    await user.click(await screen.findByRole('tab', { name: '定时工单' }));
+
+    expect(await screen.findByText('定时需求A')).toBeInTheDocument();
+    expect(requests[0]).toContain('scheduledStart=ALL');
+    expect(window.localStorage.getItem(TAB_STORAGE_KEY)).toBe('workitems');
+  });
+
+  it('restores the remembered tab on the next visit', async () => {
+    const requests: string[] = [];
+    window.localStorage.setItem(TAB_STORAGE_KEY, 'workitems');
+    server.use(...readHandlers(), workitemHandler(requests));
+
+    renderList('READ_WRITE');
+
+    expect(await screen.findByText('定时需求A')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '定时工单' })).toHaveAttribute('aria-selected', 'true');
+    expect(requests[0]).toContain('scheduledStart=ALL');
   });
 });

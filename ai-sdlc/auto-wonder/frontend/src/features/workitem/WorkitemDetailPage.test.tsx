@@ -130,6 +130,41 @@ function setupHandlers() {
         data: mockTemplateDetail,
       });
     }),
+    http.get('/api/workitems/:id/recovery', () => HttpResponse.json({ success: true, code: '0', data: { closed: false, executions: [] } })),
+  ];
+}
+
+/** 澄清面板与启动交付弹窗会打到的接口：进入澄清态或打开交付弹窗的用例都要带上。 */
+function mockClarifyEndpoints() {
+  return [
+    http.get('/api/squads', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null,
+      data: { list: [], total: 0, pageNum: 1, pageSize: 100 },
+    })),
+    http.get('/api/squads/:squadId/members', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: [],
+    })),
+    http.get('/api/workitems/1/clarification-conversations', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: [],
+    })),
+    http.post('/api/workitems/1/clarification-conversations', async ({ request }) => {
+      const body = (await request.json()) as { agentId?: number };
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          id: 5, agentId: body.agentId ?? 1, agentName: 'Agent-A', channelConversationId: 'ch-5',
+          status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+          cliSessionRef: null, processingStatus: null, processingTurnId: null,
+          lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
+        },
+      });
+    }),
+    http.get('/api/workitems/1/clarification-conversations/:conversationId', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: null,
+    })),
+    http.get('/api/workitems/1/clarification-conversations/:conversationId/events', () => HttpResponse.json({
+      success: true, code: '0', message: '', traceId: null, data: [],
+    })),
   ];
 }
 
@@ -318,10 +353,40 @@ describe('WorkitemDetailPage', () => {
     renderPage();
 
     const input = await screen.findByLabelText('选择需求/设计上下文文件');
-    fireEvent.change(input, { target: { files: [new File(['archive'], 'notes.docx', { type: 'application/vnd.word' })] } });
+    fireEvent.change(input, { target: { files: [new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' })] } });
 
-    expect(await screen.findByText('仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp 文件')).toBeInTheDocument();
+    expect(await screen.findByText(
+      '仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp、.docx、.doc、.java、.py、.zip 文件',
+    )).toBeInTheDocument();
     expect(uploadRequested).toBe(false);
+  });
+
+  it('accepts docx, java, python and zip requirement documents and uploads them', async () => {
+    let uploadRequested = false;
+    server.use(
+      http.post('/api/workitems/1/requirement-documents', () => {
+        uploadRequested = true;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
+      }),
+      ...setupHandlers(),
+    );
+    renderPage();
+
+    const input = await screen.findByLabelText('选择需求/设计上下文文件');
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(['docx'], 'spec.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+          new File(['class Sample {}'], 'Sample.java', { type: 'text/x-java-source' }),
+          new File(['print(1)'], 'helper.py', { type: 'text/x-python' }),
+          new File(['zip'], 'assets.zip', { type: 'application/zip' }),
+        ],
+      },
+    });
+
+    await waitFor(() => expect(uploadRequested).toBe(true));
   });
 
   it('accepts txt, html and pdf requirement documents and uploads them', async () => {
@@ -445,7 +510,7 @@ describe('WorkitemDetailPage', () => {
             provider: 'AONE',
             externalProjectId: '2087214',
             externalWorkitemId: '84877007',
-            externalUrl: 'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+            externalUrl: 'https://aone.example.com/v2/project/2087214/req/84877007',
             sourceStatusId: '100',
             sourceStatusName: '处理中',
             sourceLifecycle: 'ACTIVE',
@@ -479,7 +544,7 @@ describe('WorkitemDetailPage', () => {
     );
     renderPage();
 
-    expect(await screen.findByText('创建者: 导入人（10009）')).toBeInTheDocument();
+    expect(await screen.findByText('创建者: 导入人')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /重新指派/ })).toBeInTheDocument();
     expect(await screen.findByText('外部协作')).toBeInTheDocument();
     expect(screen.getByText('需求提出人（001）')).toBeInTheDocument();
@@ -491,7 +556,7 @@ describe('WorkitemDetailPage', () => {
     expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /打开Aone工单/ })).toHaveAttribute(
       'href',
-      'https://project.aone.alibaba-inc.com/v2/project/2087214/req/84877007',
+      'https://aone.example.com/v2/project/2087214/req/84877007',
     );
   });
 
@@ -711,7 +776,7 @@ describe('WorkitemDetailPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
     const panel = await screen.findByTestId('workitem-right-panel');
     // clarify 模式：右栏容器 flex column，box 底部锚定
-    expect(panel).toHaveStyle({ display: 'flex', flexDirection: 'column' });
+    await waitFor(() => expect(panel).toHaveStyle({ display: 'flex', flexDirection: 'column' }));
     const box = await screen.findByTestId('clarify-resize-box');
     expect(box.style.marginTop).toBe('auto');
 
@@ -727,10 +792,13 @@ describe('WorkitemDetailPage', () => {
     firePointer('pointerup', handle, { clientX: 1200, clientY: 200 });
 
     await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
-    expect(screen.queryByTestId('resize-handle-horizontal')).not.toBeInTheDocument();
+    // 返回进度同样经 Router 的异步导航提交，等待父级布局与手柄一起更新。
+    await waitFor(() => {
+      expect(screen.queryByTestId('resize-handle-horizontal')).not.toBeInTheDocument();
+      expect(panel).toHaveStyle('display: block');
+    });
     // jsdom 的 CSSOM 不接受 clamp() 赋值，默认宽度的恢复改为行为断言：
     // 重新进入 clarify 后拖拽从默认测量宽度重新生效（宽度状态已重置）
-    expect(panel).toHaveStyle('display: block');
 
     await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
     const rehandle = await screen.findByTestId('resize-handle-horizontal');
@@ -744,7 +812,7 @@ describe('WorkitemDetailPage', () => {
     server.use(...setupHandlers());
     renderPage();
 
-    expect((await screen.findByText('优先级: P1')).parentElement).toHaveStyle('margin-top: 14px');
+    expect((await screen.findByText(/优先级:/)).parentElement).toHaveStyle('margin-top: 14px');
     expect(screen.getByTestId('workitem-comment-input')).toHaveStyle('margin-top: 14px');
   });
 
@@ -1506,39 +1574,6 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     );
   }
 
-  function mockClarifyEndpoints() {
-    return [
-      http.get('/api/squads', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: { list: [], total: 0, pageNum: 1, pageSize: 100 },
-      })),
-      http.get('/api/squads/:squadId/members', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
-      })),
-      http.get('/api/workitems/1/clarification-conversations', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
-      })),
-      http.post('/api/workitems/1/clarification-conversations', async ({ request }) => {
-        const body = (await request.json()) as { agentId?: number };
-        return HttpResponse.json({
-          success: true, code: '0', message: '', traceId: null,
-          data: {
-            id: 5, agentId: body.agentId ?? 1, agentName: 'Agent-A', channelConversationId: 'ch-5',
-            status: 'ACTIVE', executorOnline: true, streamingSupported: true,
-            cliSessionRef: null, processingStatus: null, processingTurnId: null,
-            lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
-          },
-        });
-      }),
-      http.get('/api/workitems/1/clarification-conversations/:conversationId', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: null,
-      })),
-      http.get('/api/workitems/1/clarification-conversations/:conversationId/events', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [],
-      })),
-    ];
-  }
-
   function currentSearch() {
     return screen.getByTestId('location-search').textContent ?? '';
   }
@@ -1717,5 +1752,301 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
 
     expect(await screen.findByText('工单列表')).toBeInTheDocument();
     expect(screen.queryByTestId('clarify-resize-box')).toBeNull();
+  });
+});
+
+describe('WorkitemDetailPage start-delivery clarify reminder (工单 53315 / 54819)', () => {
+  function LocationProbe() {
+    const location = useLocation();
+    return <span data-testid="location-search">{location.search}</span>;
+  }
+
+  function renderReminderPage(options: {
+    sdlcId?: string | null;
+    clarification?: { workitemId: string; contentMd: string | null } | null;
+    /** 需求文档：工单 54819 起「已有需求文档」是抑制引导的条件之一，默认空数组保持既有用例行为。 */
+    requirementDocuments?: unknown[];
+  } = {}) {
+    const { sdlcId = null, clarification = null, requirementDocuments = [] } = options;
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, sdlcId, sdlcName: null },
+      })),
+      http.get('/api/workitems/1/clarification', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: clarification,
+      })),
+      http.get('/api/workitems/1/requirement-documents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: requirementDocuments,
+      })),
+      ...mockClarifyEndpoints(),
+      ...setupHandlers().filter(
+        (h) => h.info.path !== '/api/workitems/1'
+          && h.info.path !== '/api/workitems/1/clarification'
+          && h.info.path !== '/api/workitems/1/requirement-documents',
+      ),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/workitems/1']}>
+          <Routes>
+            <Route
+              path="/workitems/:id"
+              element={(
+                <>
+                  <WorkitemDetailPage />
+                  <LocationProbe />
+                </>
+              )}
+            />
+            <Route path="/workitems" element={<div>工单列表</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  function currentSearch() {
+    return screen.getByTestId('location-search').textContent ?? '';
+  }
+
+  /** 「首步执行 Agent」只在启动交付弹窗的表单里出现，用它判断原流程有没有被打开，
+   *  避免和引导弹窗的文案互相干扰。 */
+  const DELIVERY_MODAL_MARKER = '首步执行 Agent';
+
+  /** antd 默认 autoInsertSpace 会在两个中文字符之间插空格，「跳过」的可访问名实际是 "跳 过"。 */
+  const SKIP_BUTTON = /^跳\s*过$/;
+  /** 启动交付弹窗的取消按钮同样是两个中文字符，用宽松匹配避开 autoInsertSpace。 */
+  const CANCEL_BUTTON = /^取\s*消$/;
+  /** 「记住我的选项，下次不再提醒」勾选项（工单 54819）。 */
+  const REMEMBER_CHECKBOX = { name: /记住我的选项/ };
+  /** clarifyReminderPreference.ts 落盘用的 key，直接写字面量避免把存储 key 导出成公共 API。 */
+  const CLARIFY_REMINDER_KEY = 'autowonder.workitems.clarifyReminder';
+
+  async function openReminder() {
+    await userEvent.click(await screen.findByRole('button', { name: /启动交付/ }));
+    return screen.findByText('建议先完成需求澄清');
+  }
+
+  function rememberCheckbox() {
+    return screen.getByRole('checkbox', REMEMBER_CHECKBOX);
+  }
+
+  /** 关掉启动交付弹窗，好用例能再点一次「启动交付」验证同一次会话内引导是否已被抑制。 */
+  async function closeDeliveryModal() {
+    await userEvent.click(screen.getByRole('button', { name: CANCEL_BUTTON }));
+    await waitFor(() => expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull());
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    // 上一轮用例可能已经把「下次不再提醒」写进 localStorage，不清会串味
+    window.localStorage.clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    if (!Element.prototype.setPointerCapture) {
+      Element.prototype.setPointerCapture = vi.fn();
+    }
+  });
+
+  it('reminds about clarification before a first-time delivery start', async () => {
+    renderReminderPage();
+    await screen.findByRole('heading', { name: '跨境支付重构' });
+
+    await openReminder();
+
+    // 引导挡在原流程前面，此时不该看到启动交付表单
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+  });
+
+  it('continues the unchanged delivery flow after skipping', async () => {
+    renderReminderPage();
+    await openReminder();
+
+    await userEvent.click(screen.getByRole('button', { name: SKIP_BUTTON }));
+
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('建议先完成需求澄清')).toBeNull());
+    // 跳过只是继续原流程，不该顺手把用户带进澄清页
+    expect(currentSearch()).not.toContain('panel=clarify');
+  });
+
+  it('jumps into the AI clarification panel after confirming', async () => {
+    renderReminderPage();
+    await openReminder();
+
+    await userEvent.click(screen.getByRole('button', { name: '确认，去澄清' }));
+
+    await waitFor(() => expect(currentSearch()).toContain('panel=clarify'));
+    expect(await screen.findByTestId('clarify-resize-box')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('建议先完成需求澄清')).toBeNull());
+    // 去澄清不等于启动交付
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+  });
+
+  it('only dismisses itself through the close icon', async () => {
+    const { baseElement } = renderReminderPage();
+    await openReminder();
+
+    const closeIcon = baseElement.querySelector('.ant-modal-close');
+    expect(closeIcon).not.toBeNull();
+    await userEvent.click(closeIcon as Element);
+
+    await waitFor(() => expect(screen.queryByText('建议先完成需求澄清')).toBeNull());
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+    expect(currentSearch()).not.toContain('panel=clarify');
+  });
+
+  it('does not remind once an SDLC is bound and the button reads 重新指派', async () => {
+    renderReminderPage({ sdlcId: '10' });
+
+    await userEvent.click(await screen.findByRole('button', { name: /重新指派/ }));
+
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+  });
+
+  it('does not remind when clarification is already done', async () => {
+    renderReminderPage({
+      clarification: { workitemId: '1', contentMd: '# 澄清结论\n补充风控口径' },
+    });
+
+    await userEvent.click(await screen.findByRole('button', { name: /启动交付/ }));
+
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+    expect(await screen.findByText('澄清材料 (AI 生成)')).toBeInTheDocument();
+  });
+
+  it('still denies a read-only user instead of showing the reminder', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    renderReminderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: /启动交付/ }));
+
+    // 权限守卫仍在引导之前：只读用户拿到的是既有的拒绝提示，而不是澄清引导
+    expect(await screen.findByText('当前为只读权限，启动工单交付需要读写权限')).toBeInTheDocument();
+    expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+  });
+
+  it('does not remind when the workitem already has requirement documents', async () => {
+    renderReminderPage({ requirementDocuments: mockRequirementDocuments });
+
+    await userEvent.click(await screen.findByRole('button', { name: /启动交付/ }));
+
+    // 需求材料已经就位，直接进原流程（工单 54819）
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+  });
+
+  it('does not remind once the user opted out in an earlier visit', async () => {
+    window.localStorage.setItem(CLARIFY_REMINDER_KEY, 'suppressed');
+    renderReminderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: /启动交付/ }));
+
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+  });
+
+  it('persists the opt-out on skip and stops reminding within the same session', async () => {
+    renderReminderPage();
+    await openReminder();
+
+    await userEvent.click(rememberCheckbox());
+    await userEvent.click(screen.getByRole('button', { name: SKIP_BUTTON }));
+
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(window.localStorage.getItem(CLARIFY_REMINDER_KEY)).toBe('suppressed');
+
+    // 不必刷新页面：同一次会话内再点启动交付就该直接进原流程
+    await closeDeliveryModal();
+    await userEvent.click(screen.getByRole('button', { name: /启动交付/ }));
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+  });
+
+  it('persists the opt-out when going to clarification', async () => {
+    renderReminderPage();
+    await openReminder();
+
+    await userEvent.click(rememberCheckbox());
+    await userEvent.click(screen.getByRole('button', { name: '确认，去澄清' }));
+
+    await waitFor(() => expect(currentSearch()).toContain('panel=clarify'));
+    expect(window.localStorage.getItem(CLARIFY_REMINDER_KEY)).toBe('suppressed');
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+  });
+
+  it('keeps reminding when the opt-out is left unticked', async () => {
+    renderReminderPage();
+    await openReminder();
+
+    await userEvent.click(screen.getByRole('button', { name: SKIP_BUTTON }));
+    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    expect(window.localStorage.getItem(CLARIFY_REMINDER_KEY)).toBeNull();
+
+    // 没勾就还得提醒，否则等于替用户做了永久决定
+    await closeDeliveryModal();
+    await openReminder();
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+  });
+
+  it('does not persist the opt-out when dismissed through the close icon', async () => {
+    const { baseElement } = renderReminderPage();
+    await openReminder();
+
+    await userEvent.click(rememberCheckbox());
+    const closeIcon = baseElement.querySelector('.ant-modal-close');
+    expect(closeIcon).not.toBeNull();
+    await userEvent.click(closeIcon as Element);
+
+    await waitFor(() => expect(screen.queryByText('建议先完成需求澄清')).toBeNull());
+    // 关闭图标只表达「我先不决定」，勾了也不算做过决定
+    expect(window.localStorage.getItem(CLARIFY_REMINDER_KEY)).toBeNull();
+    expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull();
+  });
+});
+
+// 详情页把 workitem.watched 透传给操作栏关注入口，并把点击接到 useToggleWatch；
+// 此前没有断言覆盖这条装配链路，补两个场景：已关注态的展示、未关注态点击发起关注。
+describe('WorkitemDetailPage 关注入口装配', () => {
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  });
+
+  it('已关注工单的操作栏入口展示「取消关注工单/已关注」', async () => {
+    server.use(
+      http.get('/api/workitems/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...mockWorkitem, watched: true },
+      })),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
+    );
+    renderPage();
+
+    const toggle = await screen.findByTestId('workitem-watch-toggle');
+    expect(toggle).toHaveAccessibleName('取消关注工单');
+    expect(toggle).toHaveTextContent('已关注');
+  });
+
+  it('点击未关注工单的操作栏入口发起 POST /watch', async () => {
+    const requests: Array<{ method: string; url: string }> = [];
+    server.use(
+      ...setupHandlers(),
+      http.post('/api/workitems/1/watch', ({ request }) => {
+        requests.push({ method: request.method, url: new URL(request.url).pathname });
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { workitemId: 1, watched: true, watcherCount: 1 } });
+      }),
+    );
+    renderPage();
+
+    const toggle = await screen.findByTestId('workitem-watch-toggle');
+    expect(toggle).toHaveAccessibleName('关注工单');
+    await userEvent.click(toggle);
+
+    await waitFor(() => expect(requests).toEqual([{ method: 'POST', url: '/api/workitems/1/watch' }]));
   });
 });

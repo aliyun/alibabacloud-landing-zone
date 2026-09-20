@@ -145,6 +145,7 @@ class WorkitemCommentMentionedListenerTest {
     private static class Fixture {
         final UserImIdentityService identityService = mock(UserImIdentityService.class);
         final PlatformImChannelConfigService channelConfigService = mock(PlatformImChannelConfigService.class);
+        { when(channelConfigService.selectedProvider()).thenReturn("DINGTALK"); }
         final ImNotificationQueue queue = mock(ImNotificationQueue.class);
         final WorkitemCommentMentionedListener listener =
                 new WorkitemCommentMentionedListener(identityService, channelConfigService, queue);

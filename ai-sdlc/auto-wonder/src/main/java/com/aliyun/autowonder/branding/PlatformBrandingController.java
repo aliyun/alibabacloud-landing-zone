@@ -46,21 +46,21 @@ public class PlatformBrandingController {
 
     @GetMapping
     public Result<PlatformBrandingVO> adminConfig() {
-        boolean canManage = systemAdminService.isFirstActiveUser(AutoWonderContext.get().getUserId());
+        boolean canManage = systemAdminService.isSystemAdmin(AutoWonderContext.get().getUserId());
         return Result.ok(brandingService.adminConfig(canManage));
     }
 
     @PutMapping
     public Result<PlatformBrandingVO> update(@RequestBody UpdatePlatformBrandingRequest request) {
-        systemAdminService.requireFirstActiveUser(
-                AutoWonderContext.get().getUserId(), "更新平台品牌配置");
+        systemAdminService.requireSystemAdmin(
+                AutoWonderContext.get().getUserId(), "修改平台配置");
         return Result.ok(brandingService.update(AutoWonderContext.get().getUserId(), request));
     }
 
     @PostMapping(value = "/logo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<LogoUploadVO> uploadLogo(@RequestParam("file") MultipartFile file) {
-        systemAdminService.requireFirstActiveUser(
-                AutoWonderContext.get().getUserId(), "上传平台品牌标志");
+        systemAdminService.requireSystemAdmin(
+                AutoWonderContext.get().getUserId(), "上传平台 Logo");
         return Result.ok(brandingService.uploadLogo(AutoWonderContext.get().getUserId(), file));
     }
 

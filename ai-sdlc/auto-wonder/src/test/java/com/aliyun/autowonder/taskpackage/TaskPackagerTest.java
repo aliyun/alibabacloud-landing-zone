@@ -26,6 +26,93 @@ class TaskPackagerTest {
         packager = new TaskPackager(storage, "autowonder-task-pkg-daily", "https://daily.auto-wonder.example.com");
     }
 
+    @Test
+    void indexedCommentsPreserveExactTextAndRemainStableWhenAnotherCommentArrives() throws Exception {
+        PackageContext context = baseCtx();
+        String original = "  必须保留接口兼容性\n```java\nreturn value;\n```\n";
+        context.setCommentsMd("legacy complete comment history");
+        context.setComments(List.of(new TaskComment(10L, "HUMAN", 7L, original)));
+        Map<String, byte[]> before = unzip(storage.get(packager.build(context).getOssRef()));
+        JSONObject manifest = JSON.parseObject(new String(before.get("manifest.json"), StandardCharsets.UTF_8));
+        String indexPath = manifest.getString("commentIndex");
+        JSONObject index = JSON.parseObject(new String(before.get(indexPath), StandardCharsets.UTF_8));
+        JSONObject entry = index.getJSONArray("comments").getJSONObject(0);
+        String path = entry.getString("path");
+
+        assertEquals("autowonder.commentIndex.v1", index.getString("schemaVersion"));
+        assertEquals("10", entry.getString("id"));
+        assertEquals("HUMAN", entry.getString("authorType"));
+        assertEquals("7", entry.getString("authorRef"));
+        assertArrayEquals(original.getBytes(StandardCharsets.UTF_8), before.get(path));
+        assertEquals(before.get(path).length, entry.getIntValue("sizeBytes"));
+        String digest = "sha256:" + HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(before.get(path)));
+        assertEquals(digest, entry.getString("sha256"));
+        assertEquals(digest, manifest.getJSONObject("fileDigests").getString(path));
+        assertNotNull(manifest.getJSONObject("fileDigests").getString(indexPath));
+        assertEquals("legacy complete comment history", new String(before.get("comments.md"), StandardCharsets.UTF_8));
+
+        context.setComments(List.of(new TaskComment(10L, "HUMAN", 7L, original),
+                new TaskComment(11L, "AGENT", 8L, "New evidence")));
+        Map<String, byte[]> after = unzip(storage.get(packager.build(context).getOssRef()));
+        JSONObject appendedIndex = JSON.parseObject(new String(after.get(indexPath), StandardCharsets.UTF_8));
+        assertEquals(2, appendedIndex.getJSONArray("comments").size());
+        assertEquals(entry, appendedIndex.getJSONArray("comments").getJSONObject(0));
+        assertArrayEquals(before.get(path), after.get(path));
+        assertArrayEquals(before.get("sdlc.json"), after.get("sdlc.json"));
+
+        context.setComments(List.of(new TaskComment(10L, "HUMAN", 7L, "Updated requirement")));
+        Map<String, byte[]> updated = unzip(storage.get(packager.build(context).getOssRef()));
+        JSONObject changed = JSON.parseObject(new String(updated.get(indexPath), StandardCharsets.UTF_8))
+                .getJSONArray("comments").getJSONObject(0);
+        assertEquals(path, changed.getString("path"));
+        assertNotEquals(digest, changed.getString("sha256"));
+    }
+
+    @Test
+    void absentCommentSnapshotsKeepLegacyPackageShape() throws Exception {
+        PackageContext context = baseCtx();
+        context.setCommentsMd("comments from a legacy caller");
+        for (List<TaskComment> comments : java.util.Arrays.<List<TaskComment>>asList(null, List.of())) {
+            context.setComments(comments);
+            Map<String, byte[]> archive = unzip(storage.get(packager.build(context).getOssRef()));
+            assertFalse(archive.containsKey("context/comments-index.json"));
+            assertFalse(JSON.parseObject(new String(archive.get("manifest.json"), StandardCharsets.UTF_8))
+                    .containsKey("commentIndex"));
+            assertTrue(archive.containsKey("comments.md"));
+        }
+    }
+
+    @Test
+    void duplicateCommentIdsFailInsteadOfSilentlyOverwritingRequirements() {
+        PackageContext context = baseCtx();
+        context.setComments(List.of(new TaskComment(10L, "HUMAN", 7L, "first"),
+                new TaskComment(10L, "HUMAN", 7L, "conflicting")));
+        assertThrows(BizException.class, () -> packager.build(context));
+    }
+
+    @Test
+    void emptyCommentBodyStillHasAnAddressableEntry() throws Exception {
+        PackageContext context = baseCtx();
+        context.setComments(List.of(new TaskComment(10L, null, null, null)));
+        Map<String, byte[]> archive = unzip(storage.get(packager.build(context).getOssRef()));
+        JSONObject entry = JSON.parseObject(new String(archive.get("context/comments-index.json"),
+                StandardCharsets.UTF_8)).getJSONArray("comments").getJSONObject(0);
+        assertEquals(0, entry.getIntValue("sizeBytes"));
+        assertEquals("", entry.getString("authorType"));
+        assertEquals("", entry.getString("authorRef"));
+        assertArrayEquals(new byte[0], archive.get(entry.getString("path")));
+    }
+
+    @Test
+    void invalidCommentSnapshotsFailThePackageBuild() {
+        PackageContext context = baseCtx();
+        for (TaskComment comment : java.util.Arrays.asList(null, new TaskComment(0L, "HUMAN", 7L, "text"))) {
+            context.setComments(Collections.singletonList(comment));
+            assertThrows(BizException.class, () -> packager.build(context));
+        }
+    }
+
     private PackageContext baseCtx() {
         PackageContext c = new PackageContext();
         c.setTenantId(100L);
@@ -253,6 +340,29 @@ class TaskPackagerTest {
 
         JSONObject manifest = JSON.parseObject(new String(entries.get("manifest.json"), StandardCharsets.UTF_8));
         assertEquals(1, manifest.getJSONArray("teammates").size());
+    }
+
+    @Test
+    void unicodeRequirementNamesRoundTripWithoutNativeFilesystemEncoding() throws Exception {
+        String name = "requirements/记忆批量审核缺口报告-形态B-😀.md";
+        byte[] body = "# 中文内容".getBytes(StandardCharsets.UTF_8);
+        var stored = storage.put("autowonder-artifacts-daily", "unicode-fixture", body);
+        var ref = new TaskArtifactRef(); ref.setName(name); ref.setOssRef(stored.getOssRef());
+        var context = baseCtx(); context.setRequirementDocuments(List.of(ref));
+        var entries = unzip(storage.get(packager.build(context).getOssRef()));
+        assertArrayEquals(body, entries.get(name));
+        assertEquals(name, JSON.parseObject(new String(entries.get("manifest.json"), StandardCharsets.UTF_8))
+                .getJSONArray("requirementDocuments").getJSONObject(0).getString("name"));
+    }
+
+    @Test
+    void portableArchiveValidationRejectsTraversalAndAmbiguousPaths() {
+        for (String path : List.of("../report.md", "/report.md", "C:/report.md", "requirements/../report.md",
+                "requirements//report.md", "requirements/./report.md", "requirements/report.md/", "requirements/a\0.md")) {
+            var context = baseCtx(); var ref = new TaskArtifactRef(); ref.setName(path); ref.setOssRef("unused");
+            context.setRequirementDocuments(List.of(ref));
+            assertInstanceOf(IllegalArgumentException.class, assertThrows(BizException.class, () -> packager.build(context), path).getCause());
+        }
     }
 
     @Test

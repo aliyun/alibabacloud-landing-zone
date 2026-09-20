@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.storage;
 
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class InMemoryObjectStorage implements ObjectStorage {
@@ -22,6 +23,11 @@ public class InMemoryObjectStorage implements ObjectStorage {
     @Override
     public String presignGet(String ossRef, int ttlSeconds) {
         return "mem://" + ossRef + "?ttl=" + ttlSeconds;
+    }
+
+    @Override
+    public String presignPut(String bucket, String key, Duration ttl) {
+        return "mem-put://" + bucket + "/" + key + "?ttl=" + ttl.toSeconds();
     }
 
     @Override

@@ -19,6 +19,7 @@ import com.aliyun.autowonder.workspace.dto.RestoreWorkspaceRequest;
 import com.aliyun.autowonder.workspace.dto.WorkspaceUpdateRequest;
 import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
+import com.aliyun.autowonder.agent.PlatformAgentSeeder;
 import com.aliyun.autowonder.workspace.event.WorkspaceDeletedEvent;
 import com.aliyun.autowonder.statemachine.StatusTemplateSeeder;
 import com.aliyun.autowonder.user.UserDO;
@@ -52,6 +53,7 @@ public class WorkspaceService {
     private final WorkspaceDao workspaceDao;
     private final WorkspaceMemberDao workspaceMemberDao;
     private final StatusTemplateSeeder statusTemplateSeeder;
+    private final PlatformAgentSeeder platformAgentSeeder;
     private final JwtService jwtService;
     private final UserDao userDao;
     private final AuditLogService auditLogService;
@@ -60,7 +62,8 @@ public class WorkspaceService {
     private final ApplicationEventPublisher eventPublisher;
 
     public WorkspaceService(WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao,
-                      StatusTemplateSeeder statusTemplateSeeder, JwtService jwtService,
+                      StatusTemplateSeeder statusTemplateSeeder,
+                      PlatformAgentSeeder platformAgentSeeder, JwtService jwtService,
                       UserDao userDao, AuditLogService auditLogService,
                       SystemAdminService systemAdminService,
                       WorkspaceDeletionLinkage deletionLinkage,
@@ -68,6 +71,7 @@ public class WorkspaceService {
         this.workspaceDao = workspaceDao;
         this.workspaceMemberDao = workspaceMemberDao;
         this.statusTemplateSeeder = statusTemplateSeeder;
+        this.platformAgentSeeder = platformAgentSeeder;
         this.jwtService = jwtService;
         this.userDao = userDao;
         this.auditLogService = auditLogService;
@@ -115,6 +119,7 @@ public class WorkspaceService {
         workspaceMemberDao.insert(owner);
 
         statusTemplateSeeder.seed(workspace.getId(), ownerUserId);
+        platformAgentSeeder.seed(workspace.getId(), ownerUserId);
 
         WorkspaceVO result = toVO(workspace);
         result.setAccessLevel(WorkspaceAccessLevel.ADMIN);
@@ -166,9 +171,17 @@ public class WorkspaceService {
     }
 
     public WorkspaceAccessLevel activeAccessLevel(long workspaceId, long userId) {
-        WorkspaceMemberDO member = requireActiveMember(
-                workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId));
-        return exactAccessLevel(member.getAccessLevel());
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId);
+        if (isActiveMember(member)) {
+            return exactAccessLevel(member.getAccessLevel());
+        }
+        // Shared by MCP personal tokens: the platform-admin branch keeps page and MCP calls
+        // by the same user on the same authorization rule. Machine credentials are resolved
+        // from their token level instead and never gain cross-workspace access here.
+        if (systemAdminService.isSystemAdmin(userId)) {
+            return WorkspaceAccessLevel.ADMIN;
+        }
+        throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
     }
 
     public WorkspaceVO scopedWorkspace(long workspaceId, WorkspaceAccessLevel accessLevel) {
@@ -196,8 +209,25 @@ public class WorkspaceService {
     }
 
     public SwitchWorkspaceResponse switchWorkspace(long workspaceId, long userId) {
-        WorkspaceMemberDO member = requireActiveMember(workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId));
-        WorkspaceAccessLevel accessLevel = exactAccessLevel(member.getAccessLevel());
+        // The same usability predicate AuthFilter applies on every request: a deleted or
+        // disabled workspace must be rejected before a token is issued, not on the first
+        // request that token carries.
+        if (workspaceDao.countUsable(workspaceId) == 0) {
+            throw new BizException(ErrorCode.ORG_DELETED_OR_DISABLED);
+        }
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId);
+        WorkspaceAccessLevel accessLevel;
+        if (isActiveMember(member)) {
+            accessLevel = exactAccessLevel(member.getAccessLevel());
+        } else if (systemAdminService.isSystemAdmin(userId)) {
+            // A platform admin may enter any workspace without being a member. ADMIN is the
+            // highest level, so every @RequireWorkspaceAccess guard treats the session as a
+            // workspace admin; the flag is re-read from the database on every request by
+            // AuthFilter, so a revoked admin cannot keep using an access token issued here.
+            accessLevel = WorkspaceAccessLevel.ADMIN;
+        } else {
+            throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
+        }
 
         AutoWonderContext context = AutoWonderContext.get();
         context.setCurrentWorkspaceId(workspaceId);
@@ -226,6 +256,20 @@ public class WorkspaceService {
 
     public CurrentMembershipVO currentMembership(long workspaceId, long userId) {
         WorkspaceMemberDO member = currentRequestMember(workspaceId, userId);
+        if (!isActiveMember(member) && systemAdminService.isSystemAdmin(userId)) {
+            // A platform admin entered a workspace it never joined: AuthFilter already grants
+            // ADMIN, and this synthetic membership keeps the frontend flags consistent with it.
+            WorkspaceDO workspace = workspaceDao.findById(workspaceId);
+            CurrentMembershipVO result = new CurrentMembershipVO();
+            result.setUserId(userId);
+            result.setJoinedAt(null);
+            result.setOwner(workspace != null && Objects.equals(workspace.getOwnerId(), userId));
+            result.setAccessLevel(WorkspaceAccessLevel.ADMIN);
+            result.setIdentityTags(IdentityTags.fromJson(null));
+            applyUserIdentity(result, userDao.findById(userId));
+            return result;
+        }
+        member = requireActiveMember(member);
         WorkspaceDO workspace = workspaceDao.findById(workspaceId);
         CurrentMembershipVO result = new CurrentMembershipVO();
         result.setUserId(member.getUserId());
@@ -237,6 +281,11 @@ public class WorkspaceService {
         return result;
     }
 
+    /**
+     * Prefers the member AuthFilter already validated for this very request over an identical
+     * second DAO read; the DAO fallback covers callers without a request context. Activeness is
+     * left to {@link #currentMembership}, whose platform-admin branch must see the raw member.
+     */
     private WorkspaceMemberDO currentRequestMember(long workspaceId, long userId) {
         AutoWonderContext context = AutoWonderContext.get();
         WorkspaceMemberDO member = context.getWorkspaceMember();
@@ -245,9 +294,9 @@ public class WorkspaceService {
                 && member != null
                 && Objects.equals(member.getTenantId(), workspaceId)
                 && Objects.equals(member.getUserId(), userId)) {
-            return requireActiveMember(member);
+            return member;
         }
-        return requireActiveMember(workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId));
+        return workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId);
     }
 
     public List<MemberCandidateVO> searchMemberCandidates(long workspaceId, String keyword) {
@@ -574,13 +623,15 @@ public class WorkspaceService {
 
     private boolean canManage(WorkspaceDO workspace, long operatorId) {
         // D8: ownership is org.owner_id — there is no OWNER access level to compare against.
+        // A platform admin manages every workspace without being a member of it.
         return Objects.equals(workspace.getOwnerId(), operatorId)
-                || isAdminMember(workspace.getId(), operatorId);
+                || isAdminMember(workspace.getId(), operatorId)
+                || systemAdminService.isSystemAdmin(operatorId);
     }
 
     private boolean canManageDeleted(WorkspaceDO workspace, long operatorId) {
         // F4/F5: a platform admin may not be a member of the workspace at all.
-        return canManage(workspace, operatorId) || systemAdminService.isSystemAdmin(operatorId);
+        return canManage(workspace, operatorId);
     }
 
     private boolean isAdminMember(long workspaceId, long operatorId) {
@@ -595,7 +646,10 @@ public class WorkspaceService {
     private void applyManageFlags(WorkspaceVO value, WorkspaceDO workspace, long operatorId) {
         boolean owner = Objects.equals(workspace.getOwnerId(), operatorId);
         value.setIsOwner(owner);
-        value.setCanManage(owner || isAdminMember(workspace.getId(), operatorId));
+        // A platform admin manages every workspace, so the UI flags agree with canManage().
+        value.setCanManage(owner
+                || isAdminMember(workspace.getId(), operatorId)
+                || systemAdminService.isSystemAdmin(operatorId));
     }
 
     private Set<String> takenActiveNames(List<WorkspaceDO> rows) {

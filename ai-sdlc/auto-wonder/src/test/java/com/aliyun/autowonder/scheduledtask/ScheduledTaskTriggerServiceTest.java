@@ -74,7 +74,7 @@ class ScheduledTaskTriggerServiceTest {
         AgentRepoPermDao repoPermDao = mock(AgentRepoPermDao.class); RepoDao repoDao = mock(RepoDao.class);
         RepoRelationDao relationDao = mock(RepoRelationDao.class); AgentSkillDao skillDao = mock(AgentSkillDao.class);
         SkillDao skillCatalogDao = mock(SkillDao.class); AgentMemoryRefDao memoryRefDao = mock(AgentMemoryRefDao.class); MemoryDao memoryDao = mock(MemoryDao.class);
-        AgentRepoPermDO permission = new AgentRepoPermDO(); permission.setTenantId(1L); permission.setRepoId(21L); permission.setPermLevel("WRITE");
+        AgentRepoPermDO permission = new AgentRepoPermDO(); permission.setTenantId(1L); permission.setRepoId(21L); permission.setPermLevel("WRITE"); permission.setAllowedBranchPatterns("[\"release/*\"]");
         when(repoPermDao.listByVersion(12L)).thenReturn(List.of(permission));
         RepoDO repo = new RepoDO(); repo.setId(21L); repo.setTenantId(1L); repo.setName("service"); repo.setUrl("git://service"); repo.setDefaultBranch("main"); when(repoDao.findById(21L)).thenReturn(repo);
         when(relationDao.listByRepoId(1L, 21L)).thenReturn(List.of());
@@ -218,6 +218,7 @@ class ScheduledTaskTriggerServiceTest {
         assertTrue(repo.getBooleanValue("allowCommit"));
         assertTrue(repo.getBooleanValue("allowPush"));
         assertTrue(repo.getBooleanValue("allowNetwork"));
+        assertEquals(List.of("release/*"), repo.getJSONArray("allowedBranchPatterns").toJavaList(String.class));
     }
 
     @Test

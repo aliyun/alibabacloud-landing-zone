@@ -32,11 +32,17 @@ public class PlatformImChannelConfigController {
         return Result.ok(configService.list(AutoWonderContext.get().getUserId()));
     }
 
+    @PutMapping("/feishu")
+    public Result<PlatformImChannelConfigVO> updateFeishu(
+            @Valid @RequestBody UpdateDingTalkChannelRequest request) {
+        systemAdminService.requireSystemAdmin(AutoWonderContext.get().getUserId(), "配置协作通知");
+        return Result.ok(configService.update(AutoWonderContext.get().getUserId(), "FEISHU", request));
+    }
+
     @PutMapping("/dingtalk")
     public Result<PlatformImChannelConfigVO> updateDingTalk(
             @Valid @RequestBody UpdateDingTalkChannelRequest request) {
-        systemAdminService.requireFirstActiveUser(
-                AutoWonderContext.get().getUserId(), "管理协作通知");
+        systemAdminService.requireSystemAdmin(AutoWonderContext.get().getUserId(), "配置协作通知");
         return Result.ok(configService.updateDingTalk(
                 AutoWonderContext.get().getUserId(), request));
     }

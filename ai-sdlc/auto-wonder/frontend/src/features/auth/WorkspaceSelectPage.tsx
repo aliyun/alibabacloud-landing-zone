@@ -11,6 +11,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/shared/api/client';
+import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
 import { useAuthStore } from '@/shared/auth/store';
 import type { WorkspaceInfo, SwitchWorkspaceResponse } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
@@ -107,11 +108,12 @@ export function WorkspaceSelectPage() {
             <Text style={{ display: 'block', marginTop: 8, color: '#697386' }}>请选择要进入的 {publicBranding.platformName} 工作空间</Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <HelpCenterLink />
             <Button
               icon={<BgColorsOutlined />}
               onClick={() => navigate('/workspaces/branding')}
             >
-              品牌配置
+              平台配置
             </Button>
             <div style={userPanelStyle}>
               <Text strong style={{ display: 'block', color: '#111827' }}>{currentWorkspace?.name || '未选择工作空间'}</Text>

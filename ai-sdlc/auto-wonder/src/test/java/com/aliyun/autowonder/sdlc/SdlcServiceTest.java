@@ -5,6 +5,7 @@ import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.sdlc.dto.*;
+import com.aliyun.autowonder.squad.SquadAttributionService;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +48,13 @@ class SdlcServiceTest {
         return s;
     }
 
+    // stepDao.update 现在整行写回 SdlcStepDO，先固定目标行与审计字段，业务字段由各用例自行断言
+    private static boolean stepWrite(SdlcStepDO st) {
+        return Long.valueOf(1L).equals(st.getId())
+                && Long.valueOf(100L).equals(st.getTenantId())
+                && Long.valueOf(7L).equals(st.getModifierId());
+    }
+
     @Test
     void create_sets_draft_status() {
         CreateSdlcRequest req = new CreateSdlcRequest();
@@ -57,6 +65,7 @@ class SdlcServiceTest {
 
         assertEquals("DRAFT", vo.getStatus());
         assertEquals("Test Flow", vo.getName());
+        assertEquals(0, vo.getStepCount());
         verify(sdlcDao).insert(argThat((SdlcDO s) ->
                 s.getTenantId() == 100L && "DRAFT".equals(s.getStatus())
                         && "REQ".equals(s.getWorkType())));
@@ -93,6 +102,8 @@ class SdlcServiceTest {
         assertEquals(9L, vo.getId());
         assertEquals(1, vo.getSteps().size());
         assertEquals("coding", vo.getSteps().get(0).getName());
+        // 详情接口带 steps 明细，stepCount 必须与之等长，两个页面口径一致
+        assertEquals(1, vo.getStepCount());
     }
 
     @Test
@@ -156,9 +167,8 @@ class SdlcServiceTest {
         service.reorderSteps(9L, reorder, 100L, 7L);
 
         verify(stepDao).insert(any(SdlcStepDO.class));
-        verify(stepDao).update(eq(1L), eq(100L), eq("updated"),
-                any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) ->
+                stepWrite(st) && "updated".equals(st.getName())));
         verify(stepDao).softDelete(1L, 100L, 7L);
         verify(stepDao, times(2)).updateOrder(2L, 100L, 1, 7L);
         verify(stepDao, times(2)).updateOrder(3L, 100L, 2, 7L);
@@ -217,9 +227,68 @@ class SdlcServiceTest {
     @Test
     void list_maps_to_vos() {
         SdlcDO s = sdlc(1L, "DRAFT");
-        when(sdlcDao.list(eq("REQ"), isNull(), eq(0), eq(20))).thenReturn(List.of(s));
-        List<SdlcVO> vos = service.list("REQ", null, 1, 20);
+        when(sdlcDao.list(eq("REQ"), isNull(), eq(100L), isNull(), eq(0), eq(20))).thenReturn(List.of(s));
+        List<SdlcVO> vos = service.list(100L, "REQ", null, null, 1, 20);
         assertEquals(1, vos.size());
+    }
+
+    @Test
+    void list_pushes_squad_filter_to_dao_and_fills_attribution() {
+        SdlcDO s = sdlc(1L, "ENABLED");
+        when(sdlcDao.list(isNull(), isNull(), eq(100L), eq(List.of(7L)), eq(0), eq(20))).thenReturn(List.of(s));
+        SquadAttributionService attribution = mock(SquadAttributionService.class);
+        service.setSquadAttributionService(attribution);
+
+        List<SdlcVO> vos = service.list(100L, null, null, List.of(7L), 1, 20);
+
+        assertEquals(1, vos.size());
+        verify(sdlcDao).list(isNull(), isNull(), eq(100L), eq(List.of(7L)), eq(0), eq(20));
+        verify(attribution).fillSdlcSquads(100L, vos);
+    }
+
+    @Test
+    void list_leaves_squad_fields_null_without_attribution_service() {
+        SdlcDO s = sdlc(1L, "DRAFT");
+        when(sdlcDao.list(eq("REQ"), isNull(), eq(100L), isNull(), eq(0), eq(20))).thenReturn(List.of(s));
+
+        List<SdlcVO> vos = service.list(100L, "REQ", null, null, 1, 20);
+
+        assertNull(vos.get(0).getSquadIds());
+        assertNull(vos.get(0).getSquadNames());
+    }
+
+    @Test
+    void list_fills_step_count_from_one_batch_query_and_keeps_steps_null() {
+        when(sdlcDao.list(isNull(), isNull(), eq(100L), isNull(), eq(0), eq(20)))
+                .thenReturn(List.of(sdlc(1L, "ENABLED"), sdlc(2L, "DRAFT")));
+        when(stepDao.countBySdlcIds(List.of(1L, 2L))).thenReturn(List.of(stepCount(1L, 3)));
+
+        List<SdlcVO> vos = service.list(100L, null, null, null, 1, 20);
+
+        assertEquals(3, vos.get(0).getStepCount());
+        // 聚合结果里缺席的 SDLC（无步骤）必须落 0，留 null 会让前端再兜底一次而掩盖问题
+        assertEquals(0, vos.get(1).getStepCount());
+        // 性能取舍不变：列表仍不返回 steps 明细
+        assertNull(vos.get(0).getSteps());
+        // 整页一次 IN 聚合，不退化成逐个 SDLC 查询
+        verify(stepDao, times(1)).countBySdlcIds(List.of(1L, 2L));
+        verify(stepDao, never()).listBySdlc(anyLong());
+    }
+
+    @Test
+    void list_skips_step_count_query_when_page_is_empty() {
+        when(sdlcDao.list(isNull(), isNull(), eq(100L), isNull(), eq(0), eq(20))).thenReturn(List.of());
+
+        assertTrue(service.list(100L, null, null, null, 1, 20).isEmpty());
+
+        verify(stepDao, never()).countBySdlcIds(anyCollection());
+    }
+
+    private static SdlcStepCount stepCount(long sdlcId, int cnt) {
+        SdlcStepCount count = new SdlcStepCount();
+        count.setSdlcId(sdlcId);
+        count.setCnt(cnt);
+        return count;
     }
 
     @Test
@@ -298,9 +367,7 @@ class SdlcServiceTest {
         updatedStep.setName("new");
         updatedStep.setHandlerType("AGENT");
         when(stepDao.findById(1L)).thenReturn(step).thenReturn(updatedStep);
-        when(stepDao.update(eq(1L), eq(100L), eq("new"),
-                any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), eq(7L))).thenReturn(1);
+        when(stepDao.update(any(SdlcStepDO.class))).thenReturn(1);
 
         UpdateStepRequest req = new UpdateStepRequest();
         req.setName("new");
@@ -327,9 +394,10 @@ class SdlcServiceTest {
         req.setRetryBudget(null);
         service.updateStep(9L, 1L, req, 100L, 7L);
 
-        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
-                any(), any(), any(), any(), any(), isNull(), isNull(),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "old".equals(st.getName())
+                && st.getTimeoutSeconds() == null
+                && st.getRetryBudget() == null));
     }
 
     @Test
@@ -349,9 +417,152 @@ class SdlcServiceTest {
         req.setName("new");
         service.updateStep(9L, 1L, req, 100L, 7L);
 
-        verify(stepDao).update(eq(1L), eq(100L), eq("new"),
-                any(), any(), any(), any(), any(), eq(600), eq(2),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "new".equals(st.getName())
+                && Integer.valueOf(600).equals(st.getTimeoutSeconds())
+                && Integer.valueOf(2).equals(st.getRetryBudget())));
+    }
+
+    // handler_role_ref/status_on_enter_code 是 VARCHAR，on_success/on_fail 是 MySQL JSON 列，
+    // 因此流转字段的可空值必须是合法 JSON 文本
+    private SdlcStepDO stepWithNullableFields() {
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L);
+        step.setTenantId(100L);
+        step.setSdlcId(9L);
+        step.setStepOrder(1);
+        step.setName("old");
+        step.setInstructionMd("old instruction");
+        step.setHandlerRoleRef("AW_CR");
+        step.setStatusOnEnterCode("aone_172915");
+        step.setOnSuccess("{\"to\":\"STEP_2\"}");
+        step.setOnFail("{\"to\":\"STOP\"}");
+        return step;
+    }
+
+    @Test
+    void updateStep_absentFields_keepHandlerRoleRefAndTransitions() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        when(stepDao.findById(1L)).thenReturn(stepWithNullableFields());
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setName("new");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "new".equals(st.getName())
+                && "old instruction".equals(st.getInstructionMd())
+                && "AW_CR".equals(st.getHandlerRoleRef())
+                && "aone_172915".equals(st.getStatusOnEnterCode())
+                && "{\"to\":\"STEP_2\"}".equals(st.getOnSuccess())
+                && "{\"to\":\"STOP\"}".equals(st.getOnFail())));
+    }
+
+    @Test
+    void updateStep_blankHandlerRoleRef_clearsField() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        when(stepDao.findById(1L)).thenReturn(stepWithNullableFields());
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setHandlerRoleRef("");
+        req.setStatusOnEnterCode("   ");
+        req.setOnSuccess("");
+        req.setOnFail("  ");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "old".equals(st.getName())
+                && st.getHandlerRoleRef() == null
+                && st.getStatusOnEnterCode() == null
+                && st.getOnSuccess() == null
+                && st.getOnFail() == null));
+    }
+
+    @Test
+    void updateStep_presentTransitions_overwriteExistingValues() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        when(stepDao.findById(1L)).thenReturn(stepWithNullableFields());
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setHandlerRoleRef("AW_QA");
+        req.setStatusOnEnterCode("aone_100012");
+        req.setOnSuccess("{\"to\":\"DONE\"}");
+        req.setOnFail("{\"to\":\"REWORK\"}");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "AW_QA".equals(st.getHandlerRoleRef())
+                && "aone_100012".equals(st.getStatusOnEnterCode())
+                && "{\"to\":\"DONE\"}".equals(st.getOnSuccess())
+                && "{\"to\":\"REWORK\"}".equals(st.getOnFail())));
+    }
+
+    @Test
+    void updateStep_presentScalarFields_overwriteExistingValues() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        SdlcStepDO step = stepWithNullableFields();
+        step.setKind("analysis");
+        step.setCode("STEP_OLD");
+        step.setHandlerType("HUMAN");
+        step.setRequired(Boolean.FALSE);
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setKind("test");
+        req.setCode("STEP_NEW");
+        req.setHandlerType("AGENT");
+        req.setRequired(Boolean.TRUE);
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "test".equals(st.getKind())
+                && "STEP_NEW".equals(st.getCode())
+                && "AGENT".equals(st.getHandlerType())
+                && Boolean.TRUE.equals(st.getRequired())));
+    }
+
+    @Test
+    void updateStep_blankInstructionMd_clearsField() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        when(stepDao.findById(1L)).thenReturn(stepWithNullableFields());
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setInstructionMd("   ");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && st.getInstructionMd() == null
+                && "AW_CR".equals(st.getHandlerRoleRef())));
+    }
+
+    @Test
+    void updateStep_writesBackWholeRowPreservingUntouchedColumns() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "ENABLED"));
+        SdlcStepDO step = stepWithNullableFields();
+        step.setKind("test");
+        step.setCode("STEP_1");
+        step.setHandlerType("AGENT");
+        step.setRequired(Boolean.FALSE);
+        step.setTimeoutSeconds(900);
+        step.setRetryBudget(3);
+        step.setCreatorId(5L);
+        when(stepDao.findById(1L)).thenReturn(step);
+
+        UpdateStepRequest req = new UpdateStepRequest();
+        req.setName("new");
+        service.updateStep(9L, 1L, req, 100L, 7L);
+
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "new".equals(st.getName())
+                && Long.valueOf(9L).equals(st.getSdlcId())
+                && Integer.valueOf(1).equals(st.getStepOrder())
+                && "test".equals(st.getKind())
+                && "STEP_1".equals(st.getCode())
+                && "AGENT".equals(st.getHandlerType())
+                && Boolean.FALSE.equals(st.getRequired())
+                && Integer.valueOf(900).equals(st.getTimeoutSeconds())
+                && Integer.valueOf(3).equals(st.getRetryBudget())
+                && Long.valueOf(5L).equals(st.getCreatorId())));
     }
 
     @Test
@@ -396,9 +607,8 @@ class SdlcServiceTest {
         reorder.setStepIds(List.of(2L, 1L));
         service.reorderSteps(9L, reorder, 100L, 7L);
 
-        verify(stepDao).update(eq(1L), eq(100L), eq("new"),
-                any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) ->
+                stepWrite(st) && "new".equals(st.getName())));
         verify(stepDao).updateOrder(2L, 100L, 1, 7L);
         verify(stepDao).updateOrder(1L, 100L, 2, 7L);
     }
@@ -429,9 +639,11 @@ class SdlcServiceTest {
         assertEquals("new instruction", vo.getInstructionMd());
         assertEquals("[\"编译通过\"]", vo.getChecklistJson());
         assertEquals("{\"passCriteria\":\"证据目录非空\"}", vo.getGatePolicyJson());
-        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
-                any(), eq("new instruction"), eq("[\"编译通过\"]"), eq("{\"passCriteria\":\"证据目录非空\"}"),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "old".equals(st.getName())
+                && "new instruction".equals(st.getInstructionMd())
+                && "[\"编译通过\"]".equals(st.getChecklistJson())
+                && "{\"passCriteria\":\"证据目录非空\"}".equals(st.getGatePolicyJson())));
     }
 
     @Test
@@ -735,8 +947,7 @@ class SdlcServiceTest {
 
         assertEquals("10001", ex.getCode());
         assertTrue(ex.getMessage().contains("checklistJson"));
-        verify(stepDao, never()).update(anyLong(), anyLong(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+        verify(stepDao, never()).update(any(SdlcStepDO.class));
     }
 
     @Test
@@ -757,8 +968,7 @@ class SdlcServiceTest {
 
         assertEquals("10001", ex.getCode());
         assertTrue(ex.getMessage().contains("gatePolicyJson"));
-        verify(stepDao, never()).update(anyLong(), anyLong(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+        verify(stepDao, never()).update(any(SdlcStepDO.class));
     }
 
     @Test
@@ -786,9 +996,10 @@ class SdlcServiceTest {
         StepVO vo = service.updateStep(9L, 1L, req, 100L, 7L);
 
         assertEquals("new", vo.getName());
-        verify(stepDao).update(eq(1L), eq(100L), eq("new"),
-                any(), any(), eq("[\"a\"]"), eq("{\"b\":1}"), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "new".equals(st.getName())
+                && "[\"a\"]".equals(st.getChecklistJson())
+                && "{\"b\":1}".equals(st.getGatePolicyJson())));
     }
 
     @Test
@@ -840,9 +1051,10 @@ class SdlcServiceTest {
         req.setChecklistJson("");
         service.updateStep(9L, 1L, req, 100L, 7L);
 
-        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
-                any(), any(), isNull(), eq("{\"b\":1}"), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "old".equals(st.getName())
+                && st.getChecklistJson() == null
+                && "{\"b\":1}".equals(st.getGatePolicyJson())));
     }
 
     @Test
@@ -862,9 +1074,10 @@ class SdlcServiceTest {
         req.setGatePolicyJson("   ");
         service.updateStep(9L, 1L, req, 100L, 7L);
 
-        verify(stepDao).update(eq(1L), eq(100L), eq("old"),
-                any(), any(), eq("[\"a\"]"), isNull(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any(), eq(7L));
+        verify(stepDao).update(argThat((SdlcStepDO st) -> stepWrite(st)
+                && "old".equals(st.getName())
+                && "[\"a\"]".equals(st.getChecklistJson())
+                && st.getGatePolicyJson() == null));
     }
 
     @Test

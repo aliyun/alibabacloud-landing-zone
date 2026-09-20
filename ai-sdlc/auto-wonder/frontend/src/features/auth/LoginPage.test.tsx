@@ -29,7 +29,7 @@ describe('LoginPage', () => {
 
   it('renders the product command center landing narrative', () => {
     renderLogin();
-    expect(screen.getByText('AutoWonder · Agent SDLC')).toBeInTheDocument();
+    expect(screen.getByText('AutoWonder · AI Native SDLC Platform')).toBeInTheDocument();
     expect(screen.getByText('登录后，把工单交给数字员工小队')).toBeInTheDocument();
     expect(screen.getByText('工单系统、仓库、SDLC、执行器和工作空间记忆在入口第一屏形成完整认知。')).toBeInTheDocument();
     expect(screen.getByText('6')).toBeInTheDocument();

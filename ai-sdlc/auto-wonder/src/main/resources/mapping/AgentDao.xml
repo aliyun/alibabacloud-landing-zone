@@ -4,13 +4,26 @@
 <mapper namespace="com.aliyun.autowonder.agent.AgentDao">
     <insert id="insert" parameterType="com.aliyun.autowonder.agent.AgentDO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO agent (tenant_id, name, avatar_url, status, online_version_id, editing_version_id,
+        INSERT INTO agent (tenant_id, name, avatar_url, status, kind, online_version_id, editing_version_id,
             latest_version_no, creator_id, is_deleted, version)
-        VALUES (#{tenantId}, #{name}, #{avatarUrl}, #{status}, #{onlineVersionId}, #{editingVersionId},
+        VALUES (#{tenantId}, #{name}, #{avatarUrl}, #{status}, #{kind}, #{onlineVersionId}, #{editingVersionId},
             #{latestVersionNo}, #{creatorId}, 0, 0)
     </insert>
     <select id="findById" resultType="com.aliyun.autowonder.agent.AgentDO">
         SELECT * FROM agent WHERE id = #{id} AND is_deleted = 0 LIMIT 1
+    </select>
+    <select id="lockByIdForUpdate" resultType="java.lang.Long">
+        SELECT id FROM agent
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+        FOR UPDATE
+    </select>
+    <select id="findPlatformAgent" resultType="com.aliyun.autowonder.agent.AgentDO">
+        SELECT * FROM agent
+        WHERE tenant_id = #{tenantId}
+          AND kind = 'PLATFORM'
+          AND is_deleted = 0
+        ORDER BY id ASC
+        LIMIT 1
     </select>
     <select id="findByExactName" resultType="com.aliyun.autowonder.agent.AgentDO">
         SELECT * FROM agent
@@ -25,6 +38,20 @@
             is_deleted = 0
             <if test="tenantId != null">AND tenant_id = #{tenantId}</if>
             <if test="status != null">AND status = #{status}</if>
+            <if test="kind != null">AND kind = #{kind}</if>
+            <if test="squadIds != null and squadIds.size() > 0">
+                AND id IN (
+                    SELECT sm.agent_id FROM squad_member sm
+                    <!-- SquadDao.listByIds skips soft-deleted squads when naming tags, so the filter must
+                         skip them too; otherwise a deleted squad stays filterable but renders no tag. -->
+                    JOIN squad s ON s.id = sm.squad_id AND s.is_deleted = 0
+                    <where>
+                        sm.squad_id IN
+                        <foreach collection="squadIds" item="sqid" open="(" separator="," close=")">#{sqid}</foreach>
+                        <if test="tenantId != null">AND sm.tenant_id = #{tenantId}</if>
+                    </where>
+                )
+            </if>
         </where>
         ORDER BY id DESC LIMIT #{offset}, #{limit}
     </select>
@@ -36,6 +63,10 @@
     </update>
     <update id="updateName">
         UPDATE agent SET name = #{name}, version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="updateAvatarUrl">
+        UPDATE agent SET avatar_url = #{avatarUrl}, version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
     </update>
     <select id="findOnlineByRoleCode" resultType="com.aliyun.autowonder.agent.AgentDO">

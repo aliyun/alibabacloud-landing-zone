@@ -137,4 +137,23 @@ class ImNotificationTaskSerializationTest {
         assertNull(deserialized.commentContentMd());
         assertNull(deserialized.sourceType());
     }
+
+    @Test
+    void unknownFieldsAreIgnoredEvenByStrictDefaultObjectMapper() throws JsonProcessingException {
+        // A default ObjectMapper fails on unknown properties; only the @JsonIgnoreProperties
+        // annotation on the record keeps this payload parseable.
+        String futurePayload = """
+                {"notificationKey":"key-1","workitemEventId":100,"tenantId":7,\
+                "workitemId":42,"recipientUserId":9,"actorType":"USER","actorRef":3,\
+                "actorDisplayName":"张三","requestId":"rid-1","workitemTitle":"审批",\
+                "futureField":{"nested":true},"anotherNewField":"x"}""";
+
+        ImNotificationTask deserialized =
+                new ObjectMapper().readValue(futurePayload, ImNotificationTask.class);
+
+        assertNotNull(deserialized);
+        assertEquals("key-1", deserialized.notificationKey());
+        assertEquals("WORKITEM_ASSIGNED", deserialized.notificationType());
+        assertNull(deserialized.sourceType());
+    }
 }

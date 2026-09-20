@@ -9,7 +9,6 @@ import unittest
 
 
 UPGRADE_ROOT = Path(__file__).resolve().parents[1]
-DEPLOY_ROOT = UPGRADE_ROOT.parent / "deploying-autowonder-on-alibaba-cloud"
 UPGRADE_INFO = UPGRADE_ROOT / "scripts" / "upgrade_info.py"
 
 
@@ -167,7 +166,7 @@ printf '%s|%s|%s|%s\n' \
                     self.assertIn("ensure-autowonderaliyunprofile", normalized)
                 else:
                     self.assertIn("refresh-approvedupgradetargets", normalized)
-                    library = (DEPLOY_ROOT / "scripts" / "windows" / "lib.ps1").read_text(encoding="utf-8").lower()
+                    library = (UPGRADE_ROOT / "scripts" / "windows" / "lib.ps1").read_text(encoding="utf-8").lower()
                     self.assertIn("verify-deployment-targets.ps1", library)
                     self.assertIn("$profile = 'auto-wonder'", library)
                 self.assertIsNone(
@@ -243,6 +242,19 @@ fi
         for binary in binary_dir.iterdir():
             binary.chmod(0o755)
 
+        # Keep the real authentication flow; isolate private tool installation.
+        skills = self.project / 'fixture-skills'
+        deploy_scripts = skills / UPGRADE_ROOT.name / 'scripts'
+        upgrade_scripts = skills / UPGRADE_ROOT.name / 'scripts'
+        deploy_scripts.mkdir(parents=True, exist_ok=True)
+        upgrade_scripts.mkdir(parents=True, exist_ok=True)
+        for name in ('bootstrap-control-host.sh', 'lib.sh', 'cloud_diagnostics.py'):
+            shutil.copyfile(UPGRADE_ROOT / 'scripts' / name, deploy_scripts / name)
+        for name in ('refresh-upgrade-info.sh', 'upgrade-lib.sh'):
+            shutil.copyfile(UPGRADE_ROOT / 'scripts' / name, upgrade_scripts / name)
+        (deploy_scripts / 'runtime-env.sh').write_text(
+            'autowonder_runtime_environment() { export AUTOWONDER_PYTHON="$FIXTURE_PYTHON" JAVA_HOME="$HOME/jdk" PYTHONUTF8=1 PYTHONDONTWRITEBYTECODE=1; }\n')
+
         clean_environment = {
             key: value
             for key, value in os.environ.items()
@@ -259,7 +271,7 @@ fi
         result = subprocess.run(
             [
                 "bash",
-                str(UPGRADE_ROOT / "scripts" / "refresh-upgrade-info.sh"),
+                str(upgrade_scripts / "refresh-upgrade-info.sh"),
                 "--project-root",
                 str(self.project),
                 "--manifest",
@@ -275,6 +287,7 @@ fi
                 "FAKE_ALIYUN_LOG": str(aliyun_log),
                 "FAKE_STS_COUNT": str(sts_count),
                 "FAKE_CONTINUED": str(continued),
+                "FIXTURE_PYTHON": str(binary_dir / "python3"),
             },
         )
 

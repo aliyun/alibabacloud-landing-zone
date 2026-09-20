@@ -36,6 +36,33 @@ class ScheduledTaskRunDeliveryProgressServiceTest {
     }
 
     @Test
+    void canceledRunConvergesStartedStepWithoutTerminalRuntimeEvent() {
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setId(100L); run.setSdlcId(10L); run.setStatus("CANCELED");
+        SdlcStepDO step = new SdlcStepDO(); step.setId(1L); step.setName("Audit");
+        when(stepDao.listBySdlc(10L)).thenReturn(List.of(step));
+        DispatchDO dispatch = new DispatchDO(); dispatch.setId(201L);
+        dispatch.setSdlcStepId(1L); dispatch.setStatus("CANCELED");
+        when(dispatchDao.listBySource(1L, "SCHEDULED_TASK_RUN", 100L)).thenReturn(List.of(dispatch));
+        DispatchRuntimeEventDO started = new DispatchRuntimeEventDO();
+        started.setStepId(1L); started.setEventType("step.started");
+        when(eventDao.listByDispatch(1L, 201L)).thenReturn(List.of(started));
+        var result = service.getDeliveryProgress(1L, run);
+        assertEquals("cancelled", result.getSteps().get(0).getStatus());
+        assertEquals("cancelled", result.getAgents().get(0).getStatus());
+        run.setStatus("FAILED");
+        result = service.getDeliveryProgress(1L, run);
+        assertEquals("failed", result.getSteps().get(0).getStatus());
+        assertEquals("failed", result.getAgents().get(0).getStatus());
+        run.setStatus("SUCCEEDED");
+        result = service.getDeliveryProgress(1L, run);
+        assertEquals("done", result.getSteps().get(0).getStatus());
+        assertEquals("finished", result.getAgents().get(0).getStatus());
+        started.setEventType("step.completed");
+        assertEquals("done", service.getDeliveryProgress(1L, run).getSteps().get(0).getStatus());
+    }
+
+    @Test
     void succeededRunWithTwoSteps_oneCompletedOnePending() {
         // Setup run
         ScheduledTaskRunDO run = new ScheduledTaskRunDO();

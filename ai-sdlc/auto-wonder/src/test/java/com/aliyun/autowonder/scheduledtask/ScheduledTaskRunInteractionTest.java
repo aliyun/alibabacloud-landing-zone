@@ -141,6 +141,107 @@ class ScheduledTaskRunInteractionTest {
     }
 
     @Test
+    void humanCommentWithExplicitAgentTargetQueuesGuidanceForFrozenParticipant() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        AgentDO target = new AgentDO(); target.setId(21L); target.setName("tester"); target.setTenantId(1L);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(agents.findById(21L)).thenReturn(target);
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+
+        service.addHumanComment(1L, 77L, 10000L, "请复核失败日志", List.of(21L), List.of());
+
+        ArgumentCaptor<WorkitemCommentMentionDO> mention = ArgumentCaptor.forClass(WorkitemCommentMentionDO.class);
+        verify(mentions).insert(mention.capture());
+        assertEquals("AGENT", mention.getValue().getTargetType());
+        assertEquals(21L, mention.getValue().getTargetRef());
+        assertEquals("SCHEDULED_TASK_RUN", mention.getValue().getSourceType());
+        verify(guidance).createForScheduledRunComment(1L, 77L, 9L, 21L, 10000L);
+    }
+
+    @Test
+    void humanCommentWithExplicitAgentTargetRejectsNonFrozenParticipant() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        AgentDO outsider = new AgentDO(); outsider.setId(22L); outsider.setName("outsider"); outsider.setTenantId(1L);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(agents.findById(22L)).thenReturn(outsider);
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+
+        assertThrows(IllegalArgumentException.class, () -> service.addHumanComment(
+                1L, 77L, 10000L, "请复核失败日志", List.of(22L), List.of()));
+
+        verify(mentions, never()).insert(any());
+        verifyNoInteractions(guidance);
+    }
+
+    @Test
+    void humanCommentWithHumanTargetsOnlyOverloadNotifiesWithoutGuidance() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        UserDao users = mock(UserDao.class);
+        WorkspaceMemberDao members = mock(WorkspaceMemberDao.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        UserDO target = new UserDO(); target.setId(20000L); target.setUsername("bob"); target.setNickname("Bob");
+        WorkspaceMemberDO member = new WorkspaceMemberDO(); member.setStatus(0);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(users.findById(20000L)).thenReturn(target);
+        when(members.findByWorkspaceAndUser(1L, 20000L)).thenReturn(member);
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+        service.configureHumanMentions(users, members, null, events);
+
+        service.addHumanComment(1L, 77L, 10000L, "请复核失败日志 @Bob", List.of(20000L));
+
+        ArgumentCaptor<WorkitemCommentMentionDO> mention = ArgumentCaptor.forClass(WorkitemCommentMentionDO.class);
+        verify(mentions).insert(mention.capture());
+        assertEquals("HUMAN", mention.getValue().getTargetType());
+        assertEquals(20000L, mention.getValue().getTargetRef());
+        assertEquals("Bob", mention.getValue().getDisplayNameSnapshot());
+        verify(events).publishEvent(any(WorkitemCommentMentionedEvent.class));
+        verifyNoInteractions(guidance);
+    }
+
+    @Test
+    void plainHumanCommentWithoutTargetsNeverQueuesGuidance() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+
+        service.addHumanComment(1L, 77L, 10000L, "记录一下本次运行很顺利");
+
+        verifyNoInteractions(guidance, mentions);
+    }
+
+    @Test
     void autoParseFallsBackToHumanWhenAgentNameDoesNotMatch() {
         ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
         WorkitemCommentDao comments = mock(WorkitemCommentDao.class);

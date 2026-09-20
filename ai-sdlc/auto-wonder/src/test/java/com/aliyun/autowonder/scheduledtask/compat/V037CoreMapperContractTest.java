@@ -59,7 +59,8 @@ class V037CoreMapperContractTest {
         Document mapper = mapper("DispatchDao.xml");
 
         for (String id : List.of("findMaxAttemptBySource", "listBySource",
-                "listLatestBySourceAndAgent", "listSucceededBySource", "pinScheduledAgentVersion")) {
+                "listLatestBySourceAndAgent", "listSucceededBySource", "pinScheduledAgentVersion",
+                "markDebugLogEnabled")) {
             assertNotNull(element(mapper, id, SOURCE_AWARE), id);
             assertEquals(1, elements(mapper, id).size(), id + " must have no generic or Legacy registration");
         }

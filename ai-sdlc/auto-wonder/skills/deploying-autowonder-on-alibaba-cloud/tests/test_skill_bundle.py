@@ -12,6 +12,7 @@ REQUIRED = [
     "assets/templates/deployment-manifest.json",
     "scripts/lib.sh",
     "scripts/preflight.sh",
+    "scripts/resolve-zones.sh",
     "scripts/plan-upgrade.sh",
     "scripts/build-release.sh",
     "scripts/terraform-stage.sh",
@@ -114,6 +115,36 @@ class SkillBundleTest(unittest.TestCase):
             "protected environment file",
         ):
             self.assertIn(term, combined)
+
+    def test_deployment_acceptance_scope_and_teardown_are_documented(self):
+        for relative in ("SKILL.md", "references/operations-runbook.md",
+                         "references/acceptance-and-rollback.md"):
+            text = " ".join((SKILL_ROOT / relative).read_text(encoding="utf-8").split())
+            with self.subTest(document=relative):
+                for term in ("ALB public IPv4", "/checkpreload.htm", "extended",
+                             "--acceptance-evidence", "AUTOWONDER_RUNTIME_PROBE",
+                             "not reached", "TLS", "prepare-teardown.sh",
+                             "--confirmation-file FILE", "DESTROY <deploymentId>",
+                             "BSS unsubscription", "subscription refunds",
+                             "dedicated operations bucket"):
+                    self.assertIn(term, text)
+        runbook = " ".join((SKILL_ROOT / "references/operations-runbook.md").read_text().split())
+        self.assertNotIn("Release acceptance remains partial", runbook)
+        self.assertIn("Extended acceptance remains partial", runbook)
+
+    def test_zone_resolution_is_automatic_with_agent_fallback(self):
+        skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        runbook = (SKILL_ROOT / "references/operations-runbook.md").read_text(encoding="utf-8")
+        catalog = (SKILL_ROOT / "references/input-catalog.md").read_text(encoding="utf-8")
+        trouble = (SKILL_ROOT / "references/troubleshooting.md").read_text(encoding="utf-8")
+        self.assertIn("scripts/resolve-zones.sh", skill)
+        self.assertIn("resolve --candidate FILE", skill)
+        self.assertIn("needs-agent", skill)
+        self.assertIn("scripts/resolve-zones.sh", runbook)
+        self.assertIn("scripts/resolve-zones.sh", catalog)
+        combined = (skill + runbook + catalog + trouble).lower()
+        self.assertIn("never ask the user", combined)
+        self.assertIn("cannot be parsed", trouble.lower())
 
     def test_frontmatter_has_valid_identity(self):
         content = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")

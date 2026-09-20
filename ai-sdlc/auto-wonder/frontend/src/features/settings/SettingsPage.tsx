@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Card, Tabs, Form, Input, InputNumber, Button, Spin, message, Row, Col, Statistic, Table, Switch, Space, Typography } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
@@ -14,6 +14,8 @@ import {
   updateSettings,
 } from './api';
 import type { AiUsageVO, SettingItem, SettingVO, UpdateQuotaRequest } from './api';
+import { getPlatformImChannels, PLATFORM_IM_CHANNELS_QUERY_KEY, selectedImProvider } from '@/features/platform/brandingApi';
+import { Alert } from 'antd';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { Text } = Typography;
@@ -34,8 +36,6 @@ const AI_SETTINGS: SettingSchema[] = [
 
 const NOTIFY_SETTINGS: SettingSchema[] = [
   { key: 'dingtalk_enabled', label: '启用钉钉通知', hint: 'true / false' },
-  { key: 'dingtalk_webhook', label: '钉钉 Webhook', hint: '敏感配置，普通保存不会覆盖已有密钥', secret: true, placeholder: '输入新 Webhook 以替换' },
-  { key: 'dingtalk_secret', label: '钉钉签名密钥', hint: '可选，敏感配置', secret: true, placeholder: '输入新签名密钥以替换' },
 ];
 
 const SYSTEM_SETTINGS: SettingSchema[] = [
@@ -201,8 +201,15 @@ function NotifySettingsTab() {
   const [prefForm] = Form.useForm<Record<string, boolean>>();
   const [settingsForm] = Form.useForm<Record<string, string>>();
 
+  const channelQuery = useQuery({ queryKey: PLATFORM_IM_CHANNELS_QUERY_KEY, queryFn: getPlatformImChannels });
+  const provider = selectedImProvider(channelQuery.data ?? []);
+  const providerKey = provider === 'FEISHU' ? 'feishu' : 'dingtalk';
+  const providerLabel = provider === 'FEISHU' ? '飞书' : '钉钉';
+  const notifySettings = useMemo(() => NOTIFY_SETTINGS.map((item) => ({
+    ...item, key: item.key.replace('dingtalk', providerKey), label: item.label.replace('钉钉', providerLabel),
+  })), [providerKey, providerLabel]);
   const prefsQuery = useQuery({ queryKey: ['notify-prefs'], queryFn: listNotifyPrefs });
-  const settingsQuery = useSettingsGroup('NOTIFY', settingsForm, NOTIFY_SETTINGS);
+  const settingsQuery = useSettingsGroup('NOTIFY', settingsForm, notifySettings);
 
   useEffect(() => {
     const prefs = prefsQuery.data ?? [];
@@ -211,11 +218,11 @@ function NotifySettingsTab() {
       const pref = byType.get(type);
       return [
         [`${type}.inApp`, pref?.inApp ?? true],
-        [`${type}.dingtalk`, pref?.dingtalk ?? false],
+        [`${type}.${providerKey}`, pref?.[providerKey] ?? false],
       ];
     }));
     prefForm.setFieldsValue(values);
-  }, [prefForm, prefsQuery.data]);
+  }, [prefForm, prefsQuery.data, providerKey]);
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -225,9 +232,10 @@ function NotifySettingsTab() {
         updateNotifyPrefs(NOTIFY_TYPES.map(({ type }) => ({
           type,
           inApp: Boolean(prefValues[`${type}.inApp`]),
-          dingtalk: Boolean(prefValues[`${type}.dingtalk`]),
+          dingtalk: providerKey === 'dingtalk' && Boolean(prefValues[`${type}.dingtalk`]),
+          feishu: providerKey === 'feishu' && Boolean(prefValues[`${type}.feishu`]),
         }))),
-        updateSettings('NOTIFY', buildSettingItems(NOTIFY_SETTINGS, settingValues)),
+        updateSettings('NOTIFY', buildSettingItems(notifySettings, settingValues)),
       ]);
     },
     onSuccess: () => {
@@ -237,9 +245,11 @@ function NotifySettingsTab() {
     },
   });
 
-  if (prefsQuery.isLoading || settingsQuery.isLoading) {
+  if (channelQuery.isLoading || prefsQuery.isLoading || settingsQuery.isLoading) {
     return <Spin />;
   }
+
+  if (channelQuery.isError || prefsQuery.isError || settingsQuery.isError) return <Alert type="error" message="通知配置加载失败，请刷新重试" />;
 
   const prefColumns: ColumnsType<{ type: string; label: string }> = [
     { title: '事件类型', dataIndex: 'label' },
@@ -252,9 +262,9 @@ function NotifySettingsTab() {
       ),
     },
     {
-      title: '钉钉',
+      title: providerLabel,
       render: (_, row) => (
-        <Form.Item name={`${row.type}.dingtalk`} valuePropName="checked" noStyle>
+        <Form.Item name={`${row.type}.${providerKey}`} valuePropName="checked" noStyle>
           <Switch />
         </Form.Item>
       ),
@@ -274,7 +284,8 @@ function NotifySettingsTab() {
         <Col xs={24} lg={10}>
           <Card title="通知渠道" size="small" data-testid="notify-settings-panel">
             <Form form={settingsForm} layout="vertical">
-              <SettingFields schema={NOTIFY_SETTINGS} />
+              <Alert type="info" message={`当前使用${providerLabel}，复用平台协作通知的机器人凭据，无需在项目中重复配置。`} style={{ marginBottom: 16 }} />
+              <SettingFields schema={notifySettings} />
             </Form>
           </Card>
         </Col>

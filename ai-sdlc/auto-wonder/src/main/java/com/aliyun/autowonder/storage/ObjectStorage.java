@@ -15,6 +15,9 @@ public interface ObjectStorage {
     /** Short-lived, externally reachable presigned download URL for the ossRef. */
     String presignGet(String ossRef, int ttlSeconds);
 
+    /** Short-lived, externally reachable presigned upload (PUT) URL for bucket/key. */
+    String presignPut(String bucket, String key, java.time.Duration ttl);
+
     /** Return whether the referenced object currently exists. */
     boolean exists(String ossRef);
 

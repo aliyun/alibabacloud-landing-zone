@@ -47,6 +47,7 @@ class UserServiceLoginTest {
         u.setEmail("alice@example.com");
         u.setPasswordHash(PasswordEncoderUtil.encode("secret123"));
         u.setStatus(0);
+        u.setIsAdmin(1);
         when(userDao.findByUsername("alice")).thenReturn(u);
 
         LoginRequest req = new LoginRequest();
@@ -61,6 +62,9 @@ class UserServiceLoginTest {
         assertEquals("alice", resp.getUser().getUsername());
         assertEquals("Alice Chen", resp.getUser().getNickname());
         assertEquals("alice@example.com", resp.getUser().getEmail());
+        // The frontend renders the 平台配置 entry from this flag instead of re-deriving
+        // "first user" semantics client-side.
+        assertEquals(Boolean.TRUE, resp.getUser().getIsAdmin());
         assertNotNull(resp.getAccessToken());
         assertNotNull(resp.getRefreshToken());
         TokenPayload payload = jwtService.parse(resp.getAccessToken());

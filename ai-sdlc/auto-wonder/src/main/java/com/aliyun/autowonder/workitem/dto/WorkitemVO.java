@@ -11,6 +11,8 @@ public class WorkitemVO {
     private Long id;
     private String workType;
     private String title;
+    /** Latest dispatch state, independent of the business status and kanban column. */
+    private String executionStatus;
     private String contentMd;
     private Long templateId;
     private Long statusNodeId;
@@ -54,6 +56,13 @@ public class WorkitemVO {
     private Date scheduledStartAt;
     /** Actual time the planned scheduled start fired; null when never triggered. */
     private Date scheduledStartTriggeredAt;
+    /**
+     * Derived scheduled-workitem phase: PENDING (待触发), READY (待处理), RUNNING (执行中) or DONE (已完成).
+     * Null for workitems that were never scheduled. See WorkitemScheduledPhase.
+     */
+    private String scheduledPhase;
     /** Workitem tags; empty list when unset. */
     private List<String> tags;
+    /** Whether the current user watches this workitem's progress. */
+    private Boolean watched;
 }

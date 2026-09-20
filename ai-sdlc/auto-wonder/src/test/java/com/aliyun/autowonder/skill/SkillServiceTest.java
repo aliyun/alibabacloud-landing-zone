@@ -5,6 +5,7 @@ import com.aliyun.autowonder.agent.AgentSkillDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
@@ -16,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import java.util.Date;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -33,6 +35,51 @@ class SkillServiceTest {
         agentSkillDao = mock(AgentSkillDao.class);
         userDao = mock(UserDao.class);
         service = new SkillService(skillDao, agentSkillDao, userDao);
+    }
+
+    @Test
+    void missingCategoryTablesDoNotHideSkillsAndRecoverWithoutRestart() {
+        var categories = mock(com.aliyun.autowonder.category.CategoryService.class);
+        service = new SkillService(skillDao, agentSkillDao, userDao, null, categories);
+        SkillDO skill = new SkillDO();
+        skill.setId(1L);
+        skill.setTenantId(1L);
+        skill.setName("existing-skill");
+        when(skillDao.findById(1L)).thenReturn(skill);
+        when(skillDao.list(1L, null, null, false, 0, 20)).thenReturn(List.of(skill));
+        when(skillDao.count(1L, null, null, false)).thenReturn(1L);
+        var missingRef = new org.springframework.jdbc.BadSqlGrammarException("query", "select", new java.sql.SQLException(
+                "Table 'autowonderdev.asset_category_ref' doesn't exist", "42S02", 1146));
+        when(categories.mapCategoryIdsByAssets(eq(1L), anyList())).thenThrow(missingRef);
+        var page = service.listPage(1L, null, 1, 20);
+        assertEquals(1L, page.getTotal());
+        assertEquals("existing-skill", page.getList().get(0).getName());
+        assertNull(service.get(1L).getCategoryId());
+
+        when(categories.mapCategoryIdsByAssets(eq(1L), anyList())).thenReturn(java.util.Map.of(1L, 2L));
+        when(categories.mapCategoryPaths(1L)).thenThrow(new org.springframework.jdbc.BadSqlGrammarException(
+                "query", "select", new java.sql.SQLException("Table 'autowonderdev.asset_category' doesn't exist", "42S02", 1146)));
+        assertNull(service.get(1L).getCategoryId());
+        doReturn(java.util.Map.of(2L, "编码 / 前端")).when(categories).mapCategoryPaths(1L);
+        assertEquals("编码 / 前端", service.get(1L).getCategoryPath());
+    }
+
+    @Test
+    void unrelatedDatabaseErrorsAreNotSuppressed() {
+        var categories = mock(com.aliyun.autowonder.category.CategoryService.class);
+        service = new SkillService(skillDao, agentSkillDao, userDao, null, categories);
+        SkillDO skill = new SkillDO();
+        skill.setId(1L);
+        skill.setTenantId(1L);
+        when(skillDao.findById(1L)).thenReturn(skill);
+        for (var sql : List.of(
+                new java.sql.SQLException("Table 'autowonderdev.skill' doesn't exist", "42S02", 1146),
+                new java.sql.SQLException("Unknown column 'category_id'", "42S22", 1054),
+                new java.sql.SQLException("Connection failed", "08001", 0))) {
+            var error = new org.springframework.jdbc.BadSqlGrammarException("query", "select", sql);
+            when(categories.mapCategoryIdsByAssets(eq(1L), anyList())).thenThrow(error);
+            assertSame(error, assertThrows(org.springframework.dao.DataAccessException.class, () -> service.get(1L)));
+        }
     }
 
     @Test
@@ -268,7 +315,7 @@ class SkillServiceTest {
         s.setId(1L);
         s.setTenantId(1L);
         s.setVersion(0);
-        when(skillDao.findById(1L)).thenReturn(s);
+        when(skillDao.findByIdForUpdate(1L)).thenReturn(s);
         when(agentSkillDao.countBySkillId(1L, 1L)).thenReturn(2);
 
         BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 1L, 2L));
@@ -281,12 +328,26 @@ class SkillServiceTest {
         s.setId(1L);
         s.setTenantId(1L);
         s.setVersion(0);
-        when(skillDao.findById(1L)).thenReturn(s);
+        when(skillDao.findByIdForUpdate(1L)).thenReturn(s);
         when(agentSkillDao.countBySkillId(1L, 1L)).thenReturn(0);
         when(skillDao.softDelete(1L, 1L, 0, 2L)).thenReturn(1);
 
         service.delete(1L, 1L, 2L);
         verify(skillDao).softDelete(1L, 1L, 0, 2L);
+    }
+
+    @Test
+    void deleteRemovesCategoryReference() {
+        var categories = mock(com.aliyun.autowonder.category.CategoryService.class);
+        var serviceWithCategories = new SkillService(skillDao, agentSkillDao, userDao, null, categories);
+        SkillDO skill = new SkillDO();
+        skill.setId(1L);
+        skill.setTenantId(1L);
+        skill.setVersion(0);
+        when(skillDao.findByIdForUpdate(1L)).thenReturn(skill);
+        when(skillDao.softDelete(1L, 1L, 0, 2L)).thenReturn(1);
+        serviceWithCategories.delete(1L, 1L, 2L);
+        verify(categories).removeSkillCategory(1L, 1L);
     }
 
     @Test
@@ -380,5 +441,56 @@ class SkillServiceTest {
                 .getJSONObject("headers").getJSONObject("Authorization").getString("ref"));
         assertEquals("kc:v1:env", JSON.parseObject(stored.getAllValues().get(1).getInstallSpec())
                 .getJSONObject("env").getJSONObject("TOKEN").getString("ref"));
+    }
+
+    @Test
+    void listPassesTenantTypeAndComputedOffsetToDao() {
+        SkillDO row = new SkillDO();
+        row.setId(1L);
+        row.setType("MCP");
+        row.setName("github-mcp");
+        row.setInstallSpec("\"npx\"");
+        // page=3,size=10 -> offset=(3-1)*10=20；tenantId 必须透传给 DAO 做租户隔离
+        when(skillDao.list(7L, "MCP", null, false, 20, 10)).thenReturn(List.of(row));
+
+        List<SkillVO> result = service.list(7L, "MCP", 3, 10);
+
+        assertEquals(1, result.size());
+        assertEquals("github-mcp", result.get(0).getName());
+        verify(skillDao).list(7L, "MCP", null, false, 20, 10);
+    }
+
+    @Test
+    void listNormalizesPageAndSizeBounds() {
+        when(skillDao.list(7L, null, null, false, 0, 100)).thenReturn(List.of());
+
+        // page<1 归一到第 1 页(offset 0)，size 超过上限被夹到 100
+        service.list(7L, null, 0, 1000);
+
+        verify(skillDao).list(7L, null, null, false, 0, 100);
+    }
+
+    @Test
+    void listPageReturnsTenantScopedTotalFromCountNotListLength() {
+        SkillDO a = new SkillDO();
+        a.setId(1L);
+        a.setType("SKILL");
+        a.setName("a");
+        SkillDO b = new SkillDO();
+        b.setId(2L);
+        b.setType("SKILL");
+        b.setName("b");
+        // 当前页只有 2 行，但租户内真实总数是 45：total 必须取自 count，而不是 list.size()
+        when(skillDao.list(7L, "SKILL", null, false, 0, 20)).thenReturn(List.of(a, b));
+        when(skillDao.count(7L, "SKILL", null, false)).thenReturn(45L);
+
+        PageResult<SkillVO> page = service.listPage(7L, "SKILL", 1, 20);
+
+        assertEquals(45L, page.getTotal());
+        assertEquals(2, page.getList().size());
+        assertEquals(1, page.getPageNum());
+        assertEquals(20, page.getPageSize());
+        // count 同样按 tenantId+type 收敛，避免跨租户串数
+        verify(skillDao).count(7L, "SKILL", null, false);
     }
 }

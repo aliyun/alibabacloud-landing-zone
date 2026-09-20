@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { CreateMemoryParams, Memory, UpdateMemoryParams, ReviewMemoryParams } from './api';
+import type { CreateMemoryParams, Memory, MemoryListFilters, UpdateMemoryParams, ReviewMemoryParams } from './api';
 import { useAuthStore } from '@/shared/auth/store';
 
 export function useMemoryList(params: {
@@ -28,6 +28,21 @@ export function useMemoryGroups(params?: {
   return useQuery({
     queryKey: ['memories', 'grouped', params],
     queryFn: () => api.listMemoryGroups(params!),
+    enabled: params !== undefined,
+  });
+}
+
+export function useMemoryCount(params: MemoryListFilters) {
+  return useQuery({
+    queryKey: ['memories', 'count', params],
+    queryFn: () => api.countMemories(params),
+  });
+}
+
+export function useMemoryGroupCount(params?: MemoryListFilters) {
+  return useQuery({
+    queryKey: ['memories', 'grouped', 'count', params],
+    queryFn: () => api.countMemoryGroups(params!),
     enabled: params !== undefined,
   });
 }

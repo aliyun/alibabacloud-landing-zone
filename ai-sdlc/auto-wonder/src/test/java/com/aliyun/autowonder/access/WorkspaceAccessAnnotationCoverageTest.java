@@ -44,8 +44,10 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.artifact.ScheduledTaskCliUploadController",
             "com.aliyun.autowonder.controller.HealthCheckController",
             "com.aliyun.autowonder.controller.HelloWorldController",
+            "com.aliyun.autowonder.debuglog.DebugLogUploadController",
             "com.aliyun.autowonder.dispatch.DaemonCheckpointController",
             "com.aliyun.autowonder.dispatch.DaemonRecoveryClaimController",
+            "com.aliyun.autowonder.executor.DaemonExecutorEnvironmentController",
             "com.aliyun.autowonder.integration.dingtalk.HttpCallbackTransport",
             "com.aliyun.autowonder.mcp.McpController",
             "com.aliyun.autowonder.notification.NotificationController",
@@ -55,6 +57,10 @@ class WorkspaceAccessAnnotationCoverageTest {
     );
 
     private static final Set<String> EXEMPT_METHODS = Set.of(
+            // Feishu callbacks authenticate through FeishuCallbackSecurity using the binding's
+            // verification token and, when configured, signature; no user workspace context exists.
+            "com.aliyun.autowonder.integration.feishu.FeishuCallbackController#callback("
+                    + "java.lang.Long, java.lang.String, java.lang.String, java.lang.String, java.lang.String)",
             "com.aliyun.autowonder.branding.PlatformBrandingController#logo()",
             "com.aliyun.autowonder.branding.PlatformBrandingController#adminConfig()",
             "com.aliyun.autowonder.branding.PlatformBrandingController#publicConfig()",
@@ -69,7 +75,13 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.access.PlatformAdminController#add("
                     + "com.aliyun.autowonder.access.dto.AddPlatformAdminRequest)",
             "com.aliyun.autowonder.access.PlatformAdminController#remove(java.lang.Long)",
+            // The platform-wide executor auto-upgrade switch is a global deployment setting read from
+            // application.yml, so the workspace ladder cannot express it; reading is open to any
+            // signed-in user and there is no write endpoint.
+            "com.aliyun.autowonder.executor.PlatformRuntimeAutoUpdateController#view()",
             "com.aliyun.autowonder.im.PlatformImChannelConfigController#list()",
+            "com.aliyun.autowonder.im.PlatformImChannelConfigController#updateFeishu("
+                    + "com.aliyun.autowonder.im.dto.UpdateDingTalkChannelRequest)",
             "com.aliyun.autowonder.im.PlatformImChannelConfigController#updateDingTalk("
                     + "com.aliyun.autowonder.im.dto.UpdateDingTalkChannelRequest)",
             "com.aliyun.autowonder.integration.IntegrationCapabilityController#capabilities()",
@@ -102,9 +114,19 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.workspace.WorkspaceController#restore("
                     + "java.lang.Long, com.aliyun.autowonder.workspace.dto.RestoreWorkspaceRequest)",
             "com.aliyun.autowonder.im.UserImIdentityController#list()",
+            "com.aliyun.autowonder.im.UserImIdentityController#updateFeishu("
+                    + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
+            "com.aliyun.autowonder.im.UserImIdentityController#testFeishu()",
             "com.aliyun.autowonder.im.UserImIdentityController#updateDingTalk("
                     + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
             "com.aliyun.autowonder.im.UserImIdentityController#testDingTalk()",
+            // Personal preferences authorize with the logged-in user ID only, independent of
+            // workspace membership; callers cannot provide another user's ID.
+            "com.aliyun.autowonder.user.UserSettingController#list()",
+            "com.aliyun.autowonder.user.UserSettingController#get(java.lang.String)",
+            "com.aliyun.autowonder.user.UserSettingController#upsert("
+                    + "java.lang.String, com.aliyun.autowonder.user.dto.UpsertUserSettingRequest)",
+            "com.aliyun.autowonder.user.UserSettingController#delete(java.lang.String)",
             "com.aliyun.autowonder.user.UserAccountController#changePassword("
                     + "com.aliyun.autowonder.user.dto.ChangePasswordRequest)",
             "com.aliyun.autowonder.user.UserAccountController#initiateDeactivation("

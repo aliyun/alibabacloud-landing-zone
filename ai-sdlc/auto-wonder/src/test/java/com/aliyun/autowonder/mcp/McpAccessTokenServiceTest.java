@@ -242,6 +242,8 @@ class McpAccessTokenServiceTest {
         AgentConversationDO conversation = new AgentConversationDO();
         conversation.setId(22L);
         conversation.setTenantId(TENANT_ID);
+        conversation.setAgentId(77L);
+        conversation.setAgentVersionId(88L);
         conversation.setStatus("ACTIVE");
         when(conversationDao.findById(TENANT_ID, 22L)).thenReturn(conversation);
         ConversationMcpTokenService tokens = new ConversationMcpTokenService(

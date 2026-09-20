@@ -151,11 +151,19 @@ else: sys.exit(subprocess.call(['/bin/mv']+args))
 
     def test_staging_requires_backup_for_every_target(self):
         data = json.loads(self.manifest.read_text())
+        generation = '985bc0a7-5abf-4fc7-a612-2549c5a7848d'
+        candidate_text = 'AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.7.0\nAUTOWONDER_SECRET_KEY_GENERATION_ID=' + generation + '\n'
+        candidate_hash = hashlib.sha256(candidate_text.encode()).hexdigest()
         data['upgrade'].update(environmentContractChecked=True, environmentValidated=True,
-                               targetRecommendedRuntimeVersion='0.7.0')
-        data['runtimeConfig'] = {'prepared': True, 'recommendedRuntimeVersion': '0.7.0'}
+                               targetRecommendedRuntimeVersion='0.7.0', keyGenerationId=generation,
+                               environmentCandidateSha256=candidate_hash)
+        data['runtimeConfig'] = {'prepared': True, 'recommendedRuntimeVersion': '0.7.0',
+                                'keyGenerationId': generation, 'envSha256': candidate_hash}
         self.manifest.write_text(json.dumps(data))
         self.approve()
+        data = json.loads(self.manifest.read_text())
+        data['runtimeConfig']['planFingerprint'] = data['upgrade']['planFingerprint']
+        self.manifest.write_text(json.dumps(data))
         self.backup()
         data = json.loads(self.manifest.read_text())
         data['upgrade']['rollbackBackup']['nodes'].pop()
@@ -164,7 +172,7 @@ else: sys.exit(subprocess.call(['/bin/mv']+args))
         for name in ('autowonder-schema.sql', 'autowonder-community-templates.sql'):
             (release / name).write_text('fixture')
         candidate = self.root / 'candidate.env'
-        candidate.write_text('AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=0.7.0\n')
+        candidate.write_text(candidate_text)
         candidate.chmod(0o600)
         calls = (self.root / 'calls').read_text()
         result = self.run_script('stage-upgrade.sh', '--env-file', str(candidate), '--release-dir', str(release))

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Button,
   Card,
@@ -36,7 +37,19 @@ const ACCESS_LEVEL_COLORS: Record<WorkspaceAccessLevel, string> = {
   ADMIN: 'green',
 };
 
+export const DEFAULT_MEMBERS_TAB = 'members';
+const MEMBERS_TAB_KEYS: readonly string[] = [DEFAULT_MEMBERS_TAB, 'requests'];
+
+/** Whitelisted so an unknown `tab` value keeps the historical default instead of blanking the pane. */
+export function resolveMembersTab(tabParam: string | null): string {
+  return tabParam !== null && MEMBERS_TAB_KEYS.includes(tabParam)
+    ? tabParam
+    : DEFAULT_MEMBERS_TAB;
+}
+
 export function MembersPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = resolveMembersTab(searchParams.get('tab'));
   const accessCommand = useAccessCommand();
   const { data: members = [], isLoading } = useMembers();
   const { data: membership } = useCurrentMembership();
@@ -202,7 +215,16 @@ export function MembersPage() {
   return (
     <Card title="成员管理">
       <Tabs
-        defaultActiveKey="members"
+        activeKey={activeTab}
+        onChange={(key) => {
+          const next = new URLSearchParams(searchParams);
+          if (key === DEFAULT_MEMBERS_TAB) {
+            next.delete('tab');
+          } else {
+            next.set('tab', key);
+          }
+          setSearchParams(next, { replace: true });
+        }}
         tabBarExtraContent={adminOnlyTip(
           <Button
             disabled={!isAdmin}

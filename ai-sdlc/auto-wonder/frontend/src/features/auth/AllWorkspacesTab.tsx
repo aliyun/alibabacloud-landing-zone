@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Empty, Input, Modal, Pagination, Spin, Typography, message } from 'antd';
-import { ArrowRightOutlined, LoadingOutlined } from '@ant-design/icons';
+import { ArrowRightOutlined, DeleteOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/shared/api/client';
 import { useAuthStore } from '@/shared/auth/store';
 import { ApiError } from '@/shared/types/common';
-import type { SwitchWorkspaceResponse, WorkspaceListItem } from '@/shared/types/common';
+import type { SwitchWorkspaceResponse, WorkspaceInfo, WorkspaceListItem } from '@/shared/types/common';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
 import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 import { useAllWorkspaces, useCancelAccessRequest } from './workspaceDiscoveryApi';
 import { AccessRequestModal } from './AccessRequestModal';
+import { WorkspaceEditModal } from './WorkspaceEditModal';
+import { WorkspaceDeleteModal } from './WorkspaceDeleteModal';
 import './workspaceLifecycle.css';
 
 const { Text } = Typography;
@@ -39,8 +41,14 @@ export function AllWorkspacesTab() {
   const queryClient = useQueryClient();
   const setAccessToken = useAuthStore((s) => s.setAccessToken);
   const setCurrentWorkspace = useAuthStore((s) => s.setCurrentWorkspace);
+  const clearCurrentWorkspace = useAuthStore((s) => s.clearCurrentWorkspace);
+  const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
   const switchingRef = useRef<number | null>(null);
   const lastModalTargetRef = useRef<WorkspaceListItem | null>(null);
+  // Platform-admin manage entry points on the discovery cards; the modals are shared with the
+  // "my workspaces" tab and the buttons only render when the server said canManage.
+  const [editTarget, setEditTarget] = useState<WorkspaceInfo | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WorkspaceInfo | null>(null);
 
   const { data, isLoading, isFetching } = useAllWorkspaces(
     debouncedKeyword,
@@ -152,6 +160,14 @@ export function AllWorkspacesTab() {
     }
   };
 
+  const handleDeleted = (workspace: WorkspaceInfo) => {
+    // Same rule as the "my workspaces" tab: the access token stays bound to a workspace that
+    // AuthFilter rejects after the delete, so the binding is dropped immediately.
+    if (currentWorkspace?.id === workspace.id) {
+      clearCurrentWorkspace();
+    }
+  };
+
   return (
     <div>
       <div style={toolbarStyle}>
@@ -192,6 +208,8 @@ export function AllWorkspacesTab() {
               onEnter={handleSwitch}
               onApply={(item) => setModalTargetId(item.id)}
               onCancelRequest={(item) => setCancelTargetId(item.id)}
+              onEdit={(item) => setEditTarget(item)}
+              onDelete={(item) => setDeleteTarget(item)}
             />
           ))}
         </div>
@@ -212,6 +230,17 @@ export function AllWorkspacesTab() {
       <AccessRequestModal
         workspace={modalTarget}
         onClose={() => setModalTargetId(null)}
+      />
+
+      <WorkspaceEditModal
+        workspace={editTarget}
+        onClose={() => setEditTarget(null)}
+      />
+
+      <WorkspaceDeleteModal
+        workspace={deleteTarget}
+        onDeleted={handleDeleted}
+        onClose={() => setDeleteTarget(null)}
       />
 
       <Modal
@@ -242,6 +271,8 @@ interface WorkspaceDiscoveryCardProps {
   onEnter: (workspace: WorkspaceListItem) => void;
   onApply: (workspace: WorkspaceListItem) => void;
   onCancelRequest: (workspace: WorkspaceListItem) => void;
+  onEdit: (workspace: WorkspaceListItem) => void;
+  onDelete: (workspace: WorkspaceListItem) => void;
 }
 
 function WorkspaceDiscoveryCard({
@@ -251,8 +282,15 @@ function WorkspaceDiscoveryCard({
   onEnter,
   onApply,
   onCancelRequest,
+  onEdit,
+  onDelete,
 }: WorkspaceDiscoveryCardProps) {
   const isMember = workspace.membershipStatus === 'MEMBER';
+  // canManage comes from the server (owner, workspace ADMIN, or platform admin), so a
+  // platform admin that never joined this workspace still gets enter/edit/delete entry
+  // points here while the backend enforces the same rule independently.
+  const canManage = workspace.canManage === true;
+  const enterable = isMember || canManage;
   const testId = `all-workspace-card-${workspace.id}`;
 
   const description = (
@@ -264,69 +302,93 @@ function WorkspaceDiscoveryCard({
       <span style={descStyle}>{workspace.description || '暂无描述'}</span>
     </>
   );
-  // F7.5: the fade covers the descriptive half only. Fading the whole card used to pull the
-  // 申请权限 button down to 0.62 opacity as well, which both drops its contrast below what F7
-  // requires and makes an actionable state read as a disabled one.
-  const body = isMember ? description : <div style={fadedBodyStyle}>{description}</div>;
+  // F7.5: the fade covers the descriptive half only, and only for cards the user cannot
+  // enter — a platform admin's card keeps full contrast because its actions are real.
+  const body = enterable ? description : <div style={fadedBodyStyle}>{description}</div>;
 
-  if (isMember) {
+  if (enterable) {
     return (
-      <button
-        type="button"
-        data-testid={testId}
-        style={getCardStyle(true)}
-        // Membership is the entire point of this screen, but for MEMBER cards it is
-        // otherwise carried only by badge *absence* and opacity — both purely visual.
-        // Folding 已加入 into the accessible name is what makes status non-visual.
-        aria-label={switching
-          ? `正在进入工作空间 ${workspace.name}（已加入）`
-          : `进入工作空间 ${workspace.name}（已加入）`}
-        aria-busy={switching}
-        // Blocked by any in-flight switch, not just this card's: two racing successful
-        // switches would pair one workspace's token with another's currentWorkspace.
-        disabled={switchBlocked}
-        onMouseEnter={(event) => {
-          event.currentTarget.style.borderColor = BRAND_ORANGE;
-          event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
-          event.currentTarget.style.transform = 'translateY(-1px)';
-        }}
-        onMouseLeave={(event) => {
-          const next = getCardStyle(true);
-          event.currentTarget.style.borderColor = String(next.borderColor);
-          event.currentTarget.style.boxShadow = String(next.boxShadow);
-          event.currentTarget.style.transform = 'none';
-        }}
-        onFocus={(event) => {
-          event.currentTarget.style.borderColor = BRAND_ORANGE;
-          event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
-        }}
-        onBlur={(event) => {
-          const next = getCardStyle(true);
-          event.currentTarget.style.borderColor = String(next.borderColor);
-          event.currentTarget.style.boxShadow = String(next.boxShadow);
-        }}
-        onClick={() => onEnter(workspace)}
-      >
-        {body}
-        <span style={actionStyle}>
-          {switching ? (
-            <>
-              正在进入 <LoadingOutlined />
-            </>
-          ) : (
-            <>
-              进入工作空间 <ArrowRightOutlined />
-            </>
-          )}
-        </span>
-      </button>
+      <div data-testid={testId} style={cardStyle}>
+        <button
+          type="button"
+          data-testid={`all-workspace-enter-${workspace.id}`}
+          style={enterButtonStyle}
+          // Membership is the entire point of this screen, but for MEMBER cards it is
+          // otherwise carried only by badge *absence* and opacity — both purely visual.
+          // Folding 已加入 into the accessible name is what makes status non-visual.
+          aria-label={switching
+            ? `正在进入工作空间 ${workspace.name}${isMember ? '（已加入）' : ''}`
+            : `进入工作空间 ${workspace.name}${isMember ? '（已加入）' : ''}`}
+          aria-busy={switching}
+          // Blocked by any in-flight switch, not just this card's: two racing successful
+          // switches would pair one workspace's token with another's currentWorkspace.
+          disabled={switchBlocked}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.borderColor = BRAND_ORANGE;
+            event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
+            event.currentTarget.style.transform = 'translateY(-1px)';
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.borderColor = 'transparent';
+            event.currentTarget.style.boxShadow = 'none';
+            event.currentTarget.style.transform = 'none';
+          }}
+          onFocus={(event) => {
+            event.currentTarget.style.borderColor = BRAND_ORANGE;
+            event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
+          }}
+          onBlur={(event) => {
+            event.currentTarget.style.borderColor = 'transparent';
+            event.currentTarget.style.boxShadow = 'none';
+          }}
+          onClick={() => onEnter(workspace)}
+        >
+          {body}
+          <span style={actionStyle}>
+            {switching ? (
+              <>
+                正在进入 <LoadingOutlined />
+              </>
+            ) : (
+              <>
+                进入工作空间 <ArrowRightOutlined />
+              </>
+            )}
+          </span>
+        </button>
+        {/* F1.2: siblings of the enter button rather than children of it. A control nested
+            inside a <button> is invalid HTML and its click would reach the enter handler. */}
+        {canManage && (
+          <div style={cardManageAreaStyle} data-testid={`all-workspace-manage-area-${workspace.id}`}>
+            <button
+              type="button"
+              className="aw-card-manage-button"
+              data-testid={`all-workspace-edit-${workspace.id}`}
+              aria-label={`编辑工作空间 ${workspace.name}`}
+              onClick={() => onEdit(workspace)}
+            >
+              <EditOutlined />
+            </button>
+            <button
+              type="button"
+              className="aw-card-manage-button aw-card-manage-button--danger"
+              data-testid={`all-workspace-delete-${workspace.id}`}
+              aria-label={`删除工作空间 ${workspace.name}`}
+              onClick={() => onDelete(workspace)}
+            >
+              <DeleteOutlined />
+            </button>
+          </div>
+        )}
+      </div>
     );
   }
 
-  // Non-members are not activatable: the only action is the apply button below, so the
-  // card itself must not be exposed as a button to keyboard or screen-reader users.
+  // Non-members without manage rights are not activatable: the only action is the apply
+  // button below, so the card itself must not be exposed as a button to keyboard or
+  // screen-reader users.
   return (
-    <div data-testid={testId} style={getCardStyle(false)}>
+    <div data-testid={testId} style={cardStyle}>
       {body}
       {workspace.membershipStatus === 'NOT_MEMBER' ? (
         // F7.4: the non-member card is a <div>, not a button, so there is no enter handler here
@@ -359,12 +421,29 @@ function getWorkspaceInitial(name: string) {
   return name.trim().slice(0, 2).toUpperCase() || 'WORKSPACE';
 }
 
-function getCardStyle(isMember: boolean): CSSProperties {
-  return {
-    ...cardStyle,
-    cursor: isMember ? 'pointer' : 'default',
-  };
-}
+const cardManageAreaStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: 8,
+  marginTop: 12,
+};
+
+const enterButtonStyle: CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: 0,
+  // `0` rather than the idiomatic `'none'`: jsdom drops the `border: none` shorthand, so the
+  // computed border falls back to the UA default and this reset becomes unobservable in tests.
+  // Both render identically in a browser.
+  border: 0,
+  background: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+  appearance: 'none',
+};
 
 const fadedBodyStyle: CSSProperties = {
   opacity: 0.62,

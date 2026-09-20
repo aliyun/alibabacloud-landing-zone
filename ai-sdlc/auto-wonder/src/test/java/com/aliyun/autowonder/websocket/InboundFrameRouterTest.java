@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.websocket;
 
+import com.alibaba.fastjson.JSONObject;
 import com.aliyun.autowonder.artifact.ArtifactService;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
@@ -10,6 +11,7 @@ import com.aliyun.autowonder.dispatch.HandoffService;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
 import com.aliyun.autowonder.executor.ExecutorService;
 import com.aliyun.autowonder.executor.ProviderModelCatalogService;
 import com.aliyun.autowonder.guidance.GuidanceService;
@@ -27,6 +29,16 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import javax.websocket.Session;
 import javax.websocket.RemoteEndpoint;
 
+import java.util.List;
+
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
+import org.apache.logging.log4j.core.layout.PatternLayout;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -41,6 +53,27 @@ class InboundFrameRouterTest {
     private GuidanceService guidanceService;
     private InboundFrameRouter router;
     private ScheduledTaskCapabilityGuard capabilityGuard;
+
+    @Test
+    void canceledResultOnlyConfirmsStopAndNeverRoutesWorkflowOrArtifacts() {
+        var recovery = mock(com.aliyun.autowonder.dispatch.DispatchRecoveryService.class);
+        router.setRecovery(recovery);
+        when(recovery.cancelRequested(100L, 55L)).thenReturn(true);
+        when(recovery.onStopped(100L, 1L, 55L)).thenReturn(true);
+        router.route(session(1L, 10L, 100L), "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"workflowPlan\":{}}");
+        verify(recovery).onStopped(100L, 1L, 55L);
+        verifyNoInteractions(dispatchService, handoffService, artifactService);
+    }
+
+    @Test
+    void canceledGuidanceWithoutDispatchIdCannotApplyLateWorkflowPlan() {
+        var recovery = mock(com.aliyun.autowonder.dispatch.DispatchRecoveryService.class);
+        router.setRecovery(recovery);
+        when(recovery.cancelRequested(100L, 42L)).thenReturn(true);
+        router.route(session(1L, 10L, 100L), "{\"type\":\"TASK_GUIDANCE_ACK\",\"guidanceId\":77,\"status\":\"APPLIED\",\"workflowPlan\":{}}");
+        verify(guidanceService, never()).acknowledge(anyLong(), anyLong(), anyLong(), anyString(), any(), any());
+        verifyNoInteractions(handoffService, artifactService);
+    }
 
     @BeforeEach
     void setUp() {
@@ -58,6 +91,29 @@ class InboundFrameRouterTest {
         router = new InboundFrameRouter(dispatchService, artifactService, presenceManager,
                 handoffService, drainScheduler, pauseService, guidanceService);
         ReflectionTestUtils.setField(router, "capabilityGuard", capabilityGuard);
+        when(presenceManager.publishHeartbeat(anyLong(), anyLong(), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.APPLIED);
+    }
+
+    private String heartbeat(Object... fields) {
+        JSONObject json = new JSONObject();
+        json.put("type", "HEARTBEAT");
+        json.put("maxConcurrentDispatches", 1);
+        json.put("protocolFeatures", java.util.List.of("dispatch_inventory_v1"));
+        json.put("runningDispatchIds", java.util.List.of());
+        json.put("ownedDispatchIds", java.util.List.of());
+        json.put("runningConversationTurnIds", java.util.List.of());
+        json.put("dispatchInventoryReady", true);
+        boolean ownedExplicit = false;
+        for (int i = 0; i < fields.length; i += 2) {
+            String key = (String) fields[i];
+            json.put(key, fields[i + 1]);
+            if ("ownedDispatchIds".equals(key)) ownedExplicit = true;
+        }
+        if (!ownedExplicit && json.get("runningDispatchIds") instanceof java.util.Collection<?>) {
+            json.put("ownedDispatchIds", json.get("runningDispatchIds"));
+        }
+        return json.toJSONString();
     }
 
     private ExecutorSession session(long executorId, long agentId, long tenantId) {
@@ -104,7 +160,7 @@ class InboundFrameRouterTest {
         when(ws.getBasicRemote()).thenReturn(basicRemote);
         when(ws.isOpen()).thenReturn(true);
         when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
 
         router.route(new ExecutorSession(1L, 10L, 100L, ws),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"," +
@@ -116,67 +172,220 @@ class InboundFrameRouterTest {
     }
 
     @Test
-    void heartbeatRenewsPresence() {
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-        router.route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[55,56]}");
-        verify(presenceManager).heartbeat(1L, 10L, 1);
+    void heartbeatWithoutInventoryProtocolRemainsOnlineWithoutAuthoritativeReconciliation() throws Exception {
+        Session ws = mock(Session.class);
+        when(ws.getId()).thenReturn("legacy-session");
+        var reconciler = mock(com.aliyun.autowonder.dispatch.DispatchRuntimeReconciler.class);
+        router.setRuntimeReconciler(reconciler);
+
+        router.route(new ExecutorSession(1L, 10L, 100L, 10, ws),
+                "{\"type\":\"HEARTBEAT\",\"maxConcurrentDispatches\":10,"
+                        + "\"runningDispatchIds\":[55,56],\"runningConversationTurnIds\":[77]} ");
+
+        ArgumentCaptor<ExecutorDispatchSnapshot> snapshot = ArgumentCaptor.forClass(ExecutorDispatchSnapshot.class);
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), eq("legacy-session"),
+                snapshot.capture(), isNull(), isNull(), isNull());
+        assertFalse(snapshot.getValue().inventoryReady());
+        assertEquals(java.util.Set.of(55L, 56L), snapshot.getValue().runningDispatchIds());
         verify(dispatchService).renewActiveLeases(100L, 1L, java.util.List.of(55L, 56L));
         verify(drainScheduler).request(10L);
-        verify(dispatchService, never()).drainPending(anyLong());
+        verify(reconciler, never()).request(anyLong(), anyLong(), anyLong(), anyString());
+        verify(ws, never()).close();
+    }
+
+    @Test
+    void legacyHeartbeatWithoutConversationReportPreservesUnknownActivity() {
+        router.route(session(1L, 10L, 100L), "{\"type\":\"HEARTBEAT\"}");
+        ArgumentCaptor<ExecutorDispatchSnapshot> snapshot = ArgumentCaptor.forClass(ExecutorDispatchSnapshot.class);
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(),
+                snapshot.capture(), isNull(), isNull(), isNull());
+        assertFalse(snapshot.getValue().hasConversationActivityReport());
+    }
+
+    @Test
+    void legacyHeartbeatWithEmptyConversationReportPreservesKnownIdleActivity() {
+        router.route(session(1L, 10L, 100L),
+                "{\"type\":\"HEARTBEAT\",\"runningConversationTurnIds\":[]}");
+        ArgumentCaptor<ExecutorDispatchSnapshot> snapshot = ArgumentCaptor.forClass(ExecutorDispatchSnapshot.class);
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(),
+                snapshot.capture(), isNull(), isNull(), isNull());
+        assertTrue(snapshot.getValue().hasConversationActivityReport());
+        assertTrue(snapshot.getValue().runningConversationTurnIds().isEmpty());
+    }
+
+    @Test
+    void heartbeatRoutesProtocolFeaturesWithoutRequiringActivityReport() {
+        router.route(session(1L, 10L, 100L),
+                heartbeat("protocolFeatures", java.util.List.of(
+                        "dispatch_inventory_v1", "AGENT_ENVIRONMENT_VARIABLES_V1")));
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                eq(java.util.List.of("dispatch_inventory_v1", "AGENT_ENVIRONMENT_VARIABLES_V1")),
+                isNull(), isNull());
+    }
+
+    @Test
+    void inventoryHeartbeatStoresCurrentSessionSnapshotAndRefreshesCapacity() {
+        Session ws = mock(Session.class);
+        when(ws.getId()).thenReturn("session-1");
+        ExecutorSession es = new ExecutorSession(1L, 10L, 100L, 1, ws);
+
+        router.route(es, "{\"type\":\"HEARTBEAT\",\"maxConcurrentDispatches\":10,"
+                + "\"protocolFeatures\":[\"dispatch_inventory_v1\"],"
+                + "\"runningDispatchIds\":[55],\"ownedDispatchIds\":[55,56],"
+                + "\"runningConversationTurnIds\":[77],\"dispatchInventoryReady\":true}");
+
+        ArgumentCaptor<ExecutorDispatchSnapshot> snapshot = ArgumentCaptor.forClass(ExecutorDispatchSnapshot.class);
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), eq("session-1"),
+                snapshot.capture(), eq(java.util.List.of("dispatch_inventory_v1")), isNull(), isNull());
+        assertEquals("session-1", snapshot.getValue().sessionId());
+        assertEquals(10, snapshot.getValue().capacity());
+        assertEquals(java.util.Set.of(55L), snapshot.getValue().runningDispatchIds());
+        assertEquals(java.util.Set.of(55L, 56L), snapshot.getValue().ownedDispatchIds());
+        assertTrue(snapshot.getValue().inventoryReady());
+        verify(dispatchService).renewActiveLeases(100L, 1L, java.util.List.of(55L));
+    }
+
+    @Test
+    void staleSessionHeartbeatIsClosedBeforeAnyDownstreamEffects() throws Exception {
+        Session ws = mock(Session.class);
+        when(ws.getId()).thenReturn("session-old");
+        when(presenceManager.publishHeartbeat(anyLong(), anyLong(), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.STALE_SESSION);
+
+        router.route(new ExecutorSession(1L, 10L, 100L, 1, ws), heartbeat());
+
+        verify(ws).close();
+        verify(dispatchService, never()).renewActiveLeases(anyLong(), anyLong(), any());
+        verify(drainScheduler, never()).request(anyLong());
+    }
+
+    @Test
+    void readyInventoryRequestsSessionFencedReconciliationInsteadOfDirectDrain() {
+        Session ws = mock(Session.class);
+        when(ws.getId()).thenReturn("session-1");
+        var reconciler = mock(com.aliyun.autowonder.dispatch.DispatchRuntimeReconciler.class);
+        router.setRuntimeReconciler(reconciler);
+
+        router.route(new ExecutorSession(1L, 10L, 100L, 1, ws),
+                "{\"type\":\"HEARTBEAT\",\"maxConcurrentDispatches\":10,"
+                        + "\"protocolFeatures\":[\"dispatch_inventory_v1\"],"
+                        + "\"runningDispatchIds\":[],\"ownedDispatchIds\":[],"
+                        + "\"runningConversationTurnIds\":[],\"dispatchInventoryReady\":true}");
+
+        verify(reconciler).request(100L, 1L, 10L, "session-1");
+        verify(drainScheduler, never()).request(anyLong());
+    }
+
+    @Test
+    void completeInventoryRejectsRunningDispatchMissingFromOwnedSet() throws Exception {
+        Session ws = mock(Session.class);
+        when(ws.getId()).thenReturn("session-1");
+        ExecutorSession es = new ExecutorSession(1L, 10L, 100L, 1, ws);
+
+        router.route(es, "{\"type\":\"HEARTBEAT\",\"maxConcurrentDispatches\":10,"
+                + "\"protocolFeatures\":[\"dispatch_inventory_v1\"],"
+                + "\"runningDispatchIds\":[55],\"ownedDispatchIds\":[],"
+                + "\"runningConversationTurnIds\":[],\"dispatchInventoryReady\":true}");
+
+        verify(ws).close();
+        verify(presenceManager, never()).publishHeartbeat(anyLong(), anyLong(), any(), any(),
+                anyCollection(), any(), any());
+        verify(dispatchService, never()).renewActiveLeases(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void heartbeatRecordsReportedRuntimeVersion() {
+        router.route(session(1L, 10L, 100L),
+                heartbeat("version", "0.2.152"));
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                anyCollection(), eq("0.2.152"), isNull());
+    }
+
+    @Test
+    void heartbeatWithoutVersionPassesNullThroughToPresence() {
+        router.route(session(1L, 10L, 100L), heartbeat());
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                anyCollection(), isNull(), isNull());
+    }
+
+    @Test
+    void heartbeatRejectedByTombstoneSkipsVersionRecording() {
+        when(presenceManager.publishHeartbeat(eq(1L), eq(10L), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.DELETED);
+
+        router.route(session(1L, 10L, 100L),
+                heartbeat("version", "0.2.152"));
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), any(), any(),
+                anyCollection(), eq("0.2.152"), isNull());
+    }
+
+    @Test
+    void heartbeatRecordsReportedModel() {
+        router.route(session(1L, 10L, 100L),
+                heartbeat("model", "qoder3-coder-plus"));
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                anyCollection(), isNull(), eq("qoder3-coder-plus"));
+    }
+
+    @Test
+    void heartbeatWithoutModelPassesNullThroughToPresence() {
+        router.route(session(1L, 10L, 100L), heartbeat());
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), isNull(), any(),
+                anyCollection(), isNull(), isNull());
+    }
+
+    @Test
+    void heartbeatRejectedByTombstoneSkipsModelRecording() {
+        when(presenceManager.publishHeartbeat(eq(1L), eq(10L), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.DELETED);
+
+        router.route(session(1L, 10L, 100L),
+                heartbeat("model", "qoder3-coder-plus"));
+
+        verify(presenceManager).publishHeartbeat(eq(1L), eq(10L), any(), any(),
+                anyCollection(), isNull(), eq("qoder3-coder-plus"));
     }
 
     @Test
     void heartbeatWithExplicitEmptyRunningDispatchIdsPassesKnownEmptyLease() {
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-
         router.route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[]}");
+                heartbeat("runningDispatchIds", java.util.List.of()));
 
         verify(dispatchService).renewActiveLeases(100L, 1L, java.util.List.of());
     }
 
     @Test
-    void heartbeatWithStringifiedRunningDispatchIdsClearsKnownEmptyLease() {
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-        LeaseRoutingFixture fixture = leaseRoutingFixture();
-
-        fixture.router().route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[]}");
-        assertTrue(fixture.registry().hasNoReportedRunningDispatches(1L));
-
-        fixture.router().route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":\"[]\"}");
-
-        verify(fixture.registry()).updateRunningDispatches(1L, java.util.List.of());
-        verify(fixture.registry()).updateRunningDispatches(1L, null);
-        assertFalse(fixture.registry().hasNoReportedRunningDispatches(1L));
+    void heartbeatWithStringifiedRunningDispatchIdsIsRejected() throws Exception {
+        Session ws = mock(Session.class);
+        router.route(new ExecutorSession(1L, 10L, 100L, ws),
+                heartbeat("runningDispatchIds", "[]"));
+        verify(ws).close();
+        verify(presenceManager).recordProtocolError(eq(1L), eq(10L), isNull(), startsWith("EXECUTOR_PROTOCOL_INCOMPATIBLE:"));
     }
 
     @Test
-    void heartbeatWithNonnumericRunningDispatchIdClearsKnownEmptyLease() {
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-        LeaseRoutingFixture fixture = leaseRoutingFixture();
-
-        fixture.router().route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[]}");
-        assertTrue(fixture.registry().hasNoReportedRunningDispatches(1L));
-
-        fixture.router().route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[\"not-a-number\"]}");
-
-        verify(fixture.registry()).updateRunningDispatches(1L, java.util.List.of());
-        verify(fixture.registry()).updateRunningDispatches(1L, null);
-        assertFalse(fixture.registry().hasNoReportedRunningDispatches(1L));
+    void heartbeatWithNonnumericRunningDispatchIdIsRejected() throws Exception {
+        Session ws = mock(Session.class);
+        router.route(new ExecutorSession(1L, 10L, 100L, ws),
+                heartbeat("runningDispatchIds", java.util.List.of("not-a-number")));
+        verify(ws).close();
+        verify(presenceManager).recordProtocolError(eq(1L), eq(10L), isNull(), startsWith("EXECUTOR_PROTOCOL_INCOMPATIBLE:"));
     }
 
     @Test
     void heartbeatRejectedByTombstoneClosesSessionAndSkipsDownstream() throws Exception {
         Session ws = mock(Session.class);
         ExecutorSession es = new ExecutorSession(1L, 10L, 100L, ws);
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(false);
+        when(presenceManager.publishHeartbeat(eq(1L), eq(10L), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.DELETED);
 
-        router.route(es, "{\"type\":\"HEARTBEAT\"}");
+        router.route(es, heartbeat());
 
         verify(ws).close();
         verify(dispatchService, never()).renewActiveLeases(anyLong(), anyLong(), any());
@@ -374,11 +583,11 @@ class InboundFrameRouterTest {
     void taskResultSuccessCallsOnResult() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
         when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"," +
                         "\"checkpointReceiptVersion\":1,\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\"}");
-        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, false);
+        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, false, false, null);
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
                 && text.contains("55")));
     }
@@ -386,20 +595,20 @@ class InboundFrameRouterTest {
     @Test
     void taskResultPassesWorkflowChangedFlag() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, true)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, true, false, null)).thenReturn(true);
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true," +
                         "\"resultSummary\":\"done\",\"workflowChanged\":true}");
-        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, true);
+        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, true, false, null);
     }
 
     @Test
     void taskResultFailureCallsOnResult() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, "oops", false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, false, null, "oops", false, false, null)).thenReturn(true);
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false,\"error\":\"oops\"}");
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, "oops", false);
+        verify(dispatchService).onResult(100L, 1L, 55L, false, null, "oops", false, false, null);
         verify(guidanceService).failForDispatch(100L, 55L, "oops");
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
     }
@@ -421,7 +630,7 @@ class InboundFrameRouterTest {
         recovery.verify(guidanceService).requeueForExecutorFailover(100L, 55L);
         recovery.verify(dispatchService).runPending(55L);
         verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean());
+                any(), any(), anyBoolean(), anyBoolean(), any());
         verify(guidanceService, never()).failForDispatch(anyLong(), anyLong(), any());
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
     }
@@ -440,7 +649,7 @@ class InboundFrameRouterTest {
         verify(dispatchService).onExecutorUnavailableResult(100L, 1L, 55L,
                 "agent_error.provider_quota_limit", error);
         verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean());
+                any(), any(), anyBoolean(), anyBoolean(), any());
         verify(guidanceService).requeueForExecutorFailover(100L, 55L);
     }
 
@@ -448,20 +657,61 @@ class InboundFrameRouterTest {
     void legacyOrdinaryTaskFailureDoesNotUseExecutorFailover() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
         when(dispatchService.onResult(100L, 1L, 55L, false, null,
-                "tests failed", false)).thenReturn(true);
+                "tests failed", false, false, null)).thenReturn(true);
 
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
                         "\"error\":\"tests failed\"}");
 
         verify(dispatchService, never()).onExecutorUnavailableResult(anyLong(), anyLong(), anyLong(), any(), any());
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, "tests failed", false);
+        verify(dispatchService).onResult(100L, 1L, 55L, false, null, "tests failed", false, false, null);
+    }
+
+    @Test
+    void runtimeDeclaredToolHookBlockageIsPassedThroughWithoutExecutorFailover() throws Exception {
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        String error = "tool_hook_blocked: kind safety_denial hook jarvis-tool-safety "
+                + "trigger beforeTool status blocked exitCode 2 blockedCalls 3";
+        when(dispatchService.onResult(100L, 1L, 55L, false, null, error, false, false,
+                "tool_hook_blocked")).thenReturn(true);
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
+                        "\"failureCategory\":\"tool_hook_blocked\",\"error\":\"" + error + "\"}");
+
+        verify(dispatchService).onResult(100L, 1L, 55L, false, null, error, false, false,
+                "tool_hook_blocked");
+        verify(dispatchService, never()).onExecutorUnavailableResult(anyLong(), anyLong(), anyLong(), any(), any());
+        verify(guidanceService, never()).requeueForExecutorFailover(anyLong(), anyLong());
+        verify(dispatchService, never()).runPending(anyLong());
+        verify(guidanceService).failForDispatch(100L, 55L, error);
+        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
+                && text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void runtimeDeclaredToolHookBlockageIsNotRelabelledByUsageLimitHeuristic() throws Exception {
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        String error = "You've hit your usage limit. Purchase more credits or try again later.";
+        when(dispatchService.onResult(100L, 1L, 55L, false, null, error, false, false,
+                "tool_hook_blocked")).thenReturn(true);
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
+                        "\"failureCategory\":\"tool_hook_blocked\",\"error\":\"" + error + "\"}");
+
+        verify(dispatchService).onResult(100L, 1L, 55L, false, null, error, false, false,
+                "tool_hook_blocked");
+        verify(dispatchService, never()).onExecutorUnavailableResult(anyLong(), anyLong(), anyLong(), any(), any());
+        verify(guidanceService, never()).requeueForExecutorFailover(anyLong(), anyLong());
+        verify(dispatchService, never()).runPending(anyLong());
+        verify(guidanceService).failForDispatch(100L, 55L, error);
     }
 
     @Test
     void terminallyRejectedTaskResultIsAcknowledgedWithoutRoutingHandoff() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, "stale", false)).thenReturn(false);
+        when(dispatchService.onResult(100L, 1L, 55L, false, null, "stale", false, false, null)).thenReturn(false);
 
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
@@ -482,7 +732,7 @@ class InboundFrameRouterTest {
                         "\"checkpointReceiptVersion\":1}");
 
         verify(dispatchService).hasDurableCheckpoint(100L, 55L, 0L, null);
-        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(), any(), any(), anyBoolean());
+        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(), any(), any(), anyBoolean(), anyBoolean(), any());
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
                 && text.contains("\"accepted\":false")));
     }
@@ -490,12 +740,12 @@ class InboundFrameRouterTest {
     @Test
     void legacySuccessfulTaskResultRemainsAcceptedDuringProtocolRollout() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
 
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"}");
 
-        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, false);
+        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, false, false, null);
         verify(dispatchService, never()).hasDurableCheckpoint(anyLong(), anyLong(), anyLong(), any());
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
     }
@@ -556,7 +806,7 @@ class InboundFrameRouterTest {
 
         verify(dispatchService, never()).onProgress(anyLong(), anyLong(), any());
         verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean());
+                any(), any(), anyBoolean(), anyBoolean(), any());
         verifyNoInteractions(guidanceService, pauseService);
     }
 
@@ -592,7 +842,7 @@ class InboundFrameRouterTest {
         when(handoffService.handle(100L, 200L, 55L, "AW_CR", "AGENT"))
                 .thenReturn(HandoffResult.agent(12L, 56L));
         when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, null, null, false, true)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, null, null, false, true, null)).thenReturn(true);
         when(dispatchService.mayRouteHandoff(100L, 1L, 55L)).thenReturn(true);
 
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
@@ -600,7 +850,7 @@ class InboundFrameRouterTest {
                         "\"success\":true,\"checkpointReceiptVersion\":1,\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\"," +
                         "\"handoff\":{\"to\":\"AW_CR\",\"toType\":\"AGENT\"}}");
 
-        verify(dispatchService).onResult(100L, 1L, 55L, true, null, null, false, true);
+        verify(dispatchService).onResult(100L, 1L, 55L, true, null, null, false, true, null);
         verify(handoffService).handle(100L, 200L, 55L, "AW_CR", "AGENT");
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_HANDOFF_RESULT")
                 && text.contains("AGENT_DISPATCHED") && text.contains("56")));
@@ -624,7 +874,7 @@ class InboundFrameRouterTest {
                         "\"checkpointSha256\":\"sha256:abc\"}");
 
         verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean());
+                any(), any(), anyBoolean(), anyBoolean(), any());
         verify(workflowService).onPaused(100L, 55L);
         verify(guidanceService).requeueDeliveredForDispatch(100L, 55L);
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
@@ -638,7 +888,7 @@ class InboundFrameRouterTest {
         InboundFrameRouter interactionRouter = new InboundFrameRouter(dispatchService, artifactService,
                 presenceManager, handoffService, drainScheduler, pauseService, guidanceService, workflowService, null, null);
         when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "reply", null, false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, "reply", null, false, false, null)).thenReturn(true);
 
         interactionRouter.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
@@ -655,7 +905,7 @@ class InboundFrameRouterTest {
     void acceptedLateResultDoesNotRouteHandoffWhenDispatchIsNoLongerCurrent() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
         when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, null, null, false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, true, null, null, false, false, null)).thenReturn(true);
         when(dispatchService.mayRouteHandoff(100L, 1L, 55L)).thenReturn(false);
 
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
@@ -670,12 +920,12 @@ class InboundFrameRouterTest {
     @Test
     void failedTaskResultDoesNotRouteEmbeddedHandoff() throws Exception {
         RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, null, false)).thenReturn(true);
+        when(dispatchService.onResult(100L, 1L, 55L, false, null, null, false, false, null)).thenReturn(true);
         router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
                         "\"success\":false,\"handoff\":{\"to\":\"AW_CR\",\"toType\":\"AGENT\"}}");
 
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, null, false);
+        verify(dispatchService).onResult(100L, 1L, 55L, false, null, null, false, false, null);
         verifyNoInteractions(handoffService);
         verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
     }
@@ -693,17 +943,15 @@ class InboundFrameRouterTest {
     }
 
     @Test
-    void heartbeatWithoutRunningDispatchIdsPersistsHeartbeatAndPassesUnknownLease() {
+    void inventoryHeartbeatPersistsHeartbeatAndPassesKnownEmptyLease() {
         ExecutorService executorService = mock(ExecutorService.class);
         InboundFrameRouter routerWithExecSvc = new InboundFrameRouter(dispatchService, artifactService,
                 presenceManager, handoffService, drainScheduler, pauseService, guidanceService,
                 null, null, null, null, executorService);
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-
-        routerWithExecSvc.route(session(1L, 10L, 100L), "{\"type\":\"HEARTBEAT\"}");
+        routerWithExecSvc.route(session(1L, 10L, 100L), heartbeat());
 
         verify(executorService).persistHeartbeatIfNeeded(1L, 100L);
-        verify(dispatchService).renewActiveLeases(eq(100L), eq(1L), isNull());
+        verify(dispatchService).renewActiveLeases(eq(100L), eq(1L), eq(java.util.List.of()));
     }
 
     @Test
@@ -714,9 +962,10 @@ class InboundFrameRouterTest {
                 null, null, null, null, executorService);
         Session ws = mock(Session.class);
         ExecutorSession es = new ExecutorSession(1L, 10L, 100L, ws);
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(false);
+        when(presenceManager.publishHeartbeat(eq(1L), eq(10L), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.DELETED);
 
-        routerWithExecSvc.route(es, "{\"type\":\"HEARTBEAT\"}");
+        routerWithExecSvc.route(es, heartbeat());
 
         verify(executorService, never()).persistHeartbeatIfNeeded(anyLong(), anyLong());
         verify(ws).close();
@@ -724,20 +973,16 @@ class InboundFrameRouterTest {
 
     @Test
     void heartbeatAccepted_nullExecutorService_doesNotFail() {
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-
         assertDoesNotThrow(() ->
-                router.route(session(1L, 10L, 100L), "{\"type\":\"HEARTBEAT\"}"));
-        verify(dispatchService).renewActiveLeases(eq(100L), eq(1L), isNull());
+                router.route(session(1L, 10L, 100L), heartbeat()));
+        verify(dispatchService).renewActiveLeases(eq(100L), eq(1L), eq(java.util.List.of()));
     }
 
     @Test
     void acceptedHeartbeatRequestsProviderCatalogRefreshAfterNormalHeartbeatWork() {
         ProviderModelCatalogService catalogService = mock(ProviderModelCatalogService.class);
         router.setProviderModelCatalogService(catalogService);
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-
-        router.route(session(1L, 10L, 100L), "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[]}");
+        router.route(session(1L, 10L, 100L), heartbeat());
 
         InOrder order = inOrder(dispatchService, drainScheduler, catalogService);
         order.verify(dispatchService).renewActiveLeases(100L, 1L, java.util.List.of());
@@ -749,9 +994,10 @@ class InboundFrameRouterTest {
     void rejectedHeartbeatDoesNotRequestProviderCatalogRefresh() {
         ProviderModelCatalogService catalogService = mock(ProviderModelCatalogService.class);
         router.setProviderModelCatalogService(catalogService);
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(false);
+        when(presenceManager.publishHeartbeat(eq(1L), eq(10L), any(), any(), anyCollection(),
+                any(), any())).thenReturn(PresenceManager.SessionMutationResult.DELETED);
 
-        router.route(session(1L, 10L, 100L), "{\"type\":\"HEARTBEAT\"}");
+        router.route(session(1L, 10L, 100L), heartbeat());
 
         verifyNoInteractions(catalogService);
     }
@@ -760,10 +1006,8 @@ class InboundFrameRouterTest {
     void heartbeatWithActiveDispatchesDoesNotRequestProviderCatalogRefresh() {
         ProviderModelCatalogService catalogService = mock(ProviderModelCatalogService.class);
         router.setProviderModelCatalogService(catalogService);
-        when(presenceManager.heartbeat(1L, 10L, 1)).thenReturn(true);
-
         router.route(session(1L, 10L, 100L),
-                "{\"type\":\"HEARTBEAT\",\"runningDispatchIds\":[55]}");
+                heartbeat("runningDispatchIds", java.util.List.of(55L)));
 
         verifyNoInteractions(catalogService);
     }
@@ -780,5 +1024,128 @@ class InboundFrameRouterTest {
         verify(catalogService).complete(eq(100L), eq(1L), argThat(frame ->
                 "request-1".equals(frame.getString("requestId"))
                         && "qoder".equals(frame.getString("provider"))));
+    }
+
+    @Test
+    void taskResultDebugLogSegmentIsRecordedAfterResultProcessing() throws Exception {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
+                        + "\"debugLog\":{\"status\":\"UPLOADED\",\"channel\":\"DIRECT\",\"sizeBytes\":123,"
+                        + "\"sha256\":\"abc\",\"truncated\":false}}");
+
+        ArgumentCaptor<JSONObject> cap = ArgumentCaptor.forClass(JSONObject.class);
+        verify(debugLogService).recordTaskResultReport(eq(100L), eq(1L), eq(55L), cap.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("UPLOADED", cap.getValue().getString("status"));
+        org.junit.jupiter.api.Assertions.assertEquals("DIRECT", cap.getValue().getString("channel"));
+        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
+                && text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void debugLogRecordingFailureNeverBlocksResultAck() throws Exception {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        doThrow(new RuntimeException("db down")).when(debugLogService)
+                .recordTaskResultReport(anyLong(), anyLong(), anyLong(), any());
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
+                        + "\"debugLog\":{\"status\":\"UPLOADED\"}}");
+
+        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void debugLogRecordingFailureWarnsWithReasonToken() throws Exception {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        doThrow(new RuntimeException("db down")).when(debugLogService)
+                .recordTaskResultReport(anyLong(), anyLong(), anyLong(), any());
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
+
+        // Issue 2：catch-all warn 补 reason token，与服务侧措辞一致、供 grep 统一。
+        List<String> warns = captureRouterWarns(() -> router.route(
+                sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
+                        + "\"debugLog\":{\"status\":\"UPLOADED\"}}"));
+
+        assertTrue(warns.stream().anyMatch(m -> m.contains("debug log report ignored")
+                        && m.contains("dispatchId=55")
+                        && m.contains("reason=DEBUG_LOG_REPORT_IGNORED")),
+                "catch-all warn 必须带 reason token：" + warns);
+        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void taskResultWithoutDebugLogSegmentDoesNotTouchDebugService() {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        // owner 必须非空：否则 guard 在 owner==null 处短路，测不到「段缺失」这条路径
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"}");
+
+        verifyNoInteractions(debugLogService);
+    }
+
+    /** 捕获 InboundFrameRouter 在 action 执行期间产生的 WARN 级格式化消息。 */
+    private static List<String> captureRouterWarns(Runnable action) {
+        Logger logger = (Logger) LogManager.getLogger(InboundFrameRouter.class);
+        Level previousLevel = logger.getLevel();
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.WARN);
+        try {
+            action.run();
+        } finally {
+            logger.removeAppender(appender);
+            logger.setLevel(previousLevel);
+            appender.stop();
+        }
+        return appender.events.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .map(event -> event.getMessage().getFormattedMessage())
+                .toList();
+    }
+
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = new java.util.ArrayList<>();
+
+        private CapturingAppender() {
+            super("inbound-frame-router-test", null, PatternLayout.createDefaultLayout(), true,
+                    Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
     }
 }

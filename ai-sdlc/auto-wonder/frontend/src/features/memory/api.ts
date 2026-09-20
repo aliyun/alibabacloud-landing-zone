@@ -33,20 +33,29 @@ export interface UpdateMemoryParams {
 export interface ReviewMemoryParams {
   decision: 'ADOPT' | 'REJECT';
   editedContentMd?: string;
+  editedType?: Memory['type'];
   comment?: string;
   scope?: string;
   ownerRef?: number;
 }
 
-export async function listMemories(params: {
-  page?: number;
-  size?: number;
+export interface MemoryListFilters {
   scope?: string;
   ownerRef?: number;
   type?: string;
   status?: string;
+}
+
+export async function listMemories(params: MemoryListFilters & {
+  page?: number;
+  size?: number;
 }): Promise<Memory[]> {
   const resp = await apiClient.get<Memory[]>('/api/memories', { params });
+  return resp.data;
+}
+
+export async function countMemories(params: MemoryListFilters): Promise<number> {
+  const resp = await apiClient.get<number>('/api/memories/count', { params });
   return resp.data;
 }
 
@@ -58,15 +67,16 @@ export interface MemoryGroup {
   memories: Memory[];
 }
 
-export async function listMemoryGroups(params: {
+export async function listMemoryGroups(params: MemoryListFilters & {
   page?: number;
   size?: number;
-  scope?: string;
-  ownerRef?: number;
-  type?: string;
-  status?: string;
 }): Promise<MemoryGroup[]> {
   const resp = await apiClient.get<MemoryGroup[]>('/api/memories/grouped', { params });
+  return resp.data;
+}
+
+export async function countMemoryGroups(params: MemoryListFilters): Promise<number> {
+  const resp = await apiClient.get<number>('/api/memories/grouped/count', { params });
   return resp.data;
 }
 

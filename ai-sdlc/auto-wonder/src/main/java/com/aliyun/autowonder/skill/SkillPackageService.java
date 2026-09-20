@@ -27,6 +27,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
@@ -39,6 +40,7 @@ import com.alibaba.fastjson.JSON;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 @Service
 public class SkillPackageService {
@@ -98,6 +100,41 @@ public class SkillPackageService {
 
     public SkillPackageInspectVO inspect(String fileName, byte[] bytes) {
         return inspect(parse(fileName, bytes));
+    }
+
+    /** Directory contents use paths relative to the selected root, never server filesystem paths. */
+    public byte[] packDirectory(Map<String, String> files) {
+        if (files == null || files.isEmpty() || files.size() > MAX_ENTRIES) {
+            throw invalid();
+        }
+        ByteArrayOutputStreamWithLimit output = new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE);
+        long totalSize = 0;
+        try (ZipOutputStream zip = new ZipOutputStream(output, StandardCharsets.UTF_8)) {
+            // Stable order and timestamps preserve package hashes across retries.
+            for (String path : files.keySet().stream().sorted().toList()) {
+                validateEntryName(path);
+                if (path.endsWith("/") || Arrays.stream(path.split("/", -1)).anyMatch(part -> part.isEmpty() || part.equals("."))) {
+                    throw invalid();
+                }
+                String encoded = files.get(path);
+                if (encoded == null || encoded.length() > 4 * ((MAX_PACKAGE_SIZE - totalSize + 2) / 3)) {
+                    throw invalid();
+                }
+                byte[] bytes = Base64.getDecoder().decode(encoded);
+                totalSize += bytes.length;
+                if (totalSize > MAX_PACKAGE_SIZE) {
+                    throw invalid();
+                }
+                ZipEntry entry = new ZipEntry(path);
+                entry.setTime(0);
+                zip.putNextEntry(entry);
+                zip.write(bytes);
+                zip.closeEntry();
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            throw invalid();
+        }
+        return output.toByteArray();
     }
 
     public UploadedPackage uploadMcpPackage(String fileName, byte[] bytes, String type, String name,
@@ -1033,7 +1070,7 @@ public class SkillPackageService {
 
     private static void validateEntryName(String name) {
         if (name == null || name.isBlank() || name.startsWith("/") || name.startsWith("\\")
-                || name.contains("..") || name.contains("\\")) {
+                || name.contains("..") || name.contains("\\") || name.indexOf(':') >= 0 || name.indexOf('\0') >= 0) {
             throw invalid();
         }
     }
@@ -1079,6 +1116,12 @@ public class SkillPackageService {
 
         private ByteArrayOutputStreamWithLimit(long limit) {
             this.limit = limit;
+        }
+
+        @Override
+        public synchronized void write(int b) {
+            if (count >= limit) throw invalid();
+            super.write(b);
         }
 
         @Override

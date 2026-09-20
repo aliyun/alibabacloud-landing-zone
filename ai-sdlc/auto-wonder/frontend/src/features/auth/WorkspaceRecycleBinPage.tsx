@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
 import type { RecycleBinItem } from '@/shared/types/common';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
+import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
 import { useRestoreWorkspace, useRecycleBin } from './workspaceLifecycleApi';
 import './workspaceLifecycle.css';
 
@@ -108,9 +109,12 @@ export function WorkspaceRecycleBinPage() {
               仅展示你有权管理（原 Owner、原管理员或平台管理员）的已删除工作空间
             </Text>
           </div>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workspaces')}>
-            返回工作空间列表
-          </Button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <HelpCenterLink />
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workspaces')}>
+              返回工作空间列表
+            </Button>
+          </div>
         </div>
 
         <div style={toolbarStyle}>

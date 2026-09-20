@@ -229,6 +229,7 @@ public class TaskPackager {
             if (ctx.getCommentsMd() != null && !ctx.getCommentsMd().isBlank()) {
                 putEntry(zos, "comments.md", ctx.getCommentsMd(), fileDigests);
             }
+            String commentIndex = writeCommentIndex(zos, ctx.getComments(), fileDigests);
             if (ctx.getInteractionContextMd() != null && !ctx.getInteractionContextMd().isBlank()) {
                 putEntry(zos, "interaction-context.md", ctx.getInteractionContextMd(), fileDigests);
             }
@@ -296,11 +297,49 @@ public class TaskPackager {
             manifest.put("fileDigests", fileDigests);
             manifest.put("teammates", teammatesManifest);
             manifest.put("requirementDocuments", requirementDocumentsManifest);
+            if (commentIndex != null) {
+                manifest.put("commentIndex", commentIndex);
+            }
             putEntry(zos, "manifest.json", JSON.toJSONString(manifest), fileDigests);
         } catch (Exception e) {
             throw new BizException(ErrorCode.PACKAGE_BUILD_FAILED, e);
         }
         return baos.toByteArray();
+    }
+
+    /** Additive v1 extension: old runtimes keep reading comments.md; new readers can
+     * compare IDs + hashes and fetch individual comments without replaying the whole history.
+     * Sizes are UTF-8 bytes, deliberately not presented as model token usage.
+     */
+    private String writeCommentIndex(ZipOutputStream zos, List<TaskComment> comments,
+            Map<String, String> digests) throws Exception {
+        if (comments == null || comments.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> entries = new ArrayList<>();
+        Set<Long> ids = new HashSet<>();
+        for (TaskComment comment : comments) {
+            if (comment == null || comment.id() <= 0 || !ids.add(comment.id())) {
+                throw new IllegalArgumentException("comment snapshot must have a unique positive id");
+            }
+            String path = "context/comments/" + comment.id() + ".md";
+            byte[] content = nz(comment.contentMd()).getBytes(StandardCharsets.UTF_8);
+            putEntryBytes(zos, path, content, digests);
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("id", String.valueOf(comment.id()));
+            entry.put("authorType", nz(comment.authorType()));
+            entry.put("authorRef", str(comment.authorRef()));
+            entry.put("path", path);
+            entry.put("sha256", digests.get(path));
+            entry.put("sizeBytes", content.length);
+            entries.add(entry);
+        }
+        String path = "context/comments-index.json";
+        Map<String, Object> index = new LinkedHashMap<>();
+        index.put("schemaVersion", "autowonder.commentIndex.v1");
+        index.put("comments", entries);
+        putEntry(zos, path, JSON.toJSONString(index), digests);
+        return path;
     }
 
     private Map<String, Object> writeCapabilities(ZipOutputStream zos, PackageContext ctx,
@@ -616,12 +655,17 @@ public class TaskPackager {
         if (raw == null || raw.isBlank() || raw.startsWith("/") || raw.startsWith("\\") || raw.contains("\\")) {
             throw new IllegalArgumentException("unsafe capability archive path");
         }
-        java.nio.file.Path normalized = java.nio.file.Path.of(raw).normalize();
-        String path = normalized.toString().replace('\\', '/');
-        if (path.equals(".") || path.equals("..") || path.startsWith("../") || !path.equals(raw)) {
+        // ZIP names are portable logical paths, not paths on the server's filesystem.
+        // Path.of encodes through sun.jnu.encoding and rejects Unicode under ASCII locales.
+        if (raw.indexOf('\0') >= 0 || raw.matches("^[A-Za-z]:.*")) {
             throw new IllegalArgumentException("unsafe capability archive path " + raw);
         }
-        return path;
+        for (String segment : raw.split("/", -1)) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                throw new IllegalArgumentException("unsafe capability archive path " + raw);
+            }
+        }
+        return raw;
     }
 
     private static String requiredCapabilityName(Map<String, Object> capability) {

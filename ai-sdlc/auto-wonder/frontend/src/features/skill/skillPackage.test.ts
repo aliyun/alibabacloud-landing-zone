@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import JSZip from 'jszip';
 import {
   buildPackageTree,
-  buildSkillZip,
+  buildDirectoryZip,
   formatBytes,
-  parseSkillFrontmatter,
-  readSkillDirectory,
 } from './skillPackage';
 import type { SkillPackageEntryKind, SkillPackageFile } from './api';
 
@@ -26,43 +25,30 @@ function entry(path: string, kind: SkillPackageEntryKind = 'TEXT', size = 10): S
 }
 
 describe('skillPackage', () => {
-  it('parses name and block description from SKILL.md frontmatter', () => {
-    const meta = parseSkillFrontmatter(`---
-name: custom-skill
-description: |
-  First line.
-  Second line.
----
-# Custom Skill
-`);
-
-    expect(meta).toEqual({
-      name: 'custom-skill',
-      description: 'First line.\nSecond line.',
-    });
-  });
-
-  it('reads selected directory metadata from root SKILL.md', async () => {
-    const result = await readSkillDirectory([
+  it('packs root-relative files, preserves hidden files, and omits ignored files and directory entries', async () => {
+    const result = await buildDirectoryZip([
       file('custom-skill/SKILL.md', '---\nname: custom-skill\ndescription: Demo skill\n---\n'),
+      file('custom-skill/.config/settings.json', '{}'),
       file('custom-skill/scripts/run.sh', 'echo run'),
+      file('custom-skill/.git/config', 'ignored'),
+      file('custom-skill/node_modules/module/index.js', 'ignored'),
+      file('custom-skill/.DS_Store', 'ignored'),
     ]);
-
-    expect(result.metadata.name).toBe('custom-skill');
-    expect(result.metadata.description).toBe('Demo skill');
-    expect(result.rootName).toBe('custom-skill');
+    expect(result.name).toBe('custom-skill.zip');
+    expect(result.type).toBe('application/zip');
+    const bytes = await result.arrayBuffer();
+    const zip = await JSZip.loadAsync(new Uint8Array(bytes));
+    expect(Object.keys(zip.files)).toEqual(['SKILL.md', '.config/settings.json', 'scripts/run.sh']);
+    expect(await zip.file('scripts/run.sh')!.async('string')).toBe('echo run');
   });
 
-  it('builds a zip file for upload', async () => {
-    const result = await readSkillDirectory([
-      file('custom-skill/SKILL.md', '---\nname: custom-skill\ndescription: Demo skill\n---\n'),
-    ]);
-
-    const zip = await buildSkillZip(result);
-
-    expect(zip.name).toBe('custom-skill.zip');
-    expect(zip.size).toBeGreaterThan(0);
-    expect(zip.type).toBe('application/zip');
+  it('rejects empty, oversized, and mixed directory selections', async () => {
+    await expect(buildDirectoryZip([])).rejects.toThrow();
+    await expect(buildDirectoryZip(Array.from({ length: 501 }, (_, i) => file(`skill/${i}`, '')))).rejects.toThrow();
+    const oversized = file('skill/large', '');
+    Object.defineProperty(oversized, 'size', { value: 100 * 1024 * 1024 + 1 });
+    await expect(buildDirectoryZip([oversized])).rejects.toThrow();
+    await expect(buildDirectoryZip([file('one/a', ''), file('two/b', '')])).rejects.toThrow();
   });
 });
 

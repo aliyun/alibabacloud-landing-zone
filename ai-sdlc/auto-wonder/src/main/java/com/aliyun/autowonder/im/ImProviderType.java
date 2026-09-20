@@ -6,7 +6,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import java.util.Locale;
 
 public enum ImProviderType {
-    DINGTALK("DINGTALK");
+    DINGTALK("DINGTALK"), FEISHU("FEISHU");
 
     private final String key;
 
@@ -22,6 +22,9 @@ public enum ImProviderType {
         String normalized = provider == null ? "" : provider.trim().toUpperCase(Locale.ROOT);
         if (normalized.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "IM provider 不能为空");
+        }
+        if (!normalized.equals("DINGTALK") && !normalized.equals("FEISHU")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "不支持的 IM provider");
         }
         return normalized;
     }

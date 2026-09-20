@@ -14,6 +14,7 @@ import com.aliyun.autowonder.workspace.dto.CurrentMembershipVO;
 import com.aliyun.autowonder.workspace.dto.MemberVO;
 import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
+import com.aliyun.autowonder.agent.PlatformAgentSeeder;
 import com.aliyun.autowonder.statemachine.StatusTemplateSeeder;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
@@ -32,6 +33,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,6 +54,7 @@ class WorkspaceServiceTest {
     private WorkspaceDao workspaceDao;
     private WorkspaceMemberDao workspaceMemberDao;
     private StatusTemplateSeeder statusTemplateSeeder;
+    private PlatformAgentSeeder platformAgentSeeder;
     private JwtService jwtService;
     private UserDao userDao;
     private AuditLogService auditLogService;
@@ -65,6 +68,7 @@ class WorkspaceServiceTest {
         workspaceDao = mock(WorkspaceDao.class);
         workspaceMemberDao = mock(WorkspaceMemberDao.class);
         statusTemplateSeeder = mock(StatusTemplateSeeder.class);
+        platformAgentSeeder = mock(PlatformAgentSeeder.class);
         userDao = mock(UserDao.class);
         auditLogService = mock(AuditLogService.class);
         systemAdminService = mock(SystemAdminService.class);
@@ -76,8 +80,8 @@ class WorkspaceServiceTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         jwtService = new JwtService(props);
         service = new WorkspaceService(workspaceDao, workspaceMemberDao, statusTemplateSeeder,
-                jwtService, userDao, auditLogService, systemAdminService, deletionLinkage,
-                eventPublisher);
+                platformAgentSeeder, jwtService, userDao, auditLogService, systemAdminService,
+                deletionLinkage, eventPublisher);
     }
 
     @AfterEach
@@ -106,6 +110,36 @@ class WorkspaceServiceTest {
                         && "[]".equals(member.getIdentityTags())
                         && Long.valueOf(7L).equals(member.getCreatorId())));
         verify(statusTemplateSeeder).seed(10L, 7L);
+    }
+
+    @Test
+    void createSeedsPlatformAgentAfterStatusTemplates() {
+        doAnswer(invocation -> {
+            ((WorkspaceDO) invocation.getArgument(0)).setId(55L);
+            return null;
+        }).when(workspaceDao).insert(any(WorkspaceDO.class));
+        CreateWorkspaceRequest request = new CreateWorkspaceRequest();
+        request.setName("新工区");
+
+        service.create(request, 7L);
+
+        InOrder inOrder = inOrder(statusTemplateSeeder, platformAgentSeeder);
+        inOrder.verify(statusTemplateSeeder).seed(55L, 7L);
+        inOrder.verify(platformAgentSeeder).seed(55L, 7L);
+    }
+
+    @Test
+    void createPropagatesPlatformSeedFailure() {
+        doAnswer(invocation -> {
+            ((WorkspaceDO) invocation.getArgument(0)).setId(55L);
+            return null;
+        }).when(workspaceDao).insert(any(WorkspaceDO.class));
+        doThrow(new IllegalStateException("platform agent template missing"))
+                .when(platformAgentSeeder).seed(55L, 7L);
+        CreateWorkspaceRequest request = new CreateWorkspaceRequest();
+        request.setName("新工区");
+
+        assertThrows(IllegalStateException.class, () -> service.create(request, 7L));
     }
 
     @Test
@@ -158,6 +192,7 @@ class WorkspaceServiceTest {
 
     @Test
     void switchWorkspaceReturnsTokenAndExactAccessLevelAndUpdatesContext() {
+        when(workspaceDao.countUsable(100L)).thenReturn(1L);
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L))
                 .thenReturn(activeMember(100L, 7L, WorkspaceAccessLevel.READ_WRITE, "[]"));
         AutoWonderContext.get().setCurrentWorkspaceId(200L);
@@ -174,7 +209,33 @@ class WorkspaceServiceTest {
     }
 
     @Test
+    void switchWorkspaceAllowsAPlatformAdminWhoIsNotAMember() {
+        when(workspaceDao.countUsable(100L)).thenReturn(1L);
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+        AutoWonderContext.get().setCurrentWorkspaceId(200L);
+
+        SwitchWorkspaceResponse response = service.switchWorkspace(100L, 7L);
+
+        TokenPayload payload = jwtService.parse(response.getAccessToken());
+        assertEquals(7L, payload.getUserId());
+        assertEquals(100L, payload.getCurrentWorkspaceId());
+        assertEquals(WorkspaceAccessLevel.ADMIN, response.getAccessLevel());
+        assertEquals(100L, AutoWonderContext.get().getCurrentWorkspaceId());
+        assertEquals(WorkspaceAccessLevel.ADMIN, AutoWonderContext.get().getWorkspaceAccessLevel());
+    }
+
+    @Test
+    void switchWorkspaceRejectsARevokedPlatformAdminWhoIsNotAMember() {
+        when(workspaceDao.countUsable(100L)).thenReturn(1L);
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(false);
+
+        assertCode("11001", () -> service.switchWorkspace(100L, 7L));
+    }
+
+    @Test
     void switchWorkspaceRejectsMissingInactiveDeletedAndInvalidLevelMemberships() {
+        when(workspaceDao.countUsable(100L)).thenReturn(1L);
+
         assertCode("11001", () -> service.switchWorkspace(100L, 7L));
 
         WorkspaceMemberDO inactive = activeMember(100L, 7L, WorkspaceAccessLevel.READ_ONLY, "[]");
@@ -191,6 +252,21 @@ class WorkspaceServiceTest {
         invalid.setAccessLevel("admin");
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(invalid);
         assertCode("12007", () -> service.switchWorkspace(100L, 7L));
+    }
+
+    @Test
+    void switchWorkspaceRejectsADeletedOrDisabledWorkspaceEvenForAPlatformAdmin() {
+        when(workspaceDao.countUsable(100L)).thenReturn(0L);
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+        AutoWonderContext.get().setCurrentWorkspaceId(200L);
+
+        // AuthFilter applies the same countUsable predicate on every request, so a token issued
+        // here would die on arrival; the switch must fail up front with the same message.
+        assertCode("11005", () -> service.switchWorkspace(100L, 7L));
+
+        verify(workspaceMemberDao, never()).findByWorkspaceAndUser(100L, 7L);
+        assertEquals(200L, AutoWonderContext.get().getCurrentWorkspaceId());
+        assertNull(AutoWonderContext.get().getWorkspaceAccessLevel());
     }
 
     @Test
@@ -265,6 +341,46 @@ class WorkspaceServiceTest {
         assertEquals(WorkspaceAccessLevel.ADMIN, result.getAccessLevel());
         assertEquals(List.of("owner"), result.getIdentityTags());
         verify(workspaceMemberDao, never()).findByWorkspaceAndUser(100L, 7L);
+    }
+
+    @Test
+    void currentMembershipSynthesizesAnAdminMembershipForAPlatformAdminWhoNeverJoined() {
+        // ownerId belongs to someone else: this admin never joined, so the synthetic membership
+        // must not paint it as the workspace Owner.
+        when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 99L));
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+        UserDO user = activeUser(7L);
+        user.setUsername("platform-admin");
+        when(userDao.findById(7L)).thenReturn(user);
+
+        CurrentMembershipVO result = service.currentMembership(100L, 7L);
+
+        // AuthFilter already granted ADMIN without a member row; the synthetic membership keeps
+        // the frontend flags consistent instead of reporting "not a member".
+        assertEquals(7L, result.getUserId());
+        assertEquals("platform-admin", result.getUsername());
+        assertEquals(WorkspaceAccessLevel.ADMIN, result.getAccessLevel());
+        assertFalse(result.isOwner());
+        assertNull(result.getJoinedAt());
+        assertTrue(result.getIdentityTags().isEmpty());
+    }
+
+    @Test
+    void currentMembershipSynthesizesAdminForAPlatformAdminWhoseMemberRowIsDeactivated() {
+        WorkspaceMemberDO inactive = activeMember(100L, 7L, WorkspaceAccessLevel.READ_ONLY, "[]");
+        inactive.setStatus(1);
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(inactive);
+        when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 99L));
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+        when(userDao.findById(7L)).thenReturn(activeUser(7L));
+
+        // AuthFilter grants ADMIN here too — an inactive row is not a membership — so the view
+        // must match instead of reporting 11001. Only an active row caps the admin's level.
+        CurrentMembershipVO result = service.currentMembership(100L, 7L);
+
+        assertEquals(WorkspaceAccessLevel.ADMIN, result.getAccessLevel());
+        assertFalse(result.isOwner());
+        assertNull(result.getJoinedAt());
     }
 
     @Test
@@ -579,6 +695,15 @@ class WorkspaceServiceTest {
                 .thenReturn(activeMember(10L, 7L, WorkspaceAccessLevel.READ_WRITE, null));
 
         assertEquals(WorkspaceAccessLevel.READ_WRITE, service.activeAccessLevel(10L, 7L));
+    }
+
+    @Test
+    void activeAccessLevelGrantsAdminToAPlatformAdminWithoutAMembership() {
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+
+        // Shared by MCP personal tokens: the same user gets the same cross-workspace rule on the
+        // page and over MCP without holding a member row.
+        assertEquals(WorkspaceAccessLevel.ADMIN, service.activeAccessLevel(10L, 7L));
     }
 
     @Test

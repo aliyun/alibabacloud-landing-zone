@@ -27,7 +27,7 @@ class PlatformBrandingControllerTest {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         PlatformBrandingVO vo = branding("AutoWonder");
-        when(systemAdminService.isFirstActiveUser(10000L)).thenReturn(true);
+        when(systemAdminService.isSystemAdmin(10000L)).thenReturn(true);
         when(brandingService.adminConfig(true)).thenReturn(vo);
         AutoWonderContext.get().setUserId(10000L);
         PlatformBrandingController controller =
@@ -35,11 +35,11 @@ class PlatformBrandingControllerTest {
 
         assertEquals(vo, controller.adminConfig().getData());
 
-        verify(systemAdminService).isFirstActiveUser(10000L);
+        verify(systemAdminService).isSystemAdmin(10000L);
     }
 
     @Test
-    void updateRequiresFirstActiveUserInsteadOfWorkspaceAdmin() {
+    void updateRequiresPlatformAdminInsteadOfWorkspaceAdmin() {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         PlatformBrandingVO vo = branding("AutoWonder");
@@ -51,11 +51,11 @@ class PlatformBrandingControllerTest {
 
         assertEquals(vo, controller.update(request).getData());
 
-        verify(systemAdminService).requireFirstActiveUser(10000L, "更新平台品牌配置");
+        verify(systemAdminService).requireSystemAdmin(10000L, "修改平台配置");
     }
 
     @Test
-    void uploadLogoRequiresFirstActiveUserInsteadOfWorkspaceAdmin() {
+    void uploadLogoRequiresPlatformAdminInsteadOfWorkspaceAdmin() {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);
         MockMultipartFile file = new MockMultipartFile(
@@ -66,7 +66,7 @@ class PlatformBrandingControllerTest {
 
         controller.uploadLogo(file);
 
-        verify(systemAdminService).requireFirstActiveUser(10000L, "上传平台品牌标志");
+        verify(systemAdminService).requireSystemAdmin(10000L, "上传平台 Logo");
     }
 
     @Test

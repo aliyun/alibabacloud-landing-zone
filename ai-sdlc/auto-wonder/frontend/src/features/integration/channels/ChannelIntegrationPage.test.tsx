@@ -18,17 +18,17 @@ function renderPage() {
 const emptyResult = { success: true, code: '0', message: '', traceId: null, data: [] };
 
 describe('ChannelIntegrationPage', () => {
-  it('renders DingTalk tab active and Feishu/Slack as disabled placeholders', async () => {
+  it.each(['DINGTALK', 'FEISHU'])('only exposes the platform-selected %s channel, even when disabled', async (provider) => {
     server.use(
+      http.get('/api/platform/im-channels', () => HttpResponse.json({ ...emptyResult, data: [{ provider, selected: true, enabled: false }] })),
       http.get('/api/integrations/dingtalk/bindings', () => HttpResponse.json(emptyResult)),
+      http.get('/api/integrations/feishu/bindings', () => HttpResponse.json(emptyResult)),
       http.get('/api/agents', () => HttpResponse.json(emptyResult)),
     );
     renderPage();
     expect(await screen.findByText('消息渠道集成')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '钉钉' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '飞书（待接入）' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Slack（待接入）' })).toBeInTheDocument();
-    // DingTalk panel is active by default → its new-binding button shows
-    expect(await screen.findByText('新建绑定')).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+    expect(screen.getByRole('tab', { name: provider === 'FEISHU' ? '飞书' : '钉钉' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: provider === 'FEISHU' ? '钉钉' : '飞书' })).not.toBeInTheDocument();
   });
 });

@@ -391,7 +391,7 @@ public class ProviderModelCatalogService implements DisposableBean {
         return normalized;
     }
 
-    private static String providerForClientKind(String clientKind) {
+    public static String providerForClientKind(String clientKind) {
         if ("QODER_CLI".equals(clientKind)) {
             return QODER;
         }

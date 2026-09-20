@@ -114,13 +114,20 @@ public class ScheduledTaskRunCommentService {
     @RequiresScheduledTaskCapability(entry = "http")
     @Transactional
     public CommentVO addHumanComment(long workspaceId, long runId, long userId, String contentMd) {
-        return addHumanComment(workspaceId, runId, userId, contentMd, List.of());
+        return addHumanComment(workspaceId, runId, userId, contentMd, List.of(), List.of());
     }
 
     @RequiresScheduledTaskCapability(entry = "http")
     @Transactional
     public CommentVO addHumanComment(long workspaceId, long runId, long userId, String contentMd,
                                      Collection<Long> explicitTargetHumanIds) {
+        return addHumanComment(workspaceId, runId, userId, contentMd, List.of(), explicitTargetHumanIds);
+    }
+
+    @RequiresScheduledTaskCapability(entry = "http")
+    @Transactional
+    public CommentVO addHumanComment(long workspaceId, long runId, long userId, String contentMd,
+                                     Collection<Long> explicitTargetAgentIds, Collection<Long> explicitTargetHumanIds) {
         requireRun(workspaceId, runId);
         if (contentMd == null || contentMd.isBlank()) {
             throw new BizException(ErrorCode.PARAM_INVALID);
@@ -133,7 +140,7 @@ public class ScheduledTaskRunCommentService {
         comment.setAuthorRef(userId);
         comment.setContentMd(contentMd);
         commentDao.insert(comment);
-        createMentionsAndGuidance(workspaceId, runId, comment, userId, List.of(), explicitTargetHumanIds);
+        createMentionsAndGuidance(workspaceId, runId, comment, userId, explicitTargetAgentIds, explicitTargetHumanIds);
         publish(runId, comment);
         if (notificationService != null) notificationService.comment(requireRun(workspaceId, runId));
         return toVO(comment);
@@ -316,15 +323,7 @@ public class ScheduledTaskRunCommentService {
     }
 
     private boolean isFrozenParticipant(long workspaceId, long runId, long agentId) {
-        ScheduledTaskRunDO run = runDao.findById(workspaceId, runId);
-        try {
-            var root = com.alibaba.fastjson.JSON.parseObject(run == null ? null : run.getExecutionSnapshotJson());
-            var contexts = root == null ? null : root.getJSONArray("agentContexts");
-            for (int i = 0; contexts != null && i < contexts.size(); i++) {
-                if (contexts.getJSONObject(i) != null && contexts.getJSONObject(i).getLongValue("agentId") == agentId) return true;
-            }
-        } catch (RuntimeException ignored) { }
-        return false;
+        return ScheduledTaskRunFrozenSnapshot.isFrozenParticipant(runDao.findById(workspaceId, runId), agentId);
     }
 
     private void publish(long runId, WorkitemCommentDO comment) {

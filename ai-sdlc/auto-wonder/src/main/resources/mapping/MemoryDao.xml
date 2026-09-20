@@ -32,7 +32,10 @@
             <if test="scope != null">AND scope = #{scope}</if>
             <if test="ownerRef != null">AND owner_ref = #{ownerRef}</if>
             <if test="type != null">AND type = #{type}</if>
-            <if test="status != null">AND status = #{status}</if>
+            <choose>
+                <when test="status != null">AND status = #{status}</when>
+                <otherwise>AND status &lt;&gt; 'REJECTED'</otherwise>
+            </choose>
             <if test="visibleAgentRef != null">
                 AND (scope &lt;&gt; 'AGENT' OR owner_ref = #{visibleAgentRef})
             </if>
@@ -42,6 +45,19 @@
             </if>
         </where>
         ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <select id="countList" resultType="int">
+        SELECT COUNT(*) FROM memory
+        <where>
+            tenant_id = #{tenantId} AND is_deleted = 0
+            <if test="scope != null">AND scope = #{scope}</if>
+            <if test="ownerRef != null">AND owner_ref = #{ownerRef}</if>
+            <if test="type != null">AND type = #{type}</if>
+            <choose>
+                <when test="status != null">AND status = #{status}</when>
+                <otherwise>AND status &lt;&gt; 'REJECTED'</otherwise>
+            </choose>
+        </where>
     </select>
     <update id="update">
         UPDATE memory SET title = #{title}, content_md = #{contentMd}, type = #{type},
@@ -70,17 +86,39 @@
             <if test="scope != null">AND scope = #{scope}</if>
             <if test="ownerRef != null">AND owner_ref = #{ownerRef}</if>
             <if test="type != null">AND type = #{type}</if>
-            <if test="status != null">AND status = #{status}</if>
+            <choose>
+                <when test="status != null">AND status = #{status}</when>
+                <otherwise>AND status &lt;&gt; 'REJECTED'</otherwise>
+            </choose>
         </where>
         GROUP BY scope, owner_ref
         ORDER BY latest_id DESC
         LIMIT #{offset}, #{limit}
     </select>
+    <select id="countGroupSummaries" resultType="int">
+        SELECT COUNT(*) FROM (
+            SELECT scope, owner_ref FROM memory
+            <where>
+                tenant_id = #{tenantId} AND is_deleted = 0
+                <if test="scope != null">AND scope = #{scope}</if>
+                <if test="ownerRef != null">AND owner_ref = #{ownerRef}</if>
+                <if test="type != null">AND type = #{type}</if>
+                <choose>
+                    <when test="status != null">AND status = #{status}</when>
+                    <otherwise>AND status &lt;&gt; 'REJECTED'</otherwise>
+                </choose>
+            </where>
+            GROUP BY scope, owner_ref
+        ) grouped_memory
+    </select>
     <select id="listByGroups" resultType="com.aliyun.autowonder.memory.MemoryDO">
         SELECT * FROM memory
         WHERE tenant_id = #{tenantId} AND is_deleted = 0
         <if test="type != null">AND type = #{type}</if>
-        <if test="status != null">AND status = #{status}</if>
+        <choose>
+            <when test="status != null">AND status = #{status}</when>
+            <otherwise>AND status &lt;&gt; 'REJECTED'</otherwise>
+        </choose>
         AND
         <foreach collection="groups" item="g" open="(" close=")" separator=" OR ">
             (scope = #{g.scope} AND

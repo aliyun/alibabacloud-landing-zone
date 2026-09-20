@@ -52,6 +52,17 @@ class DispatchMcpTokenServiceTest {
     }
 
     @Test
+    void cancellationIntentRevokesPreviouslyIssuedTokenWhileStopping() {
+        DispatchDO d = dispatch(DispatchStatus.RUNNING);
+        String token = service.issue(d);
+        when(dispatchDao.findById(DISPATCH_ID)).thenReturn(d);
+        var recovery = mock(com.aliyun.autowonder.dispatch.DispatchRecoveryService.class);
+        when(recovery.fenced(d)).thenReturn(true);
+        service.setRecovery(recovery);
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> service.authenticate(token));
+    }
+
+    @Test
     void issuedTokenPreservesDispatchProtocolClaimsAndTwentyFourHourTtl() {
         DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
 

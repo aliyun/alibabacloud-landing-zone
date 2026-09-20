@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$Manifest,[Parameter(Mandatory)][string]$Fingerprint,[switch]$Automatic)
 $ErrorActionPreference='Stop'
-. (Join-Path $PSScriptRoot '..\..\deploying-autowonder-on-alibaba-cloud\scripts\windows\lib.ps1')
+. (Join-Path $PSScriptRoot 'windows\lib.ps1')
 $data=Get-ManifestData $Manifest
 Assert-VerifiedUpgradeTargets $data
 $upgrade = $data['upgrade']

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.conversation.ConversationShareDao">
+
+    <resultMap id="BaseResultMap" type="com.aliyun.autowonder.conversation.ConversationShareDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="conversation_id" property="conversationId"/>
+        <result column="grantee_user_id" property="granteeUserId"/>
+        <result column="permission" property="permission"/>
+        <result column="created_by" property="createdBy"/>
+        <result column="revoked_at" property="revokedAt"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, tenant_id, conversation_id, grantee_user_id, permission, created_by, revoked_at, gmt_create
+    </sql>
+
+    <!-- uk_conversation_grantee 让「撤销后再分享」复用同一行，避免唯一键冲突 -->
+    <insert id="upsertReadShare">
+        INSERT INTO conversation_share
+        (tenant_id, conversation_id, grantee_user_id, permission, created_by, revoked_at)
+        VALUES
+        (#{tenantId}, #{conversationId}, #{granteeUserId}, 'READ', #{createdBy}, NULL)
+        ON DUPLICATE KEY UPDATE
+            permission = 'READ',
+            created_by = #{createdBy},
+            revoked_at = NULL
+    </insert>
+
+    <select id="findActive" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM conversation_share
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND grantee_user_id = #{granteeUserId}
+          AND revoked_at IS NULL
+    </select>
+
+    <select id="listActive" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM conversation_share
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND revoked_at IS NULL
+        ORDER BY grantee_user_id ASC, id ASC
+    </select>
+
+    <update id="revoke">
+        UPDATE conversation_share
+        SET revoked_at = #{revokedAt}
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND grantee_user_id = #{granteeUserId}
+          AND created_by = #{ownerUserId}
+          AND revoked_at IS NULL
+    </update>
+
+</mapper>

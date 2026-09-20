@@ -379,9 +379,34 @@ echo "WS_DUP3_REJECT_MESSAGE=$(json_get "$OUT/ws_dup3.json" message)"
 # --- 9. agent + work item + clarification conversation (new elicitation) -----
 api agent_create POST /api/agents "$CFG1" \
   '{"name":"AW E2E Agent","roleName":"E2E Probe","roleCode":"AW_E2E_PROBE","businessBackground":"created by authchain.sh","responsibilities":"exercise the clarification conversation endpoints"}'
-check agent_create 200 any "agent needed as the conversation counterparty"
+check agent_create 200 true "agent needed as the conversation counterparty"
 AGENT_ID="$(json_get "$OUT/agent_create.json" data.id)"
 echo "AGENT_ID=$AGENT_ID"
+
+# Formal conversations use an approved online version, not an editing draft.
+# CFG1 belongs to this disposable workspace's owner, who may approve their own
+# version. Exercise the public lifecycle APIs; never manufacture database state.
+if [[ "$AGENT_ID" =~ ^[1-9][0-9]*$ ]]; then
+  api agent_submit POST "/api/agents/$AGENT_ID/submit" "$CFG1" '{}'
+  check agent_submit 200 true "submit conversation counterparty for review"
+  api agent_approve POST "/api/agents/$AGENT_ID/approve" "$CFG1" \
+    '{"comment":"Approve disposable E2E conversation counterparty"}'
+  check agent_approve 200 true "workspace owner approves the agent version"
+  api agent_online GET "/api/agents/$AGENT_ID" "$CFG1"
+  check agent_online 200 true "read back the published conversation counterparty"
+  AGENT_STATUS="$(json_get "$OUT/agent_online.json" data.status)"
+  ONLINE_VERSION_ID="$(json_get "$OUT/agent_online.json" data.onlineVersionId)"
+else
+  AGENT_STATUS=""
+  ONLINE_VERSION_ID=""
+fi
+if [[ "$AGENT_STATUS" == ONLINE && "$ONLINE_VERSION_ID" =~ ^[1-9][0-9]*$ ]]; then
+  PASS=$((PASS+1))
+  echo "CHECK|PASS|agent_online_version|status=ONLINE|onlineVersionId=$ONLINE_VERSION_ID"
+else
+  FAIL=$((FAIL+1))
+  echo "CHECK|FAIL|agent_online_version|expected ONLINE and a positive onlineVersionId"
+fi
 
 api wi_create POST /api/workitems "$CFG1" \
   '{"workType":"TASK","title":"AW E2E smoke work item","contentMd":"created by e2e-tests/authchain.sh to reach the new clarification-conversation endpoints","priority":2}'

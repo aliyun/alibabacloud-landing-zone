@@ -6,6 +6,8 @@ import com.aliyun.autowonder.agent.AgentVersionDO;
 import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolFeatures;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,9 +34,11 @@ class AgentConversationServiceTest {
     private final AgentDao agentDao = mock(AgentDao.class);
     private final AgentVersionDao agentVersionDao = mock(AgentVersionDao.class);
     private final ConversationChannelSinkRegistry sinkRegistry = mock(ConversationChannelSinkRegistry.class);
+    private final ConversationExecutorRouter executorRouter = mock(ConversationExecutorRouter.class);
 
     private final AgentConversationService svc = new AgentConversationService(
-            convDao, turnDao, transport, executorSelector, agentDao, agentVersionDao, sinkRegistry);
+            convDao, turnDao, transport, agentDao, agentVersionDao, sinkRegistry,
+            executorRouter);
 
     @BeforeEach
     void setUp() {
@@ -46,6 +50,9 @@ class AgentConversationServiceTest {
         when(turnDao.claimStaleDispatchAttemptIfProcessing(anyLong(), anyLong(), anyLong(), any()))
                 .thenReturn(1);
         when(convDao.updateAgentVersion(anyLong(), anyLong(), anyLong())).thenReturn(1);
+        when(executorRouter.select(anyLong(), anyLong(), anyLong(), nullable(Long.class)))
+                .thenAnswer(invocation -> executorSelector.select(invocation.getArgument(1),
+                        invocation.getArgument(3)));
         AgentDO agent = new AgentDO();
         agent.setId(3L);
         agent.setOnlineVersionId(50L);
@@ -198,6 +205,7 @@ class AgentConversationServiceTest {
         commitTransactionSynchronizations();
 
         verify(executorSelector).select(eq(3L), eq(9L));
+        verify(executorRouter).select(1L, 3L, 50L, 9L);
         verify(turnDao).insert(argThat(t -> "IN".equals(t.getDirection())
                 && "more".equals(t.getContent())
                 && "PROCESSING".equals(t.getStatus())));
@@ -206,6 +214,26 @@ class AgentConversationServiceTest {
         verify(convDao, never()).updateExecutor(anyLong(), anyLong(), anyLong());
         verify(transport).send(any(), eq(90L), eq("more"), argThat(prompt ->
                 prompt != null && prompt.contains("默认数字人")), any());
+    }
+
+    @Test
+    void submitTurnCanFallbackFromPreferredExecutorThroughFeatureAwareRouter() {
+        when(turnDao.findByExternalMsgId(1L, "msg-fallback")).thenReturn(null);
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findByKey(1L, "DINGTALK", "conv-x", 3L)).thenReturn(conv);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(10L);
+        when(turnDao.insert(any())).thenAnswer(inv -> {
+            AgentConversationTurnDO turn = inv.getArgument(0);
+            turn.setId(92L);
+            return 1;
+        });
+
+        svc.submitTurn(1L, 3L, "DINGTALK", "conv-x", "more", "msg-fallback");
+        commitTransactionSynchronizations();
+
+        verify(convDao).updateExecutor(1L, 77L, 10L);
+        assertEquals(10L, conv.getExecutorId());
+        verify(transport).send(eq(conv), eq(92L), eq("more"), any(), any());
     }
 
     @Test
@@ -639,6 +667,7 @@ class AgentConversationServiceTest {
         next.setContent("next");
         next.setStatus("QUEUED");
         when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(next);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(10L);
         when(turnDao.updateStatusIfCurrent(1L, 56L, "QUEUED", "PROCESSING", null))
                 .thenReturn(0);
         when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
@@ -651,6 +680,64 @@ class AgentConversationServiceTest {
         verify(turnDao).updateStatusIfCurrent(1L, 56L, "QUEUED", "PROCESSING", null);
         verify(transport, never()).send(any(), any(), any(), any(), any());
         verify(turnDao).releaseConversationLock("agent-conversation:1:77");
+        verify(convDao, never()).updateExecutor(anyLong(), anyLong(), anyLong());
+        verify(convDao, never()).updateAgentVersion(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void acknowledgeCommitsButLeavesQueuedTurnUntouchedWithoutCompatibleCapacity() {
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO completed = processingInboundTurn(77L);
+        AgentConversationTurnDO next = new AgentConversationTurnDO();
+        next.setId(56L);
+        next.setTenantId(1L);
+        next.setConversationId(77L);
+        next.setDirection("IN");
+        next.setStatus("QUEUED");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(completed);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(next);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(null);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "done", null);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null);
+        verify(turnDao, never()).updateStatusIfCurrent(eq(1L), eq(56L), eq("QUEUED"),
+                eq("PROCESSING"), any());
+        verify(turnDao, never()).recordDispatchAttemptIfProcessing(1L, 77L, 56L);
+    }
+
+    @Test
+    void unsupportedQueuedTurnFailsAfterPriorAcknowledgementCommits() {
+        AgentConversationDO conv = existingConversationWithSession();
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentConversationTurnDO completed = processingInboundTurn(77L);
+        AgentConversationTurnDO next = new AgentConversationTurnDO();
+        next.setId(56L);
+        next.setTenantId(1L);
+        next.setConversationId(77L);
+        next.setDirection("IN");
+        next.setStatus("QUEUED");
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(completed);
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.findNextQueuedInbound(1L, 77L)).thenReturn(next);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenThrow(
+                new ExecutorProtocolCompatibilityException(
+                        ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1));
+        when(turnDao.updateStatusIfCurrent(eq(1L), eq(56L), eq("QUEUED"), eq("FAILED"),
+                contains(ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1))).thenReturn(1);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "done", null);
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null);
+        verify(turnDao).updateStatusIfCurrent(eq(1L), eq(56L), eq("QUEUED"), eq("FAILED"),
+                contains(ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1));
+        verify(turnDao, never()).recordDispatchAttemptIfProcessing(1L, 77L, 56L);
     }
 
     @Test
@@ -809,11 +896,60 @@ class AgentConversationServiceTest {
                 .thenReturn(java.util.List.of(stale));
         when(convDao.findById(1L, 77L)).thenReturn(conv);
         when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(stale);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(10L);
         when(turnDao.claimStaleDispatchAttemptIfProcessing(1L, 77L, 55L, cutoff)).thenReturn(0);
 
         svc.recoverStaleTurnsForExecutor(1L, 9L, java.util.Set.of(), true, cutoff, 100);
         commitTransactionSynchronizations();
 
+        verify(transport, never()).send(any(), any(), any(), any(), any());
+        verify(convDao, never()).updateExecutor(anyLong(), anyLong(), anyLong());
+        verify(convDao, never()).updateAgentVersion(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void staleRedeliveryWithoutCompatibleCapacityDoesNotClaimAttempt() {
+        Date cutoff = new Date(1_000L);
+        AgentConversationDO conv = existingConversationWithSession();
+        AgentConversationTurnDO stale = processingInboundTurn(77L);
+        when(turnDao.listStaleProcessingInboundByExecutor(1L, 9L, cutoff, 100))
+                .thenReturn(java.util.List.of(stale));
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(stale);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(null);
+
+        svc.recoverStaleTurnsForExecutor(1L, 9L, java.util.Set.of(), true, cutoff, 100);
+        commitTransactionSynchronizations();
+
+        verify(turnDao, never()).claimStaleDispatchAttemptIfProcessing(anyLong(), anyLong(),
+                anyLong(), any());
+        verify(transport, never()).send(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void unsupportedStaleTurnFailsWithoutClaimingAnotherAttempt() {
+        Date cutoff = new Date(1_000L);
+        AgentConversationDO conv = existingConversationWithSession();
+        AgentConversationTurnDO stale = processingInboundTurn(77L);
+        when(turnDao.listStaleProcessingInboundByExecutor(1L, 9L, cutoff, 100))
+                .thenReturn(java.util.List.of(stale));
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L)).thenReturn(stale);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenThrow(
+                new ExecutorProtocolCompatibilityException(
+                        ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1));
+        when(turnDao.updateInboundStatusIfProcessing(eq(1L), eq(77L), eq(55L), eq("FAILED"),
+                contains(ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1))).thenReturn(1);
+
+        svc.recoverStaleTurnsForExecutor(1L, 9L, java.util.Set.of(), true, cutoff, 100);
+        verify(turnDao, never()).updateInboundStatusIfProcessing(eq(1L), eq(77L), eq(55L),
+                eq("FAILED"), anyString());
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(eq(1L), eq(77L), eq(55L), eq("FAILED"),
+                contains(ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1));
+        verify(turnDao, never()).claimStaleDispatchAttemptIfProcessing(anyLong(), anyLong(),
+                anyLong(), any());
         verify(transport, never()).send(any(), any(), any(), any(), any());
     }
 
@@ -1407,6 +1543,14 @@ class AgentConversationServiceTest {
         verify(transport).sendCancel(conv, 55L);
     }
 
+    @Test
+    void internalPlatformCallsKeepApiModeEvenWithInteractiveRuntime() {
+        ConversationRuntimePresence presence = mock(ConversationRuntimePresence.class);
+        when(presence.supportsProtocolFeature(9L, "CONVERSATION_ACP_INTERACTION_V1")).thenReturn(true);
+        assertTrue(dispatchedSystemPrompt(serviceWithPresence(presence),
+                PlatformIntelligenceChannelSink.CHANNEL).contains("API模式"));
+    }
+
     private AgentConversationService cancelableService() {
         ConversationRuntimePresence presence = mock(ConversationRuntimePresence.class);
         when(presence.isExecutorOnline(9L)).thenReturn(true);
@@ -1445,8 +1589,8 @@ class AgentConversationServiceTest {
     }
 
     private AgentConversationService serviceWithPresence(ConversationRuntimePresence presence) {
-        return new AgentConversationService(convDao, turnDao, transport, executorSelector,
-                agentDao, agentVersionDao, sinkRegistry, presence);
+        return new AgentConversationService(convDao, turnDao, transport,
+                agentDao, agentVersionDao, sinkRegistry, presence, executorRouter);
     }
 
     private AgentConversationDO existingConversationWithSession() {

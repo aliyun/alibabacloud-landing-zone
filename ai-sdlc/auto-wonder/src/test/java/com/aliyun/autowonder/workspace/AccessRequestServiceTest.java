@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.workspace;
 
+import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.result.PageResult;
@@ -41,6 +42,7 @@ class AccessRequestServiceTest {
     private AccessRequestDao accessRequestDao;
     private UserDao userDao;
     private ApplicationEventPublisher eventPublisher;
+    private SystemAdminService systemAdminService;
     private AccessRequestService service;
 
     @BeforeEach
@@ -50,8 +52,9 @@ class AccessRequestServiceTest {
         accessRequestDao = mock(AccessRequestDao.class);
         userDao = mock(UserDao.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
+        systemAdminService = mock(SystemAdminService.class);
         service = new AccessRequestService(workspaceDao, workspaceMemberDao, accessRequestDao,
-                userDao, eventPublisher);
+                userDao, eventPublisher, systemAdminService);
     }
 
     // ---------------- listAll ----------------
@@ -94,6 +97,52 @@ class AccessRequestServiceTest {
         assertThat(notMember.getMembershipStatus()).isEqualTo("NOT_MEMBER");
         assertThat(notMember.getAccessLevel()).isNull();
         assertThat(notMember.getPendingRequestId()).isNull();
+        assertThat(notMember.getCanManage()).isFalse();
+    }
+
+    @Test
+    void listAllGrantsManageOverEveryWorkspaceToAPlatformAdmin() {
+        WorkspaceDO gamma = workspace(300L, "Gamma", null);
+        gamma.setVersion(5);
+        when(workspaceDao.listAllPaged(null, 0, 10)).thenReturn(List.of(
+                workspace(100L, "Alpha", null),
+                gamma));
+        when(workspaceDao.countAll(null)).thenReturn(2L);
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+
+        PageResult<WorkspaceListItemVO> result = service.listAll(null, 1, 10, 7L);
+
+        // The discovery grid renders enter/edit/delete from canManage, so a platform admin gets
+        // the manage entries on workspaces it never joined; version travels along for the edit
+        // modal's optimistic lock.
+        assertThat(result.getList()).hasSize(2);
+        assertThat(result.getList().get(0).getMembershipStatus()).isEqualTo("NOT_MEMBER");
+        assertThat(result.getList().get(0).getCanManage()).isTrue();
+        assertThat(result.getList().get(1).getCanManage()).isTrue();
+        assertThat(result.getList().get(1).getVersion()).isEqualTo(5);
+    }
+
+    @Test
+    void listAllLetsOwnersAndAdminMembersManageWithoutPlatformAdminRights() {
+        // canManage has three independent sources; this pair exercises the two that do not
+        // need systemAdmin: workspace ownership and an ADMIN membership.
+        WorkspaceDO owned = workspace(500L, "Owned", null);
+        owned.setOwnerId(7L);
+        when(workspaceDao.listAllPaged(null, 0, 10)).thenReturn(List.of(
+                owned,
+                workspace(600L, "AdminMember", null)));
+        when(workspaceDao.countAll(null)).thenReturn(2L);
+        when(workspaceDao.listMembershipsByUser(7L))
+                .thenReturn(List.of(membership(600L, WorkspaceAccessLevel.ADMIN)));
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(false);
+
+        PageResult<WorkspaceListItemVO> result = service.listAll(null, 1, 10, 7L);
+
+        assertThat(result.getList().get(0).getIsOwner()).isTrue();
+        assertThat(result.getList().get(0).getCanManage()).isTrue();
+        assertThat(result.getList().get(1).getMembershipStatus()).isEqualTo("MEMBER");
+        assertThat(result.getList().get(1).getIsOwner()).isFalse();
+        assertThat(result.getList().get(1).getCanManage()).isTrue();
     }
 
     @Test

@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.Map;
 
@@ -18,6 +20,28 @@ import java.util.Map;
 @RequestMapping("/api/workitems")
 @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看调度恢复")
 public class DispatchRecoveryController {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private DispatchRecoveryService recoveryService;
+
+    @GetMapping("/{workitemId}/recovery")
+    public Result<Map<String, Object>> recovery(@PathVariable long workitemId) {
+        return Result.ok(recoveryService.state(currentWorkspaceId(), workitemId));
+    }
+
+    @PostMapping("/{workitemId}/recovery")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "恢复或关闭交付")
+    public Result<Map<String, Object>> control(@PathVariable long workitemId, @RequestBody ControlRequest request) {
+        if (request.action() == null) throw new BizException(ErrorCode.CONFLICT, "action required");
+        long tenantId = currentWorkspaceId(), userId = currentUserId();
+        return Result.ok(switch (request.action()) {
+            case "close" -> recoveryService.close(tenantId, workitemId, userId, request.force());
+            case "reopen" -> recoveryService.reopen(tenantId, workitemId, userId);
+            case "cancel" -> recoveryService.cancel(tenantId, workitemId, request.dispatchId(), userId, request.force());
+            default -> throw new BizException(ErrorCode.CONFLICT, "不支持的恢复操作");
+        });
+    }
+    public record ControlRequest(String action, long dispatchId, boolean force) {}
 
     private final DispatchService dispatchService;
     private final PresenceManager presenceManager;

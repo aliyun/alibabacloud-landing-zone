@@ -3,6 +3,10 @@ export interface CostMetrics {
   avgTokensPerTask: number;
   dailyAvg: number;
   trend: number[];
+  totalCredits: number;
+  avgCreditsPerTask: number;
+  dailyAvgCredits: number;
+  creditsTrend: number[];
 }
 
 export interface EfficiencyMetrics {

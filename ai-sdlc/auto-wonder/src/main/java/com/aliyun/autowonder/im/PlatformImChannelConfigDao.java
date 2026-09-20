@@ -11,5 +11,13 @@ public interface PlatformImChannelConfigDao {
 
     PlatformImChannelConfigDO findByProvider(@Param("provider") String provider);
 
+    String selectedProvider();
+
+    String lockSelection();
+
+    int selectProvider(@Param("provider") String provider);
+
+    int disableOthers(@Param("provider") String provider, @Param("userId") long userId);
+
     int upsert(PlatformImChannelConfigDO config);
 }

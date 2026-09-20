@@ -18,6 +18,10 @@
         SELECT * FROM repo WHERE tenant_id = #{tenantId} AND is_deleted = 0 ORDER BY id DESC LIMIT #{offset}, #{limit}
     </select>
 
+    <select id="listAllByTenant" resultType="com.aliyun.autowonder.repo.RepoDO">
+        SELECT * FROM repo WHERE tenant_id = #{tenantId} AND is_deleted = 0 ORDER BY id ASC
+    </select>
+
     <update id="update">
         UPDATE repo SET name = #{name}, url = #{url}, default_branch = #{defaultBranch},
             description = #{description}, version = version + 1, modifier_id = #{modifierId}

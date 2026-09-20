@@ -20,14 +20,16 @@ while (($#)); do
     *) die "unknown argument";;
   esac
 done
-require_file "$manifest"; require_command jq; require_command mvn; require_command jar; require_command tar
+require_file "$manifest"; require_command jq; require_command mvn
+python=${AUTOWONDER_PYTHON:-python3}; require_command "$python"
 json_validate "$manifest"; reject_secret_keys "$manifest"
 mode=$(jq -r '.mode // "new"' "$manifest")
 actual=
 if [[ "$mode" == upgrade ]]; then
   expected=$(json_string "$manifest" '.repositoryCommit')
+  approved_plan=$(jq -c '.upgrade // {}' "$manifest")
   if [[ $(jq -r '.upgrade.sourceMode // empty' "$manifest") == workspace-current-content ]]; then
-    source "$SCRIPT_DIR/../../upgrading-autowonder-on-alibaba-cloud/scripts/upgrade-lib.sh"
+    source "$SCRIPT_DIR/upgrade-lib.sh"
     actual=$(workspace_content_identity "$source_dir")
     [[ "$actual" == "$expected" ]] || die "workspace content changed after upgrade approval; regenerate the plan"
   else
@@ -45,35 +47,25 @@ release_version=$(tr -d '\r\n' <"$version_file")
   || die "VERSION must contain a semantic version"
 recommended_runtime_version=$(recommended_runtime_version_from_source "$source_dir") || \
   die "unable to resolve recommended runtime version from source application.yml"
-(cd "$source_dir" && mvn -DskipGitCommitId=true -DskipFrontend=false clean verify)
-jar="$source_dir/target/auto-wonder.jar"; schema="$source_dir/docs/autowonder-schema.sql"
-templates="$source_dir/docs/autowonder-community-templates.sql"
-require_file "$jar"; require_file "$schema"; require_file "$templates"
-jar tf "$jar" | awk '$0 == "BOOT-INF/classes/static/index.html" { found=1 } END { exit !found }' \
-  || die "release JAR is missing frontend static/index.html"
-jar tf "$jar" | awk 'index($0, "BOOT-INF/classes/static/assets/") == 1 && $0 !~ /\/$/ { found=1 } END { exit !found }' \
-  || die "release JAR is missing frontend static assets"
-mkdir -p "$output_dir"; chmod 700 "$output_dir"
-output_dir=$(cd -- "$output_dir" && pwd)
-install -m 0444 "$jar" "$output_dir/auto-wonder.jar"
-install -m 0444 "$schema" "$output_dir/autowonder-schema.sql"
-install -m 0444 "$templates" "$output_dir/autowonder-community-templates.sql"
-migrations_tmp=$(mktemp "$output_dir/.autowonder-migrations.XXXXXX"); TEMP_FILES+=("$migrations_tmp")
-LC_ALL=C tar -czf "$migrations_tmp" -C "$source_dir/docs/migration" .
-chmod 0444 "$migrations_tmp"
-mv -f -- "$migrations_tmp" "$output_dir/autowonder-migrations.tar.gz"
-jar_hash=$(sha256_file "$output_dir/auto-wonder.jar"); schema_hash=$(sha256_file "$output_dir/autowonder-schema.sql")
-templates_hash=$(sha256_file "$output_dir/autowonder-community-templates.sql")
-migrations_hash=$(sha256_file "$output_dir/autowonder-migrations.tar.gz")
+build_result=$("$python" -B "$SCRIPT_DIR/release_build.py" --source-dir "$source_dir" --output-dir "$output_dir")
+output_dir=$(jq -r '.directory' <<<"$build_result")
+if [[ "$mode" == upgrade ]]; then
+  [[ $(json_string "$manifest" '.repositoryCommit') == "$expected" && $(jq -c '.upgrade // {}' "$manifest") == "$approved_plan" ]] \
+    || die "approved upgrade plan changed during build"
+  if [[ $(jq -r '.upgrade.sourceMode // empty' "$manifest") == workspace-current-content ]]; then
+    [[ $(workspace_content_identity "$source_dir") == "$expected" ]] || die "workspace source changed during build"
+  else
+    [[ $(git -C "$source_dir" rev-parse HEAD) == "$expected" && -z $(git -C "$source_dir" status --porcelain --untracked-files=no) ]] \
+      || die "target Git source changed during build"
+  fi
+fi
+read -r jar_hash schema_hash templates_hash migrations_hash < <(jq -r '[.artifacts["auto-wonder.jar"].sha256,.artifacts["autowonder-schema.sql"].sha256,.artifacts["autowonder-community-templates.sql"].sha256,.artifacts["autowonder-migrations.tar.gz"].sha256] | join(" ")' <<<"$build_result")
+read -r jar_size schema_size templates_size migrations_size < <(jq -r '[.artifacts["auto-wonder.jar"].size,.artifacts["autowonder-schema.sql"].size,.artifacts["autowonder-community-templates.sql"].size,.artifacts["autowonder-migrations.tar.gz"].size] | map(tostring) | join(" ")' <<<"$build_result")
 if [[ "$mode" != upgrade ]]; then actual=${jar_hash:0:40}; fi
-jar_size=$(wc -c <"$output_dir/auto-wonder.jar" | tr -d ' '); schema_size=$(wc -c <"$output_dir/autowonder-schema.sql" | tr -d ' ')
-templates_size=$(wc -c <"$output_dir/autowonder-community-templates.sql" | tr -d ' ')
-migrations_size=$(wc -c <"$output_dir/autowonder-migrations.tar.gz" | tr -d ' ')
 atomic_jq "$manifest" --arg commit "$actual" --arg mode "$mode" --arg releaseVersion "$release_version" --arg recommendedRuntimeVersion "$recommended_runtime_version" --arg jarHash "$jar_hash" --arg schemaHash "$schema_hash" --arg templatesHash "$templates_hash" --arg migrationsHash "$migrations_hash" \
   --argjson jarSize "$jar_size" --argjson schemaSize "$schema_size" --argjson templatesSize "$templates_size" --argjson migrationsSize "$migrations_size" --arg dir "$output_dir" \
   '.repositoryCommit=$commit | .source=(if $mode == "upgrade" and (.upgrade.sourceMode // "") == "workspace-current-content" then {kind:"workspace",releaseId:$commit,gitValidation:"disabled",contentIdentity:"sha256-file-set"} elif $mode == "upgrade" then {kind:"git",releaseId:$commit,gitValidation:"required"} else {kind:"workspace",releaseId:$commit,gitValidation:"disabled"} end) | .releaseVersion=$releaseVersion | .recommendedRuntimeVersion=$recommendedRuntimeVersion | .artifacts={releaseDirectory:$dir,jar:{name:"auto-wonder.jar",sha256:$jarHash,size:$jarSize},schema:{name:"autowonder-schema.sql",sha256:$schemaHash,size:$schemaSize},templates:{name:"autowonder-community-templates.sql",sha256:$templatesHash,size:$templatesSize},migrations:{name:"autowonder-migrations.tar.gz",sha256:$migrationsHash,size:$migrationsSize}} | .phase="build" | .status="sealed"'
-require_command python3
-python3 -B "$SCRIPT_DIR/../../upgrading-autowonder-on-alibaba-cloud/scripts/upgrade_plan.py" \
+"$python" -B "$SCRIPT_DIR/upgrade_plan.py" \
   seal --manifest "$manifest" --source-dir "$source_dir"
 printf 'JAR %s bytes SHA256 %s\nSchema %s bytes SHA256 %s\nTemplates %s bytes SHA256 %s\nMigrations %s bytes SHA256 %s\n' \
   "$jar_size" "$jar_hash" "$schema_size" "$schema_hash" "$templates_size" "$templates_hash" "$migrations_size" "$migrations_hash"

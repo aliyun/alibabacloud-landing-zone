@@ -18,6 +18,8 @@ export interface UserInfo {
   username: string;
   nickname: string;
   email: string;
+  /** 平台管理员标志（user.is_admin），由登录响应下发的服务端事实。 */
+  isAdmin?: boolean | null;
 }
 
 export interface WorkspaceInfo {
@@ -43,6 +45,8 @@ export interface WorkspaceListItem {
   pendingRequestId?: number | null;
   isOwner?: boolean | null;
   canManage?: boolean | null;
+  /** 乐观锁版本，编辑弹窗提交时回传（平台管理员从发现页编辑空间时使用）。 */
+  version?: number | null;
 }
 
 /** One row of the workspace-only recycle bin (F4). */

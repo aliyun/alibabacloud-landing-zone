@@ -13,7 +13,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class WorkitemHumanAssignedListener {
     private static final Logger log = LoggerFactory.getLogger(WorkitemHumanAssignedListener.class);
-    private static final String PROVIDER = "DINGTALK";
 
     private final UserImIdentityService identityService;
     private final PlatformImChannelConfigService channelConfigService;
@@ -29,28 +28,30 @@ public class WorkitemHumanAssignedListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = false)
     public void onWorkitemHumanAssigned(WorkitemHumanAssignedEvent event) {
+        String provider = "UNKNOWN";
         try {
+            provider = channelConfigService.selectedProvider();
             log.info("IM notification published tenantId={} workitemId={} eventId={} recipientUserId={} provider={}",
                     event.tenantId(), event.workitemId(), event.workitemEventId(),
-                    event.recipientUserId(), PROVIDER);
-            UserImIdentityDO identity = identityService.find(event.recipientUserId(), PROVIDER);
+                    event.recipientUserId(), provider);
+            UserImIdentityDO identity = identityService.find(event.recipientUserId(), provider);
             if (identity == null || !hasText(identity.getExternalUserId())) {
                 log.info("IM notification skipped missing identity tenantId={} workitemId={} eventId={} "
                                 + "recipientUserId={} provider={}",
                         event.tenantId(), event.workitemId(), event.workitemEventId(),
-                        event.recipientUserId(), PROVIDER);
+                        event.recipientUserId(), provider);
                 return;
             }
-            if (!channelConfigService.isReady(PROVIDER)) {
+            if (!channelConfigService.isReady(provider)) {
                 log.info("IM notification skipped channel not ready tenantId={} workitemId={} eventId={} "
                                 + "recipientUserId={} provider={}",
                         event.tenantId(), event.workitemId(), event.workitemEventId(),
-                        event.recipientUserId(), PROVIDER);
+                        event.recipientUserId(), provider);
                 return;
             }
 
             ImNotificationTask task = new ImNotificationTask(
-                    event.workitemEventId() + ":" + PROVIDER + ":" + event.recipientUserId(),
+                    event.workitemEventId() + ":" + provider + ":" + event.recipientUserId(),
                     event.workitemEventId(),
                     event.tenantId(),
                     event.workitemId(),
@@ -63,23 +64,23 @@ public class WorkitemHumanAssignedListener {
             try {
                 queue.enqueue(task);
             } catch (Exception e) {
-                logFailure(event, "enqueue-failed", e);
+                logFailure(event, provider, "enqueue-failed", e);
                 return;
             }
             log.info("IM notification queued tenantId={} workitemId={} eventId={} recipientUserId={} provider={}",
                     event.tenantId(), event.workitemId(), event.workitemEventId(),
-                    event.recipientUserId(), PROVIDER);
+                    event.recipientUserId(), provider);
         } catch (Exception e) {
-            logFailure(event, "failed", e);
+            logFailure(event, provider, "failed", e);
         }
     }
 
-    private static void logFailure(WorkitemHumanAssignedEvent event, String reason, Exception failure) {
+    private static void logFailure(WorkitemHumanAssignedEvent event, String provider, String reason, Exception failure) {
         AlreadyLoggedException safe = AlreadyLoggedException.from(failure);
         log.error("IM notification {} tenantId={} workitemId={} eventId={} "
                         + "recipientUserId={} provider={}",
                 reason, event.tenantId(), event.workitemId(), event.workitemEventId(),
-                event.recipientUserId(), PROVIDER, safe);
+                event.recipientUserId(), provider, safe);
     }
 
     private static boolean hasText(String value) {

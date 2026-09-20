@@ -1,4 +1,6 @@
 import { Tag } from 'antd';
+import { getPriorityMeta } from '../constants';
+import { displayNameWithoutId } from '../nameDisplay';
 
 interface WorkitemMetaProps {
   priority: number;
@@ -11,18 +13,25 @@ interface WorkitemMetaProps {
 }
 
 export function WorkitemMeta({ priority, assigneeName, assigneeDisplayName, assigneeType, creatorDisplayName, sdlcName, tags }: WorkitemMetaProps) {
-  const assigneeLabel = assigneeType === 'AGENT' ? '数字员工' : '人工';
-  const assigneeText = assigneeDisplayName || assigneeName;
+  const priorityMeta = getPriorityMeta(priority);
+  const assigneeText = displayNameWithoutId(assigneeDisplayName, assigneeName);
+  const isAgent = assigneeType === 'AGENT';
 
   return (
     <div style={{ marginTop: 14, fontSize: 12, color: '#666', display: 'flex', gap: 16, flexWrap: 'wrap', lineHeight: 1.7 }}>
-      <span>优先级: P{priority}</span>
+      <span>
+        {'优先级: '}
+        <span style={{ color: priorityMeta.color }}>{priorityMeta.label}</span>
+      </span>
       {creatorDisplayName && (
-        <span>创建者: {creatorDisplayName}</span>
+        <span>{'创建者: '}{displayNameWithoutId(creatorDisplayName)}</span>
       )}
-      {assigneeText && (
-        <span>指派: {assigneeText} ({assigneeLabel})</span>
-      )}
+      <span>
+        {'当前处理人: '}
+        {isAgent && <Tag color="purple" style={{ margin: 0 }}>AI</Tag>}
+        {isAgent ? ' ' : ''}
+        {assigneeText ?? '未指派'}
+      </span>
       {sdlcName && (
         <span>SDLC: {sdlcName}</span>
       )}

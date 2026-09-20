@@ -24,4 +24,7 @@ public interface ConversationTransport {
      */
     void sendElicitationReply(AgentConversationDO conv, long turnId, String requestId,
             String action, String answerJson);
+
+    /** 带外命令探针：要求执行器独立抓取该会话的可用斜杠命令，与轮次无关。 */
+    void sendCommandsProbe(AgentConversationDO conv);
 }

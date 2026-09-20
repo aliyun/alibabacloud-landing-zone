@@ -10,7 +10,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import { message } from 'antd';
 
 function renderPage(accessLevel: 'READ_ONLY' | 'READ_WRITE' = 'READ_WRITE') {
-  useAuthStore.setState({ accessLevel });
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: '测试工作空间', description: '' }, accessLevel);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -577,6 +577,133 @@ describe('MemoryListPage', () => {
     });
     expect(isCheckedTag(within(tagRow).getByText('全部'))).toBe(true);
     expect(isCheckedTag(within(tagRow).getByText('AW全栈开发 (400130)'))).toBe(false);
+  });
+
+  const timelinePage = (pageNumber: number, count: number, titlePrefix: string) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: pageNumber * 1000 + i,
+      scope: 'ORG',
+      type: 'FACT',
+      status: 'ADOPTED',
+      title: `${titlePrefix}${i + 1}`,
+      contentMd: `内容${i + 1}`,
+      sourceRef: null,
+      gmtCreate: '2026-08-01',
+    }));
+
+  const countHandler = (total: number, seenUrls?: string[]) =>
+    http.get('/api/memories/count', ({ request }) => {
+      seenUrls?.push(new URL(request.url).search);
+      return HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: total,
+      });
+    });
+
+  it('drives the pager with the backend total so it no longer grows while paging', async () => {
+    server.use(
+      http.get('/api/memories', ({ request }) => {
+        const pageNumber = Number(new URL(request.url).searchParams.get('page') ?? '1');
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: timelinePage(pageNumber, 20, `第${pageNumber}页记忆`),
+        });
+      }),
+      countHandler(45),
+    );
+    renderPage();
+
+    await screen.findByText('第1页记忆1');
+    expect(await screen.findByText('共 45 条')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTitle('3'));
+
+    await screen.findByText('第3页记忆1');
+    expect(screen.getByText('共 45 条')).toBeInTheDocument();
+    expect(screen.queryByText('共 61 条')).not.toBeInTheDocument();
+  });
+
+  it('shows the exact total on a partial last page and zero for an empty list', async () => {
+    server.use(
+      http.get('/api/memories', ({ request }) => {
+        const pageNumber = Number(new URL(request.url).searchParams.get('page') ?? '1');
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageNumber === 1
+            ? timelinePage(1, 20, '前排记忆')
+            : timelinePage(2, 1, '末页记忆'),
+        });
+      }),
+      countHandler(21),
+    );
+    renderPage();
+
+    await screen.findByText('前排记忆1');
+    await userEvent.click(screen.getByTitle('2'));
+
+    await screen.findByText('末页记忆1');
+    expect(screen.getByText('共 21 条')).toBeInTheDocument();
+  });
+
+  it('shows zero memories and an empty pager total when no filter matches', async () => {
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      countHandler(0),
+    );
+    renderPage();
+
+    await screen.findByText('暂无记忆');
+    expect(await screen.findByText('共 0 条')).toBeInTheDocument();
+  });
+
+  it('recounts with the active filters instead of a page-based placeholder', async () => {
+    const seenCountUrls: string[] = [];
+    server.use(
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      countHandler(8, seenCountUrls),
+    );
+    renderPage();
+
+    await screen.findByText('暂无记忆');
+    fireEvent.click(screen.getByRole('radio', { name: '规则' }));
+
+    await vi.waitFor(() => {
+      expect(seenCountUrls.some((q) => q.includes('type=RULE'))).toBe(true);
+    });
+    expect(seenCountUrls.every((q) => !q.includes('page=') && !q.includes('size='))).toBe(true);
+  });
+
+  it('uses the group count for the by-agent pager', async () => {
+    const seenGroupCountUrls: string[] = [];
+    server.use(
+      ...agentHandlers,
+      http.get('/api/memories', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/memories/grouped', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: groupedFixture,
+      })),
+      http.get('/api/memories/grouped/count', ({ request }) => {
+        seenGroupCountUrls.push(new URL(request.url).search);
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null, data: 3,
+        });
+      }),
+      countHandler(42),
+    );
+    renderPage();
+
+    fireEvent.click(screen.getByRole('radio', { name: '按员工' }));
+
+    await screen.findByText('分组记忆一');
+    expect(await screen.findByText('共 3 条')).toBeInTheDocument();
+    expect(seenGroupCountUrls.length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('radio', { name: '时间线' }));
+    expect(await screen.findByText('共 42 条')).toBeInTheDocument();
   });
 
   it('syncs the owner ID input and the agent filter tags in both directions', async () => {

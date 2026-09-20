@@ -214,8 +214,16 @@ public class ExecutorLaunchOptionsService {
     }
 
     public String requireCreatableClientKind(String clientKind) {
+        return requireCreatableClientKind(clientKind, ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+    }
+
+    /**
+     * The one client-kind gate every create entry shares (MCP and REST), so neither can persist a null
+     * or non-creatable kind. Each entry passes the error code its own callers understand.
+     */
+    public static String requireCreatableClientKind(String clientKind, ErrorCode invalid) {
         if (!isCreatableClientKind(clientKind)) {
-            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+            throw new BizException(invalid,
                     "clientKind 仅支持 " + String.join("/", creatableClientKindValues()));
         }
         return canonicalClientKind(clientKind);
@@ -230,15 +238,6 @@ public class ExecutorLaunchOptionsService {
             return value;
         }
         throw invalid("memoryMode", memoryModeValues());
-    }
-
-    /**
-     * Resolves the model id the server will actually use. The catalog Redis refreshes can drop an id at any time,
-     * so an unknown one is demoted to the catalog default exactly like the page's chooseQoderModel() instead of
-     * being rejected; callers see the resolved value echoed back in the tool response.
-     */
-    public String resolveModel(String provider, String requested, String fallback) {
-        return chooseModel(models(provider), isBlank(requested) ? fallback : requested.trim());
     }
 
     public String resolveContextWindow(String requested) {

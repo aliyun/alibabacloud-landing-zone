@@ -28,6 +28,17 @@ public class UserImIdentityController {
         return Result.ok(identityService.list(AutoWonderContext.get().getUserId()));
     }
 
+    @PutMapping("/feishu")
+    public Result<UserImIdentityVO> updateFeishu(@Valid @RequestBody UpdateUserImIdentityRequest request) {
+        return Result.ok(identityService.update(AutoWonderContext.get().getUserId(), "FEISHU", request.getExternalUserId()));
+    }
+
+    @PostMapping("/feishu/test")
+    public Result<Void> testFeishu() {
+        identityService.sendTest(AutoWonderContext.get().getUserId(), "FEISHU");
+        return Result.ok(null);
+    }
+
     @PutMapping("/dingtalk")
     public Result<UserImIdentityVO> updateDingTalk(
             @Valid @RequestBody UpdateUserImIdentityRequest request) {

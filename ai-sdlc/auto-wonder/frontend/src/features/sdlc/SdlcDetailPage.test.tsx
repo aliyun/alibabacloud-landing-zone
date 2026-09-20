@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -216,6 +216,64 @@ describe('SdlcDetailPage', () => {
     expect(await screen.findByText('checklistJson 不是合法的 JSON')).toBeInTheDocument();
   });
 
+  it('keeps handler and transition fields out of the step-edit payload so the backend preserves them', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/sdlcs/1', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '1', name: '流转字段流程', description: '', status: 'DRAFT',
+            workType: 'BUG', isDefault: 0, entryStepId: null, version: 1,
+            gmtCreate: '2026-07-01',
+            steps: [
+              {
+                id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析', kind: 'analysis',
+                instructionMd: '理解需求', checklistJson: null, gatePolicyJson: null,
+                required: true, timeoutSeconds: 600, retryBudget: 2,
+                code: 'STEP_1', handlerType: 'AGENT', handlerRoleRef: 'AW_CR',
+                statusOnEnterCode: 'aone_172915',
+                onSuccess: '{"to":"STEP_2"}', onFail: '{"to":"STOP"}',
+              },
+            ],
+          },
+        });
+      }),
+      http.put('/api/sdlcs/1/steps/10', async ({ request }) => {
+        capturedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析（已更新）', kind: 'analysis',
+            instructionMd: '理解需求', checklistJson: null, gatePolicyJson: null,
+            required: true, timeoutSeconds: 600, retryBudget: 2,
+          },
+        });
+      }),
+    );
+
+    const { container } = renderPage();
+    expect(await screen.findByText('流转字段流程')).toBeInTheDocument();
+
+    const editButton = container.querySelector('.ant-table-row .anticon-edit')?.closest('button');
+    expect(editButton).toBeTruthy();
+    fireEvent.click(editButton!);
+
+    const okButton = await screen.findByRole('button', { name: /OK|确\s*定/ });
+    fireEvent.click(okButton);
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+
+    // Only the form-managed columns may travel; an explicit null/undefined for the
+    // deprecated columns would make the server overwrite them instead of keeping them.
+    expect(capturedBody!.name).toBe('需求分析');
+    expect(capturedBody!.timeoutSeconds).toBe(600);
+    expect(capturedBody!.retryBudget).toBe(2);
+    for (const key of ['handlerRoleRef', 'statusOnEnterCode', 'onSuccess', 'onFail']) {
+      expect(capturedBody!).not.toHaveProperty(key);
+    }
+  });
+
   it('lets users view checklist and gate policy content via popovers on an ENABLED SDLC', async () => {
     server.use(
       http.get('/api/sdlcs/1', () => {
@@ -228,7 +286,7 @@ describe('SdlcDetailPage', () => {
             steps: [
               {
                 id: '10', sdlcId: '1', stepOrder: 1, name: '自测交付', kind: 'test', instructionMd: '运行测试并交付',
-                checklistJson: '["运行相关测试全部通过","测试日志已保存到 artifacts/output/evidence/"]',
+                checklistJson: '["运行相关测试全部通过","测试日志已保存到 artifacts/output/evidence/",{"id":"optional","text":"实施分支检查","allowNotApplicable":true,"notApplicableWhen":"只澄清未实施"}]',
                 gatePolicyJson: '{"evidenceRequired":true,"requiredArtifacts":"evidence/"}',
                 required: true, timeoutSeconds: null, retryBudget: null,
               },
@@ -244,8 +302,9 @@ describe('SdlcDetailPage', () => {
     expect(tags).toHaveLength(2);
 
     fireEvent.click(tags[0]);
-    expect(await screen.findByText('✓ 运行相关测试全部通过')).toBeInTheDocument();
-    expect(screen.getByText('✓ 测试日志已保存到 artifacts/output/evidence/')).toBeInTheDocument();
+    expect(await screen.findByText('• 运行相关测试全部通过')).toBeInTheDocument();
+    expect(screen.getByText('• 测试日志已保存到 artifacts/output/evidence/')).toBeInTheDocument();
+    expect(screen.getByText('允许不适用：只澄清未实施')).toBeInTheDocument();
 
     fireEvent.click(tags[1]);
     expect(await screen.findByText('evidenceRequired: true')).toBeInTheDocument();
@@ -343,6 +402,8 @@ describe('SdlcDetailPage', () => {
 
     fireEvent.mouseEnter(helpIconOf('检查项 JSON'));
     expect(await screen.findByText(/checklistRequired: true/)).toBeInTheDocument();
+    expect(await screen.findByText(/先升级执行器 Runtime/)).toBeInTheDocument();
+    expect(await screen.findByText(/未配置的必需项仍须通过/)).toBeInTheDocument();
 
     fireEvent.mouseEnter(helpIconOf('准入/准出策略 JSON'));
     expect((await screen.findAllByText(/requiredArtifacts/)).length).toBeGreaterThan(0);

@@ -87,8 +87,8 @@ class TerraformContractTest(unittest.TestCase):
         self.assertIn('secondary_zone_id', self.terraform)
         self.assertRegex(self.variable_block("rds_category"), r"HighAvailability|cluster")
         redis_class = self.variable_block("redis_instance_class")
-        self.assertIn("(shard|master)", redis_class)
-        self.assertIn("redis.shard.small.ce", redis_class)
+        for name in ("ecs_instance_type", "rds_instance_type", "redis_instance_class"):
+            self.assertNotRegex(self.variable_block(name), r"(?m)^\s*default\s*=")
         self.assertRegex(self.terraform, r'host_name\s*=\s*"autowonder-\$\{replace\(each\.key, "_", "-"\)\}"')
 
     def test_exposes_alb_http_port_80_to_backend_7001(self):
@@ -178,6 +178,24 @@ class TerraformContractTest(unittest.TestCase):
         ):
             self.assertIn(required, self.terraform)
         self.assertIn('pay_type = "PayAsYouGo"', self.terraform)
+
+    def test_optional_downgrade_zone_variables_fall_back_to_zone_b(self):
+        for name in ("rds_slave_zone_id", "redis_secondary_zone_id"):
+            body = self.variable_block(name)
+            self.assertRegex(body, r'default\s*=\s*""')
+        self.assertIn(
+            'zone_id_slave_a          = var.rds_slave_zone_id != "" ? var.rds_slave_zone_id : var.zone_b_id',
+            self.terraform,
+        )
+        self.assertIn(
+            'secondary_zone_id           = var.redis_secondary_zone_id != "" ? var.redis_secondary_zone_id : var.zone_b_id',
+            self.terraform,
+        )
+        # ALB and VSwitches stay bound to the ECS zone pair (switch-bearing, no downgrade).
+        alb = re.search(r'resource "alicloud_alb_load_balancer" "app"\s*\{(.*?)\n\}', self.terraform, re.DOTALL)
+        self.assertIsNotNone(alb)
+        self.assertIn("alicloud_vswitch.zone_a.id", alb.group(1))
+        self.assertIn("alicloud_vswitch.zone_b.id", alb.group(1))
 
     def test_example_contains_no_secrets(self):
         text = TFVARS_FILE.read_text(encoding="utf-8")

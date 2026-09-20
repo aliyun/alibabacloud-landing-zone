@@ -27,7 +27,7 @@ class PlatformBrandingServiceTest {
             "${autowonder.runtime.recommended-version:";
     private static final String YAML_RECOMMENDED_VERSION_PLACEHOLDER =
             "${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:";
-    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.2.152";
+    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.2.163";
 
     @Test
     void publicConfigFallsBackWhenDatabaseRowIsMissing() {
@@ -93,7 +93,7 @@ class PlatformBrandingServiceTest {
     }
 
     @Test
-    void updateCannotRedirectTheDeploymentManagedMcpEndpoint() {
+    void updateAppliesTheBrandingDomainToThePublicMcpEndpoint() {
         PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
         when(dao.update(any())).thenReturn(1);
         when(dao.findActive()).thenReturn(row(
@@ -109,11 +109,67 @@ class PlatformBrandingServiceTest {
         var updated = service.update(100L, request);
 
         assertEquals("WonderHub", updated.getPlatformName());
-        assertEquals("https://daily.auto-wonder.example.com/api/mcp", updated.getMcpBaseUrl());
+        assertEquals("https://wonder.example.com/api/mcp", updated.getMcpBaseUrl());
         verify(dao).update(argThat(config ->
                 "WonderHub".equals(config.getPlatformName())
                         && "#2563eb".equals(config.getPrimaryColor())
                         && "https://wonder.example.com".equals(config.getDomain())));
+    }
+
+    @Test
+    void publicMcpEndpointFollowsTheConfiguredBrandingDomain() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        when(dao.findActive()).thenReturn(row("WonderHub", "#2563eb", "https://wonder.example.com"));
+        PlatformBrandingService service = newService(dao);
+
+        assertEquals("https://wonder.example.com", service.effectivePublicBaseUrl());
+        assertEquals("https://wonder.example.com/api/mcp", service.effectiveMcpBaseUrl());
+        assertEquals("https://wonder.example.com/api/mcp", service.publicConfig().getMcpBaseUrl());
+        assertEquals("https://wonder.example.com/api/mcp", service.adminConfig(true).getMcpBaseUrl());
+    }
+
+    @Test
+    void effectiveBaseUrlFallsBackToTheDeploymentBaseUrlWhenDomainIsMissing() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        when(dao.findActive()).thenReturn(row("WonderHub", "#2563eb", null));
+        PlatformBrandingService service = newService(dao);
+
+        assertEquals("https://daily.auto-wonder.example.com", service.effectivePublicBaseUrl());
+        assertEquals("https://daily.auto-wonder.example.com/api/mcp", service.effectiveMcpBaseUrl());
+        assertEquals("https://daily.auto-wonder.example.com/api/mcp", service.publicConfig().getMcpBaseUrl());
+    }
+
+    @Test
+    void effectiveBaseUrlFallsBackToTheDeploymentBaseUrlWhenDomainIsBlank() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        when(dao.findActive()).thenReturn(row("WonderHub", "#2563eb", "   "));
+        PlatformBrandingService service = newService(dao);
+
+        assertEquals("https://daily.auto-wonder.example.com", service.effectivePublicBaseUrl());
+    }
+
+    @Test
+    void effectiveBaseUrlUsesDeploymentUrlForCommunityDefaultConfiguration() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        when(dao.findActive()).thenReturn(null);
+        PlatformBrandingService service = newService(dao);
+
+        assertEquals("https://daily.auto-wonder.example.com", service.effectivePublicBaseUrl());
+        assertEquals("https://daily.auto-wonder.example.com/api/mcp", service.publicConfig().getMcpBaseUrl());
+    }
+
+    @Test
+    void effectiveBaseUrlFollowsDomainChangesWithoutRestart() {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        when(dao.findActive()).thenReturn(row("WonderHub", "#2563eb", "https://first.example.com"));
+        PlatformBrandingService service = newService(dao);
+        assertEquals("https://first.example.com/api/mcp", service.publicConfig().getMcpBaseUrl());
+
+        when(dao.findActive()).thenReturn(row("WonderHub", "#2563eb", "https://second.example.com"));
+        assertEquals("https://second.example.com/api/mcp", service.publicConfig().getMcpBaseUrl());
+
+        when(dao.findActive()).thenReturn(row("WonderHub", "#2563eb", null));
+        assertEquals("https://daily.auto-wonder.example.com/api/mcp", service.publicConfig().getMcpBaseUrl());
     }
 
     @Test
@@ -255,25 +311,29 @@ class PlatformBrandingServiceTest {
     }
 
     @Test
-    void exposesTrustedPublicBaseUrlAndRuntimeVersion() {
+    void exposesEffectivePublicBaseUrlAndRuntimeVersion() {
         PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
         PlatformBrandingService service = newService(dao);
 
-        assertEquals("https://daily.auto-wonder.example.com", service.trustedPublicBaseUrl());
+        assertEquals("https://daily.auto-wonder.example.com", service.effectivePublicBaseUrl());
         assertEquals("0.2.130", service.recommendedRuntimeVersion());
     }
 
     @Test
-    void trustedBaseUrlSupportsPrivateDeploymentsAndStripsTrailingSlashes() {
+    void effectiveBaseUrlSupportsPrivateDeploymentsAndStripsTrailingSlashes() {
         PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        PlatformBrandingService service = newService(dao, new InMemoryObjectStorage(), "x.x.x");
+
+        assertEquals("https://daily.auto-wonder.example.com", service.effectivePublicBaseUrl());
+
         OssProperties props = new OssProperties();
-        PlatformBrandingService service = new PlatformBrandingService(
+        PlatformBrandingService privateDeployment = new PlatformBrandingService(
                 dao, new InMemoryObjectStorage(), props,
                 "http://autowonder.internal.example.com:8080//", "1.0.0", "x.x.x", false);
 
-        assertEquals("http://autowonder.internal.example.com:8080", service.trustedPublicBaseUrl());
+        assertEquals("http://autowonder.internal.example.com:8080", privateDeployment.effectivePublicBaseUrl());
         assertEquals("http://autowonder.internal.example.com:8080/api/mcp",
-                service.publicConfig().getMcpBaseUrl());
+                privateDeployment.publicConfig().getMcpBaseUrl());
     }
 
     @Test

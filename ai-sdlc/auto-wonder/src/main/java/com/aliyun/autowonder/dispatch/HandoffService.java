@@ -7,8 +7,12 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.filter.BizLoggerFilter;
 import com.aliyun.autowonder.im.notification.WorkitemHumanAssignedEvent;
+import com.aliyun.autowonder.user.UserDO;
+import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.workspace.WorkspaceDO;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.workitem.AssignmentActor;
 import com.aliyun.autowonder.workitem.WorkitemDO;
@@ -26,18 +30,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Handles a workitem hand-off. Routing is server-authoritative: the requested
- * target {@code to} is first resolved against online agents for the tenant. If it
- * resolves to an online agent, the workitem is rebound onto that agent's OWN SDLC
- * (its min-stepOrder first step), a dispatch is enqueued there, and the assignee is
- * synced to the target agent. An unresolved AGENT request is assigned only to the
- * workitem's configured human operator, so a completed digital-worker step cannot
- * strand a workitem or unexpectedly escalate to an workspace owner. Explicit
- * HUMAN requests use the regular fallback chain:
- * concrete numeric user id, then the workitem's
- * assign-operator, then the tenant admin (workspace owner).
- */
 @Service
 public class HandoffService {
 
@@ -50,6 +42,8 @@ public class HandoffService {
     private final AgentRoleResolver roleResolver;
     private final AgentSdlcResolver sdlcResolver;
     private final WorkspaceDao workspaceDao;
+    private final WorkspaceMemberDao workspaceMemberDao;
+    private final UserDao userDao;
     private final WorkitemEventDao eventDao;
     private final DispatchDao dispatchDao;
     private final AgentDao agentDao;
@@ -62,15 +56,17 @@ public class HandoffService {
     }
 
     public HandoffService(WorkitemDao workitemDao, DispatchService dispatchService,
-            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, WorkspaceDao workspaceDao,
+            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver,
+            WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao, UserDao userDao,
             WorkitemEventDao eventDao) {
-        this(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, eventDao,
+        this(workitemDao, dispatchService, roleResolver, sdlcResolver, workspaceDao, workspaceMemberDao, userDao, eventDao,
                 null, null, null);
     }
 
     @Autowired
     public HandoffService(WorkitemDao workitemDao, DispatchService dispatchService,
-            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver, WorkspaceDao workspaceDao,
+            AgentRoleResolver roleResolver, AgentSdlcResolver sdlcResolver,
+            WorkspaceDao workspaceDao, WorkspaceMemberDao workspaceMemberDao, UserDao userDao,
             WorkitemEventDao eventDao, DispatchDao dispatchDao, AgentDao agentDao,
             ApplicationEventPublisher eventPublisher) {
         this.workitemDao = workitemDao;
@@ -78,6 +74,8 @@ public class HandoffService {
         this.roleResolver = roleResolver;
         this.sdlcResolver = sdlcResolver;
         this.workspaceDao = workspaceDao;
+        this.workspaceMemberDao = workspaceMemberDao;
+        this.userDao = userDao;
         this.eventDao = eventDao;
         this.dispatchDao = dispatchDao;
         this.agentDao = agentDao;
@@ -127,6 +125,9 @@ public class HandoffService {
             return HandoffResult.agent(existing.getAgentId(), existing.getId());
         }
 
+        if ("HUMAN".equalsIgnoreCase(toType)) {
+            return handleHumanHandoff(tenantId, workitemId, dispatchId, to, w, "REQUESTED_HUMAN", true);
+        }
         Long targetAgentId = null;
         if (to != null && !to.isBlank()) {
             targetAgentId = roleResolver.resolveOnlineAgentId(tenantId, to);
@@ -136,16 +137,13 @@ public class HandoffService {
                     dispatchId, targetAgentId, MAX_AUTOMATIC_HANDOFF_REPEATS)) {
                 log.warn("automatic handoff limit reached workitemId={} sourceDispatchId={} targetAgentId={} limit={}",
                         workitemId, dispatchId, targetAgentId, MAX_AUTOMATIC_HANDOFF_REPEATS);
-            return handleHumanHandoff(tenantId, workitemId, dispatchId, null, w, "AUTOMATIC_HANDOFF_LIMIT", true);
+                return handleHumanHandoff(tenantId, workitemId, dispatchId, null, w, "AUTOMATIC_HANDOFF_LIMIT", true);
             }
             return handleAgentHandoff(tenantId, workitemId, dispatchId, to, targetAgentId, w);
         }
-        if (!"HUMAN".equalsIgnoreCase(toType)) {
-            log.info("handoff agent target unavailable; falling back to human tenantId={} workitemId={} target={}",
-                    tenantId, workitemId, to);
-            return handleHumanHandoff(tenantId, workitemId, dispatchId, null, w, "UNKNOWN_AGENT_FALLBACK_HUMAN", false);
-        }
-        return handleHumanHandoff(tenantId, workitemId, dispatchId, to, w, "REQUESTED_HUMAN", true);
+        log.info("handoff agent target unavailable; falling back to human tenantId={} workitemId={} target={}",
+                tenantId, workitemId, to);
+        return handleHumanHandoff(tenantId, workitemId, dispatchId, null, w, "UNKNOWN_AGENT_FALLBACK_HUMAN", false);
     }
 
     private HandoffResult handleAgentHandoff(long tenantId, long workitemId, long dispatchId,
@@ -186,10 +184,16 @@ public class HandoffService {
         if (resolved == null && allowTenantOwnerFallback) {
             resolved = resolveTenantAdminUserId(tenantId);
         }
-        if (resolved == null) {
+        if (resolved == null || resolved <= 0) {
             log.info("handoff human target unresolved and no fallback tenantId={} workitemId={} to={}",
                     tenantId, workitemId, to);
             return HandoffResult.rejected("TARGET_UNRESOLVED", "no agent or human fallback resolved");
+        }
+        UserDO user = userDao.findById(resolved);
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(tenantId, resolved);
+        if (user == null || !Integer.valueOf(0).equals(user.getStatus())
+                || member == null || !Integer.valueOf(0).equals(member.getStatus())) {
+            return HandoffResult.rejected("TARGET_NOT_WORKSPACE_MEMBER", "human target is not an active workspace member");
         }
         if ("HUMAN".equalsIgnoreCase(w.getAssigneeType()) && resolved.equals(w.getAssigneeRef())) {
             return HandoffResult.human(resolved, fallbackReason);

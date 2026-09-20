@@ -21,6 +21,7 @@
         <result column="resume_from_dispatch_id" property="resumeFromDispatchId"/>
         <result column="delivery_source_dispatch_id" property="deliverySourceDispatchId"/>
         <result column="resume_mode" property="resumeMode"/>
+        <result column="debug_log_enabled" property="debugLogEnabled"/>
         <result column="gmt_create" property="gmtCreate"/>
         <result column="gmt_modified" property="gmtModified"/>
         <result column="creator_id" property="creatorId"/>
@@ -32,7 +33,7 @@
     <sql id="cols" databaseId="autowonder-source-aware">
         id, tenant_id, source_type, workitem_id, sdlc_step_id, agent_id, agent_version_id, executor_id,
         package_oss_ref, status, attempt, idempotency_key, result_summary, error,
-        resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode,
+        resume_from_dispatch_id, delivery_source_dispatch_id, resume_mode, debug_log_enabled,
         gmt_create, gmt_modified, creator_id, modifier_id, is_deleted, version
     </sql>
 
@@ -129,6 +130,13 @@
         WHERE id = #{id} AND tenant_id = #{tenantId}
           AND source_type = 'SCHEDULED_TASK_RUN' AND agent_id = #{agentId}
           AND status = 'PENDING' AND agent_version_id IS NULL AND is_deleted = 0
+    </update>
+
+    <update id="markDebugLogEnabled" databaseId="autowonder-source-aware">
+        UPDATE dispatch
+        SET debug_log_enabled = 1
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
+          AND status = 'PACKAGING'
     </update>
 
     <select id="listByWorkitem" databaseId="autowonder-source-aware" resultMap="dispatchMap">
@@ -275,6 +283,34 @@
         LIMIT #{limit}
     </select>
 
+    <select id="listByExecutorAndStatuses" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE executor_id = #{executorId}
+          AND is_deleted = 0
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listReleasedPausePredecessors" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch d
+        WHERE d.is_deleted = 0
+          <if test="executorId != null">AND d.executor_id = #{executorId}</if>
+          AND (d.status = 'PAUSED'
+            OR (d.status = 'CANCELED' AND d.error LIKE 'PAUSE_CONFIRMATION_MISSING:%'))
+          AND EXISTS (
+            SELECT 1 FROM dispatch waiter
+            WHERE waiter.tenant_id = d.tenant_id
+              AND waiter.workitem_id = d.workitem_id
+              AND waiter.status = 'WAITING_FOR_PAUSE'
+              AND waiter.result_summary = CONCAT('waitForDispatchId=', d.id)
+              AND waiter.is_deleted = 0
+          )
+        ORDER BY d.id ASC
+        LIMIT #{limit}
+    </select>
+
     <!-- In-flight dispatches of one workspace, for the logical-delete linkage (D5). Caller supplies
          the status set so pauseable and non-pauseable rows can be fetched in one pass each. -->
     <select id="listInFlightByTenant" resultMap="dispatchMap">
@@ -325,6 +361,22 @@
           AND is_deleted = 0
     </select>
 
+    <select id="listCapacityOccupyingIds" resultType="long">
+        SELECT d.id
+        FROM dispatch d
+        WHERE d.executor_id = #{executorId}
+          AND d.status IN ('PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'PAUSING')
+          AND d.is_deleted = 0
+        UNION
+        SELECT d.id
+        FROM dispatch d
+        INNER JOIN dispatch_recovery r
+          ON r.tenant_id = d.tenant_id AND r.dispatch_id = d.id
+        WHERE d.executor_id = #{executorId}
+          AND d.is_deleted = 0
+          AND r.stop_pending = 1
+    </select>
+
     <select id="listOldestPendingByAgent" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch
         WHERE agent_id = #{agentId}
@@ -352,7 +404,6 @@
     <update id="returnPackagingToPending">
         UPDATE dispatch
         SET status = 'PENDING',
-            agent_version_id = NULL,
             executor_id = NULL,
             package_oss_ref = NULL,
             version = version + 1,
@@ -367,7 +418,6 @@
     <update id="returnOwnedActiveToPending">
         UPDATE dispatch
         SET status = 'PENDING',
-            agent_version_id = NULL,
             executor_id = NULL,
             package_oss_ref = NULL,
             result_summary = NULL,

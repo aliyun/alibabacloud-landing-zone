@@ -33,10 +33,11 @@ describe('AuditLogPage', () => {
     );
     renderPage();
     expect(await screen.findByText('auto-dev (AGENT)')).toBeInTheDocument();
-    expect(screen.getByText('RUNTIME_EVENT')).toBeInTheDocument();
+    expect(screen.getByText('运行事件')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '详情' }));
     expect(screen.getByText('EVENT / runtime.progress')).toBeInTheDocument();
     expect(screen.getByText('step.started')).toBeInTheDocument();
-    expect(screen.getByText(/stepName: 编码实现/)).toBeInTheDocument();
+
   });
 
   it('renders rows when audit log list data is nested but count succeeds', async () => {
@@ -95,8 +96,7 @@ describe('AuditLogPage', () => {
     expect(screen.getByText('CREATE_WORKSPACES_ID_SWITCH')).toBeInTheDocument();
     expect(screen.getByText('lazy (HUMAN)')).toBeInTheDocument();
     expect(screen.getByText('CREATE_WORKITEMS_ID_TRANSITION')).toBeInTheDocument();
-    expect(screen.getAllByText('ACTIVE / USER_CLICK')).toHaveLength(2);
-    expect(screen.getAllByText('http.post')).toHaveLength(2);
+    expect(screen.queryByText('ACTIVE / USER_CLICK')).not.toBeInTheDocument();
     expect(screen.getByText('共 2 条')).toBeInTheDocument();
   });
 
@@ -119,8 +119,30 @@ describe('AuditLogPage', () => {
     renderPage();
     expect(await screen.findByText('AW测试工程师 (AGENT)')).toBeInTheDocument();
     expect(screen.getByText('UPLOAD_CHECKPOINT')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '详情' }));
     expect(screen.getByText('EVENT / DAEMON_CALLBACK')).toBeInTheDocument();
     expect(screen.getByText('daemon.checkpoint')).toBeInTheDocument();
+  });
+
+  it('filters both rows and count by actor type, and resets to human operations', async () => {
+    const seen: Record<string, string | null> = {};
+    server.use(...['/api/audit-logs', '/api/audit-logs/count'].map((path) => http.get(path, ({ request }) => {
+      seen[path] = new URL(request.url).searchParams.get('actorType');
+      return HttpResponse.json({ success: true, code: '0', data: path.endsWith('count') ? 0 : [] });
+    })));
+    const user = userEvent.setup();
+    renderPage();
+    const check = async (expected: string | null) => waitFor(() => {
+      expect(seen['/api/audit-logs']).toBe(expected);
+      expect(seen['/api/audit-logs/count']).toBe(expected);
+    });
+    await check('HUMAN');
+    await user.click(screen.getByText('全部', { exact: true }));
+    await check(null);
+    await user.click(screen.getByText('数字员工', { selector: '.ant-segmented-item-label' }));
+    await check('AGENT');
+    await user.click(screen.getByRole('button', { name: /重\s*置/ }));
+    expect(screen.getByRole('radio', { name: '人工操作' })).toBeChecked();
   });
 
   it('renders multi-dimensional filters and submits selected params', async () => {

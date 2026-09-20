@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-DEPLOY_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../../../deploying-autowonder-on-alibaba-cloud" && pwd)
-source "$DEPLOY_SKILL_DIR/scripts/lib.sh"
+UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+source "$UPGRADE_SKILL_DIR/scripts/lib.sh"
 
 operation_scope=${AUTOWONDER_OPERATION_SCOPE:-}
 [[ "$operation_scope" == deployment || "$operation_scope" == upgrade ]] || \
@@ -50,7 +50,7 @@ while IFS= read -r instance; do instances+=("$instance"); done < <(jq -er '(.res
 export ALIBABA_CLOUD_REGION_ID="$region"
 
 if [[ "$operation_scope" == upgrade ]]; then
-  UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../../../upgrading-autowonder-on-alibaba-cloud" && pwd)
+  UPGRADE_SKILL_DIR=$(cd -- "$SCRIPT_DIR/../.." && pwd)
   source "$UPGRADE_SKILL_DIR/scripts/upgrade-lib.sh"
   case "$subcommand" in
     upgrade-inventory) require_current_target_verification "$manifest" ;;
@@ -64,11 +64,13 @@ run_cloud() {
   require_command aliyun
   encoded_script=$(printf '%s' "$script" | base64 | tr -d '\r\n')
   command_content="printf '%s' '$encoded_script' | base64 -d | /usr/bin/env bash"
+  require_remote_submission_settled "$manifest"
+  atomic_jq "$manifest" --arg instance "$instance" '.remoteSubmission={instanceId:$instance,status:"unknown",preparedAt:(now|todateiso8601)}'
   response=$(aliyun_cli ecs RunCommand --region "$region" --RegionId "$region" --InstanceId.1 "$instance" --Type RunShellScript --Timeout 1800 --CommandContent "$command_content") || die "Cloud Assistant submission failed"
   unset encoded_script command_content
   invocation=$(cloud_assistant_invocation_id <<<"$response") || die "Cloud Assistant invocation ID missing"
   atomic_jq "$manifest" --arg id "$invocation" --arg instance "$instance" \
-    '.remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
+    '.remoteSubmission=null | .remoteInvocations=((.remoteInvocations // []) + [{invokeId:$id,instanceId:$instance,status:"submitted",submittedAt:(now|todateiso8601)}])'
   deadline=$((SECONDS + 1860))
   while ((SECONDS < deadline)); do
     sleep 2
@@ -78,8 +80,9 @@ run_cloud() {
       Finished|Success)
         exit_code=$(cloud_assistant_exit_code <<<"$result")
         [[ "$exit_code" == 0 ]] || die "Cloud Assistant command failed"
+        output=$("${AUTOWONDER_PYTHON:-python3}" "${AUTOWONDER_OPERATIONS_CLI%/*}/cloud_assistant.py" poll <<<"$result" | jq -er '.output') \
+          || die "Cloud Assistant result failed validation"
         atomic_jq "$manifest" --arg id "$invocation" '(.remoteInvocations[] | select(.invokeId==$id)).status="finished"'
-        output=$(jq -r '[..|objects|.Output? // empty][0] // ""' <<<"$result" | decode_b64 2>/dev/null || true)
         jq -n --arg invocationId "$invocation" --arg output "$output" '{invocationId:$invocationId,output:$output}'
         return 0;;
       Failed|PartialFailed|Stopped|Stopping|TimedOut|Cancelled|Invalid|Aborted|Terminated) die "Cloud Assistant invocation reached terminal failure";;
@@ -295,8 +298,18 @@ exit 1'); then
     ;;
   runtime-config)
     require_file "$env_file"; require_mode_600 "$env_file"; require_command openssl; require_command terraform
+    chmod 600 "$manifest"
+    candidate_hash=$(sha256_file "$env_file")
+    jq -e --arg hash "$candidate_hash" '
+      .upgrade.environmentPlanSha256 == $hash or
+      (.runtimeConfig.planFingerprint == .upgrade.planFingerprint and
+       .runtimeConfig.keyGenerationId == .upgrade.keyGenerationId and
+       .runtimeConfig.envSha256 == $hash)
+    ' "$manifest" >/dev/null || die "candidate environment differs from the approved plan or prepared checkpoint"
     [[ -d "$terraform_dir" ]] || die "runtime-config requires --terraform-dir"
     validate_env_file_syntax "$env_file"
+    candidate_env_path="$(cd -- "$(dirname -- "$env_file")" && pwd -P)/$(basename -- "$env_file")"
+    atomic_jq "$manifest" --arg path "$candidate_env_path" '.localContext.candidateEnvFile=$path'
     if [[ $(jq -r '.mode // empty' "$manifest") == upgrade ]]; then
       jq -e '
         .upgrade.environment as $environment |
@@ -312,6 +325,7 @@ exit 1'); then
         die "upgrade environment requirement contract is missing or invalid; regenerate the upgrade plan"
     fi
     load_alicloud_profile_credentials "$region"
+    initialize_runtime_terraform "$manifest" "$terraform_dir"
     terraform_identity_file=$(mktemp); TEMP_FILES+=("$terraform_identity_file"); chmod 600 "$terraform_identity_file"
     terraform -chdir="$terraform_dir" output -json expected_tags >"$terraform_identity_file" || \
       die "cannot bind Terraform state to this deployment"
@@ -357,9 +371,11 @@ exit 1'); then
     unset application_access_key_id_file application_access_key_secret_file normalized_env line
     unset seen_oss_id seen_oss_secret seen_sls_id seen_sls_secret
     if ! grep -q '^AUTOWONDER_SECRET_MASTER_KEY=' "$env_file"; then
+      require_secret_creation_allowed "$manifest"
       value=$(openssl rand -base64 32 | tr -d '\r\n' | jq -Rr @sh); printf 'AUTOWONDER_SECRET_MASTER_KEY=%s\n' "$value" >>"$env_file"; unset value
     fi
     if ! grep -q '^AUTOWONDER_JWT_SECRET=' "$env_file"; then
+      require_secret_creation_allowed "$manifest"
       value=$(openssl rand -base64 48 | tr -d '\r\n' | jq -Rr @sh); printf 'AUTOWONDER_JWT_SECRET=%s\n' "$value" >>"$env_file"; unset value
     fi
     if ! grep -q '^AUTOWONDER_PUBLIC_BASE_URL=' "$env_file"; then
@@ -408,6 +424,9 @@ exit 1'); then
     [[ "$master_key" =~ ^[A-Za-z0-9+/]{43}=$ ]] || die "master key must be strict single-line Base64"
     [[ $(printf '%s' "$master_key" | decode_b64 | wc -c | tr -d ' ') == 32 ]] || die "master key must decode to 32 bytes"
     unset master_key
+    key_generation_id=$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_SECRET_KEY_GENERATION_ID)")
+    [[ "$key_generation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || die "protected candidate requires the escrow key generation UUIDv4"
+    [[ "$key_generation_id" == "$(jq -r '.upgrade.keyGenerationId // empty' "$manifest")" ]] || die "key generation differs from the approved plan"
     public_base_url=$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_PUBLIC_BASE_URL)")
     [[ "$public_base_url" =~ ^https?://[^[:space:]]+$ ]] || die "AUTOWONDER_PUBLIC_BASE_URL must be an absolute HTTP(S) URL"
     unset public_base_url
@@ -423,9 +442,10 @@ exit 1'); then
     atomic_jq "$manifest" --arg version "$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_RUNTIME_RECOMMENDED_VERSION)")" \
       --arg applicationVersion "$(unquote_simple "$(env_raw_value "$env_file" AUTOWONDER_VERSION)")" \
       --arg envHash "$(sha256_file "$env_file")" \
+      --arg generation "$key_generation_id" \
       --arg envFile "$(cd -- "$(dirname -- "$env_file")" && pwd -P)/$(basename -- "$env_file")" \
       --arg terraformDir "$(cd -- "$terraform_dir" && pwd -P)" \
-      '.runtimeConfig={prepared:true,fileMode:"0600",valuesValidated:true,recommendedRuntimeVersion:$version,applicationVersion:$applicationVersion,applicationCredentialSource:"terraform-sensitive-outputs",envSha256:$envHash}
+      '.runtimeConfig={prepared:true,fileMode:"0600",valuesValidated:true,recommendedRuntimeVersion:$version,applicationVersion:$applicationVersion,applicationCredentialSource:"terraform-sensitive-outputs",envSha256:$envHash,keyGenerationId:$generation,planFingerprint:.upgrade.planFingerprint}
        | .localContext.protectedEnvFile=$envFile | .localContext.terraformDirectory=$terraformDir
        | (if .mode == "upgrade" then .upgrade.environmentValidated=true | .upgrade.environmentCandidateSha256=$envHash else . end)
        | .phase="runtime-config" | .status="prepared"'
@@ -524,6 +544,10 @@ if test -n \"\$existing\"; then
   test \"\$recorded_checksum\" = '$expected_sha' || { echo 'migration checksum mismatch' >&2; exit 1; }
   test \"\$recorded_success\" = 1 || { echo 'previous failed migration record requires reviewed repair' >&2; exit 1; }
 else
+  if [[ '$filename' == *__platform_admin_init.sql ]]; then
+    admin_count=\$(mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" -Nse 'SELECT COUNT(*) FROM user WHERE is_deleted = 0 AND is_admin = 1' \"\$database\")
+    [[ \"\$admin_count\" =~ ^[0-9]+$ ]] && test \"\$admin_count\" -gt 0 || { echo 'migration requires an existing system administrator; explicit recovery is required' >&2; exit 1; }
+  fi
   started=\$(date +%s)
   if mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" < \"\$file\"; then
     elapsed=\$(( (\$(date +%s) - started) * 1000 ))
@@ -553,6 +577,9 @@ printf 'MIGRATIONS_APPLIED=%s\\n' '$pending_count'"
     jq -e '
       .runtimeConfig.prepared == true and
       .runtimeConfig.recommendedRuntimeVersion == .upgrade.targetRecommendedRuntimeVersion and
+      .runtimeConfig.planFingerprint == .upgrade.planFingerprint and
+      .runtimeConfig.keyGenerationId == .upgrade.keyGenerationId and
+      (.runtimeConfig.keyGenerationId | type == "string" and test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")) and
       .runtimeConfig.envSha256 == .deployment.lastRun.envSha256
     ' "$manifest" >/dev/null || die "target runtime environment checkpoint is incomplete or stale"
     migration_status=$(jq -r '.upgrade.databaseMigration.status // empty' "$manifest")
@@ -561,10 +588,12 @@ printf 'MIGRATIONS_APPLIED=%s\\n' '$pending_count'"
       [[ $(jq -r '.upgrade.databaseCompatibility.rollingAllowed // false' "$manifest") == true ]] || die "database compatibility does not allow rolling activation"
     fi
     expected_jar=$(jq -er '.artifacts.jar.sha256 | select(test("^[0-9a-f]{64}$"))' "$manifest") || die "target JAR checksum is missing"
+    expected_env=$(jq -er '.runtimeConfig.envSha256 | select(test("^[0-9a-f]{64}$"))' "$manifest") || die "protected environment checkpoint is missing"
     invocation_json='[]'; node_json='[]'
     for instance in "${instances[@]}"; do
       result=$(run_cloud "$instance" "set -euo pipefail
 target=/opt/autowonder/releases/$short_commit
+test \"\$(sha256sum /etc/autowonder/autowonder.env | cut -d ' ' -f 1)\" = '$expected_env' || { echo 'installed environment checkpoint mismatch' >&2; exit 1; }
 test -f \"\$target/auto-wonder.jar\" || { echo 'expected target release is not staged' >&2; exit 1; }
 actual_jar=\$(sha256sum \"\$target/auto-wonder.jar\" | awk '{print \$1}')
 test \"\$actual_jar\" = '$expected_jar'
@@ -581,6 +610,7 @@ if ln -sfn /opt/autowonder/releases/$short_commit /opt/autowonder/current.new \
       && ss -ltnH \"sport = :7001\" | grep -q . \
       && test \"\$body\" = success \
       && curl --fail --silent --connect-timeout 2 --max-time 5 http://127.0.0.1:7001/api/platform/branding/public >/dev/null; then
+      test \"\$(sha256sum /etc/autowonder/autowonder.env | cut -d ' ' -f 1)\" = '$expected_env' || { echo 'installed environment checkpoint mismatch' >&2; exit 1; }
       printf 'ROLLING_STATUS=passed\\nPREVIOUS_RELEASE=%s\\nACTIVE_RELEASE=%s\\n' \"\$previous\" \"\$target\"
       exit 0
     fi
@@ -661,50 +691,18 @@ exit 1')
     require_command openssl
     jq -e '.applicationBaseUrl | type == "string" and length > 0' "$manifest" >/dev/null || die "applicationBaseUrl missing"
     handoff_file=${handoff_file:-"$(dirname "$manifest")/.autowonder-admin-handoff.json"}
-    reconcile_orphan_admin() {
-      local result deleted
-      result=$(run_cloud "${instances[0]}" "$remote_db_prelude
-deleted=\$(mysql -h \"\$host\" -P \"\$port\" -u \"\$SPRING_DATASOURCE_USERNAME\" \"\$database\" -N -e \"START TRANSACTION; DELETE u FROM user u WHERE u.username='admin' AND NOT EXISTS (SELECT 1 FROM org o WHERE o.owner_id=u.id) AND NOT EXISTS (SELECT 1 FROM org_member m WHERE m.user_id=u.id); SELECT ROW_COUNT(); COMMIT;\")
-test \"\$deleted\" = 1
-printf 'ORPHAN_ADMIN_RECONCILED=1\\n'")
-      deleted=$(jq -r '.output' <<<"$result" | sed -n 's/^ORPHAN_ADMIN_RECONCILED=//p' | tail -1)
-      [[ "$deleted" == 1 ]] || die "existing administrator is not a safe orphan; manual reconciliation required"
-    }
     if [[ $(jq -r '.business.adminCreated // false' "$manifest") != true ]]; then
       private_key=$(mktemp); public_key=$(mktemp); TEMP_FILES+=("$private_key" "$public_key"); chmod 600 "$private_key" "$public_key"
       openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$private_key" >/dev/null 2>&1
       openssl pkey -in "$private_key" -pubout -out "$public_key" >/dev/null 2>&1
       public_key_b64=$(base64 <"$public_key" | tr -d '\r\n')
-      organization_b64=$(printf '%s' "$(json_string "$manifest" '.organizationName')" | base64 | tr -d '\r\n')
-      run_business_initialization() {
-        run_cloud "${instances[0]}" "set -euo pipefail
-work=\$(mktemp -d); trap 'rm -rf -- \"\$work\"' EXIT
-printf '%s' '$public_key_b64' | base64 -d >\"\$work/public.pem\"
-organization=\$(printf '%s' '$organization_b64' | base64 -d)
-for attempt in \$(seq 1 20); do
-  password=\$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9!@#%^+=' | head -c 32)
-  if [[ \"\$password\" =~ [A-Z] && \"\$password\" =~ [a-z] && \"\$password\" =~ [0-9] && \"\$password\" =~ [!@#%^+=] ]]; then break; fi
-done
-[[ \"\$password\" =~ [A-Z] && \"\$password\" =~ [a-z] && \"\$password\" =~ [0-9] && \"\$password\" =~ [!@#%^+=] ]]
-jq -n --arg password \"\$password\" '{username:\"admin\",password:\$password,email:\"admin@localhost.invalid\",nickname:\"Administrator\"}' >\"\$work/register.json\"
-code=\$(curl --silent --output \"\$work/register-response.json\" --write-out '%{http_code}' -H 'Content-Type: application/json' --data-binary @\"\$work/register.json\" http://127.0.0.1:7001/api/auth/register || true)
-if test \"\$code\" = 409; then printf 'BUSINESS_STATUS=conflict\\n'; exit 0; fi
-case \"\$code\" in 2??) ;; *) exit 1;; esac
-jq -e '.success == true' \"\$work/register-response.json\" >/dev/null
-jq '{username,password}' \"\$work/register.json\" >\"\$work/login.json\"
-curl --fail --silent -H 'Content-Type: application/json' --data-binary @\"\$work/login.json\" http://127.0.0.1:7001/api/auth/login >\"\$work/login-response.json\"
-token=\$(jq -er 'select(.success == true) | .data.accessToken' \"\$work/login-response.json\")
-jq -n --arg name \"\$organization\" '{name:\$name,description:\"AutoWonder community deployment\",background:\"\"}' >\"\$work/org.json\"
-curl --fail --silent -H 'Content-Type: application/json' -H \"Authorization: Bearer \$token\" --data-binary @\"\$work/org.json\" http://127.0.0.1:7001/api/orgs >\"\$work/org-response.json\"
-jq -e '.success == true' \"\$work/org-response.json\" >/dev/null
-jq -c '{username,password}' \"\$work/register.json\" | openssl pkeyutl -encrypt -pubin -inkey \"\$work/public.pem\" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 | base64 | tr -d '\\r\\n' | sed 's/^/HANDOFF_CIPHERTEXT=/'
-printf '\\nBUSINESS_STATUS=passed\\n'"
-      }
-      result=$(run_business_initialization)
-      if [[ $(jq -r '.output' <<<"$result") == *BUSINESS_STATUS=conflict* ]]; then
-        reconcile_orphan_admin
-        result=$(run_business_initialization)
-      fi
+      deployment_b64=$(printf '%s' "$(json_string "$manifest" '.deploymentId')" | base64 | tr -d '\r\n')
+      admin_script=$(cat "$SCRIPT_DIR/admin-init.sh")
+      result=$(run_cloud "${instances[0]}" "set -euo pipefail
+public_key_b64='$public_key_b64'
+deployment_b64='$deployment_b64'
+credential_file=/etc/autowonder/admin-bootstrap.json
+$admin_script")
       output=$(jq -r '.output' <<<"$result")
       [[ "$output" == *BUSINESS_STATUS=passed* ]] || die "business initialization failed"
       ciphertext=$(sed -n 's/^HANDOFF_CIPHERTEXT=//p' <<<"$output" | tail -1)
@@ -713,8 +711,8 @@ printf '\\nBUSINESS_STATUS=passed\\n'"
       printf '%s' "$ciphertext" | decode_b64 | openssl pkeyutl -decrypt -inkey "$private_key" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 >"$handoff_tmp"
       jq -e '.username == "admin" and (.password | type == "string" and length >= 20)' "$handoff_tmp" >/dev/null || die "decrypted administrator handoff is invalid"
       mv -f -- "$handoff_tmp" "$handoff_file"; chmod 600 "$handoff_file"
-      unset ciphertext organization_b64 output public_key_b64 result
-      atomic_jq "$manifest" '.business.adminCreated=true | .business.organizationCreated=true'
+      unset ciphertext deployment_b64 admin_script output public_key_b64 result
+      atomic_jq "$manifest" '.business.adminCreated=true'
     else
       require_file "$handoff_file"; require_mode_600 "$handoff_file"
     fi

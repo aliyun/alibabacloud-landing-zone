@@ -73,18 +73,12 @@ export function useMemoryReviewActions() {
       const targetOwnerRef = reviewOwnerRef ? Number(reviewOwnerRef) : currentMemory.ownerRef ?? undefined;
       setPendingReviewId(currentMemory.id);
       try {
-        await updateMutation.mutateAsync({
-          id: currentMemory.id,
-          params: {
-            title: currentMemory.title ?? undefined,
-            contentMd: editedContent,
-            type: editedType,
-          },
-        });
         await reviewMutation.mutateAsync({
           id: currentMemory.id,
           params: {
             decision: 'ADOPT',
+            editedContentMd: editedContent,
+            editedType,
             scope: reviewScope,
             ownerRef: reviewScope === 'ORG' ? undefined : targetOwnerRef,
           },
@@ -122,7 +116,7 @@ export function useMemoryReviewActions() {
           id: currentMemory.id,
           params: { decision: 'REJECT', comment: rejectComment || undefined },
         });
-        message.success('已驳回');
+        message.success('已移出日常列表，可在已驳回记录中查看');
         setRejectModalOpen(false);
       } catch (err: unknown) {
         if (err && typeof err === 'object' && 'message' in err) {

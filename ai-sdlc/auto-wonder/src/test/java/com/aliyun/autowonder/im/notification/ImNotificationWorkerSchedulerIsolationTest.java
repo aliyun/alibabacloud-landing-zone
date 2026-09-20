@@ -210,6 +210,7 @@ class ImNotificationWorkerSchedulerIsolationTest {
         final ImProvider provider = mock(ImProvider.class);
         final ImNotificationMessageContextResolver contextResolver = mock(ImNotificationMessageContextResolver.class);
         final ImNotificationProperties properties = new ImNotificationProperties();
+        final ImNotificationPreferenceService preferenceService = mock(ImNotificationPreferenceService.class);
         final ImNotificationWorker worker;
 
         Fixture() {
@@ -225,7 +226,7 @@ class ImNotificationWorkerSchedulerIsolationTest {
                     channelConfigService,
                     new ImProviderRegistry(List.of(provider)),
                     properties,
-                    contextResolver);
+                    contextResolver, preferenceService);
         }
     }
 }

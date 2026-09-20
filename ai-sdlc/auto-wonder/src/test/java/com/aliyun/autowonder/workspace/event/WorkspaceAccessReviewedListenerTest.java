@@ -163,6 +163,7 @@ class WorkspaceAccessReviewedListenerTest {
     private static class Fixture {
         final UserImIdentityService identityService = mock(UserImIdentityService.class);
         final PlatformImChannelConfigService channelConfigService = mock(PlatformImChannelConfigService.class);
+        { when(channelConfigService.selectedProvider()).thenReturn("DINGTALK"); }
         final ImNotificationQueue queue = mock(ImNotificationQueue.class);
         final WorkspaceAccessReviewedListener listener =
                 new WorkspaceAccessReviewedListener(identityService, channelConfigService, queue);

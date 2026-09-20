@@ -13,6 +13,7 @@ import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
+import com.aliyun.autowonder.scheduledtask.dto.ScheduledRunMentionCandidateVO;
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskRunDetailVO;
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskRunVO;
 import com.aliyun.autowonder.scheduledtask.compat.RequiresScheduledTaskCapability;
@@ -88,11 +89,17 @@ public class ScheduledTaskRunController {
 
     @PostMapping("/{runId}/cancel")
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "取消定时任务运行")
-    public Result<ScheduledTaskRunVO> cancel(@PathVariable long runId, @RequestParam Integer version) {
+    public Result<ScheduledTaskRunVO> cancel(@PathVariable long runId, @RequestParam Integer version,
+                                             @RequestParam(required = false, defaultValue = "false") boolean force) {
         ScheduledTaskRunDO existing = requireRun(runId);
         requireOwnerOrAdmin(existing.getOwnerId());
         if (!version.equals(existing.getVersion()) || !runService.markCancelIntent(existing, userId())) {
             throw new BizException(ErrorCode.SCHEDULED_TASK_VERSION_CONFLICT);
+        }
+        if (force) {
+            dispatchControlService.forceCancelActive(workspaceId(), runId, userId());
+            ScheduledTaskRunDO canceled = runService.transition(workspaceId(), runId, existing.getVersion(), "CANCELED", userId());
+            return Result.ok(ScheduledTaskRunViews.toVO(canceled));
         }
         boolean awaitingPause = dispatchControlService.pauseActive(workspaceId(), runId, userId(), true);
         ScheduledTaskRunDO current = runDao.findById(workspaceId(), runId);
@@ -110,7 +117,17 @@ public class ScheduledTaskRunController {
     public Result<CommentVO> comment(@PathVariable long runId, @RequestBody RunCommentRequest request) {
         return Result.ok(commentService.addHumanComment(workspaceId(), runId, userId(),
                 request == null ? null : request.contentMd,
+                request == null ? null : request.getTargetAgentIds(),
                 request == null ? null : request.getTargetHumanIds()));
+    }
+
+    /** 候选口径与评论写入侧的冻结参与者校验一致：不可 @ 的数字人也返回，由前端置灰并展示原因。 */
+    @GetMapping("/{runId}/mention-candidates")
+    public Result<List<ScheduledRunMentionCandidateVO>> mentionCandidates(@PathVariable long runId,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "limit", defaultValue = "50") int limit) {
+        ScheduledTaskRunDO run = requireRun(runId);
+        return Result.ok(participantService.getMentionCandidates(workspaceId(), run, q, limit));
     }
 
     @GetMapping("/{runId}/artifacts")
@@ -165,9 +182,12 @@ public class ScheduledTaskRunController {
 
     public static class RunCommentRequest {
         public String contentMd;
+        public java.util.List<Long> targetAgentIds;
         public java.util.List<Long> targetHumanIds;
         public String getContentMd() { return contentMd; }
         public void setContentMd(String contentMd) { this.contentMd = contentMd; }
+        public java.util.List<Long> getTargetAgentIds() { return targetAgentIds; }
+        public void setTargetAgentIds(java.util.List<Long> targetAgentIds) { this.targetAgentIds = targetAgentIds; }
         public java.util.List<Long> getTargetHumanIds() { return targetHumanIds; }
         public void setTargetHumanIds(java.util.List<Long> targetHumanIds) { this.targetHumanIds = targetHumanIds; }
     }

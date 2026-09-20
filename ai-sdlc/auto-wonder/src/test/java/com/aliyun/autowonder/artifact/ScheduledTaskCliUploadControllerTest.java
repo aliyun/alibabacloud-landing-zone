@@ -222,13 +222,59 @@ class ScheduledTaskCliUploadControllerTest {
         String token = mintToken();
 
         for (String filename : new String[]{"a.exe", "fake.png", "fake.jpg", "fake.jpeg",
-                "fake.webp", "fake.pdf"}) {
+                "fake.webp", "fake.pdf", "fake.zip", "fake.docx", "fake.doc"}) {
             mvc.perform(multipart(uploadPath)
                             .file(new MockMultipartFile("files", filename, "application/octet-stream",
                                     "not-a-real-file".getBytes(StandardCharsets.UTF_8)))
                             .header("Authorization", "Bearer " + token))
                     .andExpect(status().isBadRequest());
         }
+    }
+
+    /** Source code carries no magic-byte signature, so its guard is UTF-8 validity. */
+    @Test
+    void sourceCodeWithNonUtf8BytesReturns400() throws Exception {
+        String token = mintToken();
+
+        for (String filename : new String[]{"broken.java", "broken.py"}) {
+            mvc.perform(multipart(uploadPath)
+                            .file(new MockMultipartFile("files", filename, "application/octet-stream",
+                                    new byte[]{(byte) 0xFF, (byte) 0xFE, 0x00, 0x01}))
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void newlySupportedFormatsUploadSuccessfully() throws Exception {
+        String token = mintToken();
+        byte[] docx = TestArchives.docx("验收标准");
+        byte[] doc = TestArchives.doc();
+        byte[] zip = TestArchives.zipOf("notes/readme.txt", "read me".getBytes(StandardCharsets.UTF_8));
+
+        mvc.perform(multipart(uploadPath)
+                        .file(new MockMultipartFile("files", "Sample.java", "text/x-java-source",
+                                "public class Sample {\n}\n".getBytes(StandardCharsets.UTF_8)))
+                        .file(new MockMultipartFile("files", "helper.py", "text/x-python",
+                                "def helper():\n    return 1\n".getBytes(StandardCharsets.UTF_8)))
+                        .file(new MockMultipartFile("files", "spec.docx",
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx))
+                        .file(new MockMultipartFile("files", "legacy.doc", "application/msword", doc))
+                        .file(new MockMultipartFile("files", "assets.zip", "application/zip", zip))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(5))
+                .andExpect(jsonPath("$.data[0].name").value("requirements/Sample.java"))
+                .andExpect(jsonPath("$.data[1].name").value("requirements/helper.py"))
+                .andExpect(jsonPath("$.data[2].name").value("requirements/spec.docx"))
+                .andExpect(jsonPath("$.data[3].name").value("requirements/legacy.doc"))
+                .andExpect(jsonPath("$.data[4].name").value("requirements/assets.zip"));
+
+        assertArrayEquals(docx, storage.get(
+                "artifact-bucket/t/100/scheduled-task/321/requirements/spec.docx"));
+        assertArrayEquals(zip, storage.get(
+                "artifact-bucket/t/100/scheduled-task/321/requirements/assets.zip"));
     }
 
     @Test

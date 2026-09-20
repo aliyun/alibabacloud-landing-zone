@@ -1,14 +1,21 @@
-import { useState } from 'react';
-import { Table, Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Table, Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs, Pagination, Spin, Empty } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listSdlcTemplates, createSdlcTemplate, deleteSdlcTemplate, enableSdlcTemplate, disableSdlcTemplate } from './api';
 import type { SdlcTemplate } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { SquadTemplateGallery } from './SquadTemplateGallery';
 import { SDLC_AI_ENABLED } from './featureFlags';
+import { SquadFilterBar, useSquadOptions } from '@/features/squad/SquadFilterBar';
+import { SquadTags } from '@/features/squad/SquadTags';
+import { groupBySquad } from '@/features/squad/squadGrouping';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
+
+const SDLCS_VIEW_STORAGE_KEY = 'autowonder.sdlcs.view';
+const SDLCS_VIEW_OPTIONS = ['list', 'grouped'] as const;
 
 const statusMap: Record<string, { color: string; label: string }> = {
   DRAFT: { color: 'default', label: '草稿' },
@@ -23,12 +30,27 @@ export function SdlcListPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [createOpen, setCreateOpen] = useState(false);
+  const [squadFilter, setSquadFilter] = useState<number[]>([]);
+  const [grouped, setGrouped] = useState(
+    () => readViewPreference(SDLCS_VIEW_STORAGE_KEY, SDLCS_VIEW_OPTIONS, 'grouped') === 'grouped',
+  );
   const [form] = Form.useForm();
+  const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
 
   const { data = [], isLoading } = useQuery({
-    queryKey: ['sdlcs', page, size],
-    queryFn: () => listSdlcTemplates({ page, size }),
+    queryKey: ['sdlcs', page, size, squadFilter],
+    queryFn: () => listSdlcTemplates({ page, size, squadIds: squadFilter }),
   });
+
+  // The squad filter is applied server-side, so page 1 is the only page that can hold the new result set.
+  useEffect(() => {
+    setPage(1);
+  }, [squadFilter]);
+
+  const squadGroups = useMemo(
+    () => groupBySquad(data, (sdlc) => sdlc.squadIds, squadNameById),
+    [data, squadNameById],
+  );
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sdlcs'] });
 
@@ -67,7 +89,11 @@ export function SdlcListPage() {
     },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     { title: '工单类型', dataIndex: 'workType', width: 90, render: (v: string | null) => v || '通用' },
-    { title: '步骤数', width: 80, render: (_, record) => record.steps?.length ?? 0 },
+    { title: '步骤数', width: 80, render: (_, record) => record.stepCount ?? record.steps?.length ?? 0 },
+    {
+      title: '所属小队', width: 180,
+      render: (_, record) => <SquadTags squadIds={record.squadIds} squadNames={record.squadNames} />,
+    },
     {
       title: '状态', dataIndex: 'status', width: 100,
       render: (s: string) => <Tag color={statusMap[s]?.color}>{statusMap[s]?.label || s}</Tag>,
@@ -117,6 +143,19 @@ export function SdlcListPage() {
           label: '流程模版',
           children: (
             <>
+              <div style={{ marginBottom: 12 }}>
+                <SquadFilterBar
+                  options={squadOptions}
+                  value={squadFilter}
+                  onChange={setSquadFilter}
+                  grouped={grouped}
+                  onGroupedChange={(next) => {
+                    setGrouped(next);
+                    writeViewPreference(SDLCS_VIEW_STORAGE_KEY, next ? 'grouped' : 'list');
+                  }}
+                  loading={squadsLoading}
+                />
+              </div>
               <Card
                 title="SDLC 流程模版"
                 extra={
@@ -136,17 +175,58 @@ export function SdlcListPage() {
                   </Space>
                 }
               >
-                <Table
-                  rowKey="id"
-                  columns={columns}
-                  dataSource={data}
-                  loading={isLoading}
-                  pagination={{
-                    current: page, pageSize: size,
-                    onChange: (p, ps) => { setPage(p); setSize(ps); },
-                    showTotal: (t) => `共 ${t} 条`,
-                  }}
-                />
+                {grouped ? (
+                  <Spin spinning={isLoading}>
+                    {!isLoading && data.length === 0 ? (
+                      <Empty description="暂无 SDLC 模版" />
+                    ) : (
+                      <>
+                        {squadGroups.map((group) => (
+                          <section key={group.key} className="sdlc-squad-group" style={{ marginBottom: 20 }}>
+                            <Space className="sdlc-squad-group-header" style={{ marginBottom: 8 }}>
+                              <strong>
+                                {group.squadId == null ? (
+                                  group.label
+                                ) : (
+                                  <Link to={`/squads?squadId=${group.squadId}`}>{group.label}</Link>
+                                )}
+                              </strong>
+                              <span style={{ color: '#64748b', fontSize: 12 }}>{group.items.length} 个</span>
+                            </Space>
+                            <Table
+                              rowKey="id"
+                              columns={columns}
+                              dataSource={group.items}
+                              loading={isLoading}
+                              pagination={false}
+                            />
+                          </section>
+                        ))}
+                        <Pagination
+                          current={page}
+                          pageSize={size}
+                          total={data.length}
+                          showSizeChanger
+                          showTotal={(t) => `共 ${t} 条`}
+                          onChange={(p, ps) => { setPage(p); setSize(ps); }}
+                          style={{ marginTop: 8, textAlign: 'right' }}
+                        />
+                      </>
+                    )}
+                  </Spin>
+                ) : (
+                  <Table
+                    rowKey="id"
+                    columns={columns}
+                    dataSource={data}
+                    loading={isLoading}
+                    pagination={{
+                      current: page, pageSize: size,
+                      onChange: (p, ps) => { setPage(p); setSize(ps); },
+                      showTotal: (t) => `共 ${t} 条`,
+                    }}
+                  />
+                )}
               </Card>
 
               <Modal

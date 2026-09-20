@@ -28,6 +28,15 @@ export async function sendMyDingTalkIdentityTest(): Promise<void> {
   await apiClient.post<void>('/api/users/me/im-identities/dingtalk/test');
 }
 
+export async function updateMyFeishuIdentity(params: UpdateDingTalkIdentityParams): Promise<UserImIdentity> {
+  const resp = await apiClient.put<UserImIdentity>('/api/users/me/im-identities/feishu', params);
+  return resp.data;
+}
+
+export async function sendMyFeishuIdentityTest(): Promise<void> {
+  await apiClient.post<void>('/api/users/me/im-identities/feishu/test');
+}
+
 export interface ChangePasswordParams {
   oldPassword: string;
   newPassword: string;

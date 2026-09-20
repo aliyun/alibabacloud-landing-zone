@@ -1,5 +1,5 @@
-. (Join-Path $PSScriptRoot '..\..\deploying-autowonder-on-alibaba-cloud\scripts\windows\lib.ps1')
-. (Join-Path $PSScriptRoot '..\..\deploying-autowonder-on-alibaba-cloud\scripts\windows\cloud-assistant.ps1')
+. (Join-Path $PSScriptRoot 'windows\lib.ps1')
+. (Join-Path $PSScriptRoot 'windows\cloud-assistant.ps1')
 
 function New-UpgradeRemoteRequest {
     param($Data, [string]$Operation)
@@ -48,6 +48,17 @@ function Assert-UpgradeCandidate {
     $required=@('SPRING_DATASOURCE_URL','SPRING_DATASOURCE_USERNAME','SPRING_DATASOURCE_PASSWORD','REDIS_HOST','AUTOWONDER_SECRET_MASTER_KEY','AUTOWONDER_JWT_SECRET')
     if ($Data.upgrade['environment']) { $required += @($Data.upgrade.environment['required']) }
     foreach ($key in $required) { if (-not $values[$key]) { throw "Required environment key missing: $key" } }
+    if ($values['AUTOWONDER_SECRET_MASTER_KEY'] -cnotmatch '^[A-Za-z0-9+/]{43}=$' -or [Convert]::FromBase64String($values['AUTOWONDER_SECRET_MASTER_KEY']).Length -ne 32) { throw 'Master key must be strict single-line Base64 encoding 32 bytes' }
+    if ($values['AUTOWONDER_SECRET_KEY_GENERATION_ID'] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') { throw 'Protected candidate requires the escrow key generation UUIDv4' }
+    if ($values['AUTOWONDER_SECRET_KEY_GENERATION_ID'] -cne $Data.upgrade.keyGenerationId) { throw 'Key generation differs from the approved plan' }
+}
+
+function Get-UpgradeKeyGeneration {
+    param([string]$EnvFile)
+    foreach ($line in [IO.File]::ReadAllLines($EnvFile)) {
+        if ($line -cmatch '^AUTOWONDER_SECRET_KEY_GENERATION_ID=(.*)$') { return $Matches[1].Trim('"', "'") }
+    }
+    throw 'Protected candidate key generation is missing'
 }
 
 function Assert-UpgradeStaging {
@@ -60,6 +71,8 @@ function Assert-UpgradeStaging {
     if (@(Compare-Object $expected $covered).Count -ne 0) { throw 'Staging does not cover every verified ECS' }
     $runtime=$Data['runtimeConfig']
     if (-not $runtime -or -not $runtime.prepared -or $runtime.recommendedRuntimeVersion -ne $Data.upgrade.targetRecommendedRuntimeVersion -or $runtime.candidateSha256 -ne $Data.upgrade.environmentSha256) { throw 'Target runtime environment checkpoint is incomplete or stale' }
+    if ($runtime.planFingerprint -ne $Data.upgrade.planFingerprint -or $runtime.keyGenerationId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') { throw 'Protected environment generation checkpoint is incomplete or stale' }
+    if ($runtime.keyGenerationId -cne $Data.upgrade.keyGenerationId) { throw 'Prepared generation differs from approved plan' }
 }
 
 function Get-UpgradeBackupSha {

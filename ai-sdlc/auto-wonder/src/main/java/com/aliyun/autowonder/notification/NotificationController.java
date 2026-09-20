@@ -1,9 +1,12 @@
 package com.aliyun.autowonder.notification;
 
+import com.aliyun.autowonder.im.PlatformImChannelConfigService;
+
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.notification.dto.NotificationPageVO;
 import com.aliyun.autowonder.notification.dto.NotificationVO;
 import com.aliyun.autowonder.notification.dto.NotifyPrefVO;
 import com.aliyun.autowonder.notification.dto.UpdatePrefRequest;
@@ -19,27 +22,32 @@ public class NotificationController {
     private final NotificationDao notificationDao;
     private final NotifyPrefDao prefDao;
     private final NotifyService notifyService;
+    private final PlatformImChannelConfigService imConfigs;
 
     public NotificationController(NotificationDao notificationDao, NotifyPrefDao prefDao,
-                                   NotifyService notifyService) {
+                                   NotifyService notifyService, PlatformImChannelConfigService imConfigs) {
         this.notificationDao = notificationDao;
         this.prefDao = prefDao;
         this.notifyService = notifyService;
+        this.imConfigs = imConfigs;
     }
 
     @GetMapping
-    public Result<List<NotificationVO>> list(
+    public Result<NotificationPageVO> list(
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
+        long tenantId = currentWorkspaceId();
+        long userId = currentUserId();
         int p = Math.max(page, 1);
         int sz = Math.min(Math.max(size, 1), 100);
         int offset = (p - 1) * sz;
-        List<NotificationVO> result = new ArrayList<>();
-        for (NotificationDO n : notificationDao.listByRecipient(currentWorkspaceId(), currentUserId(), status, offset, sz)) {
-            result.add(toVO(n));
+        List<NotificationVO> items = new ArrayList<>();
+        for (NotificationDO n : notificationDao.listByRecipient(tenantId, userId, status, offset, sz)) {
+            items.add(toVO(n));
         }
-        return Result.ok(result);
+        long total = notificationDao.countByRecipient(tenantId, userId, status);
+        return Result.ok(new NotificationPageVO(items, total));
     }
 
     @GetMapping("/unread-count")
@@ -59,6 +67,12 @@ public class NotificationController {
         return Result.ok(null);
     }
 
+    @DeleteMapping("/{id}")
+    public Result<Void> delete(@PathVariable("id") Long id) {
+        notifyService.delete(id, currentWorkspaceId(), currentUserId());
+        return Result.ok(null);
+    }
+
     @GetMapping("/prefs")
     public Result<List<NotifyPrefVO>> listPrefs() {
         List<NotifyPrefVO> result = new ArrayList<>();
@@ -66,7 +80,8 @@ public class NotificationController {
             NotifyPrefVO vo = new NotifyPrefVO();
             vo.setType(p.getType());
             vo.setInApp(p.getInApp() != null && p.getInApp() == 1);
-            vo.setDingtalk(p.getDingtalk() != null && p.getDingtalk() == 1);
+            vo.setDingtalk("DINGTALK".equals(imConfigs.selectedProvider()) && Integer.valueOf(1).equals(p.getDingtalk()));
+            vo.setFeishu("FEISHU".equals(imConfigs.selectedProvider()) && Integer.valueOf(1).equals(p.getFeishu()));
             result.add(vo);
         }
         return Result.ok(result);
@@ -80,6 +95,10 @@ public class NotificationController {
         long tenantId = currentWorkspaceId();
         long userId = currentUserId();
         for (UpdatePrefRequest.PrefItem item : req.getItems()) {
+            if (item.isDingtalk()) imConfigs.requireSelected("DINGTALK");
+            if (item.isFeishu()) imConfigs.requireSelected("FEISHU");
+        }
+        for (UpdatePrefRequest.PrefItem item : req.getItems()) {
             NotifyPrefDO existing = prefDao.findByUserAndType(tenantId, userId, item.getType());
             if (existing == null) {
                 NotifyPrefDO pref = new NotifyPrefDO();
@@ -88,9 +107,10 @@ public class NotificationController {
                 pref.setType(item.getType());
                 pref.setInApp(item.isInApp() ? 1 : 0);
                 pref.setDingtalk(item.isDingtalk() ? 1 : 0);
+                pref.setFeishu(item.isFeishu() ? 1 : 0);
                 prefDao.insert(pref);
             } else {
-                prefDao.update(existing.getId(), item.isInApp() ? 1 : 0, item.isDingtalk() ? 1 : 0);
+                prefDao.update(existing.getId(), item.isInApp() ? 1 : 0, item.isDingtalk() ? 1 : 0, item.isFeishu() ? 1 : 0);
             }
         }
         return Result.ok(null);

@@ -4,7 +4,7 @@
 
 Upgrade an existing community deployment to an exact GitHub commit without
 mutating the active release until source, configuration, database, build, and
-rollback checks have passed. Reuse the deployment Skill's immutable releases,
+rollback checks have passed. Use this Skill's immutable releases,
 private OSS transfer, sequential activation, probes, acceptance, and rollback.
 
 Use this only for an existing deployment with the files and identity fields
@@ -14,7 +14,13 @@ import the complete schema exactly once.
 
 ## Prerequisite Context Gate
 
-Detect the control host first and run the deployment Skill's matching bootstrap
+Resolve the dedicated operations bucket before relying on local deployment
+files. See `references/operations-state.md` in this Skill.
+The returned manifest and recovered paths are authoritative; a cloud permission
+error is not a reason to use an older local manifest. Preserve all migration and
+invocation checkpoints when restoring, then rerun live prerequisite checks.
+
+Detect the control host first and run this Skill's matching bootstrap
 adapter. The adapter checks all supported third-party dependencies and installs
 missing supported third-party dependencies without conversational confirmation,
 including Alibaba Cloud CLI. It must use only the dedicated `auto-wonder`
@@ -24,15 +30,14 @@ automatically, followed by another STS probe. Historical or missing manifest
 profiles are normalized to `auto-wonder`; never fall back to the CLI current or
 `default` profile.
 
-After OAuth, target verification is also the account deployment-presence probe.
-If STS succeeds but there is no manifest-owned AutoWonder deployment visible in
-the recorded region, report an account authorization/login failure and ask the
-user to log into the Alibaba Cloud account that deployed AutoWonder in the
-browser. Stop until the user gives an equivalent natural-language confirmation
-that the browser login is complete, such as “已登录”, “登录好了”, or “已重新登录”.
-Do not require an exact confirmation phrase. That confirmation authorizes an
-automatic rerun of OAuth on `auto-wonder` to overwrite the previous CLI
-login; repeat STS and target verification before continuing.
+Target verification compares the complete live ECS inventory with the recovered
+manifest. A successful STS probe with missing targets does not establish an
+expired login. Distinguish account mismatch, permission denial, region/ID/tag
+mismatch and incomplete inventory; report sanitized evidence and stop. Only a
+confirmed missing profile/session or recognized credential failure triggers
+OAuth. Do not trigger login for transient API/network failures or unknown errors,
+and do not replay mutations. Repeat STS and complete target verification after
+the underlying cause is corrected.
 
 Discovery and target verification are read-only with respect to cloud
 resources, but may atomically write sanitized evidence checkpoints to the local
@@ -178,8 +183,9 @@ mutation has started, an unfinished upgrade must resume its existing reviewed
 plan; replanning must not erase the migration checkpoint or permit rollback.
 
 If a historical manifest has an empty `repositoryUrl`, only the repository
-allowlist in `scripts/upgrade_plan.py` is accepted: the AutoWonder internal
-repository or the official `aliyun/alibabacloud-landing-zone` repository. SSH
+allowlist in `scripts/upgrade_plan.py` is accepted: the official
+`aliyun/alibabacloud-landing-zone` repository. An internal repository is not
+implicitly trusted when the historical repository URL is absent. SSH
 and HTTPS spellings normalize to the same identity. All Git command failures
 stop planning; an unsuccessful diff is never an empty migration result.
 
@@ -305,13 +311,14 @@ Then activate and verify:
 scripts/upgrade-operations.sh rolling-upgrade --manifest "$MANIFEST"
 # Optional idempotent confirmation; rolling-upgrade already records acceptance.
 scripts/upgrade-operations.sh acceptance --manifest "$MANIFEST"
-../deploying-autowonder-on-alibaba-cloud/scripts/sanitize-evidence.sh \
+scripts/sanitize-evidence.sh \
   --input "$MANIFEST" --output "$SANITIZED_REPORT"
 ```
 
 `SOURCE` may be a standalone repository root, a monorepo root, or the AutoWonder
 project subdirectory. The planner and build wrapper resolve the unique project
-directory from its versioned systemd marker, `VERSION`, and `pom.xml`. Preserve
+directory from `src/main/resources/application.yml`, `VERSION`, and `pom.xml`.
+The target must include this upgrade Skill's versioned systemd asset for sealing. Preserve
 the project-relative path in the detached target worktree. Do not run the new-deployment `database` or
 `business-init` subcommands during
 an upgrade. Remove the temporary target worktree only after its build and hashes
@@ -357,10 +364,12 @@ Record a sanitized upgrade evidence directory containing:
 - current database backup policy and latest successful backup time;
 - target remote URL, ref, and resolved commit.
 
-Abort when active nodes report different release commits, the local repository
-has tracked changes, the checked-out branch is not `master`, `git pull --ff-only
-origin master` cannot fast-forward, the target commit is unavailable, or the
-target architecture is not Linux x86_64.
+Abort when active nodes report different release commits, repository identity
+validation fails, the isolated target worktree has tracked changes or is not
+pinned to the exact fetched `origin/master`, the target commit is unavailable,
+or the target architecture is not Linux x86_64. Preserve the operator's local
+branch and working tree; their divergence is not an upgrade blocker. Explicit
+same-version workspace validation follows its separate no-Git route above.
 
 ## Phase 2: Change And Risk Plan
 
@@ -449,9 +458,12 @@ failure and do not activate the target release.
 ## Phase 5: Build And Stage
 
 Build the exact target worktree with `-DskipFrontend=false`. Run backend tests,
-frontend tests/lint/build, deployment Skill tests, internal-reference scans, and
+frontend tests/lint/build, this Skill's tests, internal-reference scans, and
 the existing release sealing checks. Record the target commit and artifact
 SHA-256 values in the deployment manifest.
+Use the builder's installed Node runtime for separate frontend tests and lint.
+Do not switch to a global Node with a different architecture: optional native
+dependencies were installed for the build runtime's architecture.
 
 Before any ECS environment, systemd unit, database, or active-release mutation,
 run `upgrade-backup`. It creates exactly one backup archive per ECS at

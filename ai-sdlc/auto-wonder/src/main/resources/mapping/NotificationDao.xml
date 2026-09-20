@@ -22,6 +22,12 @@
         WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
     </select>
 
+    <select id="countByRecipient" resultType="int">
+        SELECT COUNT(*) FROM notification
+        WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId}
+        <if test="status != null">AND status = #{status}</if>
+    </select>
+
     <update id="markRead">
         UPDATE notification SET status = 'READ'
         WHERE id = #{id} AND tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
@@ -31,6 +37,12 @@
         UPDATE notification SET status = 'READ'
         WHERE tenant_id = #{tenantId} AND recipient_id = #{recipientId} AND status = 'UNREAD'
     </update>
+
+    <!-- notification 表无 is_deleted 列，删除为物理删除；归属校验落在 WHERE 上，避免越权删他人通知。 -->
+    <delete id="delete">
+        DELETE FROM notification
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND recipient_id = #{recipientId}
+    </delete>
 
     <update id="updateChannels">
         UPDATE notification SET channels_json = #{channelsJson}

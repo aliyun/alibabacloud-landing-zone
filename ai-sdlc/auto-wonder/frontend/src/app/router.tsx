@@ -26,8 +26,10 @@ import { RepoMapPage } from '@/features/repo/RepoMapPage';
 import { MemoryListPage } from '@/features/memory/MemoryListPage';
 import { MemoryImportPage } from '@/features/memory/MemoryImportPage';
 import { MemoryReviewPage } from '@/features/memory/MemoryReviewPage';
+import { NotificationCenterPage } from '@/features/notification/NotificationCenterPage';
 import { SkillListPage } from '@/features/skill/SkillListPage';
 import { AuditLogPage } from '@/features/audit/AuditLogPage';
+import { ProjectBackupsPage } from '@/features/settings/ProjectBackupsPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { MemberRoleSettingsPage } from '@/features/settings/MemberRoleSettingsPage';
 import { StatusTemplatePage } from '@/features/statemachine/StatusTemplatePage';
@@ -44,9 +46,15 @@ import { ScheduledTaskDetailPage } from '@/features/scheduledTask/ScheduledTaskD
 import { ScheduledTaskEditPage } from '@/features/scheduledTask/ScheduledTaskEditPage';
 import { ScheduledTaskRunDetailPage } from '@/features/scheduledTask/ScheduledTaskRunDetailPage';
 import { ScheduledTaskCapabilityGate } from '@/features/scheduledTask/ScheduledTaskCapabilityGate';
+import { EnvironmentVariablesPage } from '@/features/environmentVariables/EnvironmentVariablesPage';
+import { HelpCenterPage } from '@/features/help/HelpCenterPage';
 
 export function createAppRoutes(): RouteObject[] {
   return [
+    {
+      element: <AppLayout helpCenter />,
+      children: [{ path: '/help', element: <HelpCenterPage /> }],
+    },
     {
       element: <AuthLayout />,
       children: [
@@ -118,11 +126,14 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/integrations/channels', element: <ChannelIntegrationPage /> },
         { path: '/evolution', element: <EvolutionPage /> },
         { path: '/audit-logs', element: <AuditLogPage /> },
+        { path: '/notifications', element: <NotificationCenterPage /> },
         { path: '/settings/members', element: <MemberRoleSettingsPage /> },
         { path: '/settings/members-roles', element: <Navigate to="/settings/members" replace /> },
         { path: '/settings/members-roles/:tab', element: <Navigate to="/settings/members" replace /> },
         { path: '/settings/roles', element: <Navigate to="/settings/members" replace /> },
         { path: '/settings', element: <SettingsPage /> },
+        { path: '/settings/backups', element: <ProjectBackupsPage /> },
+        { path: '/settings/environment-variables', element: <EnvironmentVariablesPage /> },
         { path: '/insights', element: <InsightsPage /> },
         { path: '/about', element: <AboutAutoWonderPage /> },
       ],

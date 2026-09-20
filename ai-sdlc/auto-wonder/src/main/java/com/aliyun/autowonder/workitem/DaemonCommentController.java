@@ -64,7 +64,7 @@ public class DaemonCommentController {
                                      @RequestParam("token") String token,
                                      @RequestBody Map<String, Object> body) {
         DaemonUploadAuthenticator.AuthResult auth = authenticator.authenticate(dispatchId, token);
-        if (!auth.isSuccess()) {
+        if (!auth.isSuccess() || authenticator.isMutationFenced(dispatchId)) {
             return ResponseEntity.status(401).build();
         }
         requireScheduledCapability(auth);
@@ -116,7 +116,7 @@ public class DaemonCommentController {
                                             @RequestParam("token") String token,
                                             @RequestBody Map<String, String> body) {
         DaemonUploadAuthenticator.AuthResult auth = authenticator.authenticate(dispatchId, token);
-        if (!auth.isSuccess()) {
+        if (!auth.isSuccess() || authenticator.isMutationFenced(dispatchId)) {
             return ResponseEntity.status(401).build();
         }
         requireScheduledCapability(auth);

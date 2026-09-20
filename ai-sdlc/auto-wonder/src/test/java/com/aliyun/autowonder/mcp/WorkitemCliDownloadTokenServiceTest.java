@@ -3,6 +3,7 @@ package com.aliyun.autowonder.mcp;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.branding.PlatformBrandingDao;
+import com.aliyun.autowonder.branding.PlatformBrandingDO;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.mcp.dto.WorkitemCliDownloadTokenVO;
@@ -43,9 +44,10 @@ class WorkitemCliDownloadTokenServiceTest {
         assertEquals("https://daily.auto-wonder.example.com", vo.getServerUrl());
         assertEquals("0.2.130", vo.getRuntimeVersion());
         assertEquals("AUTOWONDER_DOWNLOAD_TOKEN", vo.getTokenEnvName());
-        assertEquals(java.util.List.of(".md", ".markdown", ".txt", ".html", ".pdf",
-                        ".png", ".jpg", ".jpeg", ".webp"),
+        assertEquals(com.aliyun.autowonder.artifact.RequirementDocumentService.SUPPORTED_EXTENSIONS,
                 vo.getSupportedExtensions());
+        assertTrue(vo.getSupportedExtensions().containsAll(java.util.List.of(
+                ".docx", ".doc", ".java", ".py", ".zip")));
         assertFalse(vo.getToken().contains(SECRET));
     }
 
@@ -224,6 +226,33 @@ class WorkitemCliDownloadTokenServiceTest {
         assertTrue(hint.contains("autowonder.workitem_cli_download_token"));
     }
 
+    @Test
+    void serverUrlAndCommandsFollowTheConfiguredBrandingDomainWithoutRestart() {
+        PlatformBrandingDao brandingDao = mock(PlatformBrandingDao.class);
+        when(brandingDao.findActive()).thenReturn(brandingRow("https://wonder.example.com"));
+        when(workitemDao.findById(WORKITEM_ID)).thenReturn(workitem());
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(member("READ_ONLY"));
+        PlatformBrandingService branding = new PlatformBrandingService(
+                brandingDao, new InMemoryObjectStorage(), new OssProperties(),
+                "https://daily.auto-wonder.example.com", "0.2.130", "x.x.x", false);
+        WorkitemCliDownloadTokenService service =
+                new WorkitemCliDownloadTokenService(jwtService(), workitemDao, workspaceMemberDao, branding);
+
+        WorkitemCliDownloadTokenVO vo = service.mint(
+                McpAccessTokenService.CredentialType.LONG_LIVED, USER_ID, WORKITEM_ID);
+
+        assertEquals("https://wonder.example.com", vo.getServerUrl());
+        assertTrue(vo.getCommand().contains("--server-url 'https://wonder.example.com'"), vo.getCommand());
+        assertTrue(vo.getPowershellCommand().contains("--server-url 'https://wonder.example.com'"));
+        assertTrue(service.commandTemplate().contains("--server-url https://wonder.example.com "));
+
+        when(brandingDao.findActive()).thenReturn(brandingRow(null));
+        WorkitemCliDownloadTokenVO cleared = service.mint(
+                McpAccessTokenService.CredentialType.LONG_LIVED, USER_ID, WORKITEM_ID);
+
+        assertEquals("https://daily.auto-wonder.example.com", cleared.getServerUrl());
+    }
+
     // ---- fixtures ----
 
     private final WorkitemDao workitemDao = mock(WorkitemDao.class);
@@ -263,6 +292,15 @@ class WorkitemCliDownloadTokenServiceTest {
         workitem.setId(WORKITEM_ID);
         workitem.setTenantId(TENANT_ID);
         return workitem;
+    }
+
+    private static PlatformBrandingDO brandingRow(String domain) {
+        PlatformBrandingDO row = new PlatformBrandingDO();
+        row.setPlatformName("WonderHub");
+        row.setThemeKey("ocean-blue");
+        row.setPrimaryColor("#2563eb");
+        row.setDomain(domain);
+        return row;
     }
 
     private static WorkspaceMemberDO member(String accessLevel) {

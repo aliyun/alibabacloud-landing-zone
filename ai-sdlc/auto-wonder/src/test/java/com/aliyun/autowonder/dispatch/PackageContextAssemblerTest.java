@@ -25,6 +25,8 @@ import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
@@ -32,6 +34,7 @@ import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -56,6 +59,7 @@ class PackageContextAssemblerTest {
     private AgentDao agentDao;
     private AgentVersionDao agentVersionDao;
     private UserDao userDao;
+    private WorkspaceMemberDao workspaceMemberDao;
     private StatusNodeDao statusNodeDao;
     private RepoDao repoDao;
     private RepoRelationDao repoRelationDao;
@@ -82,13 +86,14 @@ class PackageContextAssemblerTest {
         agentDao = mock(AgentDao.class);
         agentVersionDao = mock(AgentVersionDao.class);
         userDao = mock(UserDao.class);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
         statusNodeDao = mock(StatusNodeDao.class);
         repoDao = mock(RepoDao.class);
         repoRelationDao = mock(RepoRelationDao.class);
         checkpointService = mock(DispatchCheckpointService.class);
         assembler = new PackageContextAssembler(workitemDao, clarificationDao, commentDao, guidanceDao, stepDao,
                 repoPermDao, skillDao, skillCatalogDao, memoryRefDao, memoryDao, dispatchDao, artifactDao,
-                squadMemberDao, agentDao, agentVersionDao, userDao,
+                squadMemberDao, agentDao, agentVersionDao, userDao, workspaceMemberDao,
                 repoDao, repoRelationDao, statusNodeDao, checkpointService);
     }
 
@@ -216,6 +221,30 @@ class PackageContextAssemblerTest {
         assertTrue(context.getCommentsMd().contains("Comment 10"));
         assertTrue(context.getCommentsMd().contains("@Dev adjust the API"));
         assertTrue(context.getCommentsMd().contains("I have started the adjustment."));
+        assertEquals(List.of(10L, 11L), context.getComments().stream().map(c -> c.id()).toList());
+        assertEquals("@Dev adjust the API", context.getComments().get(0).contentMd());
+        verify(commentDao, times(1)).listByWorkitem(TENANT, 200L);
+    }
+
+    @Test
+    void commentIndexAndLegacyTextShareTheSameTenantFilteredSnapshot() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        WorkitemCommentDO local = comment(10L, "  不可删除验收条件\n", "HUMAN", 7L);
+        WorkitemCommentDO foreign = comment(11L, "foreign secret", "HUMAN", 8L);
+        foreign.setTenantId(TENANT + 1);
+        WorkitemCommentDO unscoped = comment(12L, "unscoped secret", "HUMAN", 8L);
+        unscoped.setTenantId(null);
+        when(commentDao.listByWorkitem(TENANT, 200L))
+                .thenReturn(java.util.Arrays.asList(local, foreign, unscoped, null));
+
+        PackageContext context = assembler.assemble(dispatch(), version());
+
+        assertEquals(1, context.getComments().size());
+        assertEquals("  不可删除验收条件\n", context.getComments().get(0).contentMd());
+        assertFalse(context.getCommentsMd().contains("secret"));
     }
 
     @Test
@@ -327,6 +356,28 @@ class PackageContextAssemblerTest {
         assertNull(context.getInteractionContextMd());
     }
 
+    @Test
+    void freezesApplicabilityPolicyButClearsResultsForNewDispatch() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        SdlcStepDO step = workflowStep(300L, 50L, 1, "review", "implementation", "review scope",
+                "[{\"id\":\"tests\",\"text\":\"测试通过\",\"allowNotApplicable\":true,\"notApplicableWhen\":\"仅澄清\",\"checked\":true,\"status\":\"NOT_APPLICABLE\",\"reason\":\"prior run\"}]",
+                "{\"checklistRequired\":true}");
+        when(stepDao.findById(300L)).thenReturn(step);
+        when(stepDao.listBySdlc(50L)).thenReturn(List.of(step));
+        PackageContext context = assembler.assemble(dispatch(), version());
+        List<?> steps = (List<?>) context.getSdlc().get("steps");
+        Map<?, ?> workflow = (Map<?, ?>) steps.get(0);
+        Map<?, ?> check = (Map<?, ?>) ((List<?>) workflow.get("checklist")).get(0);
+        assertEquals(true, check.get("allowNotApplicable"));
+        assertEquals("仅澄清", check.get("notApplicableWhen"));
+        assertEquals(false, check.get("checked"));
+        assertFalse(check.containsKey("status"));
+        assertFalse(check.containsKey("reason"));
+    }
+
     private DispatchDO dispatch() {
         DispatchDO d = new DispatchDO();
         d.setId(500L);
@@ -368,6 +419,14 @@ class PackageContextAssemblerTest {
         repo.setName(name);
         repo.setUrl("git@example.test/" + name + ".git");
         return repo;
+    }
+
+    private AgentDO agent(long id, long tenantId, String kind) {
+        AgentDO agent = new AgentDO();
+        agent.setId(id);
+        agent.setTenantId(tenantId);
+        agent.setKind(kind);
+        return agent;
     }
 
     private RepoRelationDO relation(long id, long fromRepoId, long toRepoId, String type) {
@@ -469,6 +528,7 @@ class PackageContextAssemblerTest {
         write.setTenantId(TENANT);
         write.setRepoId(700L);
         write.setPermLevel("WRITE");
+        write.setAllowedBranchPatterns("[\"release/*\",\"develop\"]");
         AgentRepoPermDO read = new AgentRepoPermDO();
         read.setTenantId(TENANT);
         read.setRepoId(701L);
@@ -497,11 +557,99 @@ class PackageContextAssemblerTest {
         assertEquals(true, ctx.getRepos().get(0).get("allowCommit"));
         assertEquals(true, ctx.getRepos().get(0).get("allowPush"));
         assertEquals(true, ctx.getRepos().get(0).get("allowNetwork"));
+        assertEquals(List.of("release/*", "develop"), ctx.getRepos().get(0).get("allowedBranchPatterns"));
         assertEquals(false, ctx.getRepos().get(1).get("allowCommit"));
         assertEquals(false, ctx.getRepos().get(1).get("allowPush"));
         assertEquals(true, ctx.getRepos().get(1).get("allowNetwork"));
+        assertFalse(ctx.getRepos().get(1).containsKey("allowedBranchPatterns"));
         assertFalse(ctx.getRepos().get(0).containsKey("worktreeBranch"));
         assertFalse(ctx.getRepos().get(1).containsKey("worktreeBranch"));
+    }
+
+    @Test
+    void platformAgentReceivesEveryTenantRepoReadOnlyWithoutBindings() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        when(skillDao.listByVersion(401L)).thenReturn(List.of());
+        when(memoryRefDao.listByVersion(401L)).thenReturn(List.of());
+        when(agentDao.findById(400L)).thenReturn(agent(400L, TENANT, "PLATFORM"));
+
+        AgentRepoPermDO stale = new AgentRepoPermDO();
+        stale.setTenantId(TENANT);
+        stale.setAgentVersionId(401L);
+        stale.setRepoId(999L);
+        stale.setPermLevel("WRITE");
+        when(repoPermDao.listByVersion(401L)).thenReturn(List.of(stale));
+
+        RepoDO trunk = repo(10L, "service");
+        trunk.setDefaultBranch("master");
+        RepoDO foreign = repo(12L, "other-tenant-repo");
+        foreign.setTenantId(200L);
+        when(repoDao.listAllByTenant(TENANT)).thenReturn(List.of(trunk, repo(11L, "client-runtime"), foreign));
+
+        PackageContext ctx = assembler.assemble(dispatch(), version());
+
+        assertEquals(2, ctx.getRepos().size());
+        assertEquals(10L, ctx.getRepos().get(0).get("repoId"));
+        assertEquals("service", ctx.getRepos().get(0).get("name"));
+        assertEquals("git@example.test/service.git", ctx.getRepos().get(0).get("url"));
+        assertEquals("master", ctx.getRepos().get(0).get("ref"));
+        assertFalse(ctx.getRepos().get(1).containsKey("ref"));
+        for (Map<String, Object> entry : ctx.getRepos()) {
+            assertEquals("lazy", entry.get("mode"));
+            assertEquals(false, entry.get("allowCommit"));
+            assertEquals(false, entry.get("allowPush"));
+            assertEquals(true, entry.get("allowNetwork"));
+        }
+        assertEquals(List.of(10L, 11L), ctx.getRepoMap().get("boundRepoIds"));
+        verify(repoPermDao, never()).listByVersion(anyLong());
+        verify(repoDao, never()).findById(999L);
+    }
+
+    @Test
+    void nonPlatformAgentStillAssemblesReposFromBindingsOnly() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        when(skillDao.listByVersion(401L)).thenReturn(List.of());
+        when(memoryRefDao.listByVersion(401L)).thenReturn(List.of());
+        when(agentDao.findById(400L)).thenReturn(agent(400L, TENANT, "NORMAL"));
+
+        AgentRepoPermDO permission = new AgentRepoPermDO();
+        permission.setTenantId(TENANT);
+        permission.setAgentVersionId(401L);
+        permission.setRepoId(10L);
+        permission.setPermLevel("WRITE");
+        when(repoPermDao.listByVersion(401L)).thenReturn(List.of(permission));
+        when(repoDao.findById(10L)).thenReturn(repo(10L, "service"));
+
+        PackageContext ctx = assembler.assemble(dispatch(), version());
+
+        assertEquals(1, ctx.getRepos().size());
+        assertEquals("eager", ctx.getRepos().get(0).get("mode"));
+        assertEquals(true, ctx.getRepos().get(0).get("allowCommit"));
+        assertEquals(true, ctx.getRepos().get(0).get("allowPush"));
+        verify(repoDao, never()).listAllByTenant(anyLong());
+    }
+
+    @Test
+    void platformAgentOfAnotherTenantIsNotGrantedAllRepos() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        when(skillDao.listByVersion(401L)).thenReturn(List.of());
+        when(memoryRefDao.listByVersion(401L)).thenReturn(List.of());
+        when(agentDao.findById(400L)).thenReturn(agent(400L, 200L, "PLATFORM"));
+        when(repoPermDao.listByVersion(401L)).thenReturn(List.of());
+
+        PackageContext ctx = assembler.assemble(dispatch(), version());
+
+        assertTrue(ctx.getRepos().isEmpty());
+        verify(repoDao, never()).listAllByTenant(anyLong());
     }
 
     @Test
@@ -1043,6 +1191,50 @@ class PackageContextAssemblerTest {
         assertEquals("13003", failure.getCode());
     }
 
+    private void stubHumanMembers(UserDO... users) {
+        List<WorkspaceMemberDO> members = java.util.Arrays.stream(users).map(user -> {
+            if (user.getStatus() == null) user.setStatus(0);
+            WorkspaceMemberDO member = new WorkspaceMemberDO();
+            member.setTenantId(TENANT);
+            member.setUserId(user.getId());
+            member.setStatus(0);
+            return member;
+        }).toList();
+        when(workspaceMemberDao.listByTenant(TENANT)).thenReturn(members);
+        when(userDao.listByIds(members.stream().map(WorkspaceMemberDO::getUserId).toList()))
+                .thenReturn(List.of(users));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void rosterIncludesAllActiveWorkspaceHumansWithoutPriorParticipation() {
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(200L);
+        workitem.setTenantId(TENANT);
+        workitem.setAssigneeType("AGENT");
+        when(workitemDao.findById(200L)).thenReturn(workitem);
+        stubEmptyExceptRoster();
+        UserDO first = new UserDO();
+        first.setId(41L);
+        first.setNickname("Reviewer");
+        UserDO second = new UserDO();
+        second.setId(42L);
+        second.setNickname("Reviewer");
+        UserDO inactive = new UserDO();
+        inactive.setId(43L);
+        inactive.setStatus(1);
+        stubHumanMembers(first, second, inactive);
+        workspaceMemberDao.listByTenant(TENANT).get(0).setAccessLevel("READ_ONLY");
+
+        List<Map<String, Object>> humans = (List<Map<String, Object>>) assembler.assemble(dispatch(), version())
+                .getRoster().get("humanTeammates");
+
+        assertEquals(List.of(41L, 42L), humans.stream().map(human -> human.get("userId")).toList());
+        assertTrue(humans.stream().allMatch(human -> "空间成员".equals(human.get("relation"))));
+        verify(userDao).listByIds(List.of(41L, 42L, 43L));
+        verify(userDao, never()).findById(anyLong());
+    }
+
     @SuppressWarnings("unchecked")
     @Test
     void rosterIncludesSameTenantHumanAssignee() {
@@ -1052,6 +1244,9 @@ class PackageContextAssemblerTest {
         w.setTitle("t"); w.setContentMd("c");
         w.setAssigneeType("HUMAN");
         w.setAssigneeRef(12345L);
+        UserDO user = new UserDO();
+        user.setId(12345L);
+        stubHumanMembers(user);
         when(workitemDao.findById(200L)).thenReturn(w);
         stubEmptyExceptRoster();
         when(squadMemberDao.listByAgent(400L)).thenReturn(List.of());
@@ -1080,7 +1275,7 @@ class PackageContextAssemblerTest {
         UserDO user = new UserDO();
         user.setId(42L);
         user.setNickname("Alice Wang");
-        when(userDao.findById(42L)).thenReturn(user);
+        stubHumanMembers(user);
 
         PackageContext ctx = assembler.assemble(dispatch(), version());
         Map<String, Object> roster = ctx.getRoster();
@@ -1107,7 +1302,7 @@ class PackageContextAssemblerTest {
         UserDO user = new UserDO();
         user.setId(43L);
         user.setUsername("bob_dev");
-        when(userDao.findById(43L)).thenReturn(user);
+        stubHumanMembers(user);
 
         PackageContext ctx = assembler.assemble(dispatch(), version());
         Map<String, Object> roster = ctx.getRoster();
@@ -1133,7 +1328,7 @@ class PackageContextAssemblerTest {
         UserDO user = new UserDO();
         user.setId(42L);
         user.setNickname("Zhang");
-        when(userDao.findById(42L)).thenReturn(user);
+        stubHumanMembers(user);
 
         PackageContext ctx = assembler.assemble(dispatch(), version());
         Map<String, Object> roster = ctx.getRoster();
@@ -1149,6 +1344,9 @@ class PackageContextAssemblerTest {
     @SuppressWarnings("unchecked")
     @Test
     void rosterDoesNotDuplicateOperatorWhenSameAsHumanAssignee() {
+        UserDO user = new UserDO();
+        user.setId(42L);
+        stubHumanMembers(user);
         WorkitemDO w = new WorkitemDO();
         w.setId(200L);
         w.setTenantId(TENANT);
@@ -1169,7 +1367,7 @@ class PackageContextAssemblerTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    void rosterHumanNameNullWhenUserNotFound() {
+    void rosterExcludesHumanWhoIsNotAWorkspaceMember() {
         WorkitemDO w = new WorkitemDO();
         w.setId(200L);
         w.setTenantId(TENANT);
@@ -1179,13 +1377,12 @@ class PackageContextAssemblerTest {
         when(workitemDao.findById(200L)).thenReturn(w);
         stubEmptyExceptRoster();
         when(squadMemberDao.listByAgent(400L)).thenReturn(List.of());
-        when(userDao.findById(44L)).thenReturn(null);
 
         PackageContext ctx = assembler.assemble(dispatch(), version());
         Map<String, Object> roster = ctx.getRoster();
         List<Map<String, Object>> humans = (List<Map<String, Object>>) roster.get("humanTeammates");
-        assertEquals(1, humans.size());
-        assertNull(humans.get(0).get("name"));
+        assertTrue(humans.isEmpty());
+        verify(userDao, never()).listByIds(any());
     }
 
     @SuppressWarnings("unchecked")
@@ -1246,5 +1443,55 @@ class PackageContextAssemblerTest {
         Map<String, Object> ws = ctx.getWorkitemStatus();
         assertNotNull(ws);
         assertTrue(ws.isEmpty());
+    }
+
+    @Test
+    void buildAllTenantReposSkipsNullAndTenantlessAndForeignRepoRows() {
+        AgentDO platform = agent(400L, TENANT, "PLATFORM");
+        RepoDO tenantless = repo(13L, "tenantless");
+        tenantless.setTenantId(null);
+        RepoDO foreign = repo(12L, "other-tenant-repo");
+        foreign.setTenantId(200L);
+        when(repoDao.listAllByTenant(TENANT)).thenReturn(Arrays.asList(
+                repo(10L, "service"), null, tenantless, foreign, repo(11L, "client-runtime")));
+
+        List<Map<String, Object>> repos = assembler.buildRepos(TENANT, 401L, platform);
+
+        assertEquals(List.of(10L, 11L), repos.stream().map(r -> r.get("repoId")).toList());
+        for (Map<String, Object> entry : repos) {
+            assertEquals("lazy", entry.get("mode"));
+            assertEquals(false, entry.get("allowCommit"));
+            assertEquals(false, entry.get("allowPush"));
+            assertEquals(true, entry.get("allowNetwork"));
+        }
+        verify(repoPermDao, never()).listByVersion(anyLong());
+    }
+
+    @Test
+    void agentWithoutTenantOrWithNullAgentIsNotTreatedAsPlatformAgent() {
+        when(repoPermDao.listByVersion(401L)).thenReturn(List.of());
+        AgentDO tenantless = new AgentDO();
+        tenantless.setId(400L);
+        tenantless.setTenantId(null);
+        tenantless.setKind("PLATFORM");
+
+        assertTrue(assembler.buildRepos(TENANT, 401L, tenantless).isEmpty());
+        assertTrue(assembler.buildRepos(TENANT, 401L, null).isEmpty());
+        verify(repoDao, never()).listAllByTenant(anyLong());
+    }
+
+    @Test
+    void blankDefaultBranchOmitsRefJustLikeNullDefaultBranch() {
+        AgentDO platform = agent(400L, TENANT, "PLATFORM");
+        RepoDO blank = repo(14L, "blank-branch");
+        blank.setDefaultBranch("   ");
+        RepoDO configured = repo(15L, "configured");
+        configured.setDefaultBranch(" master ");
+        when(repoDao.listAllByTenant(TENANT)).thenReturn(List.of(blank, configured));
+
+        List<Map<String, Object>> repos = assembler.buildRepos(TENANT, 401L, platform);
+
+        assertFalse(repos.get(0).containsKey("ref"));
+        assertEquals("master", repos.get(1).get("ref"));
     }
 }

@@ -37,4 +37,13 @@ class InMemoryObjectStorageTest {
         s.delete(obj.getOssRef());
         assertNull(s.get(obj.getOssRef()));
     }
+
+    @Test
+    void presignPutReturnsRecognizableFakeUrl() {
+        InMemoryObjectStorage storage = new InMemoryObjectStorage();
+
+        String url = storage.presignPut("bucket", "debug/1/k.log.gz", java.time.Duration.ofMinutes(20));
+
+        assertEquals("mem-put://bucket/debug/1/k.log.gz?ttl=1200", url);
+    }
 }

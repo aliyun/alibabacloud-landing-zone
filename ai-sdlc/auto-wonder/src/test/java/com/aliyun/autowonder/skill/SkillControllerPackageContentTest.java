@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.skill;
 
+import com.aliyun.autowonder.category.CategoryService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.skill.dto.SkillPackageFileContentVO;
@@ -34,7 +35,8 @@ class SkillControllerPackageContentTest {
     void setUp() {
         skillService = mock(SkillService.class);
         skillPackageService = mock(SkillPackageService.class);
-        controller = new SkillController(skillService, skillPackageService, mock(SkillConnectionTestService.class));
+        controller = new SkillController(skillService, skillPackageService, mock(SkillConnectionTestService.class),
+                mock(CategoryService.class));
         skill = new SkillVO();
         skill.setId(7L);
         skill.setSourceType("OSS_ZIP");

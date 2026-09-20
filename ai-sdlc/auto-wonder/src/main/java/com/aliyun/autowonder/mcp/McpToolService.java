@@ -19,18 +19,23 @@ import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.artifact.ArtifactService;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
+import com.aliyun.autowonder.dispatch.RuntimeTraceService;
+import com.aliyun.autowonder.dispatch.RuntimeTraceArtifactService;
+import com.aliyun.autowonder.dispatch.dto.RuntimeTraceVO;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
 import com.aliyun.autowonder.dispatch.DispatchPauseService;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorLaunchCommandService;
+import com.aliyun.autowonder.executor.ExecutorLaunchConfigService;
 import com.aliyun.autowonder.executor.ExecutorLaunchOptionsService;
 import com.aliyun.autowonder.executor.ExecutorService;
 import com.aliyun.autowonder.executor.dto.CreateExecutorRequest;
 import com.aliyun.autowonder.executor.dto.CreatedExecutorVO;
 import com.aliyun.autowonder.executor.dto.ExecutorVO;
 import com.aliyun.autowonder.executor.dto.IssuedExecutorVO;
+import com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
@@ -61,6 +66,9 @@ import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.CreateRelationRequest;
 import com.aliyun.autowonder.repo.dto.CreateRepoRequest;
 import com.aliyun.autowonder.repo.dto.UpdateRepoRequest;
+import com.aliyun.autowonder.category.CategoryService;
+import com.aliyun.autowonder.category.dto.CreateCategoryRequest;
+import com.aliyun.autowonder.category.dto.UpdateCategoryRequest;
 import com.aliyun.autowonder.sdlc.SdlcService;
 import com.aliyun.autowonder.sdlc.dto.CreateSdlcRequest;
 import com.aliyun.autowonder.sdlc.dto.CreateStepRequest;
@@ -163,11 +171,20 @@ public class McpToolService {
     private static final String UPDATE_SKILL_PACKAGE = "autowonder.update_skill_package";
     private static final String LIST_PLATFORM_SKILLS = "autowonder.list_platform_skills";
     private static final String INSTALL_PLATFORM_SKILL = "autowonder.install_platform_skill";
+    private static final String LIST_CATEGORIES = "autowonder.list_categories";
+    private static final String GET_CATEGORY = "autowonder.get_category";
+    private static final String CREATE_CATEGORY = "autowonder.create_category";
+    private static final String UPDATE_CATEGORY = "autowonder.update_category";
+    private static final String DELETE_CATEGORY = "autowonder.delete_category";
+    private static final String SET_SKILL_CATEGORY = "autowonder.set_skill_category";
+    private static final String BATCH_SET_SKILL_CATEGORY = "autowonder.batch_set_skill_category";
     private static final String CREATE_MEMORY = "autowonder.create_memory";
     private static final String SEARCH_MEMORIES = "autowonder.search_memories";
     private static final String GET_MEMORY = "autowonder.get_memory";
     private static final String UPDATE_MEMORY = "autowonder.update_memory";
     private static final String DEPRECATE_MEMORY = "autowonder.deprecate_memory";
+    private static final String REVIEW_MEMORY = "autowonder.review_memory";
+    private static final String COUNT_PENDING_MEMORIES = "autowonder.count_pending_memories";
     private static final String DELETE_MEMORY = "autowonder.delete_memory";
     private static final String LIST_REPOS = "autowonder.list_repos";
     private static final String GET_REPO = "autowonder.get_repo";
@@ -182,6 +199,16 @@ public class McpToolService {
     private static final String GET_SQUAD = "autowonder.get_squad";
     private static final String ADD_AGENT_TO_SQUAD = "autowonder.add_agent_to_squad";
     private static final String REMOVE_AGENT_FROM_SQUAD = "autowonder.remove_agent_from_squad";
+    private static final String GET_DELIVERY_RECOVERY = "autowonder.get_delivery_recovery";
+    private static final String CONTROL_DELIVERY = "autowonder.control_delivery";
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.dispatch.DispatchRecoveryService recoveryService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.dispatch.DispatchService recoveryDispatchService;
+    private static final String GET_DISPATCH_RUNTIME_TRACE = "autowonder.get_dispatch_runtime_trace";
+    private static final String GET_DISPATCH_ACTIVITIES = "autowonder.get_dispatch_activities";
+    private static final String GET_DISPATCH_TURN = "autowonder.get_dispatch_turn";
+    private static final String GET_DISPATCH_OBSERVATION = "autowonder.get_dispatch_observation";
     private static final String PAUSE_DISPATCH = "autowonder.pause_dispatch";
     private static final String SET_AGENT_DEFAULT_SDLC = "autowonder.set_agent_default_sdlc";
     private static final String CREATE_SCHEDULED_TASK = "autowonder.create_scheduled_task";
@@ -191,6 +218,8 @@ public class McpToolService {
     private static final String TRANSITION_SCHEDULED_TASK = "autowonder.transition_scheduled_task";
     private static final String GET_SCHEDULED_TASK_RUN = "autowonder.get_scheduled_task_run";
     private static final String ADD_SCHEDULED_TASK_RUN_COMMENT = "autowonder.add_scheduled_task_run_comment";
+    private static final String LIST_SCHEDULED_TASK_RUNS = "autowonder.list_scheduled_task_runs";
+    private static final String DELETE_SCHEDULED_TASK = "autowonder.delete_scheduled_task";
     private static final String LIST_EXECUTORS = "autowonder.list_executors";
     private static final String GET_EXECUTOR = "autowonder.get_executor";
     private static final String LIST_EXECUTOR_CLIENT_KINDS = "autowonder.list_executor_client_kinds";
@@ -199,6 +228,8 @@ public class McpToolService {
     private static final String GET_EXECUTOR_TOKEN = "autowonder.get_executor_token";
     private static final String DELETE_EXECUTOR = "autowonder.delete_executor";
     private static final String BUILD_EXECUTOR_LAUNCH_COMMAND = "autowonder.build_executor_launch_command";
+    private static final String GET_EXECUTOR_LAUNCH_CONFIG = "autowonder.get_executor_launch_config";
+    private static final String UPDATE_EXECUTOR_LAUNCH_CONFIG = "autowonder.update_executor_launch_config";
     /**
      * Static half of the executor {@code model} description. {@link #applyExecutorModelDescriptions} appends the
      * ids Redis currently holds, because usable model ids rotate and must never be hardcoded by a caller.
@@ -208,8 +239,8 @@ public class McpToolService {
                     + "the provider catalog that Redis refreshes automatically, so never hardcode one: omit this "
                     + "argument and the server resolves a currently usable id, or call "
                     + "autowonder.get_executor_launch_options for the live list with labels and defaults. An id "
-                    + "the catalog no longer offers is resolved to the catalog default, exactly like the executor "
-                    + "page, and the resolved value is returned in the response.";
+                    + "you pass explicitly that the catalog no longer offers is rejected with an error instead of "
+                    + "being silently replaced, and the persisted value is returned in the response.";
     private static final Set<String> TRANSITION_SCHEDULED_TASK_ACTIONS = Set.of(
             "enable", "pause", "archive", "run-now", "pause-run", "resume-run", "cancel-run");
     private static final Set<String> SCHEDULED_TASK_LIST_STATUSES = Set.of(
@@ -219,13 +250,16 @@ public class McpToolService {
      * task-level listing and mutation stay with human/conversation credentials.
      */
     private static final Set<String> DISPATCH_FORBIDDEN_SCHEDULED_TASK_TOOLS = Set.of(
-            CREATE_SCHEDULED_TASK, LIST_SCHEDULED_TASKS, UPDATE_SCHEDULED_TASK, TRANSITION_SCHEDULED_TASK);
+            CREATE_SCHEDULED_TASK, LIST_SCHEDULED_TASKS, UPDATE_SCHEDULED_TASK, TRANSITION_SCHEDULED_TASK,
+            DELETE_SCHEDULED_TASK);
     /**
-     * Executor tokens are long-lived credentials and creating or deleting an executor changes which
-     * machines may connect, so dispatch credentials keep read-only visibility of the executor list.
+     * Executor tokens are long-lived credentials, creating or deleting an executor changes which machines may
+     * connect, and the launch config is operator-owned state the page maintains, so dispatch credentials keep
+     * read-only visibility of the executor list.
      */
     private static final Set<String> DISPATCH_FORBIDDEN_EXECUTOR_TOOLS = Set.of(
-            CREATE_EXECUTOR, GET_EXECUTOR_TOKEN, DELETE_EXECUTOR, BUILD_EXECUTOR_LAUNCH_COMMAND);
+            CREATE_EXECUTOR, GET_EXECUTOR_TOKEN, DELETE_EXECUTOR, BUILD_EXECUTOR_LAUNCH_COMMAND,
+            GET_EXECUTOR_LAUNCH_CONFIG, UPDATE_EXECUTOR_LAUNCH_CONFIG);
     private static final String MEMORY_SCOPE_AGENT = "AGENT";
     private static final Set<String> MEMORY_SCOPES = Set.of(MEMORY_SCOPE_AGENT, "SQUAD", "ORG");
     /**
@@ -348,6 +382,20 @@ public class McpToolService {
                             globalTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(INSTALL_PLATFORM_SKILL,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(LIST_CATEGORIES,
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(GET_CATEGORY,
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(CREATE_CATEGORY,
+                            workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(UPDATE_CATEGORY,
+                            workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(DELETE_CATEGORY,
+                            workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(SET_SKILL_CATEGORY,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(BATCH_SET_SKILL_CATEGORY,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_MEMORY,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SEARCH_MEMORIES,
@@ -358,6 +406,8 @@ public class McpToolService {
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DEPRECATE_MEMORY,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(REVIEW_MEMORY, workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(COUNT_PENDING_MEMORIES, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_MEMORY,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_REPOS,
@@ -386,6 +436,12 @@ public class McpToolService {
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SQUAD,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(GET_DELIVERY_RECOVERY, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(CONTROL_DELIVERY, workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(GET_DISPATCH_RUNTIME_TRACE, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(GET_DISPATCH_ACTIVITIES, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(GET_DISPATCH_TURN, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(GET_DISPATCH_OBSERVATION, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(PAUSE_DISPATCH,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(SET_AGENT_DEFAULT_SDLC,
@@ -402,7 +458,11 @@ public class McpToolService {
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(GET_SCHEDULED_TASK_RUN,
                             workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
+                    Map.entry(LIST_SCHEDULED_TASK_RUNS,
+                            workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(ADD_SCHEDULED_TASK_RUN_COMMENT,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(DELETE_SCHEDULED_TASK,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_EXECUTORS,
                             workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
@@ -419,6 +479,10 @@ public class McpToolService {
                     Map.entry(DELETE_EXECUTOR,
                             workspaceTool(WorkspaceAccessLevel.ADMIN)),
                     Map.entry(BUILD_EXECUTOR_LAUNCH_COMMAND,
+                            workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(GET_EXECUTOR_LAUNCH_CONFIG,
+                            workspaceTool(WorkspaceAccessLevel.ADMIN)),
+                    Map.entry(UPDATE_EXECUTOR_LAUNCH_CONFIG,
                             workspaceTool(WorkspaceAccessLevel.ADMIN)));
 
     private static final String WORKSPACE_ID_DESCRIPTION =
@@ -443,6 +507,11 @@ public class McpToolService {
     private final RepoService repoService;
     private final SquadService squadService;
     private final DispatchPauseService dispatchPauseService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private RuntimeTraceService runtimeTraceService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private RuntimeTraceArtifactService runtimeTraceArtifactService;
+    private final CategoryService categoryService;
     private ScheduledTaskCapabilityGuard capabilityGuard;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ScheduledTaskRunCommentService scheduledTaskRunCommentService;
@@ -470,6 +539,8 @@ public class McpToolService {
     private ExecutorLaunchOptionsService executorLaunchOptionsService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ExecutorLaunchCommandService executorLaunchCommandService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ExecutorLaunchConfigService executorLaunchConfigService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public McpToolService(WorkspaceService workspaceService, WorkitemService workitemService,
@@ -484,11 +555,12 @@ public class McpToolService {
                           MemoryService memoryService, RepoService repoService,
                           SquadService squadService,
                           DispatchPauseService dispatchPauseService,
-                          ScheduledTaskCapabilityGuard capabilityGuard) {
+                          ScheduledTaskCapabilityGuard capabilityGuard,
+                          CategoryService categoryService) {
         this(workspaceService, workitemService, guidanceService, skillService, skillPackageService, sdlcService,
                 agentService, statusTemplateService, platformSkillCatalog, dispatchDao,
                 requirementDocumentService, workitemCliUploadTokenService, workitemCliDownloadTokenService,
-                memoryService, repoService, squadService, dispatchPauseService);
+                memoryService, repoService, squadService, dispatchPauseService, categoryService);
         this.capabilityGuard = capabilityGuard;
     }
 
@@ -503,7 +575,8 @@ public class McpToolService {
                           WorkitemCliDownloadTokenService workitemCliDownloadTokenService,
                           MemoryService memoryService, RepoService repoService,
                           SquadService squadService,
-                          DispatchPauseService dispatchPauseService) {
+                          DispatchPauseService dispatchPauseService,
+                          CategoryService categoryService) {
         this.workspaceService = workspaceService;
         this.workitemService = workitemService;
         this.guidanceService = guidanceService;
@@ -521,6 +594,7 @@ public class McpToolService {
         this.repoService = repoService;
         this.squadService = squadService;
         this.dispatchPauseService = dispatchPauseService;
+        this.categoryService = categoryService;
     }
 
     public List<McpToolVO> listTools() {
@@ -642,20 +716,27 @@ public class McpToolService {
                                 + workitemCliUploadTokenService.tokenEnvHint() + " && "
                                 + workitemCliUploadTokenService.commandTemplate() + ". "
                                 + "Keep this legacy tool only as a fallback when the CLI is unavailable. "
-                                + "Supports Markdown (.md, .markdown), text documents (.txt, .html) and PDF (.pdf), "
+                                + "Supports Markdown (.md, .markdown), text documents (.txt, .html), PDF (.pdf), "
+                                + "Word documents (.docx, .doc), source code (.java, .py) and ZIP archives (.zip), "
                                 + "plus static images (PNG, JPEG, WebP: .png, .jpg, .jpeg, .webp). "
                                 + "At most 10 attachments, 5MB each, 20MB total per workitem. "
-                                + "Use contentMd only for Markdown/text content and contentBase64 for images and PDF; "
+                                + "Use contentMd only for Markdown/text/source-code content and contentBase64 for binary "
+                                + "files (images, PDF, Word, ZIP); "
                                 + "contentBase64 wins when both are set. "
                                 + "IMPORTANT: For workitems that will be executed by a digital worker, upload all documents "
                                 + "before calling assign_workitem to ensure the first dispatch task includes these materials.",
                         schema(required("id", "filename"), prop("id", "integer"),
-                                prop("filename", "string", "Required. Attachment file name; only .md, .markdown, .txt, "
-                                        + ".html, .pdf, .png, .jpg, .jpeg, and .webp are accepted."),
-                                prop("contentMd", "string", "Markdown or plain text body; Markdown and text files only. "
-                                        + "Ignored for images and PDF."),
-                                prop("contentBase64", "string", "Base64-encoded payload; the required form for PNG, JPEG, "
-                                        + "WebP images and PDF files. Wins over contentMd when both are set."),
+                                enumProp("sourceType", List.of("WORKITEM", "SCHEDULED_TASK"),
+                                        "Optional. Owner type of the attachment: WORKITEM (default) or SCHEDULED_TASK. "
+                                                + "id is the workitem id or the scheduled task id accordingly."),
+                                prop("filename", "string", "Required. Attachment file name; only "
+                                        + String.join(", ", WorkitemCliUploadTokenService.SUPPORTED_EXTENSIONS)
+                                        + " are accepted."),
+                                prop("contentMd", "string", "Markdown or plain text body; Markdown, text and source-code "
+                                        + "files only. Ignored for binary files (images, PDF, Word, ZIP)."),
+                                prop("contentBase64", "string", "Base64-encoded payload; the required form for binary files: "
+                                        + "PNG, JPEG, WebP images, PDF, Word (.docx, .doc) and ZIP archives. "
+                                        + "Wins over contentMd when both are set."),
                                 prop("sourcePath", "string", "Optional local source path for display/audit only."))),
                 tool(WORKITEM_CLI_UPLOAD_TOKEN, "Mint a 30-minute, user-level, upload-only token for the AutoWonder CLI "
                                 + "`workitem upload` command. Long-lived personal, dispatch, and conversation "
@@ -695,9 +776,17 @@ public class McpToolService {
                                 + "context, mint a download token with autowonder.workitem_cli_download_token and run the "
                                 + "returned CLI `workitem download` command to save the files locally, then open them with "
                                 + "your own file tools.",
-                        schema(required("id"), prop("id", "integer"))),
-                tool(DELETE_WORKITEM_DOCUMENT, "Delete an uploaded requirement/design context attachment document from an AutoWonder workitem.",
-                        schema(required("id", "artifactId"), prop("id", "integer"), prop("artifactId", "integer"))),
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Workitem id, or scheduled task id when sourceType=SCHEDULED_TASK."),
+                                enumProp("sourceType", List.of("WORKITEM", "SCHEDULED_TASK"),
+                                        "Optional. Owner type of the attachment: WORKITEM (default) or SCHEDULED_TASK."))),
+                tool(DELETE_WORKITEM_DOCUMENT, "Delete an uploaded requirement/design context attachment document from an AutoWonder workitem, "
+                                + "or from a scheduled task when sourceType=SCHEDULED_TASK.",
+                        schema(required("id", "artifactId"), prop("id", "integer"),
+                                enumProp("sourceType", List.of("WORKITEM", "SCHEDULED_TASK"),
+                                        "Optional. Owner type of the attachment: WORKITEM (default) or SCHEDULED_TASK. "
+                                                + "id is the workitem id or the scheduled task id accordingly."),
+                                prop("artifactId", "integer", "Required. Artifact id to delete."))),
                 tool(TRANSITION_WORKITEM, "Transition an AutoWonder workitem to a status node.",
                         schema(required("id", "toNodeId"), prop("id", "integer"), prop("toNodeId", "integer"))),
                 tool(PAUSE_WORKITEM, "Pause a workitem by transitioning it to the configured pause status node.",
@@ -717,6 +806,8 @@ public class McpToolService {
                                 prop("workType", "string"))),
                 tool(LIST_SDLCS, "List AutoWonder SDLC flows.",
                         schema(prop("workType", "string"), prop("status", "string"),
+                                prop("squadId", "integer", "Optional. Filter by squad id; a SDLC belongs to a squad "
+                                        + "when an agent of that squad binds it on its online version."),
                                 prop("page", "integer"), prop("size", "integer"))),
                 tool(GET_SDLC, "Get one AutoWonder SDLC flow with steps.",
                         schema(required("id"), prop("id", "integer"))),
@@ -729,7 +820,7 @@ public class McpToolService {
                         schema(required("sdlcId"), prop("sdlcId", "integer"), prop("stepOrder", "integer"),
                                 prop("name", "string"), prop("kind", "string"), prop("instructionMd", "string"),
                                 prop("checklistJson", "string",
-                                        "Checklist JSON array, e.g. [\"编译通过\",\"测试通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
+                                        "Checklist definitions. Conditional items may set allowNotApplicable=true and a non-empty notApplicableWhen; requires upgraded runtime. Do not preset execution status/reason. JSON array, e.g. [\"编译通过\",\"测试通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
                                 prop("gatePolicyJson", "string",
                                         "Gate policy JSON object, e.g. {\"passCriteria\":\"checklist 全部通过且 evidence 目录非空\"}."),
                                 prop("required", "boolean"), prop("timeoutSeconds", "integer"),
@@ -738,11 +829,12 @@ public class McpToolService {
                                 prop("statusOnEnterCode", "string"), prop("onSuccess", "string"),
                                 prop("onFail", "string"))),
                 tool(UPDATE_SDLC_STEP, "Update a step in an AutoWonder SDLC flow, including enabled flows. "
-                                + "Content fields (instructionMd, checklistJson, gatePolicyJson) are also editable on active flows.",
+                                + "Content fields (instructionMd, checklistJson, gatePolicyJson) are also editable on active flows. "
+                                + "Omitted fields keep their current values; pass an empty string to clear a nullable field.",
                         schema(required("sdlcId", "stepId"), prop("sdlcId", "integer"), prop("stepId", "integer"),
                                 prop("name", "string"), prop("kind", "string"), prop("instructionMd", "string"),
                                 prop("checklistJson", "string",
-                                        "Checklist JSON array, e.g. [\"编译通过\",\"测试通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
+                                        "Checklist definitions. Conditional items may set allowNotApplicable=true and a non-empty notApplicableWhen; requires upgraded runtime. Do not preset execution status/reason. JSON array, e.g. [\"编译通过\",\"测试通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
                                 prop("gatePolicyJson", "string",
                                         "Gate policy JSON object, e.g. {\"passCriteria\":\"checklist 全部通过且 evidence 目录非空\"}."),
                                 prop("required", "boolean"), prop("timeoutSeconds", "integer"),
@@ -764,13 +856,24 @@ public class McpToolService {
                                 prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
                                 prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."))),
                 tool(LIST_AGENTS, "List AutoWonder digital workers.",
-                        schema(prop("status", "string"), prop("page", "integer"), prop("size", "integer"))),
+                        schema(prop("status", "string"),
+                                prop("squadId", "integer", "Optional. Filter by squad id; omit to list every "
+                                        + "digital worker in the workspace."),
+                                prop("page", "integer"), prop("size", "integer"))),
                 tool(GET_AGENT, "Get one AutoWonder digital worker by id.",
                         schema(required("id"), prop("id", "integer"))),
                 tool(DELETE_AGENT, "Delete an AutoWonder digital worker when it is not online.",
                         schema(required("id"), prop("id", "integer"))),
                 tool(UPDATE_AGENT, "Update an AutoWonder digital worker. Partial update: omit an optional "
-                        + "field to keep its current value; pass null to clear it explicitly.",
+                        + "field to keep its current value; pass null to clear it explicitly. "
+                        + "Pass lifecycleAction to change the worker lifecycle instead of editing fields: "
+                        + "offline takes an ONLINE worker offline and clears its online version so later "
+                        + "dispatches stop routing to it, which is not a delete and does not interrupt a "
+                        + "dispatch that is already running; online brings an OFFLINE worker back online and "
+                        + "restores its most recent approved version. lifecycleAction is mutually exclusive "
+                        + "with the field-update arguments, and it behaves exactly like the console REST "
+                        + "endpoints, including platform-worker protection, state validation and "
+                        + "optimistic-lock conflicts.",
                         schema(required("id"), prop("id", "integer"),
                                 prop("name", "string", "Optional. New display name; omit to keep the current name."),
                                 prop("roleCode", "string", "Optional. Omit to keep the current role code; "
@@ -778,7 +881,13 @@ public class McpToolService {
                                 prop("roleName", "string", "Optional. Omit to keep the current role name; "
                                         + "pass null to clear it."),
                                 prop("soulMd", "string", "SOUL.md Markdown content for the digital worker."),
-                                prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."))),
+                                prop("agentMd", "string", "AGENT.md Markdown content for the digital worker."),
+                                enumProp("lifecycleAction", List.of("offline", "online"),
+                                        "Optional. Lifecycle action instead of a field update: offline takes an "
+                                                + "ONLINE worker offline, which is not a delete; online brings an "
+                                                + "OFFLINE worker back online with its most recent approved version. "
+                                                + "Mutually exclusive with name, roleCode, roleName, soulMd and "
+                                                + "agentMd; omit it to keep the partial-update behaviour."))),
                 tool(SUBMIT_AGENT_FOR_REVIEW, "Submit an AutoWonder digital worker's editing version for review. "
                         + "This transitions the draft version to PENDING_REVIEW status, triggering the review process.",
                         schema(required("id"),
@@ -814,7 +923,9 @@ public class McpToolService {
                         + "AutoWonder digital worker. Returns agent info and the full version history.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Agent id to query."))),
-                tool(BIND_AGENT_REPOS, "Bind multiple repositories to an AutoWonder digital worker. Repeated ids are ignored.",
+                tool(BIND_AGENT_REPOS, "Bind multiple repositories to an AutoWonder digital worker. Repeated ids are ignored. "
+                        + "Platform agents (kind=PLATFORM) are rejected: they already receive read access to every "
+                        + "repository in the workspace on each dispatch and cannot be configured manually.",
                         schema(required("agentId", "repoIds"),
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("repoIds", "integer", "Required. Repository ids to bind."),
@@ -828,7 +939,9 @@ public class McpToolService {
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to bind."),
                                 prop("source", "string", "Optional binding source; defaults to DIRECT."))),
-                tool(UNBIND_AGENT_REPOS, "Unbind exact repositories from an AutoWonder digital worker. Repeated ids are ignored.",
+                tool(UNBIND_AGENT_REPOS, "Unbind exact repositories from an AutoWonder digital worker. Repeated ids are ignored. "
+                        + "Platform agents (kind=PLATFORM) are rejected: their workspace-wide read access is granted "
+                        + "by the platform and cannot be removed.",
                         schema(required("agentId", "repoIds"),
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("repoIds", "integer", "Required. Repository ids to unbind."))),
@@ -844,7 +957,17 @@ public class McpToolService {
                         schema(required("type", "name"), prop("type", "string"), prop("name", "string"),
                                 prop("installSpec", "string"), prop("description", "string"))),
                 tool(LIST_SKILLS, "List installed AutoWonder skills.",
-                        schema(prop("type", "string"), prop("page", "integer"), prop("size", "integer"))),
+                        schema(prop("type", "string"),
+                                prop("categoryId", "integer",
+                                        "Optional. Filter skills whose primary category is this category. "
+                                        + "Mutually exclusive with uncategorized."),
+                                prop("includeDescendants", "boolean",
+                                        "Optional. Whether categoryId also matches descendant categories; defaults to true. "
+                                        + "Ignored without categoryId."),
+                                prop("uncategorized", "boolean",
+                                        "Optional. Only return skills without a primary category. "
+                                        + "Mutually exclusive with categoryId."),
+                                prop("page", "integer"), prop("size", "integer"))),
                 tool(GET_SKILL, "Get one skill, MCP server, plugin, or Runtime hook record.",
                         schema(required("id"), prop("id", "integer"))),
                 tool(UPDATE_SKILL, "Update a skill, MCP server, or plugin record. Runtime hooks must use the validated package endpoint.",
@@ -852,10 +975,10 @@ public class McpToolService {
                                 prop("name", "string"), prop("installSpec", "string"), prop("description", "string"))),
                 tool(DELETE_SKILL, "Delete a skill, MCP server, plugin, or Runtime hook record.",
                         schema(required("id"), prop("id", "integer"))),
-                tool(INSPECT_SKILL_PACKAGE, "Inspect a .zip or .tar.gz Skill package before upload. The archive must preserve safe relative paths and include root SKILL.md for SKILL packages.",
-                        schema(required("fileName", "contentBase64"), skillPackageInputProps())),
-                tool(UPLOAD_SKILL_PACKAGE, "Upload a validated Skill/Plugin .zip or .tar.gz package, or a Runtime Hook .zip package, through MCP and return a package reference for create/update calls. Hook packages require root hook.yaml. Provide expectedMd5 to reject digest mismatches.",
-                        schema(required("fileName", "contentBase64"), skillPackageInputProps())),
+                tool(INSPECT_SKILL_PACKAGE, "Inspect a Skill directory (files) or .zip/.tar.gz package before upload. The archive must preserve safe relative paths and include root SKILL.md for SKILL packages.",
+                        skillPackageInputSchema()),
+                tool(UPLOAD_SKILL_PACKAGE, "Upload a directory via files, a Skill/Plugin .zip or .tar.gz package, or a Runtime Hook .zip package through MCP and return a package reference for create/update calls. Hook packages require root hook.yaml. Provide expectedMd5 to reject digest mismatches.",
+                        skillPackageInputSchema()),
                 tool(CREATE_SKILL_FROM_PACKAGE, "Create a Skill, Plugin, or Runtime Hook from an uploaded package reference. Pass idempotencyKey to make repeated identical package calls return the existing capability instead of creating duplicates.",
                         schema(required("packageOssRef"), skillPackageReferenceProps())),
                 tool(UPDATE_SKILL_PACKAGE, "Update an existing Skill, Plugin, or Runtime Hook with an uploaded package reference.",
@@ -863,6 +986,47 @@ public class McpToolService {
                 tool(LIST_PLATFORM_SKILLS, "List installable AutoWonder platform skills.", schema()),
                 tool(INSTALL_PLATFORM_SKILL, "Install an AutoWonder platform skill into the given workspace.",
                         schema(required("skillId"), prop("skillId", "string"))),
+                tool(LIST_CATEGORIES, "List the project-level capability category tree of the workspace. "
+                        + "Categories are ordered by name, then id, using the database collation. Every node carries id, parentId, name, description, version and its full "
+                        + "path string such as \"编码 → 前端 → Vue\".",
+                        schema(prop("keyword", "string",
+                                "Optional. Only return categories whose name or path contains this keyword."))),
+                tool(GET_CATEGORY, "Get one capability category by id, including its full path.",
+                        schema(required("id"), prop("id", "integer", "Required. Category id."))),
+                tool(CREATE_CATEGORY, "Create a capability category in the workspace. Sibling names under the "
+                        + "same parent must be unique; the tree is at most 5 levels deep.",
+                        schema(required("name"),
+                                prop("name", "string", "Required. Category name; max 128 characters."),
+                                nullableProp("parentId", "integer",
+                                        "Optional. Parent category id; omit or pass null for a top-level category."),
+                                prop("description", "string",
+                                        "Optional. Category description for humans and agents."))),
+                tool(UPDATE_CATEGORY, "Update a capability category by id. Only fields present in the arguments "
+                        + "are updated: omit a field to keep its current value, pass null to clear it "
+                        + "(parentId null moves the category to top level). Moving keeps skill associations.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Category id."),
+                                prop("name", "string", "Optional. New category name."),
+                                nullableProp("parentId", "integer",
+                                        "Optional. New parent category id; null moves to top level."),
+                                prop("description", "string", "Optional. New category description."))),
+                tool(DELETE_CATEGORY, "Delete an empty capability category by id. Rejected when it still has "
+                        + "subcategories or skill associations; skills are never deleted.",
+                        schema(required("id"), prop("id", "integer", "Required. Category id."))),
+                tool(SET_SKILL_CATEGORY, "Set, replace or clear the primary category of one skill. "
+                        + "categoryId is required: pass a category id to tag, pass explicit null to clear. "
+                        + "Repeatedly setting the same value is idempotent.",
+                        schema(required("skillId", "categoryId"),
+                                prop("skillId", "integer", "Required. Skill id."),
+                                nullableProp("categoryId", "integer",
+                                        "Required. Target category id, or explicit null to clear the tag."))),
+                tool(BATCH_SET_SKILL_CATEGORY, "Set or clear the primary category for multiple skills at once. "
+                        + "Each item is validated independently and returns its own success or failure; "
+                        + "retrying does not duplicate associations.",
+                        schema(required("skillIds", "categoryId"),
+                                primitiveArrayProp("skillIds", "integer", "Required. Skill ids to tag."),
+                                nullableProp("categoryId", "integer",
+                                        "Required. Target category id, or explicit null to clear all tags."))),
                 tool(CREATE_MEMORY, "Record a reusable memory (lesson learned, best practice, architecture or interface "
                         + "constraint, tool usage, domain knowledge) directly into the AutoWonder server memory store. "
                         + "Use this instead of writing a learning delta file; nothing is passed through local files. "
@@ -874,9 +1038,9 @@ public class McpToolService {
                         + "to the current worker agent. "
                         + "Provenance is filled in server-side from the calling credential: when called with a dispatch "
                         + "credential the source agent, workitem and dispatch are recorded automatically, and the memory "
-                        + "is always AGENT-scoped and owned by that agent. Promotion to SQUAD or ORG is a human review "
+                        + "is always AGENT-scoped and owned by that agent. Promotion to SQUAD or ORG is a separate review "
                         + "decision, so a dispatch credential passing scope=SQUAD or scope=ORG is rejected. New memories "
-                        + "are created with status PENDING and become reusable only after a human adopts them. Repeating "
+                        + "are created with status PENDING and become reusable only after adoption through review_memory or the console. Repeating "
                         + "the same title and content is idempotent and returns the existing memory; pass idempotencyKey "
                         + "to control that explicitly. Reusing an idempotencyKey with different content after the memory "
                         + "has been adopted or rejected is refused, so review decisions can never be silently overwritten.",
@@ -889,9 +1053,9 @@ public class McpToolService {
                                 prop("idempotencyKey", "string", "Optional key making a repeated write target the same memory instead of duplicating it."))),
                 tool(SEARCH_MEMORIES, "Search the AutoWonder server memory store while reasoning or deciding. "
                         + "Pass keyword to match memory title and content. Defaults to status=ADOPTED so only "
-                        + "human-approved memories are returned; pass status explicitly to inspect PENDING or REJECTED "
-                        + "entries. Dispatch credentials can only see AGENT-scoped memories they own, plus SQUAD and "
-                        + "ORG memories. Defaults: page=1, size=20.",
+                        + "approved memories are returned; pass status explicitly to inspect PENDING or REJECTED "
+                        + "entries. Credentials can read all AGENT, SQUAD and "
+                        + "ORG memories in their authorized workspace, including other agents. Defaults: page=1, size=20. Use count_pending_memories for backlog size; agent memoryCount counts bindings.",
                         schema(prop("keyword", "string", "Optional free-text filter matched against title and content."),
                                 prop("scope", "string", "Optional visibility scope filter: AGENT, SQUAD, or ORG."),
                                 prop("ownerRef", "integer", "Optional scope owner id filter."),
@@ -902,7 +1066,7 @@ public class McpToolService {
                 tool(GET_MEMORY, "Get one memory by id from the AutoWonder server memory store.",
                         schema(required("id"), prop("id", "integer", "Required. Memory id."))),
                 tool(UPDATE_MEMORY, "Correct or refine an existing memory in place when it is out of date or inaccurate. "
-                        + "Dispatch credentials may only update AGENT-scoped memories they own.",
+                        + "Requires workspace write access; may update memories owned by other agents in the same workspace.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Memory id."),
                                 prop("title", "string", "Optional new title; omit to keep the current one."),
@@ -910,14 +1074,27 @@ public class McpToolService {
                                 prop("type", "string", "Optional new memory type; omit to keep the current one."))),
                 tool(DEPRECATE_MEMORY, "Retire a memory that has become stale or turned out to be wrong. The memory is "
                         + "marked REJECTED so it stops being reused, the row and its audit trail are kept, and unlike "
-                        + "human review this also works on already adopted memories. Prefer this over delete_memory. "
-                        + "Dispatch credentials may only deprecate AGENT-scoped memories they own.",
+                        + "review_memory this also works on already adopted memories. Use delete_memory when the memory should be removed together with its worker bindings. "
+                        + "Requires workspace write access, including for other agents in the same workspace.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Memory id."),
                                 prop("comment", "string", "Optional reason recorded in the memory audit trail."))),
-                tool(DELETE_MEMORY, "Soft delete a memory. Rejected when the memory is still bound to a digital worker; "
-                        + "use deprecate_memory in that case. Dispatch credentials may only delete AGENT-scoped "
-                        + "memories they own.",
+                tool(REVIEW_MEMORY, "Review a PENDING memory in the authorized workspace, including another agent's memory. "
+                        + "Use decision=ADOPT to adopt or REJECT to reject after checking the facts. Requires workspace write access. "
+                        + "Records a review audit and uses the same distribution workflow as console review: adoption binds "
+                        + "affected worker editing versions; those versions still need approval before dispatch injection. "
+                        + "Already reviewed memories cannot be reviewed again; use deprecate_memory to retire adopted memories.",
+                        schema(required("id", "decision"), prop("id", "integer", "Required. Memory id."),
+                                enumProp("decision", List.of("ADOPT", "REJECT"), "Required review decision."),
+                                prop("comment", "string", "Review rationale and verification evidence."),
+                                prop("editedContentMd", "string", "Optional corrected content; saved atomically with adoption."),
+                                prop("editedType", "string", "Optional corrected memory type; saved atomically with adoption."),
+                                enumProp("scope", List.of("AGENT", "SQUAD", "ORG"), "Optional adopted scope; omitted keeps current scope."),
+                                prop("ownerRef", "integer", "Required when specifying AGENT or SQUAD scope; ORG clears the owner."))),
+                tool(COUNT_PENDING_MEMORIES, "Count all PENDING memories in the authorized workspace, across agents. "
+                        + "Counts memory rows, not worker bindings. Use search_memories with status=PENDING to inspect them.", schema()),
+                tool(DELETE_MEMORY, "Soft delete a memory and atomically remove its worker bindings, retaining audit records and historical dispatch snapshots. Requires workspace write access; other agents' memories "
+                        + "in the same workspace may also be deleted.",
                         schema(required("id"), prop("id", "integer", "Required. Memory id."))),
                 tool(LIST_REPOS, "List repositories registered in AutoWonder. Use this to discover repo ids before reading or maintaining the Repo Map.",
                         schema(prop("page", "integer", "Optional page number, 1-based; defaults to 1."),
@@ -952,7 +1129,8 @@ public class McpToolService {
                 tool(LIST_SQUADS, "List squads in the given workspace.",
                         schema(prop("page", "integer", "Optional. Page number, 1-based; defaults to 1."),
                                 prop("size", "integer", "Optional. Page size; defaults to 20."))),
-                tool(GET_SQUAD, "Get one squad with its member agent ids.",
+                tool(GET_SQUAD, "Get one squad with its member agent ids plus the associated SDLC flows and "
+                        + "executors, so a single call answers what belongs to the squad.",
                         schema(required("id"), prop("id", "integer", "Required. Squad id."))),
                 tool(ADD_AGENT_TO_SQUAD, "Add a digital worker to a squad. Adding an existing member is a no-op.",
                         schema(required("squadId", "agentId"),
@@ -967,6 +1145,32 @@ public class McpToolService {
                         schema(required("name"),
                                 prop("name", "string", "Required. Squad name."),
                                 prop("description", "string", "Optional. Squad description."))),
+                tool(GET_DELIVERY_RECOVERY, "Read delivery closure, executions, failure reasons, retries and cancellation acknowledgements.",
+                        schema(required("workitemId"), prop("workitemId", "integer"))),
+                tool(CONTROL_DELIVERY, "Recover delivery. cancel stops one dispatch; force ends platform execution while retaining an unconfirmed executor quarantine. close stops all workitem executions and blocks new dispatches. reopen enables future work; retry creates one idempotent successor. Personal credentials required.",
+                        schema(required("workitemId", "action"), prop("workitemId", "integer"),
+                                enumProp("action", List.of("cancel", "close", "reopen", "retry"), "Action"),
+                                prop("dispatchId", "integer", "Required for cancel/retry"), prop("force", "boolean"))),
+                tool(GET_DISPATCH_RUNTIME_TRACE, "Read an execution trace by dispatchId (not the workitem id). "
+                        + "Prefers the archived OSS outline; otherwise returns LIVE runtime events. "
+                        + "Use traceId and observationId from the outline with get_dispatch_turn and "
+                        + "get_dispatch_observation for full archived inputs, outputs and errors. "
+                        + "LIVE data may be incomplete; execution success does not imply complete trace coverage.",
+                        schema(required("dispatchId"),
+                                prop("dispatchId", "integer", "Required. Dispatch id, including historical executions."),
+                                prop("afterSeq", "integer", "Optional non-negative last seen sequence; only applies to LIVE polling."))),
+                tool(GET_DISPATCH_ACTIVITIES, "Read the activity log of a dispatch in persisted arrival order, including progress and lifecycle events.",
+                        schema(required("dispatchId"), prop("dispatchId", "integer", "Required. Dispatch id."))),
+                tool(GET_DISPATCH_TURN, "Read one archived execution turn, including prompts, output and tool observations. "
+                        + "Requires an uploaded trace artifact; missing artifacts return ARTIFACT_NOT_FOUND.",
+                        schema(required("dispatchId", "traceId"),
+                                prop("dispatchId", "integer", "Required. Dispatch id."),
+                                prop("traceId", "string", "Required. traceId or turnId from get_dispatch_runtime_trace."))),
+                tool(GET_DISPATCH_OBSERVATION, "Read one archived tool/model observation, including input, output, error and nested observations. "
+                        + "Requires an uploaded trace artifact; missing artifacts return ARTIFACT_NOT_FOUND.",
+                        schema(required("dispatchId", "observationId"),
+                                prop("dispatchId", "integer", "Required. Dispatch id."),
+                                prop("observationId", "string", "Required. observationId from the trace or turn."))),
                 tool(PAUSE_DISPATCH, "Pause an active dispatch (delivery execution) for a workitem. "
                         + "The dispatch must be in DISPATCHED, ACKED, or RUNNING status. "
                         + "Returns the dispatch id and its new status (PAUSING or PAUSED).",
@@ -997,11 +1201,11 @@ public class McpToolService {
                                 prop("cronExpression", "string", "Cron expression; required when scheduleType=CRON."),
                                 prop("runAt", "string", "ISO-8601 fire instant; required when scheduleType=ONCE."),
                                 prop("timezone", "string", "Required. IANA timezone for the schedule, e.g. Asia/Shanghai."),
-                                enumProp("sessionMode", List.of("ISOLATED", "CONTINUE_LAST"),
-                                        "Optional. Run session mode; defaults to ISOLATED."),
-                                enumProp("overlapPolicy", List.of("SKIP", "QUEUE", "CANCEL_RUNNING"),
-                                        "Optional. Policy when a fire hits while a run is still active; defaults to SKIP."),
-                                enumProp("misfirePolicy", List.of("FIRE_LATEST", "FIRE_ALL", "SKIP"),
+                                enumProp("sessionMode", List.of("ISOLATED", "CONTINUOUS"),
+                                        "Optional. Run session mode; defaults to ISOLATED. CONTINUOUS reuses the last run session and cannot combine with overlapPolicy=ALLOW."),
+                                enumProp("overlapPolicy", List.of("SKIP", "QUEUE", "ALLOW"),
+                                        "Optional. Policy when a fire hits while a run is still active; defaults to SKIP. ALLOW cannot combine with sessionMode=CONTINUOUS."),
+                                enumProp("misfirePolicy", List.of("FIRE_LATEST", "FIRE_ALL", "SKIP_ALL"),
                                         "Optional. Policy for missed fires; defaults to FIRE_LATEST."),
                                 enumProp("initialStatus", List.of("ACTIVE", "PAUSED"),
                                         "Optional. Initial task status; defaults to ACTIVE."))),
@@ -1029,22 +1233,27 @@ public class McpToolService {
                                 prop("includeRuns", "boolean", "Optional. Include the 10 most recent runs; defaults to true."),
                                 prop("includeDocuments", "boolean", "Optional. Include uploaded task documents; defaults to false."))),
                 tool(UPDATE_SCHEDULED_TASK, "Update a 7x24 scheduled task configuration. "
-                        + "version is the optimistic lock version from the latest read; a stale version is rejected. "
-                        + "Archived tasks cannot be updated. Returns the updated task.",
+                        + "Read-modify-write: omitted optional arguments keep their current values, so a partial "
+                        + "update never clears unrelated fields. version is the optimistic lock version from the "
+                        + "latest read; a stale version is rejected. Archived tasks cannot be updated. "
+                        + "Switching scheduleType=CRON clears runAt and switching scheduleType=ONCE clears "
+                        + "cronExpression automatically. Returns the updated task.",
                         schema(required("id", "version"),
                                 prop("id", "integer", "Required. Scheduled task id."),
                                 prop("version", "integer", "Required. Optimistic lock version read from the task."),
-                                prop("name", "string", "Optional. New task name."),
-                                prop("instructionMd", "string", "Optional. New Markdown execution instruction."),
-                                enumProp("scheduleType", List.of("CRON", "ONCE"), "Optional. New schedule type."),
-                                prop("cronExpression", "string", "Optional. New cron expression."),
-                                prop("runAt", "string", "Optional. New ISO-8601 fire instant for ONCE tasks."),
-                                prop("timezone", "string", "Optional. New IANA timezone."),
-                                enumProp("sessionMode", List.of("ISOLATED", "CONTINUE_LAST"), "Optional. New run session mode."),
-                                enumProp("overlapPolicy", List.of("SKIP", "QUEUE", "CANCEL_RUNNING"), "Optional. New overlap policy."),
-                                enumProp("misfirePolicy", List.of("FIRE_LATEST", "FIRE_ALL", "SKIP"), "Optional. New misfire policy."),
-                                prop("squadId", "integer", "Optional. New executor squad id."),
-                                prop("initialAgentId", "integer", "Optional. New initial digital worker id."))),
+                                prop("name", "string", "Optional. New task name; omitted keeps the current value."),
+                                prop("instructionMd", "string", "Optional. New Markdown execution instruction; omitted keeps the current value."),
+                                enumProp("scheduleType", List.of("CRON", "ONCE"), "Optional. New schedule type. When it differs from the current one, CRON->ONCE clears cronExpression and ONCE->CRON clears runAt unless explicitly provided."),
+                                prop("cronExpression", "string", "Optional. New cron expression; omitted keeps the current value (cleared only on a switch to ONCE)."),
+                                prop("runAt", "string", "Optional. New ISO-8601 fire instant for ONCE tasks; omitted keeps the current value (cleared only on a switch to CRON)."),
+                                prop("timezone", "string", "Optional. New IANA timezone; omitted keeps the current value."),
+                                enumProp("sessionMode", List.of("ISOLATED", "CONTINUOUS"), "Optional. New run session mode; cannot combine with overlapPolicy=ALLOW."),
+                                enumProp("overlapPolicy", List.of("SKIP", "QUEUE", "ALLOW"), "Optional. New overlap policy; cannot combine with sessionMode=CONTINUOUS."),
+                                enumProp("misfirePolicy", List.of("FIRE_LATEST", "FIRE_ALL", "SKIP_ALL"), "Optional. New misfire policy."),
+                                prop("startDeadlineSeconds", "integer", "Optional. New start deadline in seconds; must be positive; omitted keeps the current value."),
+                                prop("affinityTimeoutSeconds", "integer", "Optional. New affinity timeout in seconds; must be positive in CONTINUOUS mode; omitted keeps the current value."),
+                                prop("squadId", "integer", "Optional. New executor squad id; omitted keeps the current value."),
+                                prop("initialAgentId", "integer", "Optional. New initial digital worker id; omitted keeps the current value."))),
                 tool(TRANSITION_SCHEDULED_TASK, "Advance a 7x24 scheduled task or one of its runs. "
                         + "Task-level actions: enable, pause, archive. Run-level actions need runId: "
                         + "pause-run, resume-run, cancel-run. run-now manually triggers a new run and needs requestId "
@@ -1074,12 +1283,29 @@ public class McpToolService {
                         schema(required("runId", "contentMd"),
                                 prop("runId", "integer", "Required. Scheduled task run id."),
                                 prop("contentMd", "string", "Required. Markdown comment content."))),
-                tool(LIST_EXECUTORS, "List executors in the given workspace, optionally filtered by digital worker. "
-                        + "Returns the same fields the executor page table shows: id, agentId, agentName, name, "
-                        + "clientKind, live status (ONLINE/BUSY/OFFLINE), lastConnectIp, lastHeartbeat and gmtCreate.",
+                tool(LIST_SCHEDULED_TASK_RUNS, "List a scheduled task's runs, newest first (id desc). Returns a "
+                        + "paged object { list, offset, size }; there is no total. Dispatch credentials may only "
+                        + "list runs of the task that owns their own run.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Scheduled task id."),
+                                prop("size", "integer", "Optional. Page size between 1-100; defaults to 20."),
+                                prop("offset", "integer", "Optional. Offset; defaults to 0."))),
+                tool(DELETE_SCHEDULED_TASK, "Delete a scheduled task. Requires the task owner or workspace ADMIN "
+                        + "and a matching version (optimistic lock from the latest read). Refused while the task "
+                        + "still has unfinished runs; on success the task is soft-deleted (isDeleted=1, "
+                        + "status=ARCHIVED, nextFireAt=null). Not available to dispatch credentials.",
+                        schema(required("id", "version"),
+                                prop("id", "integer", "Required. Scheduled task id."),
+                                prop("version", "integer", "Required. Optimistic lock version read from the task."))),
+                tool(LIST_EXECUTORS, "List executors in the given workspace, optionally filtered by digital worker "
+                        + "or squad. Returns the same fields the executor page table shows: id, agentId, agentName, "
+                        + "name, clientKind, live status (ONLINE/BUSY/OFFLINE), lastConnectIp, lastHeartbeat, "
+                        + "gmtCreate, plus squadIds and squadNames of the owning digital worker.",
                         schema(prop("agentId", "integer",
                                 "Optional. Filter by owning digital worker id; omit to list every executor "
-                                        + "in the workspace."))),
+                                        + "in the workspace."),
+                                prop("squadId", "integer", "Optional. Filter by squad id; an executor follows the "
+                                        + "squads of its owning digital worker."))),
                 tool(GET_EXECUTOR, "Get one executor by id, including its live status, last connect IP "
                         + "and last heartbeat.",
                         schema(required("id"),
@@ -1096,26 +1322,30 @@ public class McpToolService {
                         schema(required("clientKind"),
                                 enumProp("clientKind", ExecutorLaunchOptionsService.creatableClientKindValues(),
                                         "Required. Executor client kind; only the Qoder CLI family is supported."))),
-                tool(CREATE_EXECUTOR, "Create an executor for a digital worker and return its one-time plaintext token. "
-                        + "Validation and defaults match the executor page's create dialog: agentId and name are "
-                        + "required, clientKind is limited to the Qoder CLI family, and memoryMode, "
-                        + "reasoningEffort and contextWindow fall back to the values that dialog pre-fills. The "
-                        + "model id is resolved server-side from the provider catalog Redis refreshes, so omit it "
-                        + "unless you deliberately want a specific one. "
-                        + "Launch options are not persisted, so pass them to autowonder.build_executor_launch_command "
-                        + "to generate the startup command.",
+                tool(CREATE_EXECUTOR, "Create an executor for a digital worker, persist its launch config, and return "
+                        + "its one-time plaintext token. Validation and defaults match the executor page's create "
+                        + "dialog: agentId and name are required, clientKind is limited to the Qoder CLI family, and "
+                        + "memoryMode, model, reasoningEffort and contextWindow are saved on the new row in the same "
+                        + "transaction. An omitted value takes the same default that dialog pre-fills; an id you pass "
+                        + "explicitly that the provider catalog no longer offers is rejected rather than silently "
+                        + "replaced. The response echoes exactly what was persisted, and "
+                        + "autowonder.build_executor_launch_command reads those values back from the database.",
                         schema(required("agentId", "name", "clientKind"),
                                 prop("agentId", "integer", "Required. Owning digital worker id."),
                                 prop("name", "string", "Required. Executor name, e.g. dev-machine-01."),
                                 enumProp("clientKind", ExecutorLaunchOptionsService.creatableClientKindValues(),
                                         "Required. Executor client kind; only the Qoder CLI family can be created."),
+                                prop("maxConcurrentDispatches", "integer", "Optional. Integer from 1 to 10. Defaults to 5 on create; omitted updates preserve the current value. Use the new launch command to apply."),
                                 enumProp("memoryMode", ExecutorLaunchOptionsService.memoryModeValues(),
-                                        "Optional. Memory mode; defaults to platform, the value the page pre-selects."),
+                                        "Optional. Memory mode to persist; defaults to platform, the value the page "
+                                                + "pre-selects."),
                                 prop("model", "string", EXECUTOR_MODEL_DESCRIPTION),
                                 enumProp("reasoningEffort", ExecutorLaunchOptionsService.reasoningEffortValues(),
-                                        "Optional. Reasoning effort; defaults to the chosen model's default."),
+                                        "Optional. Reasoning effort to persist; defaults to the chosen model's "
+                                                + "default."),
                                 enumProp("contextWindow", ExecutorLaunchOptionsService.contextWindowValues(),
-                                        "Optional. Context window; defaults to the chosen model's default."))),
+                                        "Optional. Context window to persist; defaults to the chosen model's "
+                                                + "default."))),
                 tool(GET_EXECUTOR_TOKEN, "Reveal an executor's plaintext connection token, the same value the page's "
                         + "eye icon shows. Requires workspace ADMIN. Treat it as a secret: anyone holding it can "
                         + "connect an executor as this digital worker.",
@@ -1123,25 +1353,50 @@ public class McpToolService {
                                 prop("id", "integer", "Required. Executor id."))),
                 tool(DELETE_EXECUTOR, "Delete an executor. Mirrors the page's delete action: the row is soft-deleted, "
                         + "its live presence is cleared and any connected WebSocket session is closed, so the executor "
-                        + "stops receiving dispatches immediately.",
+                        + "stops receiving dispatches immediately. Its launch config goes with it: reading, updating "
+                        + "or building a command for a deleted executor is refused.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Executor id."))),
-                tool(BUILD_EXECUTOR_LAUNCH_COMMAND, "Build the startup command for an existing executor, identical to "
-                        + "what the executor page copies to the clipboard. The token, client kind, MCP address and "
-                        + "runtime version are resolved server-side; memoryMode defaults to what the page pre-fills, "
-                        + "the model id comes from the provider catalog Redis refreshes automatically, and "
-                        + "autowonder.get_executor_launch_options lists the current "
-                        + "choices. debug=true appends --debug and tees the full log: use it only for troubleshooting, "
-                        + "because a long run can fill the disk.",
+                tool(GET_EXECUTOR_LAUNCH_CONFIG, "Read one executor's persisted launch config, the exact row the "
+                        + "page's 启动命令 dialog reads and writes. Values that were never saved come back as null, so "
+                        + "an executor created before launch config persistence is reported as unconfigured instead of "
+                        + "being padded with defaults, and version is the optimistic lock to pass back to "
+                        + "autowonder.update_executor_launch_config. Strictly read-only: it never repairs a model the "
+                        + "catalog dropped and never writes the row.",
                         schema(required("id"),
+                                prop("id", "integer", "Required. Executor id."))),
+                tool(UPDATE_EXECUTOR_LAUNCH_CONFIG, "Update one executor's persisted launch config, the same write "
+                        + "the page's 启动命令 dialog performs. It is a full replace: pass every value you want kept, "
+                        + "and an omitted optional value falls back to the default the page pre-fills. version is the "
+                        + "optimistic lock from autowonder.get_executor_launch_config; a stale one is reported as a "
+                        + "conflict. An invalid value or a model the provider catalog no longer offers fails "
+                        + "explicitly instead of being substituted, and the response returns what the database now "
+                        + "holds. Changing the config never restarts a running executor.",
+                        schema(required("id", "version"),
                                 prop("id", "integer", "Required. Executor id."),
+                                prop("version", "integer", "Required. Optimistic-lock version read from "
+                                        + "autowonder.get_executor_launch_config; a stale version is a conflict."),
+                                prop("maxConcurrentDispatches", "integer", "Optional. Integer from 1 to 10. Defaults to 5 on create; omitted updates preserve the current value. Use the new launch command to apply."),
                                 enumProp("memoryMode", ExecutorLaunchOptionsService.memoryModeValues(),
-                                        "Optional. Memory mode; defaults to platform."),
+                                        "Optional. Memory mode to persist; defaults to platform."),
                                 prop("model", "string", EXECUTOR_MODEL_DESCRIPTION),
                                 enumProp("reasoningEffort", ExecutorLaunchOptionsService.reasoningEffortValues(),
                                         "Optional. Reasoning effort; ignored for non-Qoder executors."),
                                 enumProp("contextWindow", ExecutorLaunchOptionsService.contextWindowValues(),
-                                        "Optional. Context window; ignored for non-Qoder executors."),
+                                        "Optional. Context window; ignored for non-Qoder executors."))),
+                tool(BUILD_EXECUTOR_LAUNCH_COMMAND, "Build the startup command for an existing executor, identical to "
+                        + "what the executor page copies to the clipboard. The token, client kind, MCP address, "
+                        + "runtime version and every launch value are resolved server-side from the executor's "
+                        + "persisted launch config, the same one the page's startup dialog reads and writes; only the "
+                        + "output format (os, debug, shell) is per-request and it is never written back. Launch "
+                        + "overrides are rejected: change the config with "
+                        + "autowonder.update_executor_launch_config first, then build again. An executor whose config "
+                        + "was never saved, or whose saved model the catalog dropped, fails with that reason instead "
+                        + "of returning a command built from defaults. debug=true appends "
+                        + "--debug and tees the full log: use it only for troubleshooting, "
+                        + "because a long run can fill the disk.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Executor id."),
                                 enumProp("os", List.of("posix", "windows"),
                                         "Optional. Target OS, used for shell quoting; defaults to posix."),
                                 prop("debug", "boolean",
@@ -1230,7 +1485,7 @@ public class McpToolService {
         }
         for (McpToolVO tool : tools) {
             String name = tool.getName();
-            if (CREATE_EXECUTOR.equals(name) || BUILD_EXECUTOR_LAUNCH_COMMAND.equals(name)) {
+            if (CREATE_EXECUTOR.equals(name) || UPDATE_EXECUTOR_LAUNCH_CONFIG.equals(name)) {
                 replacePropertyDescription(tool, "model", EXECUTOR_MODEL_DESCRIPTION + live);
             }
         }
@@ -1309,7 +1564,10 @@ public class McpToolService {
     /**
      * Workspace authorization happens per call instead of at authentication time so a
      * personal token always reflects its owner's live membership in the requested
-     * workspace. Task-scoped credentials stay pinned to their own workspace.
+     * workspace. Task-scoped credentials stay pinned to their own workspace, except
+     * conversation tokens: those act as the conversation Owner for up to 24 hours, so
+     * the Owner's live membership is re-checked on every call and can only lower the
+     * level the token was issued with.
      */
     private ToolExecutionContext resolveExecutionContext(
             McpAccessTokenService.Principal principal, String name, Map<String, Object> args) {
@@ -1322,7 +1580,14 @@ public class McpToolService {
                         "任务作用域令牌不能访问其他工作空间");
             }
             WorkspaceAccessLevel scopeLevel = principal.accessLevel();
-            if (scopeLevel == null || !scopeLevel.allows(access.level())) {
+            if (scopeLevel == null) {
+                throw new BizException(ErrorCode.NO_PERMISSION);
+            }
+            if (principal.credentialType() == McpAccessTokenService.CredentialType.CONVERSATION) {
+                scopeLevel = WorkspaceAccessLevel.minimum(scopeLevel,
+                        workspaceService.activeAccessLevel(scopeWorkspaceId, principal.userId()));
+            }
+            if (!scopeLevel.allows(access.level())) {
                 throw new BizException(ErrorCode.NO_PERMISSION);
             }
             return new ToolExecutionContext(scopeWorkspaceId, principal.userId(), scopeLevel,
@@ -1407,8 +1672,12 @@ public class McpToolService {
                         bool(safeArgs, "pendingDecisionOnly", false), str(safeArgs, "mineScope"),
                         context.workspaceId(), context.userId(),
                         str(safeArgs, "keyword"), str(safeArgs, "tag"),
+                        // 定时工单过滤只服务于 Web 定时任务页，list_workitems 的 MCP 契约保持不变
+                        null,
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20)).getList();
             }
+            case GET_DISPATCH_RUNTIME_TRACE, GET_DISPATCH_ACTIVITIES,
+                    GET_DISPATCH_TURN, GET_DISPATCH_OBSERVATION -> readDispatchTrace(context, name, safeArgs);
             case GET_WORKITEM -> {
                 yield workitemService.get(requiredLong(safeArgs, "id"));
             }
@@ -1429,7 +1698,8 @@ public class McpToolService {
                             lng(safeArgs, "assigneeRef"), lng(safeArgs, "sdlcId"), lng(safeArgs, "squadId"),
                             scheduledStartAt,
                             context.workspaceId(), context.userId(),
-                            AssignmentActor.agent(dispatch.getAgentId(), resolveAgentName(dispatch.getAgentId())));
+                            AssignmentActor.agent(dispatch.getAgentId(),
+                                    resolveAgentName(dispatch.getAgentId(), context.workspaceId())));
                 }
                 yield workitemService.assign(workitemId, requiredString(safeArgs, "assigneeType"),
                         lng(safeArgs, "assigneeRef"), lng(safeArgs, "sdlcId"), lng(safeArgs, "squadId"),
@@ -1466,7 +1736,18 @@ public class McpToolService {
                 yield workitemService.listComments(id);
             }
             case UPLOAD_WORKITEM_DOCUMENT -> {
-                yield requirementDocumentService.uploadMcp(requiredLong(safeArgs, "id"),
+                long id = requiredLong(safeArgs, "id");
+                if (scheduledTaskDocumentSource(safeArgs)) {
+                    requireScheduledTaskCapability();
+                    if (isDispatchCredential(context)) {
+                        throw new BizException(ErrorCode.NO_PERMISSION);
+                    }
+                    yield requirementDocumentService.uploadMcp(
+                            new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, id),
+                            requiredString(safeArgs, "filename"), documentBytes(safeArgs),
+                            context.workspaceId(), context.userId(), str(safeArgs, "sourcePath"));
+                }
+                yield requirementDocumentService.uploadMcp(id,
                         requiredString(safeArgs, "filename"), documentBytes(safeArgs),
                         context.workspaceId(), context.userId(), str(safeArgs, "sourcePath"));
             }
@@ -1479,11 +1760,31 @@ public class McpToolService {
                         context.userId(), requiredLong(safeArgs, "id"));
             }
             case LIST_WORKITEM_DOCUMENTS -> {
-                yield requirementDocumentService.list(requiredLong(safeArgs, "id"), context.workspaceId());
+                long id = requiredLong(safeArgs, "id");
+                if (scheduledTaskDocumentSource(safeArgs)) {
+                    requireScheduledTaskCapability();
+                    if (isDispatchCredential(context)) {
+                        requireDispatchRunOfTask(context, id);
+                    }
+                    yield requirementDocumentService.list(
+                            new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, id), context.workspaceId());
+                }
+                yield requirementDocumentService.list(id, context.workspaceId());
             }
             case DELETE_WORKITEM_DOCUMENT -> {
-                requirementDocumentService.delete(requiredLong(safeArgs, "id"),
-                        requiredLong(safeArgs, "artifactId"), context.workspaceId(), context.userId());
+                long id = requiredLong(safeArgs, "id");
+                long artifactId = requiredLong(safeArgs, "artifactId");
+                if (scheduledTaskDocumentSource(safeArgs)) {
+                    requireScheduledTaskCapability();
+                    if (isDispatchCredential(context)) {
+                        throw new BizException(ErrorCode.NO_PERMISSION);
+                    }
+                    requirementDocumentService.delete(
+                            new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, id),
+                            artifactId, context.workspaceId(), context.userId());
+                } else {
+                    requirementDocumentService.delete(id, artifactId, context.workspaceId(), context.userId());
+                }
                 yield Map.of("deleted", true);
             }
             case TRANSITION_WORKITEM, PAUSE_WORKITEM, RESUME_WORKITEM -> {
@@ -1501,8 +1802,8 @@ public class McpToolService {
                         context.workspaceId(), context.userId());
             }
             case LIST_SDLCS -> {
-                yield sdlcService.list(str(safeArgs, "workType"), str(safeArgs, "status"),
-                        integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
+                yield sdlcService.list(context.workspaceId(), str(safeArgs, "workType"), str(safeArgs, "status"),
+                        squadIdFilter(safeArgs), integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             }
             case GET_SDLC -> {
                 yield sdlcService.get(requiredLong(safeArgs, "id"));
@@ -1546,11 +1847,11 @@ public class McpToolService {
                         context.workspaceId(), context.userId());
             }
             case LIST_AGENTS -> {
-                yield agentService.list(context.workspaceId(), str(safeArgs, "status"),
-                        integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
+                yield agentService.list(context.workspaceId(), str(safeArgs, "status"), null,
+                        squadIdFilter(safeArgs), integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             }
             case GET_AGENT -> {
-                yield agentService.get(requiredLong(safeArgs, "id"));
+                yield agentService.get(requiredLong(safeArgs, "id"), context.workspaceId());
             }
             case DELETE_AGENT -> {
                 agentService.delete(requiredLong(safeArgs, "id"), context.workspaceId(), context.userId());
@@ -1558,6 +1859,22 @@ public class McpToolService {
             }
             case UPDATE_AGENT -> {
                 Map<String, Object> normalized = normalizeAgentIdentityArgs(safeArgs);
+                String lifecycleAction = str(safeArgs, "lifecycleAction");
+                if (lifecycleAction != null) {
+                    long id = requiredLong(safeArgs, "id");
+                    if (!presentAgentUpdateFields(normalized).isEmpty()) {
+                        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+                                "lifecycleAction 与字段更新参数互斥，请只传其中一类");
+                    }
+                    long workspaceId = context.workspaceId();
+                    long userId = context.userId();
+                    yield switch (lifecycleAction.trim().toLowerCase(Locale.ROOT)) {
+                        case "offline" -> agentService.offline(id, workspaceId, userId);
+                        case "online" -> agentService.online(id, workspaceId, userId);
+                        default -> throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+                                "lifecycleAction 仅支持 offline/online");
+                    };
+                }
                 UpdateAgentRequest updateReq = toBean(normalized, UpdateAgentRequest.class);
                 updateReq.setId(requiredLong(safeArgs, "id"));
                 updateReq.setProvidedFields(presentAgentUpdateFields(normalized));
@@ -1585,8 +1902,8 @@ public class McpToolService {
             }
             case GET_AGENT_VERSION_STATUS -> {
                 long agentId = requiredLong(safeArgs, "id");
-                AgentVO agent = agentService.get(agentId);
-                List<AgentVersionSummaryVO> versions = agentService.listVersions(agentId);
+                AgentVO agent = agentService.get(agentId, context.workspaceId());
+                List<AgentVersionSummaryVO> versions = agentService.listVersions(agentId, context.workspaceId());
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("agent", agent);
                 result.put("versions", versions);
@@ -1655,7 +1972,9 @@ public class McpToolService {
                         context.workspaceId(), context.userId());
             }
             case LIST_SKILLS -> {
-                yield skillService.list(str(safeArgs, "type"),
+                yield skillService.list(context.workspaceId(), str(safeArgs, "type"),
+                        positiveCategoryId(safeArgs, "categoryId", true), bool(safeArgs, "includeDescendants", true),
+                        bool(safeArgs, "uncategorized", false),
                         integer(safeArgs, "page", 1), integer(safeArgs, "size", 20));
             }
             case GET_SKILL -> {
@@ -1670,11 +1989,11 @@ public class McpToolService {
                 yield Map.of("deleted", true);
             }
             case INSPECT_SKILL_PACKAGE -> {
-                yield skillPackageService.inspect(requiredString(safeArgs, "fileName"), packageBytes(safeArgs));
+                yield skillPackageService.inspect(packageFileName(safeArgs), packageBytes(safeArgs));
             }
             case UPLOAD_SKILL_PACKAGE -> {
                 yield uploadedPackageSchemaResult(skillPackageService.uploadMcpPackage(
-                        requiredString(safeArgs, "fileName"), packageBytes(safeArgs), str(safeArgs, "type"),
+                        packageFileName(safeArgs), packageBytes(safeArgs), str(safeArgs, "type"),
                         str(safeArgs, "name"), str(safeArgs, "description"), stringList(safeArgs, "providers"),
                         str(safeArgs, "expectedMd5"), context.workspaceId()));
             }
@@ -1692,6 +2011,43 @@ public class McpToolService {
                         context.workspaceId(), context.userId());
             }
             case LIST_PLATFORM_SKILLS -> platformSkillCatalog.list();
+            case LIST_CATEGORIES -> {
+                String keyword = str(safeArgs, "keyword");
+                yield keyword == null || keyword.isBlank()
+                        ? categoryService.list(context.workspaceId())
+                        : categoryService.list(context.workspaceId()).stream()
+                                .filter(c -> (c.getName() != null && c.getName().contains(keyword))
+                                        || (c.getPath() != null && c.getPath().contains(keyword)))
+                                .toList();
+            }
+            case GET_CATEGORY -> {
+                yield categoryService.get(positiveCategoryId(safeArgs, "id", false), context.workspaceId());
+            }
+            case CREATE_CATEGORY -> {
+                CreateCategoryRequest req = new CreateCategoryRequest();
+                req.setName(requiredString(safeArgs, "name"));
+                req.setParentId(positiveCategoryId(safeArgs, "parentId", true));
+                req.setDescription(str(safeArgs, "description"));
+                yield categoryService.create(req, context.workspaceId(), context.userId());
+            }
+            case UPDATE_CATEGORY -> {
+                yield categoryService.update(positiveCategoryId(safeArgs, "id", false),
+                        categoryUpdateRequest(safeArgs), context.workspaceId(), context.userId());
+            }
+            case DELETE_CATEGORY -> {
+                categoryService.delete(positiveCategoryId(safeArgs, "id", false), context.workspaceId(), context.userId());
+                yield Map.of("deleted", true);
+            }
+            case SET_SKILL_CATEGORY -> {
+                // 取消打标时 categoryId 为 null，Map.of 不接受 null 值
+                yield java.util.Collections.singletonMap("categoryId", categoryService.setSkillCategory(
+                        positiveCategoryId(safeArgs, "skillId", false), requiredNullableCategoryId(safeArgs),
+                        context.workspaceId(), context.userId()));
+            }
+            case BATCH_SET_SKILL_CATEGORY -> {
+                yield categoryService.batchSetSkillCategory(categorySkillIds(safeArgs),
+                        requiredNullableCategoryId(safeArgs), context.workspaceId(), context.userId());
+            }
             case CREATE_MEMORY -> createMemory(context, safeArgs);
             case SEARCH_MEMORIES -> searchMemories(context, safeArgs);
             case GET_MEMORY -> requireVisibleMemory(context, requiredLong(safeArgs, "id"));
@@ -1707,6 +2063,15 @@ public class McpToolService {
                 yield memoryService.deprecateFromMcp(memoryId, str(safeArgs, "comment"),
                         context.workspaceId(), context.userId());
             }
+            case REVIEW_MEMORY -> {
+                long memoryId = requiredLong(safeArgs, "id");
+                requireMutableMemory(context, memoryId);
+                memoryService.review(memoryId,
+                        toBean(safeArgs, com.aliyun.autowonder.memory.dto.ReviewRequest.class),
+                        context.workspaceId(), context.userId());
+                yield memoryService.getScoped(memoryId, context.workspaceId());
+            }
+            case COUNT_PENDING_MEMORIES -> Map.of("count", memoryService.countPendingReviews(context.workspaceId()));
             case DELETE_MEMORY -> {
                 long memoryId = requiredLong(safeArgs, "id");
                 requireMutableMemory(context, memoryId);
@@ -1790,7 +2155,7 @@ public class McpToolService {
             case SET_AGENT_DEFAULT_SDLC -> {
                 long agentId = requiredLong(safeArgs, "agentId");
                 long sdlcId = requiredLong(safeArgs, "sdlcId");
-                AgentVO agent = agentService.get(agentId);
+                AgentVO agent = agentService.get(agentId, context.workspaceId());
                 UpdateConfigRequest cfgReq = new UpdateConfigRequest();
                 cfgReq.setRoleName(agent.getRoleName());
                 cfgReq.setRoleCode(agent.getRoleCode());
@@ -1806,6 +2171,23 @@ public class McpToolService {
             }
             case INSTALL_PLATFORM_SKILL -> {
                 yield installPlatformSkill(requiredString(safeArgs, "skillId"), context);
+            }
+            case GET_DELIVERY_RECOVERY -> recoveryService.state(context.workspaceId(), requiredLong(safeArgs, "workitemId"));
+            case CONTROL_DELIVERY -> {
+                if (context.credentialType() != McpAccessTokenService.CredentialType.LONG_LIVED)
+                    throw new BizException(ErrorCode.NO_PERMISSION);
+                long workitemId = requiredLong(safeArgs, "workitemId");
+                boolean force = Boolean.TRUE.equals(safeArgs.get("force"));
+                yield switch (requiredString(safeArgs, "action")) {
+                    case "close" -> recoveryService.close(context.workspaceId(), workitemId, context.userId(), force);
+                    case "reopen" -> recoveryService.reopen(context.workspaceId(), workitemId, context.userId());
+                    case "cancel" -> recoveryService.cancel(context.workspaceId(), workitemId, requiredLong(safeArgs, "dispatchId"), context.userId(), force);
+                    case "retry" -> {
+                        recoveryDispatchService.continueDispatch(context.workspaceId(), workitemId, requiredLong(safeArgs, "dispatchId"), context.userId());
+                        yield recoveryService.state(context.workspaceId(), workitemId);
+                    }
+                    default -> throw new BizException(ErrorCode.CONFLICT, "不支持的恢复操作");
+                };
             }
             case PAUSE_DISPATCH -> {
                 DispatchDO dispatch = dispatchPauseService.requestPause(context.workspaceId(),
@@ -1834,11 +2216,27 @@ public class McpToolService {
             case ADD_SCHEDULED_TASK_RUN_COMMENT -> {
                 yield addScheduledTaskRunComment(context, safeArgs);
             }
+            case LIST_SCHEDULED_TASK_RUNS -> {
+                yield listScheduledTaskRuns(context, safeArgs);
+            }
+            case DELETE_SCHEDULED_TASK -> {
+                yield deleteScheduledTask(context, safeArgs);
+            }
             case LIST_EXECUTORS -> {
                 ExecutorService executors = requireExecutorDependency(executorService);
                 Long agentId = lng(safeArgs, "agentId");
+                Long squadId = lng(safeArgs, "squadId");
+                if (squadId != null) {
+                    // squadId always goes to SQL: squad attribution is an optional bean, so narrowing
+                    // on e.getSquadIds() would silently return nothing whenever it is not wired.
+                    // agentId is a real column, so narrowing that dimension in memory is safe.
+                    List<ExecutorVO> inSquad = executors.listAll(context.workspaceId(), List.of(squadId));
+                    yield agentId == null ? inSquad : inSquad.stream()
+                            .filter(e -> agentId.equals(e.getAgentId()))
+                            .toList();
+                }
                 yield agentId == null
-                        ? executors.listAll(context.workspaceId())
+                        ? executors.listAll(context.workspaceId(), null)
                         : executors.listByAgent(agentId, context.workspaceId());
             }
             case GET_EXECUTOR -> requireExecutorDependency(executorService)
@@ -1858,6 +2256,9 @@ public class McpToolService {
                 yield Map.of("deleted", true);
             }
             case BUILD_EXECUTOR_LAUNCH_COMMAND -> buildExecutorLaunchCommand(context, safeArgs);
+            case GET_EXECUTOR_LAUNCH_CONFIG -> requireExecutorDependency(executorLaunchConfigService)
+                    .readStoredConfig(requiredLong(safeArgs, "id"), context.workspaceId());
+            case UPDATE_EXECUTOR_LAUNCH_CONFIG -> updateExecutorLaunchConfig(context, safeArgs);
             default -> throw new BizException(ErrorCode.MCP_TOOL_NOT_FOUND);
         };
     }
@@ -1870,52 +2271,67 @@ public class McpToolService {
     }
 
     /**
-     * The launch values are validated like the create dialog but not persisted, mirroring the page
-     * where they only live in the dialog and in the operator's browser storage.
+     * The launch values are persisted by the create itself, so the response echoes what the database holds rather
+     * than values that only ever lived inside this call.
      */
     private CreatedExecutorVO createExecutor(ToolExecutionContext context, Map<String, Object> args) {
         ExecutorLaunchOptionsService options = requireExecutorDependency(executorLaunchOptionsService);
         String clientKind = options.requireCreatableClientKind(requiredString(args, "clientKind"));
         long agentId = requiredLong(args, "agentId");
-        String name = requiredString(args, "name");
-        String provider = ExecutorLaunchOptionsService.resolveProvider(clientKind);
-        // 与页面一致：先校验全部启动选项再落库，否则非法取值会留下一个已创建的执行器和已签发的 Token。
-        String memoryMode = options.resolveMemoryMode(str(args, "memoryMode"));
-        String model = options.resolveModel(provider, str(args, "model"),
-                ExecutorLaunchOptionsService.AUTO_MODEL);
-        String reasoningEffort = options.resolveReasoningEffort(model, str(args, "reasoningEffort"));
-        String contextWindow = options.resolveContextWindow(str(args, "contextWindow"));
 
         CreateExecutorRequest request = new CreateExecutorRequest();
-        request.setName(name);
+        request.setName(requiredString(args, "name"));
         request.setClientKind(clientKind);
+        request.setMemoryMode(str(args, "memoryMode"));
+        request.setMaxConcurrentDispatches(executorConcurrency(args));
+        request.setModel(str(args, "model"));
+        request.setReasoningEffort(str(args, "reasoningEffort"));
+        request.setContextWindow(str(args, "contextWindow"));
         IssuedExecutorVO issued = requireExecutorDependency(executorService)
                 .create(agentId, request, context.workspaceId(), context.userId());
         return new CreatedExecutorVO(issued.getId(), issued.getAgentId(), issued.getName(), issued.getToken(),
-                clientKind, memoryMode, model, reasoningEffort, contextWindow);
+                issued.getClientKind(), issued.getMemoryMode(), issued.getModel(), issued.getReasoningEffort(),
+                issued.getContextWindow(), issued.getMaxConcurrentDispatches());
     }
 
+    /**
+     * Launch values come only from the persisted config. An override is refused instead of ignored, so a caller
+     * holding an old script learns to update the config rather than copying a command that does not match it.
+     */
     private Object buildExecutorLaunchCommand(ToolExecutionContext context, Map<String, Object> args) {
-        ExecutorService executors = requireExecutorDependency(executorService);
-        ExecutorLaunchOptionsService options = requireExecutorDependency(executorLaunchOptionsService);
-        long executorId = requiredLong(args, "id");
-        ExecutorVO executor = executors.getDetail(executorId, context.workspaceId());
-        String token = executors.getToken(executorId, context.workspaceId());
-        String clientKind = executor.getClientKind();
-        String provider = ExecutorLaunchOptionsService.resolveProvider(clientKind);
-        String memoryMode = options.resolveMemoryMode(str(args, "memoryMode"));
-        String model = null;
-        String reasoningEffort = null;
-        String contextWindow = null;
-        if (ExecutorLaunchOptionsService.isQoderFamily(provider)) {
-            model = options.resolveModel(provider, str(args, "model"),
-                    ExecutorLaunchOptionsService.DEFAULT_MODEL);
-            reasoningEffort = options.resolveReasoningEffort(model, str(args, "reasoningEffort"));
-            contextWindow = options.resolveContextWindow(str(args, "contextWindow"));
+        rejectLaunchOverrides(args);
+        return requireExecutorDependency(executorLaunchCommandService).buildForExecutor(
+                requiredLong(args, "id"), context.workspaceId(), str(args, "os"), bool(args, "debug", false),
+                str(args, "shell"));
+    }
+
+    private static void rejectLaunchOverrides(Map<String, Object> args) {
+        for (String field : List.of("memoryMode", "model", "reasoningEffort", "contextWindow", "maxConcurrentDispatches")) {
+            Object value = args.get(field);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_OVERRIDE_REJECTED,
+                        field + " 不支持在生成启动命令时临时覆盖，请先调用 " + UPDATE_EXECUTOR_LAUNCH_CONFIG
+                                + " 修改启动配置");
+            }
         }
-        return requireExecutorDependency(executorLaunchCommandService).build(token, executorId, clientKind,
-                memoryMode, model, reasoningEffort, contextWindow, str(args, "os"),
-                bool(args, "debug", false), str(args, "shell"));
+    }
+
+    /** The same write the page's 启动命令 dialog performs, so both entries validate and persist identically. */
+    private Object updateExecutorLaunchConfig(ToolExecutionContext context, Map<String, Object> args) {
+        Long version = lng(args, "version");
+        if (version == null) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+                    "version 必填，取自 " + GET_EXECUTOR_LAUNCH_CONFIG);
+        }
+        UpdateExecutorLaunchConfigRequest request = new UpdateExecutorLaunchConfigRequest();
+        request.setVersion(version.intValue());
+        request.setMemoryMode(str(args, "memoryMode"));
+        request.setMaxConcurrentDispatches(executorConcurrency(args));
+        request.setModel(str(args, "model"));
+        request.setReasoningEffort(str(args, "reasoningEffort"));
+        request.setContextWindow(str(args, "contextWindow"));
+        return requireExecutorDependency(executorLaunchConfigService)
+                .updateConfig(requiredLong(args, "id"), context.workspaceId(), request, context.userId());
     }
 
     private CommentVO addDispatchAgentComment(ToolExecutionContext context,
@@ -1992,6 +2408,53 @@ public class McpToolService {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "version 必须提供且不能为负数");
         }
         return version.intValue();
+    }
+
+    private String strOr(Map<String, Object> args, String key, String fallback) {
+        String value = str(args, key);
+        return value == null ? fallback : value;
+    }
+
+    private Long longOr(Map<String, Object> args, String key, Long fallback) {
+        Long value = lng(args, key);
+        return value == null ? fallback : value;
+    }
+
+    private Integer executorConcurrency(Map<String, Object> args) {
+        Object value = args.get("maxConcurrentDispatches");
+        if (value == null) return null;
+        try {
+            return ExecutorLaunchConfigService.resolveMaxConcurrentDispatches(
+                    new java.math.BigDecimal(value.toString()).intValueExact());
+        } catch (NumberFormatException | ArithmeticException e) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "maxConcurrentDispatches 必须为 1 到 10 的整数");
+        }
+    }
+
+    private Integer intOr(Map<String, Object> args, String key, Integer fallback) {
+        Long value = lng(args, key);
+        if (value == null) {
+            return fallback;
+        }
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, key + " 超出整数范围");
+        }
+        return value.intValue();
+    }
+
+    private boolean scheduledTaskDocumentSource(Map<String, Object> args) {
+        String sourceType = str(args, "sourceType");
+        if (sourceType == null) {
+            return false;
+        }
+        String normalized = sourceType.trim().toUpperCase(Locale.ROOT);
+        if ("WORKITEM".equals(normalized)) {
+            return false;
+        }
+        if ("SCHEDULED_TASK".equals(normalized)) {
+            return true;
+        }
+        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "sourceType 仅支持 WORKITEM/SCHEDULED_TASK");
     }
 
     private Object createScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
@@ -2079,21 +2542,77 @@ public class McpToolService {
         long id = requiredLong(args, "id");
         int version = requiredScheduledTaskVersion(args);
         ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
-        requireScheduledTaskOwner(context, taskService.get(id, context.workspaceId()).getCreatorId());
+        ScheduledTaskVO current = taskService.get(id, context.workspaceId());
+        requireScheduledTaskOwner(context, current.getCreatorId());
         UpdateScheduledTaskRequest request = new UpdateScheduledTaskRequest();
         request.setVersion(version);
-        request.setName(str(args, "name"));
-        request.setInstructionMd(str(args, "instructionMd"));
-        request.setScheduleType(str(args, "scheduleType"));
-        request.setCronExpression(str(args, "cronExpression"));
-        request.setRunAt(isoInstantArgument(args, "runAt"));
-        request.setTimezone(str(args, "timezone"));
-        request.setSessionMode(str(args, "sessionMode"));
-        request.setOverlapPolicy(str(args, "overlapPolicy"));
-        request.setMisfirePolicy(str(args, "misfirePolicy"));
-        request.setSquadId(lng(args, "squadId"));
-        request.setInitialAgentId(lng(args, "initialAgentId"));
+        // applyUpdate overwrites every column, so anything the caller omits must be backfilled
+        // from the current row; otherwise the write nulls it and the validator rejects the task.
+        request.setName(strOr(args, "name", current.getName()));
+        request.setInstructionMd(strOr(args, "instructionMd", current.getInstructionMd()));
+        request.setSquadId(longOr(args, "squadId", current.getSquadId()));
+        request.setInitialAgentId(longOr(args, "initialAgentId", current.getInitialAgentId()));
+        request.setTimezone(strOr(args, "timezone", current.getTimezone()));
+        request.setSessionMode(strOr(args, "sessionMode", current.getSessionMode()));
+        request.setOverlapPolicy(strOr(args, "overlapPolicy", current.getOverlapPolicy()));
+        request.setMisfirePolicy(strOr(args, "misfirePolicy", current.getMisfirePolicy()));
+        request.setStartDeadlineSeconds(intOr(args, "startDeadlineSeconds", current.getStartDeadlineSeconds()));
+        request.setAffinityTimeoutSeconds(intOr(args, "affinityTimeoutSeconds", current.getAffinityTimeoutSeconds()));
+        String requestedScheduleType = str(args, "scheduleType");
+        if (requestedScheduleType != null) {
+            requestedScheduleType = requestedScheduleType.trim();
+            if (requestedScheduleType.isEmpty()) {
+                requestedScheduleType = null;
+            }
+        }
+        boolean scheduleTypeSwitched = requestedScheduleType != null
+                && !requestedScheduleType.equals(current.getScheduleType());
+        request.setScheduleType(requestedScheduleType == null ? current.getScheduleType() : requestedScheduleType);
+        if (scheduleTypeSwitched) {
+            // A CRON<->ONCE switch must not carry the previous type's field over; the counterpart
+            // stays null when not explicitly provided so the validator names the missing field.
+            request.setCronExpression(str(args, "cronExpression"));
+            request.setRunAt(isoInstantArgument(args, "runAt"));
+        } else {
+            request.setCronExpression(strOr(args, "cronExpression", current.getCronExpression()));
+            Date runAt = isoInstantArgument(args, "runAt");
+            request.setRunAt(runAt == null ? current.getRunAt() : runAt);
+        }
         return scheduledTaskMap(taskService.update(id, request, context.workspaceId(), context.userId()));
+    }
+
+    private Object listScheduledTaskRuns(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long id = requiredLong(args, "id");
+        int size = integer(args, "size", 20);
+        int offset = integer(args, "offset", 0);
+        if (size < 1 || size > 100 || offset < 0) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "size 必须在 1-100 之间且 offset 不能为负数");
+        }
+        if (isDispatchCredential(context)) {
+            requireDispatchRunOfTask(context, id);
+        }
+        requireScheduledTaskDependency(scheduledTaskService).get(id, context.workspaceId());
+        List<ScheduledTaskRunDO> runs = requireScheduledTaskDependency(scheduledTaskRunDao)
+                .listByTask(context.workspaceId(), id, size, offset);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("list", runs.stream()
+                .map(ScheduledTaskRunViews::toVO)
+                .map(this::scheduledRunMap)
+                .toList());
+        result.put("offset", offset);
+        result.put("size", size);
+        return result;
+    }
+
+    private Object deleteScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
+        requireScheduledTaskCapability();
+        long id = requiredLong(args, "id");
+        int version = requiredScheduledTaskVersion(args);
+        ScheduledTaskService taskService = requireScheduledTaskDependency(scheduledTaskService);
+        requireScheduledTaskOwner(context, taskService.get(id, context.workspaceId()).getCreatorId());
+        taskService.delete(id, version, context.workspaceId(), context.userId());
+        return Map.of("deleted", true);
     }
 
     private Object transitionScheduledTask(ToolExecutionContext context, Map<String, Object> args) {
@@ -2312,6 +2831,48 @@ public class McpToolService {
         return context.credentialType() == McpAccessTokenService.CredentialType.DISPATCH;
     }
 
+    private Object readDispatchTrace(ToolExecutionContext context, String name, Map<String, Object> args) {
+        long dispatchId = requiredLong(args, "dispatchId");
+        if (dispatchId <= 0) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+        }
+        DispatchDO target = dispatchDao.findById(dispatchId);
+        if (target == null || !Objects.equals(target.getTenantId(), context.workspaceId())) {
+            throw new BizException(ErrorCode.DISPATCH_NOT_FOUND);
+        }
+        if (isDispatchCredential(context)) {
+            DispatchDO owner = requireDispatchOwner(context);
+            if (owner.executionSourceType() != target.executionSourceType()
+                    || !Objects.equals(owner.getWorkitemId(), target.getWorkitemId())) {
+                throw new BizException(ErrorCode.NO_PERMISSION);
+            }
+        }
+        if (target.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
+            capabilityGuard.requireAvailable("mcp");
+        }
+        return switch (name) {
+            case GET_DISPATCH_RUNTIME_TRACE -> {
+                Long afterSeq = lng(args, "afterSeq");
+                if (afterSeq != null && afterSeq < 0) {
+                    throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                }
+                RuntimeTraceVO archived = runtimeTraceArtifactService.loadOutlineIfPresent(context.workspaceId(), dispatchId);
+                if (archived != null) {
+                    yield archived;
+                }
+                RuntimeTraceVO live = runtimeTraceService.get(context.workspaceId(), dispatchId, afterSeq);
+                live.setSource("LIVE");
+                yield live;
+            }
+            case GET_DISPATCH_ACTIVITIES -> runtimeTraceService.getActivities(context.workspaceId(), dispatchId);
+            case GET_DISPATCH_TURN -> runtimeTraceArtifactService.loadTurn(context.workspaceId(), dispatchId,
+                    requiredString(args, "traceId"));
+            case GET_DISPATCH_OBSERVATION -> runtimeTraceArtifactService.loadObservation(context.workspaceId(), dispatchId,
+                    requiredString(args, "observationId"));
+            default -> throw new BizException(ErrorCode.MCP_TOOL_NOT_FOUND);
+        };
+    }
+
     private DispatchDO requireDispatchScope(ToolExecutionContext context, long workitemId) {
         DispatchDO dispatch = requireDispatchOwner(context);
         if (!Objects.equals(dispatch.getWorkitemId(), workitemId)) {
@@ -2328,8 +2889,8 @@ public class McpToolService {
         return dispatch;
     }
 
-    private String resolveAgentName(long agentId) {
-        AgentVO agent = agentService.get(agentId);
+    private String resolveAgentName(long agentId, long workspaceId) {
+        AgentVO agent = agentService.get(agentId, workspaceId);
         return agent == null || agent.getName() == null || agent.getName().isBlank()
                 ? "数字人"
                 : agent.getName();
@@ -2355,44 +2916,18 @@ public class McpToolService {
     private List<MemoryVO> searchMemories(ToolExecutionContext context, Map<String, Object> args) {
         String scope = memoryScope(str(args, "scope"), null);
         String status = str(args, "status");
-        Long dispatchAgentId = isDispatchCredential(context)
-                ? requireDispatchOwner(context).getAgentId()
-                : null;
-        List<MemoryVO> memories = memoryService.list(context.workspaceId(), scope, lng(args, "ownerRef"),
+        return memoryService.list(context.workspaceId(), scope, lng(args, "ownerRef"),
                 str(args, "type"), status == null ? "ADOPTED" : status, str(args, "keyword"),
-                dispatchAgentId, integer(args, "page", 1), integer(args, "size", 20));
-        if (dispatchAgentId == null) {
-            return memories;
-        }
-        return memories.stream()
-                .filter(memory -> isOwnAgentMemory(memory, dispatchAgentId))
-                .toList();
+                null, integer(args, "page", 1), integer(args, "size", 20));
     }
 
     private MemoryVO requireVisibleMemory(ToolExecutionContext context, long memoryId) {
-        MemoryVO memory = memoryService.getScoped(memoryId, context.workspaceId());
-        if (isDispatchCredential(context)
-                && !isOwnAgentMemory(memory, requireDispatchOwner(context).getAgentId())) {
-            throw new BizException(ErrorCode.NO_PERMISSION);
-        }
-        return memory;
+        return memoryService.getScoped(memoryId, context.workspaceId());
     }
 
     private void requireMutableMemory(ToolExecutionContext context, long memoryId) {
-        MemoryVO memory = memoryService.getScoped(memoryId, context.workspaceId());
-        if (!isDispatchCredential(context)) {
-            return;
-        }
-        Long agentId = requireDispatchOwner(context).getAgentId();
-        if (!MEMORY_SCOPE_AGENT.equals(memory.getScope())
-                || !Objects.equals(memory.getOwnerRef(), agentId)) {
-            throw new BizException(ErrorCode.NO_PERMISSION);
-        }
-    }
-
-    private boolean isOwnAgentMemory(MemoryVO memory, Long agentId) {
-        return !MEMORY_SCOPE_AGENT.equals(memory.getScope())
-                || Objects.equals(memory.getOwnerRef(), agentId);
+        // Per-call workspace write authorization is enforced before invoking a mutation.
+        memoryService.getScoped(memoryId, context.workspaceId());
     }
 
     private String requiredMemoryScope(String scope) {
@@ -2448,7 +2983,7 @@ public class McpToolService {
             if (!ErrorCode.SKILL_DUPLICATE_NAME.getCode().equals(e.getCode())) {
                 throw e;
             }
-            return skillService.list(skill.getType(), 1, 100).stream()
+            return skillService.list(context.workspaceId(), skill.getType(), 1, 100).stream()
                     .filter(existing -> skill.getName().equals(existing.getName()))
                     .findFirst()
                     .orElseThrow(() -> e);
@@ -2561,10 +3096,20 @@ public class McpToolService {
                     CREATE_SKILL_FROM_PACKAGE, UPDATE_SKILL_PACKAGE -> skillSchema();
             case LIST_SKILLS -> listOutputSchema(skillSchema());
             case DELETE_SKILL -> schema(prop("deleted", "boolean", "Whether the skill record was deleted."));
+            case LIST_CATEGORIES -> listOutputSchema(categorySchema());
+            case GET_CATEGORY, CREATE_CATEGORY, UPDATE_CATEGORY -> categorySchema();
+            case DELETE_CATEGORY -> schema(prop("deleted", "boolean", "Whether the category was deleted."));
+            case SET_SKILL_CATEGORY -> schema(
+                    nullableProp("categoryId", "integer",
+                            "The category id now tagged on the skill; null after clearing the tag."));
+            case BATCH_SET_SKILL_CATEGORY -> schema(
+                    required("results"),
+                    arrayProp("results", batchSkillCategoryResultSchema(), "Per-skill tagging results."));
             case INSPECT_SKILL_PACKAGE -> skillPackageInspectSchema();
             case UPLOAD_SKILL_PACKAGE -> skillPackageUploadSchema();
             case LIST_PLATFORM_SKILLS -> listOutputSchema(platformSkillSchema());
-            case CREATE_MEMORY, GET_MEMORY, UPDATE_MEMORY, DEPRECATE_MEMORY -> memorySchema();
+            case CREATE_MEMORY, GET_MEMORY, UPDATE_MEMORY, DEPRECATE_MEMORY, REVIEW_MEMORY -> memorySchema();
+            case COUNT_PENDING_MEMORIES -> schema(prop("count", "integer", "Number of pending memory rows in the workspace."));
             case SEARCH_MEMORIES -> listOutputSchema(memorySchema());
             case DELETE_MEMORY -> schema(prop("deleted", "boolean", "Whether the memory was deleted."));
             case GET_REPO -> repoSchema();
@@ -2579,6 +3124,18 @@ public class McpToolService {
             case ADD_AGENT_TO_SQUAD -> schema(prop("added", "boolean", "Whether the agent was added to the squad."));
             case REMOVE_AGENT_FROM_SQUAD -> schema(prop("removed", "boolean", "Whether the agent was removed from the squad."));
             case CREATE_SQUAD -> squadSchema();
+            case GET_DISPATCH_RUNTIME_TRACE -> schema(
+                    prop("source", "string", "OSS archive or LIVE runtime events."),
+                    prop("dispatchId", "integer", "Dispatch id."),
+                    prop("changed", "boolean", "Whether LIVE events have changed since afterSeq."),
+                    nullableProp("lastSeq", "integer", "Latest LIVE event sequence; may be absent for OSS."),
+                    arrayProp("sessions", schema(), "Sessions with turns and observation identifiers."),
+                    arrayProp("events", schema(), "Runtime events."));
+            case GET_DISPATCH_ACTIVITIES -> schema(
+                    prop("dispatchId", "integer", "Dispatch id."),
+                    arrayProp("activities", schema(), "Activity entries in persisted arrival order."));
+            // Trace payloads contain optional and provider-specific fields, including nested tool I/O.
+            case GET_DISPATCH_TURN, GET_DISPATCH_OBSERVATION -> schema();
             case PAUSE_DISPATCH -> schema(
                     prop("dispatchId", "integer", "Dispatch id."),
                     prop("status", "string", "Dispatch status after pause request (PAUSING or PAUSED)."));
@@ -2614,6 +3171,11 @@ public class McpToolService {
                     arrayProp("comments", commentSchema(), "Run comments; present when includeComments is true."),
                     arrayProp("derivedWorkitems", workitemSchema(), "Workitems created by the run; present when includeDerivedWorkitems is true."));
             case ADD_SCHEDULED_TASK_RUN_COMMENT -> commentSchema();
+            case LIST_SCHEDULED_TASK_RUNS -> schema(required("list"),
+                    arrayProp("list", scheduledRunSchema(), "Runs of this task, newest first (id desc)."),
+                    prop("offset", "integer", "Current offset."),
+                    prop("size", "integer", "Page size."));
+            case DELETE_SCHEDULED_TASK -> schema(prop("deleted", "boolean", "Whether the scheduled task was deleted."));
             case LIST_EXECUTORS -> listOutputSchema(executorSchema());
             case GET_EXECUTOR -> executorSchema();
             case LIST_EXECUTOR_CLIENT_KINDS -> listOutputSchema(selectOptionSchema());
@@ -2623,6 +3185,7 @@ public class McpToolService {
                     prop("id", "integer", "Executor id the token belongs to."),
                     prop("token", "string", "Plaintext connection token; treat it as a secret."));
             case DELETE_EXECUTOR -> schema(prop("deleted", "boolean", "Whether the executor was deleted."));
+            case GET_EXECUTOR_LAUNCH_CONFIG, UPDATE_EXECUTOR_LAUNCH_CONFIG -> executorLaunchConfigSchema();
             case BUILD_EXECUTOR_LAUNCH_COMMAND -> executorLaunchCommandSchema();
             default -> schema();
         };
@@ -2811,14 +3374,22 @@ public class McpToolService {
     private Map<String, Object> sdlcSchema() {
         return schema(prop("id", "integer", "SDLC flow id."),
                 prop("name", "string", "SDLC flow name."),
-                prop("description", "string", "SDLC flow description."),
-                prop("workType", "string", "Supported workitem type."),
+                nullableProp("description", "string", "SDLC flow description."),
+                nullableProp("workType", "string", "Supported workitem type."),
                 prop("status", "string", "SDLC flow status."),
                 prop("isDefault", "integer", "Whether this is default."),
-                prop("entryStepId", "integer", "Entry step id."),
+                nullableProp("entryStepId", "integer", "Entry step id."),
                 prop("version", "integer", "Optimistic lock version."),
                 timestampProp("gmtCreate", "Creation time."),
-                arrayProp("steps", sdlcStepSchema(), "SDLC flow steps."));
+                nullableArrayProp("steps", sdlcStepSchema(), "SDLC flow steps."),
+                nullableProp("stepCount", "integer",
+                        "Number of non-deleted steps. list_sdlcs returns it instead of full steps; "
+                                + "null only when neither was loaded."),
+                nullableArrayProp("squadIds", Map.of("type", "integer"),
+                        "Squad ids derived from the member agents that bind this SDLC on their online version; "
+                                + "populated for list_sdlcs, null for single-record tools."),
+                nullableArrayProp("squadNames", Map.of("type", "string"),
+                        "Squad names index-aligned with squadIds; empty when unaffiliated."));
     }
 
     private Map<String, Object> sdlcStepSchema() {
@@ -2827,20 +3398,20 @@ public class McpToolService {
                 prop("stepOrder", "integer", "Step order."),
                 prop("name", "string", "Step name."),
                 prop("kind", "string", "Step kind."),
-                prop("instructionMd", "string", "Step instruction."),
-                prop("checklistJson", "string",
-                        "Checklist JSON array, e.g. [\"编译通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
-                prop("gatePolicyJson", "string",
+                nullableProp("instructionMd", "string", "Step instruction."),
+                nullableProp("checklistJson", "string",
+                        "Checklist definitions. Conditional items may set allowNotApplicable=true and a non-empty notApplicableWhen; requires upgraded runtime. Do not preset execution status/reason. JSON array, e.g. [\"编译通过\"] or [{\"id\":\"cl_0\",\"text\":\"编译通过\",\"checked\":false}]."),
+                nullableProp("gatePolicyJson", "string",
                         "Gate policy JSON object, e.g. {\"passCriteria\":\"checklist 全部通过且 evidence 目录非空\"}."),
                 prop("required", "boolean", "Whether the step is required."),
-                prop("timeoutSeconds", "integer", "Timeout seconds."),
-                prop("retryBudget", "integer", "Retry budget."),
-                prop("code", "string", "Step code."),
-                prop("handlerType", "string", "Handler type."),
-                prop("handlerRoleRef", "string", "Handler role reference."),
-                prop("statusOnEnterCode", "string", "Status code on enter."),
-                prop("onSuccess", "string", "Success transition."),
-                prop("onFail", "string", "Failure transition."));
+                nullableProp("timeoutSeconds", "integer", "Timeout seconds."),
+                nullableProp("retryBudget", "integer", "Retry budget."),
+                nullableProp("code", "string", "Step code."),
+                nullableProp("handlerType", "string", "Handler type."),
+                nullableProp("handlerRoleRef", "string", "Handler role reference."),
+                nullableProp("statusOnEnterCode", "string", "Status code on enter."),
+                nullableProp("onSuccess", "string", "Success transition."),
+                nullableProp("onFail", "string", "Failure transition."));
     }
 
     private Map<String, Object> agentSchema() {
@@ -2861,7 +3432,12 @@ public class McpToolService {
                 prop("executorTotalCount", "integer", "Total executor count."),
                 prop("skillCount", "integer", "Bound skill count."),
                 prop("memoryCount", "integer", "Bound memory count."),
-                prop("repoPermCount", "integer", "Repository permission count."));
+                prop("repoPermCount", "integer", "Repository permission count."),
+                nullableArrayProp("squadIds", Map.of("type", "integer"),
+                        "Squad ids this digital worker belongs to; populated for list_agents, "
+                                + "null for single-record tools."),
+                nullableArrayProp("squadNames", Map.of("type", "string"),
+                        "Squad names index-aligned with squadIds; empty when unaffiliated."));
     }
 
     private Map<String, Object> agentVersionSchema() {
@@ -2913,18 +3489,39 @@ public class McpToolService {
         return schema(prop("id", "integer", "Skill record id."),
                 prop("type", "string", "Skill record type."),
                 prop("name", "string", "Skill name."),
-                prop("installSpec", "string", "Install specification."),
-                prop("description", "string", "Skill description."),
+                nullableProp("installSpec", "string", "Install specification."),
+                nullableProp("description", "string", "Skill description."),
                 prop("sourceType", "string", "Skill source type."),
-                prop("packageOssRef", "string", "Package OSS reference."),
-                prop("packageFileName", "string", "Package file name."),
-                prop("packageSize", "integer", "Package size."),
-                prop("packageMd5", "string", "Package MD5."),
+                nullableProp("packageOssRef", "string", "Package OSS reference."),
+                nullableProp("packageFileName", "string", "Package file name."),
+                nullableProp("packageSize", "integer", "Package size."),
+                nullableProp("packageMd5", "string", "Package MD5."),
                 prop("version", "integer", "Optimistic lock version."),
                 timestampProp("gmtCreate", "Creation time."),
                 timestampProp("gmtModified", "Last modified time."),
-                prop("modifierId", "integer", "Last modifier id."),
-                prop("modifierName", "string", "Last modifier name."));
+                nullableProp("modifierId", "integer", "Last modifier id."),
+                nullableProp("modifierName", "string", "Last modifier name."),
+                nullableProp("categoryId", "integer",
+                        "Primary category id; null when the skill is uncategorized."),
+                nullableProp("categoryPath", "string",
+                        "Full category path such as \"编码 → 前端 → Vue\"; null when uncategorized."));
+    }
+
+    private Map<String, Object> categorySchema() {
+        return schema(prop("id", "integer", "Category id."),
+                nullableProp("parentId", "integer", "Parent category id; null for top-level categories."),
+                prop("name", "string", "Category name."),
+                nullableProp("description", "string", "Category description."),
+                prop("path", "string", "Full path such as \"编码 → 前端 → Vue\"."),
+                prop("version", "integer", "Optimistic lock version."),
+                timestampProp("gmtCreate", "Creation time."),
+                timestampProp("gmtModified", "Last modified time."));
+    }
+
+    private Map<String, Object> batchSkillCategoryResultSchema() {
+        return schema(prop("skillId", "integer", "Skill id."),
+                prop("success", "boolean", "Whether the tagging succeeded."),
+                nullableProp("message", "string", "Success or failure message."));
     }
 
     private Map<String, Object> skillPackageInspectSchema() {
@@ -2975,11 +3572,21 @@ public class McpToolService {
                 prop("agentId", "integer", "Owning digital worker id."),
                 nullableProp("agentName", "string", "Owning digital worker name."),
                 prop("name", "string", "Executor name."),
-                prop("clientKind", "string", "Client kind, for example QODER_CLI or QODER_CN_CLI."),
+                nullableProp("clientKind", "string", "Client kind, for example QODER_CLI or QODER_CN_CLI; "
+                        + "null for legacy executors created before the kind became mandatory."),
                 prop("status", "string", "Live status driven by heartbeats: ONLINE, BUSY or OFFLINE."),
                 nullableProp("lastConnectIp", "string", "IP of the most recent WebSocket connection."),
                 timestampProp("lastHeartbeat", "Most recent heartbeat time."),
-                timestampProp("gmtCreate", "Creation time."));
+                timestampProp("lastStartedAt", "Client process startup time; reconnecting does not reset it. Null for older clients."),
+                nullableProp("version", "string", "Client runtime version."),
+                prop("restartSupported", "boolean", "Whether this online client supports remote restart."),
+                prop("updateRestartSupported", "boolean", "Whether this client supports release update and restart."),
+                timestampProp("gmtCreate", "Creation time."),
+                nullableArrayProp("squadIds", Map.of("type", "integer"),
+                        "Squad ids of the owning digital worker; populated for list_executors, "
+                                + "null for get_executor."),
+                nullableArrayProp("squadNames", Map.of("type", "string"),
+                        "Squad names index-aligned with squadIds; empty when the worker is unaffiliated."));
     }
 
     private Map<String, Object> selectOptionSchema() {
@@ -3019,10 +3626,30 @@ public class McpToolService {
                 prop("name", "string", "Executor name."),
                 prop("token", "string", "One-time plaintext connection token; treat it as a secret."),
                 prop("clientKind", "string", "Canonical client kind."),
-                prop("memoryMode", "string", "Validated memory mode to pass to build_executor_launch_command."),
-                prop("model", "string", "Validated Qoder model to pass to build_executor_launch_command."),
-                prop("reasoningEffort", "string", "Validated reasoning effort."),
-                prop("contextWindow", "string", "Validated context window."));
+                prop("memoryMode", "string", "Memory mode persisted on the new executor."),
+                prop("maxConcurrentDispatches", "integer", "Saved maximum concurrent dispatches."),
+                prop("model", "string", "Qoder model persisted on the new executor."),
+                prop("reasoningEffort", "string", "Reasoning effort persisted on the new executor."),
+                prop("contextWindow", "string", "Context window persisted on the new executor."));
+    }
+
+    /**
+     * The persisted launch config the page's 启动命令 dialog and the MCP config tools exchange. Every launch value is
+     * nullable so an executor that was never configured is reported truthfully instead of being padded with
+     * defaults; version is the optimistic lock the next update must carry.
+     */
+    private Map<String, Object> executorLaunchConfigSchema() {
+        return schema(required("version"),
+                nullableProp("model", "string", "Persisted Qoder model id; null when it was never saved or the "
+                        + "executor is not in the Qoder family."),
+                nullableProp("reasoningEffort", "string", "Persisted reasoning effort; null when it was never saved "
+                        + "or the executor is not in the Qoder family."),
+                nullableProp("contextWindow", "string", "Persisted context window; null when it was never saved or "
+                        + "the executor is not in the Qoder family."),
+                nullableProp("memoryMode", "string", "Persisted memory mode; null when it was never saved."),
+                nullableProp("maxConcurrentDispatches", "integer", "Saved concurrency; older configs default to 5."),
+                prop("version", "integer", "Optimistic-lock version to pass back to "
+                        + "autowonder.update_executor_launch_config; 1 while nothing has been saved yet."));
     }
 
     private Map<String, Object> executorLaunchCommandSchema() {
@@ -3032,6 +3659,7 @@ public class McpToolService {
                 prop("clientKind", "string", "Executor client kind."),
                 prop("provider", "string", "Runtime provider passed as --provider."),
                 prop("memoryMode", "string", "Memory mode passed as --memory-mode."),
+                prop("maxConcurrentDispatches", "integer", "Concurrency passed as --max-tasks."),
                 nullableProp("model", "string", "Model passed as --model; null for non-Qoder executors."),
                 nullableProp("reasoningEffort", "string",
                         "Value passed as --reasoning-effort; null for non-Qoder executors."),
@@ -3077,7 +3705,29 @@ public class McpToolService {
                 prop("roleCount", "integer", "Number of distinct roles in the squad."),
                 prop("executorOnlineCount", "integer", "Online executor count."),
                 prop("executorTotalCount", "integer", "Total executor count."),
-                prop("sdlcCount", "integer", "Number of distinct SDLC flows in the squad."));
+                prop("sdlcCount", "integer", "Number of distinct SDLC flows in the squad."),
+                nullableArrayProp("sdlcs", squadSdlcSummarySchema(),
+                        "SDLC flows bound by the member agents' online versions; "
+                                + "populated for get_squad, null for list_squads."),
+                nullableArrayProp("executors", squadExecutorSummarySchema(),
+                        "Executors owned by the member agents; populated for get_squad, null for list_squads."));
+    }
+
+    private Map<String, Object> squadSdlcSummarySchema() {
+        return schema(prop("id", "integer", "SDLC flow id."),
+                prop("name", "string", "SDLC flow name."),
+                nullableProp("workType", "string", "Supported workitem type."),
+                nullableProp("status", "string", "SDLC flow status."));
+    }
+
+    private Map<String, Object> squadExecutorSummarySchema() {
+        return schema(prop("id", "integer", "Executor id."),
+                nullableProp("agentId", "integer", "Owning digital worker id."),
+                nullableProp("agentName", "string", "Owning digital worker name."),
+                prop("name", "string", "Executor name."),
+                prop("status", "string", "Live status derived from heartbeats: ONLINE or OFFLINE."),
+                nullableProp("clientKind", "string", "Client kind, for example QODER_CLI."),
+                timestampProp("lastHeartbeat", "Most recent heartbeat time."));
     }
 
     private Map<String, Object> listOutputSchema(Map<String, Object> itemSchema) {
@@ -3109,9 +3759,20 @@ public class McpToolService {
         return List.of(names);
     }
 
+    private Map<String, Object> skillPackageInputSchema() {
+        Map<String, Object> result = schema(skillPackageInputProps());
+        result.put("oneOf", List.of(
+                Map.of("required", List.of("fileName", "contentBase64"), "not", Map.of("required", List.of("files"))),
+                Map.of("required", List.of("files"), "not", Map.of("required", List.of("contentBase64")))));
+        return result;
+    }
+
     private Map<String, Object>[] skillPackageInputProps() {
-        return new Map[]{prop("fileName", "string", "Required package file name; .zip or .tar.gz is supported."),
-                prop("contentBase64", "string", "Required base64 encoded package bytes."),
+        return new Map[]{prop("fileName", "string", "Archive file name; .zip or .tar.gz. Optional for files input (defaults to directory.zip); must be .zip for files."),
+                prop("contentBase64", "string", "Base64 encoded archive bytes. Provide either contentBase64 or files, never both."),
+                objectProp("files", Map.of("type", "object", "minProperties", 1, "maxProperties", 500,
+                        "additionalProperties", Map.of("type", "string")),
+                        "Directory files: map each relative path (e.g. SKILL.md, scripts/run.sh) to base64 content. Omit the enclosing directory name; the server creates a ZIP. No local filesystem paths."),
                 prop("type", "string", "Optional package type: SKILL, PLUGIN, or HOOK; defaults to SKILL."),
                 prop("name", "string", "Required for PLUGIN packages; optional for HOOK and must match root hook.yaml; ignored for SKILL."),
                 prop("description", "string", "Optional PLUGIN or HOOK description."),
@@ -3214,7 +3875,30 @@ public class McpToolService {
         return result;
     }
 
+    private String packageFileName(Map<String, Object> args) {
+        if (!args.containsKey("files")) return requiredString(args, "fileName");
+        String name = str(args, "fileName");
+        if (name == null || name.isBlank()) return "directory.zip";
+        if (!name.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+        }
+        return name;
+    }
+
     private byte[] packageBytes(Map<String, Object> args) {
+        if (args.containsKey("files")) {
+            if (args.containsKey("contentBase64") || !(args.get("files") instanceof Map<?, ?> files)) {
+                throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+            }
+            Map<String, String> contents = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : files.entrySet()) {
+                if (!(entry.getKey() instanceof String path) || !(entry.getValue() instanceof String content)) {
+                    throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+                }
+                contents.put(path, content);
+            }
+            return skillPackageService.packDirectory(contents);
+        }
         String contentBase64 = requiredString(args, "contentBase64");
         try {
             return Base64.getDecoder().decode(contentBase64);
@@ -3348,6 +4032,59 @@ public class McpToolService {
         } catch (NumberFormatException e) {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
         }
+    }
+
+    /** 打标参数“缺省”与“显式 null”语义不同：缺省报参数错误，显式 null 表示取消打标。 */
+    private Long requiredNullableCategoryId(Map<String, Object> args) {
+        if (!args.containsKey("categoryId")) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+        }
+        return positiveCategoryId(args, "categoryId", true);
+    }
+
+    private Long positiveCategoryId(Map<String, Object> args, String key, boolean nullable) {
+        Object value = args.get(key);
+        if (value == null && nullable) return null;
+        if (value instanceof Number number) {
+            try {
+                long id = new java.math.BigDecimal(number.toString()).longValueExact();
+                if (id > 0) return id;
+            } catch (ArithmeticException | NumberFormatException ignored) {
+                // Reject fractions and overflow instead of silently targeting another asset.
+            }
+        }
+        throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+    }
+
+    private List<Long> categorySkillIds(Map<String, Object> args) {
+        Object value = args.get("skillIds");
+        if (!(value instanceof List<?> ids) || ids.isEmpty()) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
+        }
+        return ids.stream().map(id -> positiveCategoryId(
+                java.util.Collections.singletonMap("id", id), "id", false)).distinct().toList();
+    }
+
+    private UpdateCategoryRequest categoryUpdateRequest(Map<String, Object> args) {
+        UpdateCategoryRequest req = new UpdateCategoryRequest();
+        if (args.containsKey("name")) {
+            req.setNamePresent(true);
+            req.setName(str(args, "name"));
+        }
+        if (args.containsKey("parentId")) {
+            req.setParentIdPresent(true);
+            req.setParentId(positiveCategoryId(args, "parentId", true));
+        }
+        if (args.containsKey("description")) {
+            req.setDescriptionPresent(true);
+            req.setDescription(str(args, "description"));
+        }
+        return req;
+    }
+
+    private List<Long> squadIdFilter(Map<String, Object> args) {
+        Long squadId = lng(args, "squadId");
+        return squadId == null ? null : List.of(squadId);
     }
 
     private long requiredLong(Map<String, Object> args, String key) {

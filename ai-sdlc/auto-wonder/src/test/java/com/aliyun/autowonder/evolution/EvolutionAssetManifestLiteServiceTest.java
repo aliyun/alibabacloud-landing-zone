@@ -50,7 +50,7 @@ class EvolutionAssetManifestLiteServiceTest {
         skill.setDescription("Before multi-repo edits, load repo-map.");
         skill.setInstallSpec("VERY_LONG_INSTALL_SPEC_SHOULD_NOT_APPEAR");
         skill.setVersion(4);
-        when(skillService.list(null, 1, 10)).thenReturn(List.of(skill));
+        when(skillService.list(1L, null, 1, 10)).thenReturn(List.of(skill));
 
         RepoRelationVO relation = new RepoRelationVO();
         relation.setId(33L);

@@ -5,6 +5,8 @@ import com.aliyun.autowonder.dispatch.DispatchCheckpointService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.dispatch.ResumeDescriptor;
 import com.aliyun.autowonder.dispatch.ResumeCheckpointCandidate;
+import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
+import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.mcp.DispatchMcpTokenService;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
@@ -16,6 +18,7 @@ import org.mockito.InOrder;
 import javax.websocket.RemoteEndpoint;
 import javax.websocket.Session;
 import java.io.IOException;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -257,5 +260,165 @@ class WsDispatchTransportTest {
         com.alibaba.fastjson.JSONObject frame = com.alibaba.fastjson.JSON.parseObject(json.getValue());
         assertEquals(41001L, frame.getLongValue("workitemId"));
         assertFalse(frame.containsKey("sourceType"));
+    }
+
+    @Test
+    void debugLogDirectiveIsSentOnlyToDebugCapableExecutors() throws IOException {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        Session ws = mock(Session.class);
+        RemoteEndpoint.Basic basic = mock(RemoteEndpoint.Basic.class);
+        when(ws.getBasicRemote()).thenReturn(basic);
+        when(ws.isOpen()).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(5L))
+                .thenReturn(new ExecutorSession(5L, 10L, 100L, ws));
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.DEBUG_LOG_V1))
+                .thenReturn(true);
+        DispatchDO d = dispatch(99L, 5L);
+        d.setDebugLogEnabled(true);
+
+        transport.dispatch(d, pkg());
+
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
+        verify(basic).sendText(cap.capture());
+        com.alibaba.fastjson.JSONObject frame = com.alibaba.fastjson.JSON.parseObject(cap.getValue());
+        com.alibaba.fastjson.JSONObject debugLog = frame.getJSONObject("debugLog");
+        assertNotNull(debugLog);
+        assertTrue(debugLog.getBooleanValue("enabled"));
+        assertEquals(209715200L, debugLog.getLongValue("maxBytes"));
+    }
+
+    @Test
+    void debugLogDirectiveIsOmittedWithoutProtocolFeature() throws IOException {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        Session ws = mock(Session.class);
+        RemoteEndpoint.Basic basic = mock(RemoteEndpoint.Basic.class);
+        when(ws.getBasicRemote()).thenReturn(basic);
+        when(ws.isOpen()).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(5L))
+                .thenReturn(new ExecutorSession(5L, 10L, 100L, ws));
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.DEBUG_LOG_V1))
+                .thenReturn(false);
+        DispatchDO d = dispatch(99L, 5L);
+        d.setDebugLogEnabled(true);
+
+        transport.dispatch(d, pkg());
+
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
+        verify(basic).sendText(cap.capture());
+        assertFalse(cap.getValue().contains("debugLog"));
+    }
+
+    @Test
+    void debugLogDirectiveIsOmittedWhenFlagFrozenOff() throws IOException {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        Session ws = mock(Session.class);
+        RemoteEndpoint.Basic basic = mock(RemoteEndpoint.Basic.class);
+        when(ws.getBasicRemote()).thenReturn(basic);
+        when(ws.isOpen()).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(5L))
+                .thenReturn(new ExecutorSession(5L, 10L, 100L, ws));
+        DispatchDO d = dispatch(99L, 5L);
+        d.setDebugLogEnabled(null);
+
+        transport.dispatch(d, pkg());
+
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
+        verify(basic).sendText(cap.capture());
+        assertFalse(cap.getValue().contains("debugLog"));
+        verify(presence, never()).supportsProtocolFeature(5L, WsDispatchTransport.DEBUG_LOG_V1);
+    }
+
+    @Test
+    void debugLogCapabilityProbeFailureDoesNotBlockDispatch() throws IOException {
+        // best-effort 不变量：debugLog 组装任何异常不得影响 TASK_DISPATCH 帧下发
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(
+                sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        Session ws = mock(Session.class);
+        RemoteEndpoint.Basic basic = mock(RemoteEndpoint.Basic.class);
+        when(ws.getBasicRemote()).thenReturn(basic);
+        when(ws.isOpen()).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(5L))
+                .thenReturn(new ExecutorSession(5L, 10L, 100L, ws));
+        when(presence.supportsProtocolFeature(5L, WsDispatchTransport.DEBUG_LOG_V1))
+                .thenThrow(new IllegalStateException("redis unavailable"));
+        DispatchDO d = dispatch(99L, 5L);
+        d.setDebugLogEnabled(true);
+
+        assertDoesNotThrow(() -> transport.dispatch(d, pkg()));
+
+        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
+        verify(basic).sendText(cap.capture());
+        String sent = cap.getValue();
+        assertFalse(sent.contains("debugLog"));
+        assertTrue(sent.contains("\"dispatchId\":99"));
+    }
+
+    @Test
+    void resolvesAndSendsLatestCompleteEnvironmentSnapshotOnEveryDispatch() {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(sessionRegistry, redisManager, nodeIdentity, null, null,
+                presence, null, resolver);
+        when(resolver.resolve(100L, 8L))
+                .thenReturn(Map.of("ALPHA", "first", "ZETA", "last"), Map.of("ALPHA", "updated"));
+        when(presence.supportsProtocolFeature(
+                5L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1)).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(5L)).thenReturn(null);
+
+        transport.dispatch(dispatch(99L, 5L), pkg(false));
+        transport.dispatch(dispatch(100L, 5L), pkg(false));
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager, times(2)).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL),
+                payload.capture());
+        assertEquals(Map.of("ALPHA", "first", "ZETA", "last"),
+                com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(0))
+                        .getJSONObject("environmentVariables").getInnerMap());
+        assertEquals("updated", com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(1))
+                .getJSONObject("environmentVariables").getString("ALPHA"));
+        verify(resolver, times(2)).resolve(100L, 8L);
+    }
+
+    @Test
+    void rejectsNonEmptySnapshotWhenExecutorDoesNotSupportEnvironmentProtocol() {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(sessionRegistry, redisManager, nodeIdentity, null, null,
+                presence, null, resolver);
+        when(resolver.resolve(100L, 8L)).thenReturn(Map.of("TOKEN", "secret-value"));
+
+        ExecutorProtocolCompatibilityException error = assertThrows(
+                ExecutorProtocolCompatibilityException.class,
+                () -> transport.dispatch(dispatch(99L, 5L), pkg(false)));
+
+        assertEquals(WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1,
+                error.getRequiredFeature());
+        assertFalse(error.getMessage().contains("secret-value"));
+        verify(redisManager, never()).publish(anyString(), anyString());
+    }
+
+    @Test
+    void sendsExplicitEmptySnapshotToLegacyExecutor() {
+        AgentEnvironmentVariableResolver resolver = mock(AgentEnvironmentVariableResolver.class);
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(sessionRegistry, redisManager, nodeIdentity, null, null,
+                presence, null, resolver);
+        when(resolver.resolve(100L, 8L)).thenReturn(Map.of());
+        when(sessionRegistry.findByExecutorId(5L)).thenReturn(null);
+
+        transport.dispatch(dispatch(99L, 5L), pkg(false));
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        assertTrue(payload.getValue().contains("\"environmentVariables\":{}"));
+        verify(presence, never()).supportsProtocolFeature(
+                5L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1);
     }
 }

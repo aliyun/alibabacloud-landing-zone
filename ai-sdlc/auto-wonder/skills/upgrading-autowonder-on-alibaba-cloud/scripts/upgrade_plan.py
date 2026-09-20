@@ -57,6 +57,10 @@ def protect_temp_acl(source, target):
         raise OSError('Cannot protect temporary file ACL')
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from operations_hooks import checkpoint as operations_checkpoint, assert_current as operations_assert_current
+
+
 def atomic_write(path, contents):
     path = Path(path)
     fd, name = tempfile.mkstemp(prefix=path.name + '.', dir=path.parent)
@@ -71,7 +75,9 @@ def atomic_write(path, contents):
 
 
 def save(path, data):
+    operations_assert_current(path)
     atomic_write(path, canonical(data))
+    operations_checkpoint(path, data)
 
 
 def resource_identity(data):
@@ -87,7 +93,7 @@ def fingerprint(data):
     upgrade = data['upgrade']
     keys = ('fromCommit toCommit targetRef remote forceRedeploy commits changedFiles environment '
             'pendingMigrations blockedReasons confirmationRequired environmentContractChecked '
-            'environmentPlanSha256 targetRecommendedRuntimeVersion').split()
+            'environmentPlanSha256 targetRecommendedRuntimeVersion keyGenerationId').split()
     material = {key: upgrade.get(key) for key in keys}
     material['databaseDestructive'] = upgrade.get('databaseCompatibility', {}).get('destructive')
     material['targetVerificationFingerprint'] = upgrade.get('targetVerification', {}).get('fingerprint')
@@ -140,9 +146,8 @@ def check_repository(actual, expected):
 def contract_path(path):
     return path == 'docs/community/application.env.example' or any(fnmatch.fnmatchcase(path, pattern) for pattern in (
         'src/main/resources/application*.yml',
-        'skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*',
-        'skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*',
-        'skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh',
+        'skills/upgrading-autowonder-on-alibaba-cloud/assets/templates/*',
+        'skills/upgrading-autowonder-on-alibaba-cloud/assets/systemd/*',
         'skills/upgrading-autowonder-on-alibaba-cloud/scripts/*.sh'))
 
 
@@ -164,7 +169,6 @@ def git_files(root, commit):
 def workspace_files(root):
     return {path.relative_to(root).as_posix(): path.read_bytes()
             for folder in ('src/main/resources', 'docs/migration', 'docs/community',
-                           'skills/deploying-autowonder-on-alibaba-cloud',
                            'skills/upgrading-autowonder-on-alibaba-cloud')
             for path in (root / folder).rglob('*') if path.is_file() and relevant(path.relative_to(root).as_posix())}
 
@@ -316,6 +320,8 @@ def candidate_env(path, runtime):
         if match[1] in values:
             raise PlanError('candidate environment file contains duplicate keys')
         values[match[1]] = match[2].strip().strip('"\'')
+    if not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', values.get('AUTOWONDER_SECRET_KEY_GENERATION_ID', '')):
+        raise PlanError('candidate requires the existing escrow key generation UUIDv4 before approval')
     updated = [line for line in lines if not line.startswith('AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=')]
     updated.append('AUTOWONDER_RUNTIME_RECOMMENDED_VERSION=' + runtime)
     contents = ('\n'.join(updated) + '\n').encode()
@@ -386,12 +392,12 @@ def resource_fingerprint(data):
 
 
 def resolve_source(root):
-    marker = 'skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/autowonder.service'
-    if (root / marker).is_file():
+    marker = 'src/main/resources/application.yml'
+    if (root / marker).is_file() and (root / 'VERSION').is_file() and (root / 'pom.xml').is_file():
         return root
     candidates = []
     for current, directories, files in os.walk(root):
-        directories[:] = [name for name in directories if name not in {'.git', 'target', 'node_modules'}]
+        directories[:] = [name for name in directories if name not in {'.git', 'target', 'node_modules', 'skills', '.agents'}]
         if 'VERSION' in files and 'pom.xml' in files and (Path(current) / marker).is_file():
             candidates.append(Path(current))
     if len(candidates) > 1:
@@ -404,8 +410,12 @@ def content_identity(root):
     paths = []
     for current, directories, names in os.walk(root):
         directories[:] = [name for name in directories if name not in {'.git', 'target', 'node_modules', 'upgrade-info', '__pycache__'}
-                           and not (Path(current).name == 'frontend' and name == 'dist')]
-        paths.extend(Path(current) / name for name in names if name not in {'.git', '.DS_Store'} and not (Path(current) / name).is_symlink())
+                           and not (Path(current) == root and name in {'.operations-cache', 'deployments', 'logs'})
+                           and not (Path(current) in (root / 'skills', root / '.agents/skills') and name != Path(__file__).resolve().parent.parent.name)
+                           and not (Path(current).name == 'frontend' and name in {'dist', 'coverage'})]
+        paths.extend(Path(current) / name for name in names if name not in {'.git', '.DS_Store'}
+                     and not (Path(current).relative_to(root).parts[:1] == ('frontend',) and name.endswith('.tsbuildinfo'))
+                     and not (Path(current) / name).is_symlink())
     for path in sorted(paths):
         relative = path.relative_to(root).as_posix()
         material.append(relative + '\t' + digest(path.read_bytes()) + '\n')
@@ -501,6 +511,7 @@ def plan(args, data):
     data['upgrade'] = dict(fromCommit=active, toCommit=target, sourceBaseline=baseline, targetRef='master', remote=args.remote,
         forceRedeploy=args.force_redeploy, commits=commits, changedFiles=changed_files, **findings,
         environmentContractChecked=True, environmentPlanSha256=env_hash, environmentSha256=env_hash,
+        keyGenerationId=values['AUTOWONDER_SECRET_KEY_GENERATION_ID'],
         environmentValidated=False, targetRecommendedRuntimeVersion=runtime, resourceSetFingerprint=resource_fingerprint(data),
         resourceIdentity=resource_identity(data),
         databaseBackup={'status': 'pending'}, migrationApproved=False, approval={'status': 'pending'},
@@ -509,10 +520,14 @@ def plan(args, data):
         data['repositoryRef'] = 'workspace-current-content'
         data['upgrade'].update(sourceMode='workspace-current-content', targetRef='workspace-current-content', remote='none')
     data['upgrade']['planFingerprint'] = fingerprint(data)
+    if args.env_file:
+        data.setdefault('localContext', {})['candidateEnvFile'] = str(Path(args.env_file).resolve())
     save(args.manifest, data)
     if findings['blockedReasons']:
         raise PlanError('upgrade plan is blocked; inspect sanitized manifest findings')
-    print(json.dumps(dict(phase=data['phase'], status=data['status'], mode=data['mode'], upgrade=data['upgrade'])))
+    report = {key: value for key, value in data['upgrade'].items()
+              if key not in ('environmentPlanSha256', 'environmentSha256', 'environmentCandidateSha256')}
+    print(json.dumps(dict(phase=data['phase'], status=data['status'], mode=data['mode'], upgrade=report)))
 
 
 def main():
@@ -536,6 +551,8 @@ def main():
             return 0
         if not args.manifest:
             parser.error('--manifest is required')
+        if args.command in ('plan', 'seal'):
+            operations_assert_current(Path(args.manifest))
         data = json.loads(Path(args.manifest).read_text(encoding='utf-8-sig'))
         if args.command == 'fingerprint':
             print(fingerprint(data))

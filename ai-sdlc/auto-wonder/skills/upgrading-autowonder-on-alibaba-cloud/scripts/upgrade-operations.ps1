@@ -63,8 +63,9 @@ switch ($Operation) {
     'runtime-config' {
         Assert-UpgradeCandidate $data $EnvFile
         $targetRecommendedRuntimeVersion=[string]$data.upgrade.targetRecommendedRuntimeVersion
+        $keyGenerationId=Get-UpgradeKeyGeneration $EnvFile
         Update-JsonFileAtomic $Manifest {param($document)
-            $document.runtimeConfig=@{prepared=$true;valuesValidated=$true;recommendedRuntimeVersion=$targetRecommendedRuntimeVersion;candidateSha256=(Get-FileSha256 $EnvFile)}
+            $document.runtimeConfig=@{prepared=$true;valuesValidated=$true;recommendedRuntimeVersion=$targetRecommendedRuntimeVersion;candidateSha256=(Get-FileSha256 $EnvFile);keyGenerationId=$keyGenerationId;planFingerprint=$planFingerprint}
             $document.phase='runtime-config';$document.status='prepared';$document
         }
     }
@@ -122,6 +123,8 @@ switch ($Operation) {
             $request.jarSha=[string]$data.upgrade.release.artifacts['auto-wonder.jar'].sha256
             $request.unitSha=[string]$data.upgrade.release.artifacts['autowonder.service'].sha256
             $request.envSha=[string]$data.upgrade.environmentSha256
+            $request.runtime=[string]$data.runtimeConfig.recommendedRuntimeVersion
+            $request.keyGenerationId=[string]$data.runtimeConfig.keyGenerationId
             $request.backupSha=Get-UpgradeBackupSha $data $instanceId
             try {
                 $result=Invoke-UpgradePayload $data $instanceId $request -ManifestPath $Manifest

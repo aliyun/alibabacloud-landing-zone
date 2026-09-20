@@ -32,6 +32,18 @@ class AuditLogServiceTest {
     }
 
     @Test
+    void actorTypeFiltersBothSearchAndCount() {
+        AuditLogQuery query = new AuditLogQuery();
+        query.setActorType("HUMAN");
+        when(auditLogDao.search(1L, null, null, "HUMAN", null, null, null, null, null, null, 0, 20))
+                .thenReturn(java.util.Collections.emptyList());
+        service.search(query, 1L, 1, 20);
+        service.count(query, 1L);
+        verify(auditLogDao).search(1L, null, null, "HUMAN", null, null, null, null, null, null, 0, 20);
+        verify(auditLogDao).countSearch(1L, null, null, "HUMAN", null, null, null, null, null, null);
+    }
+
+    @Test
     void searchDelegatesWithPagination() {
         AuditLogDO log = new AuditLogDO();
         log.setId(1L);
@@ -39,7 +51,7 @@ class AuditLogServiceTest {
         log.setModule("WORKITEM");
         log.setAction("CREATE");
         log.setGmtCreate(new Date());
-        when(auditLogDao.search(1L, "WORKITEM", null, null, null, null, null, null, null, 0, 20))
+        when(auditLogDao.search(1L, "WORKITEM", null, null, null, null, null, null, null, null, 0, 20))
                 .thenReturn(List.of(log));
 
         AuditLogQuery query = new AuditLogQuery();
@@ -53,18 +65,18 @@ class AuditLogServiceTest {
 
     @Test
     void searchPageBoundsClamped() {
-        when(auditLogDao.search(eq(1L), any(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(100)))
+        when(auditLogDao.search(eq(1L), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0), eq(100)))
                 .thenReturn(List.of());
 
         AuditLogQuery query = new AuditLogQuery();
         service.search(query, 1L, -1, 999);
 
-        verify(auditLogDao).search(1L, null, null, null, null, null, null, null, null, 0, 100);
+        verify(auditLogDao).search(1L, null, null, null, null, null, null, null, null, null, 0, 100);
     }
 
     @Test
     void countDelegates() {
-        when(auditLogDao.countSearch(1L, "AGENT", "DELETE", null, null, null, null, null, null))
+        when(auditLogDao.countSearch(1L, "AGENT", "DELETE", null, null, null, null, null, null, null))
                 .thenReturn(5);
 
         AuditLogQuery query = new AuditLogQuery();
@@ -83,7 +95,7 @@ class AuditLogServiceTest {
         log.setAction("UPDATE");
         log.setDetailJson("{\"name\":\"alpha\"}");
         log.setGmtCreate(new Date());
-        when(auditLogDao.search(1L, null, null, null, null, null, null, null, "alpha", 0, 20))
+        when(auditLogDao.search(1L, null, null, null, null, null, null, null, null, "alpha", 0, 20))
                 .thenReturn(List.of(log));
 
         AuditLogQuery query = new AuditLogQuery();
@@ -123,7 +135,7 @@ class AuditLogServiceTest {
         agent.setName("Auto Dev");
         when(userDao.findById(7L)).thenReturn(user);
         when(agentDao.findById(7L)).thenReturn(agent);
-        when(auditLogDao.search(1L, null, null, null, "workitem", null, null, null, null, 0, 20))
+        when(auditLogDao.search(1L, null, null, null, null, "workitem", null, null, null, null, 0, 20))
                 .thenReturn(List.of(humanLog, agentLog));
 
         AuditLogQuery query = new AuditLogQuery();
@@ -139,7 +151,7 @@ class AuditLogServiceTest {
 
     @Test
     void countWithKeyword() {
-        when(auditLogDao.countSearch(1L, null, null, null, null, null, null, null, "beta"))
+        when(auditLogDao.countSearch(1L, null, null, null, null, null, null, null, null, "beta"))
                 .thenReturn(3);
 
         AuditLogQuery query = new AuditLogQuery();

@@ -44,6 +44,26 @@ class DispatchDaoContractTest {
     }
 
     @Test
+    void markDebugLogEnabledFreezesOnlyWithinThePackagingWindow() throws Exception {
+        String sql = mapperStatement(mapperXml(), "markDebugLogEnabled", "update");
+
+        assertTrue(sql.contains("debug_log_enabled = 1"), sql);
+        assertTrue(sql.contains("tenant_id = #{tenantId}"), sql);
+        assertTrue(sql.contains("status = 'PACKAGING'"),
+                "freeze must be guarded to PACKAGING so it cannot mark a row this worker no longer owns");
+    }
+
+    @Test
+    void retryUpdatesPreserveTheFrozenAgentVersion() throws Exception {
+        String xml = mapperXml();
+
+        assertFalse(mapperStatement(xml, "returnPackagingToPending")
+                .contains("agent_version_id = NULL"));
+        assertFalse(mapperStatement(xml, "returnOwnedActiveToPending")
+                .contains("agent_version_id = NULL"));
+    }
+
+    @Test
     void workitemQueriesArePermanentlyFencedToWorkitemSource() throws Exception {
         String xml = mapperXml();
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEPLOY = ROOT / "deploying-autowonder-on-alibaba-cloud" / "scripts"
+DEPLOY = ROOT / "upgrading-autowonder-on-alibaba-cloud" / "scripts"
 UPGRADE = ROOT / "upgrading-autowonder-on-alibaba-cloud" / "scripts"
 
 
@@ -126,19 +126,11 @@ class WindowsNativeAdapterTests(unittest.TestCase):
         script = (DEPLOY / "windows" / "bootstrap-control-host.ps1").read_text(
             encoding="utf-8"
         )
-        for term in (
-            "git",
-            "jq",
-            "terraform",
-            "aliyun",
-            "ossutil",
-            "curl.exe",
-            "python",
-            "tar",
-            "java",
-            "mvn",
-        ):
+        for term in ('git', 'curl.exe', 'tar', 'runtime-bootstrap.ps1', 'tool_runtime.py'):
             self.assertIn(term, script)
+        lock = (DEPLOY / 'runtime-lock.tsv').read_text(encoding='utf-8')
+        names = {line.split('\t')[0] for line in lock.splitlines() if line and not line.startswith('#')}
+        self.assertTrue({'python', 'jdk', 'maven', 'terraform', 'aliyun', 'ossutil', 'jq'} <= names)
         self.assertIn("Ensure-AutoWonderAliyunProfile", script)
 
     def test_native_upgrade_entrypoints_exist_and_never_invoke_bash(self):

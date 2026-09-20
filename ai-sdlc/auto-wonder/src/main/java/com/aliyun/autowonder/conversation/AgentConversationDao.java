@@ -40,4 +40,24 @@ public interface AgentConversationDao {
             @Param("bizRefType") String bizRefType,
             @Param("bizRefId") Long bizRefId,
             @Param("agentId") Long agentId);
+
+    java.util.List<AgentConversationDO> listPlatformByOwner(
+            @Param("tenantId") Long tenantId,
+            @Param("ownerUserId") Long ownerUserId,
+            @Param("archived") Boolean archived,
+            @Param("keyword") String keyword,
+            @Param("limit") int limit,
+            @Param("offset") int offset);
+
+    int updatePlatformMetadata(@Param("tenantId") Long tenantId,
+            @Param("id") Long id,
+            @Param("ownerUserId") Long ownerUserId,
+            @Param("title") String title,
+            @Param("titleSource") String titleSource,
+            @Param("archivedAt") Date archivedAt);
+
+    int markPlatformDeleted(@Param("tenantId") Long tenantId,
+            @Param("id") Long id,
+            @Param("ownerUserId") Long ownerUserId,
+            @Param("deletedAt") Date deletedAt);
 }

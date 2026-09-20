@@ -9,6 +9,33 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WorkitemDaoMappingTest {
 
     @Test
+    void watchedScopeAppliesToBothListAndCountOnlyWhenSelected() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", false);
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+            params.put("mineScope", "WATCHED");
+            String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+            assertTrue(sql.contains("SELECT 1 FROM workitem_watcher ww"));
+            assertTrue(sql.contains("ww.tenant_id = w.tenant_id"));
+            assertTrue(sql.contains("ww.workitem_id = w.id"));
+            assertTrue(sql.contains("ww.user_id = ?"));
+            assertTrue(sql.contains("w.is_deleted = 0"));
+            params.remove("mineScope");
+            org.junit.jupiter.api.Assertions.assertFalse(
+                    mapped.getBoundSql(params).getSql().contains("workitem_watcher"));
+        }
+    }
+
+    @Test
     void listOrdersWorkitemsByCreateTimeDescThenIdDesc() throws Exception {
         String xml = new String(
                 getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
@@ -176,6 +203,36 @@ class WorkitemDaoMappingTest {
         int tagIdx = xml.indexOf("JSON_CONTAINS(w.tags");
         assertTrue(tagIdx > xml.indexOf("<sql id=\"listFilter\">") && tagIdx < filterEnd,
                 "tag filter must live inside listFilter so list and count share it");
+    }
+
+    @Test
+    void scheduledStartFilterLivesInsideSharedListFilterWithoutOtherwiseBranch() throws Exception {
+        String xml = new String(
+                getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
+                StandardCharsets.UTF_8);
+
+        assertTrue(xml.contains("<when test=\"scheduledStart == 'ALL'\">"),
+                "ALL should return both pending and triggered scheduled workitems");
+        assertTrue(xml.contains("AND (w.scheduled_start_at IS NOT NULL OR w.scheduled_start_triggered_at IS NOT NULL)"),
+                "ALL must match either the pending or the already-triggered schedule column");
+        assertTrue(xml.contains("<when test=\"scheduledStart == 'PENDING'\">"),
+                "PENDING should return only not-yet-fired schedules");
+        assertTrue(xml.contains("<when test=\"scheduledStart == 'TRIGGERED'\">"),
+                "TRIGGERED should return only fired schedules");
+        assertTrue(xml.contains("AND w.scheduled_start_triggered_at IS NOT NULL"),
+                "TRIGGERED must match the trigger timestamp written by fireScheduledStartAt");
+
+        int filterStart = xml.indexOf("<sql id=\"listFilter\">");
+        int filterEnd = xml.indexOf("</sql>", filterStart);
+        int allIdx = xml.indexOf("scheduledStart == 'ALL'");
+        assertTrue(allIdx > filterStart && allIdx < filterEnd,
+                "scheduled start filter must live inside listFilter so list and count share the same condition");
+        assertTrue(xml.contains("<include refid=\"listFilter\"/>"),
+                "list and count should both include listFilter");
+
+        String chooseBlock = xml.substring(xml.lastIndexOf("<choose>", allIdx), xml.indexOf("</choose>", allIdx));
+        assertTrue(!chooseBlock.contains("<otherwise>"),
+                "no otherwise branch so an absent or illegal scheduledStart adds no condition and keeps existing lists unchanged");
     }
 
     @Test

@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { SettingsPage } from './SettingsPage';
+import type { NotifyPrefItem, SettingItem } from './api';
 import { useAuthStore } from '@/shared/auth/store';
 
 function apiOk<T>(data: T) {
@@ -23,6 +24,8 @@ function renderPage() {
 
 function useCommonSettingsHandlers(overrides: Parameters<typeof server.use>) {
   server.use(
+    ...overrides,
+    http.get('/api/platform/im-channels', () => HttpResponse.json(apiOk([{ provider: 'DINGTALK', selected: true }]))),
     http.get('/api/ai-usage/quota', () => HttpResponse.json(apiOk({
       periodType: 'MONTH',
       maxCalls: 20000,
@@ -51,7 +54,6 @@ function useCommonSettingsHandlers(overrides: Parameters<typeof server.use>) {
       { key: 'default_status_template_id', valueJson: 'default-coding', secret: false },
       { key: 'artifact_bucket', valueJson: 'auto-wonder-artifacts', secret: false },
     ]))),
-    ...overrides,
   );
 }
 
@@ -122,7 +124,8 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('工单指派')).toBeInTheDocument();
     expect(screen.getByText('交付阻塞')).toBeInTheDocument();
     const notifyPanel = screen.getByTestId('notify-settings-panel');
-    expect(within(notifyPanel).getByDisplayValue('********')).toBeInTheDocument();
+    expect(within(notifyPanel).getByText(/复用平台协作通知的机器人凭据/)).toBeInTheDocument();
+    expect(within(notifyPanel).queryByLabelText('钉钉 Webhook')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
 
@@ -187,4 +190,23 @@ describe('SettingsPage', () => {
     expect(quotaUpdates).toBe(0);
     expect(await screen.findByText('当前为只读权限，保存AI配置需要管理员权限')).toBeInTheDocument();
   });
+});
+
+it('only saves Feishu settings and preferences when the platform selects Feishu', async () => {
+  const saved: { prefs?: { items: NotifyPrefItem[] }; settings?: { items: SettingItem[] } } = {};
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
+  useCommonSettingsHandlers([
+    http.get('/api/platform/im-channels', () => HttpResponse.json(apiOk([{ provider: 'FEISHU', selected: true, enabled: false }]))),
+    http.get('/api/settings/NOTIFY', () => HttpResponse.json(apiOk([{ key: 'feishu_enabled', valueJson: 'true', secret: false }]))),
+    http.get('/api/notifications/prefs', () => HttpResponse.json(apiOk([{ type: 'WORKITEM_ASSIGNED', inApp: true, feishu: true, dingtalk: false }]))),
+    http.put('/api/notifications/prefs', async ({ request }) => { saved.prefs = await request.json() as { items: NotifyPrefItem[] }; return HttpResponse.json(apiOk(null)); }),
+    http.put('/api/settings/NOTIFY', async ({ request }) => { saved.settings = await request.json() as { items: SettingItem[] }; return HttpResponse.json(apiOk(null)); }),
+  ]);
+  renderPage();
+  await userEvent.click(await screen.findByRole('tab', { name: '通知配置' }));
+  expect(await screen.findByLabelText('启用飞书通知')).toBeInTheDocument();
+  expect(screen.queryByLabelText('启用钉钉通知')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /保存通知配置/ }));
+  await waitFor(() => expect(saved.prefs?.items[0]).toEqual({ type: 'WORKITEM_ASSIGNED', inApp: true, feishu: true, dingtalk: false }));
+  expect(saved.settings?.items).toEqual([{ key: 'feishu_enabled', valueJson: 'true', secret: false }]);
 });

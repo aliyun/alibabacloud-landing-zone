@@ -15,7 +15,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @Component
 public class WorkspaceAccessReviewedListener {
     private static final Logger log = LoggerFactory.getLogger(WorkspaceAccessReviewedListener.class);
-    private static final String PROVIDER = "DINGTALK";
     private static final String OUTCOME_APPROVED = "APPROVED";
     private static final String ACTOR_TYPE_USER = "USER";
 
@@ -33,27 +32,29 @@ public class WorkspaceAccessReviewedListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = false)
     public void onWorkspaceAccessReviewed(WorkspaceAccessReviewedEvent event) {
+        String provider = "UNKNOWN";
         try {
+            provider = channelConfigService.selectedProvider();
             log.info("IM workspace access reviewed notification published tenantId={} requestId={} "
                             + "recipientUserId={} outcome={} provider={}",
-                    event.tenantId(), event.requestId(), event.requesterId(), event.outcome(), PROVIDER);
-            if (!channelConfigService.isReady(PROVIDER)) {
+                    event.tenantId(), event.requestId(), event.requesterId(), event.outcome(), provider);
+            if (!channelConfigService.isReady(provider)) {
                 log.info("IM workspace access reviewed notification skipped channel not ready tenantId={} "
                                 + "requestId={} recipientUserId={} provider={}",
-                        event.tenantId(), event.requestId(), event.requesterId(), PROVIDER);
+                        event.tenantId(), event.requestId(), event.requesterId(), provider);
                 return;
             }
-            UserImIdentityDO identity = identityService.find(event.requesterId(), PROVIDER);
+            UserImIdentityDO identity = identityService.find(event.requesterId(), provider);
             if (identity == null || !hasText(identity.getExternalUserId())) {
                 log.info("IM workspace access reviewed notification skipped missing identity tenantId={} "
                                 + "requestId={} recipientUserId={} provider={}",
-                        event.tenantId(), event.requestId(), event.requesterId(), PROVIDER);
+                        event.tenantId(), event.requestId(), event.requesterId(), provider);
                 return;
             }
 
             ImNotificationTask task = new ImNotificationTask(
                     ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED + ":" + event.requestId()
-                            + ":" + PROVIDER + ":" + event.requesterId(),
+                            + ":" + provider + ":" + event.requesterId(),
                     event.requestId(),
                     event.tenantId(),
                     // Not a workitem notification: ImNotificationMessageContextResolver unconditionally
@@ -72,22 +73,22 @@ public class WorkspaceAccessReviewedListener {
             try {
                 queue.enqueue(task);
             } catch (Exception e) {
-                logFailure(event, "enqueue-failed", e);
+                logFailure(event, provider, "enqueue-failed", e);
                 return;
             }
             log.info("IM workspace access reviewed notification queued tenantId={} requestId={} "
                             + "recipientUserId={} outcome={} provider={}",
-                    event.tenantId(), event.requestId(), event.requesterId(), event.outcome(), PROVIDER);
+                    event.tenantId(), event.requestId(), event.requesterId(), event.outcome(), provider);
         } catch (Exception e) {
-            logFailure(event, "failed", e);
+            logFailure(event, provider, "failed", e);
         }
     }
 
-    private static void logFailure(WorkspaceAccessReviewedEvent event, String reason, Exception failure) {
+    private static void logFailure(WorkspaceAccessReviewedEvent event, String provider, String reason, Exception failure) {
         AlreadyLoggedException safe = AlreadyLoggedException.from(failure);
         log.error("IM workspace access reviewed notification {} tenantId={} requestId={} "
                         + "recipientUserId={} outcome={} provider={}",
-                reason, event.tenantId(), event.requestId(), event.requesterId(), event.outcome(), PROVIDER, safe);
+                reason, event.tenantId(), event.requestId(), event.requesterId(), event.outcome(), provider, safe);
     }
 
     private static boolean hasText(String value) {

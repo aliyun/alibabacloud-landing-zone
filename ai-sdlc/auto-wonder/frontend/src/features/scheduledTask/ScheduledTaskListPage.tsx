@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Card, Input, Popconfirm, Select, Space, Table, Tag } from 'antd';
+import { Button, Card, Input, Popconfirm, Select, Space, Table, Tabs, Tag } from 'antd';
 import { PlayCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
@@ -7,9 +7,11 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { listSquads } from '@/features/squad/api';
 import { listAgents } from '@/features/agent/api';
 import { useQuery, useQueries } from '@tanstack/react-query';
+import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
 import { getScheduledTaskSummary, listScheduledTaskRuns } from './api';
 import { useDeleteScheduledTask, useRunScheduledTaskNow, useScheduledTaskList } from './hooks';
 import { RunStatusTag } from './components/RunStatusTag';
+import { ScheduledWorkitemsPanel } from './ScheduledWorkitemsPanel';
 import type { ScheduledTask, ScheduledTaskStatus } from './types';
 
 const STATUS_META: Record<ScheduledTaskStatus, { label: string; color: string }> = {
@@ -17,12 +19,18 @@ const STATUS_META: Record<ScheduledTaskStatus, { label: string; color: string }>
   EXHAUSTED: { label: '已结束', color: 'default' }, ARCHIVED: { label: '已归档', color: 'default' },
 };
 
+/** 定时任务页的标签页：既有调度任务与新增的定时工单聚合。 */
+type TabKey = 'tasks' | 'workitems';
+
+const TAB_STORAGE_KEY = 'autowonder.scheduled-tasks.tab';
+const TAB_KEYS: TabKey[] = ['tasks', 'workitems'];
+
 function createRequestId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID() : `scheduled-task-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function ScheduledTaskListPage() {
+function ScheduledTasksPanel() {
   const navigate = useNavigate();
   const accessCommand = useAccessCommand();
   const [status, setStatus] = useState<ScheduledTaskStatus | undefined>();
@@ -54,6 +62,24 @@ export function ScheduledTaskListPage() {
     <Space style={{ marginBottom: 16 }} aria-label="任务汇总"><Tag color="processing">运行中 {summary.running}</Tag><Tag>今日执行 {summary.today}</Tag><Tag color="success">近30天成功率 {successRate}%（{summary.success30d}/{summary.completed30d}）</Tag><Tag color={summary.attention ? 'error' : 'default'}>需关注 {summary.attention}</Tag></Space>
     <Table rowKey="id" columns={columns} dataSource={tasks} loading={isLoading} pagination={{ current: Math.floor(offset / pageSize) + 1, pageSize, total: data?.total, onChange: (page) => setOffset((page - 1) * pageSize) }} />
   </Card>;
+}
+
+export function ScheduledTaskListPage() {
+  const [activeKey, setActiveKey] = useState<TabKey>(() => readViewPreference(TAB_STORAGE_KEY, TAB_KEYS, 'tasks'));
+  return (
+    <Tabs
+      activeKey={activeKey}
+      onChange={(key) => {
+        const next = key as TabKey;
+        setActiveKey(next);
+        writeViewPreference(TAB_STORAGE_KEY, next);
+      }}
+      items={[
+        { key: 'tasks', label: '定时任务', children: <ScheduledTasksPanel /> },
+        { key: 'workitems', label: '定时工单', children: <ScheduledWorkitemsPanel /> },
+      ]}
+    />
+  );
 }
 
 function formatDate(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN') : '-'; }

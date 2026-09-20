@@ -63,7 +63,7 @@ class UpgradePlanTest(unittest.TestCase):
     def manifest(self):
         path = self.root / "manifest.json"
         protected_env = self.root / "autowonder.env"
-        protected_env.write_text("OLD_ENV=old\nNEW_REQUIRED=configured\n", encoding="utf-8")
+        protected_env.write_text("OLD_ENV=old\nNEW_REQUIRED=configured\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n", encoding="utf-8")
         protected_env.chmod(0o600)
         nodes = [{"instanceId": "i-a", "vpcId": "vpc-1"}]
         tags = {
@@ -121,6 +121,11 @@ class UpgradePlanTest(unittest.TestCase):
         return path
 
     def run_plan(self, manifest, *extra):
+        # Plan fixtures model an operator-provided, already escrowed generation.
+        env_path = (Path(extra[extra.index('--env-file') + 1]) if '--env-file' in extra
+                    else Path(json.loads(Path(manifest).read_text()).get('localContext', {}).get('protectedEnvFile', '')))
+        if env_path.is_file() and 'AUTOWONDER_SECRET_KEY_GENERATION_ID=' not in env_path.read_text():
+            env_path.write_text(env_path.read_text() + '\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n')
         return subprocess.run(
             [
                 "bash",
@@ -497,9 +502,9 @@ class UpgradePlanTest(unittest.TestCase):
 
     def test_project_source_resolver_finds_unique_monorepo_project(self):
         project = self.source / "nested" / "auto-wonder"
-        unit = project / "skills" / "deploying-autowonder-on-alibaba-cloud" / "assets" / "systemd" / "autowonder.service"
-        unit.parent.mkdir(parents=True)
-        unit.write_text("[Service]\n", encoding="utf-8")
+        application = project / "src/main/resources/application.yml"
+        application.parent.mkdir(parents=True)
+        application.write_text("fixture: true\n", encoding="utf-8")
         (project / "VERSION").write_text("0.5.0\n", encoding="utf-8")
         (project / "pom.xml").write_text("<project/>\n", encoding="utf-8")
 
@@ -721,7 +726,7 @@ esac
 
     def test_shell_locals_are_not_application_environment_contract(self):
         self.write(
-            "skills/deploying-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",
+            "skills/upgrading-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",
             """#!/usr/bin/env bash
 SCRIPT_DIR=$(pwd)
 TEMP_DIRS=()
@@ -759,7 +764,7 @@ printf '%s' "${REAL_SCRIPT_ENV:-}"
 
     def test_optional_shell_environment_does_not_require_candidate_value(self):
         self.write(
-            "skills/deploying-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",
+            "skills/upgrading-autowonder-on-alibaba-cloud/scripts/check-runtime.sh",
             """#!/usr/bin/env bash
 if [[ -n ${AUTOWONDER_RUNTIME_PROBE:-} ]]; then
   printf '%s' "$AUTOWONDER_RUNTIME_PROBE"

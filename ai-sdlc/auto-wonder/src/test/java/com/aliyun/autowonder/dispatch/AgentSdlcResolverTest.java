@@ -64,6 +64,79 @@ class AgentSdlcResolverTest {
         assertEquals(30003L, r.resolveSdlcId(10000L, 10002L));
     }
 
+    /** 验收6：存在生效版本但其已解除 SDLC 引用(sdlcId 为空)时，返回 null，且不回退历史版本隐式恢复引用。 */
+    @Test
+    void onlineVersionReleasedSdlc_returnsNull_withoutHistoricalFallback() {
+        AgentDao agentDao = mock(AgentDao.class);
+        AgentVersionDao versionDao = mock(AgentVersionDao.class);
+        SdlcStepDao stepDao = mock(SdlcStepDao.class);
+
+        AgentDO a = new AgentDO();
+        a.setId(10003L);
+        a.setTenantId(10000L);
+        a.setOnlineVersionId(10003L);
+        when(agentDao.findById(10003L)).thenReturn(a);
+        AgentVersionDO online = new AgentVersionDO();
+        online.setId(10003L);
+        online.setAgentId(10003L);
+        online.setTenantId(10000L);
+        online.setSdlcId(null);
+        when(versionDao.findById(10003L)).thenReturn(online);
+
+        AgentSdlcResolver r = new AgentSdlcResolver(agentDao, versionDao, stepDao);
+
+        assertNull(r.resolveSdlcId(10000L, 10003L));
+        verify(versionDao, never()).listByAgent(anyLong());
+    }
+
+    /** 生效指针不可用（记录缺失/跨租户/指向他人数字人版本）时返回 null，同样不回退历史版本。 */
+    @Test
+    void onlineVersionPointerUnusable_returnsNull_withoutHistoricalFallback() {
+        AgentDao agentDao = mock(AgentDao.class);
+        AgentVersionDao versionDao = mock(AgentVersionDao.class);
+        SdlcStepDao stepDao = mock(SdlcStepDao.class);
+
+        AgentDO missing = new AgentDO();
+        missing.setId(10004L);
+        missing.setTenantId(10000L);
+        missing.setOnlineVersionId(999L);
+        when(agentDao.findById(10004L)).thenReturn(missing);
+        when(versionDao.findById(999L)).thenReturn(null);
+
+        AgentDO crossOnline = new AgentDO();
+        crossOnline.setId(10005L);
+        crossOnline.setTenantId(10000L);
+        crossOnline.setOnlineVersionId(10005L);
+        when(agentDao.findById(10005L)).thenReturn(crossOnline);
+        AgentVersionDO crossVersion = new AgentVersionDO();
+        crossVersion.setId(10005L);
+        crossVersion.setAgentId(10005L);
+        crossVersion.setTenantId(999L);
+        crossVersion.setSdlcId(30009L);
+        when(versionDao.findById(10005L)).thenReturn(crossVersion);
+
+        // 生效指针指向他人数字人的版本：租户匹配(通过第 42 行)但 agentId 不匹配(触发第 43 行 false 分支)。
+        // sdlcId 非空，确保返回 null 来自 agentId 守卫而非取到空值。
+        AgentDO foreignPointer = new AgentDO();
+        foreignPointer.setId(10006L);
+        foreignPointer.setTenantId(10000L);
+        foreignPointer.setOnlineVersionId(10099L);
+        when(agentDao.findById(10006L)).thenReturn(foreignPointer);
+        AgentVersionDO foreignVersion = new AgentVersionDO();
+        foreignVersion.setId(10099L);
+        foreignVersion.setAgentId(777L);
+        foreignVersion.setTenantId(10000L);
+        foreignVersion.setSdlcId(30010L);
+        when(versionDao.findById(10099L)).thenReturn(foreignVersion);
+
+        AgentSdlcResolver r = new AgentSdlcResolver(agentDao, versionDao, stepDao);
+
+        assertNull(r.resolveSdlcId(10000L, 10004L));
+        assertNull(r.resolveSdlcId(10000L, 10005L));
+        assertNull(r.resolveSdlcId(10000L, 10006L));
+        verify(versionDao, never()).listByAgent(anyLong());
+    }
+
     @Test
     void returnsNull_whenAgentMissingCrossTenantOrNoSdlc() {
         AgentDao agentDao = mock(AgentDao.class);

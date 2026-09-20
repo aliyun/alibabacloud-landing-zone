@@ -111,3 +111,21 @@ export interface SchedulePreview {
   timezone: string;
   instants: string[];
 }
+
+export interface ScheduledRunMentionCandidate {
+  userId: number;
+  targetType?: 'AGENT' | 'HUMAN' | string | null;
+  name?: string | null;
+  displayId?: string | null;
+  isAgent?: boolean;
+  online?: boolean;
+  executorStatus?: string | null;
+  mentionable?: boolean;
+  mentionDisabledReason?: string | null;
+}
+
+export interface ScheduledRunCommentBody {
+  contentMd: string;
+  targetAgentIds: number[];
+  targetHumanIds: number[];
+}

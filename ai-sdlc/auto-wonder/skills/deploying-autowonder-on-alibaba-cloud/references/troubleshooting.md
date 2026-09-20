@@ -243,6 +243,18 @@ are global. **Evidence:** attempted sanitized prefix and ownership result.
 **Safe fix:** regenerate the suffix from deployment identity. **Unsafe:** reuse an
 unowned bucket. **Resume:** Terraform plan.
 
+### ECS Stock Structure Cannot Be Parsed
+
+**Symptom:** the availability response does not match the expected
+`AvailableZones` → `AvailableResource` → `SupportedResource` shape, so the
+current in-sale subscription zones cannot be auto-parsed. **Cause:** inventory
+drift or unexpected nesting. **Evidence:** sanitized resolver output and the
+zone/instance-type queried. **Safe fix:** `scripts/resolve-zones.sh` returns
+`needs-agent`; reason over read-only `Describe*` inventory, submit a candidate JSON with
+`resolve_zones.py resolve --candidate FILE --manifest FILE`; the validator re-queries facts before use.
+**Unsafe:** asking the user to look up zones in the console, or accepting an
+unvalidated plan. **Resume:** preflight.
+
 ### Regional Inventory Or Provider Schema Mismatch
 
 **Symptom:** a SKU or field validates locally but fails in the chosen region or
@@ -258,3 +270,5 @@ or bypass validation globally. **Resume:** preflight and plan review.
 policy, never state contents in logs. **Safe fix:** protect/rotate credentials and
 minimize stored outputs. **Unsafe:** printing state for diagnosis. **Resume:**
 credential rotation and plan.
+
+Adaptive discovery: unknown/403/timeout/pagination failure is not sold-out stock. Preserve pending Terraform operations and OSS revisions. A changed quote, selection or configuration invalidates the saved plan. Do not reset planningAttempts to bypass the three-attempt bound. See operations-runbook.md for the discover/candidate protocol and supported product boundaries.

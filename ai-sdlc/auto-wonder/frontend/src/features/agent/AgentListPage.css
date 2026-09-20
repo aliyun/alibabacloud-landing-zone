@@ -286,6 +286,48 @@
   font-size: 11px;
 }
 
+.agent-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+/* Above .agent-card-detail-link (z-index 2) so the squad links inside a card stay clickable. */
+.agent-card-squad-row {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 14px 0;
+}
+
+.agent-squad-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.agent-squad-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.agent-squad-group-count {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .agent-card-pagination {
   margin-top: 16px;
   text-align: right;

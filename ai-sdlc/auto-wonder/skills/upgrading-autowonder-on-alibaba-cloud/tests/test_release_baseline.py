@@ -35,7 +35,8 @@ class RepositoryTrustTest(unittest.TestCase):
     def test_atomic_writers_protect_empty_temp_before_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'protected'
-            path.write_text('OLD=value\n')
+            original = 'OLD=value\nAUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n'
+            path.write_text(original)
             calls = []
             def reject_protection(source, target):
                 calls.append((source, target))
@@ -45,7 +46,7 @@ class RepositoryTrustTest(unittest.TestCase):
                 with mock.patch.object(policy, 'protect_temp_acl', reject_protection, create=True):
                     with self.assertRaisesRegex(OSError, 'ACL protection failed'):
                         operation()
-                self.assertEqual('OLD=value\n', path.read_text())
+                self.assertEqual(original, path.read_text())
                 self.assertEqual([path], list(Path(directory).iterdir()))
             self.assertEqual(2, len(calls))
 

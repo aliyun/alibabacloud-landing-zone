@@ -44,6 +44,40 @@ class SkillPackageServiceTest {
     }
 
     @Test
+    void directoryPackingPreservesContentsAndIsStableAcrossRetries() throws Exception {
+        Map<String, String> files = new LinkedHashMap<>();
+        files.put("SKILL.md", java.util.Base64.getEncoder().encodeToString(skillMd("demo", "Demo").getBytes(StandardCharsets.UTF_8)));
+        files.put(".config/empty", "");
+        files.put("assets/binary", "AAH/");
+        byte[] archive = service.packDirectory(files);
+        assertEquals("demo", service.inspect("directory.zip", archive).getName());
+        Map<String, String> reversed = new LinkedHashMap<>();
+        files.entrySet().stream().sorted(Map.Entry.<String, String>comparingByKey().reversed())
+                .forEach(entry -> reversed.put(entry.getKey(), entry.getValue()));
+        assertArrayEquals(archive, service.packDirectory(reversed));
+        Map<String, byte[]> unpacked = new LinkedHashMap<>();
+        try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(archive))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) unpacked.put(entry.getName(), zip.readAllBytes());
+        }
+        assertEquals(files.keySet(), unpacked.keySet());
+        assertArrayEquals(new byte[]{0, 1, (byte) 255}, unpacked.get("assets/binary"));
+        assertEquals(0, unpacked.get(".config/empty").length);
+    }
+
+    @Test
+    void directoryPackingRejectsUnsafePathsInvalidBase64AndTooManyFiles() {
+        for (String path : List.of("../escape", "/absolute", "C:/absolute", "a\\b", "a//b", "./a", "folder/")) {
+            assertThrows(BizException.class, () -> service.packDirectory(Map.of(path, "")), path);
+        }
+        assertThrows(BizException.class, () -> service.packDirectory(Map.of()));
+        assertThrows(BizException.class, () -> service.packDirectory(Map.of("SKILL.md", "%%%")));
+        Map<String, String> files = new LinkedHashMap<>();
+        for (int i = 0; i < 501; i++) files.put("file" + i, "");
+        assertThrows(BizException.class, () -> service.packDirectory(files));
+    }
+
+    @Test
     void inspectReadsRootSkillFrontmatter() throws Exception {
         MockMultipartFile file = skillZip("custom-skill", "Custom skill for AutoWonder");
 

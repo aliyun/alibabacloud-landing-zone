@@ -238,4 +238,33 @@ describe('StartDeliveryModal', () => {
     expect(onClose).not.toHaveBeenCalled();
     error.mockRestore();
   });
+
+  it('excludes platform agents from first-step executor options', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    server.use(
+      http.get('/api/squads', () =>
+        HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { list: [{ id: 1, name: 'AW交付组', description: '', memberCount: 2, gmtCreate: '' }], total: 1, pageNum: 1, pageSize: 100 },
+        }),
+      ),
+      http.get('/api/squads/:squadId/members', () =>
+        HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: [
+            { agentId: 77, agentName: 'Agent-77', roleCode: 'AW_FS_DEV', agentKind: 'STANDARD' },
+            { agentId: 9, agentName: 'Chief of Staff', roleCode: 'chief_of_staff', agentKind: 'PLATFORM' },
+          ],
+        }),
+      ),
+    );
+
+    renderModal();
+
+    await userEvent.click(await screen.findByLabelText('小队'));
+    await userEvent.click(await screen.findByText('AW交付组'));
+    await userEvent.click(await screen.findByLabelText('首步执行 Agent'));
+    expect(await screen.findByText('Agent-77 (AW_FS_DEV)')).toBeInTheDocument();
+    expect(screen.queryByText(/Chief of Staff/)).not.toBeInTheDocument();
+  });
 });

@@ -24,6 +24,8 @@ public class DispatchDO {
     private Long resumeFromDispatchId;
     private Long deliverySourceDispatchId;
     private String resumeMode;
+    /** 打包时冻结的 debug 开关；仅 source-aware schema 读取，legacy 模式恒为 null。 */
+    private Boolean debugLogEnabled;
     private Date gmtCreate;
     private Date gmtModified;
     private Long creatorId;

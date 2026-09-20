@@ -11,6 +11,7 @@ import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.user.UserDao;
+import com.aliyun.autowonder.user.UserDO;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -155,6 +156,23 @@ class AuthFilterTest {
 
             assertEquals(401, resp.getStatus(), path);
             assertNull(chain.getRequest(), path);
+        }
+    }
+
+    @Test
+    void feishuOnlyExactPostCallbackBypassesPlatformJwt() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), mock(UserDao.class));
+        String[][] routes = {{"POST", "/api/integrations/feishu/callback", "200"},
+                {"GET", "/api/integrations/feishu/callback", "401"},
+                {"POST", "/api/integrations/feishu/callback/extra", "401"},
+                {"POST", "/api/integrations/feishu/bindings", "401"},
+                {"GET", "/api/integrations/feishu/bindings", "401"}};
+        for (String[] route : routes) {
+            var request = new MockHttpServletRequest(route[0], route[1]);
+            var response = new MockHttpServletResponse();
+            filter.doFilter(request, response, new MockFilterChain());
+            assertEquals(Integer.parseInt(route[2]), response.getStatus(), route[0] + " " + route[1]);
         }
     }
 
@@ -592,6 +610,93 @@ class AuthFilterTest {
     }
 
     @Test
+    void aPlatformAdminWhoIsNotAMemberEntersAnyWorkspaceWithAdminAccess() throws Exception {
+        JwtService jwtService = newJwtService();
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.findById(42L)).thenReturn(user(42L, 1));
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                workspaceMemberDao, usableWorkspaceDao(), userDao);
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-sys-admin"));
+
+        AtomicReference<WorkspaceAccessLevel> seenLevel = new AtomicReference<>();
+        AtomicReference<WorkspaceMemberDO> seenMember = new AtomicReference<>();
+        MockFilterChain chain = new MockFilterChain(new javax.servlet.http.HttpServlet() {
+            @Override
+            protected void service(javax.servlet.http.HttpServletRequest r,
+                                   javax.servlet.http.HttpServletResponse s) {
+                seenLevel.set(AutoWonderContext.get().getWorkspaceAccessLevel());
+                seenMember.set(AutoWonderContext.get().getWorkspaceMember());
+            }
+        });
+
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        filter.doFilter(authenticatedRequest(token), resp, chain);
+
+        assertEquals(200, resp.getStatus());
+        assertNotNull(chain.getRequest());
+        // ADMIN is the highest WorkspaceAccessLevel, so every @RequireWorkspaceAccess guard passes
+        // through this branch; no member row is ever synthesized.
+        assertEquals(WorkspaceAccessLevel.ADMIN, seenLevel.get());
+        assertNull(seenMember.get());
+        verify(workspaceMemberDao).findByWorkspaceAndUser(100L, 42L);
+    }
+
+    @Test
+    void aPlatformAdminWithAStaleMembershipRowStillGetsAdminAccess() throws Exception {
+        JwtService jwtService = newJwtService();
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        // Removed from a workspace they once joined: the row survives the removal, so the member
+        // branch cannot apply — the is_admin flag has to carry the request on its own.
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L))
+                .thenReturn(member(0, 1, WorkspaceAccessLevel.READ_ONLY.name()));
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.findById(42L)).thenReturn(user(42L, 1));
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                workspaceMemberDao, usableWorkspaceDao(), userDao);
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-stale-member"));
+
+        AtomicReference<WorkspaceAccessLevel> seenLevel = new AtomicReference<>();
+        MockFilterChain chain = new MockFilterChain(new javax.servlet.http.HttpServlet() {
+            @Override
+            protected void service(javax.servlet.http.HttpServletRequest r,
+                                   javax.servlet.http.HttpServletResponse s) {
+                seenLevel.set(AutoWonderContext.get().getWorkspaceAccessLevel());
+            }
+        });
+
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        filter.doFilter(authenticatedRequest(token), resp, chain);
+
+        assertEquals(200, resp.getStatus());
+        assertEquals(WorkspaceAccessLevel.ADMIN, seenLevel.get());
+    }
+
+    @Test
+    void aRevokedPlatformAdminWhoIsNotAMemberIsRejectedImmediately() throws Exception {
+        JwtService jwtService = newJwtService();
+        WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.findById(42L)).thenReturn(user(42L, 0));
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                workspaceMemberDao, usableWorkspaceDao(), userDao);
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-revoked-admin"));
+
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(authenticatedRequest(token), resp, chain);
+
+        // The flag is read from the database on every request, so a token issued while the user
+        // was an admin stops working the moment the flag is revoked.
+        assertEquals(403, resp.getStatus());
+        assertTrue(resp.getContentAsString().contains("\"code\":\"11001\""));
+        assertNull(chain.getRequest());
+        assertNull(AutoWonderContext.get().getUserId());
+        assertNull(AutoWonderContext.get().getWorkspaceAccessLevel());
+    }
+
+    @Test
     void null_stored_access_level_returns_explicit_internal_data_error() throws Exception {
         assertInvalidAccessLevel(member(0, 0, null));
     }
@@ -765,6 +870,14 @@ class AuthFilterTest {
         member.setIsDeleted(isDeleted);
         member.setAccessLevel(accessLevel);
         return member;
+    }
+
+    private UserDO user(long id, int isAdmin) {
+        UserDO user = new UserDO();
+        user.setId(id);
+        user.setStatus(0);
+        user.setIsAdmin(isAdmin);
+        return user;
     }
 
     private static Stream<Arguments> workspaceRecoveryRoutes() {

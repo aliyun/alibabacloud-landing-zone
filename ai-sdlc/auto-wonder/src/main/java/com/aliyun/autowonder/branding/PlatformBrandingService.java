@@ -40,7 +40,6 @@ public class PlatformBrandingService {
     private final ObjectStorage objectStorage;
     private final String bucket;
     private final String publicBaseUrl;
-    private final String trustedMcpBaseUrl;
     private final String recommendedRuntimeVersion;
     private final String deploymentVersion;
     private final boolean communityEdition;
@@ -49,14 +48,13 @@ public class PlatformBrandingService {
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.2.152}") String recommendedRuntimeVersion,
+                                   @Value("${autowonder.runtime.recommended-version:0.2.163}") String recommendedRuntimeVersion,
                                    @Value("${autowonder.version:x.x.x}") String deploymentVersion,
                                    @Value("${autowonder.community-edition:false}") boolean communityEdition) {
         this.brandingDao = brandingDao;
         this.objectStorage = objectStorage;
         this.bucket = ossProperties.resolveArtifactBucket();
         this.publicBaseUrl = requirePublicBaseUrl(publicBaseUrl);
-        this.trustedMcpBaseUrl = this.publicBaseUrl + "/api/mcp";
         this.recommendedRuntimeVersion = requireRuntimeVersion(recommendedRuntimeVersion);
         this.deploymentVersion = normalizeDeploymentVersion(deploymentVersion);
         this.communityEdition = communityEdition;
@@ -66,8 +64,27 @@ public class PlatformBrandingService {
         return toVO(currentOrDefault(), false);
     }
 
-    public String trustedPublicBaseUrl() {
-        return publicBaseUrl;
+    /**
+     * The base URL this deployment actually serves to users and agents: the branding domain
+     * saved in platform_branding_config when one is configured, otherwise the
+     * deployment-managed autowonder.public-base-url. Resolved on every call, so saving a
+     * domain in the brand settings takes effect immediately without a restart.
+     */
+    public String effectivePublicBaseUrl() {
+        return effectivePublicBaseUrl(currentOrDefault().getDomain());
+    }
+
+    public String effectiveMcpBaseUrl() {
+        return effectivePublicBaseUrl() + "/api/mcp";
+    }
+
+    private String effectivePublicBaseUrl(String domain) {
+        return isConfiguredDomain(domain) ? domain.trim() : publicBaseUrl;
+    }
+
+    private static boolean isConfiguredDomain(String value) {
+        // Community does not seed an internal domain; an unset value uses the deployment URL.
+        return value != null && !value.isBlank();
     }
 
     public String recommendedRuntimeVersion() {
@@ -193,7 +210,7 @@ public class PlatformBrandingService {
                 safe(current.getThemeKey(), DEFAULT_THEME_KEY),
                 safe(current.getPrimaryColor(), DEFAULT_PRIMARY_COLOR),
                 current.getDomain(),
-                trustedMcpBaseUrl,
+                effectivePublicBaseUrl(current.getDomain()) + "/api/mcp",
                 recommendedRuntimeVersion,
                 deploymentVersion,
                 communityEdition,

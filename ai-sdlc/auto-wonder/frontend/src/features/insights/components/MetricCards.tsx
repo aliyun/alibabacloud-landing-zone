@@ -1,21 +1,57 @@
 import { DollarOutlined, ThunderboltOutlined, AimOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Tooltip } from 'antd';
+import type { ReactNode } from 'react';
 import { Sparkline } from './Sparkline';
+import { formatCredits } from '@/shared/lib/tokenFormat';
 import type { InsightMetrics } from '../types';
 
 interface MetricCardsProps {
   metrics: InsightMetrics;
 }
 
+interface MetricKpi {
+  label: string;
+  value: string;
+}
+
+interface MetricCard {
+  title: string;
+  icon: ReactNode;
+  color: string;
+  bg: string;
+  kpis: MetricKpi[];
+  trend: number[];
+  tooltip?: ReactNode;
+}
+
+function tokenRow(label: string, value: string) {
+  return (
+    <div>
+      <span style={{ fontWeight: 600 }}>{label}</span> <span>{value}</span>
+    </div>
+  );
+}
+
 export function MetricCards({ metrics }: MetricCardsProps) {
-  const cards = [
+  // 成本卡主位展示 credits（真实消耗口径），Token 明细只作为 hover 补充信息。
+  const tokenTooltip = (
+    <div style={{ lineHeight: '1.8' }}>
+      {tokenRow('总 Token:', (metrics.cost.totalTokens / 1000).toFixed(0) + 'K')}
+      {tokenRow('均/任务:', (metrics.cost.avgTokensPerTask / 1000).toFixed(1) + 'K')}
+      {tokenRow('日均:', (metrics.cost.dailyAvg / 1000).toFixed(0) + 'K')}
+    </div>
+  );
+
+  const cards: MetricCard[] = [
     {
       title: '成本', icon: <DollarOutlined />, color: '#d97706', bg: '#fffbeb',
       kpis: [
-        { label: '总 Token', value: (metrics.cost.totalTokens / 1000).toFixed(0) + 'K' },
-        { label: '均/任务', value: (metrics.cost.avgTokensPerTask / 1000).toFixed(1) + 'K' },
-        { label: '日均', value: (metrics.cost.dailyAvg / 1000).toFixed(0) + 'K' },
+        { label: '总 Credits', value: formatCredits(metrics.cost.totalCredits) },
+        { label: '均/任务', value: formatCredits(metrics.cost.avgCreditsPerTask) },
+        { label: '日均', value: formatCredits(metrics.cost.dailyAvgCredits) },
       ],
-      trend: metrics.cost.trend,
+      trend: metrics.cost.creditsTrend,
+      tooltip: tokenTooltip,
     },
     {
       title: '效率', icon: <ThunderboltOutlined />, color: '#2563eb', bg: '#eff6ff',
@@ -59,16 +95,28 @@ export function MetricCards({ metrics }: MetricCardsProps) {
               <Sparkline data={card.trend} color={card.color} />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 18 }}>
-            {card.kpis.map((kpi) => (
-              <div key={kpi.label} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <span style={{ fontSize: 17, fontWeight: 700, color: '#1f2937' }}>{kpi.value}</span>
-                <span style={{ fontSize: 11, color: '#9ca3af' }}>{kpi.label}</span>
-              </div>
-            ))}
-          </div>
+          <CardKpis kpis={card.kpis} tooltip={card.tooltip} />
         </div>
       ))}
     </div>
+  );
+}
+
+function CardKpis({ kpis, tooltip }: { kpis: MetricKpi[]; tooltip?: ReactNode }) {
+  const block = (
+    <div style={{ display: 'flex', gap: 18 }}>
+      {kpis.map((kpi) => (
+        <div key={kpi.label} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <span style={{ fontSize: 17, fontWeight: 700, color: '#1f2937' }}>{kpi.value}</span>
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>{kpi.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+  if (!tooltip) return block;
+  return (
+    <Tooltip title={tooltip}>
+      <div style={{ cursor: 'help', width: 'fit-content' }}>{block}</div>
+    </Tooltip>
   );
 }

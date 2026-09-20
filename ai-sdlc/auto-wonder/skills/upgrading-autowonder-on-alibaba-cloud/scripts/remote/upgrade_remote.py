@@ -143,9 +143,7 @@ def stage():
             command(["curl", "--fail", "--silent", "--connect-timeout", "10", "--max-time", "900", item["url"], "-o", str(path)])
             require(digest(path) == item["sha256"], "Downloaded artifact checksum mismatch")
         candidate = release / "autowonder.env"
-        require(digest(candidate) == REQUEST["envSha"], "Candidate environment checksum mismatch")
-        values = read_environment(candidate)
-        require(values.get("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION") == REQUEST["runtime"], "Candidate runtime version mismatch")
+        verify_environment(candidate)
         extract(release / "autowonder-migrations.tar.gz", release, "migration")
         require((release / "migration").is_dir(), "Migration archive is incomplete")
         candidate.chmod(0o600)
@@ -168,6 +166,7 @@ def stage():
             os.replace(str(release), str(target))
         # Only install configuration after every transfer and checksum has passed.
         install_file(protected_candidate, ENV, 0o640, "autowonder")
+        verify_environment(ENV)
         install_file(target / "autowonder.service", UNIT, 0o644, "root")
         print("STAGED_COMMIT=" + REQUEST["target"])
 
@@ -184,6 +183,16 @@ def read_environment(path):
             value = value[1:-1]
         values[key] = value
     return values
+
+
+def verify_environment(path):
+    require(digest(path) == REQUEST["envSha"], "Installed environment checkpoint mismatch")
+    values = read_environment(path)
+    require(values.get("AUTOWONDER_RUNTIME_RECOMMENDED_VERSION") == REQUEST["runtime"], "Environment runtime checkpoint mismatch")
+    generation = REQUEST.get("keyGenerationId", "")
+    require(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", generation) is not None,
+            "Escrow key generation ID must be an opaque UUIDv4")
+    require(values.get("AUTOWONDER_SECRET_KEY_GENERATION_ID") == generation, "Environment generation checkpoint mismatch")
 
 
 def migrate():
@@ -223,6 +232,10 @@ def migrate():
             if existing:
                 require(existing == sha + " 1", "Previous failed migration or ledger checksum mismatch requires review")
                 continue
+            if filename.endswith("__platform_admin_init.sql"):
+                admin_count = sql("SELECT COUNT(*) FROM `user` WHERE is_deleted = 0 AND is_admin = 1")
+                require(admin_count.isdigit() and int(admin_count) > 0,
+                        "Migration requires an existing system administrator; explicit recovery is required")
             # Mark running before executing SQL; interruption remains a failed record.
             sql("INSERT INTO autowonder_schema_history(migration_version,filename,checksum,source_commit,success,error_message) VALUES(%d,'%s','%s','%s',0,'migration started; completion unverified')" % (version, filename, sha, REQUEST["target"]))
             started = time.time()
@@ -273,9 +286,10 @@ def rollout():
         verify_backup(Path(temporary), REQUEST["backupSha"])
     target = APP / "releases" / REQUEST["target"][:12]
     require(digest(target / "auto-wonder.jar") == REQUEST["jarSha"], "Target JAR checksum mismatch")
-    require(digest(ENV) == REQUEST["envSha"], "Staged environment changed before activation")
+    verify_environment(ENV)
     require(digest(UNIT) == REQUEST["unitSha"], "Staged systemd unit changed before activation")
     activate(target)
+    verify_environment(ENV)
     print("ROLLOUT_COMMIT=" + REQUEST["target"])
 
 

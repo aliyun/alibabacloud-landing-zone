@@ -27,6 +27,7 @@ public class AuditLogController {
     public Result<List<AuditLogVO>> search(
             @RequestParam(value = "module", required = false) String module,
             @RequestParam(value = "action", required = false) String action,
+            @RequestParam(value = "actorType", required = false) String actorType,
             @RequestParam(value = "actorId", required = false) Long actorId,
             @RequestParam(value = "targetType", required = false) String targetType,
             @RequestParam(value = "targetId", required = false) Long targetId,
@@ -39,6 +40,7 @@ public class AuditLogController {
         query.setModule(module);
         query.setAction(action);
         query.setActorId(actorId);
+        query.setActorType(actorType);
         query.setTargetType(targetType);
         query.setTargetId(targetId);
         query.setStartTime(startTime);
@@ -51,6 +53,7 @@ public class AuditLogController {
     public Result<Integer> count(
             @RequestParam(value = "module", required = false) String module,
             @RequestParam(value = "action", required = false) String action,
+            @RequestParam(value = "actorType", required = false) String actorType,
             @RequestParam(value = "actorId", required = false) Long actorId,
             @RequestParam(value = "targetType", required = false) String targetType,
             @RequestParam(value = "targetId", required = false) Long targetId,
@@ -61,6 +64,7 @@ public class AuditLogController {
         query.setModule(module);
         query.setAction(action);
         query.setActorId(actorId);
+        query.setActorType(actorType);
         query.setTargetType(targetType);
         query.setTargetId(targetId);
         query.setStartTime(startTime);

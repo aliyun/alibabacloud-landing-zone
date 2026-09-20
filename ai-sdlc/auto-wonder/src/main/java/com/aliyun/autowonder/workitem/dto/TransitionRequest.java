@@ -7,4 +7,6 @@ import lombok.Setter;
 @Setter
 public class TransitionRequest {
     private Long toNodeId;
+    private Long fromNodeId;
+    private Integer expectedVersion;
 }

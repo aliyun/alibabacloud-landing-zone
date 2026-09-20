@@ -27,7 +27,13 @@ require_command jq
 require_command aliyun
 require_command python3
 json_validate "$manifest"
-bash "$UPGRADE_DEPLOY_SKILL_DIR/scripts/bootstrap-control-host.sh" --manifest "$manifest" >/dev/null
+bootstrap=$(bash "$UPGRADE_SCRIPT_DIR/bootstrap-control-host.sh" --manifest "$manifest")
+# A child bootstrap cannot change this shell's PATH. Carry its selected tools
+# forward explicitly instead of falling back to the original system Python.
+for name in AUTOWONDER_PYTHON JAVA_HOME PATH PYTHONUTF8 PYTHONDONTWRITEBYTECODE; do
+  value=$(jq -er --arg name "$name" '.runtimeEnvironment[$name]' <<<"$bootstrap")
+  export "$name=$value"
+done
 configure_cloud_profile "$manifest"
 region=$(json_string "$manifest" '.region')
 load_alicloud_profile_credentials "$region"

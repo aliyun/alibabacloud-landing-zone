@@ -12,6 +12,8 @@ describe('qoder model catalog helpers', () => {
     ['QODER_CN_CLI', 'qodercn'],
     ['CLAUDE_CODE', undefined],
     [undefined, undefined],
+    // 历史数据的 clientKind 为 null 时同样不算 Qoder 系，不得解析出 provider
+    [null, undefined],
   ])('maps %s to its catalog provider', (clientKind, provider) => {
     expect(qoderProviderForClientKind(clientKind)).toBe(provider);
   });

@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.storage;
 
+import com.aliyun.oss.HttpMethod;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.OSSException;
@@ -12,6 +13,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URL;
+import java.time.Duration;
 import java.util.Date;
 
 public class AliyunOssObjectStorage implements ObjectStorage {
@@ -78,6 +80,23 @@ public class AliyunOssObjectStorage implements ObjectStorage {
         Date expiry = new Date(System.currentTimeMillis() + ttlSeconds * 1000L);
         GeneratePresignedUrlRequest req = new GeneratePresignedUrlRequest(bk[0], bk[1]);
         req.setExpiration(expiry);
+        URL url = publicClient.generatePresignedUrl(req);
+        return forceHttps(url.toString());
+    }
+
+    private String forceHttps(String url) {
+        if (url != null && url.regionMatches(true, 0, "http://", 0, "http://".length())) {
+            return "https://" + url.substring("http://".length());
+        }
+        return url;
+    }
+
+    @Override
+    public String presignPut(String bucket, String key, Duration ttl) {
+        Date expiry = new Date(System.currentTimeMillis() + ttl.toMillis());
+        GeneratePresignedUrlRequest req = new GeneratePresignedUrlRequest(bucket, key);
+        req.setExpiration(expiry);
+        req.setMethod(HttpMethod.PUT);
         URL url = publicClient.generatePresignedUrl(req);
         return url.toString();
     }

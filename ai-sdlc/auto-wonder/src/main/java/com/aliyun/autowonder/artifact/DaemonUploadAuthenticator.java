@@ -15,6 +15,16 @@ public class DaemonUploadAuthenticator {
 
     private static final Logger log = LoggerFactory.getLogger(DaemonUploadAuthenticator.class);
 
+    private com.aliyun.autowonder.dispatch.DispatchRecoveryService recovery;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRecovery(com.aliyun.autowonder.dispatch.DispatchRecoveryService service) { recovery = service; }
+
+    /** Checkpoints may still be uploaded to acknowledge stopping; business writes may not. */
+    public boolean isMutationFenced(long dispatchId) {
+        DispatchDO d = dispatchDao.findById(dispatchId);
+        return d == null || "CANCELED".equals(d.getStatus()) || (recovery != null && recovery.fenced(d));
+    }
+
     private final DispatchDao dispatchDao;
     private final ExecutorDao executorDao;
     private final TokenService tokenService;
@@ -40,6 +50,29 @@ public class DaemonUploadAuthenticator {
         log.info("upload auth ok dispatchId={} tenantId={} workitemId={}", dispatchId, d.getTenantId(), d.getWorkitemId());
         return AuthResult.success(d.getTenantId(), d.getWorkitemId(), d.getAgentId(), d.getResumeMode(),
                 d.executionSourceType());
+    }
+
+    public enum DetailedAuthStatus { OK, DISPATCH_NOT_FOUND, TOKEN_INVALID }
+
+    public record DetailedAuthResult(DetailedAuthStatus status, DispatchDO dispatch) {}
+
+    /**
+     * Same validation chain as {@link #authenticate} but separates "dispatch missing" from
+     * "token invalid" so the debug-log issuing endpoint can answer 404 vs 403 per contract.
+     */
+    public DetailedAuthResult authenticateDetailed(long dispatchId, String token) {
+        DispatchDO d = dispatchDao.findById(dispatchId);
+        if (d == null) {
+            log.info("detailed upload auth failed dispatchId={} reason=dispatch_not_found", dispatchId);
+            return new DetailedAuthResult(DetailedAuthStatus.DISPATCH_NOT_FOUND, null);
+        }
+        ExecutorDO e = d.getExecutorId() == null ? null : executorDao.findById(d.getExecutorId());
+        if (e == null || !tokenService.validate(e.getTokenRef(), token)) {
+            log.info("detailed upload auth failed dispatchId={} reason=executor_or_token_invalid",
+                    dispatchId);
+            return new DetailedAuthResult(DetailedAuthStatus.TOKEN_INVALID, d);
+        }
+        return new DetailedAuthResult(DetailedAuthStatus.OK, d);
     }
 
     public static class AuthResult {

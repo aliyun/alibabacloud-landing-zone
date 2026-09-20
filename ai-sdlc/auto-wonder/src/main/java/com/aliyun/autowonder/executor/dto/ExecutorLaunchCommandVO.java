@@ -16,6 +16,7 @@ public class ExecutorLaunchCommandVO {
     private String clientKind;
     private String provider;
     private String memoryMode;
+    private Integer maxConcurrentDispatches;
     private String model;
     private String reasoningEffort;
     private String contextWindow;

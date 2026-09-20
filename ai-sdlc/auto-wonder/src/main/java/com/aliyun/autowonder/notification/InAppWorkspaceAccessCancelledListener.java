@@ -20,7 +20,6 @@ public class InAppWorkspaceAccessCancelledListener {
     private static final Logger log = LoggerFactory.getLogger(InAppWorkspaceAccessCancelledListener.class);
     private static final String LEVEL_ADMIN = "ADMIN";
     private static final String REF_TYPE = "WORKSPACE_ACCESS_REQUEST";
-    private static final String REVIEW_LINK = "/settings/members?tab=requests";
     private static final DateTimeFormatter CANCEL_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -84,7 +83,7 @@ public class InAppWorkspaceAccessCancelledListener {
         notifyEvent.setType(REF_TYPE);
         notifyEvent.setTitle("权限申请已撤销");
         notifyEvent.setContent(content);
-        notifyEvent.setLink(REVIEW_LINK);
+        notifyEvent.setLink(WorkspaceAccessNotifyText.reviewLink(event.tenantId()));
         notifyEvent.setRefType(REF_TYPE);
         notifyEvent.setRefId(event.requestId());
         notifyEvent.setRecipientIds(List.of(recipientId));

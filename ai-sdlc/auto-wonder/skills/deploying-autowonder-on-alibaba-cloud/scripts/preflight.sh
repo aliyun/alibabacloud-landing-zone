@@ -48,11 +48,11 @@ jq -e '.ingressScenario as $s | ($s == "no-domain-no-certificate" or $s == "doma
 jq -e '.publicSourceCidrs | type == "array" and length > 0 and all(test("^[0-9a-fA-F:.]+/[0-9]+$"))' "$manifest" >/dev/null || die "at least one valid public source CIDR is required"
 jq -e 'if .topology == "multi-az-ha" then (.availabilityZones|type=="array" and length>=2 and (unique|length)>=2) else true end' "$manifest" >/dev/null || die "HA requires two distinct zones"
 jq -e '.tags.Project=="AutoWonder" and .tags.ManagedBy=="Terraform" and .tags.Environment==.environment and .tags.DeploymentId==.deploymentId and .tags.Topology==.topology' "$manifest" >/dev/null || die "required system tags are invalid"
-for query in '.organizationName' '.resolvedInfrastructure.ecsImageId' '.resolvedInfrastructure.ecsInstanceType' '.resolvedInfrastructure.rdsInstanceType' '.resolvedInfrastructure.rdsCategory' '.resolvedInfrastructure.rdsStorageType' '.resolvedInfrastructure.redisInstanceClass'; do
+for query in '.resolvedInfrastructure.ecsImageId' '.resolvedInfrastructure.ecsInstanceType' '.resolvedInfrastructure.rdsInstanceType' '.resolvedInfrastructure.rdsCategory' '.resolvedInfrastructure.rdsStorageType' '.resolvedInfrastructure.redisInstanceClass'; do
   json_required "$manifest" "$query"
 done
 jq -e '.resolvedInfrastructure.rdsStorageGb > 0' "$manifest" >/dev/null || die "resolved RDS storage is required"
-jq -e '.resolvedInfrastructure.ecsVcpus == 2 and .resolvedInfrastructure.ecsMemoryGiB == 4 and .resolvedInfrastructure.preferredEcsInstanceType == "ecs.c8a.large"' "$manifest" >/dev/null || die "small ECS sizing must be 2 vCPU and 4 GiB with ecs.c8a.large preferred"
+jq -e '.resolvedInfrastructure.ecsVcpus == 2 and .resolvedInfrastructure.ecsMemoryGiB == 4' "$manifest" >/dev/null || die "small ECS sizing must be 2 vCPU and 4 GiB"
 
 if [[ "$dry_run" == false ]]; then
   for command in aliyun terraform ossutil openssl curl; do require_command "$command"; done
@@ -73,11 +73,11 @@ if [[ "$dry_run" == false ]]; then
     select(.InstanceTypeId? == $instanceType) |
     .CpuCoreCount == 2 and .MemorySize == 4 and .CpuArchitecture == "X86"
   ' <<<"$instance_types" >/dev/null || die "resolved ECS instance type must provide exactly 2 vCPU and 4 GiB"
-  while IFS= read -r zone; do
-    zone=${zone%$'\r'}
-    available=$(aliyun_cli ecs DescribeAvailableResource --region "$region" --RegionId "$region" --ZoneId "$zone" --DestinationResource InstanceType --InstanceChargeType PrePaid --InstanceType "$ecs_instance_type") || die "ECS subscription availability probe failed for zone"
-    jq -e --arg instanceType "$ecs_instance_type" '.. | objects | select(.Value? == $instanceType)' <<<"$available" >/dev/null || die "ecs instance type is unavailable in zone: $zone"
-  done < <(jq -r '.availabilityZones[0:2][]' "$manifest")
+  # Delegate purchasable-stock validation to the shared resolver, which checks
+  # Status/StatusCategory (real subscription stock) per zone rather than mere
+  # presence of the instance type value.
+  "${AUTOWONDER_PYTHON:-python3}" "$SCRIPT_DIR/resolve_zones.py" validate --manifest "$manifest" >/dev/null \
+    || die "resolved combination lacks complete current ECS, image, RDS, Redis, ALB, or price evidence"
 fi
 jq -n --arg region "$region" --argjson dryRun "$dry_run" --arg ossutilContract "$ossutil_contract" --arg ossutilVersion "$ossutil_version" \
   '{phase:"preflight",status:"passed",region:$region,dryRun:$dryRun,ossutilContract:$ossutilContract,ossutilVersion:$ossutilVersion}'

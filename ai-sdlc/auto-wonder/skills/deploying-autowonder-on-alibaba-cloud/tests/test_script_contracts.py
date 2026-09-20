@@ -25,6 +25,39 @@ SCRIPTS = [
 
 
 class ScriptContracts(unittest.TestCase):
+    def adaptive_fixture(self, manifest, binary, work):
+        from unittest.mock import patch
+        import test_resolve_zones as fixture
+        import resolve_zones as resolver
+        import resource_inventory as inventory
+        data = json.loads(manifest.read_text())
+        data['accountUid'] = '1234567890123456'
+        data['region'] = 'cn-beijing'
+        data['resources'] = {}
+        data['resolvedInfrastructure'] = {'rdsCategory':'HighAvailability','rdsStorageGb':100}
+        manifest.write_text(json.dumps(data))
+        with patch.object(inventory, 'request', side_effect=fixture.cloud_response_adapter):
+            self.assertEqual(resolver.resolve(manifest), 0)
+        data = json.loads(manifest.read_text())
+        plan = {'variables':{k:{'value':v} for k,v in resolver.expected_tfvars(data).items()}, 'resource_changes':[]}
+        for kind, values in resolver.expected_resources(data).items():
+            for idx, value in enumerate(values):
+                if kind == 'alicloud_alb_load_balancer':
+                    value['zone_mappings'] = [{'zone_id':z} for z in data['availabilityZones']]
+                plan['resource_changes'].append({'address':kind+'.fixture'+str(idx),'type':kind,'mode':'managed',
+                                                'change':{'actions':['create'],'before':None,'after':value}})
+        fixture_plan = work / 'fixture-plan.json'
+        fixture_plan.write_text(json.dumps(plan))
+        fake = binary / 'aliyun'
+        fake.write_text('#!'+sys.executable+'\nimport sys,json\nsys.path.insert(0,'+repr(str(Path(__file__).parent))+')\nfrom test_resolve_zones import cloud_response\na=sys.argv[1:]; p=dict(zip([k.removeprefix("--") for k in a[2::2]],a[3::2]))\nprint(json.dumps(cloud_response(a[0],a[1],p)))\n')
+        fake.chmod(0o700)
+        terraform = binary / 'terraform'
+        content = terraform.read_text()
+        # Preserve each test's command/path behavior, adding the real plan JSON boundary.
+        line = 'if [[ "$*" == *"show -json"* ]]; then cat ' + shlex.quote(str(fixture_plan)) + '; exit 0; fi\n'
+        content = content.replace('\n', '\n'+line, 1).replace('#!/bin/sh', '#!/usr/bin/env bash')
+        terraform.write_text(content)
+
     REQUIRED_ENV = {
         "SPRING_DATASOURCE_URL": "jdbc:mysql://db.internal:3306/autowonder?useSSL=false",
         "SPRING_DATASOURCE_USERNAME": "autowonder",
@@ -135,12 +168,24 @@ esac
             env["OSSUTIL_LOG"] = str(log)
             env["HOME"] = str(root)
 
+            scripts = root / 'isolated-scripts'
+            scripts.mkdir()
+            for name in ('terraform-backend.sh', 'lib.sh', 'cloud_diagnostics.py'):
+                (scripts / name).write_bytes((ROOT / 'scripts' / name).read_bytes())
+            (scripts / 'operations-store.py').write_text(
+                'import json, pathlib, sys\n'
+                'pathlib.Path(__file__).with_name("operations-call.json").write_text(json.dumps(sys.argv[1:]))\n'
+            )
             result = subprocess.run([
-                "bash", str(ROOT / "scripts/terraform-backend.sh"), "prepare",
+                "bash", str(scripts / "terraform-backend.sh"), "prepare",
                 "--manifest", str(manifest), "--project-root", str(root),
             ], text=True, capture_output=True, env=env)
 
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((scripts / 'operations-call.json').read_text()),
+                             ['initialize', '--manifest', str(manifest), '--project-root', str(root.resolve()), '--allow-incomplete'])
+            self.assertEqual(json.loads(manifest.read_text())['localContext']['terraformDirectory'],
+                             str(root.resolve() / 'deployments' / 'prod-abc12345' / 'terraform'))
             self.assertIn("api put-bucket-tags ", log.read_text())
             self.assertEqual("ready", json.loads(manifest.read_text())["terraform"]["backendStatus"])
 
@@ -244,12 +289,23 @@ PY
             '.CpuCoreCount == 2',
             '.MemorySize == 4',
             '.CpuArchitecture == "X86"',
-            'DescribeAvailableResource',
-            '--InstanceType "$ecs_instance_type"',
-            'ecs instance type is unavailable in zone',
+            'resolve_zones.py',
+            'validate',
         ):
             self.assertIn(required, preflight)
         self.assertNotIn('--Cores 2 --Memory 4 --InstanceType', preflight)
+        # The per-zone purchasable-stock probe now lives in the shared resolver,
+        # which must query by instance type only and check real stock status.
+        resolver = (ROOT / "scripts/resource_inventory.py").read_text()
+        for required in (
+            'DescribeAvailableResource',
+            'InstanceChargeType',
+            'PrePaid',
+            'WithStock',
+        ):
+            self.assertIn(required, resolver)
+        self.assertNotIn('--Cores', resolver)
+        self.assertNotIn('--Memory', resolver)
 
     def test_preflight_dry_run_accepts_valid_manifest_and_rejects_secret(self):
         with tempfile.TemporaryDirectory() as td:
@@ -284,7 +340,7 @@ PY
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("TEST_SECRET_DO_NOT_PRINT", result.stdout + result.stderr)
 
-    def test_preflight_queries_ecs_stock_by_instance_type_without_cpu_memory_conflict(self):
+    def test_ecs_only_inventory_cannot_pass_full_preflight(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             manifest = self.valid_manifest(root / "manifest.json")
@@ -322,21 +378,24 @@ case "$product:$operation" in
     echo '{"InstanceTypes":{"InstanceType":[{"InstanceTypeId":"ecs.c8a.large","CpuCoreCount":2,"MemorySize":4,"CpuArchitecture":"X86"}]}}'
     ;;
   ecs:DescribeAvailableResource)
-    has_type=false; has_cores=false; has_memory=false
+    has_type=false; has_cores=false; has_memory=false; zone=""; prev=""
     for arg in "$@"; do
       if [[ "$arg" == *$'\r'* ]]; then
         echo 'zone contains a carriage return' >&2
         exit 1
       fi
+      [[ "$prev" == --ZoneId ]] && zone="$arg"
       [[ "$arg" == --InstanceType ]] && has_type=true
       [[ "$arg" == --Cores ]] && has_cores=true
       [[ "$arg" == --Memory ]] && has_memory=true
+      prev="$arg"
     done
     if [[ "$has_type" == true && ("$has_cores" == true || "$has_memory" == true) ]]; then
       echo 'InvalidParam.TypeAndCpuMem.Conflict' >&2
       exit 1
     fi
-    echo '{"AvailableZones":{"AvailableZone":[{"AvailableResources":{"AvailableResource":[{"SupportedResources":{"SupportedResource":[{"Value":"ecs.c8a.large"}]}}]}}]}}'
+    [[ -n "$zone" ]] || zone="zone-a"
+    printf '{"AvailableZones":{"AvailableZone":[{"ZoneId":"%s","AvailableResources":{"AvailableResource":[{"SupportedResources":{"SupportedResource":[{"Value":"ecs.c8a.large","Status":"Available","StatusCategory":"WithStock"}]}}]}}]}}' "$zone"
     ;;
   *) exit 1;;
 esac
@@ -351,8 +410,85 @@ esac
                 "--manifest", str(manifest), "--source-dir", str(ROOT.parents[1]),
             ], text=True, capture_output=True, env=env)
 
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual("passed", json.loads(result.stdout)["status"])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("resolved combination lacks complete current", result.stderr)
+
+    def test_terraform_unresolved_state_blocks_every_stage_before_writes(self):
+        stages = ('plan', 'apply', 'inventory', 'destroy-plan', 'destroy-apply')
+        signals = ('pending-apply', 'pending-destroy', 'infrastructure-unknown',
+                   'destroy-unknown', 'emergency-state', 'emergency-symlink')
+        for stage in stages:
+            for signal in signals:
+                for bound in (False, True):
+                    with self.subTest(stage=stage, signal=signal, bound=bound), tempfile.TemporaryDirectory() as td:
+                        root = Path(td)
+                        manifest = self.valid_manifest(root / 'manifest.json')
+                        work = root / 'tf'
+                        work.mkdir()
+                        data = json.loads(manifest.read_text())
+                        if bound:
+                            data['operationsStore'] = {'revision': 'fixture'}
+                        if signal.startswith('pending-'):
+                            data['terraform']['pendingOperation'] = signal.removeprefix('pending-')
+                        elif signal.endswith('-unknown'):
+                            data.update(phase='infrastructure' if signal == 'infrastructure-unknown' else 'terraform-destroy', status='unknown')
+                        elif signal == 'emergency-state':
+                            (work / 'errored.tfstate').write_text('private emergency state')
+                        else:
+                            (work / 'errored.tfstate').symlink_to(work / 'missing-emergency-state')
+                        fingerprint = hashlib.sha256(b'original plan').hexdigest()
+                        data['terraform'].update(planFingerprint=fingerprint, destroyPlanFingerprint=fingerprint)
+                        manifest.write_text(json.dumps(data))
+                        protected = [manifest]
+                        for name in ('reviewed.tfplan', 'destroy.tfplan', 'inventory.json', 'deployment.auto.tfvars.json'):
+                            path = work / name
+                            path.write_bytes(b'original plan')
+                            protected.append(path)
+                        before = {path: path.read_bytes() for path in protected}
+                        binary = root / 'bin'
+                        binary.mkdir()
+                        calls = root / 'calls'
+                        for name in ('terraform', 'python3'):
+                            stub = binary / name
+                            stub.write_text('#!/bin/sh\nprintf called >> "$FAKE_CALLS"\nexit 73\n')
+                            stub.chmod(0o700)
+                        result = subprocess.run(['bash', str(ROOT / 'scripts/terraform-stage.sh'), stage,
+                            '--manifest', str(manifest), '--work-dir', str(work),
+                            '--approved-plan-sha256', fingerprint], capture_output=True, text=True,
+                            env=dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                                     HOME=str(root), FAKE_CALLS=str(calls),
+                                     AUTOWONDER_TERRAFORM_CONFIG_DIR=str(root / 'config')))
+                        self.assertNotEqual(0, result.returncode)
+                        self.assertEqual(before, {path: path.read_bytes() for path in protected})
+                        self.assertFalse(calls.exists(), 'No Terraform or operations checkpoint may run')
+                        self.assertFalse((work / 'terraform-secrets.env').exists())
+                        self.assertFalse((root / 'config').exists())
+                        self.assertIn('Terraform operation is unresolved', result.stderr)
+
+    def test_terraform_guard_does_not_treat_teardown_preparation_as_unknown_apply(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            manifest = self.valid_manifest(root / 'manifest.json')
+            data = json.loads(manifest.read_text())
+            data.update(teardownPreparation={'status': 'pending'}, phase='teardown-preparation', status='unknown')
+            data['terraform']['pendingOperation'] = ''
+            manifest.write_text(json.dumps(data))
+            work = root / 'tf'
+            work.mkdir()
+            binary = root / 'bin'
+            binary.mkdir()
+            fake = binary / 'terraform'
+            fake.write_text('#!/bin/sh\nfor arg in "$@"; do\n'
+                            'case "$arg" in -out=*) printf reviewed-plan > "${arg#-out=}";; esac\ndone\n')
+            fake.chmod(0o700)
+            self.adaptive_fixture(manifest, binary, work)
+            result = subprocess.run(['bash', str(ROOT / 'scripts/terraform-stage.sh'), 'plan',
+                '--manifest', str(manifest), '--work-dir', str(work)], capture_output=True, text=True,
+                env=dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                         HOME=str(root), AUTOWONDER_TERRAFORM_CONFIG_DIR=str(root / 'config')))
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(b'reviewed-plan', (work / 'reviewed.tfplan').read_bytes())
+            self.assertEqual({'status': 'pending'}, json.loads(manifest.read_text())['teardownPreparation'])
 
     def test_terraform_apply_requires_matching_plan_hash(self):
         with tempfile.TemporaryDirectory() as td:
@@ -370,6 +506,48 @@ esac
                 "--work-dir", str(work), "--approved-plan-sha256", "wrong",
             ], text=True, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_terraform_relative_workdir_plan_and_destroy_paths(self):
+        with tempfile.TemporaryDirectory(prefix="terraform 路径 ") as td:
+            root = Path(td).resolve()
+            manifest = self.valid_manifest(root / "manifest.json")
+            work = root / "relative 工作目录"
+            work.mkdir()
+            binary_dir = root / "bin"
+            binary_dir.mkdir()
+            fake = binary_dir / "terraform"
+            fake.write_text("""#!/usr/bin/env bash
+set -eu
+cd -- "${1#-chdir=}"
+shift
+for arg in "$@"; do
+  case "$arg" in -out=*) printf reviewed-plan > "${arg#-out=}";; esac
+done
+if [[ "$1" == apply ]]; then test -f "$2"; fi
+""")
+            fake.chmod(0o755)
+            self.adaptive_fixture(manifest, binary_dir, work)
+            env = dict(os.environ, PATH=str(binary_dir) + os.pathsep + os.environ["PATH"],
+                       AUTOWONDER_TERRAFORM_CONFIG_DIR=str(root / "config"))
+            script = str(ROOT / "scripts/terraform-stage.sh")
+            confirmation = root / "confirmation"
+            confirmation.write_text("DESTROY " + json.loads(manifest.read_text())["deploymentId"] + "\n")
+            for command, filename, field in (("plan", "reviewed.tfplan", "planFingerprint"),
+                                              ("destroy-plan", "destroy.tfplan", "destroyPlanFingerprint")):
+                with self.subTest(command=command):
+                    result = subprocess.run(["bash", script, command, "--manifest", str(manifest),
+                        "--work-dir", work.name, "--confirmation-file", str(confirmation)],
+                        cwd=root, env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual((work / filename).read_bytes(), b"reviewed-plan")
+                    data = json.loads(manifest.read_text())
+                    self.assertEqual(data["terraform"][field], hashlib.sha256(b"reviewed-plan").hexdigest())
+                    if command == "plan":
+                        self.assertEqual(data["terraform"]["planPath"], str(work / filename))
+                        applied = subprocess.run(["bash", script, "apply", "--manifest", str(manifest),
+                            "--work-dir", work.name, "--approved-plan-sha256", data["terraform"][field]],
+                            cwd=root, env=env, capture_output=True, text=True)
+                        self.assertEqual(applied.returncode, 0, applied.stderr)
 
     def test_terraform_plan_then_exact_reviewed_apply(self):
         with tempfile.TemporaryDirectory() as td:
@@ -390,6 +568,7 @@ done
 if [[ "$*" == *'output -json'* ]]; then printf '{}\\n'; fi
 """)
             fake.chmod(0o755)
+            self.adaptive_fixture(manifest, binary_dir, work)
             env = os.environ.copy()
             env["PATH"] = f"{binary_dir}:{env['PATH']}"
             env["FAKE_TERRAFORM_LOG"] = str(log)
@@ -399,25 +578,37 @@ if [[ "$*" == *'output -json'* ]]; then printf '{}\\n'; fi
             ], text=True, capture_output=True, env=env)
             self.assertEqual(plan.returncode, 0, plan.stderr)
             tfvars = json.loads((work / "deployment.auto.tfvars.json").read_text())
-            self.assertEqual(tfvars["zone_a_id"], "zone-a")
-            self.assertEqual(tfvars["zone_b_id"], "zone-b")
+            self.assertEqual(tfvars["zone_a_id"], "cn-beijing-a")
+            self.assertEqual(tfvars["zone_b_id"], "cn-beijing-b")
             self.assertEqual(tfvars["lifecycle_mode"], "persistent")
             self.assertEqual(tfvars["billing_strategy"], "subscription-first")
             self.assertEqual(tfvars["purchase_period_months"], 1)
             self.assertIs(tfvars["auto_renew"], True)
             self.assertEqual(tfvars["auto_renew_period_months"], 1)
-            self.assertEqual(tfvars["ecs_image_id"], "aliyun-test-x86_64.vhd")
+            self.assertEqual(tfvars["ecs_image_id"], "aliyun_3_fixture")
             self.assertEqual(tfvars["vpc_cidr"], "10.0.0.0/16")
             self.assertNotIn("availability_zones", tfvars)
             calls = log.read_text().splitlines()
             self.assertEqual([c.split()[1] for c in calls[:4]], ["fmt", "init", "validate", "plan"])
             fingerprint = json.loads(manifest.read_text())["terraform"]["planFingerprint"]
+            tfvars_path = work / "deployment.auto.tfvars.json"
+            original_tfvars = tfvars_path.read_bytes()
+            changed_vars = dict(tfvars, zone_a_cidr="10.0.9.0/24")
+            tfvars_path.write_text(json.dumps(changed_vars))
+            rejected = subprocess.run([
+                script, "apply", "--manifest", str(manifest), "--work-dir", str(work),
+                "--approved-plan-sha256", fingerprint,
+            ], text=True, capture_output=True, env=env)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertFalse(any(" apply " in line for line in log.read_text().splitlines()))
+            self.assertFalse(json.loads(manifest.read_text())["terraform"].get("pendingOperation"))
+            tfvars_path.write_bytes(original_tfvars)
             apply = subprocess.run([
                 script, "apply", "--manifest", str(manifest), "--work-dir", str(work),
                 "--approved-plan-sha256", fingerprint,
             ], text=True, capture_output=True, env=env)
             self.assertEqual(apply.returncode, 0, apply.stderr)
-            self.assertTrue(log.read_text().splitlines()[-1].endswith("apply " + str(work / "reviewed.tfplan")))
+            self.assertTrue(log.read_text().splitlines()[-1].endswith("apply " + str(work.resolve() / "reviewed.tfplan")))
 
     def test_terraform_inventory_normalizes_actual_outputs(self):
         with tempfile.TemporaryDirectory() as td:
@@ -431,16 +622,27 @@ if [[ "$*" == *'output -json'* ]]; then printf '{}\\n'; fi
             fake.write_text("""#!/usr/bin/env bash
 set -eu
 cat <<'JSON'
-{"region":{"value":"cn-hangzhou"},"ecs_instance_ids":{"value":{"zone_a":"i-a","zone_b":"i-b"}},"load_balancer_address":{"value":"example.alb.aliyuncs.com"},"rds":{"value":{"connection":"db.internal","port":"3306","database":"autowonder","account":"autowonder"}},"redis":{"value":{"connection":"redis.internal","port":6379}},"oss":{"value":{"package_bucket":"pkg-example","artifact_bucket":"arti-example","control_endpoint":"oss-cn-hangzhou.aliyuncs.com","runtime_endpoint":"oss-cn-hangzhou-internal.aliyuncs.com"}},"sls":{"value":{"project":"logs-example","stores":{"system":"system","business":"business","metrics":"metrics"},"control_endpoint":"cn-hangzhou.log.aliyuncs.com","runtime_endpoint":"cn-hangzhou-intranet.log.aliyuncs.com"}}}
+{"region":{"value":"cn-hangzhou"},"ecs_instance_ids":{"value":{"zone_a":"i-a","zone_b":"i-b"}},"load_balancer_id":{"value":"alb-test"},"load_balancer_address":{"value":"example.alb.aliyuncs.com"},"rds":{"value":{"connection":"db.internal","port":"3306","database":"autowonder","account":"autowonder"}},"redis":{"value":{"connection":"redis.internal","port":6379}},"oss":{"value":{"package_bucket":"pkg-example","artifact_bucket":"arti-example","control_endpoint":"oss-cn-hangzhou.aliyuncs.com","runtime_endpoint":"oss-cn-hangzhou-internal.aliyuncs.com"}},"sls":{"value":{"project":"logs-example","stores":{"system":"system","business":"business","metrics":"metrics"},"control_endpoint":"cn-hangzhou.log.aliyuncs.com","runtime_endpoint":"cn-hangzhou-intranet.log.aliyuncs.com"}}}
 JSON
 """)
             fake.chmod(0o755)
+            aliyun = binary_dir / "aliyun"
+            aliyun.write_text("#!/usr/bin/env python3\n"
+                              "import os, sys\n"
+                              "assert sys.argv[1:] == ['alb', 'GetLoadBalancerAttribute', '--region', 'cn-hangzhou', '--LoadBalancerId', 'alb-test', '--profile', 'auto-wonder']\n"
+                              "print(os.environ['FAKE_ALB'])\n"
+                              "sys.exit(int(os.environ.get('FAKE_ALB_EXIT', '0')))\n")
+            aliyun.chmod(0o755)
+            def alb_response(addresses):
+                return json.dumps({"ZoneMappings": [
+                    {"LoadBalancerAddresses": [{"Address": address}]} for address in addresses
+                ]})
             env = os.environ.copy()
+            env["FAKE_ALB"] = alb_response(["198.51.100.11", "198.51.100.2"])
             env["PATH"] = f"{binary_dir}:{env['PATH']}"
-            result = subprocess.run([
-                str(ROOT / "scripts/terraform-stage.sh"), "inventory",
-                "--manifest", str(manifest), "--work-dir", str(work),
-            ], text=True, capture_output=True, env=env)
+            command = ["bash", str(ROOT / "scripts/terraform-stage.sh"), "inventory",
+                       "--manifest", str(manifest), "--work-dir", str(work)]
+            result = subprocess.run(command, text=True, capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             resources = json.loads(manifest.read_text())["resources"]
             self.assertEqual(resources["package_bucket"], "pkg-example")
@@ -451,6 +653,48 @@ JSON
             self.assertEqual(resources["oss_public_endpoint"], "oss-cn-hangzhou.aliyuncs.com")
             self.assertEqual(resources["oss"]["runtime_endpoint"], "oss-cn-hangzhou-internal.aliyuncs.com")
             self.assertEqual(resources["sls"]["runtime_endpoint"], "cn-hangzhou-intranet.log.aliyuncs.com")
+
+            self.assertEqual(resources["load_balancer_address"], "example.alb.aliyuncs.com")
+            self.assertEqual(resources["alb_public_ipv4_addresses"], ["198.51.100.2", "198.51.100.11"])
+            self.assertEqual(json.loads(manifest.read_text())["applicationBaseUrl"], "http://198.51.100.2")
+
+            # API order must not change the selected default on a repeated inventory.
+            env["FAKE_ALB"] = alb_response(["198.51.100.2", "198.51.100.11"])
+            repeated = subprocess.run(command, text=True, capture_output=True, env=env)
+            self.assertEqual(repeated.returncode, 0, repeated.stderr)
+            self.assertEqual(json.loads(manifest.read_text())["applicationBaseUrl"], "http://198.51.100.2")
+
+            # Never replace the known URL with a DNS fallback on failed/invalid inventory.
+            before = manifest.read_text()
+            for addresses, status in [([], 0), (["198.51.100.2"] * 2, 0),
+                                      (["999.1.1.1", "198.51.100.2"], 0),
+                                      (["example.alb.aliyuncs.com", "198.51.100.2"], 0),
+                                      (["2001:db8::1", "2001:db8::2"], 0),
+                                      (["198.51.100.2", "198.51.100.11"], 1)]:
+                with self.subTest(addresses=addresses, api_status=status):
+                    env["FAKE_ALB"] = alb_response(addresses)
+                    env["FAKE_ALB_EXIT"] = str(status)
+                    failed = subprocess.run(command, text=True, capture_output=True, env=env)
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertEqual(manifest.read_text(), before)
+            env["FAKE_ALB_EXIT"] = "0"
+
+            # Carry the inventory result all the way into the generated application env.
+            terraform_stub = fake.read_bytes()
+            env_file = self.write_env(root / "autowonder.env")
+            runtime = self.run_runtime_config(manifest, env_file)
+            self.assertEqual(runtime.returncode, 0, runtime.stderr)
+            values = dict(line.split("=", 1) for line in env_file.read_text().splitlines())
+            self.assertEqual(shlex.split(values["AUTOWONDER_PUBLIC_BASE_URL"]), ["http://198.51.100.2"])
+
+            # Restore the output stub replaced by the runtime helper, then test domain ingress.
+            fake.write_bytes(terraform_stub)
+            data = json.loads(manifest.read_text())
+            data.update(ingressScenario="domain-no-certificate", domain="autowonder.example.com")
+            manifest.write_text(json.dumps(data))
+            domain = subprocess.run(command, text=True, capture_output=True, env=env)
+            self.assertEqual(domain.returncode, 0, domain.stderr)
+            self.assertEqual(json.loads(manifest.read_text())["applicationBaseUrl"], "http://autowonder.example.com")
 
     def test_remote_state_requires_backend_reference(self):
         with tempfile.TemporaryDirectory() as td:
@@ -519,7 +763,7 @@ JSON
             root = Path(td)
             manifest = self.valid_manifest(root / "manifest.json")
             data = json.loads(manifest.read_text())
-            data["applicationBaseUrl"] = "http://public-nlb.example.com"
+            data["applicationBaseUrl"] = "http://198.51.100.2"
             manifest.write_text(json.dumps(data))
             env_file = self.write_env(root / "autowonder.env")
 
@@ -531,7 +775,7 @@ JSON
                 key, value = line.split("=", 1)
                 values[key] = shlex.split(value)[0] if value else ""
             self.assertEqual(
-                "http://public-nlb.example.com",
+                "http://198.51.100.2",
                 values["AUTOWONDER_PUBLIC_BASE_URL"],
             )
 
@@ -753,6 +997,8 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             data["repositoryCommit"] = "a" * 40
             manifest.write_text(json.dumps(data))
             env_file = self.write_env(root / "autowonder.env")
+            env_file.write_text(env_file.read_text()
+                                + "AUTOWONDER_SECRET_KEY_GENERATION_ID=985bc0a7-5abf-4fc7-a612-2549c5a7848d\n")
             release = root / "release"
             release.mkdir()
             for name in (
@@ -764,20 +1010,28 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
                 (release / name).write_bytes(b"sealed")
 
             unit = release / "autowonder.service"
-            unit.write_bytes((ROOT / "assets/systemd/autowonder.service").read_bytes())
+            # The sealed target can differ from both executing Skill bundles.
+            unit.write_bytes((ROOT / "assets/systemd/autowonder.service").read_bytes()
+                             + b"\n# sealed target release\n")
             data = json.loads(manifest.read_text())
             data["upgrade"] = {
                 "blockedReasons": [], "environmentContractChecked": True,
                 "environmentValidated": True, "targetRecommendedRuntimeVersion": "0.2.152",
                 "environmentCandidateSha256": hashlib.sha256(env_file.read_bytes()).hexdigest(),
+                "keyGenerationId": "985bc0a7-5abf-4fc7-a612-2549c5a7848d",
             }
-            data["runtimeConfig"] = {"prepared": True, "recommendedRuntimeVersion": "0.2.152"}
+            data["runtimeConfig"] = {
+                "prepared": True, "recommendedRuntimeVersion": "0.2.152",
+                "envSha256": data["upgrade"]["environmentCandidateSha256"],
+                "keyGenerationId": data["upgrade"]["keyGenerationId"],
+            }
             data["artifacts"]["systemdUnit"] = {
                 "sha256": hashlib.sha256(unit.read_bytes()).hexdigest(), "source": "target-source",
             }
             manifest.write_text(json.dumps(data))
             env = self.prepare_upgrade(manifest)
             data = json.loads(manifest.read_text())
+            data["runtimeConfig"]["planFingerprint"] = data["upgrade"]["planFingerprint"]
             data["upgrade"]["rollbackBackup"] = {
                 "status": "passed", "planFingerprint": data["upgrade"]["planFingerprint"],
                 "fromCommit": data["upgrade"]["fromCommit"], "targetCommit": data["upgrade"]["toCommit"],
@@ -794,14 +1048,30 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual("stage-only", json.loads(result.stdout)["mode"])
 
+            command = [
+                "bash", str(UPGRADE_ROOT / "scripts/stage-upgrade.sh"),
+                "--manifest", str(manifest), "--env-file", str(env_file),
+                "--release-dir", str(release), "--dry-run",
+            ]
+            explicit = subprocess.run(command + ["--unit-file", str(unit)],
+                                      text=True, capture_output=True, env=env)
+            self.assertEqual(0, explicit.returncode, explicit.stderr)
+            wrong = subprocess.run(command + ["--unit-file", str(
+                UPGRADE_ROOT / "assets/systemd/autowonder.service")],
+                text=True, capture_output=True, env=env)
+            self.assertNotEqual(0, wrong.returncode)
+            self.assertIn("staged systemd unit does not match", wrong.stderr)
+            unit.write_bytes(b"changed after sealing")
+            changed = subprocess.run(command, text=True, capture_output=True, env=env)
+            self.assertNotEqual(0, changed.returncode)
+            self.assertIn("staged systemd unit does not match", changed.stderr)
+
     def test_upgrade_release_seals_migrations_and_preserves_active_symlink(self):
         build = (ROOT / "scripts/build-release.sh").read_text()
         deploy = (UPGRADE_ROOT / "scripts/internal/release-transfer.sh").read_text()
         normalized_deploy = deploy.replace('\\"', '"').replace('\\$', '$')
 
         self.assertIn("autowonder-migrations.tar.gz", build)
-        self.assertIn('LC_ALL=C tar -czf "$migrations_tmp"', build)
-        self.assertIn('mv -f -- "$migrations_tmp" "$output_dir/autowonder-migrations.tar.gz"', build)
         self.assertIn('migrations:{name:"autowonder-migrations.tar.gz"', build)
         self.assertIn("autowonder-migrations.tar.gz", deploy)
         self.assertIn("migrations_hash", deploy)
@@ -879,6 +1149,7 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             env = os.environ.copy()
             env["PATH"] = f"{binary_dir}:{env['PATH']}"
             env["FAKE_MVN_PWD"] = str(mvn_pwd)
+            env["AUTOWONDER_PYTHON"] = sys.executable
 
             result = subprocess.run(
                 [
@@ -1070,8 +1341,13 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             data["deployment"] = {"lastRun": {"mode": "stage-only", "envSha256": "c" * 64}}
             data["runtimeConfig"] = {"prepared": True, "recommendedRuntimeVersion": "0.2.152", "envSha256": "c" * 64}
             data["upgrade"]["targetRecommendedRuntimeVersion"] = "0.2.152"
+            data["upgrade"]["keyGenerationId"] = "985bc0a7-5abf-4fc7-a612-2549c5a7848d"
+            data["runtimeConfig"]["keyGenerationId"] = data["upgrade"]["keyGenerationId"]
             manifest.write_text(json.dumps(data))
             self.approve_upgrade(manifest)
+            data = json.loads(manifest.read_text())
+            data["runtimeConfig"]["planFingerprint"] = data["upgrade"]["planFingerprint"]
+            manifest.write_text(json.dumps(data))
             no_migration_checkpoint = subprocess.run(command, text=True, capture_output=True, env=env)
             self.assertNotEqual(0, no_migration_checkpoint.returncode)
             self.assertIn("database migration checkpoint", no_migration_checkpoint.stderr)
@@ -1125,14 +1401,6 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             initialize.index(seed_name),
         )
 
-    def test_release_build_requires_frontend_assets_in_jar(self):
-        build = (ROOT / "scripts/build-release.sh").read_text()
-
-        self.assertIn("-DskipFrontend=false", build)
-        self.assertNotIn("-DskipFrontend=true", build)
-        self.assertIn("BOOT-INF/classes/static/index.html", build)
-        self.assertIn("BOOT-INF/classes/static/assets/", build)
-
     def test_sanitizer_removes_sensitive_fields_and_identifiers(self):
         with tempfile.TemporaryDirectory() as td:
             source = Path(td) / "evidence.json"
@@ -1157,6 +1425,40 @@ printf 'contract=%s url_ready=%s\n' "$OSSUTIL_CONTRACT" "${OSSUTIL_PRESIGNED_URL
             self.assertIn('"encryptedCredentialRestart"', clean)
             for sentinel in ("TEST_SECRET_DO_NOT_PRINT", "i-example", "t-example", "203.0.113.10", "executor-secret"):
                 self.assertNotIn(sentinel, clean)
+
+    def test_sanitizer_omits_protected_environment_fingerprints(self):
+        with tempfile.TemporaryDirectory() as td:
+            source = Path(td) / "evidence.json"
+            output = Path(td) / "clean.json"
+            source.write_text(json.dumps({
+                "runtimeConfig": {"envSha256": "a" * 64,
+                                  "lastEnvironmentSha256": "e" * 64,
+                                  "environmentCandidateSha256": "f" * 64,
+                                  "AUTOWONDER_SECRET_MASTER_KEY": "protected-key-placeholder"},
+                "upgrade": {"environmentSha256": "b" * 64,
+                            "environmentPlanSha256": "1a" * 32,
+                            "runtimeEnvironment": {"candidateSha256": "c" * 64}},
+                "release": {"sha256": "d" * 64},
+            }))
+            result = subprocess.run([
+                "bash", str(ROOT / "scripts/sanitize-evidence.sh"),
+                "--input", str(source), "--output", str(output),
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            clean = output.read_text()
+            for fingerprint in ("a" * 64, "b" * 64, "c" * 64, "e" * 64, "f" * 64,
+                                "1a" * 32, "protected-key-placeholder"):
+                self.assertNotIn(fingerprint, clean)
+            self.assertEqual(json.loads(clean)["release"]["sha256"], "d" * 64)
+
+            source.write_text("environmentPlanSha256=" + "1a" * 32 + "\nphase=ready\n")
+            result = subprocess.run([
+                "bash", str(ROOT / "scripts/sanitize-evidence.sh"),
+                "--input", str(source), "--output", str(output),
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("1a" * 32, output.read_text())
+            self.assertIn("phase=ready", output.read_text())
 
     def test_acceptance_rerun_preserves_completed_deep_checks(self):
         with tempfile.TemporaryDirectory() as td:

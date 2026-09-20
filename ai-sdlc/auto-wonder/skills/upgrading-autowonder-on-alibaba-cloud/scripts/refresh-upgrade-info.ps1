@@ -5,8 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$DeploySkill = Join-Path $PSScriptRoot '..\..\deploying-autowonder-on-alibaba-cloud'
-. (Join-Path $DeploySkill 'scripts\windows\lib.ps1')
+. (Join-Path $PSScriptRoot 'windows\lib.ps1')
 $manifestData = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
 $profile = 'auto-wonder'
 $region = [string]$manifestData.region

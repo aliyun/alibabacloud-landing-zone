@@ -69,7 +69,7 @@ class InAppWorkspaceAccessRequestedListenerTest {
         assertEquals("WORKSPACE_ACCESS_REQUEST", sent.getType());
         assertEquals("WORKSPACE_ACCESS_REQUEST", sent.getRefType());
         assertEquals(555L, sent.getRefId());
-        assertEquals("/settings/members?tab=requests", sent.getLink());
+        assertEquals("/settings/members?tab=requests&workspaceId=100", sent.getLink());
         assertEquals("有新的权限申请", sent.getTitle());
         assertEquals("李四 申请加入「研发效能部」，申请权限：读写", sent.getContent());
     }
