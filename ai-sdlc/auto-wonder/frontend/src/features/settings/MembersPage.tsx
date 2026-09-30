@@ -1,3 +1,4 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -7,13 +8,14 @@ import {
   Segmented,
   Select,
   Space,
-  Table,
   Tabs,
   Tag,
-  Tooltip,
-} from 'antd';
+  Tooltip} from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import { Table } from '@/shared/theme/ThemedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import { ACCESS_LEVEL_LABEL } from '@/shared/auth/access';
 import type { WorkspaceAccessLevel } from '@/shared/types/common';
 import {
@@ -65,6 +67,9 @@ export function MembersPage() {
   const transferOwnerMutation = useTransferOwner();
 
   const [levelFilter, setLevelFilter] = useState<WorkspaceAccessLevel | 'ALL'>('ALL');
+  const [memberPage, setMemberPage] = useState(1);
+  const [memberPageSize, setMemberPageSize] = usePageSizePreference(
+    'autowonder.members.pageSize', [10, 20, 50, 100], 10);
   const [editTarget, setEditTarget] = useState<MemberVO | null>(null);
   const [removeConfirmUserId, setRemoveConfirmUserId] = useState<number>();
   const [ownerTransferOpen, setOwnerTransferOpen] = useState(false);
@@ -146,7 +151,7 @@ export function MembersPage() {
             <span style={{ fontWeight: 500 }}>{member.nickname || member.username}</span>
             {member.owner && <Tag color="gold">工作空间所有者</Tag>}
           </Space>
-          <div style={{ fontSize: 12, color: '#666' }}>{member.email}</div>
+          <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{member.email}</div>
         </div>
       ),
     },
@@ -164,7 +169,7 @@ export function MembersPage() {
         <Space size={4} wrap>
           {tags.length
             ? tags.map((tag) => <Tag key={tag}>{tag}</Tag>)
-            : <span style={{ color: '#999' }}>-</span>}
+            : <span style={{ color: 'var(--aw-muted)' }}>-</span>}
         </Space>
       ),
     },
@@ -213,7 +218,63 @@ export function MembersPage() {
   ];
 
   return (
-    <Card title="成员管理">
+    <Card className="aw-content-card" title={<PageHeading title="成员管理" />}
+      extra={
+        <Space size={12}>
+          {adminOnlyTip(
+            <Button
+              disabled={!isAdmin}
+              onClick={() =>
+                accessCommand('ADMIN', '移交 Owner', () => setOwnerTransferOpen(true))}
+            >
+              移交 Owner
+            </Button>,
+          )}
+          {activeTab === 'members' && (
+            <Space size={8}>
+              {adminOnlyTip(
+                <Select
+                  showSearch
+                  allowClear
+                  filterOption={false}
+                  aria-label="搜索全局人员"
+                  disabled={!isAdmin}
+                  value={selectedUserId}
+                  placeholder="搜索全局人员"
+                  loading={candidatesLoading}
+                  style={{ width: 240 }}
+                  onSearch={setCandidateKeyword}
+                  onClear={() => {
+                    setSelectedUserId(undefined);
+                    setCandidateKeyword('');
+                  }}
+                  onChange={setSelectedUserId}
+                  options={candidates.map((candidate) => ({
+                    value: candidate.userId,
+                    label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
+                  }))}
+                  notFoundContent={
+                    candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
+                  }
+                />,
+              )}
+              {adminOnlyTip(
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  aria-label="添加成员"
+                  disabled={!isAdmin || selectedUserId === undefined}
+                  loading={addMemberMutation.isPending}
+                  onClick={handleAddMember}
+                >
+                  添加成员
+                </Button>,
+              )}
+            </Space>
+          )}
+        </Space>
+      }
+    >
       <Tabs
         activeKey={activeTab}
         onChange={(key) => {
@@ -225,26 +286,13 @@ export function MembersPage() {
           }
           setSearchParams(next, { replace: true });
         }}
-        tabBarExtraContent={adminOnlyTip(
-          <Button
-            disabled={!isAdmin}
-            onClick={() =>
-              accessCommand('ADMIN', '移交 Owner', () => setOwnerTransferOpen(true))}
-          >
-            移交 Owner
-          </Button>,
-        )}
         items={[
           {
             key: 'members',
             label: '成员管理',
             children: (
               <>
-                <Space
-                  style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}
-                  align="start"
-                  wrap
-                >
+                <div style={{ marginBottom: 16 }}>
                   <Segmented
                     options={[
                       { label: `全部 (${members.length})`, value: 'ALL' },
@@ -253,53 +301,25 @@ export function MembersPage() {
                       { label: '只读', value: 'READ_ONLY' },
                     ]}
                     value={levelFilter}
-                    onChange={(value) => setLevelFilter(value as WorkspaceAccessLevel | 'ALL')}
+                    onChange={(value) => { setLevelFilter(value as WorkspaceAccessLevel | 'ALL'); setMemberPage(1); }}
                   />
-                  <Space.Compact>
-                    {adminOnlyTip(
-                      <Select
-                        showSearch
-                        allowClear
-                        filterOption={false}
-                        aria-label="搜索全局人员"
-                        disabled={!isAdmin}
-                        value={selectedUserId}
-                        placeholder="搜索全局人员"
-                        loading={candidatesLoading}
-                        style={{ width: 280 }}
-                        onSearch={setCandidateKeyword}
-                        onClear={() => {
-                          setSelectedUserId(undefined);
-                          setCandidateKeyword('');
-                        }}
-                        onChange={setSelectedUserId}
-                        options={candidates.map((candidate) => ({
-                          value: candidate.userId,
-                          label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
-                        }))}
-                        notFoundContent={
-                          candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
-                        }
-                      />,
-                    )}
-                    {adminOnlyTip(
-                      <Button
-                        type="primary"
-                        disabled={!isAdmin || selectedUserId === undefined}
-                        loading={addMemberMutation.isPending}
-                        onClick={handleAddMember}
-                      >
-                        添加成员
-                      </Button>,
-                    )}
-                  </Space.Compact>
-                </Space>
+                </div>
                 <Table
                   rowKey="userId"
                   columns={columns}
                   dataSource={filteredMembers}
                   loading={isLoading}
-                  pagination={false}
+                  pagination={{
+                    current: memberPage,
+                    pageSize: memberPageSize,
+                    total: filteredMembers.length,
+                    onChange: (nextPage, nextSize) => {
+                      setMemberPage(nextPage);
+                      if (nextSize !== memberPageSize) setMemberPageSize(nextSize);
+                    },
+                    showSizeChanger: true,
+                    showTotal: (t) => `共 ${t} 条`,
+                  }}
                   scroll={{ x: 880 }}
                 />
               </>

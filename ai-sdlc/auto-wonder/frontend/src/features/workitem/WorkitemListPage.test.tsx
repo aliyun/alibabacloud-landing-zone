@@ -31,6 +31,27 @@ describe('WorkitemListPage', () => {
     vi.restoreAllMocks();
   });
 
+  it('shows only the current user and server pending total under All, and hides the summary under Pending', async () => {
+    useAuthStore.getState().setUser({ id: 42, username: 'zhangsan', nickname: '张三', email: '' });
+    server.use(http.get('/api/workitems', ({ request }) => {
+      const query = new URL(request.url).searchParams;
+      const pending = query.get('statusCategory') === 'PENDING_DECISION';
+      return HttpResponse.json({ success: true, code: '0', data: pageData(pending ? [{
+        id: 1, title: '别人的工单', workType: 'REQ', statusCategory: 'PENDING_DECISION',
+        statusName: '待决策', assigneeType: 'HUMAN', assigneeRef: 99, assigneeDisplayName: '李四', priority: 2,
+      }] : [], query.get('pendingDecisionOnly') === 'true' ? 73 : 100) });
+    }));
+    renderPage();
+    const summary = await screen.findByLabelText('决策人汇总');
+    expect(within(summary).getByText('张三')).toBeInTheDocument();
+    expect(within(summary).getByTitle('73')).toBeInTheDocument();
+    expect(within(summary).queryByText('李四')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('待我决策'));
+    expect(screen.queryByLabelText('决策人汇总')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('全部'));
+    expect(await screen.findByLabelText('决策人汇总')).toBeInTheDocument();
+  });
+
   it('filters watched workitems in every kanban column and table, and remembers the scope', async () => {
     const requests: URLSearchParams[] = [];
     server.use(http.get('/api/workitems', ({ request }) => {
@@ -46,7 +67,7 @@ describe('WorkitemListPage', () => {
     });
     expect(window.localStorage.getItem('autowonder.workitems.scope')).toBe('WATCHED');
     await userEvent.click(screen.getByLabelText('表格视图'));
-    await waitFor(() => expect(requests.some(q => q.get('mineScope') === 'WATCHED' && q.get('size') === '100')).toBe(true));
+    await waitFor(() => expect(requests.some(q => q.get('mineScope') === 'WATCHED' && q.get('size') === '10')).toBe(true));
     view.unmount();
     requests.length = 0;
     renderPage();
@@ -74,7 +95,7 @@ describe('WorkitemListPage', () => {
     expect(screen.getByText('修复搜索Bug')).toBeInTheDocument();
     expect(screen.getAllByText('待处理').length).toBeGreaterThan(0);
     expect(screen.getAllByText('执行中').length).toBeGreaterThan(0);
-    expect(screen.getByText('总工单数 6001 个')).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === '总工单数 6001 个' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
   });
 
   it('shows the 定时执行 icon for scheduled workitems in kanban view', async () => {
@@ -164,13 +185,13 @@ describe('WorkitemListPage', () => {
     expect(screen.getByText('异常')).toBeInTheDocument();
   });
 
-  it('shows 需人工（XXX）tag in kanban for a human-assigned workitem', async () => {
+  it('shows the assignee once without a duplicate intervention tag in kanban', async () => {
     server.use(
       http.get('/api/workitems', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: pageData([
-            { id: 6, title: '人工处理工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+            { id: 6, title: '人工处理工单', workType: 'REQ', statusName: '待处理', statusCategory: 'PENDING_DECISION', priority: 2, assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
           ]),
         });
       }),
@@ -178,16 +199,17 @@ describe('WorkitemListPage', () => {
 
     renderPage();
     expect(await screen.findByText('人工处理工单')).toBeInTheDocument();
-    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+    expect(screen.queryByText(/需人工（蔡何）/)).not.toBeInTheDocument();
+    expect(screen.getByText('当前处理人: 蔡何')).toBeInTheDocument();
   });
 
-  it('shows 需人工（XXX）tag in table status column for a human-assigned workitem', async () => {
+  it('shows 需人工（XXX）tag in table status column for a pending-decision workitem', async () => {
     server.use(
       http.get('/api/workitems', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: pageData([
-            { id: 7, title: '表格人工工单', workType: 'REQ', statusName: '开发中', priority: 2, assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何(10000)', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+            { id: 7, title: '表格人工工单', workType: 'REQ', statusName: '开发中', statusCategory: 'PENDING_DECISION', priority: 2, assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何(10000)', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
           ]),
         });
       }),
@@ -206,8 +228,8 @@ describe('WorkitemListPage', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: pageData([
-            { id: 8, title: '机器工单', workType: 'REQ', statusName: '开发中', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
-            { id: 9, title: '未指派工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+            { id: 8, title: '机器工单', workType: 'REQ', statusName: '开发中', statusCategory: 'PENDING_DECISION', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
+            { id: 9, title: '未指派工单', workType: 'REQ', statusName: '待处理', statusCategory: 'PENDING_DECISION', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-07-05', gmtModified: '2026-07-05' },
           ]),
         });
       }),
@@ -293,10 +315,10 @@ describe('WorkitemListPage', () => {
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
           data: pageData(pendingOnly ? [
-            { id: 1, title: '我的决策', workType: 'REQ', statusName: '开发中', pendingDecision: true, priority: 2, assigneeType: 'HUMAN', assigneeRef: 42, assigneeName: '我', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+            { id: 1, title: '我的决策', workType: 'REQ', statusName: '开发中', statusCategory: 'PENDING_DECISION', pendingDecision: true, priority: 2, assigneeType: 'HUMAN', assigneeRef: 42, assigneeName: '我', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
           ] : [
-            { id: 1, title: '我的决策', workType: 'REQ', statusName: '开发中', pendingDecision: true, priority: 2, assigneeType: 'HUMAN', assigneeRef: 42, assigneeName: '我', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
-            { id: 2, title: '别人的决策', workType: 'REQ', statusName: '开发中', pendingDecision: true, priority: 2, assigneeType: 'HUMAN', assigneeRef: 99, assigneeName: '同事', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+            { id: 1, title: '我的决策', workType: 'REQ', statusName: '开发中', statusCategory: 'PENDING_DECISION', pendingDecision: true, priority: 2, assigneeType: 'HUMAN', assigneeRef: 42, assigneeName: '我', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
+            { id: 2, title: '别人的决策', workType: 'REQ', statusName: '开发中', statusCategory: 'PENDING_DECISION', pendingDecision: true, priority: 2, assigneeType: 'HUMAN', assigneeRef: 99, assigneeName: '同事', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01' },
           ]),
         });
       }),
@@ -328,7 +350,7 @@ describe('WorkitemListPage', () => {
     );
 
     renderPage();
-    expect(await screen.findByText('总工单数 42 个')).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.textContent === '总工单数 42 个' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
   });
 
   it('updates total count when workType filter changes', async () => {
@@ -345,13 +367,13 @@ describe('WorkitemListPage', () => {
     );
 
     renderPage();
-    expect(await screen.findByText('总工单数 120 个')).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.textContent === '总工单数 120 个' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
 
     const selectInput = document.querySelector('.ant-select-selector')!;
     await userEvent.click(selectInput);
     await userEvent.click(await screen.findByTitle('缺陷'));
 
-    expect(await screen.findByText('总工单数 5 个')).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.textContent === '总工单数 5 个' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
   });
 
   it('restores the scope preference from localStorage', async () => {
@@ -575,6 +597,7 @@ describe('WorkitemListPage 看板按状态列查询', () => {
     card: {
       ...card, workType: 'REQ', priority: 2, assigneeType: 'AGENT', assigneeRef: 5,
       assigneeName: '代码助手', version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01',
+      statusCategory: cat,
     },
     cat,
   }));
@@ -734,8 +757,8 @@ describe('WorkitemListPage 关注入口', () => {
 
     const unwatchedIcon = toggles[0].querySelector('.anticon-star')!;
     const watchedIcon = toggles[1].querySelector('.anticon-star')!;
-    expect(unwatchedIcon).not.toHaveStyle('color: #ff6a00');
-    expect(watchedIcon).toHaveStyle('color: #ff6a00');
+    expect(unwatchedIcon).not.toHaveClass('aw-watch-active');
+    expect(watchedIcon).toHaveClass('aw-watch-active');
   });
 
   it('点击未关注行的关注入口发起 POST /watch', async () => {
@@ -827,7 +850,7 @@ describe('WorkitemListPage 拖拽流转集成', () => {
   it('checks workflow rules, submits the guarded transition and refreshes columns', async () => {
     window.localStorage.clear();
     useAuthStore.setState({ accessLevel: 'READ_WRITE' });
-    let current = { id: 91, title: '拖拽集成工单', workType: 'REQ', statusName: '待处理',
+    let current = { id: 91, title: '拖拽集成工单', workType: 'REQ', statusName: '待处理', statusCategory: 'NEW',
       statusNodeId: 20, templateId: 10, version: 3, priority: 3, assigneeType: 'HUMAN' };
     const submitted = vi.fn();
     server.use(
@@ -838,11 +861,11 @@ describe('WorkitemListPage 拖拽流转集成', () => {
       }),
       http.get('/api/workitems/91', () => HttpResponse.json({ success: true, data: current })),
       http.get('/api/status-templates/10', () => HttpResponse.json({ success: true, data: {
-        nodes: [{ id: 21, name: '开发中' }], transitions: [{ fromNodeId: 20, toNodeId: 21 }],
+        nodes: [{ id: 21, name: '开发中', category: 'IN_PROGRESS' }], transitions: [{ fromNodeId: 20, toNodeId: 21 }],
       } })),
       http.post('/api/workitems/91/transition', async ({ request }) => {
         submitted(await request.json());
-        current = { ...current, statusNodeId: 21, statusName: '开发中', version: 4 };
+        current = { ...current, statusNodeId: 21, statusName: '开发中', statusCategory: 'IN_PROGRESS', version: 4 };
         return HttpResponse.json({ success: true, data: current });
       }),
     );

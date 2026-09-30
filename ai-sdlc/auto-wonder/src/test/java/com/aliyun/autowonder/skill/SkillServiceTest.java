@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.skill;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.agent.AgentSkillDao;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;

@@ -108,7 +108,18 @@
     <select id="listAuditItems" resultType="com.aliyun.autowonder.insights.dto.InsightAuditItemVO">
         SELECT
             DATE_FORMAT(al.gmt_create, '%Y-%m-%d %H:%i:%s') as timestamp,
-            COALESCE(a.name, CONCAT('user-', al.actor_id)) as worker,
+            CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.actorType')) = 'HUMAN'
+                    OR (JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.actorType')) IS NULL AND a.id IS NULL)
+                THEN COALESCE(u.nickname, u.username, CONCAT('user-', al.actor_id))
+                ELSE COALESCE(a.name, CONCAT('agent-', al.actor_id))
+            END as worker,
+            CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.actorType')) = 'HUMAN'
+                    OR (JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.actorType')) IS NULL AND a.id IS NULL)
+                THEN 'HUMAN'
+                ELSE 'AGENT'
+            END as operatorType,
             al.action as eventType,
             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.detail_json, '$.summary')), CONCAT(al.target_type, '#', al.target_id)) as detail,
             CASE
@@ -118,6 +129,7 @@
             END as riskLevel
         FROM audit_log al
         LEFT JOIN agent a ON al.actor_id = a.id AND al.tenant_id = a.tenant_id
+        LEFT JOIN `user` u ON al.actor_id = u.id AND u.is_deleted = 0
         WHERE al.tenant_id = #{tenantId}
           AND al.gmt_create >= DATE_SUB(NOW(), INTERVAL
             <choose>
@@ -197,6 +209,33 @@
           AND e.event_type IN ('CREATE', 'ASSIGN', 'STATUS_CHANGE')
         ORDER BY w.id, e.gmt_create, e.id
         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <sql id="participationDispatchFilter">
+        d.tenant_id = #{tenantId} AND d.is_deleted = 0
+        <if test="_databaseId == 'autowonder-source-aware'">AND d.source_type = 'WORKITEM'</if>
+        AND d.gmt_create &lt; #{cutoffExclusive}
+        AND d.workitem_id IN
+        <foreach collection="workitemIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </sql>
+
+    <!-- Include a marker for dispatches without boundaries so missing traces cannot look complete. -->
+    <select id="listParticipationExecutionEvents" resultType="com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO">
+        SELECT d.workitem_id AS workitemId, d.id AS dispatchId, 0 AS id, 0 AS sequenceOrder,
+               'dispatch.observed' AS eventType, d.gmt_create AS eventTime, NULL AS detailJson
+        FROM dispatch d WHERE <include refid="participationDispatchFilter"/>
+        UNION ALL
+        SELECT d.workitem_id AS workitemId, d.id AS dispatchId, e.id AS id,
+               COALESCE(e.seq, e.id) AS sequenceOrder,
+               e.event_type AS eventType, e.event_time AS eventTime,
+               JSON_OBJECT('sessionId', CASE WHEN JSON_VALID(e.detail_json)
+                   THEN JSON_UNQUOTE(JSON_EXTRACT(e.detail_json, '$.sessionId')) ELSE NULL END) AS detailJson
+        FROM dispatch d JOIN dispatch_runtime_event e ON e.dispatch_id = d.id AND e.tenant_id = d.tenant_id
+        WHERE <include refid="participationDispatchFilter"/>
+          AND e.gmt_create &lt; #{cutoffExclusive}
+          AND e.event_type IN ('session.started', 'session.resumed', 'session.forked',
+                              'session.interrupted', 'session.completed', 'session.failed', 'session.cancelled')
+        ORDER BY workitemId, dispatchId, sequenceOrder, id
     </select>
 
 </mapper>

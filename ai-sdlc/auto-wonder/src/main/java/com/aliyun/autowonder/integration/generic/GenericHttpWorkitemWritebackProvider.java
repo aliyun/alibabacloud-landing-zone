@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.integration.generic;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.integration.aone.AoneOpenApiConfig;
 import com.aliyun.autowonder.integration.aone.AoneOpenApiException;
 import okhttp3.MediaType;

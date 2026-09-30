@@ -1,6 +1,5 @@
 package com.aliyun.autowonder.mcp.dto;
 
-import com.alibaba.fastjson.annotation.JSONField;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Getter;
 import lombok.Setter;
@@ -28,7 +27,6 @@ public class McpRpcResponse {
         return response;
     }
 
-    @JSONField(name = "error")
     public RpcError getError() {
         return error;
     }

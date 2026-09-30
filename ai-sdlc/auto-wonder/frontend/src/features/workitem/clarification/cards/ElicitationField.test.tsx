@@ -1,8 +1,9 @@
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ElicitationField } from './ElicitationField';
 import { OTHER_SENTINEL } from './elicitationAnswer';
-import { CLARIFICATION_THEME } from '../theme';
+
 import type { ElicitationField as F } from './schemaForm';
 
 const selectField: F = {
@@ -123,12 +124,16 @@ describe('ElicitationField', () => {
   it('单选「有其他想法」是 1px 浅色细虚线框', () => {
     render(<ElicitationField field={selectField} value={undefined} otherText="" onValueChange={noop} onOtherTextChange={noop} />);
     expect(screen.getByTestId('elicitation-option-q0-other').closest('label'))
-      .toHaveStyle({ borderWidth: '1px', borderStyle: 'dashed', borderColor: CLARIFICATION_THEME.controlBorder });
+      .toHaveStyle({ borderWidth: '1px', borderStyle: 'dashed' });
+    const html = renderToStaticMarkup(<ElicitationField field={selectField} value={undefined} otherText="" onValueChange={noop} onOtherTextChange={noop} />);
+    expect(html).toContain('border-color:var(--aw-border)');
   });
 
   it('多选「有其他想法」是 1px 浅色细虚线框', () => {
     render(<ElicitationField field={multiField} value={[]} otherText="" onValueChange={noop} onOtherTextChange={noop} />);
     expect(screen.getByTestId('elicitation-option-q1-other').closest('label'))
-      .toHaveStyle({ borderWidth: '1px', borderStyle: 'dashed', borderColor: CLARIFICATION_THEME.controlBorder });
+      .toHaveStyle({ borderWidth: '1px', borderStyle: 'dashed' });
+    const html = renderToStaticMarkup(<ElicitationField field={selectField} value={undefined} otherText="" onValueChange={noop} onOtherTextChange={noop} />);
+    expect(html).toContain('border-color:var(--aw-border)');
   });
 });

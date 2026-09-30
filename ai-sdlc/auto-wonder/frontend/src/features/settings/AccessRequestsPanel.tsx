@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Button, Empty, Input, Modal, Radio, Space, Table, Tag } from 'antd';
+import { Button, Empty, Input, Modal, Radio, Space, Tag } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { ACCESS_LEVEL_LABEL } from '@/shared/auth/access';
@@ -147,7 +148,7 @@ export function AccessRequestsPanel() {
         cancelText="取消"
         okButtonProps={{ danger: true }}
       >
-        <p style={{ color: '#697386' }}>
+        <p style={{ color: 'var(--aw-muted)' }}>
           拒绝 {rejectTarget ? (rejectTarget.requesterName || rejectTarget.requesterId) : ''} 的申请
         </p>
         <Input.TextArea

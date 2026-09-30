@@ -1,5 +1,6 @@
-import { Card, Button, Space, Alert } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
+import { Card, Alert } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -18,16 +19,14 @@ export function SdlcGeneratePage() {
 
   return (
     <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/sdlcs')}>返回</Button>
-      </Space>
+
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
         message="AI 生成的流程会落库为草稿（DRAFT），需到 SDLC 列表显式启用后才会生效。"
       />
-      <Card title="AI 生成 SDLC" styles={{ body: { height: '70vh', padding: 0 } }}>
+      <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/sdlcs" label="返回" /><span>AI 生成 SDLC</span></span>} />} styles={{ body: { height: '70vh', padding: 0 } }}>
         <div
           style={{ height: '100%' }}
           onClickCapture={(event) => {

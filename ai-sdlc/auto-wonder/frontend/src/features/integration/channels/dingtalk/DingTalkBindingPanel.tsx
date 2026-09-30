@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Badge, Button, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography, message } from 'antd';
+import { Badge, Button, Card, Popconfirm, Space, Switch, Tag, Tooltip, Typography, message } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
@@ -89,7 +90,7 @@ export function DingTalkBindingPanel() {
   const columns: ColumnsType<DingTalkBinding> = [
     { title: '机器人', dataIndex: 'robotCode', width: 180, render: (v) => <Text code>{v}</Text> },
     {
-      title: '关联数字人',
+      title: '关联数字员工',
       dataIndex: 'agentId',
       render: (agentId: number) => agentNameById.get(agentId) || `#${agentId}`,
     },
@@ -198,16 +199,14 @@ export function DingTalkBindingPanel() {
   ];
 
   return (
-    <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text type="secondary">
-          绑定一个钉钉机器人到一个数字人。群成员 @该机器人 即可与数字人多轮对话。
-        </Text>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建绑定
-        </Button>
-      </div>
+    <Card title="钉钉机器人绑定" extra={
+      <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建绑定</Button>
+    }>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        绑定一个钉钉机器人到一个数字员工。群成员 @该机器人 即可与数字员工多轮对话。
+      </Typography.Paragraph>
       <Table
+        scroll={{ x: 900 }}
         rowKey="id"
         columns={columns}
         dataSource={bindings}
@@ -222,6 +221,6 @@ export function DingTalkBindingPanel() {
         onClose={() => setDrawerOpen(false)}
         onSaved={() => undefined}
       />
-    </Space>
+    </Card>
   );
 }

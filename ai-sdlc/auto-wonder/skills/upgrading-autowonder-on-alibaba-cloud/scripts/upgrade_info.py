@@ -957,7 +957,9 @@ def sync_manifest(args: argparse.Namespace) -> Dict[str, Any]:
     applied = migration.get("applied") if isinstance(migration.get("applied"), list) else []
     migration_status = migration.get("status") or "unknown"
     rollback = upgrade.get("rollbackBackup") if isinstance(upgrade.get("rollbackBackup"), dict) else {}
-    rollback_available = rollback.get("status") == "passed" and not applied
+    database_mutation_started = upgrade.get("databaseMutationStarted") or migration_status in {
+        "running", "failed", "awaiting-review", "passed", "applied"}
+    rollback_available = rollback.get("status") == "passed" and not applied and not database_mutation_started
     source_commit = upgrade.get("fromCommit") or nested(manifest, "deployment", "activeCommit") or None
     target_commit = upgrade.get("toCommit") or manifest.get("repositoryCommit") or None
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + fingerprint[:12]

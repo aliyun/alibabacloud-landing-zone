@@ -44,35 +44,21 @@ const okPage = (list: unknown[]) =>
     data: { list, total: list.length, pageNum: 1, pageSize: 100 },
   });
 
-function mockMemoryApis({ memories = [], memoryRefs = [] }: {
-  memories?: unknown[];
-  memoryRefs?: Array<{ memoryId: number; source: string }>;
-} = {}) {
+function mockMemoryApis() {
   server.use(
     http.get('/api/agents/1', () => ok(agentData)),
-    http.get('/api/agents/1/versions/1', () => ok({ ...versionData, memoryRefs })),
+    http.get('/api/agents/1/versions/1', () => ok(versionData)),
     http.get('/api/repos', () => okPage([])),
     http.get('/api/skills', () => okPage([])),
-    http.get('/api/memories', () => okPage(memories)),
     http.get('/api/sdlcs', () => okPage([])),
   );
-}
-
-async function findMemoryCard() {
-  return (await screen.findByText('记忆导入')).closest('.ant-card') as HTMLElement;
-}
-
-async function openMemoryImportDialog() {
-  await userEvent.click(screen.getByRole('button', { name: /导入记忆/ }));
-  const dialog = await screen.findByRole('dialog', { name: /导入记忆/ });
-  await userEvent.click(within(dialog).getAllByRole('combobox')[0]);
-  return dialog;
 }
 
 describe('AgentEditPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    mockMemoryApis();
     server.use(
       http.get('/api/environment-variables', () => ok([])),
     );
@@ -122,25 +108,25 @@ describe('AgentEditPage', () => {
     renderPage();
     expect(await screen.findByText('仓库权限')).toBeInTheDocument();
     expect(screen.getByText('能力配置')).toBeInTheDocument();
-    expect(screen.getByText('AutoWonder MCP 已内置')).toBeInTheDocument();
-    expect(screen.getByText('记忆导入')).toBeInTheDocument();
+    expect(screen.getByText('平台 MCP 已内置')).toBeInTheDocument();
+    expect(screen.queryByText('记忆导入')).not.toBeInTheDocument();
   });
 
-  it('prefills repo skill and memory relations from version detail', async () => {
+  it('prefills repo and skill relations without version-bound memory relations', async () => {
     server.use(
       http.get('/api/agents/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: agentData })),
       http.get('/api/agents/1/versions/1', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: {
           ...versionData,
-          repoPerms: [{ repoId: 11, permLevel: 'WRITE', allowedBranchPatterns: ['release/*'] }, { repoId: 11, permLevel: 'WRITE', allowedBranchPatterns: ['release/*'] }],
+          repoPerms: [{ repoId: 11, permLevel: 'WRITE' }, { repoId: 11, permLevel: 'WRITE' }],
           skills: [{ skillId: 22 }, { skillId: 22 }],
           memoryRefs: [{ memoryId: 33, source: 'ORG' }, { memoryId: 33, source: 'ORG' }],
         },
       })),
       http.get('/api/repos', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 11, name: 'web-repo' }], total: 1, pageNum: 1, pageSize: 100 } })),
       http.get('/api/skills', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 22, name: 'Code Review', code: 'CR' }], total: 1, pageNum: 1, pageSize: 100 } })),
-      http.get('/api/memories', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 33, title: 'React 规范', contentMd: '第一行正文\n第二行正文', status: 'ADOPTED' }], total: 1, pageNum: 1, pageSize: 100 } })),
+      http.get('/api/memories', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [{ id: 33, contentMd: 'React rules' }], total: 1, pageNum: 1, pageSize: 100 } })),
       http.get('/api/sdlcs', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: { list: [], total: 0, pageNum: 1, pageSize: 100 } })),
     );
 
@@ -148,52 +134,12 @@ describe('AgentEditPage', () => {
     expect(await screen.findByText('web-repo')).toBeInTheDocument();
     expect(screen.getAllByText('web-repo')).toHaveLength(1);
     expect(screen.getByText('WRITE')).toBeInTheDocument();
-    expect(screen.getByText('release/*')).toBeInTheDocument();
     expect(screen.getByText('Code Review')).toBeInTheDocument();
-    expect(screen.getByText('React 规范')).toBeInTheDocument();
     expect(screen.getAllByText('Code Review')).toHaveLength(1);
-    expect(screen.getAllByText('React 规范')).toHaveLength(1);
-    expect(screen.queryByText(/第一行正文/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/第二行正文/)).not.toBeInTheDocument();
+    expect(screen.queryByText('React rules')).not.toBeInTheDocument();
   });
 
-  it('edits branch patterns through the existing repository permission endpoint', async () => {
-    let savedBody: unknown = null;
-    server.use(
-      http.get('/api/agents/1', () => ok(agentData)),
-      http.get('/api/agents/1/versions/1', () => ok({
-        ...versionData,
-        repoPerms: [{ repoId: 11, permLevel: 'WRITE', allowedBranchPatterns: ['release/*'] }],
-      })),
-      http.get('/api/repos', () => okPage([{ id: 11, name: 'web-repo' }])),
-      http.get('/api/skills', () => okPage([])),
-      http.get('/api/memories', () => okPage([])),
-      http.get('/api/sdlcs', () => okPage([])),
-      http.post('/api/agents/1/repos', async ({ request }) => {
-        savedBody = await request.json();
-        return ok(null);
-      }),
-    );
-
-    renderPage();
-    const repoName = await screen.findByText('web-repo');
-    const row = repoName.closest('tr') as HTMLElement;
-    expect(within(row).getByText('release/*')).toBeInTheDocument();
-    await userEvent.click(within(row).getByRole('button', { name: '编辑 web-repo 分支规则' }));
-    const dialog = await screen.findByRole('dialog', { name: '编辑仓库权限' });
-    const patternsInput = within(dialog).getByRole('combobox', { name: '允许提交的分支' });
-    await userEvent.type(patternsInput, 'develop{enter}');
-    await userEvent.click(within(dialog).getByRole('button', { name: /OK/ }));
-
-    await waitFor(() => expect(savedBody).toEqual({
-      repoId: 11,
-      permLevel: 'WRITE',
-      allowedBranchPatterns: ['release/*', 'develop'],
-    }));
-    expect(within(row).getByText('develop')).toBeInTheDocument();
-  });
-
-  it('uses multi-select controls for repositories, capabilities, and memories', async () => {
+  it('uses multi-select controls for repositories and capabilities only', async () => {
     server.use(
       http.get('/api/agents/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: agentData })),
       http.get('/api/agents/1/versions/1', () => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: versionData })),
@@ -215,9 +161,7 @@ describe('AgentEditPage', () => {
     expect(skillPlaceholder.closest('.ant-select')).toHaveClass('ant-select-multiple');
     await userEvent.click(within(skillPlaceholder.closest('.ant-modal') as HTMLElement).getByRole('button', { name: /Cancel/ }));
 
-    await userEvent.click(screen.getByRole('button', { name: /导入记忆/ }));
-    const memoryPlaceholder = await screen.findByText('选择记忆（可多选）');
-    expect(memoryPlaceholder.closest('.ant-select')).toHaveClass('ant-select-multiple');
+    expect(screen.queryByRole('button', { name: /导入记忆/ })).not.toBeInTheDocument();
   });
 
   it('shows persistent draft feedback after saving config', async () => {
@@ -302,93 +246,7 @@ describe('AgentEditPage', () => {
     expect(await screen.findByText('当前版本不是草稿,无法编辑')).toBeInTheDocument();
   });
 
-  it('lists only adopted memories by title in the import dialog', async () => {
-    const imported: Array<{ memoryId: number; source: string }> = [];
-    mockMemoryApis({
-      memories: [
-        { id: 41, title: '待审核记忆', contentMd: '待审核正文', status: 'PENDING' },
-        { id: 42, title: '已采纳记忆', contentMd: '已采纳正文首行', status: 'ADOPTED' },
-        { id: 43, title: '已驳回记忆', contentMd: '已驳回正文', status: 'REJECTED' },
-      ],
-    });
-    server.use(
-      http.post('/api/agents/1/memories', async ({ request }) => {
-        imported.push(await request.json() as { memoryId: number; source: string });
-        return ok(null);
-      }),
-    );
-
-    renderPage();
-    expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
-
-    const dialog = await openMemoryImportDialog();
-
-    const option = await screen.findByText('已采纳记忆');
-    const dropdown = option.closest('.ant-select-dropdown') as HTMLElement;
-    expect(within(dropdown).queryByText('待审核记忆')).not.toBeInTheDocument();
-    expect(within(dropdown).queryByText('已驳回记忆')).not.toBeInTheDocument();
-    expect(within(dropdown).queryByText(/已采纳正文首行/)).not.toBeInTheDocument();
-
-    await userEvent.click(option);
-    await userEvent.click(within(dialog).getByRole('button', { name: /OK/ }));
-
-    await waitFor(() => expect(imported).toEqual([{ memoryId: 42, source: 'ORG' }]));
-    expect(await within(await findMemoryCard()).findByText('已采纳记忆')).toBeInTheDocument();
-  });
-
-  it('falls back to #id for adopted memories without a usable title', async () => {
-    mockMemoryApis({
-      memories: [
-        { id: 51, title: '   ', contentMd: '空白标题正文', status: 'ADOPTED' },
-        { id: 52, title: null, contentMd: null, status: 'ADOPTED' },
-      ],
-    });
-
-    renderPage();
-    expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
-
-    await openMemoryImportDialog();
-
-    // Regression guard: null/blank title or contentMd must not throw while building options.
-    expect(await screen.findByText('#51')).toBeInTheDocument();
-    expect(screen.getByText('#52')).toBeInTheDocument();
-    expect(screen.queryByText(/空白标题正文/)).not.toBeInTheDocument();
-  });
-
-  it('falls back to #id when a bound memory is missing from the memory list', async () => {
-    mockMemoryApis({ memoryRefs: [{ memoryId: 77, source: 'ORG' }] });
-
-    renderPage();
-    expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
-
-    expect(await within(await findMemoryCard()).findByText('#77')).toBeInTheDocument();
-  });
-
-  it('keeps titles of bound unreviewed memories and hides them from the import dialog', async () => {
-    mockMemoryApis({
-      memoryRefs: [{ memoryId: 61, source: 'ORG' }],
-      memories: [
-        { id: 61, title: '历史待审核记忆', contentMd: '历史正文', status: 'PENDING' },
-        { id: 62, title: '可导入记忆', contentMd: '可导入正文', status: 'ADOPTED' },
-      ],
-    });
-
-    renderPage();
-    expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
-
-    // 已绑定的历史未审核记忆仍按标题展示，不退化为 #id。
-    expect(await within(await findMemoryCard()).findByText('历史待审核记忆')).toBeInTheDocument();
-
-    await openMemoryImportDialog();
-
-    const option = await screen.findByText('可导入记忆');
-    const dropdown = option.closest('.ant-select-dropdown') as HTMLElement;
-    expect(within(dropdown).queryByText('历史待审核记忆')).not.toBeInTheDocument();
-  });
-
   it('prefills the agent name and avatar inputs from the agent row', async () => {
-    mockMemoryApis();
-
     renderPage();
     expect(await screen.findByText(/编辑配置/)).toBeInTheDocument();
 
@@ -400,7 +258,6 @@ describe('AgentEditPage', () => {
   it('patches only the agent row when the display name changes', async () => {
     let patched: unknown = null;
     let configBody: Record<string, unknown> | null = null;
-    mockMemoryApis();
     server.use(
       http.patch('/api/agents/1', async ({ request }) => {
         patched = await request.json();
@@ -429,7 +286,6 @@ describe('AgentEditPage', () => {
 
   it('does not patch the agent row when name and avatar are unchanged', async () => {
     const patched: unknown[] = [];
-    mockMemoryApis();
     server.use(
       http.patch('/api/agents/1', async ({ request }) => {
         patched.push(await request.json());
@@ -475,7 +331,6 @@ describe('AgentEditPage', () => {
   it('persists a rename before submitting for review', async () => {
     const patched: unknown[] = [];
     let submitted = false;
-    mockMemoryApis();
     server.use(
       http.patch('/api/agents/1', async ({ request }) => {
         patched.push(await request.json());

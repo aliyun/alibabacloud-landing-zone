@@ -22,5 +22,4 @@ public class AoneBindingVO {
     private Date lastSuccessAt;
     private String lastError;
     private Boolean reusedExistingBinding;
-    private Boolean statusTemplateSynced;
 }

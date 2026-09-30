@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.scheduledtask;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDO;

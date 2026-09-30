@@ -12,24 +12,17 @@ import com.aliyun.autowonder.integration.dto.AoneTestConnectionResult;
 import com.aliyun.autowonder.integration.provider.ExternalProject;
 import com.aliyun.autowonder.integration.provider.ExternalProjectMember;
 import com.aliyun.autowonder.integration.provider.ExternalProjectProvider;
-import com.aliyun.autowonder.integration.provider.ExternalIssueType;
-import com.aliyun.autowonder.integration.provider.ExternalStatusOption;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemProvider;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemSummary;
 import com.aliyun.autowonder.integration.provider.PageResult;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import org.springframework.stereotype.Service;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 @Service
 public class AoneIntegrationService {
 
-    private static final Logger log = LoggerFactory.getLogger(AoneIntegrationService.class);
     public static final String PROVIDER = "AONE";
 
     private final ExternalProjectBindingDao bindingDao;
@@ -37,37 +30,27 @@ public class AoneIntegrationService {
     private final ExternalProjectProvider projectProvider;
     private final ExternalWorkitemProvider workitemProvider;
     private final AoneInboundSyncService inboundSyncService;
-    private final ExternalStatusBootstrapService statusBootstrapService;
 
     public AoneIntegrationService(ExternalProjectBindingDao bindingDao,
                                   SecretCrypto secretCrypto,
                                   ExternalProjectProvider projectProvider,
                                   ExternalWorkitemProvider workitemProvider,
-                                  AoneInboundSyncService inboundSyncService,
-                                  ExternalStatusBootstrapService statusBootstrapService) {
+                                  AoneInboundSyncService inboundSyncService) {
         this.bindingDao = bindingDao;
         this.secretCrypto = secretCrypto;
         this.projectProvider = projectProvider;
         this.workitemProvider = workitemProvider;
         this.inboundSyncService = inboundSyncService;
-        this.statusBootstrapService = statusBootstrapService;
     }
 
-    // Deliberately NOT @Transactional: this method makes dozens of throttled remote Aone calls in
-    // bootstrapStatusTemplates. A surrounding transaction would pin a pooled DB connection and hold
-    // the single hot aone_rate_bucket row lock (touched by the rate limiter on every remote call)
-    // for minutes, starving the inbound poller until Lock wait timeout. The binding insert is atomic
-    // on its own and the status bootstrap is idempotent, so no transaction is required.
     public AoneBindingVO createBinding(AoneBindingRequest req, long tenantId, long userId) {
         validate(req);
         String externalProjectId = req.getExternalProjectId().trim();
         ExternalProjectBindingDO existing = bindingDao.findByProject(tenantId, PROVIDER, externalProjectId);
         if (existing != null) {
             existing.setWritebackStaffId(defaultIfBlank(existing.getWritebackStaffId(), req.getWritebackStaffId()));
-            boolean statusTemplateSynced = bootstrapStatusTemplates(existing, config(existing), userId);
             AoneBindingVO vo = toVO(existing);
             vo.setReusedExistingBinding(true);
-            vo.setStatusTemplateSynced(statusTemplateSynced);
             return vo;
         }
         ExternalProjectBindingDO binding = new ExternalProjectBindingDO();
@@ -77,17 +60,15 @@ public class AoneIntegrationService {
         binding.setExternalProjectName(req.getExternalProjectName());
         binding.setBaseUrl(req.getBaseUrl().trim());
         binding.setClientKey(defaultIfBlank(req.getClientKey(), "auto-wonder"));
-        binding.setCredentialRef(secretCrypto.encrypt(req.getAccessSecret().trim()));
+        binding.setCredentialRef(req.getAccessSecret().trim());
         binding.setRegionId(defaultIfBlank(req.getRegionId(), "1"));
         binding.setWritebackStaffId(req.getWritebackStaffId().trim());
         binding.setPollIntervalSeconds(req.getPollIntervalSeconds() == null ? 3 : req.getPollIntervalSeconds());
         binding.setEnabled(Boolean.FALSE.equals(req.getEnabled()) ? 0 : 1);
         binding.setCreatorId(userId);
         bindingDao.insert(binding);
-        boolean statusTemplateSynced = bootstrapStatusTemplates(binding, config(req), userId);
         AoneBindingVO vo = toVO(binding);
         vo.setReusedExistingBinding(false);
-        vo.setStatusTemplateSynced(statusTemplateSynced);
         return vo;
     }
 
@@ -179,76 +160,6 @@ public class AoneIntegrationService {
                 || req.getExternalProjectId() == null || req.getExternalProjectId().isBlank()
                 || req.getWritebackStaffId() == null || req.getWritebackStaffId().isBlank()) {
             throw new BizException(ErrorCode.PARAM_INVALID);
-        }
-    }
-
-    private boolean bootstrapStatusTemplates(ExternalProjectBindingDO binding, AoneOpenApiConfig config, long userId) {
-        List<ExternalIssueType> issueTypes = enabledIssueTypes(binding, config);
-        log.info("Aone status template bootstrap started bindingId={} projectId={} issueTypeCount={}",
-                binding.getId(), binding.getExternalProjectId(), issueTypes.size());
-        boolean syncedAnyStatus = false;
-        for (ExternalIssueType issueType : issueTypes) {
-            String workType = workType(issueType.getStamp());
-            Integer issueTypeId = intValue(issueType.getExternalId());
-            if (workType == null || issueTypeId == null) {
-                log.warn("Aone status template bootstrap skip unsupported issueType bindingId={} projectId={} stamp={} issueTypeId={} name={}",
-                        binding.getId(), binding.getExternalProjectId(), issueType.getStamp(), issueType.getExternalId(),
-                        issueType.getName());
-                continue;
-            }
-            List<ExternalStatusOption> statuses = workitemProvider.listStatusRules(config, binding.getExternalProjectId(),
-                    issueTypeId);
-            log.info("Aone status template bootstrap issueType bindingId={} projectId={} workType={} issueTypeId={} issueTypeName={} statusCount={}",
-                    binding.getId(), binding.getExternalProjectId(), workType, issueTypeId, issueType.getName(),
-                    statuses.size());
-            if (statuses.isEmpty()) {
-                log.warn("Aone status rule list is empty bindingId={} projectId={} workType={} issueTypeId={} issueTypeName={}",
-                        binding.getId(), binding.getExternalProjectId(), workType, issueTypeId, issueType.getName());
-            }
-            statusBootstrapService.ensureStatuses(binding, workType, String.valueOf(issueTypeId), statuses, userId);
-            syncedAnyStatus = syncedAnyStatus || !statuses.isEmpty();
-        }
-        return syncedAnyStatus;
-    }
-
-    private List<ExternalIssueType> enabledIssueTypes(ExternalProjectBindingDO binding, AoneOpenApiConfig config) {
-        List<ExternalIssueType> result = new ArrayList<>();
-        for (String stamp : List.of("Req", "Bug", "Task")) {
-            try {
-                List<ExternalIssueType> issueTypes = workitemProvider.listEnabledIssueTypes(config,
-                        binding.getExternalProjectId(), binding.getWritebackStaffId(), stamp);
-                log.info("Aone enabled issue types loaded bindingId={} projectId={} stamp={} count={}",
-                        binding.getId(), binding.getExternalProjectId(), stamp, issueTypes.size());
-                result.addAll(issueTypes);
-            } catch (RuntimeException e) {
-                log.warn("Aone enabled issue types lookup failed bindingId={} projectId={} stamp={} error={}",
-                        binding.getId(), binding.getExternalProjectId(), stamp, e.getMessage());
-                log.debug("Aone enabled issue types lookup exception", e);
-            }
-        }
-        return result;
-    }
-
-    private String workType(String stamp) {
-        if (stamp == null) {
-            return null;
-        }
-        return switch (stamp.toLowerCase(Locale.ROOT)) {
-            case "req" -> "REQ";
-            case "bug" -> "BUG";
-            case "task" -> "TASK";
-            default -> null;
-        };
-    }
-
-    private Integer intValue(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException ignored) {
-            return null;
         }
     }
 

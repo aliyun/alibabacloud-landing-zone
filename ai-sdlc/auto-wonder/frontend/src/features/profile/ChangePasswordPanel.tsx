@@ -45,7 +45,6 @@ export function ChangePasswordPanel() {
         layout="vertical"
         disabled={mutation.isPending}
         onFinish={() => mutation.mutate()}
-        style={{ maxWidth: 420 }}
       >
         <Form.Item
           label="当前密码"

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { useMemo } from 'react';
 import { Empty, Result, Segmented, Select, Spin } from 'antd';
 import { useInsightAudit, useInsightMetrics, useInsightWorkers } from './hooks';
 import { buildInsightModel } from './insightModel';
@@ -12,6 +13,8 @@ import { MemberDeliveryTab } from './components/MemberDeliveryTab';
 import { ParticipationTab } from './components/ParticipationTab';
 import RealtimeDashboard from './realtime/RealtimeDashboard';
 import type { TimeRange } from './types';
+import './InsightsPage.css';
+import { useInsightPreference } from './useInsightPreference';
 
 const TIME_RANGES = [
   { label: '近7天', value: '7d' },
@@ -20,9 +23,10 @@ const TIME_RANGES = [
 ];
 
 export function InsightsPage() {
-  const [tab, setTab] = useState<'realtime' | 'metrics' | 'audit' | 'participation' | 'members'>('realtime');
-  const [workerId, setWorkerId] = useState<number | undefined>();
-  const [timeRange, setTimeRange] = useState<TimeRange>('30d');
+  const [tab, setTab] = useInsightPreference<'realtime' | 'metrics' | 'audit' | 'participation' | 'members'>('tab', 'realtime', v => typeof v === 'string' && ['realtime', 'audit', 'participation', 'members'].includes(v));
+  const [riskFilter, setRiskFilter] = useInsightPreference('audit.risk', '', v => typeof v === 'string' && ['', 'high', 'medium', 'low'].includes(v));
+  const [workerId, setWorkerId] = useInsightPreference<number | undefined>('audit.worker', undefined, v => typeof v === 'number' && Number.isSafeInteger(v) && v > 0);
+  const [timeRange, setTimeRange] = useInsightPreference<TimeRange>('audit.range', '30d', v => typeof v === 'string' && ['7d', '30d', '90d'].includes(v));
 
   const metricsQuery = useInsightMetrics(workerId, timeRange);
   const workersQuery = useInsightWorkers();
@@ -40,49 +44,56 @@ export function InsightsPage() {
     metricsQuery.isLoading || workersQuery.isLoading || auditSummaryQuery.isLoading;
   const metricsUnavailable = metricsQuery.isError || !metrics || !model;
 
-  return (
-    <div>
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 600, color: '#1f2937', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          数据洞察
-        </h2>
-        <p style={{ fontSize: 13, color: '#9ca3af', marginTop: 4 }}>成本、效率、稳定性、安全 — 全方位洞察数字员工执行情况</p>
-      </div>
+  const auditFilters = (
+    <div className="insight-filter-group">
+      <span style={{ fontSize: 12, color: 'var(--aw-muted)' }}>数字员工</span>
+      <Select
+        aria-label="数字员工"
+        placeholder="全部数字员工"
+        allowClear
+        value={workerId}
+        onChange={(value) => setWorkerId(value)}
+        options={workers.map((worker) => ({ value: worker.id, label: worker.name, title: worker.name }))}
+        style={{ width: 220 }}
+        optionLabelProp="label"
+      />
+      <span style={{ fontSize: 12, color: 'var(--aw-muted)' }}>日期</span>
+      <Segmented
+        options={TIME_RANGES}
+        value={timeRange}
+        onChange={(v) => setTimeRange(v as TimeRange)}
+      />
+    </div>
+  );
 
-      {/* Filter Toolbar */}
-      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <Segmented
+  return (
+    <div className="insights-page">
+      <PageHeading title="数据洞察" description="实时执行、风险审计、人机协作与成员交付"
+        extra={<Segmented
           value={tab}
-          onChange={(v) => setTab(v as 'realtime' | 'metrics' | 'audit' | 'participation' | 'members')}
+          onChange={(v) => { setTab(v as 'realtime' | 'metrics' | 'audit' | 'participation' | 'members'); }}
           options={[
             { label: '实时看板', value: 'realtime' },
             { label: '执行审计', value: 'audit' },
             { label: '人机协作', value: 'participation' },
             { label: '成员交付', value: 'members' },
           ]}
-        />
-        {tab !== 'realtime' && tab !== 'participation' && tab !== 'members' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>数字员工</span>
-            <Select
-              size="small"
-              placeholder="全部数字员工"
-              allowClear
-              value={workerId}
-              onChange={(value) => setWorkerId(value)}
-              options={workers.map((worker) => ({ value: worker.id, label: worker.name }))}
-              style={{ width: 150 }}
-            />
-            <span style={{ fontSize: 12, color: '#6b7280' }}>日期</span>
-            <Segmented
-              options={TIME_RANGES}
-              value={timeRange}
-              onChange={(v) => setTimeRange(v as TimeRange)}
-            />
-          </div>
-        )}
-      </div>
+        />} />
+
+      {(tab === 'metrics' || tab === 'audit') && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          {auditFilters}
+          {tab === 'audit' && <Segmented
+            aria-label="风险等级"
+            options={[
+              { label: '全部', value: '' }, { label: '高危', value: 'high' },
+              { label: '中危', value: 'medium' }, { label: '低危', value: 'low' },
+            ]}
+            value={riskFilter}
+            onChange={(value) => setRiskFilter(value as string)}
+          />}
+        </div>
+      )}
 
       {tab !== 'realtime' && tab !== 'participation' && tab !== 'members' && workersQuery.isError && (
         <div style={{ marginBottom: 16 }}>
@@ -98,7 +109,8 @@ export function InsightsPage() {
       {tab === 'members' && <MemberDeliveryTab />}
 
       {/* Metrics / Audit Tabs */}
-      {tab !== 'realtime' && tab !== 'participation' && tab !== 'members' &&
+      {tab === 'audit' && <AuditTable workerId={workerId} workerName={selectedWorkerName} timeRange={timeRange} riskFilter={riskFilter} />}
+      {tab === 'metrics' &&
         (metricsLoading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
             <Spin />
@@ -117,9 +129,6 @@ export function InsightsPage() {
                 </div>
                 <Recommendations items={model.recommendations} />
               </>
-            )}
-            {tab === 'audit' && (
-              <AuditTable workerId={workerId} workerName={selectedWorkerName} timeRange={timeRange} />
             )}
           </>
         ))}

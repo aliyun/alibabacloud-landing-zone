@@ -5,6 +5,7 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.user.dto.UserSettingVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 
@@ -16,6 +17,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -100,6 +102,30 @@ class UserSettingServiceTest {
                         && s.getModifierId() == USER_ID));
         verify(dao, never()).update(anyLong(), anyLong(), any(), anyLong());
         assertEquals("\"shift-enter\"", vo.getValueJson());
+    }
+
+    @Test
+    void upsertFallsBackToUpdateWhenConcurrentFirstWriteWinsTheUniqueKey() {
+        // 并发首写：本请求查不到已有行、insert 时对方已抢先插入，撞 uk_user_setting。
+        // 转成对同一行的 update 幂等落库，而不是把并发竞争放大成 500（工单 55511）。
+        when(dao.findByUk(USER_ID, SEND_MODE_KEY)).thenReturn(null, row(9L, "\"shift-enter\"", 0));
+        doThrow(new DuplicateKeyException("uk_user_setting")).when(dao).insert(any());
+
+        UserSettingVO vo = service.upsert(USER_ID, SEND_MODE_KEY, "\"enter\"");
+
+        verify(dao).update(9L, USER_ID, "\"enter\"", USER_ID);
+        assertEquals("\"enter\"", vo.getValueJson());
+    }
+
+    @Test
+    void upsertRethrowsWhenUniqueKeyConflictHasNoCompetingRow() {
+        // 撞了唯一键却查不到冲突行：不是已知竞争形态，原样抛出让上层看到真实错误。
+        when(dao.findByUk(USER_ID, SEND_MODE_KEY)).thenReturn(null, null);
+        doThrow(new DuplicateKeyException("uk_user_setting")).when(dao).insert(any());
+
+        assertThrows(DuplicateKeyException.class,
+                () -> service.upsert(USER_ID, SEND_MODE_KEY, "\"enter\""));
+        verify(dao, never()).update(anyLong(), anyLong(), any(), anyLong());
     }
 
     @Test

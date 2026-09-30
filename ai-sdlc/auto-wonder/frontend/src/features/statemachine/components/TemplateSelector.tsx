@@ -1,10 +1,10 @@
-import { Select, Button, Space, Tag, Modal, Form, Input, Popconfirm } from 'antd';
-import { PlusOutlined, StarOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Select, Button, Tag, Modal, Form, Input, Popconfirm } from 'antd';
+import { StarOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { StatusTemplate, WorkType } from '../types';
-import { useState } from 'react';
-import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 interface Props {
+  createOpen: boolean;
+  onCloseCreate: () => void;
   templates: StatusTemplate[];
   selectedId: number | null;
   onSelect: (id: number) => void;
@@ -14,9 +14,7 @@ interface Props {
   workType: WorkType;
 }
 
-export function TemplateSelector({ templates, selectedId, onSelect, onCreate, onSetDefault, onDelete }: Props) {
-  const accessCommand = useAccessCommand();
-  const [createOpen, setCreateOpen] = useState(false);
+export function TemplateSelector({ createOpen, onCloseCreate, templates, selectedId, onSelect, onCreate, onSetDefault, onDelete }: Props) {
   const [form] = Form.useForm();
 
   const selected = templates.find((t) => t.id === selectedId);
@@ -24,14 +22,14 @@ export function TemplateSelector({ templates, selectedId, onSelect, onCreate, on
   const handleCreate = () => {
     form.validateFields().then(({ name }) => {
       onCreate(name);
-      setCreateOpen(false);
+      onCloseCreate();
       form.resetFields();
     });
   };
 
   return (
-    <div style={{ padding: '12px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
-      <span style={{ fontSize: 12, color: '#999' }}>当前模版:</span>
+    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+      <span style={{ fontSize: 14, color: 'var(--aw-muted)' }}>当前模版:</span>
       <Select
         value={selectedId}
         onChange={onSelect}
@@ -39,27 +37,23 @@ export function TemplateSelector({ templates, selectedId, onSelect, onCreate, on
         options={templates.map((t) => ({
           value: t.id,
           label: (
-            <Space>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, height: '100%' }}>
               <span>{t.name}</span>
-              {t.isDefault && <Tag color="blue" style={{ fontSize: 10 }}>默认</Tag>}
-            </Space>
+              {t.isDefault && <Tag color="blue" style={{ fontSize: 10, lineHeight: '18px' }}>默认</Tag>}
+            </span>
           ),
         }))}
       />
       {selected && !selected.isDefault && (
-        <Button size="small" icon={<StarOutlined />} onClick={() => onSetDefault(selected.id)}>设为默认</Button>
+        <Button icon={<StarOutlined />} onClick={() => onSetDefault(selected.id)}>设为默认</Button>
       )}
       {selected && !selected.isDefault && (
         <Popconfirm title="确认删除该模版？" onConfirm={() => onDelete(selected.id)}>
-          <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+          <Button danger icon={<DeleteOutlined />}>删除</Button>
         </Popconfirm>
       )}
-      <Button size="small" type="dashed" icon={<PlusOutlined />}
-        onClick={() => accessCommand('READ_WRITE', '新建状态模版', () => setCreateOpen(true))}>
-        新建模版
-      </Button>
 
-      <Modal title="新建状态模版" open={createOpen} onOk={handleCreate} onCancel={() => setCreateOpen(false)} destroyOnHidden>
+      <Modal title="新建状态模版" open={createOpen} onOk={handleCreate} onCancel={() => onCloseCreate()} destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="模版名称" rules={[{ required: true, message: '请输入模版名称' }]}>
             <Input placeholder="如: 自定义需求流程" />

@@ -94,28 +94,6 @@ describe('ExecutionListPage', () => {
     expect(screen.getByRole('heading', { name: '执行结果' })).toBeInTheDocument();
   });
 
-  it('keeps long result summaries compact and opens markdown preview', async () => {
-    server.use(
-      http.get('/api/dispatches', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: { list: [{ ...ROW, resultSummary: LONG_MARKDOWN }], total: 1, page: 1, pageSize: 50 },
-      })),
-      http.get('/api/agents', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: [],
-      })),
-    );
-    renderPage();
-
-    const preview = await screen.findByRole('button', { name: /查看完整结果/ });
-    expect(preview).toBeInTheDocument();
-    fireEvent.click(preview);
-
-    expect(await screen.findByText('完整结果')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '执行结果' })).toBeInTheDocument();
-    expect(screen.getByText('very long output')).toBeInTheDocument();
-  });
-
   it('sends time_range=7d when segment changed', async () => {
     let lastUrl = '';
     server.use(

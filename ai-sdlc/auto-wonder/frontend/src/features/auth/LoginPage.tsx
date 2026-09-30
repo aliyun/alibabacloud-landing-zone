@@ -38,15 +38,14 @@ export function LoginPage() {
   return (
     <AuthEntryShell>
       <Card className="auth-entry-card" variant="borderless">
-        <Title level={3} className="auth-entry-title">欢迎回来</Title>
-        <p className="auth-entry-subtitle">继续推进你的自主交付工作台</p>
+        <Title level={3} className="auth-entry-title">登录</Title>
         {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 16 }} />}
-        <Form onFinish={onFinish} layout="vertical">
+        <Form onFinish={onFinish} layout="vertical" noValidate>
           <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" />
+            <Input autoComplete="username" prefix={<UserOutlined />} placeholder="用户名" />
           </Form.Item>
           <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" />
+            <Input.Password autoComplete="current-password" prefix={<LockOutlined />} placeholder="密码" />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block>

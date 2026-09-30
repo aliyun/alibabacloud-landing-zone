@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.workspace;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.websocket.ExecutorSession;
 import com.aliyun.autowonder.websocket.SessionRegistry;

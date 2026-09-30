@@ -1,3 +1,5 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent as ReactClipboardEvent, DragEvent as ReactDragEvent } from 'react';
 import { Alert, Button, Card, Collapse, Form, Input, message, Select, Space, Upload } from 'antd';
@@ -143,11 +145,11 @@ export function ScheduledTaskCreatePage() {
       navigate(`/scheduled-tasks/${task.id}`);
     } catch { /* shared interceptor preserves the form for retry */ }
   });
-  return <Card title="新建 定时任务" style={{ maxWidth: 820, margin: '0 auto' }}><Form form={form} layout="vertical" onFinish={submit} initialValues={{ scheduleType: 'CRON', schedulePreset: 'daily', cronExpression: '0 0 2 * * *', sessionMode: 'ISOLATED', overlapPolicy: 'SKIP', misfirePolicy: 'SKIP_ALL', startDeadlineSeconds: 300, affinityTimeoutSeconds: 0, initialStatus: 'ACTIVE' }}>
+  return <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/scheduled-tasks" label="返回定时任务列表" /><span>新建定时任务</span></span>} />}><Form form={form} layout="vertical" onFinish={submit} initialValues={{ scheduleType: 'CRON', schedulePreset: 'daily', cronExpression: '0 0 2 * * *', sessionMode: 'ISOLATED', overlapPolicy: 'SKIP', misfirePolicy: 'SKIP_ALL', startDeadlineSeconds: 300, affinityTimeoutSeconds: 0, initialStatus: 'ACTIVE' }}>
     <Form.Item name="name" label="任务名称" rules={[{ required: true, message: '任务名称不能为空' }]}><Input maxLength={200} placeholder="例如：主干夜间回归" /></Form.Item>
-    <Form.Item name="instructionMd" label="任务指令" rules={[{ required: true, message: '请描述希望数字人周期完成的工作' }]}><TextArea rows={6} placeholder="支持 Markdown。说明任务目标、输入、完成标准与注意事项。" /></Form.Item>
+    <Form.Item name="instructionMd" label="任务指令" rules={[{ required: true, message: '请描述希望数字员工周期完成的工作' }]}><TextArea rows={6} placeholder="支持 Markdown。说明任务目标、输入、完成标准与注意事项。" /></Form.Item>
     <Form.Item name="squadId" label="小队" rules={[{ required: true, message: '请选择小队' }]}><Select showSearch optionFilterProp="label" options={(squadsPage?.list ?? []).map((squad) => ({ value: squad.id, label: squad.name }))} onChange={() => form.setFieldValue('initialAgentId', undefined)} placeholder="选择执行小队" /></Form.Item>
-    <Form.Item name="initialAgentId" label="首个数字人" rules={[{ required: true, message: '请选择首个数字人' }]}><Select loading={membersLoading} disabled={!squadId} onChange={setSelectedAgentId} options={members.map((member) => ({ value: member.agentId, label: member.agentName }))} placeholder="选择该小队中的首个数字人" /></Form.Item>
+    <Form.Item name="initialAgentId" label="首个数字员工" rules={[{ required: true, message: '请选择首个数字员工' }]}><Select loading={membersLoading} disabled={!squadId} onChange={setSelectedAgentId} options={members.map((member) => ({ value: member.agentId, label: member.agentName }))} placeholder="选择该小队中的首个数字员工" /></Form.Item>
     {(() => { const selectedMember = members.find((member) => member.agentId === Number(selectedAgentId)); return selectedMember ? <Alert type="info" showIcon message={`${selectedMember.agentName} 将按 ${selectedMember.sdlcName || '未绑定 SDLC（直接接受调度指令）'} 执行`} description={selectedMember.sdlcSteps?.length ? selectedMember.sdlcSteps.map((step) => `${step.stepOrder}. ${step.name}`).join(' → ') : undefined} style={{ marginBottom: 16 }} /> : null; })()}
     <Form.Item label="时区"><Input value="Asia/Shanghai" disabled /></Form.Item><ScheduleEditor timezone="Asia/Shanghai" />
     <Collapse items={[{ key: 'policy', label: '运行策略与连续会话设置', children: <RunPolicyEditor /> }]} />

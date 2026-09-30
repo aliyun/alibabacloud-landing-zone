@@ -173,8 +173,8 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
         onDrop={handleDrop}
         onPaste={handlePaste}
         style={{
-          border: `1px dashed ${dragActive ? '#1677ff' : 'transparent'}`,
-          backgroundColor: dragActive ? 'rgba(22, 119, 255, 0.08)' : 'transparent',
+          border: `1px dashed ${dragActive ? 'var(--aw-accent-text)' : 'transparent'}`,
+          backgroundColor: dragActive ? 'rgba(var(--aw-accent-rgb),.08)' : 'transparent',
           borderRadius: 8,
           padding: 8,
           outline: 'none',
@@ -248,8 +248,8 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
               >
                 <List.Item.Meta
                   avatar={isVisualName(artifact.name)
-                    ? <FileImageOutlined style={{ color: '#1677ff', fontSize: 20 }} />
-                    : <FileMarkdownOutlined style={{ color: '#1677ff', fontSize: 20 }} />}
+                    ? <FileImageOutlined style={{ color: 'var(--aw-accent-text)', fontSize: 20 }} />
+                    : <FileMarkdownOutlined style={{ color: 'var(--aw-accent-text)', fontSize: 20 }} />}
                   title={<Text>{displayName(artifact.name)}</Text>}
                   description={(
                     <Space size={8}>

@@ -4,17 +4,15 @@
   These need real CSS pseudo-classes: :hover/:active/:focus-visible cannot be expressed with
   inline styles, and F7 explicitly requires a visible keyboard focus state.
 
-  Contrast notes — #c2410c on white is 5.2:1 (text) and #ea580c on white is 3.6:1, which is
-  what a non-text UI boundary needs. The lighter brand #ff6a00 is only 2.9:1, so it is used for
-  fills and gradients, never for the button text or its outline.
+  Shared semantic colors preserve the same interaction states in both appearances.
 */
 
 .aw-apply-access-button {
   margin-top: 18px;
   align-self: flex-start;
-  border: 1px solid #ea580c;
-  background: #fff;
-  color: #c2410c;
+  border: 1px solid var(--aw-accent-text);
+  background: var(--aw-panel);
+  color: var(--aw-accent-text);
   border-radius: 6px;
   padding: 5px 14px;
   font-size: 13px;
@@ -25,18 +23,18 @@
 }
 
 .aw-apply-access-button:hover {
-  background: #fff7ed;
-  border-color: #c2410c;
+  background: var(--aw-button-hover);
+  border-color: var(--aw-accent-text);
 }
 
 .aw-apply-access-button:active {
-  background: #ffedd5;
-  border-color: #c2410c;
-  box-shadow: inset 0 1px 2px rgba(154, 52, 18, 0.24);
+  background: var(--aw-button-active);
+  border-color: var(--aw-accent-text);
+  box-shadow: none;
 }
 
 .aw-apply-access-button:focus-visible {
-  outline: 2px solid #c2410c;
+  outline: 2px solid var(--aw-accent-text);
   outline-offset: 2px;
 }
 
@@ -47,50 +45,50 @@
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--aw-border);
   border-radius: 6px;
-  background: #fff;
-  color: #4b5563;
+  background: var(--aw-panel);
+  color: var(--aw-muted);
   font-size: 14px;
   cursor: pointer;
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
 .aw-card-manage-button:hover {
-  border-color: #ea580c;
-  background: #fff7ed;
-  color: #c2410c;
+  border-color: var(--aw-accent-text);
+  background: var(--aw-button-hover);
+  color: var(--aw-accent-text);
 }
 
 .aw-card-manage-button:active {
-  background: #ffedd5;
+  background: var(--aw-button-active);
 }
 
 .aw-card-manage-button:focus-visible {
-  outline: 2px solid #c2410c;
+  outline: 2px solid var(--aw-accent-text);
   outline-offset: 2px;
 }
 
 .aw-card-manage-button--danger:hover {
-  border-color: #dc2626;
-  background: #fef2f2;
-  color: #b91c1c;
+  border-color: var(--aw-error);
+  background: var(--aw-button-hover);
+  color: var(--aw-error);
 }
 
 .aw-card-manage-button--danger:focus-visible {
-  outline-color: #b91c1c;
+  outline-color: var(--aw-error);
 }
 
-/* F4.1: the recycle bin entry sits at the bottom-right of the workspace list page. It is an
+/* F4.1: the recycle bin entry sits on the right of the workspace tab bar. It is an
    icon-plus-text button, not a decorative element, so it needs the same focus affordance. */
 .aw-recycle-bin-entry {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid #fed7aa;
+  border: 1px solid var(--aw-border);
   border-radius: 999px;
-  background: #fff;
-  color: #c2410c;
+  background: var(--aw-panel);
+  color: var(--aw-accent-text);
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 700;
@@ -99,15 +97,15 @@
 }
 
 .aw-recycle-bin-entry:hover {
-  background: #fff7ed;
-  border-color: #ea580c;
+  background: var(--aw-button-hover);
+  border-color: var(--aw-accent-text);
 }
 
 .aw-recycle-bin-entry:active {
-  background: #ffedd5;
+  background: var(--aw-button-active);
 }
 
 .aw-recycle-bin-entry:focus-visible {
-  outline: 2px solid #c2410c;
+  outline: 2px solid var(--aw-accent-text);
   outline-offset: 2px;
 }

@@ -12,7 +12,7 @@ operation_scope=${AUTOWONDER_OPERATION_SCOPE:-}
 usage() { cat <<'EOF'
 Usage: initialize-and-verify.sh SUBCOMMAND --manifest FILE [options]
 Subcommands: upgrade-inventory, upgrade-backup, rollback-upgrade, maintenance-stop, database, database-migrate, runtime-config, rolling-start, rolling-upgrade, business-init, acceptance, handoff
-Options: --env-file FILE --terraform-dir DIR --handoff-file FILE --acceptance-evidence FILE --confirm-received --confirm-migrations --confirm-rolling-compatible --confirm-rollback
+Options: --env-file FILE --terraform-dir DIR --handoff-file FILE --acceptance-evidence FILE --confirm-received --confirm-migrations --confirm-rolling-compatible --confirm-rollback --reviewed-v075-report SHA256
 Secrets are read from protected files; they are never accepted as argument values.
 EOF
 }
@@ -23,7 +23,7 @@ case "$operation_scope:$subcommand" in
   upgrade:upgrade-inventory|upgrade:upgrade-backup|upgrade:maintenance-stop|upgrade:rollback-upgrade|upgrade:database-migrate|upgrade:runtime-config|upgrade:rolling-upgrade|upgrade:acceptance) ;;
   *) die "operation is outside the selected skill boundary" ;;
 esac
-manifest= env_file= terraform_dir= handoff_file= acceptance_evidence= confirm_received=false confirm_migrations=false confirm_rolling_compatible=false confirm_rollback=false
+manifest= env_file= terraform_dir= handoff_file= acceptance_evidence= confirm_received=false confirm_migrations=false confirm_rolling_compatible=false confirm_rollback=false reviewed_v075_report=
 require_no_secret_args "$@"
 while (($#)); do
   case "$1" in
@@ -34,6 +34,7 @@ while (($#)); do
     --acceptance-evidence) acceptance_evidence=${2:-}; shift 2;;
     --confirm-received) confirm_received=true; shift;;
     --confirm-migrations) confirm_migrations=true; shift;;
+    --reviewed-v075-report) reviewed_v075_report=${2:-}; [[ "$reviewed_v075_report" =~ ^[0-9a-f]{64}$ ]] || die "invalid reviewed V075 report digest"; shift 2;;
     --confirm-rolling-compatible) confirm_rolling_compatible=true; shift;;
     --confirm-rollback) confirm_rollback=true; shift;;
     --help|-h) usage; exit 0;;
@@ -584,6 +585,10 @@ $(maintenance_check_script)")
     [[ $(jq -r '.upgrade.databaseMigration.status // empty' "$manifest") != running && $(jq -r '.upgrade.databaseMigration.status // empty' "$manifest") != failed ]] || die "interrupted or failed migration requires reviewed recovery"
     pending=$(jq -c '(.upgrade.pendingMigrations // []) | sort_by(.version)' "$manifest")
     pending_count=$(jq 'length' <<<"$pending")
+    has_v075=$(jq 'any(.[]; .file == "docs/migration/V075__unify_status_kanban.sql")' <<<"$pending")
+    if [[ "$has_v075" == true ]]; then
+      [[ $(jq -r '.upgrade.executionMode // empty' "$manifest") == maintenance ]] || die "V075 requires stopped-writer maintenance"
+    fi
     if [[ "$pending_count" == 0 ]]; then
       atomic_jq "$manifest" '.upgrade.databaseMigration={status:"not-required",applied:[]} | .phase="database-migrate" | .status="ready"'
       exit 0
@@ -679,7 +684,35 @@ fi"
     migration_remote+="
 printf 'MIGRATIONS_APPLIED=%s\\n' '$pending_count'"
 
+    # V075 uses the same staged runner as the native PowerShell entrypoint.
+    if [[ "$has_v075" == true ]]; then
+      migration_remote=$(python3 - "$UPGRADE_SKILL_DIR/scripts/remote/upgrade_remote.py" "$manifest" "$reviewed_v075_report" <<'PY_V075'
+import base64, gzip, json, sys
+from pathlib import Path
+data = json.loads(Path(sys.argv[2]).read_text())['upgrade']
+request = dict(operation='database-migrate', plan=data['planFingerprint'], target=data['toCommit'],
+               **{'from': data['fromCommit']}, migrations=data['pendingMigrations'], maintenance=True,
+               reviewedV075Report=sys.argv[3])
+encoded = base64.b64encode(json.dumps(request).encode()).decode()
+payload = Path(sys.argv[1]).read_text().replace('@@REQUEST@@', encoded)
+packed = base64.b64encode(gzip.compress(payload.encode())).decode()
+print('set -o pipefail; printf %s ' + packed + ' | base64 -d | gzip -d | python3')
+PY_V075
+)
+    fi
+
     if migration_result=$(run_cloud "${instances[0]}" "$migration_remote"); then
+      report_sha=$(jq -r '.output' <<<"$migration_result" | sed -n 's/^V075_REVIEW_REQUIRED=//p')
+      if [[ "$has_v075" == true && "$report_sha" =~ ^[0-9a-f]{64}$ ]]; then
+        report_path="/opt/autowonder/migration-reports/$report_sha.json"
+        atomic_jq "$manifest" --arg sha "$report_sha" --arg path "$report_path" --arg instance "${instances[0]}" --arg invocation "$(jq -r '.invocationId' <<<"$migration_result")" \
+          '.upgrade.databaseMigration={status:"awaiting-review",planFingerprint:.upgrade.planFingerprint,reportSha256:$sha,reportPath:$path,instanceId:$instance,invocationId:$invocation,applied:[]} | .phase="database-migrate" | .status="awaiting-review"'
+        log "V075 live report requires review on ${instances[0]}: $report_path (SHA256 $report_sha); D and activation remain blocked"
+        exit 0
+      fi
+      if [[ "$has_v075" == true ]]; then
+        [[ $(jq -r '.output' <<<"$migration_result" | sed -n 's/^MIGRATIONS_APPLIED=//p') == "$pending_count" ]] || die "migration completion evidence is missing"
+      fi
       atomic_jq "$manifest" --arg invocation "$(jq -r '.invocationId' <<<"$migration_result")" --argjson applied "$pending" \
         '.upgrade.databaseMigration={status:"passed",invocationId:$invocation,applied:$applied} | .phase="database-migrate" | .status="ready"'
     else

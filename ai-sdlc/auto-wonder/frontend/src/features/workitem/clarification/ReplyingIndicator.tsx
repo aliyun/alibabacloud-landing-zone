@@ -68,7 +68,7 @@ export function ReplyingIndicator({ agentName }: ReplyingIndicatorProps) {
     <div
       data-testid="clarification-replying-indicator"
       style={{
-        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 12,
+        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 14,
         color: CLARIFICATION_THEME.textMuted,
       }}
     >
@@ -94,7 +94,7 @@ export function ReplyingIndicator({ agentName }: ReplyingIndicatorProps) {
             width: 12, height: 12, borderRadius: '50%',
             // 2px 控件环用 controlBorder（10%）而不是 hairline（6%）：后者是分割线级别的
             // 淡度，画在 2px 圆环上几乎看不见。
-            border: `2px solid ${CLARIFICATION_THEME.controlBorder}`,
+            borderWidth: 2, borderStyle: 'solid', borderColor: CLARIFICATION_THEME.controlBorder,
             borderTopColor: CLARIFICATION_THEME.textMuted,
             animation: 'aw-clarify-spin 0.8s linear infinite',
           }}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Alert, Card, Table, Tag, Button, Space, Modal, Input, message, Descriptions, Spin, Empty } from 'antd';
+import { Alert, Card, Tag, Button, Space, Modal, Input, message, Descriptions, Spin, Empty } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { useQueryClient } from '@tanstack/react-query';
 import { CheckOutlined, CloseOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -77,7 +78,7 @@ export function AgentReviewPage() {
   const columns: ColumnsType<Agent> = [
     { title: 'ID', dataIndex: 'id', width: 70 },
     {
-      title: '名称', dataIndex: 'name',
+      title: '名称', dataIndex: 'name', align: 'left',
       render: (name: string, record: Agent) => <a onClick={() => navigate(`/agents/${record.id}`)}>{name}</a>,
     },
     { title: '最新版本', dataIndex: 'latestVersionNo', width: 90, render: (v: number | null) => v ? `v${v}` : '-' },
@@ -114,7 +115,7 @@ export function AgentReviewPage() {
         />
       )}
 
-      <Card title="Agent 版本审核">
+      <Card className="aw-content-card">
         {isLoading ? (
           <Spin style={{ display: 'block', margin: '40px auto' }} />
         ) : pendingAgents.length === 0 ? (

@@ -1,3 +1,4 @@
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useRef } from 'react';
 import { Button, Card, Descriptions, Popconfirm, Result, Space, Spin, Typography } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -66,13 +67,17 @@ export function ScheduledTaskRunDetailPage() {
   }));
 
   return (
-    <div style={{ display: 'flex', gap: 0, height: '100%', overflow: 'hidden' }}>
+    <div className="aw-split-page" style={{ display: 'flex', gap: 0, height: '100%', overflow: 'hidden' }}>
       {/* Left Panel */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div ref={leftScrollRef} style={{ flex: 1, minWidth: 0, minHeight: 0, padding: 24, paddingBottom: 12, overflowY: 'auto' }}>
+        <div
+          data-testid="scheduled-run-scroll-region"
+          style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}
+        >
+          <div ref={leftScrollRef} data-testid="scheduled-run-left-scroll" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: 24, paddingRight: 38, paddingBottom: 12, overflowY: 'auto' }}>
           <div style={{ marginBottom: 16 }}>
-            <Typography.Link onClick={() => navigate(`/scheduled-tasks/${data.scheduledTaskId}`)}>← 返回 定时任务</Typography.Link>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            <div className="aw-detail-title">
+              <PageBackButton to={`/scheduled-tasks/${data.scheduledTaskId}`} label="返回定时任务" />
               <Typography.Title level={3} style={{ margin: 0 }}>Run #{data.id}</Typography.Title>
               <RunStatusTag status={data.status} />
             </div>
@@ -116,22 +121,23 @@ export function ScheduledTaskRunDetailPage() {
               : <Text type="secondary">-</Text>}
           </Card>
 
-          <UnifiedTimeline
-            items={timelineItems}
-            participants={participants}
-            artifacts={artifacts.data ?? []}
-            loading={comments.isLoading}
-          />
+            <UnifiedTimeline
+              items={timelineItems}
+              participants={participants}
+              artifacts={artifacts.data ?? []}
+              loading={comments.isLoading}
+            />
+          </div>
+          <ScrollToEdgeButton containerRef={leftScrollRef} />
         </div>
 
-        <div style={{ flexShrink: 0, padding: '12px 24px 16px', borderTop: '1px solid #f0f0f0' }}>
+        <div data-testid="scheduled-run-sticky-comment" style={{ flexShrink: 0, padding: '12px 24px 16px', borderTop: '1px solid var(--aw-border)' }}>
           <RunCommentInput
             runId={Number.isFinite(id) ? id : undefined}
             loading={comment.isPending}
             onSubmit={(payload) => accessCommand('READ_WRITE', '评论本次运行', () => comment.mutate(payload))}
           />
         </div>
-        <ScrollToEdgeButton containerRef={leftScrollRef} />
       </div>
 
       {/* Right Panel */}
@@ -139,8 +145,8 @@ export function ScheduledTaskRunDetailPage() {
         width: 'clamp(340px, 28vw, 420px)',
         flexShrink: 0,
         padding: 12,
-        background: '#fafafa',
-        borderLeft: '1px solid #e5e7eb',
+        background: 'var(--aw-raised)',
+        borderLeft: '1px solid var(--aw-border)',
         overflowY: 'auto',
       }}>
         <Space direction="vertical" style={{ width: '100%' }} size={8}>

@@ -1,119 +1,32 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { CreateMemoryParams, Memory, MemoryListFilters, UpdateMemoryParams, ReviewMemoryParams } from './api';
 import { useAuthStore } from '@/shared/auth/store';
 
-export function useMemoryList(params: {
-  page?: number;
-  size?: number;
-  scope?: string;
-  ownerRef?: number;
-  type?: string;
-  status?: string;
-}) {
-  return useQuery({
-    queryKey: ['memories', params],
-    queryFn: () => api.listMemories(params),
-  });
-}
+function useScopeKey() { return useAuthStore(state => `${state.currentWorkspace?.id ?? 'none'}:${state.user?.id ?? 'none'}:${state.accessLevel}`); }
+export function useMemoryDirectory() { return useQuery({ queryKey: ['memory-stores', useScopeKey(), 'directory'], queryFn: api.listMemoryDirectory, refetchInterval: 30_000 }); }
 
-export function useMemoryGroups(params?: {
-  page?: number;
-  size?: number;
-  scope?: string;
-  ownerRef?: number;
-  type?: string;
-  status?: string;
-}) {
-  return useQuery({
-    queryKey: ['memories', 'grouped', params],
-    queryFn: () => api.listMemoryGroups(params!),
-    enabled: params !== undefined,
-  });
+export function useMemoryStores() { return useQuery({ queryKey: ['memory-stores', useScopeKey()], queryFn: api.listMemoryStores }); }
+export function useMemoryDocuments(storeId?: number) { return useQuery({ queryKey: ['memory-stores', useScopeKey(), storeId, 'documents'], queryFn: () => api.listMemoryDocuments(storeId!), enabled: storeId != null }); }
+export function useMemoryMutation(storeId?: number) {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (mutation: api.MemoryMutation) => api.mutateMemoryDocument(storeId!, mutation), onSuccess: () => {
+    client.invalidateQueries({ queryKey: ['memory-stores'] });
+    client.invalidateQueries({ queryKey: ['memory-stores', storeId, 'documents'] });
+    client.invalidateQueries({ queryKey: ['memory-stores', storeId, 'history'] });
+  } });
 }
-
-export function useMemoryCount(params: MemoryListFilters) {
-  return useQuery({
-    queryKey: ['memories', 'count', params],
-    queryFn: () => api.countMemories(params),
-  });
+export function useMemoryHistory(storeId?: number) { return useQuery({ queryKey: ['memory-stores', useScopeKey(), storeId, 'history'], queryFn: () => api.listMemoryHistory(storeId!), enabled: storeId != null }); }
+export function useMemoryAcls(storeId?: number, enabled = false) { return useQuery({ queryKey: ['memory-stores', useScopeKey(), storeId, 'acls'], queryFn: () => api.listMemoryAcls(storeId!), enabled: storeId != null && enabled }); }
+export function useMemoryAclMutation(storeId?: number) {
+  const client = useQueryClient();
+  const invalidate = () => client.invalidateQueries({ queryKey: ['memory-stores'] });
+  const put = useMutation({ mutationFn: (acl: api.MemoryAcl) => api.putMemoryAcl(storeId!, acl), onSuccess: invalidate });
+  const remove = useMutation({ mutationFn: (aclId: number) => api.deleteMemoryAcl(storeId!, aclId), onSuccess: invalidate });
+  return { put, remove };
 }
-
-export function useMemoryGroupCount(params?: MemoryListFilters) {
-  return useQuery({
-    queryKey: ['memories', 'grouped', 'count', params],
-    queryFn: () => api.countMemoryGroups(params!),
-    enabled: params !== undefined,
-  });
-}
-
-export function usePendingReviews(params?: { page?: number; size?: number }) {
-  return useQuery({
-    queryKey: ['memories', 'reviews', params],
-    queryFn: () => api.listPendingReviews(params),
-  });
-}
-
-export function useCreateMemory() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (params: CreateMemoryParams) => api.createMemory(params),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['memories'] }),
-  });
-}
-
-export function useUpdateMemory() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, params }: { id: number; params: UpdateMemoryParams }) =>
-      api.updateMemory(id, params),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['memories'] }),
-  });
-}
-
-export function useDeleteMemory() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) => api.deleteMemory(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['memories'] }),
-  });
-}
-
-export function useReviewMemory() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, params }: { id: number; params: ReviewMemoryParams }) =>
-      api.reviewMemory(id, params),
-    onSuccess: (_data, { id }) => {
-      // 审核台局部刷新：从所有 pending-reviews 列表缓存中原地移除已审核项，
-      // 避免整页 refetch 导致所有卡片联动与网格重排抖动。
-      const reviewQueries = queryClient
-        .getQueryCache()
-        .findAll({ queryKey: ['memories', 'reviews'] })
-        .filter((q) => {
-          const key = q.queryKey;
-          return key.length >= 2 && key[0] === 'memories' && key[1] === 'reviews' && key[2] !== 'count';
-        });
-      for (const q of reviewQueries) {
-        queryClient.setQueryData<Memory[] | undefined>(q.queryKey, (prev) =>
-          prev ? prev.filter((m) => m.id !== id) : prev,
-        );
-      }
-      // 通用记忆列表与计数仍需保持一致，做完整 invalidate。
-      queryClient.invalidateQueries({ queryKey: ['memories'] });
-      queryClient.invalidateQueries({ queryKey: ['memories', 'reviews', 'count'] });
-    },
-  });
-}
-
-export function useMemoryPendingReviewCount() {
-  const hasAccess = useAuthStore((s) => s.hasAccess);
-  return useQuery({
-    queryKey: ['memories', 'reviews', 'count'],
-    queryFn: api.getPendingReviewCount,
-    refetchInterval: 60_000,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-    enabled: hasAccess('READ_WRITE'),
-  });
+export function useMemoryImportSources(enabled = false) { return useQuery({ queryKey: ['memory-imports', useScopeKey()], queryFn: api.listMemoryImportSources, enabled }); }
+export function useMemoryImportReceipts(sourceId?: number, enabled = false) { return useQuery({ queryKey: ['memory-imports', useScopeKey(), sourceId, 'receipts'], queryFn: () => api.listMemoryImportReceipts(sourceId!), enabled: enabled && sourceId !== undefined }); }
+export function useMemoryImportStatus() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: ({ sourceId, status, version }: { sourceId: number; status: string; version: number }) => api.changeMemoryImportStatus(sourceId, status, version), onSuccess: () => client.invalidateQueries({ queryKey: ['memory-imports'] }) });
 }

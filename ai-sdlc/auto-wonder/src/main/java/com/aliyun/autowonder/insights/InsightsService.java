@@ -223,7 +223,30 @@ public class InsightsService {
 
         HumanAgentParticipationVO.DurationSummary avg = new HumanAgentParticipationVO.DurationSummary(
                 summary.averageTotalSeconds(), summary.averageHumanSeconds(), summary.averageAgentSeconds());
+        avg.setHumanShare(humanShare(summary.totalHumanSeconds(), summary.totalAgentSeconds()));
         vo.setAverage(avg);
+        vo.setMedianTotalSeconds(summary.medianTotalSeconds());
+        vo.setAgentWorkitemCount(summary.agentWorkitemCount());
+        List<HumanAgentParticipationFact> execution = summary.eligibleFacts().stream()
+                .filter(f -> f.executionSeconds() != null).collect(java.util.stream.Collectors.toList());
+        vo.setExecutionSampleSize(execution.size());
+        vo.setAverageExecutionSeconds(execution.isEmpty() ? null : execution.stream()
+                .mapToLong(HumanAgentParticipationFact::executionSeconds).average().orElse(0));
+        vo.setExecutionMissingCount((int) summary.eligibleFacts().stream()
+                .filter(f -> f.agentParticipated() && "MISSING".equals(f.executionStatus())).count());
+        vo.setExecutionIncompleteCount((int) summary.eligibleFacts().stream()
+                .filter(f -> f.agentParticipated() && "INCOMPLETE".equals(f.executionStatus())).count());
+        vo.setInferredAssignmentCount((int) summary.eligibleFacts().stream()
+                .filter(HumanAgentParticipationFact::inferredAssignment).count());
+        java.util.Map<String, Integer> exclusions = new java.util.LinkedHashMap<>();
+        for (HumanAgentParticipationFact fact : snapshot.items()) {
+            LocalDate completed = fact.completedAt().atZone(zone).toLocalDate();
+            if (fact.exclusionReason() != null && !completed.isBefore(startDate) && !completed.isAfter(endDate)) {
+                exclusions.merge(fact.exclusionReason(), 1, Integer::sum);
+            }
+        }
+        vo.setExclusions(exclusions);
+        vo.setIdentifiedCompletedCount(vo.getSampleSize() + exclusions.values().stream().mapToInt(Integer::intValue).sum());
 
         if (summary.p90() != null) {
             vo.setP90(toP90Workitem(summary.p90()));
@@ -236,10 +259,16 @@ public class InsightsService {
             te.setAverageTotalSeconds(tb.averageTotalSeconds());
             te.setAverageHumanSeconds(tb.averageHumanSeconds());
             te.setAverageAgentSeconds(tb.averageAgentSeconds());
+            te.setSampleSize(tb.sampleSize());
+            te.setHumanShare(humanShare(tb.totalHumanSeconds(), tb.totalAgentSeconds()));
             trendEntries.add(te);
         }
         vo.setTrend(trendEntries);
         return vo;
+    }
+
+    private static Double humanShare(long human, long agent) {
+        return human + agent == 0 ? null : (double) human / (human + agent);
     }
 
     public HumanAgentSlowTailPageVO getSlowTail(long tenantId, LocalDate startDate,

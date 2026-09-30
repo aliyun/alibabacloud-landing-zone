@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.artifact;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;

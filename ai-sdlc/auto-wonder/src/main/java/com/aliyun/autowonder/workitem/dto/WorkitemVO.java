@@ -17,6 +17,17 @@ public class WorkitemVO {
     private Long templateId;
     private Long statusNodeId;
     private String statusName;
+    /**
+     * Server-computed unified kanban classification (WorkitemClassificationEvaluator):
+     * NEW / IN_PROGRESS / PENDING_DECISION / DONE / CANCELED. CANCELED items are hidden from the
+     * board and only visible via the explicit filter. The status name is display-only.
+     */
+    private String statusCategory;
+    /**
+     * 越界流转提示（规格 3.3）：流转成功但不在模板 transitions 推荐范围内时返回
+     * 「该流转不在模板推荐范围内」，页面据此提示；正常流转为 null。
+     */
+    private String transitionWarning;
     private Long sdlcId;
     private String sdlcName;
     private String assigneeType;
@@ -34,7 +45,11 @@ public class WorkitemVO {
     private String health;
     /** Human-readable reason when health is STUCK; null otherwise. */
     private String healthReason;
-    /** True when automated delivery has completed and the workitem is waiting for human decision. */
+    /**
+     * True when the workitem is waiting for a human decision: in-flight (INIT/IN_PROGRESS), assigned
+     * to a human, a dispatch has actually started before, and none is currently active. Identical to
+     * the 待决策 kanban column and the 需人工 tag condition (statusCategory = PENDING_DECISION).
+     */
     private Boolean pendingDecision;
     /** Workitem source for deletion eligibility: "NATIVE" or "EXTERNAL". */
     private String sourceType;

@@ -90,8 +90,10 @@ must be validated on those systems before claiming that release's coverage.
 ## Local verification
 
 From the project root, run `python scripts/verify-cloud-skills.py`. It runs
-fixture suites in separate child processes with cloud CLI deny stubs, reports
-test IDs/counts/durations, and does not execute a deployment. On macOS an
+deployment, upgrade, and cross-package interoperability fixture suites in
+separate child processes with cloud CLI deny stubs. Each suite reports test
+IDs/counts/durations; a failed, unloadable, or empty suite fails the overall
+verification. It does not execute a deployment. On macOS an
 additional OS network boundary can wrap it:
 
 ```bash

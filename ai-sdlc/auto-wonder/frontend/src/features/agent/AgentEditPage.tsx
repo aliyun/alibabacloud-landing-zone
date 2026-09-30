@@ -1,22 +1,22 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useEffect, useMemo, useState } from 'react';
 import { type FocusEvent, useRef, type KeyboardEvent } from 'react';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import {
   Alert, AutoComplete, Button, Card, Divider, Form, Input, Modal, Popconfirm, Result, Select,
-  Empty, Space, Spin, Table, Tag, message,
-} from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, SendOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+  Empty, Space, Spin, Tag, message} from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
+import { SaveOutlined, SendOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   useAgent, useAgentVersion, useEditConfig, useSubmitForReview, useUpdateAgent,
   useAddRepoPerm, useRemoveRepoPerm, useAddSkill, useRemoveSkill,
-  useAddMemoryRef, useRemoveMemoryRef,
   useAddEnvironmentVariableRef, useRemoveEnvironmentVariableRef,
 } from './hooks';
 import { listRepos } from '@/features/repo/api';
 import { listSkills } from '@/features/skill/api';
-import { listMemories, type Memory } from '@/features/memory/api';
 import { listSdlcTemplates } from '@/features/sdlc/api';
 import { AGENT_ROLE_CODE_OPTIONS, AGENT_ROLE_NAME_OPTIONS, getRoleCodeByName, getRoleNameByCode } from './constants';
 import type { ColumnsType } from 'antd/es/table';
@@ -43,12 +43,6 @@ interface SkillRow {
   version?: number;
 }
 
-interface MemoryRow {
-  memoryId: number;
-  title: string;
-  source: string;
-}
-
 function extractList<T>(value: T[] | { list?: T[] } | undefined): T[] {
   if (!value) return [];
   return Array.isArray(value) ? value : (value.list ?? []);
@@ -60,10 +54,6 @@ function uniqueBy<T>(items: T[], keyOf: (item: T) => string | number): T[] {
 
 function errorMessage(e: unknown, fallback: string) {
   return e instanceof Error && e.message ? e.message : fallback;
-}
-
-function memoryTitle(memory: Memory | undefined, memoryId: number) {
-  return memory?.title?.trim() || `#${memoryId}`;
 }
 
 function evolutionModeFromIdentity(identityJson?: string | null): EvolutionMode {
@@ -175,8 +165,6 @@ export function AgentEditPage() {
   const removeRepoPerm = useRemoveRepoPerm();
   const addSkillMut = useAddSkill();
   const removeSkillMut = useRemoveSkill();
-  const addMemoryRef = useAddMemoryRef();
-  const removeMemoryRef = useRemoveMemoryRef();
   const addEnvironmentVariableRef = useAddEnvironmentVariableRef();
   const removeEnvironmentVariableRef = useRemoveEnvironmentVariableRef();
   const environmentVariableLibrary = useEnvironmentVariables(canManageEnvironmentVariables);
@@ -184,13 +172,11 @@ export function AgentEditPage() {
   // Local state for relation tables (bound to agent's current relations)
   const [repoPerms, setRepoPerms] = useState<RepoPermRow[]>([]);
   const [skills, setSkills] = useState<SkillRow[]>([]);
-  const [memories, setMemories] = useState<MemoryRow[]>([]);
   const [saveFeedback, setSaveFeedback] = useState<{ message: string; description: string } | null>(null);
 
   // Selector state
   const [repoModalOpen, setRepoModalOpen] = useState(false);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
-  const [memoryModalOpen, setMemoryModalOpen] = useState(false);
   const [selectedRepoIds, setSelectedRepoIds] = useState<number[]>([]);
   const [selectedPermLevel, setSelectedPermLevel] = useState('READ');
   const [selectedBranchPatterns, setSelectedBranchPatterns] = useState<string[]>([]);
@@ -198,7 +184,6 @@ export function AgentEditPage() {
   const [editingPermLevel, setEditingPermLevel] = useState('READ');
   const [editingBranchPatterns, setEditingBranchPatterns] = useState<string[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([]);
-  const [selectedMemoryIds, setSelectedMemoryIds] = useState<number[]>([]);
   const [environmentModalOpen, setEnvironmentModalOpen] = useState(false);
   const [selectedEnvironmentVariableId, setSelectedEnvironmentVariableId] = useState<number>();
   const [environmentBindingError, setEnvironmentBindingError] = useState<string>();
@@ -256,14 +241,10 @@ export function AgentEditPage() {
   // Reference data — backend returns raw arrays; API types say PageResult but runtime is T[]
   const { data: reposRaw } = useQuery({ queryKey: ['repos', 1, 100], queryFn: () => listRepos({ page: 1, size: 100 }) });
   const { data: skillsRaw } = useQuery({ queryKey: ['skills', 1, 100], queryFn: () => listSkills({ page: 1, size: 100 }) });
-  // 不按 status 过滤：已绑定记忆可能是历史 PENDING/REJECTED 引用，需要全量列表才能解析出标题；
-  // “仅已审核可选”的限制加在导入下拉的候选项上。
-  const { data: memoriesRaw } = useQuery({ queryKey: ['memories', 1, 100], queryFn: () => listMemories({ page: 1, size: 100 }) });
   const { data: sdlcsRaw } = useQuery({ queryKey: ['sdlcs', 1, 100], queryFn: () => listSdlcTemplates({ page: 1, size: 100 }) });
   // Safe extract: handle both PageResult and raw array
   const reposList = useMemo(() => extractList(reposRaw), [reposRaw]);
   const skillsList = useMemo(() => extractList(skillsRaw), [skillsRaw]);
-  const memoriesList = useMemo(() => extractList(memoriesRaw), [memoriesRaw]);
   const sdlcsList = useMemo(() => extractList(sdlcsRaw), [sdlcsRaw]);
   const mountedEnvironmentVariables = useMemo(
     () => uniqueBy(versionDetail?.environmentVariables ?? [], variable => variable.id),
@@ -346,15 +327,7 @@ export function AgentEditPage() {
       };
     }), item => item.skillId));
 
-    setMemories(uniqueBy((versionDetail.memoryRefs ?? []).map((memoryRef) => {
-      const memory = memoriesList.find((item) => item.id === memoryRef.memoryId);
-      return {
-        memoryId: memoryRef.memoryId,
-        title: memoryTitle(memory, memoryRef.memoryId),
-        source: memoryRef.source,
-      };
-    }), item => item.memoryId));
-  }, [versionDetail, reposList, skillsList, memoriesList]);
+  }, [versionDetail, reposList, skillsList]);
 
   if (!agentId || isNaN(agentId)) return (
     <Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
@@ -551,34 +524,6 @@ export function AgentEditPage() {
     });
   };
 
-  const handleAddMemory = () => {
-    if (selectedMemoryIds.length === 0) return;
-    accessCommand('READ_WRITE', '导入数字员工记忆', async () => {
-      try {
-        await Promise.all(selectedMemoryIds.map(memoryId =>
-          addMemoryRef.mutateAsync({ agentId, memoryId, source: 'ORG' })));
-        const added = selectedMemoryIds.map(memoryId => {
-          const mem = memoriesList.find(m => m.id === memoryId);
-          return { memoryId, title: memoryTitle(mem, memoryId), source: 'ORG' };
-        });
-        setMemories(prev => uniqueBy([...prev, ...added], item => item.memoryId));
-        setMemoryModalOpen(false);
-        setSelectedMemoryIds([]);
-      } catch (e) {
-        message.error(errorMessage(e, '导入记忆失败'));
-      }
-    });
-  };
-
-  const handleRemoveMemory = (memoryId: number) => {
-    accessCommand('READ_WRITE', '移除数字员工记忆', () => {
-      removeMemoryRef.mutate({ agentId, memoryId }, {
-        onSuccess: () => setMemories(prev => prev.filter(m => m.memoryId !== memoryId)),
-        onError: (e) => message.error(errorMessage(e, '移除记忆失败')),
-      });
-    });
-  };
-
   const handleAddEnvironmentVariable = () => {
     if (!environmentVersionReady || !selectedEnvironmentVariableId || environmentOperationPending) return;
     const environmentVariableId = selectedEnvironmentVariableId;
@@ -730,7 +675,6 @@ export function AgentEditPage() {
       }
     });
   };
-
   const repoColumns: ColumnsType<RepoPermRow> = [
     { title: '仓库', dataIndex: 'repoName' },
     { title: '权限', dataIndex: 'permLevel', width: 100, render: (v: string) => <Tag>{v}</Tag> },
@@ -738,7 +682,7 @@ export function AgentEditPage() {
       {
         title: '提交分支', dataIndex: 'allowedBranchPatterns',
         render: (patterns: string[]) => patterns.length === 0
-          ? <span style={{ color: '#999' }}>不限制</span>
+          ? <span style={{ color: 'var(--aw-muted)' }}>不限制</span>
           : <Space size={[0, 4]} wrap>{patterns.map(pattern => <Tag key={pattern}>{pattern}</Tag>)}</Space>,
       },
       {
@@ -770,25 +714,12 @@ export function AgentEditPage() {
     },
   ];
 
-  const memoryColumns: ColumnsType<MemoryRow> = [
-    { title: '标题', dataIndex: 'title', ellipsis: true },
-    { title: '来源', dataIndex: 'source', width: 80, render: (v: string) => <Tag>{v}</Tag> },
-    {
-      title: '操作', width: 80,
-      render: (_: unknown, r: MemoryRow) => (
-        <Popconfirm title="确认移除?" onConfirm={() => handleRemoveMemory(r.memoryId)}>
-          <Button type="link" size="small" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
-      ),
-    },
-  ];
-
   const environmentVariableColumns: ColumnsType<AgentEnvironmentVariableRef> = [
-    { title: '变量名', dataIndex: 'name', width: '36%' },
+    { title: '变量名', dataIndex: 'name', align: 'left', width: '36%' },
     {
       title: '说明',
-      dataIndex: 'description',
-      render: (description: string | null) => description || <span style={{ color: '#999' }}>暂无说明</span>,
+      dataIndex: 'description', align: 'left',
+      render: (description: string | null) => description || <span style={{ color: 'var(--aw-muted)' }}>暂无说明</span>,
     },
     ...(canManageEnvironmentVariables ? ([{
       title: '操作',
@@ -812,12 +743,8 @@ export function AgentEditPage() {
       ),
     }] as ColumnsType<AgentEnvironmentVariableRef>) : []),
   ];
-
   return (
     <div>
-      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate(`/agents/${agentId}`)} style={{ marginBottom: 16, padding: 0 }}>
-        返回详情
-      </Button>
 
       {saveFeedback && (
         <Alert
@@ -829,7 +756,7 @@ export function AgentEditPage() {
         />
       )}
 
-      <Card title={`编辑配置 — ${agent.name}`}
+      <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to={`/agents/${agentId}`} label="返回详情" /><span>编辑配置 — {agent.name}</span></span>} />}
         extra={
           <Space>
             <Button icon={<SaveOutlined />} onClick={handleSave}
@@ -845,7 +772,7 @@ export function AgentEditPage() {
           </Space>
         }
       >
-        <Form form={form} layout="vertical" style={{ maxWidth: 800 }}>
+        <Form form={form} layout="vertical">
           <Form.Item
             label="员工名称"
             name="name"
@@ -917,7 +844,7 @@ export function AgentEditPage() {
                 return (
                   <Space direction="vertical" size={0}>
                     <span>{option.label}</span>
-                    <span style={{ fontSize: 12, color: '#888' }}>{descriptions[String(option.value)]}</span>
+                    <span style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{descriptions[String(option.value)]}</span>
                   </Space>
                 );
               }}
@@ -959,21 +886,11 @@ export function AgentEditPage() {
         <Alert
           type="info"
           showIcon
-          message="AutoWonder MCP 已内置"
+          message="平台 MCP 已内置"
           description="每次任务会自动使用任务级凭证装载，无需手动绑定，也不会暴露个人长期 Token。"
           style={{ marginBottom: 12 }}
         />
         <Table rowKey="skillId" columns={skillColumns} dataSource={skills} pagination={false} size="small" />
-      </Card>
-
-      {/* Memory */}
-      <Card title="记忆导入" style={{ marginTop: 16 }}
-        extra={<Button size="small" icon={<PlusOutlined />}
-          onClick={() => accessCommand('READ_WRITE', '导入数字员工记忆', () => setMemoryModalOpen(true))}>
-          导入记忆
-        </Button>}
-      >
-        <Table rowKey="memoryId" columns={memoryColumns} dataSource={memories} pagination={false} size="small" />
       </Card>
 
       {/* Environment variables are metadata-only here; values remain confined to the library reveal flow. */}
@@ -1088,17 +1005,6 @@ export function AgentEditPage() {
           onChange={setSelectedSkillIds} showSearch optionFilterProp="label"
           options={skillsList.filter(s => !skills.some(sk => sk.skillId === s.id))
             .map(s => ({ value: s.id, label: `${s.name} (${s.type})` })) || []}
-        />
-      </Modal>
-
-      {/* Add Memory Modal */}
-      <Modal title="导入记忆" open={memoryModalOpen} onOk={handleAddMemory} onCancel={() => setMemoryModalOpen(false)}
-        okButtonProps={{ disabled: selectedMemoryIds.length === 0 }}>
-        <Select mode="multiple" placeholder="选择记忆（可多选）" style={{ width: '100%' }} value={selectedMemoryIds}
-          onChange={setSelectedMemoryIds} showSearch optionFilterProp="label"
-          options={memoriesList
-            .filter(m => m.status === 'ADOPTED' && !memories.some(me => me.memoryId === m.id))
-            .map(m => ({ value: m.id, label: memoryTitle(m, m.id) }))}
         />
       </Modal>
 

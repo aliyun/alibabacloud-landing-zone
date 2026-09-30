@@ -1,9 +1,11 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useState } from 'react';
 import {
   Card, Descriptions, Button, Spin, Result, message, Tabs, Form, Input, Space,
-  Table, Tag, Modal, Select, Popconfirm, Drawer,
-} from 'antd';
-import { ArrowLeftOutlined, ScanOutlined, EditOutlined, SaveOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+  Tag, Modal, Select, Popconfirm, Drawer} from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
+import { ScanOutlined, EditOutlined, SaveOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -12,7 +14,9 @@ import {
 } from './api';
 import type { RepoRelation, CreateRelationRequest, UpdateRepoRequest } from './api';
 import type { ColumnsType } from 'antd/es/table';
+import { isValidRepoName, REPO_NAME_INVALID_MESSAGE } from './repoNameValidation';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
@@ -151,7 +155,11 @@ export function RepoDetailPage() {
 
   const handleSaveRepo = async () => {
     await runWithAccess('READ_WRITE', '保存仓库信息', async () => {
-      const values = await repoForm.validateFields();
+      // 校验失败时 antd 已在表单项下方展示错误信息，这里吞掉拒绝避免未处理 Promise。
+      const values = await repoForm.validateFields().catch(() => null);
+      if (!values) {
+        return;
+      }
       updateRepoMut.mutate({
         name: values.name.trim(),
         url: values.url.trim(),
@@ -187,20 +195,29 @@ export function RepoDetailPage() {
 
   const relationColumns: ColumnsType<RepoRelation> = [
     {
-      title: '关联仓库', key: 'peer',
+      title: '关联仓库', key: 'peer', ellipsis: { showTitle: false },
       render: (_: unknown, r: RepoRelation) => {
         const fromRepoId = String(r.fromRepoId);
         const toRepoId = String(r.toRepoId);
         const peerId = fromRepoId === repoId ? toRepoId : fromRepoId;
         const direction = fromRepoId === repoId ? '→' : '←';
-        return <span>{direction} {repoNameMap.get(peerId) || `#${peerId}`}</span>;
+        const peerName = repoNameMap.get(peerId) || `#${peerId}`;
+        return <EllipsisText tooltip={peerName}>{direction} {peerName}</EllipsisText>;
       },
     },
     {
-      title: '关系类型', dataIndex: 'relationType', width: 100,
-      render: (t: string) => <Tag>{RELATION_TYPES.find(rt => rt.value === t)?.label || t}</Tag>,
+      // 不设固定 width：关系类型标签长短不一（如「客户端调用服务端」），固定 100px 会把长标签挤成省略号
+      title: '关系类型', dataIndex: 'relationType', width: 140, ellipsis: { showTitle: false },
+      render: (t: string) => (
+        <EllipsisText tooltip={RELATION_TYPES.find(rt => rt.value === t)?.label || t}>
+          <Tag style={{ marginInlineEnd: 0 }}>{RELATION_TYPES.find(rt => rt.value === t)?.label || t}</Tag>
+        </EllipsisText>
+      ),
     },
-    { title: '描述', dataIndex: 'description', ellipsis: true, render: (v: string | null) => v || '-' },
+    {
+      title: '描述', dataIndex: 'description', align: 'left', ellipsis: { showTitle: false },
+      render: (v: string | null) => (v ? <EllipsisText>{v}</EllipsisText> : '-'),
+    },
     {
       title: '操作', width: 80,
       render: (_: unknown, r: RepoRelation) => (
@@ -237,9 +254,18 @@ export function RepoDetailPage() {
       key: 'info',
       label: '基础信息',
       children: editingRepo ? (
-        <Form form={repoForm} layout="vertical" style={{ maxWidth: 800 }}>
+        <Form form={repoForm} layout="vertical">
           <Form.Item label="仓库名称" name="name"
-            rules={[{ required: true, message: '请输入仓库名称' }]}>
+            rules={[
+              { required: true, message: '请输入仓库名称' },
+              {
+                validator: (_, value) => (
+                  isValidRepoName(value)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error(REPO_NAME_INVALID_MESSAGE))
+                ),
+              },
+            ]}>
             <Input placeholder="仓库名称" />
           </Form.Item>
           <Form.Item label="URL" name="url"
@@ -288,7 +314,7 @@ export function RepoDetailPage() {
       key: 'conclusion',
       label: '扫描结论',
       children: editingConclusion ? (
-        <Form form={conclusionForm} layout="vertical" style={{ maxWidth: 800 }}>
+        <Form form={conclusionForm} layout="vertical">
           <Form.Item label="用途" name="purpose">
             <Input placeholder="该仓库的主要用途" />
           </Form.Item>
@@ -360,12 +386,9 @@ export function RepoDetailPage() {
 
   return (
     <div>
-      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/repos')} style={{ marginBottom: 16, padding: 0 }}>
-        返回列表
-      </Button>
 
       <Card
-        title={repo.name}
+        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/repos" label="返回列表" /><span>{repo.name}</span></span>} />}
         extra={
           <Space>
             {REPO_SCAN_ENABLED && (

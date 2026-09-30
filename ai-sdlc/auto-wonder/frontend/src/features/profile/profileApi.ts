@@ -42,6 +42,32 @@ export interface ChangePasswordParams {
   newPassword: string;
 }
 
+export interface MyProfile {
+  id: number;
+  username: string;
+  nickname: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
+export interface UpdateMyProfileParams {
+  nickname: string;
+  email: string;
+  phone: string;
+}
+
+export const USER_PROFILE_QUERY_KEY = ['user-profile'] as const;
+
+export async function getMyProfile(): Promise<MyProfile> {
+  const resp = await apiClient.get<MyProfile>('/api/users/me/profile');
+  return resp.data;
+}
+
+export async function updateMyProfile(params: UpdateMyProfileParams): Promise<MyProfile> {
+  const resp = await apiClient.put<MyProfile>('/api/users/me/profile', params);
+  return resp.data;
+}
+
 export async function changePassword(params: ChangePasswordParams): Promise<void> {
   await apiClient.put<void>('/api/users/me/password', params);
 }

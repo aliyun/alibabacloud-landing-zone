@@ -1,8 +1,6 @@
 package com.aliyun.autowonder.evolution;
 
-import com.alibaba.fastjson.JSON;
-import com.aliyun.autowonder.memory.MemoryService;
-import com.aliyun.autowonder.memory.dto.MemoryVO;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.repo.dto.RepoRelationVO;
 import com.aliyun.autowonder.skill.SkillService;
 import com.aliyun.autowonder.skill.dto.SkillVO;
@@ -14,12 +12,9 @@ import java.util.Map;
 @Service
 public class EvolutionReleaseStateCaptureService {
 
-    private final MemoryService memoryService;
     private final SkillService skillService;
 
-    public EvolutionReleaseStateCaptureService(MemoryService memoryService,
-                                               SkillService skillService) {
-        this.memoryService = memoryService;
+    public EvolutionReleaseStateCaptureService(SkillService skillService) {
         this.skillService = skillService;
     }
 
@@ -28,14 +23,7 @@ public class EvolutionReleaseStateCaptureService {
                 && proposal.getAssetId() != null && proposal.getAssetId() > 0) {
             return JSON.toJSONString(skillService.get(proposal.getAssetId()));
         }
-        if ("MEMORY".equals(proposal.getAssetType()) && proposal.getAssetId() != null) {
-            return JSON.toJSONString(memoryService.get(proposal.getAssetId()));
-        }
         return null;
-    }
-
-    public String memoryAfterJson(MemoryVO memory) {
-        return JSON.toJSONString(memory);
     }
 
     public String relationAfterJson(RepoRelationVO relation) {

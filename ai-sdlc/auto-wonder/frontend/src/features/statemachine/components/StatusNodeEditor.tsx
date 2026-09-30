@@ -6,10 +6,10 @@ import { NodeFormModal } from './NodeFormModal';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const categoryStyle: Record<NodeCategory, { color: string; bg: string; border: string }> = {
-  INIT: { color: '#1890ff', bg: '#e6f7ff', border: '#91d5ff' },
-  IN_PROGRESS: { color: '#FF6A00', bg: '#fff7e6', border: '#ffd591' },
-  DONE: { color: '#52c41a', bg: '#f6ffed', border: '#b7eb8f' },
-  CANCELED: { color: '#f5222d', bg: '#fff1f0', border: '#ffa39e' },
+  INIT: { color: 'var(--aw-info)', bg: 'color-mix(in srgb, var(--aw-info) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))' },
+  IN_PROGRESS: { color: 'var(--aw-warning)', bg: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-warning) 30%, var(--aw-border))' },
+  DONE: { color: 'var(--aw-success)', bg: 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-success) 30%, var(--aw-border))' },
+  CANCELED: { color: 'var(--aw-error)', bg: 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-error) 30%, var(--aw-border))' },
 };
 
 const categoryLabel: Record<NodeCategory, string> = {
@@ -52,9 +52,10 @@ export function StatusNodeEditor({ nodes, onCreate, onUpdate, onDelete, createLo
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>状态节点</span>
-        <span style={{ marginLeft: 8, fontSize: 12, color: '#999' }}>定义工单的所有可能状态</span>
+        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--aw-muted)' }}>定义工单的所有可能状态</span>
+        <Button icon={<PlusOutlined />} onClick={openCreate} style={{ marginLeft: 'auto' }}>添加节点</Button>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         {nodes.map((node) => {
@@ -66,19 +67,18 @@ export function StatusNodeEditor({ nodes, onCreate, onUpdate, onDelete, createLo
             >
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: style.color, display: 'inline-block' }} />
               <span style={{ fontWeight: 500 }}>{node.code}</span>
-              <span style={{ fontSize: 11, color: '#666' }}>{node.name}</span>
+              <span style={{ fontSize: 11, color: 'var(--aw-muted)' }}>{node.name}</span>
               <Space size={2} style={{ marginLeft: 4 }}>
-                <EditOutlined style={{ fontSize: 11, color: '#1890ff', cursor: 'pointer' }} onClick={() => openEdit(node)} />
+                <EditOutlined style={{ fontSize: 11, color: 'var(--aw-info)', cursor: 'pointer' }} onClick={() => openEdit(node)} />
                 <Popconfirm title="确认删除该状态节点？" onConfirm={() => onDelete(node.id)} okText="删除" cancelText="取消">
-                  <DeleteOutlined style={{ fontSize: 11, color: '#ff4d4f', cursor: 'pointer' }} />
+                  <DeleteOutlined style={{ fontSize: 11, color: 'var(--aw-error)', cursor: 'pointer' }} />
                 </Popconfirm>
               </Space>
             </Tag>
           );
         })}
-        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={openCreate}>添加节点</Button>
       </div>
-      <div style={{ marginTop: 8, fontSize: 11, color: '#999' }}>
+      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--aw-muted)' }}>
         {Object.entries(categoryLabel).map(([cat, label]) => (
           <span key={cat} style={{ marginRight: 12 }}>
             <span style={{ color: categoryStyle[cat as NodeCategory].color }}>●</span> {label}

@@ -23,4 +23,11 @@ class TenantTablesTest {
         assertFalse(TenantTables.TABLES.contains("role_permission"));
         assertFalse(TenantTables.TABLES.contains("member_role"));
     }
+
+    @Test
+    void includesServerBackedMemoryTables() {
+        assertTrue(TenantTables.TABLES.containsAll(java.util.Set.of(
+                "memory_store", "memory_document", "memory_change", "memory_store_acl",
+                "memory_import_source", "memory_import_snapshot", "memory_import_receipt")));
+    }
 }

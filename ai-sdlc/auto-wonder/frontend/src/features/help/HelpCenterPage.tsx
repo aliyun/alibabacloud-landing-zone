@@ -165,7 +165,7 @@ export function HelpCenterPage() {
 
   const variables = {
     '--help-primary': token.colorPrimary,
-    '--help-selected': token.colorPrimaryBg,
+    '--help-selected': 'rgba(var(--aw-accent-rgb),.13)',
     '--help-surface': token.colorBgContainer,
     '--help-text': token.colorText,
     '--help-muted': token.colorTextSecondary,
@@ -197,9 +197,6 @@ export function HelpCenterPage() {
         <div className="help-reading-width">
           <div className="help-breadcrumb">帮助中心 <span>/</span> {chapter.title}</div>
           <h1>{chapter.title}</h1>
-          {chapter.sections.length > 0 && <nav className="help-mobile-sections" aria-label="本页目录">
-            {chapter.sections.map((section) => <Link key={section.id} title={section.title} className={section.level === 3 ? 'help-outline-step' : undefined} replace to={`/help?chapter=${chapter.id}#${section.id}`}>{section.navTitle ?? section.title}</Link>)}
-          </nav>}
           <div className="help-markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm, [remarkSectionIds, chapter.sections], [remarkChapterLayout, chapter.id]]} components={{
               pre: CodeBlock,

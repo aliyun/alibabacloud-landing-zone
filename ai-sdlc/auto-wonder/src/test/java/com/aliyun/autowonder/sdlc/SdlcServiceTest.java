@@ -39,6 +39,24 @@ class SdlcServiceTest {
                 agentVersionDao, agentDao);
     }
 
+    @Test
+    void listPageKeepsTotalOnLastAndEmptyPagesAndNormalizesSize() {
+        when(sdlcDao.count(null, null, 100L, null)).thenReturn(11L);
+        when(sdlcDao.list(null, null, 100L, null, 10, 10)).thenReturn(List.of(sdlc(1L, "ENABLED")));
+        var last = service.listPage(100L, null, null, null, 2, 10);
+        assertEquals(11, last.getTotal());
+        assertEquals(1, last.getList().size());
+        assertEquals(2, last.getPageNum());
+        assertEquals(10, last.getPageSize());
+        var empty = service.listPage(100L, null, null, null, 3, 10);
+        assertEquals(11, empty.getTotal());
+        assertTrue(empty.getList().isEmpty());
+        var normalized = service.listPage(100L, null, null, null, 0, 1000);
+        assertEquals(1, normalized.getPageNum());
+        assertEquals(100, normalized.getPageSize());
+        assertEquals(20, service.listPage(100L, null, null, null, -1, 0).getPageSize());
+    }
+
     private SdlcDO sdlc(long id, String status) {
         SdlcDO s = new SdlcDO();
         s.setId(id);

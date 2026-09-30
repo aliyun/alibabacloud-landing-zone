@@ -37,7 +37,7 @@ export function TurnDetailToggle({
         type="link"
         size="small"
         data-testid={`turn-detail-toggle-${turnId}`}
-        style={{ padding: 0, height: 'auto', fontSize: 11 }}
+        style={{ padding: 0, height: 'auto', fontSize: 13 }}
         onClick={() => setOpen((prev) => !prev)}
       >
         {open ? '收起执行详情' : '查看执行详情'}
@@ -58,7 +58,7 @@ function TurnDetailBody({
   if (loading) return <Spin size="small" style={{ marginTop: 4 }} />;
   if (error) {
     return (
-      <Typography.Text type="danger" style={{ fontSize: 11, display: 'block' }}>
+      <Typography.Text type="danger" style={{ fontSize: 13, display: 'block' }}>
         执行详情加载失败
       </Typography.Text>
     );
@@ -66,7 +66,7 @@ function TurnDetailBody({
   const processNodes = processNodesOf(timeline);
   if (processNodes.length === 0) {
     return (
-      <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+      <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
         无执行详情
       </Typography.Text>
     );

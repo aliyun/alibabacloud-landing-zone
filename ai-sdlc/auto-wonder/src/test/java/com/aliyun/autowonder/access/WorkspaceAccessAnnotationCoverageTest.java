@@ -42,6 +42,11 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.artifact.WorkitemCliUploadController",
             "com.aliyun.autowonder.artifact.WorkitemCliDownloadController",
             "com.aliyun.autowonder.artifact.ScheduledTaskCliUploadController",
+            // 派发级分享声明端点：daemon executor token 鉴权（DaemonUploadAuthenticator），
+            // 与产物上传同一信任边界，无工作区上下文
+            // 对外只读分享：AuthFilter 按不可猜 awshare_ 令牌形态放行，无工作区上下文，
+            // 端点自身只返回已显式暴露的产物
+            "com.aliyun.autowonder.artifact.ShareController",
             "com.aliyun.autowonder.controller.HealthCheckController",
             "com.aliyun.autowonder.controller.HelloWorldController",
             "com.aliyun.autowonder.debuglog.DebugLogUploadController",
@@ -50,6 +55,7 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.executor.DaemonExecutorEnvironmentController",
             "com.aliyun.autowonder.integration.dingtalk.HttpCallbackTransport",
             "com.aliyun.autowonder.mcp.McpController",
+            "com.aliyun.autowonder.memory.store.DaemonMemoryController",
             "com.aliyun.autowonder.notification.NotificationController",
             "com.aliyun.autowonder.taskpackage.DaemonTaskPackageController",
             "com.aliyun.autowonder.user.AuthController",
@@ -120,8 +126,10 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.im.UserImIdentityController#updateDingTalk("
                     + "com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
             "com.aliyun.autowonder.im.UserImIdentityController#testDingTalk()",
-            // Personal preferences authorize with the logged-in user ID only, independent of
-            // workspace membership; callers cannot provide another user's ID.
+            // Personal preferences are scoped to the authenticated user, not a workspace.
+            // UserSettingController obtains userId only from the login context; DAO reads and
+            // writes filter by that userId. Keep exemptions method-specific so new endpoints
+            // still require an explicit access classification.
             "com.aliyun.autowonder.user.UserSettingController#list()",
             "com.aliyun.autowonder.user.UserSettingController#get(java.lang.String)",
             "com.aliyun.autowonder.user.UserSettingController#upsert("
@@ -129,6 +137,9 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.user.UserSettingController#delete(java.lang.String)",
             "com.aliyun.autowonder.user.UserAccountController#changePassword("
                     + "com.aliyun.autowonder.user.dto.ChangePasswordRequest)",
+            "com.aliyun.autowonder.user.UserAccountController#getProfile()",
+            "com.aliyun.autowonder.user.UserAccountController#updateProfile("
+                    + "com.aliyun.autowonder.user.dto.UpdateProfileRequest)",
             "com.aliyun.autowonder.user.UserAccountController#initiateDeactivation("
                     + "com.aliyun.autowonder.user.dto.DeactivationRequest)",
             "com.aliyun.autowonder.user.UserAccountController#revokeDeactivation()",

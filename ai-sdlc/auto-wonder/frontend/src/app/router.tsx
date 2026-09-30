@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-do
 import { AuthLayout } from './AuthLayout';
 import { AppLayout } from './AppLayout';
 import { RouteGuard } from './RouteGuard';
+import { RedirectWithQuery } from './RedirectWithQuery';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { RegisterPage } from '@/features/auth/RegisterPage';
 import { WorkspaceSelectPage } from '@/features/auth/WorkspaceSelectPage';
@@ -9,23 +10,18 @@ import { WorkspaceRecycleBinPage } from '@/features/auth/WorkspaceRecycleBinPage
 import { WorkitemListPage } from '@/features/workitem/WorkitemListPage';
 import { WorkitemCreatePage } from '@/features/workitem/WorkitemCreatePage';
 import { WorkitemDetailPage } from '@/features/workitem/WorkitemDetailPage';
-import { AgentListPage } from '@/features/agent/AgentListPage';
 import { AgentCreatePage } from '@/features/agent/AgentCreatePage';
 import { AgentDetailPage } from '@/features/agent/AgentDetailPage';
 import { AgentEditPage } from '@/features/agent/AgentEditPage';
-import { AgentReviewPage } from '@/features/agent/AgentReviewPage';
-import { SquadListPage } from '@/features/squad/SquadListPage';
+import { AgentsHubPage } from '@/features/agent/AgentsHubPage';
 import { ExecutorListPage } from '@/features/executor/ExecutorListPage';
 import { ExecutionListPage } from '@/features/execution/ExecutionListPage';
 import { SdlcListPage } from '@/features/sdlc/SdlcListPage';
 import { SdlcGeneratePage } from '@/features/sdlc/SdlcGeneratePage';
 import { SdlcDetailPage } from '@/features/sdlc/SdlcDetailPage';
-import { RepoListPage } from '@/features/repo/RepoListPage';
+import { ReposHubPage } from '@/features/repo/ReposHubPage';
 import { RepoDetailPage } from '@/features/repo/RepoDetailPage';
-import { RepoMapPage } from '@/features/repo/RepoMapPage';
 import { MemoryListPage } from '@/features/memory/MemoryListPage';
-import { MemoryImportPage } from '@/features/memory/MemoryImportPage';
-import { MemoryReviewPage } from '@/features/memory/MemoryReviewPage';
 import { NotificationCenterPage } from '@/features/notification/NotificationCenterPage';
 import { SkillListPage } from '@/features/skill/SkillListPage';
 import { AuditLogPage } from '@/features/audit/AuditLogPage';
@@ -34,8 +30,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
 import { MemberRoleSettingsPage } from '@/features/settings/MemberRoleSettingsPage';
 import { StatusTemplatePage } from '@/features/statemachine/StatusTemplatePage';
 import { InsightsPage } from '@/features/insights/InsightsPage';
-import { WorkitemIntegrationPage } from '@/features/integration/WorkitemIntegrationPage';
-import { ChannelIntegrationPage } from '@/features/integration/channels/ChannelIntegrationPage';
+import { IntegrationsHubPage } from '@/features/integration/IntegrationsHubPage';
 import { AboutAutoWonderPage } from '@/features/about/AboutAutoWonderPage';
 import { EvolutionPage } from '@/features/evolution/EvolutionPage';
 import { BrandingConfigPage } from '@/features/platform/BrandingConfigPage';
@@ -48,9 +43,11 @@ import { ScheduledTaskRunDetailPage } from '@/features/scheduledTask/ScheduledTa
 import { ScheduledTaskCapabilityGate } from '@/features/scheduledTask/ScheduledTaskCapabilityGate';
 import { EnvironmentVariablesPage } from '@/features/environmentVariables/EnvironmentVariablesPage';
 import { HelpCenterPage } from '@/features/help/HelpCenterPage';
+import { SharedArtifactPage } from '@/features/workitem/SharedArtifactPage';
 
 export function createAppRoutes(): RouteObject[] {
   return [
+    { path: '/api/share/workitems/:token/:kind/:id', element: <SharedArtifactPage /> },
     {
       element: <AppLayout helpCenter />,
       children: [{ path: '/help', element: <HelpCenterPage /> }],
@@ -97,21 +94,19 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/workitems', element: <WorkitemListPage /> },
         { path: '/workitems/new', element: <WorkitemCreatePage /> },
         { path: '/workitems/:id', element: <WorkitemDetailPage /> },
-        { path: '/agents', element: <AgentListPage /> },
-        { path: '/agents/reviews', element: <AgentReviewPage /> },
+        { path: '/agents', element: <AgentsHubPage /> },
+        { path: '/agents/reviews', element: <RedirectWithQuery to="/agents" tab="reviews" /> },
         { path: '/agents/new', element: <AgentCreatePage /> },
         { path: '/agents/:id', element: <AgentDetailPage /> },
         { path: '/agents/:id/edit', element: <AgentEditPage /> },
-        { path: '/squads', element: <SquadListPage /> },
+        { path: '/squads', element: <RedirectWithQuery to="/agents" tab="squads" /> },
         { path: '/sdlcs', element: <SdlcListPage /> },
         { path: '/sdlcs/generate', element: <SdlcGeneratePage /> },
         { path: '/sdlcs/:id', element: <SdlcDetailPage /> },
-        { path: '/repos', element: <RepoListPage /> },
-        { path: '/repos/map', element: <RepoMapPage /> },
+        { path: '/repos', element: <ReposHubPage /> },
+        { path: '/repos/map', element: <RedirectWithQuery to="/repos" tab="map" /> },
         { path: '/repos/:id', element: <RepoDetailPage /> },
         { path: '/memories', element: <MemoryListPage /> },
-        { path: '/memories/import', element: <MemoryImportPage /> },
-        { path: '/memories/reviews', element: <MemoryReviewPage /> },
         { path: '/skills', element: <SkillListPage /> },
         { path: '/executors', element: <ExecutorListPage /> },
         { path: '/scheduled-tasks', element: <ScheduledTaskCapabilityGate><ScheduledTaskListPage /></ScheduledTaskCapabilityGate> },
@@ -121,9 +116,9 @@ export function createAppRoutes(): RouteObject[] {
         { path: '/scheduled-task-runs/:runId', element: <ScheduledTaskCapabilityGate><ScheduledTaskRunDetailPage /></ScheduledTaskCapabilityGate> },
         { path: '/executions', element: <ExecutionListPage /> },
         { path: '/status-templates', element: <StatusTemplatePage /> },
-        { path: '/integrations', element: <WorkitemIntegrationPage /> },
+        { path: '/integrations', element: <IntegrationsHubPage /> },
         { path: '/integrations/aone', element: <Navigate to="/integrations" replace /> },
-        { path: '/integrations/channels', element: <ChannelIntegrationPage /> },
+        { path: '/integrations/channels', element: <RedirectWithQuery to="/integrations" tab="channels" /> },
         { path: '/evolution', element: <EvolutionPage /> },
         { path: '/audit-logs', element: <AuditLogPage /> },
         { path: '/notifications', element: <NotificationCenterPage /> },

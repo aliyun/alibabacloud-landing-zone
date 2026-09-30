@@ -3,7 +3,6 @@ package com.aliyun.autowonder.evolution;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.memory.MemoryService;
-import com.aliyun.autowonder.memory.dto.MemoryVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.skill.SkillService;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,14 +30,14 @@ class EvolutionProposalServiceTest {
         repoService = mock(RepoService.class);
         skillService = mock(SkillService.class);
         stateCaptureService = mock(EvolutionReleaseStateCaptureService.class);
-        service = new EvolutionProposalService(proposalDao, evidenceService, memoryService, repoService,
+        service = new EvolutionProposalService(proposalDao, evidenceService, repoService,
                 skillService, stateCaptureService);
     }
 
     @Test
     void proposalRequiresTraceableEvidence() {
         EvolutionProposalCommand cmd = new EvolutionProposalCommand();
-        cmd.setAssetType("MEMORY");
+        cmd.setAssetType("SKILL");
         cmd.setTriggerType("USER_CORRECTION");
         cmd.setCandidatePatchJson("{\"title\":\"Use pnpm\",\"contentMd\":\"Use pnpm for this repo.\"}");
 
@@ -49,21 +48,12 @@ class EvolutionProposalServiceTest {
     }
 
     @Test
-    void proposeDoesNotWriteActiveAssets() {
-        doAnswer(inv -> {
-            EvolutionProposalDO proposal = inv.getArgument(0);
-            proposal.setId(101L);
-            return null;
-        }).when(proposalDao).insert(any());
+    void rejectsRetiredMemoryProposalBeforePersistence() {
+        BizException error = assertThrows(BizException.class,
+                () -> service.propose(memoryProposal(), 1L, 2L));
 
-        EvolutionProposalCommand cmd = memoryProposal();
-
-        EvolutionProposalDO proposal = service.propose(cmd, 1L, 2L);
-
-        assertEquals(101L, proposal.getId());
-        assertEquals("PROPOSED", proposal.getStatus());
-        verify(proposalDao).insert(any());
-        verifyNoInteractions(memoryService, repoService, skillService);
+        assertEquals(ErrorCode.CONFLICT.getCode(), error.getCode());
+        verifyNoInteractions(proposalDao, memoryService, repoService, skillService);
     }
 
     @Test
@@ -144,25 +134,14 @@ class EvolutionProposalServiceTest {
 	}
 
     @Test
-    void releaseMemoryProposalIsOnlyPlaceThatWritesAdoptedMemory() {
+    void releaseRejectsRetiredMemoryProposalLane() {
         EvolutionProposalDO proposal = storedProposal("APPROVED");
         proposal.setReplayJson("{\"verdict\":\"PASS\",\"evidenceRefs\":[\"artifact:replay-1\"]}");
         when(proposalDao.findById(101L)).thenReturn(proposal);
         when(proposalDao.markReleased(eq(101L), eq(1L), anyString(), eq(0), eq(2L))).thenReturn(1);
-        MemoryVO created = new MemoryVO();
-        created.setId(301L);
-        when(memoryService.createFromEvolutionProposal(any(), eq(1L), eq(101L), eq(2L))).thenReturn(created);
-        when(stateCaptureService.memoryAfterJson(created)).thenReturn("{\"id\":301}");
-
-        service.release(101L, 1L, 2L);
-
-        verify(memoryService).createFromEvolutionProposal(argThat(req ->
-                "Use pnpm".equals(req.getTitle())
-                        && "Use pnpm for this repo.".equals(req.getContentMd())
-                        && "ENGINEERING_RULE".equals(req.getType())), eq(1L), eq(101L), eq(2L));
-        verify(stateCaptureService).captureBefore(proposal, 1L);
-        verify(proposalDao).markReleased(eq(101L), eq(1L), contains("\"assetId\":301"), eq(0), eq(2L));
-        verify(proposalDao).markReleased(eq(101L), eq(1L), contains("\"afterJson\":\"{\\\"id\\\":301}\""), eq(0), eq(2L));
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.release(101L, 1L, 2L));
+        verify(memoryService, never()).createFromEvolutionProposal(any(), anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -171,15 +150,9 @@ class EvolutionProposalServiceTest {
         proposal.setTrialJson("{\"taskPatternKey\":\"repo-checkout\",\"decision\":\"ADOPT\",\"candidatePosteriorMean\":0.8,\"baselinePosteriorMean\":0.4}");
         when(proposalDao.findById(101L)).thenReturn(proposal);
         when(proposalDao.markReleased(eq(101L), eq(1L), anyString(), eq(0), eq(2L))).thenReturn(1);
-        MemoryVO created = new MemoryVO();
-        created.setId(301L);
-        when(memoryService.createFromEvolutionProposal(any(), eq(1L), eq(101L), eq(2L))).thenReturn(created);
-        when(stateCaptureService.memoryAfterJson(created)).thenReturn("{\"id\":301}");
-
-        service.release(101L, 1L, 2L);
-
-        verify(memoryService).createFromEvolutionProposal(any(), eq(1L), eq(101L), eq(2L));
-        verify(proposalDao).markReleased(eq(101L), eq(1L), contains("\"assetId\":301"), eq(0), eq(2L));
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.release(101L, 1L, 2L));
+        verify(memoryService, never()).createFromEvolutionProposal(any(), anyLong(), anyLong(), anyLong());
     }
 
     @Test

@@ -62,7 +62,7 @@ export function AccessRequestModal({ workspace, onClose }: AccessRequestModalPro
       onOk={handleSubmit}
       destroyOnHidden
     >
-      <Text style={{ display: 'block', marginBottom: 12, color: '#697386' }}>
+      <Text style={{ display: 'block', marginBottom: 12, color: 'var(--aw-muted)' }}>
         选择需要的权限级别，提交后由工作空间管理员审批。
       </Text>
       <Radio.Group
@@ -72,8 +72,8 @@ export function AccessRequestModal({ workspace, onClose }: AccessRequestModalPro
         <Space direction="vertical" size={12}>
           {LEVEL_OPTIONS.map((option) => (
             <Radio key={option.value} value={option.value}>
-              <span style={{ fontWeight: 600, color: '#111827' }}>{option.label}</span>
-              <Text style={{ display: 'block', color: '#697386', fontSize: 12 }}>
+              <span style={{ fontWeight: 600, color: 'var(--aw-text)' }}>{option.label}</span>
+              <Text style={{ display: 'block', color: 'var(--aw-muted)', fontSize: 12 }}>
                 {option.description}
               </Text>
             </Radio>

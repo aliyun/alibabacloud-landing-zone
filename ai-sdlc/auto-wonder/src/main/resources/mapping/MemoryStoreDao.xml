@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.memory.store.MemoryStoreDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.memory.store.MemoryStoreDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_store
+        (tenant_id, scope, owner_ref, name, current_revision, status, creator_id, version)
+        VALUES (#{tenantId}, #{scope}, #{ownerRef}, #{name}, 0, 'ACTIVE', #{creatorId}, 0)
+    </insert>
+    <insert id="insertIfAbsent" parameterType="com.aliyun.autowonder.memory.store.MemoryStoreDO">
+        INSERT IGNORE INTO memory_store
+        (tenant_id, scope, owner_ref, name, current_revision, status, creator_id, version)
+        VALUES (#{tenantId}, #{scope}, #{ownerRef}, #{name}, 0, 'ACTIVE', #{creatorId}, 0)
+    </insert>
+    <select id="findActive" resultType="com.aliyun.autowonder.memory.store.MemoryStoreDO">
+        SELECT * FROM memory_store
+        WHERE tenant_id = #{tenantId} AND scope = #{scope} AND owner_ref = #{ownerRef}
+          AND status = 'ACTIVE' LIMIT 1
+    </select>
+    <select id="findById" resultType="com.aliyun.autowonder.memory.store.MemoryStoreDO">
+        SELECT * FROM memory_store WHERE tenant_id = #{tenantId} AND id = #{id} LIMIT 1
+    </select>
+    <select id="listActive" resultType="com.aliyun.autowonder.memory.store.MemoryStoreDO">
+        SELECT * FROM memory_store WHERE tenant_id = #{tenantId} AND status = 'ACTIVE'
+        ORDER BY scope, id
+    </select>
+    <select id="lockById" resultType="com.aliyun.autowonder.memory.store.MemoryStoreDO">
+        SELECT * FROM memory_store WHERE tenant_id = #{tenantId} AND id = #{id} FOR UPDATE
+    </select>
+    <update id="advanceRevision">
+        UPDATE memory_store SET current_revision = current_revision + 1,
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version}
+    </update>
+    <update id="archive">
+        UPDATE memory_store SET status = 'ARCHIVED', version = version + 1, modifier_id = #{modifierId}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND status = 'ACTIVE'
+    </update>
+    <update id="claimMaintenance">
+        UPDATE memory_store
+        SET maintenance_lease_owner = #{owner}, maintenance_lease_until = #{leaseUntil},
+            maintenance_lease_dispatch_id = #{dispatchId}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND status = 'ACTIVE'
+          AND (maintenance_lease_until IS NULL OR maintenance_lease_until &lt; #{now})
+    </update>
+    <update id="reclaimMaintenance">
+        UPDATE memory_store
+        SET maintenance_lease_owner = #{owner}, maintenance_lease_until = #{leaseUntil}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND status = 'ACTIVE'
+          AND maintenance_lease_dispatch_id = #{dispatchId}
+          AND (maintenance_lease_until IS NULL OR maintenance_lease_until &lt; #{now})
+    </update>
+    <update id="releaseMaintenance">
+        UPDATE memory_store
+        SET maintenance_lease_owner = NULL, maintenance_lease_until = NULL
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND maintenance_lease_owner = #{owner}
+    </update>
+    <update id="renewMaintenance">
+        UPDATE memory_store SET maintenance_lease_until = #{leaseUntil}
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+          AND maintenance_lease_owner = #{owner} AND maintenance_lease_until &gt; #{now}
+    </update>
+    <select id="lockActiveMaintenanceOwner" resultType="java.lang.String">
+        SELECT maintenance_lease_owner FROM memory_store
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+          AND maintenance_lease_until &gt; #{now}
+        FOR UPDATE
+    </select>
+</mapper>

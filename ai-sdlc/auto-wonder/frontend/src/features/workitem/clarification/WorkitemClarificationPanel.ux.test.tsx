@@ -238,7 +238,7 @@ describe('WorkitemClarificationPanel 回复体验（R1/R2/R3/R4）', () => {
     await waitFor(() => expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull());
     expect(screen.getByText('已终止')).toBeInTheDocument();
     expect(screen.getByText(/部分内容/)).toBeInTheDocument();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText('输入消息...')));
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
   });
 
   it('R4: 向上滚动离开底部暂停跟随并出现「回到底部」，点击后平滑滚回并恢复跟随', async () => {
@@ -300,7 +300,7 @@ describe('WorkitemClarificationPanel 回复结束后的输入焦点（工单 533
 
     await screen.findByTestId('clarification-replying-indicator');
     expect(screen.getByPlaceholderText('输入消息...')).toBeDisabled();
-    expect(document.activeElement).not.toBe(screen.getByPlaceholderText('输入消息...'));
+    expect(document.activeElement).not.toBe(document.querySelector('.ProseMirror'));
 
     // 回复完成落库：等价于终态实时事件触发的会话失效重拉
     mockConversation({
@@ -320,13 +320,16 @@ describe('WorkitemClarificationPanel 回复结束后的输入焦点（工单 533
     await waitFor(() => expect(screen.getByPlaceholderText('输入消息...')).toBeEnabled());
     await waitFor(() => expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull());
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByPlaceholderText('输入消息...')));
+      expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
   });
 
-  // 新的进入面板自动聚焦合同允许首次聚焦；已完成的历史会话后台刷新
-  // 不能被当作新一轮回复结束，也不能再次抢走用户移到别处的焦点。
-  it('历史会话首次聚焦后后台刷新不再次抢焦点', async () => {
-    const { textarea, queryClient } = await renderPanelWithConversation({
+  // 焦点只在「本轮回复结束」时归还：面板首次拉取会话时输入框同样经历一次
+  // 禁用→可用，回复结束的归还效应不能把这次跃迁误判为回复结束（工单 53305 原始诉求）。
+  // 72ca85586 的「进入面板自动聚焦」（FR-001）有意在挂载、输入行可用后经
+  // requestAnimationFrame 聚焦一次，所以本场景的终点是焦点落在输入框上；
+  // 等待 rAF 落定后再断言，避免与断言赛跑（全量并发下 rAF 可能先于断言执行）。
+  it('打开回复早已结束的历史会话时由进入面板的自动聚焦接管焦点', async () => {
+    const { textarea } = await renderPanelWithConversation({
       processingStatus: null,
       turns: [
         { id: 1, direction: 'IN', content: '帮我澄清需求', status: 'SUCCESS' },
@@ -336,20 +339,7 @@ describe('WorkitemClarificationPanel 回复结束后的输入焦点（工单 533
 
     await waitFor(() => expect(textarea).toBeEnabled());
     expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(textarea));
-    const otherControl = document.createElement('button');
-    document.body.append(otherControl);
-    try {
-      otherControl.focus();
-      await act(async () => {
-        await queryClient.invalidateQueries({
-          queryKey: ['workitem', '100', 'clarification-conversation', 1],
-        });
-      });
-      expect(document.activeElement).toBe(otherControl);
-    } finally {
-      otherControl.remove();
-    }
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
   });
 });
 

@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.ai.adapter;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
 import com.aliyun.autowonder.memory.MemoryDO;

@@ -1,9 +1,14 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { AuditJsonBlock } from './AuditJsonBlock';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import { useMemo, useState } from 'react';
-import { Alert, Button, Card, Descriptions, Drawer, Input, Segmented, Select, Space, Table, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, Drawer, Input, Segmented, Select, Space, Typography } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { useQuery } from '@tanstack/react-query';
 import { countAuditLogs, listAuditLogs } from './api';
 import type { AuditLog, AuditLogFilters } from './api';
 import type { ColumnsType } from 'antd/es/table';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 
 interface AuditDetail {
   actorType?: string;
@@ -101,7 +106,7 @@ function triggerText(record: AuditLog): string {
 export function AuditLogPage() {
   const [selected, setSelected] = useState<AuditLog | null>(null);
   const [page, setPage] = useState(1);
-  const [size, setSize] = useState(20);
+  const [size, setSize] = usePageSizePreference('autowonder.auditLogs.pageSize', [10, 20, 50, 100, 200], 10);
   const [draft, setDraft] = useState({
     module: '',
     action: '',
@@ -139,7 +144,10 @@ export function AuditLogPage() {
         <Typography.Text type="secondary">{moduleOptions.find((option) => option.value === record.module)?.label || record.module}</Typography.Text></>
     ) },
     { title: '对象', width: 150, render: (_, record) => `${targetTypeOptions.find((option) => option.value === record.targetType)?.label || record.targetType || '—'}${record.targetId != null ? ` #${record.targetId}` : ''}` },
-    { title: '摘要', ellipsis: true, render: (_, record) => detailText(record) },
+    {
+      title: '摘要', ellipsis: { showTitle: false },
+      render: (_, record) => { const text = detailText(record); return <EllipsisText tooltip={text}>{text}</EllipsisText>; },
+    },
     { title: '', width: 90, render: (_, record) => <Button type="link" onClick={() => setSelected(record)}>详情</Button> },
   ];
 
@@ -172,61 +180,63 @@ export function AuditLogPage() {
   };
 
   return (
-    <Card title="审计日志">
-      <Space direction="vertical" size={8} style={{ marginBottom: 20, width: '100%' }}>
-        <Segmented value={filters.actorType || ''} options={[
-          { label: '人工操作', value: 'HUMAN' }, { label: '数字员工', value: 'AGENT' },
-          { label: '系统', value: 'SYSTEM' }, { label: '全部', value: '' },
-        ]} onChange={(value) => { setFilters((current) => ({ ...current, actorType: value || undefined })); setPage(1); }} />
-        <Typography.Text type="secondary">默认查看人工操作；数字员工的运行事件可切换查看，完整字段保留在详情中。</Typography.Text>
-      </Space>
-      {isError && <Alert type="error" showIcon message="审计日志加载失败，请稍后重试" /> }
-      <Space wrap size={12} style={{ marginBottom: 16 }}>
+    <Card
+      className="aw-content-card"
+      title={<PageHeading title="审计日志" description="默认查看人工操作；可切换数字员工与系统事件，完整字段见详情。" />}
+      extra={<Segmented aria-label="操作来源" value={filters.actorType || ''} options={[
+        { label: '人工操作', value: 'HUMAN' }, { label: '数字员工', value: 'AGENT' },
+        { label: '系统', value: 'SYSTEM' }, { label: '全部', value: '' },
+      ]} onChange={(value) => { setFilters((current) => ({ ...current, actorType: value || undefined })); setPage(1); }} />}
+    >
+      {isError && <Alert type="error" showIcon message="审计日志加载失败，请稍后重试" style={{ marginBottom: 12 }} />}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12, marginBottom: 16 }}>
         <Select
           value={draft.module}
           options={moduleOptions}
           onChange={(value) => setDraft((current) => ({ ...current, module: value }))}
-          style={{ width: 150 }}
+          style={{ width: '100%' }}
         />
         <Select
           value={draft.action}
           options={actionOptions}
           onChange={(value) => setDraft((current) => ({ ...current, action: value }))}
-          style={{ width: 150 }}
+          style={{ width: '100%' }}
         />
         <Select
           value={draft.targetType}
           options={targetTypeOptions}
           onChange={(value) => setDraft((current) => ({ ...current, targetType: value }))}
-          style={{ width: 160 }}
-        />
-        <Input
-          value={draft.actorId}
-          placeholder="按操作人 ID 筛选"
-          onChange={(event) => setDraft((current) => ({ ...current, actorId: event.target.value }))}
-          style={{ width: 150 }}
-        />
-        <Input
-          value={draft.targetId}
-          placeholder="按目标 ID 筛选"
-          onChange={(event) => setDraft((current) => ({ ...current, targetId: event.target.value }))}
-          style={{ width: 150 }}
+          style={{ width: '100%' }}
         />
         <Select
           value={draft.timeRange}
           options={timeRangeOptions}
           onChange={(value) => setDraft((current) => ({ ...current, timeRange: value }))}
-          style={{ width: 150 }}
+          style={{ width: '100%' }}
+        />
+        <Input
+          value={draft.actorId}
+          placeholder="按操作人 ID 筛选"
+          onChange={(event) => setDraft((current) => ({ ...current, actorId: event.target.value }))}
+          style={{ width: '100%' }}
+        />
+        <Input
+          value={draft.targetId}
+          placeholder="按目标 ID 筛选"
+          onChange={(event) => setDraft((current) => ({ ...current, targetId: event.target.value }))}
+          style={{ width: '100%' }}
         />
         <Input
           value={draft.keyword}
           placeholder="搜索详情关键词"
           onChange={(event) => setDraft((current) => ({ ...current, keyword: event.target.value }))}
-          style={{ width: 220 }}
+          style={{ width: '100%' }}
         />
-        <Button type="primary" onClick={applyFilters}>搜索</Button>
-        <Button onClick={resetFilters}>重置</Button>
-      </Space>
+        <Space style={{ justifyContent: 'flex-end' }}>
+          <Button type="primary" onClick={applyFilters}>搜索</Button>
+          <Button onClick={resetFilters}>重置</Button>
+        </Space>
+      </div>
       <Table
         scroll={{ x: 900 }}
         rowKey="id"
@@ -249,10 +259,8 @@ export function AuditLogPage() {
             { key: 'trigger', label: '触发机制', children: triggerText(selected) },
             { key: 'event', label: '事件类型', children: String(parseDetail(selected).eventType || '—') },
           ]} />
-          <Typography.Title level={5}>完整记录</Typography.Title>
-          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#fafafa', padding: 16 }}>{JSON.stringify(selected, null, 2)}</pre>
-          <Typography.Title level={5}>事件详情</Typography.Title>
-          <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{JSON.stringify(parseDetail(selected), null, 2)}</pre>
+          <AuditJsonBlock title="完整记录" value={selected} />
+          <AuditJsonBlock title="事件详情" value={parseDetail(selected)} />
         </>}
       </Drawer>
     </Card>

@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.executor;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.executor.dto.ExecutorUpdateAllResultVO;

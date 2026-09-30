@@ -13,11 +13,11 @@ export type TimelineNodeRenderer = (node: TimelineNode) => ReactNode;
 const SUMMARY_STYLE = {
   cursor: 'pointer' as const,
   color: CLARIFICATION_THEME.textMuted,
-  fontSize: 12,
+  fontSize: 14,
 };
 
 const DETAIL_PRE_STYLE = {
-  fontSize: 11, color: CLARIFICATION_THEME.textSecondary, whiteSpace: 'pre-wrap' as const,
+  fontSize: 13, color: CLARIFICATION_THEME.textSecondary, whiteSpace: 'pre-wrap' as const,
   maxHeight: 200, overflow: 'auto' as const, padding: '6px 10px',
   backgroundColor: CLARIFICATION_THEME.codeSurface,
   border: `1px solid ${CLARIFICATION_THEME.codeBorder}`,
@@ -30,9 +30,9 @@ export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> =
   thinking: (node) => (node.text ? (
     <details style={{ marginBottom: 8 }}>
       <summary style={SUMMARY_STYLE}>思考过程</summary>
-      <div style={{
-        fontSize: 12, color: CLARIFICATION_THEME.textSecondary,
-        maxHeight: 200, overflow: 'auto', padding: '6px 10px',
+      <div className="aw-clarify-thinking" style={{
+        fontSize: 15, color: CLARIFICATION_THEME.textSecondary,
+        lineHeight: 1.75, maxHeight: 280, overflow: 'auto', padding: '10px 12px',
         backgroundColor: CLARIFICATION_THEME.codeSurface,
         border: `1px solid ${CLARIFICATION_THEME.codeBorder}`,
         borderRadius: CLARIFICATION_THEME.radiusBlock, marginTop: 4,
@@ -53,7 +53,7 @@ export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> =
   status: () => null,
 
   error: (node) => (
-    <Typography.Text type="danger" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>
+    <Typography.Text type="danger" style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>
       {node.text}
     </Typography.Text>
   ),

@@ -9,6 +9,7 @@ public record WorkitemStatusChangedEvent(String actorType, long tenantId, long w
 
     public static final String ACTOR_HUMAN = "HUMAN";
     public static final String ACTOR_AGENT = "AGENT";
+    public static final String ACTOR_SYSTEM = "SYSTEM";
 
     public WorkitemStatusChangedEvent(long tenantId, long workitemId, long toNodeId, long userId) {
         this(ACTOR_HUMAN, tenantId, workitemId, toNodeId, userId);

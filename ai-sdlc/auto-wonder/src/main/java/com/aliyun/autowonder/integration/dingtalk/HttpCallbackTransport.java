@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;

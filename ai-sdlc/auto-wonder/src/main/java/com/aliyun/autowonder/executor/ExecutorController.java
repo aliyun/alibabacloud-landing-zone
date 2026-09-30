@@ -35,7 +35,7 @@ public class ExecutorController {
 
     @PostMapping("/executors/{id}/restart")
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "重启执行器")
-    public Result<com.alibaba.fastjson.JSONObject> restart(@PathVariable("id") Long id,
+    public Result<com.aliyun.autowonder.json.JSONObject> restart(@PathVariable("id") Long id,
             @RequestBody(required = false) RestartRequest request) {
         return Result.ok(restartService.request(id, currentWorkspaceId(), currentUserId(), request != null && request.update()));
     }

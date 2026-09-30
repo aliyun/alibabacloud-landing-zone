@@ -1,7 +1,5 @@
 package com.aliyun.autowonder.evolution;
 
-import com.aliyun.autowonder.memory.MemoryService;
-import com.aliyun.autowonder.memory.dto.MemoryVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.RepoRelationVO;
 import com.aliyun.autowonder.skill.SkillService;
@@ -14,21 +12,17 @@ import java.util.Locale;
 @Service
 public class EvolutionAssetManifestLiteService {
 
-    private static final String MEMORY = "MEMORY";
     private static final String SKILL = "SKILL";
     private static final String REPO_RELATION = "REPO_RELATION";
     private static final String POSTERIOR_TYPE_UTILITY = "UTILITY";
 
-    private final MemoryService memoryService;
     private final SkillService skillService;
     private final RepoService repoService;
     private final BayesianEvidenceDao evidenceDao;
 
-    public EvolutionAssetManifestLiteService(MemoryService memoryService,
-                                             SkillService skillService,
+    public EvolutionAssetManifestLiteService(SkillService skillService,
                                              RepoService repoService,
                                              BayesianEvidenceDao evidenceDao) {
-        this.memoryService = memoryService;
         this.skillService = skillService;
         this.repoService = repoService;
         this.evidenceDao = evidenceDao;
@@ -43,9 +37,6 @@ public class EvolutionAssetManifestLiteService {
         vo.setContextKey(q.getContextKey());
         vo.setLimit(limit);
 
-        if (includes(assetType, MEMORY)) {
-            addMemoryCards(vo.getCards(), tenantId, q.getContextKey(), limit);
-        }
         if (includes(assetType, SKILL)) {
             addSkillCards(vo.getCards(), tenantId, q.getContextKey(), limit);
         }
@@ -53,21 +44,6 @@ public class EvolutionAssetManifestLiteService {
             addRepoRelationCards(vo.getCards(), tenantId, q.getContextKey(), limit);
         }
         return vo;
-    }
-
-    private void addMemoryCards(List<EvolutionAssetManifestCardVO> cards, long tenantId, String contextKey, int limit) {
-        for (MemoryVO memory : memoryService.list(tenantId, null, null, null, "ADOPTED", 1, limit)) {
-            EvolutionAssetManifestCardVO card = new EvolutionAssetManifestCardVO();
-            card.setAssetType(MEMORY);
-            card.setAssetId(memory.getId());
-            card.setName(memory.getTitle());
-            card.setCategory(compactCategory(memory.getScope(), memory.getType()));
-            card.setTriggerHint(memory.getTitle());
-            card.setLazyLoadRef("/api/memories/" + memory.getId());
-            card.setVersion(memory.getVersion());
-            attachPosterior(card, tenantId, contextKey);
-            cards.add(card);
-        }
     }
 
     private void addSkillCards(List<EvolutionAssetManifestCardVO> cards, long tenantId, String contextKey, int limit) {

@@ -12,57 +12,29 @@ function renderWithQueryClient(ui: ReactElement) {
 }
 
 describe('AboutAutoWonderPage', () => {
-  it('explains the product narrative and quick-start workflow', () => {
+  it('shows the independent delivery story and removes the old onboarding content', () => {
     renderWithQueryClient(<AboutAutoWonderPage />);
 
-    expect(screen.getByText('关于 AutoWonder')).toBeInTheDocument();
-    expect(screen.getByText(/把工单交给一支/)).toBeInTheDocument();
-    expect(screen.getByText(/会协作、会沉淀的数字员工小队/)).toBeInTheDocument();
-    expect(screen.getByText('工单系统集成')).toBeInTheDocument();
-    expect(screen.getByText('托管仓库')).toBeInTheDocument();
-    expect(screen.getByText('设置角色与小队')).toBeInTheDocument();
-    expect(screen.getByText('绑定 SDLC')).toBeInTheDocument();
-    expect(screen.getByText('开始工单执行')).toBeInTheDocument();
-    expect(screen.getByText('沉淀记忆与产物')).toBeInTheDocument();
-    expect(screen.getByText('不是聊天机器人，而是研发编排系统')).toBeInTheDocument();
-    expect(screen.getByText('数字员工需要小队协作')).toBeInTheDocument();
-    expect(screen.getByText('每次交付都让工作空间更聪明')).toBeInTheDocument();
-  });
-
-  it('matches the approved visual mock content structure', () => {
-    renderWithQueryClient(<AboutAutoWonderPage />);
-
-    expect(screen.getByText('5 分钟理解工作流')).toBeInTheDocument();
-    expect(screen.getByText('从工单到产物的自动交付闭环')).toBeInTheDocument();
-    expect(screen.getByText('工单 #30020 · 支付回调稳定性修复')).toBeInTheDocument();
-    expect(screen.getByText('来自 Aone / Jira / 自建工单系统')).toBeInTheDocument();
-    expect(screen.getByText('PM')).toBeInTheDocument();
-    expect(screen.getByText('DEV')).toBeInTheDocument();
-    expect(screen.getByText('CR')).toBeInTheDocument();
-    expect(screen.getByText('QA')).toBeInTheDocument();
-    expect(screen.getByText('从现有研发体系接入 AutoWonder')).toBeInTheDocument();
-    expect(screen.getByText('这条路径兼容 Aone、Jira、GitLab/GitHub、自建仓库与独立执行器，不要求推翻现有流程。')).toBeInTheDocument();
-    expect(screen.getByText('理念 01')).toBeInTheDocument();
-    expect(screen.getByText('理念 02')).toBeInTheDocument();
-    expect(screen.getByText('理念 03')).toBeInTheDocument();
-  });
-
-  it('uses warm surfaces instead of abrupt black for the first step and first principle', () => {
-    renderWithQueryClient(<AboutAutoWonderPage />);
-
-    expect(screen.getByText('工单系统集成').closest('article')).toHaveStyle({
-      background: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
-    });
-    expect(screen.getByText('理念 01').closest('article')).toHaveStyle({
-      background: 'linear-gradient(135deg, #fff7ed 0%, #fef3c7 100%)',
-    });
+    expect(screen.getByRole('region', { name: '关于平台' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '软件产品自动交付平台' })).toBeInTheDocument();
+    expect(screen.getByText('AI Native SDLC Platform')).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      '需求澄清', '启动', '开发', '验证', '评审', '部署', '测试', '交付',
+    ]);
+    const accentFlags = screen.getAllByRole('listitem')
+      .map((item) => item.querySelector('.about-aw-delivery-label')!.className
+        .includes('about-aw-delivery-label--accent'));
+    expect(accentFlags).toEqual([false, false, true, true, true, true, true, true]);
+    expect(screen.getByText('持续迭代')).toBeInTheDocument();
+    expect(screen.queryByText('工单系统集成')).not.toBeInTheDocument();
+    expect(screen.queryByText('5 分钟理解工作流')).not.toBeInTheDocument();
   });
 
   it('shows the default deployment version placeholder', async () => {
     renderWithQueryClient(<AboutAutoWonderPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('当前部署版本：x.x.x')).toBeInTheDocument();
+      expect(screen.getByText('x.x.x')).toBeInTheDocument();
     });
   });
 
@@ -92,7 +64,7 @@ describe('AboutAutoWonderPage', () => {
     renderWithQueryClient(<AboutAutoWonderPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('当前部署版本：1.2.3')).toBeInTheDocument();
+      expect(screen.getByText('1.2.3')).toBeInTheDocument();
     });
   });
 
@@ -122,7 +94,7 @@ describe('AboutAutoWonderPage', () => {
     renderWithQueryClient(<AboutAutoWonderPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('当前部署版本：x.x.x')).toBeInTheDocument();
+      expect(screen.getByText('x.x.x')).toBeInTheDocument();
     });
   });
 
@@ -135,9 +107,9 @@ describe('AboutAutoWonderPage', () => {
 
     renderWithQueryClient(<AboutAutoWonderPage />);
 
-    expect(screen.getByText('当前部署版本：x.x.x')).toBeInTheDocument();
+    expect(screen.getByText('x.x.x')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText(/把工单交给一支/)).toBeInTheDocument();
+      expect(screen.getByText('软件产品自动交付平台')).toBeInTheDocument();
     });
   });
 });

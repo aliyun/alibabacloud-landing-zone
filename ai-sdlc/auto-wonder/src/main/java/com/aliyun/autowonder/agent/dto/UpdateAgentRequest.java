@@ -2,7 +2,7 @@ package com.aliyun.autowonder.agent.dto;
 
 import java.util.Set;
 
-import com.alibaba.fastjson.annotation.JSONField;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -23,6 +23,6 @@ public class UpdateAgentRequest {
      * provided (legacy REST semantics); when set, absent fields keep their current value while
      * explicit null clears the field.
      */
-    @JSONField(serialize = false, deserialize = false)
+    @JsonIgnore
     private Set<String> providedFields;
 }

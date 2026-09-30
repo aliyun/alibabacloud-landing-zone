@@ -41,8 +41,11 @@ public class DispatchCompensationTask {
     private final InteractionWorkflowService interactionWorkflowService;
     private final RedisManager redisManager;
     private DispatchRecoveryService recovery;
+    private DeliveryRestartOrchestrator restartOrchestrator;
     @org.springframework.beans.factory.annotation.Autowired
     public void setRecovery(DispatchRecoveryService service) { this.recovery = service; }
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRestartOrchestrator(DeliveryRestartOrchestrator orchestrator) { this.restartOrchestrator = orchestrator; }
 
     public DispatchCompensationTask(DispatchDao dispatchDao, DispatchService dispatchService,
             DispatchPauseService pauseService, InteractionWorkflowService interactionWorkflowService,
@@ -67,6 +70,16 @@ public class DispatchCompensationTask {
                     recovery.reconcile();
                 } catch (RuntimeException e) {
                     log.warn("compensation recovery reconciliation failed", e);
+                }
+            }
+            // Resume delivery-restart rounds still waiting for an old execution stop:
+            // covers service restarts mid-wait and stop confirmations that arrived
+            // through paths without an explicit advancement hook.
+            if (restartOrchestrator != null) {
+                try {
+                    restartOrchestrator.sweepWaitingRestarts();
+                } catch (RuntimeException e) {
+                    log.warn("compensation waiting-restart advancement failed", e);
                 }
             }
             long now = System.currentTimeMillis();

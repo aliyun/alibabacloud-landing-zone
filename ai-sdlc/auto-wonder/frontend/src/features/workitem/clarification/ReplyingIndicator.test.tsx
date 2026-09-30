@@ -102,9 +102,9 @@ describe('ReplyingIndicator', () => {
     const ring = getByTestId('clarification-replying-indicator').querySelector('span[aria-hidden]');
     expect(ring).not.toBeNull();
     // 2px 圆环用 6% 的分割线灰（hairline）几乎看不见，必须是 10% 的控件描边。
-    expect((ring as HTMLElement).style.borderLeftColor).toBe('rgba(0,0,0,0.10)');
+    expect((ring as HTMLElement).style.borderStyle).toBe('solid');
     expect((ring as HTMLElement).style.borderLeftWidth).toBe('2px');
     // 旋转头保持 textMuted，动效才读得出来
-    expect((ring as HTMLElement).style.borderTopColor).toBe('#9ca3af');
+    expect((ring as HTMLElement).style.animation).toContain('aw-clarify-spin');
   });
 });

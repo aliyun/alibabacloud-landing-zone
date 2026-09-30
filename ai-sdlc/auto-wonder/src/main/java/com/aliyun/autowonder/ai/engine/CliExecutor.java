@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.ai.engine;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.configuration.ThreadPoolManager;
 import lombok.Getter;
 import org.slf4j.Logger;

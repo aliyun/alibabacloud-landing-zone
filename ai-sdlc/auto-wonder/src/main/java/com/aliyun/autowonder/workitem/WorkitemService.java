@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.workitem;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.common.error.BizException;
@@ -107,6 +107,12 @@ public class WorkitemService {
     private static final String SOURCE_TYPE_EXTERNAL = "EXTERNAL";
     private static final long SYSTEM_USER_ID = 0L;
 
+    /** 越界流转放行后的页面提示文案（规格 3.3）。 */
+    public static final String OUT_OF_TEMPLATE_TRANSITION_WARNING = "该流转不在模板推荐范围内";
+    private static final String TRANSITION_SOURCE_HUMAN = "HUMAN";
+    private static final String TRANSITION_SOURCE_AGENT = "AGENT";
+    private static final String TRANSITION_SOURCE_DELIVERY_START = "SYSTEM_DELIVERY_START";
+
     private final WorkitemDao workitemDao;
     private final WorkitemCommentDao commentDao;
     private final WorkitemCommentMentionDao commentMentionDao;
@@ -137,6 +143,8 @@ public class WorkitemService {
     private ScheduledTaskDao scheduledTaskDao;
     @Autowired(required = false)
     private ScheduledTaskNotificationService scheduledTaskNotificationService;
+    @Autowired(required = false)
+    private WorkitemServiceRestartHandler restartHandler;
 
     /** A non-terminal (running) dispatch idle longer than this is treated as stalled. Default 60m. */
     @Value("${autowonder.workitem.stuck-threshold-ms:3600000}")
@@ -181,6 +189,10 @@ public class WorkitemService {
         this.externalWorkitemLinkDao = externalWorkitemLinkDao;
         this.externalWorkitemViewService = externalWorkitemViewService;
         this.eventPublisher = eventPublisher;
+    }
+
+    void bindRestartHandler(WorkitemServiceRestartHandler handler) {
+        this.restartHandler = handler;
     }
 
     WorkitemService(WorkitemDao workitemDao, WorkitemCommentDao commentDao,
@@ -392,7 +404,7 @@ public class WorkitemService {
             WorkitemVO vo = toVO(w, userMap, agentMap, nodeMap, sdlcMap);
             DispatchDO latest = latestByWorkitem.get(w.getId());
             vo.setExecutionStatus(latest == null ? null : latest.getStatus());
-            applyPendingDecision(vo, w, latest, nodeMap);
+            applyClassification(vo, w, allDispatchesByWorkitem.get(w.getId()), nodeMap);
             applyHealth(vo, w, latest, now, nodeMap);
             applyScheduledPhase(vo, w, latest, now, nodeMap);
             applyDeleteEligibility(vo, w, extLinksMap, allDispatchesByWorkitem);
@@ -406,9 +418,9 @@ public class WorkitemService {
     }
 
     private static final Set<String> STATUS_CATEGORIES =
-            Set.of("NEW", "IN_PROGRESS", "PENDING_DECISION", "DONE");
+            Set.of("NEW", "IN_PROGRESS", "PENDING_DECISION", "DONE", "CANCELED");
 
-    /** 看板状态列筛选值归一化，非法值视为不过滤。 */
+    /** 看板状态列筛选值归一化，非法值视为不过滤。CANCELED 仅在显式筛选「已取消」时可见。 */
     private String normalizeStatusCategory(String statusCategory) {
         if (statusCategory == null || statusCategory.isBlank()) {
             return null;
@@ -496,7 +508,7 @@ public class WorkitemService {
             vo.setScheduledPhase(WorkitemScheduledPhase.PENDING);
             return;
         }
-        if (isDoneStatus(w.getStatusNodeId(), vo.getStatusName(), nodeMap)) {
+        if (isFinishedNode(w.getStatusNodeId(), nodeMap)) {
             vo.setScheduledPhase(WorkitemScheduledPhase.DONE);
             return;
         }
@@ -507,51 +519,26 @@ public class WorkitemService {
         vo.setScheduledPhase(WorkitemScheduledPhase.READY);
     }
 
-    private void applyPendingDecision(WorkitemVO vo, WorkitemDO w, DispatchDO latest) {
-        boolean successfulHumanHandoff = "HUMAN".equals(w.getAssigneeType())
-                && latest != null
-                && DispatchStatus.SUCCEEDED.equals(latest.getStatus());
-        vo.setPendingDecision(successfulHumanHandoff && !isDoneStatus(w.getStatusNodeId(), vo.getStatusName()));
-    }
-
-    private void applyPendingDecision(WorkitemVO vo, WorkitemDO w, DispatchDO latest,
-                                      Map<Long, StatusNodeDO> nodeMap) {
-        boolean successfulHumanHandoff = "HUMAN".equals(w.getAssigneeType())
-                && latest != null
-                && DispatchStatus.SUCCEEDED.equals(latest.getStatus());
-        vo.setPendingDecision(successfulHumanHandoff
-                && !isDoneStatus(w.getStatusNodeId(), vo.getStatusName(), nodeMap));
-    }
-
-    private boolean isDoneStatus(Long statusNodeId, String statusName) {
-        StatusNodeDO node = statusNodeId == null ? null : nodeDao.findById(statusNodeId);
-        if (isDoneNode(node)) {
-            return true;
-        }
-        return containsDoneToken(statusName);
-    }
-
-    private boolean isDoneStatus(Long statusNodeId, String statusName, Map<Long, StatusNodeDO> nodeMap) {
+    /** 已结束 = 节点类别 DONE/CANCELED（统一口径），状态名称不参与判断。 */
+    private boolean isFinishedNode(Long statusNodeId, Map<Long, StatusNodeDO> nodeMap) {
         StatusNodeDO node = statusNodeId == null ? null : nodeMap.get(statusNodeId);
-        if (isDoneNode(node)) {
-            return true;
-        }
-        return containsDoneToken(statusName);
+        return node != null
+                && WorkitemClassificationEvaluator.isFinishedCategory(node.getCategory());
     }
 
-    private boolean isDoneNode(StatusNodeDO node) {
-        return node != null && ("DONE".equalsIgnoreCase(node.getCategory())
-                || containsDoneToken(node.getCode()) || containsDoneToken(node.getName()));
-    }
-
-    private boolean containsDoneToken(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        String s = value.toUpperCase();
-        return s.contains("完成") || s.contains("关闭") || s.contains("发布")
-                || s.contains("DONE") || s.contains("CLOSED") || s.contains("FIXED") || s.contains("RELEASED")
-                || s.contains("PUBLISHED");
+    /**
+     * 统一分类落 VO：statusCategory 为看板/筛选/统计唯一口径，pendingDecision 与「待决策」列
+     * （及「需人工」标签）完全同条件。状态名称不参与判断。
+     */
+    private void applyClassification(WorkitemVO vo, WorkitemDO w, List<DispatchDO> dispatches,
+                                     Map<Long, StatusNodeDO> nodeMap) {
+        StatusNodeDO node = w.getStatusNodeId() == null ? null
+                : (nodeMap != null ? nodeMap.get(w.getStatusNodeId()) : nodeDao.findById(w.getStatusNodeId()));
+        String category = node == null ? null : node.getCategory();
+        String classification = WorkitemClassificationEvaluator.classify(
+                category, w.getAssigneeType(), w.getAssigneeRef(), dispatches);
+        vo.setStatusCategory(classification);
+        vo.setPendingDecision(WorkitemClassificationEvaluator.CATEGORY_PENDING_DECISION.equals(classification));
     }
 
     @Transactional
@@ -574,21 +561,7 @@ public class WorkitemService {
         if (w.getTemplateId() == null || w.getStatusNodeId() == null) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
-        long fromNodeId = w.getStatusNodeId();
-        if (transitionDao.findByTemplateFromTo(w.getTemplateId(), fromNodeId, toNodeId) == null) {
-            throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
-        }
-        StatusNodeDO fromNode = nodeDao.findById(fromNodeId);
-        StatusNodeDO toNode = nodeDao.findById(toNodeId);
-        int rows = workitemDao.updateStatus(id, tenantId, toNodeId, w.getVersion(), userId);
-        if (rows == 0) {
-            throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
-        }
-        writeEvent(tenantId, id, WorkitemEventType.STATUS_CHANGE.code(),
-                fromNode == null ? null : fromNode.getCode(),
-                toNode == null ? null : toNode.getCode(), "HUMAN", userId);
-        eventPublisher.publishEvent(new WorkitemStatusChangedEvent(tenantId, id, toNodeId, userId));
-        return toVO(workitemDao.findById(id));
+        return applyTransition(w, toNodeId, "HUMAN", userId, TRANSITION_SOURCE_HUMAN, null);
     }
 
     @Transactional
@@ -601,27 +574,99 @@ public class WorkitemService {
         if (toNode == null) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
-        return agentTransition(w, toNode, tenantId, agentId);
+        return applyTransition(w, toNode.getId(), "AGENT", agentId, TRANSITION_SOURCE_AGENT, null);
     }
 
-    private WorkitemVO agentTransition(WorkitemDO w, StatusNodeDO toNode,
-                                       long tenantId, long agentId) {
+    /**
+     * 流转统一入口（规格 3.3）：真人/数字人/系统共用同一实现，保证审计口径一致。
+     * 模板 transitions 只是推荐集；越界流转放行 + 警告日志 + 审计 + 页面提示，不拦截。
+     */
+    private WorkitemVO applyTransition(WorkitemDO w, long toNodeId, String actorType, Long actorRef,
+                                       String source, String reason) {
         long id = w.getId();
+        long tenantId = w.getTenantId();
         long fromNodeId = w.getStatusNodeId();
-        if (transitionDao.findByTemplateFromTo(w.getTemplateId(), fromNodeId, toNode.getId()) == null) {
+        // 越界流转放行只针对模板内的非推荐节点；目标节点必须存在且属于当前工单的模板，
+        // 否则状态机会写入悬空/跨租户的 status_node_id。
+        StatusNodeDO toNode = nodeDao.findById(toNodeId);
+        if (toNode == null || !Long.valueOf(tenantId).equals(toNode.getTenantId())
+                || !Objects.equals(w.getTemplateId(), toNode.getTemplateId())) {
             throw new BizException(ErrorCode.ILLEGAL_TRANSITION);
         }
+        boolean inTemplate = w.getTemplateId() != null
+                && transitionDao.findByTemplateFromTo(w.getTemplateId(), fromNodeId, toNodeId) != null;
+        if (!inTemplate) {
+            log.warn("out-of-template workitem transition allowed workitemId={} templateId={} "
+                            + "fromNodeId={} toNodeId={} actorType={} source={}",
+                    id, w.getTemplateId(), fromNodeId, toNodeId, actorType, source);
+        }
         StatusNodeDO fromNode = nodeDao.findById(fromNodeId);
-        int rows = workitemDao.updateStatus(id, tenantId, toNode.getId(), w.getVersion(), agentId);
+        int rows = workitemDao.updateStatus(id, tenantId, toNodeId, w.getVersion(), actorRef);
         if (rows == 0) {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
         writeEvent(tenantId, id, WorkitemEventType.STATUS_CHANGE.code(),
                 fromNode == null ? null : fromNode.getCode(),
-                toNode.getCode(), "AGENT", agentId);
-        eventPublisher.publishEvent(new WorkitemStatusChangedEvent(WorkitemStatusChangedEvent.ACTOR_AGENT,
-                tenantId, id, toNode.getId(), agentId));
-        return toVO(workitemDao.findById(id));
+                toNode == null ? null : toNode.getCode(), actorType, actorRef,
+                transitionDetailJson(source, reason, !inTemplate));
+        eventPublisher.publishEvent(new WorkitemStatusChangedEvent(actorType, tenantId, id, toNodeId,
+                actorRef == null ? SYSTEM_USER_ID : actorRef));
+        WorkitemVO vo = toVO(workitemDao.findById(id));
+        if (!inTemplate) {
+            vo.setTransitionWarning(OUT_OF_TEMPLATE_TRANSITION_WARNING);
+        }
+        return vo;
+    }
+
+    /**
+     * 启动交付自动推进（规格 3.3 唯一自动流转）：派发开始执行时，仍处于 INIT 类别节点的
+     * 工单推进到模板首个 IN_PROGRESS 节点；重开回初始态后再次启动交付会再次推进。
+     * 执行成功/失败均不改业务状态（单次执行成功不等于工单完成）。
+     *
+     * @return 是否实际发生了推进
+     */
+    @Transactional
+    public boolean autoAdvanceOnDeliveryStart(long tenantId, long workitemId) {
+        WorkitemDO w = workitemDao.findById(workitemId);
+        if (w == null || tenantId != w.getTenantId()
+                || w.getTemplateId() == null || w.getStatusNodeId() == null) {
+            return false;
+        }
+        StatusNodeDO current = nodeDao.findById(w.getStatusNodeId());
+        if (current == null || !WorkitemClassificationEvaluator.isInitCategory(current.getCategory())) {
+            return false;
+        }
+        StatusNodeDO target = firstNodeOfCategory(w.getTemplateId(),
+                WorkitemClassificationEvaluator.NODE_CATEGORY_IN_PROGRESS);
+        if (target == null || target.getId().equals(w.getStatusNodeId())) {
+            return false;
+        }
+        applyTransition(w, target.getId(), WorkitemStatusChangedEvent.ACTOR_SYSTEM, null,
+                TRANSITION_SOURCE_DELIVERY_START, "派发开始执行，自动推进到模板首个执行中节点");
+        return true;
+    }
+
+    private StatusNodeDO firstNodeOfCategory(Long templateId, String category) {
+        return safeList(nodeDao.listByTemplateId(templateId)).stream()
+                .filter(Objects::nonNull)
+                .filter(n -> category.equalsIgnoreCase(
+                        n.getCategory() == null ? "" : n.getCategory().trim()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    static String transitionDetailJson(String source, String reason, boolean outOfTemplate) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        if (source != null) {
+            detail.put("source", source);
+        }
+        if (reason != null) {
+            detail.put("reason", reason);
+        }
+        if (outOfTemplate) {
+            detail.put("outOfTemplate", true);
+        }
+        return detail.isEmpty() ? null : JSON.toJSONString(detail);
     }
 
     @Transactional
@@ -633,29 +678,51 @@ public class WorkitemService {
     @Transactional
     public WorkitemVO assign(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
                              Date scheduledStartAt, long tenantId, long userId) {
-        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, tenantId, userId,
-                AssignmentActor.human(userId, resolveHumanName(userId)));
+        return assign(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, null, tenantId, userId);
+    }
+
+    @Transactional
+    public WorkitemVO assign(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
+                             Date scheduledStartAt, String restartToken, long tenantId, long userId) {
+        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, restartToken,
+                tenantId, userId, AssignmentActor.human(userId, resolveHumanName(userId)));
     }
 
     @Transactional
     public WorkitemVO assignAs(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
                                long tenantId, long modifierUserId, AssignmentActor actor) {
-        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, null, tenantId, modifierUserId, actor);
+        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, null, null, tenantId, modifierUserId, actor);
     }
 
     @Transactional
     public WorkitemVO assignAs(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
                                Date scheduledStartAt, long tenantId, long modifierUserId, AssignmentActor actor) {
+        return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, null,
+                tenantId, modifierUserId, actor);
+    }
+
+    @Transactional
+    public WorkitemVO assignAs(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
+                               Date scheduledStartAt, String restartToken,
+                               long tenantId, long modifierUserId, AssignmentActor actor) {
         WorkitemDO w = workitemDao.findById(id);
         if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        // A same-assignee re-assign is normally a no-op, but after cancelling a planned
-        // start the workitem keeps its agent assignee and the re-assign carries the new
-        // scheduledStartAt, so only the assignee mutation is skipped, not the schedule.
+        // The DB column is VARCHAR(64); reject overlong tokens here instead of surfacing
+        // a database error from the restart-round insert.
+        if (restartToken != null && restartToken.length() > 64) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "restartToken 长度不能超过 64 个字符");
+        }
         boolean sameAssignee = Objects.equals(w.getAssigneeType(), assigneeType)
                 && Objects.equals(w.getAssigneeRef(), assigneeRef);
-        if (sameAssignee && scheduledStartAt == null) {
+        boolean agentAssign = "AGENT".equals(assigneeType) && assigneeRef != null;
+        // A reassignment to an AGENT whose delivery already started is an explicit
+        // delivery restart: stop old formal executions, then start a new formal round
+        // from the SDLC entry. First-time delivery (no SDLC bound) keeps the plain
+        // assignment path — there is no old execution to stop.
+        boolean restartDelivery = agentAssign && w.getSdlcId() != null && w.getCurrentStepId() != null;
+        if (sameAssignee && !restartDelivery && scheduledStartAt == null) {
             return toVO(w);
         }
         AssignmentActor effectiveActor = actor == null
@@ -726,17 +793,49 @@ public class WorkitemService {
             }
         }
 
-        if ("AGENT".equals(assigneeType) && assigneeRef != null) {
-            boolean deferred = reloaded != null && reloaded.getScheduledStartAt() != null
-                    && reloaded.getScheduledStartAt().after(new Date());
-            if (deferred) {
-                // Delayed delivery: the scheduled-start scanner publishes the assign event
-                // once the planned time arrives.
-                log.info("Workitem {} agent delivery deferred until {}", id, reloaded.getScheduledStartAt());
+        if ("AGENT".equals(assigneeType) && assigneeRef != null && reloaded != null) {
+            if (restartDelivery && restartHandler != null) {
+                // An immediate restart supersedes any leftover delayed-restart schedule:
+                // without this CAS clear the scheduled-start scanner would fire the stale
+                // deferred round once its planned time arrives, stopping this restart's
+                // running dispatch and starting an extra round from a middle step.
+                if (scheduledStartAt == null && reloaded.getScheduledStartAt() != null) {
+                    int clearedRows = workitemDao.clearScheduledStartAt(id, tenantId, reloaded.getVersion());
+                    if (clearedRows == 0) {
+                        throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+                    }
+                    reloaded = workitemDao.findById(id);
+                }
+                // Explicit restart: reopen a closed delivery, allocate the idempotent restart
+                // round and publish the restart event that stops old formal executions before
+                // the new round runs. WorkitemAssignedEvent must NOT also fire — that would
+                // enqueue a second, uncontrolled dispatch for the same reassignment.
+                SdlcStepDO entry = sdlcResolver.firstStep(tenantId, reloaded.getSdlcId());
+                if (entry == null) {
+                    throw new BizException(ErrorCode.SDLC_STEP_NOT_FOUND);
+                }
+                if (!entry.getId().equals(reloaded.getCurrentStepId())) {
+                    int rows = workitemDao.updateSdlcAndStep(id, tenantId, reloaded.getSdlcId(),
+                            entry.getId(), reloaded.getVersion(), modifierUserId);
+                    if (rows == 0) {
+                        throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+                    }
+                    reloaded = workitemDao.findById(id);
+                }
+                restartHandler.restartAgentDelivery(id, tenantId, assigneeRef, entry.getId(),
+                        restartToken, scheduledStartAt, modifierUserId, effectiveActor);
             } else {
-                eventPublisher.publishEvent(new WorkitemAssignedEvent(
-                        tenantId, id, reloaded.getCurrentStepId(), assigneeRef,
-                        reloaded.getVersion(), modifierUserId));
+                boolean deferred = reloaded.getScheduledStartAt() != null
+                        && reloaded.getScheduledStartAt().after(new Date());
+                if (deferred) {
+                    // Delayed delivery: the scheduled-start scanner publishes the assign event
+                    // once the planned time arrives.
+                    log.info("Workitem {} agent delivery deferred until {}", id, reloaded.getScheduledStartAt());
+                } else {
+                    eventPublisher.publishEvent(new WorkitemAssignedEvent(
+                            tenantId, id, reloaded.getCurrentStepId(), assigneeRef,
+                            reloaded.getVersion(), modifierUserId));
+                }
             }
         }
         if ("HUMAN".equals(assigneeType) && assigneeRef != null
@@ -786,9 +885,13 @@ public class WorkitemService {
             WorkitemDO fresh = workitemDao.findById(id);
             if (executeNow && fresh != null
                     && "AGENT".equals(fresh.getAssigneeType()) && fresh.getAssigneeRef() != null) {
-                eventPublisher.publishEvent(new WorkitemAssignedEvent(
-                        tenantId, id, fresh.getCurrentStepId(), fresh.getAssigneeRef(),
-                        fresh.getVersion(), userId));
+                boolean restartFired = restartHandler != null && restartHandler.firePendingRestartNow(
+                        tenantId, id, fresh.getAssigneeRef(), fresh.getCurrentStepId(), userId);
+                if (!restartFired) {
+                    eventPublisher.publishEvent(new WorkitemAssignedEvent(
+                            tenantId, id, fresh.getCurrentStepId(), fresh.getAssigneeRef(),
+                            fresh.getVersion(), userId));
+                }
             }
             return toVO(fresh);
         }
@@ -1633,7 +1736,7 @@ public class WorkitemService {
             JSONObject detail = JSON.parseObject(latest.getDetailJson());
             Integer revision = detail.getInteger("revision");
             String targetStepId = detail.getString("targetStepId");
-            com.alibaba.fastjson.JSONArray rawSteps = detail.getJSONArray("steps");
+            com.aliyun.autowonder.json.JSONArray rawSteps = detail.getJSONArray("steps");
             if (revision == null || revision < 1 || targetStepId == null || targetStepId.isBlank()
                     || rawSteps == null || rawSteps.isEmpty()) {
                 return null;
@@ -1664,7 +1767,7 @@ public class WorkitemService {
             result.setAgentName(resolveAgentName(latest.getAgentId()));
             result.setTargetStepId(targetStepId);
             result.setReason(detail.getString("reason"));
-            com.alibaba.fastjson.JSONArray rawGuidanceIds = detail.getJSONArray("sourceGuidanceIds");
+            com.aliyun.autowonder.json.JSONArray rawGuidanceIds = detail.getJSONArray("sourceGuidanceIds");
             List<Long> guidanceIds = new ArrayList<>();
             if (rawGuidanceIds != null) {
                 for (int i = 0; i < rawGuidanceIds.size(); i++) {
@@ -2619,11 +2722,15 @@ public class WorkitemService {
             vo.setAssigneeDisplayName(resolveActorDisplayName(w.getAssigneeType(), w.getAssigneeRef()));
         }
 
-        applyDeleteEligibility(vo, w);
+        List<DispatchDO> dispatches = w.getTenantId() == null || w.getId() == null
+                ? List.of()
+                : safeList(dispatchDao.listByWorkitem(w.getTenantId(), w.getId()));
+        applyDeleteEligibility(vo, w, dispatches);
+        applyClassification(vo, w, dispatches, null);
         return vo;
     }
 
-    private void applyDeleteEligibility(WorkitemVO vo, WorkitemDO w) {
+    private void applyDeleteEligibility(WorkitemVO vo, WorkitemDO w, List<DispatchDO> dispatches) {
         vo.setSourceType(SOURCE_TYPE_NATIVE);
         vo.setDeletable(true);
         vo.setDeletableReason(null);
@@ -2636,7 +2743,7 @@ public class WorkitemService {
             vo.setDeletableReason(ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessage());
             return;
         }
-        boolean running = safeList(dispatchDao.listByWorkitem(w.getTenantId(), w.getId())).stream()
+        boolean running = dispatches.stream()
                 .anyMatch(d -> d != null && ACTIVE_DISPATCH_STATUSES.contains(d.getStatus()));
         if (running) {
             vo.setDeletable(false);

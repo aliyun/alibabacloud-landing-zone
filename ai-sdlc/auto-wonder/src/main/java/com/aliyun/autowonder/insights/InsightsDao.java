@@ -58,6 +58,10 @@ public interface InsightsDao {
 
     List<InsightWorkerVO> listActiveWorkers(@Param("tenantId") long tenantId);
 
+    List<com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO> listParticipationExecutionEvents(
+            @Param("tenantId") long tenantId, @Param("workitemIds") List<Long> workitemIds,
+            @Param("cutoffExclusive") Date cutoffExclusive);
+
     List<HumanAgentParticipationRawEventRow> listParticipationLifecycleEvents(
             @Param("tenantId") long tenantId, @Param("cutoffExclusive") Date cutoffExclusive,
             @Param("offset") int offset, @Param("limit") int limit);

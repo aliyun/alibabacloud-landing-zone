@@ -114,25 +114,25 @@ export function convergeStepsForTerminalStatus(steps: DeliveryStep[], terminalSt
 
 function StepIcon({ step, index, pausing = false }: { step: ConvergedDeliveryStep; index: number; pausing?: boolean }) {
   if (step.status === 'done' || step.status === 'reused' || step.planStatus === 'REUSED') {
-    return <CheckCircleFilled style={{ color: '#52c41a', fontSize: 16 }} />;
+    return <CheckCircleFilled style={{ color: 'var(--aw-success)', fontSize: 16 }} />;
   }
   if (pausing) {
-    return <PauseCircleOutlined style={{ color: '#d48806', fontSize: 16 }} />;
+    return <PauseCircleOutlined style={{ color: 'var(--aw-warning)', fontSize: 16 }} />;
   }
   if (step.status === 'active') {
-    return <LoadingOutlined style={{ color: '#ff6a00', fontSize: 16 }} />;
+    return <LoadingOutlined style={{ color: 'var(--aw-accent-text)', fontSize: 16 }} />;
   }
   if (step.status === 'cancelled') {
-    return <PauseCircleOutlined style={{ color: '#8c8c8c', fontSize: 16 }} />;
+    return <PauseCircleOutlined style={{ color: 'var(--aw-muted)', fontSize: 16 }} />;
   }
   if (step.status === 'failed') {
-    return <CloseCircleFilled style={{ color: '#ff4d4f', fontSize: 16 }} />;
+    return <CloseCircleFilled style={{ color: 'var(--aw-error)', fontSize: 16 }} />;
   }
   if (step.status === 'paused') {
-    return <PauseCircleOutlined style={{ color: '#d48806', fontSize: 16 }} />;
+    return <PauseCircleOutlined style={{ color: 'var(--aw-warning)', fontSize: 16 }} />;
   }
   if (step.status === 'skipped' || step.status === 'stale' || step.planStatus === 'SKIPPED') {
-    return <span style={{ color: step.status === 'stale' ? '#d46b08' : '#8c8c8c', fontSize: 11 }}>—</span>;
+    return <span style={{ color: step.status === 'stale' ? 'var(--aw-warning)' : 'var(--aw-muted)', fontSize: 11 }}>—</span>;
   }
   // pending
   return (
@@ -144,9 +144,9 @@ function StepIcon({ step, index, pausing = false }: { step: ConvergedDeliverySte
         width: 16,
         height: 16,
         borderRadius: '50%',
-        border: '1.5px solid #d9d9d9',
+        border: '1.5px solid var(--aw-border)',
         fontSize: 10,
-        color: '#bfbfbf',
+        color: 'var(--aw-muted)',
         lineHeight: 1,
       }}
     >
@@ -157,11 +157,11 @@ function StepIcon({ step, index, pausing = false }: { step: ConvergedDeliverySte
 
 function SubStepDot({ status }: { status: SubStep['status'] | 'cancelled' }) {
   const colorMap: Record<SubStep['status'] | 'cancelled', string> = {
-    done: '#52c41a',
-    active: '#ff6a00',
-    pending: '#d9d9d9',
-    failed: '#ff4d4f',
-    cancelled: '#8c8c8c',
+    done: 'var(--aw-success)',
+    active: 'var(--aw-accent-text)',
+    pending: 'var(--aw-border)',
+    failed: 'var(--aw-error)',
+    cancelled: 'var(--aw-muted)',
   };
   return (
     <span
@@ -341,8 +341,8 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
       style={{
         padding: '6px 8px',
         borderRadius: 6,
-        border: isPausing || isPaused ? '1px solid #ffe58f' : isActive ? '1px solid #ff6a00' : isFailed ? '1px solid #ffccc7' : '1px solid #f0f0f0',
-        backgroundColor: isPausing || isPaused ? '#fffbe6' : isActive ? '#fff7f0' : isFailed ? '#fff1f0' : '#fff',
+        border: isPausing || isPaused ? '1px solid color-mix(in srgb, var(--aw-warning) 35%, var(--aw-border))' : isActive ? '1px solid var(--aw-accent-text)' : isFailed ? '1px solid color-mix(in srgb, var(--aw-error) 35%, var(--aw-border))' : '1px solid var(--aw-border)',
+        backgroundColor: isPausing || isPaused ? 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))' : isActive ? 'rgba(var(--aw-accent-rgb),.10)' : isFailed ? 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))' : 'var(--aw-panel)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -351,7 +351,7 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
           style={{
             flex: 1,
             fontSize: 12,
-            color: isDone ? '#8c8c8c' : isPausing || isPaused ? '#ad6800' : isActive ? '#ff6a00' : isFailed ? '#cf1322' : '#8c8c8c',
+            color: isDone ? 'var(--aw-muted)' : isPausing || isPaused ? 'var(--aw-warning)' : isActive ? 'var(--aw-accent-text)' : isFailed ? 'var(--aw-error)' : 'var(--aw-muted)',
             fontWeight: isActive || isPausing || isPaused || isFailed ? 500 : 400,
           }}
         >
@@ -366,7 +366,7 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
         )}
         <Text
           type="secondary"
-          style={{ fontSize: 11, color: isPausing || isPaused ? '#ad6800' : isActive ? '#ff6a00' : isFailed ? '#cf1322' : undefined }}
+          style={{ fontSize: 11, color: isPausing || isPaused ? 'var(--aw-warning)' : isActive ? 'var(--aw-accent-text)' : isFailed ? 'var(--aw-error)' : undefined }}
         >
           {planLabel ? `${planLabel} · ${executionLabel}` : step.status === 'reused' ? '复用上一轮' : step.status === 'skipped' ? '本轮跳过' : step.status === 'stale' ? '旧结果失效' : executionLabel}
           {step.durationMs != null && `  ${formatDuration(step.durationMs)}`}
@@ -429,7 +429,7 @@ function StepCard({ step, index, attempts, onContinue, continuingDispatchId, onP
                         {step.subSteps.map((sub, i) => (
                           <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
                             <SubStepDot status={sub.status} />
-                            <Text style={{ fontSize: 12, color: sub.status === 'pending' ? '#bfbfbf' : '#595959' }}>
+                            <Text style={{ fontSize: 12, color: sub.status === 'pending' ? 'var(--aw-muted)' : 'var(--aw-muted)' }}>
                               {sub.name}
                             </Text>
                           </div>
@@ -615,25 +615,25 @@ function clampZoom(value: number): number {
 
 function markerDefs() {
   return <defs>
-    <marker id="execution-graph-arrow-pass" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#1677ff" /></marker>
-    <marker id="execution-graph-arrow-reject" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#ff4d4f" /></marker>
-    <marker id="execution-graph-arrow-pause" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#d48806" /></marker>
+    <marker id="execution-graph-arrow-pass" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--aw-info)" /></marker>
+    <marker id="execution-graph-arrow-reject" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--aw-error)" /></marker>
+    <marker id="execution-graph-arrow-pause" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--aw-warning)" /></marker>
   </defs>;
 }
 
 function authoritativeNodeTone(status?: string | null) {
   const value = status?.toUpperCase();
-  if (value === 'RUNNING' || value === 'ACKED' || value === 'DISPATCHED') return { border: '#ff6a00', background: '#fff7f0' };
-  if (value === 'FAILED' || value === 'TIMEOUT' || value === 'CANCELED') return { border: '#ff4d4f', background: '#fff1f0' };
-  if (value?.includes('PAUS')) return { border: '#d48806', background: '#fffbe6' };
-  if (value === 'SUCCEEDED' || value === 'HUMAN') return { border: '#52c41a', background: '#f6ffed' };
-  return { border: '#d9d9d9', background: '#fafafa' };
+  if (value === 'RUNNING' || value === 'ACKED' || value === 'DISPATCHED') return { border: 'var(--aw-accent-text)', background: 'rgba(var(--aw-accent-rgb),.10)' };
+  if (value === 'FAILED' || value === 'TIMEOUT' || value === 'CANCELED') return { border: 'var(--aw-error)', background: 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))' };
+  if (value?.includes('PAUS')) return { border: 'var(--aw-warning)', background: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))' };
+  if (value === 'SUCCEEDED' || value === 'HUMAN') return { border: 'var(--aw-success)', background: 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))' };
+  return { border: 'var(--aw-border)', background: 'var(--aw-raised)' };
 }
 
 function authoritativeEdgeTone(type: ProcessGraphEdge['type']) {
-  if (type === 'COMMENT_REWORK') return { color: '#ff4d4f', background: '#fff1f0', border: '#ffccc7', markerId: 'execution-graph-arrow-reject' };
-  if (type === 'CONTINUE') return { color: '#d48806', background: '#fffbe6', border: '#ffe58f', markerId: 'execution-graph-arrow-pause' };
-  return { color: '#1677ff', background: '#f0f7ff', border: '#b7d4ff', markerId: 'execution-graph-arrow-pass' };
+  if (type === 'COMMENT_REWORK') return { color: 'var(--aw-error)', background: 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-error) 35%, var(--aw-border))', markerId: 'execution-graph-arrow-reject' };
+  if (type === 'CONTINUE') return { color: 'var(--aw-warning)', background: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-warning) 35%, var(--aw-border))', markerId: 'execution-graph-arrow-pause' };
+  return { color: 'var(--aw-info)', background: 'color-mix(in srgb, var(--aw-info) 10%, var(--aw-panel))', border: 'var(--aw-info)', markerId: 'execution-graph-arrow-pass' };
 }
 
 function AuthoritativeExecutionProcessGraph({ processGraph }: { processGraph?: ProcessGraph | null }) {
@@ -691,12 +691,12 @@ function AuthoritativeExecutionProcessGraph({ processGraph }: { processGraph?: P
         onMouseMove={(event) => moveDrag(event.clientX, event.clientY)}
         onMouseUp={endDrag}
         onMouseLeave={endDrag}
-        style={{ height: fullscreen ? 'calc(100vh - 190px)' : 420, border: '1px solid #d6e4ff', borderRadius: 6, background: '#fff', overflow: 'hidden', cursor: 'grab' }}
+        style={{ height: fullscreen ? 'calc(100vh - 190px)' : 420, border: '1px solid var(--aw-accent)', borderRadius: 6, background: 'var(--aw-panel)', overflow: 'hidden', cursor: 'grab' }}
       >
         <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="执行过程流转图">
           {markerDefs()}
           <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
-            {lanes.map((lane, index) => <line key={lane} x1={150 + index * laneSpacing} y1="24" x2={150 + index * laneSpacing} y2={height - 24} stroke="#f0f0f0" strokeWidth="2" strokeDasharray="5 5" />)}
+            {lanes.map((lane, index) => <line key={lane} x1={150 + index * laneSpacing} y1="24" x2={150 + index * laneSpacing} y2={height - 24} stroke="var(--aw-border)" strokeWidth="2" strokeDasharray="5 5" />)}
             {processGraph.edges.map((edge, index) => {
               const source = nodesByKey.get(edge.sourceKey);
               const target = nodesByKey.get(edge.targetKey);
@@ -731,23 +731,23 @@ function AuthoritativeExecutionProcessGraph({ processGraph }: { processGraph?: P
                   if (node.dispatchId != null) setTraceNode(node);
                 }} style={{ cursor: 'pointer' }}>
                   <rect x={position.x - 66} y={position.y - 31} width="132" height="62" rx="7" fill={tone.background} stroke={tone.border} strokeWidth="1.4" />
-                  <text x={position.x} y={position.y - 9} textAnchor="middle" style={{ fontSize: 13, fontWeight: 600, fill: '#1f1f1f' }}>{node.agentName}</text>
-                  <text x={position.x} y={position.y + 9} textAnchor="middle" style={{ fontSize: 11, fill: '#595959' }}>{node.stepName || '交接真人'}</text>
-                  <text x={position.x} y={position.y + 24} textAnchor="middle" style={{ fontSize: 10, fill: '#8c8c8c' }}>{node.dispatchId != null ? `#${node.dispatchId}` : ''} {formatDuration(node.durationMs)}</text>
+                  <text x={position.x} y={position.y - 9} textAnchor="middle" style={{ fontSize: 13, fontWeight: 600, fill: 'var(--aw-text)' }}>{node.agentName}</text>
+                  <text x={position.x} y={position.y + 9} textAnchor="middle" style={{ fontSize: 11, fill: 'var(--aw-muted)' }}>{node.stepName || '交接真人'}</text>
+                  <text x={position.x} y={position.y + 24} textAnchor="middle" style={{ fontSize: 10, fill: 'var(--aw-muted)' }}>{node.dispatchId != null ? `#${node.dispatchId}` : ''} {formatDuration(node.durationMs)}</text>
                 </g>
               </Tooltip>;
             })}
           </g>
         </svg>
       </div>
-      <div data-testid="execution-graph-detail-panel" style={{ marginTop: 8, minHeight: 58, padding: '7px 9px', border: '1px solid #f0f0f0', borderRadius: 6, background: '#fafafa' }}>
+      <div data-testid="execution-graph-detail-panel" style={{ marginTop: 8, minHeight: 58, padding: '7px 9px', border: '1px solid var(--aw-border)', borderRadius: 6, background: 'var(--aw-raised)' }}>
         {selection ? <Space direction="vertical" size={1}><Text strong style={{ fontSize: 12 }}>{selection.title}</Text><Text type="secondary" style={{ fontSize: 12 }}>状态：{selection.status} · 耗时：{selection.duration}</Text><Text type="secondary" style={{ fontSize: 12 }}>{selection.detail}</Text></Space> : <Text type="secondary" style={{ fontSize: 12 }}>点击节点或箭头查看权威流转详情</Text>}
       </div>
       <RuntimeTraceDrawer node={traceNode} processGraph={processGraph} onClose={() => setTraceNode(null)} />
     </Card>
   );
 
-  return fullscreen ? <div data-testid="execution-graph-fullscreen" style={{ position: 'fixed', inset: 0, zIndex: 1000, padding: 16, background: '#fff' }}>{graph}</div> : graph;
+  return fullscreen ? <div data-testid="execution-graph-fullscreen" style={{ position: 'fixed', inset: 0, zIndex: 1000, padding: 16, background: 'var(--aw-panel)' }}>{graph}</div> : graph;
 }
 
 async function downloadArtifact(artifact: Artifact) {
@@ -785,7 +785,7 @@ function ArtifactRows({
           title={`${artifact.name} · ${artifact.type}${artifact.size != null ? ` · ${artifact.size} bytes` : ''}`}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
-            <FileTextOutlined style={{ color: '#8c8c8c', flexShrink: 0 }} />
+            <FileTextOutlined style={{ color: 'var(--aw-muted)', flexShrink: 0 }} />
             <Text
               style={{
                 flex: 1,
@@ -900,7 +900,7 @@ function AgentPanel({
             style={{
               flex: 1,
               minWidth: 0,
-              color: active ? '#ff6a00' : paused ? '#ad6800' : failed ? '#cf1322' : undefined,
+              color: active ? 'var(--aw-accent-text)' : paused ? 'var(--aw-warning)' : failed ? 'var(--aw-error)' : undefined,
               display: 'block',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
@@ -920,11 +920,11 @@ function AgentPanel({
       </div>
     ),
     style: {
-      border: active ? '1px solid #ff6a00' : paused ? '1px solid #ffe58f' : failed ? '1px solid #ffccc7' : '1px solid #f0f0f0',
+      border: active ? '1px solid var(--aw-accent-text)' : paused ? '1px solid color-mix(in srgb, var(--aw-warning) 35%, var(--aw-border))' : failed ? '1px solid color-mix(in srgb, var(--aw-error) 35%, var(--aw-border))' : '1px solid var(--aw-border)',
       borderRadius: 6,
       marginBottom: 6,
       overflow: 'hidden',
-      background: active ? '#fff7f0' : paused ? '#fffbe6' : '#fff',
+      background: active ? 'rgba(var(--aw-accent-rgb),.10)' : paused ? 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))' : 'var(--aw-panel)',
     },
     children: (
       <Space direction="vertical" style={{ width: '100%' }} size={6}>
@@ -949,7 +949,7 @@ function AgentPanel({
               children: <ArtifactGroup steps={agent.steps} artifacts={agentArtifacts} loading={artifactsLoading} onPreview={onArtifactPreview} />,
             },
           ]}
-          style={{ borderRadius: 6, background: '#fafafa' }}
+          style={{ borderRadius: 6, background: 'var(--aw-raised)' }}
         />
       </Space>
     ),
@@ -983,7 +983,7 @@ export function DeliveryProgress({ steps = [], progress, artifacts = [], artifac
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span style={{ flex: 1 }}>交付进度跟踪</span>
       {progress?.totalDurationMs != null && (
-        <Tooltip title="总耗时为纯 Agent 执行时长之和，不包含数字人之间的交接、排队与人工处理间隔。">
+        <Tooltip title="总耗时为纯 Agent 执行时长之和，不包含数字员工之间的交接、排队与人工处理间隔。">
           <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
             总耗时 {formatDuration(progress.totalDurationMs)} (Agents耗时)
           </Text>

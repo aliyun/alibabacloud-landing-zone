@@ -80,6 +80,20 @@ class RuntimeRestoreTests(unittest.TestCase):
     def test_restores_verified_missing_tool_without_shadowing_path(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
+            # Simulate a missing tool even under the verification runner's deny stubs.
+            missing_env = dict(os.environ)
+            missing_env['PATH'] = os.pathsep.join(
+                entry for entry in os.environ['PATH'].split(os.pathsep)
+                if not (Path(entry) / 'ossutil').is_file())
+            # Removing an ossutil directory must not remove unrelated prerequisites.
+            prerequisites = root / 'prerequisites'
+            prerequisites.mkdir()
+            for tool in ('jq', 'python3'):
+                executable = shutil.which(tool)
+                self.assertIsNotNone(executable, f'{tool} is required for this fixture')
+                (prerequisites / tool).symlink_to(executable)
+            missing_env['PATH'] = str(prerequisites) + os.pathsep + missing_env['PATH']
+            self.assertIsNone(shutil.which('ossutil', path=missing_env['PATH']))
             scripts=root/'skills/upgrading-autowonder-on-alibaba-cloud/scripts'
             scripts.mkdir(parents=True)
             shutil.copy(SCRIPTS/'runtime-env.sh',scripts)
@@ -90,21 +104,21 @@ class RuntimeRestoreTests(unittest.TestCase):
             binary=target/'ossutil';binary.write_text('#!/bin/sh\necho restored\n');binary.chmod(0o700)
             (target/'.verified').write_text('a'*64+'\n'+hashlib.sha256(binary.read_bytes()).hexdigest()+'\n')
             (scripts/'runtime-lock.tsv').write_text(f'ossutil\t{platform}\t{arch}\t1\thttps://unused\t'+ 'a'*64 +'\traw\tossutil\n')
-            result=subprocess.run(['bash','-c','source "$1"; autowonder_restore_runtime_environment; ossutil', 'fixture', str(scripts/'runtime-env.sh')], capture_output=True,text=True)
+            result=subprocess.run(['bash','-c','source "$1"; autowonder_restore_runtime_environment; ossutil', 'fixture', str(scripts/'runtime-env.sh')], capture_output=True,text=True,env=missing_env)
             self.assertEqual(0,result.returncode,result.stderr)
             self.assertEqual('restored',result.stdout.strip())
             # A separate public phase must restore before its operations-store check.
             shutil.copy(SCRIPTS/'lib.sh',scripts)
             (scripts/'operations-store.py').write_text("import subprocess; subprocess.run(['ossutil'],check=True)\n")
             manifest=root/'manifest.json';manifest.write_text('{"operationsStore":{}}')
-            checked=subprocess.run(['bash','-c','source "$1"; json_validate "$2"', 'fixture',str(scripts/'lib.sh'),str(manifest)],capture_output=True,text=True)
+            checked=subprocess.run(['bash','-c','source "$1"; json_validate "$2"', 'fixture',str(scripts/'lib.sh'),str(manifest)],capture_output=True,text=True,env=missing_env)
             self.assertEqual(0,checked.returncode,checked.stderr)
             mock=root/'bin';mock.mkdir()
             (mock/'ossutil').write_text('#!/bin/sh\necho caller\n');(mock/'ossutil').chmod(0o700)
             preserved=subprocess.run(['bash','-c','source "$1"; autowonder_restore_runtime_environment; ossutil','fixture',str(scripts/'runtime-env.sh')],capture_output=True,text=True,env={**os.environ,'PATH':str(mock)+os.pathsep+os.environ['PATH']})
             self.assertEqual('caller',preserved.stdout.strip())
             binary.write_text('#!/bin/sh\necho tampered\n')
-            rejected=subprocess.run(['bash','-c','source "$1"; autowonder_restore_runtime_environment; ossutil','fixture',str(scripts/'runtime-env.sh')],capture_output=True,text=True)
+            rejected=subprocess.run(['bash','-c','source "$1"; autowonder_restore_runtime_environment; ossutil','fixture',str(scripts/'runtime-env.sh')],capture_output=True,text=True,env=missing_env)
             self.assertNotEqual(0,rejected.returncode)
             self.assertNotIn('tampered',rejected.stdout)
 

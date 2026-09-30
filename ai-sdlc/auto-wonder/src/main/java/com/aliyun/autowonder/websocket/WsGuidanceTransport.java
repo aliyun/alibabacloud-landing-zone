@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.websocket;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.guidance.GuidanceDO;
 import com.aliyun.autowonder.guidance.GuidanceTransport;
 import com.aliyun.autowonder.redis.RedisManager;

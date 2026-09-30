@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.scheduledtask;
 
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.dispatch.*;

@@ -1,9 +1,10 @@
 package com.aliyun.autowonder.user;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.user.dto.UserSettingVO;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,7 +55,18 @@ public class UserSettingService {
             row.setValueJson(normalized);
             row.setCreatorId(userId);
             row.setModifierId(userId);
-            userSettingDao.insert(row);
+            try {
+                userSettingDao.insert(row);
+            } catch (DuplicateKeyException e) {
+                // 并发首写：两个请求同时查不到已有行、都走 insert，后到者撞 uk_user_setting。
+                // 唯一键就是 (user_id, setting_key)，转成对同一行的 update 即幂等落库，
+                // 不把并发竞争放大成 500（工单 55511 交付评审已提示该竞争）。
+                UserSettingDO raced = userSettingDao.findByUk(userId, key);
+                if (raced == null) {
+                    throw e;
+                }
+                userSettingDao.update(raced.getId(), userId, normalized, userId);
+            }
         } else {
             userSettingDao.update(existing.getId(), userId, normalized, userId);
         }

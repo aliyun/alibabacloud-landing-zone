@@ -36,4 +36,22 @@ public interface ArtifactDao {
                                         @Param("usageName") String usageName,
                                         @Param("offset") int offset,
                                         @Param("limit") int limit);
+
+    /**
+     * 对外暴露标记只经 workitem 暴露入口写入（入口按 source_type='WORKITEM' 解析产物），
+     * 因此以下分享查询无需 source_type 过滤，scheduled-run 产物不可能带标记匹配工单。
+     * 快照 ref 只在首次暴露时写入（external_share_ref IS NULL 条件），重复暴露不覆盖。
+     */
+    int markExternalExposed(@Param("tenantId") Long tenantId,
+                            @Param("workitemId") Long workitemId,
+                            @Param("id") Long id,
+                            @Param("externalShareRef") String externalShareRef);
+
+    List<ArtifactDO> listExternalExposed(@Param("tenantId") Long tenantId,
+                                         @Param("workitemId") Long workitemId);
+
+    ArtifactDO findExternalExposed(@Param("tenantId") Long tenantId,
+                                   @Param("workitemId") Long workitemId,
+                                   @Param("id") Long id);
+
 }

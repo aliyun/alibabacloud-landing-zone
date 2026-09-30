@@ -136,6 +136,15 @@
         WHERE id = #{id} AND is_deleted = 0
     </update>
 
+    <update id="updateProfile">
+        UPDATE `user`
+        SET nickname = #{nickname},
+            email = #{email},
+            phone = #{phone},
+            gmt_modified = NOW()
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
     <update id="updateDeactivation">
         UPDATE `user`
         SET deactivated_at = #{deactivatedAt},

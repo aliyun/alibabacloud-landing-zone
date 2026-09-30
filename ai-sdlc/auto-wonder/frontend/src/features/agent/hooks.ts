@@ -4,10 +4,10 @@ import { listWorkitems } from '@/features/workitem/api';
 
 import { useAuthStore } from '@/shared/auth/store';
 
-export function useAgentList(page: number, size: number, status?: string, kind?: api.AgentKind, squadIds?: number[]) {
+export function useAgentList(status?: string, kind?: api.AgentKind, squadIds?: number[]) {
   return useQuery({
-    queryKey: ['agents', page, size, status, kind, squadIds],
-    queryFn: () => api.listAgents({ page, size, status, kind, squadIds }),
+    queryKey: ['agents', status, kind, squadIds],
+    queryFn: () => api.listAllAgents({ status, kind, squadIds }),
   });
 }
 

@@ -14,6 +14,18 @@ import static org.mockito.Mockito.*;
 
 class MemoryServiceTest {
 
+    @Test void migratedLegacyRecordCannotBeEditedOrDeletedThroughObsoleteApi() {
+        MemoryDO source = new MemoryDO(); source.setId(41L); source.setTenantId(7L);
+        source.setStatus("ADOPTED"); source.setVersion(1);
+        when(memoryDao.findById(41L)).thenReturn(source);
+        when(memoryDao.isMigrated(7L, 41L)).thenReturn(true);
+        BizException edit = assertThrows(BizException.class,
+                () -> service.update(41L, new UpdateMemoryRequest(), 7L, 9L));
+        assertTrue(edit.getMessage().contains("已迁移"));
+        assertThrows(BizException.class, () -> service.delete(41L, 7L, 9L));
+        verify(memoryDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
     private MemoryDao memoryDao;
     private MemoryReviewDao memoryReviewDao;
     private AgentMemoryRefDao agentMemoryRefDao;
@@ -22,6 +34,8 @@ class MemoryServiceTest {
     @BeforeEach
     void setUp() {
         memoryDao = mock(MemoryDao.class);
+        when(memoryDao.findByIdForUpdate(anyLong(), anyLong()))
+                .thenAnswer(call -> memoryDao.findById(call.getArgument(0)));
         memoryReviewDao = mock(MemoryReviewDao.class);
         agentMemoryRefDao = mock(AgentMemoryRefDao.class);
         service = new MemoryService(memoryDao, memoryReviewDao, agentMemoryRefDao);
@@ -378,14 +392,14 @@ class MemoryServiceTest {
     }
 
     @Test
-    void mcpCreateIsPendingAndCarriesDispatchProvenance() {
+    void mcpCreateIsImmediateAndCarriesDispatchProvenance() {
         CreateMemoryRequest req = new CreateMemoryRequest();
         req.setScope("AGENT");
         req.setOwnerRef(40014L);
         req.setType("PITFALL");
         req.setTitle("  MyBatis keyword  ");
         req.setContentMd("Use parameterized LIKE");
-        MemoryDO stored = stored(500L, 10L, "PENDING", "MyBatis keyword", "Use parameterized LIKE");
+        MemoryDO stored = stored(500L, 10L, "ADOPTED", "MyBatis keyword", "Use parameterized LIKE");
         stored.setSource("MCP");
         stored.setVersion(4);
         stored.setGmtCreate(new java.util.Date(1_700_000_000_000L));
@@ -400,7 +414,7 @@ class MemoryServiceTest {
                 "dispatch:99:mcp:abc");
 
         verify(memoryDao).insert(argThat(memory -> "MCP".equals(memory.getSource())
-                && "PENDING".equals(memory.getStatus())
+                && "ADOPTED".equals(memory.getStatus())
                 && "MyBatis keyword".equals(memory.getTitle())
                 && "dispatch:99:mcp:abc".equals(memory.getSourceDedupeKey())
                 && Long.valueOf(7L).equals(memory.getCreatorId())
@@ -408,7 +422,7 @@ class MemoryServiceTest {
                 && memory.getSourceRef().contains("\"workitemId\":28559")
                 && memory.getSourceRef().contains("\"agentId\":40014")));
         // CR-004: the response must come from the stored row, not the pre-insert object.
-        assertEquals("PENDING", vo.getStatus());
+        assertEquals("ADOPTED", vo.getStatus());
         assertEquals(4, vo.getVersion());
         assertNotNull(vo.getGmtCreate());
         assertNotNull(vo.getGmtModified());
@@ -427,34 +441,32 @@ class MemoryServiceTest {
     }
 
     @Test
-    void mcpCreateReusingKeyOnAdoptedMemoryWithNewContentIsRefused() {
-        when(memoryDao.findBySourceDedupeKey(10L, "MCP", "dispatch:99:mcp:k1"))
-                .thenReturn(stored(500L, 10L, "ADOPTED", "原标题", "原正文"));
+    void mcpCreateReusingKeyOnAdoptedMemoryUpdatesImmediately() {
+        MemoryDO existing = stored(500L, 10L, "ADOPTED", "原标题", "原正文");
+        when(memoryDao.findBySourceDedupeKey(10L, "MCP", "dispatch:99:mcp:k1")).thenReturn(existing);
+        when(memoryDao.update(500L, 10L, "被篡改的标题", "未经审阅的新正文", null, 0, 7L)).thenReturn(1);
+        when(memoryDao.findById(500L)).thenReturn(stored(500L, 10L, "ADOPTED", "被篡改的标题", "未经审阅的新正文"));
         CreateMemoryRequest req = new CreateMemoryRequest();
         req.setTitle("被篡改的标题");
         req.setContentMd("未经审阅的新正文");
 
-        BizException ex = assertThrows(BizException.class,
-                () -> service.createFromMcp(req, 10L, 99L, 28559L, 40014L, 7L, "dispatch:99:mcp:k1"));
-
-        assertEquals(ErrorCode.MEMORY_ALREADY_REVIEWED.getCode(), ex.getCode());
-        verify(memoryDao, never()).insert(any());
-        verify(memoryDao, never()).update(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyLong());
+        assertEquals("被篡改的标题", service.createFromMcp(req, 10L, 99L, 28559L, 40014L, 7L,
+                "dispatch:99:mcp:k1").getTitle());
+        verify(memoryDao).update(500L, 10L, "被篡改的标题", "未经审阅的新正文", null, 0, 7L);
     }
 
     @Test
-    void mcpCreateReusingKeyOnRejectedMemoryWithNewContentIsRefused() {
+    void mcpCreateReusingKeyOnRejectedLegacyRowCanBeCorrected() {
         when(memoryDao.findBySourceDedupeKey(10L, "MCP", "dispatch:99:mcp:k1"))
                 .thenReturn(stored(500L, 10L, "REJECTED", "原标题", "原正文"));
         CreateMemoryRequest req = new CreateMemoryRequest();
         req.setTitle("复活尝试");
         req.setContentMd("新正文");
 
-        assertEquals(ErrorCode.MEMORY_ALREADY_REVIEWED.getCode(),
-                assertThrows(BizException.class, () -> service.createFromMcp(
-                        req, 10L, 99L, 28559L, 40014L, 7L, "dispatch:99:mcp:k1")).getCode());
-        verify(memoryDao, never()).insert(any());
-        verify(memoryDao, never()).update(anyLong(), anyLong(), any(), any(), any(), anyInt(), anyLong());
+        when(memoryDao.update(500L, 10L, "复活尝试", "新正文", null, 0, 7L)).thenReturn(1);
+        when(memoryDao.findById(500L)).thenReturn(stored(500L, 10L, "REJECTED", "复活尝试", "新正文"));
+        assertEquals("复活尝试", service.createFromMcp(
+                req, 10L, 99L, 28559L, 40014L, 7L, "dispatch:99:mcp:k1").getTitle());
     }
 
     @Test

@@ -1,5 +1,7 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState, useEffect } from 'react';
-import { Card, Tabs, Spin, Empty } from 'antd';
+import { Card, Tabs, Spin, Empty, Button } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import type { WorkType } from './types';
 import { TemplateSelector } from './components/TemplateSelector';
 import { StatusNodeEditor } from './components/StatusNodeEditor';
@@ -20,6 +22,7 @@ const workTypes: { key: WorkType; label: string }[] = [
 
 export function StatusTemplatePage() {
   const accessCommand = useAccessCommand();
+  const [createOpen, setCreateOpen] = useState(false);
   const [activeType, setActiveType] = useState<WorkType>('REQ');
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
@@ -46,7 +49,11 @@ export function StatusTemplatePage() {
   const deleteTransitionMut = useDeleteTransition(selectedId || 0);
 
   return (
-    <Card title="状态模版管理">
+    <Card className="aw-content-card" title={<PageHeading title="状态模版管理" />}
+      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => accessCommand(
+        'READ_WRITE', '新建状态模版', () => setCreateOpen(true),
+      )}>新建模版</Button>}
+    >
       <Tabs
         activeKey={activeType}
         onChange={(k) => setActiveType(k as WorkType)}
@@ -56,6 +63,8 @@ export function StatusTemplatePage() {
       {templatesLoading ? <Spin /> : (
         <>
           <TemplateSelector
+            createOpen={createOpen}
+            onCloseCreate={() => setCreateOpen(false)}
             templates={templates}
             selectedId={selectedId}
             onSelect={setSelectedId}

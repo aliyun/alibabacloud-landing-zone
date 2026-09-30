@@ -81,6 +81,29 @@ describe('PlatformAdminPanel', () => {
     );
   });
 
+  it('shows administrator identity details in dedicated columns', async () => {
+    const { container } = renderPanel();
+
+    await rowOf('爱丽丝');
+
+    expect(screen.getByRole('columnheader', { name: '管理员' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '登录账号' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '联系邮箱' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '账号状态' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '操作' })).toBeInTheDocument();
+    expect(Array.from(container.querySelectorAll('colgroup col')).map((column) => (
+      (column as HTMLElement).style.width
+    ))).toEqual(['24%', '20%', '32%', '12%', '12%']);
+
+    const aliceRow = await rowOf('爱丽丝');
+    expect(Array.from(aliceRow.children).every((cell) => (
+      (cell as HTMLElement).style.textAlign === 'center'
+    ))).toBe(true);
+    expect(within(aliceRow).getByText('alice')).toBeInTheDocument();
+    expect(within(aliceRow).getByText('alice@example.com')).toBeInTheDocument();
+    expect(within(aliceRow).getByText('正常')).toBeInTheDocument();
+  });
+
   it('renders the roster with the caller and a deactivated admin flagged', async () => {
     server.use(
       http.get('/api/platform/admins', () => roster([

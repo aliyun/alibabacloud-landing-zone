@@ -78,3 +78,6 @@ __pycache__/
 
 # Shared, disposable Skill dependencies (never deployment state)
 /skills/.autowonder-tools/
+
+# Local planning and design notes
+docs/superpowers/

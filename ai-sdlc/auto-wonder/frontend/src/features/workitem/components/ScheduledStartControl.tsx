@@ -41,7 +41,7 @@ export function ScheduledStartControl({ workitemId, assigneeType, scheduledStart
   };
 
   return (
-    <div style={{ marginTop: 8, fontSize: 12, color: '#666', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--aw-muted)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
       <span>计划执行: {new Date(scheduledStartAt).toLocaleString('zh-CN')}</span>
       <Space size={4}>
         <Button

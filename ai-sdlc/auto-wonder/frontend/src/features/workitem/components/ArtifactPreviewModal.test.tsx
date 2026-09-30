@@ -86,6 +86,24 @@ describe('ArtifactPreviewModal', () => {
     expectPreviewFetch();
   });
 
+  it('previews PDF files with the browser PDF viewer', async () => {
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({ success: true, data: 'https://oss.example/design.pdf' })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('%PDF-1.7', { status: 200 })));
+    render(<ArtifactPreviewModal open artifact={artifact('requirements/design.pdf')} onClose={() => undefined} />);
+    const viewer = await screen.findByTestId('artifact-pdf-preview');
+    expect(viewer).toHaveAttribute('type', 'application/pdf');
+    expect(viewer).toHaveAttribute('data', 'blob:artifact-preview');
+    expectPreviewFetch();
+  });
+
+  it('renders source files as text without interpreting HTML', async () => {
+    server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({ success: true, data: 'https://oss.example/example.py' })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('print("<script>alert(1)</script>")', { status: 200 })));
+    render(<ArtifactPreviewModal open artifact={artifact('requirements/example.py')} onClose={() => undefined} />);
+    expect((await screen.findByText('print("<script>alert(1)</script>")')).tagName).toBe('PRE');
+    expectPreviewFetch();
+  });
+
   it('renders image artifacts from an authenticated preview blob', async () => {
     server.use(http.get('/api/artifacts/7/download', () => HttpResponse.json({
       success: true, code: '0', message: '', traceId: null, data: 'https://oss.example/screenshot.png',

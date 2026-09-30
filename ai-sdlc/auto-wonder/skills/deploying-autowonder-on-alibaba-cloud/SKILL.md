@@ -276,8 +276,7 @@ Stop and report sanitized evidence when:
 
 Use the local Alibaba Cloud credential chain. Keep secrets out of command lines,
 Git, manifest, Cloud Assistant output, proxy/application logs, and saved reports.
-The first-deployment admin handoff in the final chat response is the sole
-password-display exception, as specified in Output Contract.
+The initial admin final-chat handoff is the sole password-display exception (Output Contract).
 Use only the dedicated Alibaba Cloud CLI profile `auto-wonder`; never use the
 CLI current profile or `default`. At the start of every deployment workflow,
 probe STS with `auto-wonder`. If the profile is missing or its identity has
@@ -467,49 +466,34 @@ Read only what the mode or current failure needs:
 
 ## Output Contract
 
-Report these statuses separately: **Infrastructure ready**, **Application ready**,
-**Business initialized**, **Release accepted**, and **TLS accepted**. Never count
-plaintext port 80 as TLS. Mark checks completed, pending, degraded, or failed;
-include exact source/hash, topology, URLs, evidence references, rollback boundary,
-and next actions. Saved/sanitized reports must exclude live secret and identity
-data; the final chat response has the narrow administrator handoff exception below.
+Report **Infrastructure ready**, **Application ready**, **Business initialized**,
+**Release accepted**, and **TLS accepted** separately; plaintext port 80 is never TLS.
+Mark checks completed/pending/degraded/failed; include source/hash, topology, URLs,
+evidence, rollback boundary and next actions. Saved reports exclude secrets and
+identity data; only final chat has the administrator handoff exception below.
 
-After a successful first deployment, the final user-visible chat report MUST
-include an Administrator credentials section containing the username `admin`
-and its actual generated initial password together, plus the login URL and a
-reminder to change the password after signing in. Read the credentials from
-this deployment's protected handoff file/output. Do not substitute masked text,
-a file path, or "already displayed above" for the password. Tool/command output
-and `.business.handoffDisplayed` do not prove delivery in the final chat response.
-If handoff already ran, use its result or read the still-protected handoff file;
-do not rerun the one-time command, reset the account, or generate another password.
-Only this initial admin password may appear in the final chat report; never copy
-it into the manifest, saved deployment-report.json/Markdown, logs, Git, or other
-evidence. Keep the handoff file until the user confirms receipt, then use
-`handoff --confirm-received` to remove it. Do not redisplay credentials during
-later maintenance/upgrades or show an old password after rotation. If the actual
-initial credential is unavailable, report incomplete delivery; never invent it.
-Only after deployment status and administrator handoff are complete, ask once for
-the user's credential export preference: no export (default), encrypted local bundle,
-or external secret manager. Never export other credentials before an
+After the first successful deployment, the final chat report MUST show `admin`,
+its actual generated initial password, and the login URL together, with a password-change reminder.
+A handoff command output or `handoffDisplayed` flag does not replace this delivery;
+never substitute masking, a file path, or "already displayed above" for the password.
+Reuse the protected handoff file/output; do not regenerate credentials or rerun the one-time command.
+Keep the file until confirmed receipt, then run `handoff --confirm-received`.
+Never persist the password in saved reports, manifest, logs, Git, or evidence;
+do not redisplay it during maintenance/upgrades or after rotation. If unavailable,
+report incomplete delivery. See `references/operations-runbook.md` for handoff details.
+After deployment status and administrator handoff are complete, ask once for credential export preference:
+no export (default), encrypted local bundle, or external secret manager. Never export other credentials before an
 explicit destination and method are selected, and never place them in chat,
 manifest, logs, or the sanitized report.
 
 ## Deployment build and health scope
 
-Release builds run `clean package -Dmaven.test.skip=true` with
-`-DskipFrontend=false`: compile the application and frontend, but do not compile
-or execute application tests. Keep archive integrity, frontend asset, hash,
-source identity, initialization, and per-node activation checks. Build failures
-still stop deployment. Do not run frontend lint/unit tests or local release testing as part of a
-cloud deployment or upgrade. Application
-quality checks belong to the release pipeline; this workflow does not certify
-application business behavior. Skill maintenance may run its own offline fixtures.
-
-The deployment health endpoint is a liveness response, not a database, Redis,
-executor, or storage business test. Do not create test Agents/executors or run
-file upload/download smoke tests unless explicitly requested. Keep the existing
-acceptance boundary: new deployment checks both ALB EIPs after node activation;
-Upgrade acceptance checks ECS locally only; the validation workflow must not
-append public EIP or business checks to an upgrade. Preserve OSS checkpoints
-and recovery artifacts.
+Build with `clean package -Dmaven.test.skip=true -DskipFrontend=false`.
+Compile application and frontend; retain archive, asset, hash, source identity,
+initialization and per-node activation checks. Build failures stop deployment.
+Do not run application tests, frontend lint, or local release verification;
+those belong to the release pipeline. Skill maintenance may run offline fixtures.
+Health is liveness only, not database/Redis/executor/storage business acceptance.
+Do not create test Agents/executors or test uploads/downloads unless requested.
+New deployments check both ALB EIPs after activation; upgrades check ECS locally only,
+without additional public EIP or business checks. Preserve OSS checkpoints and recovery artifacts.

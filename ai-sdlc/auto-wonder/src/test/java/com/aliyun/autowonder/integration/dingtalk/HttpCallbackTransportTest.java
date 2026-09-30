@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 import static org.junit.jupiter.api.Assertions.*;

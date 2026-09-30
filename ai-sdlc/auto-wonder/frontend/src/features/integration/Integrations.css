@@ -1,0 +1,11 @@
+.integration-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 16px; }
+.integration-fields > .ant-form-item { min-width: 0; }
+.integration-sync-toolbar { display: flex; align-items: center; gap: 12px; }
+.integration-sync-toolbar > .ant-input { flex: 1; min-width: 0; }
+.integration-sync-toolbar > .ant-space { flex-shrink: 0; }
+@media (max-width: 1200px) {
+  .integration-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .integration-sync-toolbar { flex-wrap: wrap; }
+  .integration-sync-toolbar > .ant-input { flex-basis: 100%; }
+  .integration-sync-toolbar > .ant-space { margin-left: auto; }
+}

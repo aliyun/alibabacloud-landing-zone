@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -221,8 +222,22 @@ async function renderActiveConversation(props: PanelTestProps = {}) {
   mockSquads();
   mockConversationWithTurns(42);
   const view = renderPanel([], props);
+  // textarea = 镜像（placeholder/value 断言）；composer = 编辑器根（高度/布局断言）
   const textarea = await screen.findByPlaceholderText('输入消息...');
-  return { view, textarea };
+  const composer = await screen.findByTestId('clarification-composer-input');
+  return { view, textarea, composer };
+}
+
+
+/** 用编辑器 API 向 Markdown 输入区写入整段文本（替代旧 TextArea 的 fireEvent.change）。
+ *  setContent 走正常 onUpdate 链，React state、镜像 textarea 与发送内容三处一致。 */
+async function typeComposer(value: string) {
+  const root = await screen.findByTestId('clarification-composer-input');
+  const editor = (root as HTMLElement & { __composerEditor?: import('@tiptap/core').Editor }).__composerEditor;
+  if (!editor) throw new Error('composer editor not mounted');
+  await act(async () => {
+    editor.commands.setContent(value, true);
+  });
 }
 
 describe('buildDeliveryAgentOptions', () => {
@@ -258,7 +273,7 @@ describe('WorkitemClarificationPanel', () => {
       { agentId: 1, agentName: 'Agent-A', status: 'active' },
       { agentId: 2, agentName: 'Agent-B', status: 'pending' },
     ]);
-    expect(screen.getByText('选择数字人')).toBeInTheDocument();
+    expect(screen.getByText('选择数字员工')).toBeInTheDocument();
     expect(screen.getByText('Agent-A')).toBeInTheDocument();
   });
 
@@ -281,7 +296,7 @@ describe('WorkitemClarificationPanel', () => {
     await waitFor(() => expect(itemOf('Agent-B')).toHaveTextContent('离线'));
     // 交付状态 pending 但执行器真实在线 → 在线
     expect(itemOf('Agent-A')).toHaveTextContent('在线');
-    // 目录中不存在的数字人按在线兜底，保持可选
+    // 目录中不存在的数字员工按在线兜底，保持可选
     expect(itemOf('Agent-C')).toHaveTextContent('在线');
     // 目录项缺少在线数 → 离线
     expect(itemOf('Agent-D')).toHaveTextContent('离线');
@@ -319,11 +334,11 @@ describe('WorkitemClarificationPanel', () => {
     const itemOf = (name: string) => screen.getByText(name).closest('.ant-list-item') as HTMLElement;
     await waitFor(() => expect(itemOf('Agent-B')).toHaveTextContent('离线'));
 
-    // 离线数字人点击后仍停留在选择页
+    // 离线数字员工点击后仍停留在选择页
     fireEvent.click(screen.getByText('Agent-B'));
-    expect(screen.getByText('选择数字人')).toBeInTheDocument();
+    expect(screen.getByText('选择数字员工')).toBeInTheDocument();
 
-    // 之前被误标离线的数字人现可点选并重入历史澄清会话
+    // 之前被误标离线的数字员工现可点选并重入历史澄清会话
     fireEvent.click(screen.getByText('Agent-A'));
     expect(await screen.findByText('历史澄清记录')).toBeInTheDocument();
   });
@@ -331,7 +346,7 @@ describe('WorkitemClarificationPanel', () => {
   it('falls back to squad selector when no delivery agents exist', async () => {
     mockSquads();
     renderPanel([]);
-    expect(screen.getByText('选择小队和数字人')).toBeInTheDocument();
+    expect(screen.getByText('选择小队和数字员工')).toBeInTheDocument();
     // Antd Select renders its placeholder inside a span, not an input attribute;
     // wait for the squad input to become enabled (squads loaded).
     const comboboxes = await screen.findAllByRole('combobox');
@@ -362,7 +377,7 @@ describe('WorkitemClarificationPanel', () => {
     mockSquads();
     renderPanel([]);
     // The prefilled selection short-circuits the agent-selection screen.
-    expect(screen.queryByText('选择小队和数字人')).not.toBeInTheDocument();
+    expect(screen.queryByText('选择小队和数字员工')).not.toBeInTheDocument();
   });
 
   it('shows the selected conversation agent name when delivery has not started', async () => {
@@ -400,11 +415,11 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
 
     expect(await screen.findByText('已选择的开发')).toBeInTheDocument();
-    expect(screen.queryByText('数字人')).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText('输入消息...')).toHaveValue('');
+    expect(screen.queryByText('数字员工')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByPlaceholderText('输入消息...')).toHaveValue('请通过平台 MCP 读取工单 #100，与我进行需求澄清。'));
   });
 
-  it('prefills the bootstrap prompt only for an automatically created first session', async () => {
+  it('prefills the bootstrap prompt for an automatically created first session', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     const created = {
@@ -426,8 +441,59 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
 
     expect(await screen.findByDisplayValue(
-      '请通过 AutoWonder MCP 读取工单 #100，与我进行需求澄清。',
+      '请通过平台 MCP 读取工单 #100，与我进行需求澄清。',
     )).toBeInTheDocument();
+  });
+
+  it('clears the prefilled bootstrap prompt from the composer after sending it', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const created = {
+      ...makeConversation(5, 'unused'),
+      turns: [],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+      ),
+      http.post('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created }),
+      ),
+      http.post('/api/workitems/:workitemId/clarification-conversations/:conversationId/turns', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null }),
+      ),
+    );
+
+    renderPanel([]);
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    await waitFor(() => expect(textarea).toHaveValue('请通过平台 MCP 读取工单 #100，与我进行需求澄清。'));
+
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await waitFor(() => expect(textarea).toHaveValue(''));
+  });
+
+  it('restores the prompt when reopening an unsent fullscreen conversation without refilling a cleared input', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const empty = { ...makeConversation(7, 'unused'), turns: [] };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, data: [empty] })),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, data: empty })),
+    );
+    const prompt = '请通过平台 MCP 读取工单 #100，与我进行需求澄清。';
+    const first = renderPanel([], { fullscreen: true, initialConversationId: 7 });
+    const input = await screen.findByDisplayValue(prompt);
+    await typeComposer('');
+    fireEvent.blur(input);
+    expect(input).toHaveValue('');
+    first.unmount();
+    renderPanel([], { fullscreen: true, initialConversationId: 7 });
+    expect(await screen.findByDisplayValue(prompt)).toBeInTheDocument();
   });
 
   it('clears prefill for unrelated workitems', () => {
@@ -446,7 +512,7 @@ describe('WorkitemClarificationPanel', () => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
     });
 
-    // AI 侧带数字人名字；用户侧不再有「你」标签（Codex 风格）
+    // AI 侧带数字员工名字；用户侧不再有「你」标签（Codex 风格）
     expect(screen.getAllByText('Agent-X').length).toBeGreaterThan(0);
     expect(screen.queryByText('你')).not.toBeInTheDocument();
     expect(screen.getByText('好的，请说说你的想法')).toBeInTheDocument();
@@ -463,9 +529,18 @@ describe('WorkitemClarificationPanel', () => {
     });
 
     // 用户侧仍是有底色的气泡
-    const userMsg = screen.getByText('你好，我想讨论需求').closest('div[style*="background-color"]');
+    const userMsg = screen.getByText('你好，我想讨论需求').closest('[data-testid="clarification-user-bubble"]');
     expect(userMsg).not.toBeNull();
-    expect(userMsg).toHaveStyle({ backgroundColor: '#f4f4f5' });
+    expect(userMsg).toHaveStyle({ borderRadius: '14px' });
+    const client = new QueryClient();
+    client.setQueryData(['workitem', '100', 'clarification-conversation', 1], makeConversation(1, '用户气泡主题校验'));
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}>
+      <WorkitemClarificationPanel workitemId="100" agents={[]} initialConversationId={1} />
+    </QueryClientProvider>);
+    const bubbleMarkup = html.match(/<div[^>]*data-testid="clarification-user-bubble"[^>]*>/)?.[0];
+    expect(bubbleMarkup).toContain('background-color:var(--aw-raised)');
+    client.clear();
 
     // AI 侧平铺：先确认 AI 文本真的渲染出来了（否则下面的 toBeNull 会空洞地通过），
     // 再证明从文本往上找不到任何带 background-color 的祖先气泡
@@ -473,7 +548,7 @@ describe('WorkitemClarificationPanel', () => {
     expect(aiText).toBeInTheDocument();
     const aiBlock = screen.getByTestId('clarification-agent-block');
     expect(aiBlock).toContainElement(aiText);
-    expect(aiText.closest('div[style*="background-color"]')).toBeNull();
+    expect(aiText.closest('[data-testid="clarification-user-bubble"]')).toBeNull();
 
     // 与流式态同款保护（clarification-streaming-bubble 已有）：光排除祖先底色不够，
     // 直接往这一层内联加 background/border 也必须红，否则平铺设计能被悄悄改回气泡
@@ -481,7 +556,7 @@ describe('WorkitemClarificationPanel', () => {
     expect(aiBlock.style.border).toBe('');
   });
 
-  it('keeps pre-wrap for plain user text and never applies it to agent markdown', async () => {
+  it('renders user messages via MarkdownView without pre-wrap on either side', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
@@ -491,12 +566,14 @@ describe('WorkitemClarificationPanel', () => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
     });
 
-    // 用户纯文本保留 pre-wrap（保留手输入换行）
-    const userBubble = screen.getByText('你好，我想讨论需求').closest('div[style*="background-color"]');
-    expect(userBubble).toHaveStyle({ whiteSpace: 'pre-wrap' });
+    // 输入框已是 Markdown 编辑器，用户消息同样经 markdown 渲染；
+    // 气泡不能带 pre-wrap：块级元素间的换行会被渲染成字面空行。
+    const userBubble = screen.getByText('你好，我想讨论需求').closest('[data-testid="clarification-user-bubble"]');
+    expect(userBubble).not.toBeNull();
+    expect(userBubble).not.toHaveStyle({ whiteSpace: 'pre-wrap' });
+    expect(userBubble!.querySelector('.aw-clarify-md')).not.toBeNull();
 
-    // agent markdown 平铺容器不能带 pre-wrap：继承它会把块级元素间的换行
-    // 渲染成字面空行，产生完成后的大块行间距空白
+    // agent markdown 平铺容器同样不能带 pre-wrap
     const aiBlock = screen.getByTestId('clarification-agent-block');
     expect(aiBlock).not.toHaveStyle({ whiteSpace: 'pre-wrap' });
   });
@@ -551,7 +628,7 @@ describe('WorkitemClarificationPanel', () => {
     // 回复过程中与完成态取同一个 agentBlockStyle()，保证前后渲染一致
     const bubble = await screen.findByTestId('clarification-streaming-bubble');
     expect(bubble).toHaveStyle({
-      fontSize: '13px',
+      fontSize: '16px',
       lineHeight: '1.75',
     });
     expect(bubble.style.backgroundColor).toBe('');
@@ -770,7 +847,7 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('你好，我想讨论需求');
-    fireEvent.change(textarea, { target: { value: '你好' } });
+    await typeComposer('你好');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
     await waitFor(() => expect(submitCalled).toBe(true));
   });
@@ -789,7 +866,7 @@ describe('WorkitemClarificationPanel', () => {
     );
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
-    fireEvent.change(textarea, { target: { value: '请保留这条消息' } });
+    await typeComposer('请保留这条消息');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
 
     await waitFor(() => expect(textarea).toHaveValue('请保留这条消息'));
@@ -824,8 +901,8 @@ describe('WorkitemClarificationPanel', () => {
     expect(screen.getByText('历史需求')).toBeInTheDocument();
     // 「你」标签已按方案 A 移除，用户侧改以「右对齐 + 用户气泡底色」为证据
     const userRowOf = (text: string) => {
-      const bubble = screen.getByText(text).closest('div[style*="background-color"]');
-      expect(bubble).toHaveStyle({ backgroundColor: '#f4f4f5' });
+      const bubble = screen.getByText(text).closest('[data-testid="clarification-user-bubble"]');
+      expect(bubble).toHaveStyle({ borderRadius: '14px' });
       return bubble!.closest('div[style*="justify-content"]');
     };
     expect(userRowOf('我的需求')).toHaveStyle({ justifyContent: 'flex-end' });
@@ -861,6 +938,41 @@ describe('WorkitemClarificationPanel', () => {
     expect((await screen.findByText('需求目标')).tagName).toBe('STRONG');
   });
 
+  it('renders persisted user messages as markdown too', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    const richMarkdown = '**我的目标**：[文档](https://example.com)\n\n- [x] 要点一\n\n| 项目 | 状态 |\n| --- | --- |\n| 澄清 | 完成 |';
+    const conversation = {
+      id: 1, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-1',
+      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+      cliSessionRef: null, processingStatus: null, processingTurnId: null,
+      lastTurnAt: '2026-01-01T00:00:02', gmtCreate: '2026-01-01T00:00:00',
+      turns: [
+        { id: 3, direction: 'IN', content: richMarkdown, status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:02' },
+        { id: 4, direction: 'OUT', content: richMarkdown, status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:03' },
+      ],
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
+      ),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+        HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation }),
+      ),
+    );
+
+    renderPanel([]);
+
+    const userBubble = await screen.findByTestId('clarification-user-bubble');
+    const agentBlock = screen.getByTestId('clarification-agent-block');
+    for (const message of [userBubble, agentBlock]) {
+      expect(message.querySelector('strong')).toHaveTextContent('我的目标');
+      expect(message.querySelector('a')).toHaveAttribute('href', 'https://example.com');
+      expect(message.querySelector('input[type="checkbox"]')).toBeChecked();
+      expect(message.querySelector('table')).toHaveTextContent('澄清');
+    }
+  });
+
   it('does not send on plain Enter in the default send mode and preserves input content', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
@@ -874,7 +986,7 @@ describe('WorkitemClarificationPanel', () => {
     );
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
-    fireEvent.change(textarea, { target: { value: '第一行' } });
+    await typeComposer('第一行');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
     await new Promise((r) => setTimeout(r, 100));
     expect(submitCalled).toBe(false);
@@ -894,7 +1006,7 @@ describe('WorkitemClarificationPanel', () => {
     );
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
-    fireEvent.change(textarea, { target: { value: '候选' } });
+    await typeComposer('候选');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true, isComposing: true });
     await new Promise((r) => setTimeout(r, 100));
     expect(submitCalled).toBe(false);
@@ -1108,12 +1220,12 @@ describe('WorkitemClarificationPanel', () => {
 
   it('clears a draft before switching to another delivery agent', async () => {
     const agentAConversation = {
-      ...makeConversation(201, '数字人 A 的会话消息'),
+      ...makeConversation(201, '数字员工 A 的会话消息'),
       agentId: 1,
       agentName: 'Agent-A',
     };
     const agentBConversation = {
-      ...makeConversation(202, '数字人 B 的会话消息'),
+      ...makeConversation(202, '数字员工 B 的会话消息'),
       agentId: 2,
       agentName: 'Agent-B',
     };
@@ -1135,14 +1247,16 @@ describe('WorkitemClarificationPanel', () => {
     ]);
     fireEvent.click(await screen.findByText('Agent-A'));
 
-    const textarea = await screen.findByPlaceholderText('输入消息...');
-    await screen.findByText('数字人 A 的会话消息');
-    fireEvent.change(textarea, { target: { value: '只属于数字人 A 的草稿' } });
+    await screen.findByPlaceholderText('输入消息...');
+    await screen.findByText('数字员工 A 的会话消息');
+    await typeComposer('只属于数字员工 A 的草稿');
 
-    fireEvent.click(screen.getByRole('button', { name: '切换数字人' }));
+    const switchButton = screen.getByRole('button', { name: '切换数字员工' });
+    expect(switchButton.querySelector('.anticon-user-switch')).toBeInTheDocument();
+    fireEvent.click(switchButton);
     fireEvent.click(await screen.findByText('Agent-B'));
 
-    expect(await screen.findByText('数字人 B 的会话消息')).toBeInTheDocument();
+    expect(await screen.findByText('数字员工 B 的会话消息')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('输入消息...')).toHaveValue('');
   });
 
@@ -1167,12 +1281,12 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('当前会话消息');
-    fireEvent.change(textarea, { target: { value: '不应带入新会话的草稿' } });
+    await typeComposer('不应带入新会话的草稿');
 
     fireEvent.click(screen.getByRole('button', { name: /新对话/ }));
 
     await waitFor(() => expect(screen.getByTestId('clarification-conversation-select')).toHaveTextContent('会话 #303'));
-    expect(textarea).toHaveValue('');
+    await waitFor(() => expect(textarea).toHaveValue('请通过平台 MCP 读取工单 #100，与我进行需求澄清。'));
   });
 
   it('submits to the historical conversation after switching back to it', async () => {
@@ -1204,7 +1318,7 @@ describe('WorkitemClarificationPanel', () => {
     expect(await screen.findByText('历史会话消息')).toBeInTheDocument();
 
     const textarea = screen.getByPlaceholderText('输入消息...');
-    fireEvent.change(textarea, { target: { value: '继续历史会话' } });
+    await typeComposer('继续历史会话');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
 
     await waitFor(() => expect(submittedUrl).toContain('/clarification-conversations/101/turns'));
@@ -1284,7 +1398,7 @@ describe('WorkitemClarificationPanel', () => {
 
     const selector = screen.getByTestId('clarification-conversation-select');
     expect(within(selector).getByRole('combobox')).toBeDisabled();
-    expect(screen.getByRole('button', { name: '切换数字人' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '切换数字员工' })).toBeDisabled();
     expect(screen.getByPlaceholderText('输入消息...')).toBeDisabled();
     expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
 
@@ -1319,7 +1433,7 @@ describe('WorkitemClarificationPanel', () => {
     fireEvent.click(await screen.findByText(/会话 #101/));
     expect(await screen.findByText('可继续的历史会话消息')).toBeInTheDocument();
     await waitFor(() => expect(textarea).not.toBeDisabled());
-    fireEvent.change(textarea, { target: { value: '不应带到处理中会话的草稿' } });
+    await typeComposer('不应带到处理中会话的草稿');
 
     selector = screen.getByTestId('clarification-conversation-select');
     fireEvent.mouseDown(within(selector).getByRole('combobox'));
@@ -1331,13 +1445,13 @@ describe('WorkitemClarificationPanel', () => {
     });
   });
 
-  it('keeps the composer empty after selecting an empty historical session', async () => {
+  it('prefills the prompt after selecting an empty historical session', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     const latest = makeConversation(202, '当前会话消息');
     const historical = {
       ...makeConversation(101, '不会显示的消息'),
-      agentName: '空历史会话数字人',
+      agentName: '空历史会话数字员工',
       turns: [],
     };
     server.use(
@@ -1358,8 +1472,8 @@ describe('WorkitemClarificationPanel', () => {
     fireEvent.mouseDown(within(selector).getByRole('combobox'));
     fireEvent.click(await screen.findByText(/会话 #101/));
 
-    await screen.findByText('空历史会话数字人');
-    expect(textarea).toHaveValue('');
+    await screen.findByText('空历史会话数字员工');
+    await waitFor(() => expect(textarea).toHaveValue('请通过平台 MCP 读取工单 #100，与我进行需求澄清。'));
   });
 
   it('does not restore a failed send draft into a different selected session', async () => {
@@ -1393,7 +1507,7 @@ describe('WorkitemClarificationPanel', () => {
     renderPanel([]);
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('当前会话消息');
-    fireEvent.change(textarea, { target: { value: '只属于当前会话的草稿' } });
+    await typeComposer('只属于当前会话的草稿');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
     await waitFor(() => expect(submitStarted).toBe(true));
 
@@ -1461,18 +1575,20 @@ describe('WorkitemClarificationPanel', () => {
     });
 
     it('renders the default 6-row auto mode without a fixed height and exposes a vertical resize handle', async () => {
-      const { textarea } = await renderActiveConversation();
-      // 自动模式：不施加我们自己的固定高度/滚动样式（6 行默认高度由 antd autoSize 应用，
-      // jsdom 下 antd 可能写入自身测量样式，故不做强断言）
-      expect(textarea.style.overflowY).not.toBe('auto');
+      const { composer } = await renderActiveConversation();
+      // 自动模式：不施加手动固定高度（高度由 minHeight/maxHeight 兜底，
+      // overflowY 滚动保留）
+      expect(composer.style.height).toBe('');
       const handle = screen.getByTestId('resize-handle-vertical');
       expect(handle).toHaveStyle({ cursor: 'row-resize' });
+      expect(handle).toBeEmptyDOMElement();
+      expect((handle.parentElement as HTMLElement).style.borderTop).toBe('');
     });
 
     it('switches to a fixed height on drag and clamps to [32px, panel height × 60%]', async () => {
-      const { view, textarea } = await renderActiveConversation();
+      const { view, composer } = await renderActiveConversation();
       const panel = view.container.firstChild as HTMLElement;
-      const wrapper = textarea.parentElement as HTMLElement;
+      const wrapper = composer.parentElement as HTMLElement;
       mockElementHeight(panel, 400);
       mockElementHeight(wrapper, 60);
 
@@ -1480,81 +1596,81 @@ describe('WorkitemClarificationPanel', () => {
       firePointer('pointerdown', handle, { clientX: 0, clientY: 200 });
       // 向上拖 100px → 60 + 100 = 160，进入手动固定高度模式
       firePointer('pointermove', handle, { clientX: 0, clientY: 100 });
-      expect(textarea).toHaveStyle({ height: '160px', overflowY: 'auto' });
+      expect(composer).toHaveStyle({ height: '160px', overflowY: 'auto' });
 
       // 继续向上拖出上限：60 + 200 = 260 → 钳制到 400 × 0.6 = 240
       firePointer('pointermove', handle, { clientX: 0, clientY: 0 });
-      expect(textarea).toHaveStyle({ height: '240px' });
+      expect(composer).toHaveStyle({ height: '240px' });
 
       // 向下拖出下限 → 钳制到 32
       firePointer('pointermove', handle, { clientX: 0, clientY: 400 });
-      expect(textarea).toHaveStyle({ height: '32px' });
+      expect(composer).toHaveStyle({ height: '32px' });
 
       firePointer('pointerup', handle, { clientX: 0, clientY: 400 });
       // 拖拽结束后移动不再改变高度
       firePointer('pointermove', handle, { clientX: 0, clientY: 100 });
-      expect(textarea).toHaveStyle({ height: '32px' });
+      expect(composer).toHaveStyle({ height: '32px' });
     });
 
     it('restores auto sizing mode when the handle is double clicked', async () => {
-      const { view, textarea } = await renderActiveConversation();
+      const { view, composer } = await renderActiveConversation();
       mockElementHeight(view.container.firstChild as HTMLElement, 400);
-      mockElementHeight(textarea.parentElement as HTMLElement, 60);
+      mockElementHeight(composer.parentElement as HTMLElement, 60);
 
       const handle = screen.getByTestId('resize-handle-vertical');
       firePointer('pointerdown', handle, { clientX: 0, clientY: 200 });
       firePointer('pointermove', handle, { clientX: 0, clientY: 100 });
-      expect(textarea).toHaveStyle({ height: '160px' });
+      expect(composer).toHaveStyle({ height: '160px' });
       firePointer('pointerup', handle, { clientX: 0, clientY: 100 });
 
       fireEvent.doubleClick(handle);
-      // 双击后回到自动模式：手动固定高度与滚动样式被移除
-      expect(textarea.style.height).not.toBe('160px');
-      expect(textarea.style.overflowY).not.toBe('auto');
+      // 双击后回到自动模式：手动固定高度被移除（overflowY:auto 保留，
+      // 自动模式仍靠 maxHeight 兜底滚动）
+      expect(composer.style.height).not.toBe('160px');
     });
 
     it('re-clamps a stored manual height after the panel shrinks', async () => {
-      const { view, textarea } = await renderActiveConversation();
+      const { view, composer } = await renderActiveConversation();
       const panel = view.container.firstChild as HTMLElement;
       mockElementHeight(panel, 400);
-      mockElementHeight(textarea.parentElement as HTMLElement, 60);
+      mockElementHeight(composer.parentElement as HTMLElement, 60);
 
       const handle = screen.getByTestId('resize-handle-vertical');
       firePointer('pointerdown', handle, { clientX: 0, clientY: 200 });
       firePointer('pointermove', handle, { clientX: 0, clientY: 0 });
-      expect(textarea).toHaveStyle({ height: '240px' });
+      expect(composer).toHaveStyle({ height: '240px' });
       firePointer('pointerup', handle, { clientX: 0, clientY: 0 });
 
       // 面板被 50386 拖小后，已存的手动高度随新上限收敛
       mockElementHeight(panel, 200);
-      fireEvent.change(textarea, { target: { value: '触发重渲染' } });
-      expect(textarea).toHaveStyle({ height: '120px' });
+      await typeComposer('触发重渲染');
+      expect(composer).toHaveStyle({ height: '120px' });
     });
 
-    it('borders the composer with the controlBorder token in both height modes', async () => {
-      // controlBorder 曾经是个零消费方的死令牌，输入框留着 antd 默认灰 #d9d9d9
-      // ——正是面板别处已全部移除的那个灰。两个分支各有一份内联样式对象，都要断言。
-      const { view, textarea } = await renderActiveConversation();
-      expect(CLARIFICATION_THEME.controlBorder).toBe('rgba(0,0,0,0.10)');
-      expect(textarea).toHaveStyle({ borderColor: CLARIFICATION_THEME.controlBorder });
+    it('keeps the composer bordered via the controlBorder token in both height modes', async () => {
+      // 令牌改由 .aw-markdown-composer 类消费（markdownComposer.css：
+      // border: 1px solid var(--aw-border)）。CSSOM 在 jsdom 会丢弃 var()，
+      // 这里断言类被挂上且两种高度分支都由编辑器根承载样式。
+      const { view, composer } = await renderActiveConversation();
+      expect(CLARIFICATION_THEME.controlBorder).toBe('var(--aw-border)');
+      expect(composer).toHaveClass('aw-markdown-composer');
 
       const panel = view.container.firstChild as HTMLElement;
       mockElementHeight(panel, 400);
-      mockElementHeight(textarea.parentElement as HTMLElement, 60);
+      mockElementHeight(composer.parentElement as HTMLElement, 60);
       const handle = screen.getByTestId('resize-handle-vertical');
       firePointer('pointerdown', handle, { clientX: 0, clientY: 200 });
       firePointer('pointermove', handle, { clientX: 0, clientY: 100 });
-      // 进入手动固定高度分支后同样取令牌
-      expect(textarea).toHaveStyle({ height: '160px' });
-      expect(textarea).toHaveStyle({ borderColor: CLARIFICATION_THEME.controlBorder });
+      // 进入手动固定高度分支后样式仍落在同一节点上
+      expect(composer).toHaveClass('aw-markdown-composer');
+      expect(composer).toHaveStyle({ height: '160px' });
     });
   });
 
   describe('fullscreen reading column', () => {
-    /** 输入行 = inputWrapRef 的父节点。铺满样式是合进这个 flex 行的，
-     *  不是新插一层节点——多一层会打断上面 6 个输入框高度测量用例。 */
-    function inputRowOf(textarea: HTMLElement): HTMLElement {
-      return textarea.parentElement!.parentElement!;
+    /** 输入行 = composer 容器（fullscreenColumnStyle 合进该 flex 列的节点）。 */
+    function composerColumn(): HTMLElement {
+      return screen.getByTestId('clarification-composer');
     }
 
     /** 工单 53035：全屏后正文/选人/输入行共用一条跟着视口铺满的列，
@@ -1568,7 +1684,7 @@ describe('WorkitemClarificationPanel', () => {
     }
 
     it('fills the viewport with the body column inside the scroll container when fullscreen', async () => {
-      const { textarea } = await renderActiveConversation({ fullscreen: true });
+      await renderActiveConversation({ fullscreen: true });
 
       const scroll = screen.getByTestId('clarification-message-scroll');
       const column = screen.getByTestId('clarification-content-column');
@@ -1577,14 +1693,17 @@ describe('WorkitemClarificationPanel', () => {
       expect(column).toContainElement(await screen.findByText('你好，我想讨论需求'));
       expectFluidColumn(column);
 
-      const inputRow = inputRowOf(textarea);
+      const inputRow = composerColumn();
       expectFluidColumn(inputRow);
       // 铺满只是叠加，flex 行本身的排布不能被覆盖掉
       expect(inputRow.style.display).toBe('flex');
+      const handle = screen.getByTestId('resize-handle-vertical');
+      expect(handle).toBeEmptyDOMElement();
+      expect((handle.parentElement as HTMLElement).style.borderTop).toBe('');
     });
 
     it('leaves the docked panel unconstrained so the narrow column keeps full width', async () => {
-      const { textarea } = await renderActiveConversation();
+      await renderActiveConversation();
 
       const column = screen.getByTestId('clarification-content-column');
       expect(column).toContainElement(await screen.findByText('你好，我想讨论需求'));
@@ -1593,7 +1712,7 @@ describe('WorkitemClarificationPanel', () => {
       expect(column.style.width).toBe('');
       expect(column.style.minWidth).toBe('');
 
-      const inputRow = inputRowOf(textarea);
+      const inputRow = composerColumn();
       expect(inputRow.style.maxWidth).toBe('');
       expect(inputRow.style.display).toBe('flex');
     });
@@ -1602,26 +1721,26 @@ describe('WorkitemClarificationPanel', () => {
       await renderActiveConversation({ fullscreen: true });
 
       // 全屏态整屏内距放宽，面板头部要跟着走，否则和外层 clarify 头部（RightPanel）错半档
-      const header = screen.getByRole('button', { name: '切换数字人' }).parentElement!;
-      expect(header.style.padding).toBe('12px 20px');
+      const header = screen.getByTestId('clarification-panel-header');
+      expect(header.style.padding).toBe('12px 24px');
     });
 
     it('keeps the compact header padding when docked', async () => {
       await renderActiveConversation();
 
-      const header = screen.getByRole('button', { name: '切换数字人' }).parentElement!;
+      const header = screen.getByTestId('clarification-panel-header');
       expect(header.style.padding).toBe('10px 14px');
     });
 
     it('fills the viewport with the agent selection screen when fullscreen', async () => {
-      // 选人页在全屏态下真实可达：全屏中点「切换数字人」会回到这一屏，
+      // 选人页在全屏态下真实可达：全屏中点「切换数字员工」会回到这一屏，
       // 轮询把 hasDeliveryAgents 翻转也会落到这里。早返回若绕过铺满列，
       // 它就成了唯一与对话屏宽度不一致的全屏面。
       mockSquads();
       renderPanel([], { fullscreen: true });
 
       const column = screen.getByTestId('clarification-selection-column');
-      expect(column).toContainElement(screen.getByText('选择小队和数字人'));
+      expect(column).toContainElement(screen.getByText('选择小队和数字员工'));
       expectFluidColumn(column);
 
       // 等小队加载落定，避免 act 警告
@@ -1634,7 +1753,7 @@ describe('WorkitemClarificationPanel', () => {
       renderPanel([]);
 
       const column = screen.getByTestId('clarification-selection-column');
-      expect(column).toContainElement(screen.getByText('选择小队和数字人'));
+      expect(column).toContainElement(screen.getByText('选择小队和数字员工'));
       expect(column.style.maxWidth).toBe('');
       expect(column.style.margin).toBe('');
       expect(column.style.width).toBe('');
@@ -1661,7 +1780,7 @@ describe('WorkitemClarificationPanel', () => {
       );
     }
 
-    /** 交付数字人来自轮询查询，挂载当帧往往还是空数组——
+    /** 交付数字员工来自轮询查询，挂载当帧往往还是空数组——
      *  恢复逻辑必须能等到列表落地后再补认，所以要能中途换 agents。
      *  同理，外层会把面板上报的上下文写回 URL 再作为 prop 回流，props 也要能中途换。 */
     function renderRestorable(
@@ -1741,7 +1860,7 @@ describe('WorkitemClarificationPanel', () => {
     it('adopts the restored agent once the delivery agent list lands', async () => {
       mockSquads();
       mockAgentDirectory([{ id: 1 }, { id: 2 }]);
-      // 会话归属交付数字人 2：header 的 displayName 优先取会话详情里的 agentName，
+      // 会话归属交付数字员工 2：header 的 displayName 优先取会话详情里的 agentName，
       // 沿用 makeConversation 默认的 Agent-X 会让「认领的是 2 号」这条断言失去指向
       mockConversationList([
         { ...makeConversation(101, '历史会话消息'), agentId: 2, agentName: 'Agent-B' },
@@ -1751,8 +1870,8 @@ describe('WorkitemClarificationPanel', () => {
         initialAgentId: 2, initialConversationId: 101, onContextChange,
       });
 
-      // 交付数字人还没落地：先停在小队选人屏（会话内容要等选人屏让位后才渲染）
-      expect(await screen.findByText('选择小队和数字人')).toBeInTheDocument();
+      // 交付数字员工还没落地：先停在小队选人屏（会话内容要等选人屏让位后才渲染）
+      expect(await screen.findByText('选择小队和数字员工')).toBeInTheDocument();
 
       // 交付列表是轮询来的，挂载当帧必然为空。这一窗口里上报 agentId: null，
       // 页面就会把 URL 里的 agent 删掉，回流后恢复源自己没了（CR53035-001）。
@@ -1783,9 +1902,9 @@ describe('WorkitemClarificationPanel', () => {
         onContextChange,
       });
 
-      // 列表落地后补认 URL 里的数字人 2，直接进对话页而不是再让人选一次
-      await waitFor(() => expect(screen.queryByText('选择数字人')).toBeNull());
-      expect(await screen.findByRole('button', { name: '切换数字人' })).toBeInTheDocument();
+      // 列表落地后补认 URL 里的数字员工 2，直接进对话页而不是再让人选一次
+      await waitFor(() => expect(screen.queryByText('选择数字员工')).toBeNull());
+      expect(await screen.findByRole('button', { name: '切换数字员工' })).toBeInTheDocument();
       await waitFor(() => expect(screen.getByText('Agent-B')).toBeInTheDocument());
       // 恢复落定后把 agent 补回 URL，会话仍是原来那条
       await waitFor(() => expect(onContextChange).toHaveBeenLastCalledWith({
@@ -1796,13 +1915,13 @@ describe('WorkitemClarificationPanel', () => {
     });
 
     it('ignores a restored agent that is no longer in the delivery list', async () => {
-      // 数字人被换掉后，URL 里的旧 id 不该把面板钉死在选不出人的状态
+      // 数字员工被换掉后，URL 里的旧 id 不该把面板钉死在选不出人的状态
       mockAgentDirectory([{ id: 1, executorOnlineCount: 1 }]);
       renderPanel([{ agentId: 1, agentName: 'Agent-A', status: 'pending' }], { initialAgentId: 7 });
 
-      expect(await screen.findByText('选择数字人')).toBeInTheDocument();
+      expect(await screen.findByText('选择数字员工')).toBeInTheDocument();
       expect(screen.getByText('Agent-A')).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: '切换数字人' })).toBeNull();
+      expect(screen.queryByRole('button', { name: '切换数字员工' })).toBeNull();
     });
 
     it('reports the restored context upward so the page can keep the URL in sync', async () => {
@@ -1853,7 +1972,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       mockAgentDirectory([{ id: 1 }, { id: 2 }]);
-      const aConversation = makeConversation(202, '预填数字人的会话');
+      const aConversation = makeConversation(202, '预填数字员工的会话');
       const bConversation = {
         ...makeConversation(101, '恢复目标的历史会话'), agentId: 2, agentName: 'Agent-B',
       };
@@ -1882,25 +2001,25 @@ describe('WorkitemClarificationPanel', () => {
       expect(await screen.findByText('恢复目标的历史会话')).toBeInTheDocument();
       expect(textarea).toBeDisabled();
 
-      // 交付列表落地，URL 里的数字人 2 被认领
+      // 交付列表落地，URL 里的数字员工 2 被认领
       view.rerenderAgents([
         { agentId: 1, agentName: 'Agent-A', status: 'active' },
         { agentId: 2, agentName: 'Agent-B', status: 'active' },
       ]);
 
-      // 最终停在 URL 记录的 B/101：预填数字人的 202 从头到尾不该出现，
+      // 最终停在 URL 记录的 B/101：预填数字员工的 202 从头到尾不该出现，
       // 也没有把恢复会话误判成不存在而清空
       await waitFor(() =>
         expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled());
       expect(screen.getByText('恢复目标的历史会话')).toBeInTheDocument();
-      expect(screen.queryByText('预填数字人的会话')).toBeNull();
+      expect(screen.queryByText('预填数字员工的会话')).toBeNull();
       await waitFor(() => expect(onContextChange).toHaveBeenLastCalledWith({
         agentId: 2, conversationId: 101,
       }));
     });
 
     /** 缺陷二优先级：用户手动选择 > URL 恢复。恢复窗口内用户已通过小队选择器
-     *  自己选了数字人，迟到的 URL 恢复不得再把面板拽到别的数字人上。 */
+     *  自己选了数字员工，迟到的 URL 恢复不得再把面板拽到别的数字员工上。 */
     it('lets a manual agent selection win over the URL restore arriving late', async () => {
       mockSquads();
       mockAgentDirectory([{ id: 1 }, { id: 2 }]);
@@ -1939,7 +2058,7 @@ describe('WorkitemClarificationPanel', () => {
         { agentId: 2, agentName: 'Agent-B', status: 'active' },
       ]);
 
-      expect(await screen.findByText('选择数字人')).toBeInTheDocument();
+      expect(await screen.findByText('选择数字员工')).toBeInTheDocument();
       expect(screen.queryByText('迟到恢复的会话')).toBeNull();
     });
   });
@@ -2200,7 +2319,7 @@ describe('WorkitemClarificationPanel', () => {
 
       await waitFor(() => expect(onAgentConfirmed).toHaveBeenCalledTimes(1));
 
-      // 模拟数字人确定之后父组件的连续重渲染
+      // 模拟数字员工确定之后父组件的连续重渲染
       rerender(tree());
       rerender(tree());
       rerender(tree());
@@ -2210,9 +2329,9 @@ describe('WorkitemClarificationPanel', () => {
       expect(onAgentConfirmed).toHaveBeenCalledTimes(1);
     });
 
-    // 守卫必须在派生值回到 null 时复位：「切换数字人」正是把选择清回 null，
+    // 守卫必须在派生值回到 null 时复位：「切换数字员工」正是把选择清回 null，
     // 少了复位分支，用户切换后重新选人就再也不会重新进全屏。
-    it('fires again after 「切换数字人」 resets the selection and a new agent is picked', async () => {
+    it('fires again after 「切换数字员工」 resets the selection and a new agent is picked', async () => {
       mockAgentDirectory([{ id: 1, executorOnlineCount: 1 }]);
       server.use(
         http.get('/api/workitems/:workitemId/clarification-conversations', () =>
@@ -2245,8 +2364,8 @@ describe('WorkitemClarificationPanel', () => {
       await waitFor(() => expect(onAgentConfirmed).toHaveBeenCalledTimes(1));
 
       // 回到选择页：派生值被清回 null，选人列表重新挂载，元素需重新查询
-      fireEvent.click(screen.getByText('切换数字人'));
-      expect(await screen.findByText('选择数字人')).toBeInTheDocument();
+      fireEvent.click(screen.getByText('切换数字员工'));
+      expect(await screen.findByText('选择数字员工')).toBeInTheDocument();
       expect(onAgentConfirmed).toHaveBeenCalledTimes(1);
 
       fireEvent.click(screen.getByText('Agent-A'));
@@ -2338,7 +2457,7 @@ describe('WorkitemClarificationPanel', () => {
       const aiBubble = aiBlock.closest('.aw-clarify-msg') as HTMLElement;
       const aiCopy = within(aiBubble).getByTestId('copy-message-button');
 
-      // 正向：按钮和数字人名字同属那一行。它待在这行 11px 文字里，才是
+      // 正向：按钮和数字员工名字同属那一行。它待在这行 11px 文字里，才是
       // clarification.css 把按钮压到 18×18 的全部理由。
       expect(aiCopy.closest('div')).toHaveTextContent('Agent-X');
       // 反向：挪进内容块就没有「别撑高名字行」这个约束了，18px 的理由随之作废，

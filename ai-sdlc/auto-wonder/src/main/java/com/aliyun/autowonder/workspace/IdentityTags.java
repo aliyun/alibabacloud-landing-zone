@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.workspace;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONException;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONException;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.fasterxml.jackson.core.JsonProcessingException;

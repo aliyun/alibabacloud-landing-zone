@@ -39,12 +39,12 @@ export interface UpdateDingTalkImChannelParams {
 
 export const DEFAULT_BRANDING: PlatformBranding = {
   platformName: 'AutoWonder',
-  logoUrl: '/logo.png',
+  logoUrl: '/logo.svg',
   themeKey: 'aliyun-orange',
   primaryColor: '#f97316',
   domain: null,
   mcpBaseUrl: '',
-  recommendedRuntimeVersion: '0.2.163',
+  recommendedRuntimeVersion: '0.3.3',
   deploymentVersion: 'x.x.x',
   communityEdition: false,
   canManage: false,

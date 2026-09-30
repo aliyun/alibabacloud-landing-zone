@@ -21,6 +21,7 @@ import zipfile
 REPOSITORY = Path(__file__).resolve().parents[2]
 DEPLOY = 'deploying-autowonder-on-alibaba-cloud'
 UPGRADE = 'upgrading-autowonder-on-alibaba-cloud'
+SYNTHETIC_MASTER = 'c3ludGhldGljLW1hc3Rlci1rZXktMzItYnl0ZXMteHg='
 SQL = 'CREATE TABLE interop_fixture (id BIGINT PRIMARY KEY);\n'
 APPLICATION = ('service:\n  value: ${EXAMPLE_VALUE:default}\n'
                'autowonder:\n  runtime:\n'
@@ -89,7 +90,7 @@ class IndependentSkillInteropTests(unittest.TestCase):
         self.manifest = self.consumer / 'upgrade-info/manifest.json'
         self.sealed = self.consumer / 'upgrade-info/sealed'
         candidate = self.consumer / 'upgrade-info/candidate.env'
-        candidate.write_text('EXAMPLE_VALUE=fixture\n', encoding='utf-8')
+        candidate.write_text('EXAMPLE_VALUE=fixture\nAUTOWONDER_SECRET_MASTER_KEY=' + SYNTHETIC_MASTER + '\n', encoding='utf-8')
         candidate.chmod(0o600)
         nodes = [{'instanceId': 'i-fixture', 'vpcId': 'vpc-fixture'}]
         tags = {'Project': 'AutoWonder', 'DeploymentId': 'interop', 'Environment': 'test',
@@ -124,10 +125,16 @@ class IndependentSkillInteropTests(unittest.TestCase):
         unforced = self.plan()
         self.assertNotEqual(0, unforced.returncode)
         self.assertIn('explicit forced redeployment', unforced.stderr)
+        original_path = Path(json.loads(self.manifest.read_text())['localContext']['protectedEnvFile'])
+        original_bytes = original_path.read_bytes()
         first = self.plan('--force-redeploy')
         document = json.loads(self.manifest.read_text())
         self.assertEqual(0, first.returncode, first.stderr +
                          json.dumps(document.get('upgrade', {}).get('blockedReasons', [])))
+        self.assertEqual(original_bytes, original_path.read_bytes())
+        candidate_path = Path(document['localContext']['candidateEnvFile'])
+        self.assertNotEqual(original_path, candidate_path)
+        self.assertIn('AUTOWONDER_SECRET_MASTER_KEY=' + SYNTHETIC_MASTER, candidate_path.read_text())
         plan = document['upgrade']
         self.assertEqual([], plan['pendingMigrations'])
         self.assertEqual([], plan['blockedReasons'])
@@ -141,6 +148,28 @@ class IndependentSkillInteropTests(unittest.TestCase):
         second = self.plan('--force-redeploy')
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertEqual(plan['planFingerprint'], json.loads(self.manifest.read_text())['upgrade']['planFingerprint'])
+
+    def test_missing_master_is_rejected_after_cross_package_restore(self):
+        active = Path(json.loads(self.manifest.read_text())['localContext']['protectedEnvFile'])
+        active.write_text('EXAMPLE_VALUE=fixture\n')
+        result = self.plan('--force-redeploy')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('candidate master key must match', result.stderr)
+        self.assertNotIn('planFingerprint', json.loads(self.manifest.read_text())['upgrade'])
+
+    def test_changed_candidate_master_is_rejected_after_cross_package_restore(self):
+        active = Path(json.loads(self.manifest.read_text())['localContext']['protectedEnvFile'])
+        original = active.read_bytes()
+        candidate = active.with_name('changed.env')
+        candidate.write_text('AUTOWONDER_SECRET_MASTER_KEY=FAKE_CHANGED_MASTER\n')
+        candidate.chmod(0o600)
+        result = self.plan('--force-redeploy', '--env-file', str(candidate))
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('candidate master key must match', result.stderr)
+        self.assertEqual(original, active.read_bytes())
+        self.assertNotIn(SYNTHETIC_MASTER, result.stdout + result.stderr)
+        self.assertNotIn('FAKE_CHANGED_MASTER', result.stdout + result.stderr)
+        self.assertNotIn('planFingerprint', json.loads(self.manifest.read_text())['upgrade'])
 
     def test_same_version_redeploy_rejects_new_migration_after_cross_package_restore(self):
         (self.consumer / 'docs/migration/V2__unexpected_change.sql').write_text('ALTER TABLE interop_fixture ADD value INT;\n')

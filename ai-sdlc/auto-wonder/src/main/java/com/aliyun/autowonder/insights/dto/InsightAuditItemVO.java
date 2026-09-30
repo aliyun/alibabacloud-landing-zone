@@ -8,6 +8,7 @@ import lombok.Setter;
 public class InsightAuditItemVO {
     private String timestamp;
     private String worker;
+    private String operatorType;
     private String eventType;
     private String detail;
     private String riskLevel;

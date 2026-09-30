@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { classifyStatus, classifyWorkitemStatus, getPriorityMeta, priorityMap, UNKNOWN_PRIORITY } from './constants';
+import {
+  STATUS_COLUMNS,
+  statusCategoryOf,
+  getPriorityMeta,
+  priorityMap,
+  UNKNOWN_PRIORITY,
+  type WorkitemStatusInput,
+} from './constants';
 
 describe('priority display mapping', () => {
   it('maps stored values 0-3 to Chinese labels with distinguishable colors', () => {
-    expect(priorityMap[0]).toEqual({ color: '#ff4d4f', label: '紧急' });
-    expect(priorityMap[1]).toEqual({ color: '#fa8c16', label: '高' });
-    expect(priorityMap[2]).toEqual({ color: '#1890ff', label: '中' });
-    expect(priorityMap[3]).toEqual({ color: '#8c8c8c', label: '低' });
+    expect(priorityMap[0]).toEqual({ color: 'red', label: '紧急' });
+    expect(priorityMap[1]).toEqual({ color: 'orange', label: '高' });
+    expect(priorityMap[2]).toEqual({ color: 'blue', label: '中' });
+    expect(priorityMap[3]).toEqual({ color: 'default', label: '低' });
     expect(new Set([0, 1, 2, 3].map(p => priorityMap[p].color)).size).toBe(4);
   });
 
@@ -25,26 +32,32 @@ describe('priority display mapping', () => {
   });
 });
 
-describe('workitem status classification', () => {
-  it('keeps status-name based classification for non-human assignments', () => {
-    expect(classifyStatus('开发中')).toBe('IN_PROGRESS');
-    expect(classifyWorkitemStatus({ statusName: '开发中', pendingDecision: false })).toBe('IN_PROGRESS');
+describe('statusCategoryOf', () => {
+  it('returns the server-provided category as-is', () => {
+    expect(statusCategoryOf({ statusCategory: 'NEW' })).toBe('NEW');
+    expect(statusCategoryOf({ statusCategory: 'IN_PROGRESS' })).toBe('IN_PROGRESS');
+    expect(statusCategoryOf({ statusCategory: 'PENDING_DECISION' })).toBe('PENDING_DECISION');
+    expect(statusCategoryOf({ statusCategory: 'DONE' })).toBe('DONE');
+    expect(statusCategoryOf({ statusCategory: 'CANCELED' })).toBe('CANCELED');
   });
 
-  it('classifies backend-marked pending decision workitems before status-name matching', () => {
-    expect(classifyWorkitemStatus({ statusName: '开发中', pendingDecision: true })).toBe('PENDING_DECISION');
-    expect(classifyWorkitemStatus({ statusName: '验证中', pendingDecision: true })).toBe('PENDING_DECISION');
+  it('falls back to NEW when the server category is missing', () => {
+    expect(statusCategoryOf({})).toBe('NEW');
+    expect(statusCategoryOf({ statusCategory: null })).toBe('NEW');
+    expect(statusCategoryOf({ statusCategory: undefined })).toBe('NEW');
+    expect(statusCategoryOf(undefined as WorkitemStatusInput | undefined)).toBe('NEW');
   });
 
-  it('keeps released workitems done even if stale data marks pending decision', () => {
-    expect(classifyWorkitemStatus({ statusName: '已发布', pendingDecision: true })).toBe('DONE');
-    expect(classifyWorkitemStatus({ statusName: 'DONE', pendingDecision: true })).toBe('DONE');
-    expect(classifyWorkitemStatus({ statusName: 'Fixed', pendingDecision: true })).toBe('DONE');
-    expect(classifyWorkitemStatus({ statusName: 'PUBLISHED', pendingDecision: true })).toBe('DONE');
+  it('never classifies by status name（规格 3.1：名称仅展示）', () => {
+    const namedItem = { statusName: '开发中' } as unknown as WorkitemStatusInput;
+    expect(statusCategoryOf(namedItem)).toBe('NEW');
   });
+});
 
-  it('does not infer pending decision without the backend marker', () => {
-    expect(classifyWorkitemStatus({ statusName: '待处理', pendingDecision: false })).toBe('NEW');
-    expect(classifyWorkitemStatus({ statusName: '已发布', pendingDecision: false })).toBe('DONE');
+describe('STATUS_COLUMNS', () => {
+  it('keeps exactly the four visible columns；CANCELED 不设列（规格 3.1 优先级 0）', () => {
+    expect(STATUS_COLUMNS.map(col => col.key)).toEqual(
+      ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE'],
+    );
   });
 });

@@ -100,7 +100,7 @@ export function DispatchActivityFeed({ dispatchId, status }: DispatchActivityFee
     <section
       aria-labelledby={titleId}
       data-testid={`dispatch-activities-${dispatchId}`}
-      style={{ margin: '6px 0 8px 4px', paddingLeft: 9, borderLeft: '2px solid #d9d9d9' }}
+      style={{ margin: '6px 0 8px 4px', paddingLeft: 9, borderLeft: '2px solid var(--aw-border)' }}
     >
       <h4 id={titleId} style={{ margin: '0 0 4px', fontSize: 12 }}>执行详情</h4>
       {loading && (
@@ -127,12 +127,12 @@ export function DispatchActivityFeed({ dispatchId, status }: DispatchActivityFee
                 {displayTime(activity.eventTime)} · {activity.eventType}
               </Text>
               <Text
+                type={activity.level === 'ERROR' ? 'danger' : undefined}
                 style={{
                   display: 'block',
                   whiteSpace: 'pre-wrap',
                   overflowWrap: 'anywhere',
                   fontSize: 12,
-                  color: activity.level === 'ERROR' ? '#cf1322' : undefined,
                 }}
               >
                 {activity.content}

@@ -103,7 +103,7 @@ class HumanAgentParticipationCalculatorTest {
     }
 
     @Test
-    void skipsAmbiguousAssignEventAndCountsAllDurationAsHuman() {
+    void excludesAmbiguousAssignmentInsteadOfInventingHumanTime() {
         Instant t0 = ZonedDateTime.of(2026, 8, 1, 10, 0, 0, 0, ZONE).toInstant();
         Instant t1 = t0.plus(Duration.ofHours(4));
         Instant t2 = t0.plus(Duration.ofHours(8));
@@ -117,10 +117,8 @@ class HumanAgentParticipationCalculatorTest {
         );
 
         List<HumanAgentParticipationFact> facts = calculator.reconstruct(rows, t2.plusSeconds(1));
-        assertEquals(1, facts.size());
-        assertEquals(Duration.between(t0, t2).getSeconds(), facts.get(0).totalDurationSeconds());
-        assertEquals(Duration.between(t0, t2).getSeconds(), facts.get(0).humanDurationSeconds());
-        assertEquals(0, facts.get(0).agentDurationSeconds());
+        assertTrue(facts.isEmpty());
+        assertEquals("UNKNOWN_ASSIGNEE", calculator.reconstructWithQuality(rows, t2.plusSeconds(1)).get(0).exclusionReason());
     }
 
     @Test
@@ -320,7 +318,7 @@ class HumanAgentParticipationCalculatorTest {
     }
 
     @Test
-    void skipsAssignEventsWithoutToTypeInsteadOfRejectingWorkitem() {
+    void retainsExclusionReasonForUnknownHistoricalAssignment() {
         Instant t0 = ZonedDateTime.of(2026, 7, 1, 10, 0, 0, 0, ZONE).toInstant();
         Instant t1 = t0.plus(Duration.ofHours(4));
         Instant t2 = t0.plus(Duration.ofHours(24));
@@ -332,13 +330,8 @@ class HumanAgentParticipationCalculatorTest {
                 terminalEvent(1L, t2)
         );
 
-        List<HumanAgentParticipationFact> facts = calculator.reconstruct(rows, cutoff);
-        assertEquals(1, facts.size());
-        HumanAgentParticipationFact fact = facts.get(0);
-        assertEquals(1L, fact.workitemId());
-        assertEquals(Duration.between(t0, t2).getSeconds(), fact.totalDurationSeconds());
-        assertEquals(Duration.between(t0, t2).getSeconds(), fact.humanDurationSeconds());
-        assertEquals(0, fact.agentDurationSeconds());
+        assertTrue(calculator.reconstruct(rows, cutoff).isEmpty());
+        assertEquals("UNKNOWN_ASSIGNEE", calculator.reconstructWithQuality(rows, cutoff).get(0).exclusionReason());
     }
 
     @Test

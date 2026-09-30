@@ -267,4 +267,89 @@ describe('StartDeliveryModal', () => {
     expect(await screen.findByText('Agent-77 (AW_FS_DEV)')).toBeInTheDocument();
     expect(screen.queryByText(/Chief of Staff/)).not.toBeInTheDocument();
   });
+
+  it('sends a restart token and restart-aware message when reassigning immediately', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    mutateAsync.mockResolvedValue({ id: 10000 });
+    const success = vi.spyOn(message, 'success').mockImplementation(
+      () => undefined as unknown as ReturnType<typeof message.success>,
+    );
+    server.use(...squadHandlers);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <StartDeliveryModal open workitemId={10000} hasSdlc onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    await pickSquadAndAgent();
+
+    await userEvent.click(screen.getByRole('button', { name: /重\s*新\s*指\s*派/ }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assigneeRef: 77,
+          squadId: 1,
+          scheduledStartAt: undefined,
+          restartToken: expect.any(String),
+        }),
+      );
+    });
+    expect(success).toHaveBeenCalledWith('已重新指派，正在重启交付');
+    success.mockRestore();
+  });
+
+  it('announces a deferred restart when reassigning with a scheduled start time', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    mutateAsync.mockResolvedValue({ id: 10000 });
+    const success = vi.spyOn(message, 'success').mockImplementation(
+      () => undefined as unknown as ReturnType<typeof message.success>,
+    );
+    server.use(...squadHandlers);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <StartDeliveryModal open workitemId={10000} hasSdlc onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    await pickSquadAndAgent();
+
+    const tomorrow = new Date(Date.now() + 86_400_000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const planned = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())} 23:59:00`;
+    const dateInput = screen.getByPlaceholderText('留空则立即执行');
+    await userEvent.type(dateInput, planned);
+    await userEvent.keyboard('{Enter}');
+
+    await userEvent.click(screen.getByRole('button', { name: /重\s*新\s*指\s*派/ }));
+
+    await waitFor(() => {
+      expect(mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ scheduledStartAt: expect.any(String) }),
+      );
+    });
+    expect(success).toHaveBeenCalledWith('已重新指派，将在计划时间重启交付');
+    success.mockRestore();
+  });
+
+  it('allocates a fresh restart token per modal session for explicit new rounds', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    mutateAsync.mockResolvedValue({ id: 10000 });
+    server.use(...squadHandlers);
+    const tokens: string[] = [];
+
+    for (let session = 0; session < 2; session++) {
+      const view = render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <StartDeliveryModal open workitemId={10000} hasSdlc onClose={() => {}} />
+        </QueryClientProvider>,
+      );
+      await pickSquadAndAgent();
+      await userEvent.click(screen.getByRole('button', { name: /重\s*新\s*指\s*派/ }));
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(session + 1));
+      tokens.push(mutateAsync.mock.calls[session][0].restartToken);
+      view.unmount();
+    }
+
+    expect(tokens[0]).toEqual(expect.any(String));
+    expect(tokens[1]).not.toBe(tokens[0]);
+  });
 });

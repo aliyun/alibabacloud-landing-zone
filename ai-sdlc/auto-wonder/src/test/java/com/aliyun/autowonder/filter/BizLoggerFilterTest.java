@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.filter;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
 import com.aliyun.autowonder.log.BizLogProducer;

@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Table, Card, Button, Space, Modal, Form, Input, message, Popconfirm } from 'antd';
+import { Card, Button, Space, Modal, Form, Input, message, Popconfirm } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, ShareAltOutlined, DeleteOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, listRepos, deleteRepo } from './api';
 import type { Repo } from './api';
 import type { ColumnsType } from 'antd/es/table';
+import { isValidRepoName, REPO_NAME_INVALID_MESSAGE } from './repoNameValidation';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 
 const SCP_LIKE_SSH_REPO_PATTERN = /^[\w.-]+@[\w.-]+:[\w./~@-]+(?:\.git)?$/;
 const URL_REPO_PATTERN = /^(https?:\/\/|ssh:\/\/|git:\/\/).+/i;
@@ -20,12 +23,20 @@ function isValidRepoUrl(value?: string) {
 }
 
 export function RepoListPage() {
-  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const runWithAccess = useAccessCommand();
   const [form] = Form.useForm();
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+
+  // The page lives in the /repos hub now, so the relation map is a sibling tab on the
+  // same route rather than a separate navigation.
+  const switchToMapTab = () => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'map');
+    setSearchParams(next, { replace: true });
+  };
 
   const { data: repos = [], isLoading } = useQuery({
     queryKey: ['repos', 1, 100],
@@ -61,19 +72,30 @@ export function RepoListPage() {
 
   const handleCreateRepo = async () => {
     await runWithAccess('READ_WRITE', '添加仓库', async () => {
-      const values = await form.validateFields();
-      createMutation.mutate(values);
+      // 校验失败时 antd 已在表单项下方展示错误信息，这里吞掉拒绝避免未处理 Promise。
+      const values = await form.validateFields().catch(() => null);
+      if (values) {
+        createMutation.mutate(values);
+      }
     });
   };
 
   const columns: ColumnsType<Repo> = [
     { title: 'ID', dataIndex: 'id', width: 70 },
     {
-      title: '名称', dataIndex: 'name',
-      render: (name: string, record: Repo) => <a onClick={() => navigate(`/repos/${record.id}`)}>{name}</a>,
+      title: '名称', dataIndex: 'name', align: 'left', width: 220, ellipsis: { showTitle: false },
+      render: (name: string, record: Repo) => (
+        <EllipsisText tooltip={name}><Link to={`/repos/${record.id}`}>{name}</Link></EllipsisText>
+      ),
     },
-    { title: 'URL', dataIndex: 'url', ellipsis: true },
-    { title: '描述', dataIndex: 'description', ellipsis: true, render: (v: string | null) => v || '-' },
+    {
+      title: 'URL', dataIndex: 'url', align: 'left', width: 260, ellipsis: { showTitle: false },
+      render: (v: string) => <EllipsisText>{v}</EllipsisText>,
+    },
+    {
+      title: '描述', dataIndex: 'description', align: 'left', width: 240, ellipsis: { showTitle: false },
+      render: (v: string | null) => (v ? <EllipsisText>{v}</EllipsisText> : '-'),
+    },
     {
       title: '创建时间', dataIndex: 'gmtCreate', width: 160,
       render: (t: string) => new Date(t).toLocaleString('zh-CN'),
@@ -101,6 +123,8 @@ export function RepoListPage() {
             type="link"
             size="small"
             danger
+            aria-label={`删除仓库 ${record.name}`}
+            title={`删除仓库 ${record.name}`}
             icon={<DeleteOutlined />}
             onClick={() => runWithAccess(
               'READ_WRITE',
@@ -115,10 +139,10 @@ export function RepoListPage() {
 
   return (
     <Card
-      title="仓库管理"
+      className="aw-content-card"
       extra={
         <Space>
-          <Button icon={<ShareAltOutlined />} onClick={() => navigate('/repos/map')}>关系图</Button>
+          <Button icon={<ShareAltOutlined />} onClick={switchToMapTab}>关系图</Button>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -130,6 +154,7 @@ export function RepoListPage() {
       }
     >
       <Table
+        scroll={{ x: 1030 }}
         rowKey="id"
         columns={columns}
         dataSource={repos}
@@ -156,7 +181,16 @@ export function RepoListPage() {
           <Form.Item
             label="仓库名称"
             name="name"
-            rules={[{ required: true, message: '请输入仓库名称' }]}
+            rules={[
+              { required: true, message: '请输入仓库名称' },
+              {
+                validator: (_, value) => (
+                  isValidRepoName(value)
+                    ? Promise.resolve()
+                    : Promise.reject(new Error(REPO_NAME_INVALID_MESSAGE))
+                ),
+              },
+            ]}
           >
             <Input placeholder="auto-wonder" />
           </Form.Item>

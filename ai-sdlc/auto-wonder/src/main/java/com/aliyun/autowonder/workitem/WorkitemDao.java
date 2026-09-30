@@ -88,4 +88,11 @@ public interface WorkitemDao {
     int updateTags(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("tags") String tagsJson,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
+
+    /** 按分享令牌取工单（令牌全局唯一；软删工单不可见，对外链接随之失效）。 */
+    WorkitemDO findByExternalShareToken(@Param("externalShareToken") String externalShareToken);
+
+    /** 仅当令牌为空时写入（并发首写竞败方返回 0 行，需回读取胜者令牌）。 */
+    int updateExternalShareTokenIfAbsent(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("externalShareToken") String externalShareToken);
 }

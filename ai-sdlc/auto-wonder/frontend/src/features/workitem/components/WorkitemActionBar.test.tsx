@@ -10,8 +10,7 @@ describe('WorkitemActionBar watch toggle', () => {
     const button = screen.getByTestId('workitem-watch-toggle');
     expect(button).toBeInTheDocument();
     expect(button).toHaveAccessibleName('关注工单');
-    expect(button).toHaveTextContent('关注');
-    expect(button).not.toHaveTextContent('已关注');
+    expect(button).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('shows a watched "已关注" state when the user is already watching', () => {
@@ -19,7 +18,7 @@ describe('WorkitemActionBar watch toggle', () => {
 
     const button = screen.getByTestId('workitem-watch-toggle');
     expect(button).toHaveAccessibleName('取消关注工单');
-    expect(button).toHaveTextContent('已关注');
+    expect(button).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('calls onToggleWatch when the watch button is clicked', async () => {

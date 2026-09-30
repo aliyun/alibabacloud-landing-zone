@@ -1,26 +1,27 @@
+import { PlatformBrand } from '@/shared/ui/PlatformBrand';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Layout, Dropdown, Typography, Button, Drawer, Grid, message, theme } from 'antd';
+import { Layout, Dropdown, Typography, Button, message, theme } from 'antd';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckOutlined, LoadingOutlined, LogoutOutlined, DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined, UserOutlined } from '@ant-design/icons';
+import { CheckOutlined, LoadingOutlined, DownOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Sidebar, NAV_GROUPS, navItemMatchesPath } from './Sidebar';
+import { AppearanceSwitch } from '@/shared/theme/AppearanceProvider';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
+import { Sidebar } from './Sidebar';
 import { PlatformAgentStatusBanner } from './PlatformAgentStatusBanner';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
+import { PageHeader } from '@/shared/ui/PageHeader';
+import { UserMenu } from '@/shared/ui/UserMenu';
 import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
 import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
-import { logout, myWorkspacesQueryKey } from '@/features/auth/api';
+import { myWorkspacesQueryKey } from '@/features/auth/api';
 import { apiClient } from '@/shared/api/client';
-import type { WorkspaceInfo, SwitchWorkspaceResponse, UserInfo } from '@/shared/types/common';
+import type { WorkspaceInfo, SwitchWorkspaceResponse } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
-import { BRANDING_QUERY_KEY, DEFAULT_BRANDING, getPublicBranding } from '@/features/platform/brandingApi';
 import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 
-const { Header, Sider, Content } = Layout;
+const { Sider, Content } = Layout;
 const { Text } = Typography;
-const { useBreakpoint } = Grid;
-
-const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 const SIDEBAR_COLLAPSED_KEY = 'autowonder.sidebar.collapsed';
 
@@ -40,40 +41,6 @@ function writeCollapsedPref(collapsed: boolean) {
   }
 }
 
-export function shouldUseMobileLayout(screens: Record<string, boolean | undefined>) {
-  return Boolean(screens.xs && !screens.md);
-}
-
-export function buildHeaderContext(pathname: string, workspaceName: string) {
-  const pageItem = [...NAV_ITEMS]
-    .filter((item) => navItemMatchesPath(item, pathname))
-    .sort((a, b) => b.key.length - a.key.length)[0];
-
-  if (!pageItem) {
-    return { workspaceName, sectionTitle: '', pageTitle: '' };
-  }
-
-  const sectionItem = [...NAV_ITEMS]
-    .filter((item) => item.key !== pageItem.key && pageItem.key.startsWith(`${item.key}/`))
-    .sort((a, b) => b.key.length - a.key.length)[0];
-
-  return {
-    workspaceName,
-    sectionTitle: sectionItem?.label || '',
-    pageTitle: pageItem.label,
-  };
-}
-
-export function buildUserDisplay(user: UserInfo | null) {
-  const primaryText = user?.nickname?.trim() || user?.username?.trim() || '未登录用户';
-  const secondaryText = user?.email?.trim() || user?.username?.trim() || '';
-  return {
-    primaryText,
-    secondaryText,
-    avatarText: primaryText[0]?.toUpperCase() || 'U',
-  };
-}
-
 export function getWorkspaceDeepLinkId(search: string): number | null {
   const value = new URLSearchParams(search).get('workspaceId');
   if (!value || !/^\d+$/.test(value)) {
@@ -90,20 +57,6 @@ export function removeWorkspaceDeepLink(search: string): string {
   return nextSearch ? `?${nextSearch}` : '';
 }
 
-const ellipsisTextStyle = {
-  display: 'block',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-} as const;
-
-const orangeWhiteInitialStyle = {
-  background: 'linear-gradient(135deg, #fff7ed 0%, #ffffff 100%)',
-  border: '1px solid rgba(255, 106, 0, 0.28)',
-  color: '#ff6a00',
-  boxShadow: '0 2px 8px rgba(255, 106, 0, 0.10)',
-} as const;
-
 export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
   const { token } = theme.useToken();
   const navigate = useNavigate();
@@ -111,15 +64,10 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
-  const refreshToken = useAuthStore((s) => s.refreshToken);
-  const clear = useAuthStore((s) => s.clear);
   const setAccessToken = useAuthStore((s) => s.setAccessToken);
   const setCurrentWorkspace = useAuthStore((s) => s.setCurrentWorkspace);
 
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsedPref);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const screens = useBreakpoint();
-  const isMobile = shouldUseMobileLayout(screens);
 
   useEffect(() => {
     if (helpCenter) return;
@@ -130,11 +78,6 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
   }, [helpCenter]);
-
-  const { data: branding = DEFAULT_BRANDING } = useQuery({
-    queryKey: BRANDING_QUERY_KEY,
-    queryFn: getPublicBranding,
-  });
 
   const { data: workspaces } = useQuery({
     queryKey: myWorkspacesQueryKey(user?.id ?? null),
@@ -219,10 +162,6 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
   ]);
 
   const toggleCollapsed = () => {
-    if (isMobile) {
-      setMobileMenuOpen(true);
-      return;
-    }
     setCollapsed((prev) => {
       const next = !prev;
       writeCollapsedPref(next);
@@ -230,27 +169,16 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
     });
   };
 
-  const handleLogout = async () => {
-    if (refreshToken) {
-      try { await logout(refreshToken); } catch { /* ignore */ }
-    }
-    clear();
-    queryClient.clear();
-    navigate('/login');
-  };
-
-  const userMenuItems = [
-    { key: 'profile-settings', label: '个人设置', icon: <UserOutlined />, onClick: () => navigate('/profile/settings') },
-    { type: 'divider' as const },
-    { key: 'logout', label: '退出登录', icon: <LogoutOutlined />, onClick: handleLogout },
-  ];
-
   const workspaceMenuItems = [
     ...(workspaces || []).map((workspace) => ({
       key: `workspace-${workspace.id}`,
-      label: workspace.name,
+      label: (
+        <EllipsisText tooltip={workspace.name}>
+          {workspace.name}
+        </EllipsisText>
+      ),
       icon: workspace.id === currentWorkspace?.id
-        ? (workspace.id === switchingWorkspaceId ? <LoadingOutlined /> : <CheckOutlined style={{ color: '#ff6a00' }} />)
+        ? (workspace.id === switchingWorkspaceId ? <LoadingOutlined /> : <CheckOutlined style={{ color: 'var(--aw-accent-text)' }} />)
         : (workspace.id === switchingWorkspaceId ? <LoadingOutlined /> : undefined),
       disabled: workspace.id === switchingWorkspaceId,
       onClick: () => { void handleWorkspaceSwitch(workspace); },
@@ -260,26 +188,24 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
   ];
 
   const workspaceName = currentWorkspace?.name || '未选择';
-  const { sectionTitle, pageTitle } = buildHeaderContext(location.pathname, workspaceName);
-  const userDisplay = buildUserDisplay(user);
-  const menuButtonLabel = isMobile ? '打开菜单' : collapsed ? '展开菜单' : '折叠菜单';
+  const menuButtonLabel = collapsed ? '展开菜单' : '折叠菜单';
 
   return (
-    <Layout className={helpCenter ? 'help-layout' : undefined} style={{ height: '100vh', minWidth: 0 }}>
-      {!helpCenter && !isMobile && (
+    <Layout className={helpCenter ? 'help-layout' : 'aw-shell'} style={{ height: '100vh', minWidth: 0 }}>
+      {!helpCenter && (
         <Sider
           width={220}
           collapsedWidth={72}
           collapsed={collapsed}
           theme="light"
-          style={{ borderRight: '1px solid rgba(0,0,0,0.05)', overflow: 'auto' }}
+          style={{ borderRight: `1px solid ${token.colorBorderSecondary}`, overflow: 'auto' }}
         >
-          <div style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 18px', borderBottom: '1px solid rgba(0,0,0,0.04)', gap: 10 }}>
-            <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
-            {!collapsed && <Text strong style={{ fontSize: 14, color: '#374151' }}>{branding.platformName}</Text>}
+          <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 18px', borderBottom: `1px solid ${token.colorBorderSecondary}`, gap: 10 }}>
+            <PlatformBrand to="/workitems" collapsed={collapsed} />
           </div>
 
-          <Dropdown menu={{ items: workspaceMenuItems }} trigger={['click']} placement="bottomLeft">
+          <Dropdown menu={{ items: workspaceMenuItems }} trigger={['click']} placement="bottomLeft"
+            overlayClassName="aw-workspace-menu" overlayStyle={{ width: 196, minWidth: 196, maxWidth: 196 }}>
             <div
               title={collapsed ? workspaceName : undefined}
               style={{
@@ -288,8 +214,8 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
                 width: collapsed ? 36 : 'auto',
                 height: collapsed ? 36 : 'auto',
                 borderRadius: 7,
-                border: '1px solid rgba(0,0,0,0.06)',
-                background: '#fafbfc',
+                border: `1px solid ${token.colorBorder}`,
+                background: token.colorFillAlter,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -298,9 +224,9 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
                 minWidth: 0,
               }}
             >
-              <div style={{
+              <div className="aw-initial-mark" style={{
                 width: 20, height: 20, borderRadius: 5,
-                ...orangeWhiteInitialStyle,
+
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontWeight: 600, fontSize: 11, flexShrink: 0,
               }}>
@@ -308,20 +234,19 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
               </div>
               {!collapsed && (
                 <>
-                  <span
+                  <EllipsisText
+                    tooltip={workspaceName}
                     style={{
-                      ...ellipsisTextStyle,
                       fontSize: 12,
                       flex: 1,
                       minWidth: 0,
-                      color: '#374151',
+                      color: token.colorText,
                       fontWeight: 500,
                     }}
-                    title={workspaceName}
                   >
                     {workspaceName}
-                  </span>
-                  <DownOutlined style={{ fontSize: 9, color: '#aaa' }} />
+                  </EllipsisText>
+                  <DownOutlined style={{ fontSize: 9, color: token.colorTextSecondary }} />
                 </>
               )}
             </div>
@@ -331,164 +256,30 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
         </Sider>
       )}
 
-      {!helpCenter && <Drawer
-        placement="left"
-        open={mobileMenuOpen}
-        onClose={() => setMobileMenuOpen(false)}
-        width={280}
-        styles={{ body: { padding: 0 } }}
-      >
-        <div style={{ height: 56, display: 'flex', alignItems: 'center', padding: '0 18px', borderBottom: '1px solid rgba(0,0,0,0.04)', gap: 10 }}>
-          <img src={branding.logoUrl || '/logo.png'} width={28} height={28} style={{ flexShrink: 0, borderRadius: 6, objectFit: 'contain' }} alt={branding.platformName} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
-          <Text strong style={{ fontSize: 14, color: '#374151' }}>{branding.platformName}</Text>
-        </div>
-        <Dropdown menu={{ items: workspaceMenuItems }} trigger={['click']} placement="bottomLeft">
-          <div
-            style={{
-              margin: '8px 12px',
-              padding: '7px 10px',
-              borderRadius: 7,
-              border: '1px solid rgba(0,0,0,0.06)',
-              background: '#fafbfc',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              minWidth: 0,
-            }}
-          >
-            <div style={{
-              width: 20, height: 20, borderRadius: 5,
-              ...orangeWhiteInitialStyle,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 600, fontSize: 11, flexShrink: 0,
-            }}>
-              {workspaceName[0]}
-            </div>
-            <span
-              style={{
-                ...ellipsisTextStyle,
-                fontSize: 12,
-                flex: 1,
-                minWidth: 0,
-                color: '#374151',
-                fontWeight: 500,
-              }}
-              title={workspaceName}
-            >
-              {workspaceName}
-            </span>
-            <DownOutlined style={{ fontSize: 9, color: '#aaa' }} />
-          </div>
-        </Dropdown>
-        <Sidebar />
-      </Drawer>}
-
       <Layout style={{ minWidth: 0 }}>
-        <Header style={{
-          height: 60, padding: isMobile ? '0 12px' : '0 24px',
-          flexShrink: helpCenter ? 0 : undefined,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          borderBottom: `1px solid ${helpCenter ? token.colorBorderSecondary : 'rgba(0,0,0,0.04)'}`, background: helpCenter ? token.colorBgContainer : '#fff',
-          minWidth: 0,
-        }}>
+        <PageHeader actions={<>
+            {!helpCenter && <HelpCenterLink />}
+            <AppearanceSwitch />
+            {(!helpCenter || user) && <NotificationBell fetchUnread={!helpCenter} />}
+            {helpCenter && !user ? <Button href="/login">登录</Button> : <UserMenu />}
+          </>}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1, overflow: 'hidden' }}>
             {helpCenter ? (
-              <a href="/" aria-label="返回平台" style={{ display: 'flex', alignItems: 'center', gap: 10, color: token.colorText, flexShrink: 0 }}>
-                <img src={branding.logoUrl || '/logo.png'} alt="" width={28} height={28} style={{ objectFit: 'contain', borderRadius: 6 }} />
-                {!isMobile && <Text strong style={{ fontSize: 15 }}>{branding.platformName}</Text>}
-              </a>
+              <PlatformBrand to="/workitems" />
             ) : <Button
+              className="aw-sidebar-toggle"
               type="text"
               onClick={toggleCollapsed}
               aria-label={menuButtonLabel}
-              icon={isMobile || collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              style={{ fontSize: 16, color: '#6b7280', flexShrink: 0 }}
+              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              style={{ width: 32, padding: 0, fontSize: 16, color: token.colorTextSecondary, flexShrink: 0 }}
             />}
-            <Text
-              style={{
-                ...ellipsisTextStyle,
-                fontSize: 13,
-                color: '#9ca3af',
-                fontWeight: 400,
-                minWidth: 0,
-                flex: 1,
-              }}
-              title={helpCenter ? '帮助中心' : [sectionTitle, pageTitle].filter(Boolean).join(' / ')}
-            >
-              {!helpCenter && sectionTitle ? (
-                <>
-                  <span style={{ color: '#6b7280' }}>{sectionTitle}</span>
-                  <span style={{ margin: '0 6px', color: '#e5e7eb' }}>/</span>
-                </>
-              ) : null}
-              <span style={{ color: helpCenter ? token.colorTextSecondary : '#374151', marginLeft: helpCenter ? 12 : 0 }}>{helpCenter ? '帮助中心' : pageTitle}</span>
-            </Text>
+            {helpCenter && <Text type="secondary" style={{ marginLeft: 12 }}>帮助中心</Text>}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 16, minWidth: 0, marginLeft: isMobile ? 8 : 16, flexShrink: 0 }}>
-            {!helpCenter && <HelpCenterLink />}
-            {(!helpCenter || user) && <NotificationBell fetchUnread={!helpCenter} />}
-            {helpCenter && !user ? <Button href="/login">登录</Button> : <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: isMobile ? 0 : 10,
-                padding: isMobile ? 4 : '6px 8px 6px 6px',
-                borderRadius: 999,
-                border: '1px solid rgba(0,0,0,0.06)',
-                cursor: 'pointer',
-                background: '#fff',
-                minWidth: 0,
-                maxWidth: 320,
-              }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: '50%',
-                  ...orangeWhiteInitialStyle,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 11, fontWeight: 600, flexShrink: 0,
-                  boxShadow: '0 0 0 2px #fff, 0 0 0 3px rgba(255, 106, 0, 0.16)',
-                }}>
-                  {userDisplay.avatarText}
-                </div>
-                {!isMobile && (
-                  <>
-                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, lineHeight: 1.1 }}>
-                      <Text
-                        strong
-                        style={{
-                          ...ellipsisTextStyle,
-                          fontSize: 13,
-                          color: '#111827',
-                          maxWidth: 220,
-                        }}
-                        title={userDisplay.primaryText}
-                      >
-                        {userDisplay.primaryText}
-                      </Text>
-                      {userDisplay.secondaryText ? (
-                        <Text
-                          style={{
-                            ...ellipsisTextStyle,
-                            fontSize: 12,
-                            color: '#9ca3af',
-                            maxWidth: 220,
-                          }}
-                          title={userDisplay.secondaryText}
-                        >
-                          {userDisplay.secondaryText}
-                        </Text>
-                      ) : null}
-                    </div>
-                    <DownOutlined style={{ fontSize: 10, color: '#9ca3af', flexShrink: 0 }} />
-                  </>
-                )}
-              </div>
-            </Dropdown>}
-          </div>
-        </Header>
+        </PageHeader>
         {!helpCenter && <PlatformAgentStatusBanner />}
-        <Content style={{ padding: helpCenter ? 0 : isMobile ? 12 : 24, overflow: helpCenter ? 'hidden' : 'auto', background: helpCenter ? token.colorBgContainer : '#f8f9fb', minWidth: 0, minHeight: 0 }}>
-          <Outlet />
+        <Content style={{ padding: helpCenter ? 0 : 12, overflow: helpCenter ? 'hidden' : 'auto', background: token.colorBgLayout, minWidth: 0, minHeight: 0 }}>
+          {helpCenter ? <Outlet /> : <section className="aw-content-frame" aria-label="页面内容"><Outlet /></section>}
         </Content>
       </Layout>
     </Layout>

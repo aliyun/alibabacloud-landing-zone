@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDispatch } from '../hooks';
 import { statusMeta, HAPPY_PATH, FAILURE_STATES, ACCENT } from '../statusMeta';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
+import './executionDetailDrawer.css';
 
 const { Text } = Typography;
 
@@ -22,13 +23,13 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
   const timelineItems = HAPPY_PATH.map((s, i) => {
     const reached = currentIdx >= 0 && i <= currentIdx;
     return {
-      color: reached ? ACCENT : '#d9d9d9',
+      color: reached ? ACCENT : 'var(--aw-border)',
       children: (
         <Text
           style={
             reached
-              ? { color: '#333', fontWeight: i === currentIdx ? 600 : 400 }
-              : { color: '#bfbfbf' }
+              ? { color: 'var(--aw-text)', fontWeight: i === currentIdx ? 600 : 400 }
+              : { color: 'var(--aw-muted)' }
           }
         >
           {s}
@@ -38,9 +39,9 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
   });
   if (isFailure && data) {
     timelineItems.push({
-      color: '#ff4d4f',
+      color: 'var(--aw-error)',
       children: (
-        <Text style={{ color: '#ff4d4f', fontWeight: 600 }}>{data.status}</Text>
+        <Text style={{ color: 'var(--aw-error)', fontWeight: 600 }}>{data.status}</Text>
       ),
     });
   }
@@ -71,12 +72,18 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
             column={1}
             size="small"
             bordered
+            className="execution-detail-descriptions"
+            styles={{ label: { width: 100 } }}
             items={[
               {
                 key: 'wi',
                 label: '工单',
                 children: data.workitemId ? (
-                  <a onClick={() => navigate(`/workitems/${data.workitemId}`)}>
+                  <a
+                    title={`#${data.workitemId} ${data.workitemTitle}`}
+                    style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    onClick={() => navigate(`/workitems/${data.workitemId}`)}
+                  >
                     #{data.workitemId} {data.workitemTitle}
                   </a>
                 ) : (
@@ -124,7 +131,7 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
                 size="small"
                 dataSource={data.artifacts}
                 renderItem={(a) => (
-                  <List.Item>
+                  <List.Item style={{ paddingInline: 0 }}>
                     <Tag color="orange">{a.type}</Tag> {a.name}
                   </List.Item>
                 )}
@@ -137,7 +144,6 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
           <Space>
             <Button
               type="primary"
-              style={{ background: ACCENT, borderColor: ACCENT }}
               disabled={!data.workitemId}
               onClick={() => navigate(`/workitems/${data.workitemId}`)}
             >

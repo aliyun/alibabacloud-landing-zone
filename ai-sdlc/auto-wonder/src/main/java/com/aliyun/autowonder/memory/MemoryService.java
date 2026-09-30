@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.memory;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentMemoryRefDao;
@@ -98,12 +98,9 @@ public class MemoryService {
         String title = req.getTitle().trim();
         MemoryDO existing = memoryDao.findBySourceDedupeKey(tenantId, "MCP", dedupeKey);
         if (existing != null) {
-            if (!"PENDING".equals(existing.getStatus())) {
-                if (Objects.equals(existing.getTitle(), title)
-                        && Objects.equals(existing.getContentMd(), req.getContentMd())) {
-                    return toVO(existing);
-                }
-                throw new BizException(ErrorCode.MEMORY_ALREADY_REVIEWED);
+            if (Objects.equals(existing.getTitle(), title)
+                    && Objects.equals(existing.getContentMd(), req.getContentMd())) {
+                return toVO(existing);
             }
             int rows = memoryDao.update(existing.getId(), tenantId, title, req.getContentMd(),
                     req.getType(), existing.getVersion(), userId);
@@ -119,7 +116,7 @@ public class MemoryService {
         m.setType(req.getType());
         m.setTitle(title);
         m.setContentMd(req.getContentMd());
-        m.setStatus("PENDING");
+        m.setStatus("ADOPTED");
         m.setSource("MCP");
         Map<String, Object> sourceRefMap = new LinkedHashMap<>();
         sourceRefMap.put("dispatchId", dispatchId);
@@ -272,10 +269,12 @@ public class MemoryService {
 
     @Transactional
     public MemoryVO update(long id, UpdateMemoryRequest req, long tenantId, long userId) {
-        MemoryDO m = memoryDao.findById(id);
-        if (m == null) {
+        // Lock before any snapshot read, serializing obsolete edits with migration.
+        MemoryDO m = memoryDao.findByIdForUpdate(id, tenantId);
+        if (m == null || !Objects.equals(m.getTenantId(), tenantId)) {
             throw new BizException(ErrorCode.MEMORY_NOT_FOUND);
         }
+        requireUnmigrated(tenantId, id);
         String title = req.getTitle() != null ? req.getTitle().trim() : m.getTitle();
         String contentMd = req.getContentMd() != null ? req.getContentMd() : m.getContentMd();
         String type = req.getType() != null ? req.getType() : m.getType();
@@ -323,10 +322,11 @@ public class MemoryService {
 
     @Transactional
     public void delete(long id, long tenantId, long userId) {
-        MemoryDO m = memoryDao.findById(id);
+        MemoryDO m = memoryDao.findByIdForUpdate(id, tenantId);
         if (m == null || !Objects.equals(m.getTenantId(), tenantId)) {
             throw new BizException(ErrorCode.MEMORY_NOT_FOUND);
         }
+        requireUnmigrated(tenantId, id);
         int rows = memoryDao.softDelete(id, tenantId, m.getVersion(), userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.MEMORY_VERSION_CONFLICT);
@@ -340,6 +340,12 @@ public class MemoryService {
         audit.setDecision("DELETE");
         audit.setComment("软删除记忆并移除员工绑定；历史执行快照保持不变");
         memoryReviewDao.insert(audit);
+    }
+
+    private void requireUnmigrated(long tenantId, long memoryId) {
+        if (memoryDao.isMigrated(tenantId, memoryId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "该记忆已迁移，请在记忆页面维护正文和索引");
+        }
     }
 
     @Transactional

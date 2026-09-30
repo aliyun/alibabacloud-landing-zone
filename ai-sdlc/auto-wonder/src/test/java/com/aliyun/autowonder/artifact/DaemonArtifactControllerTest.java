@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.artifact;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.artifact.dto.ReportArtifactRequest;
 import com.aliyun.autowonder.common.error.BizException;
@@ -193,7 +193,7 @@ class DaemonArtifactControllerTest {
     }
 
     @Test
-    void invokesMemorySedimentationForMemoryDelta() throws Exception {
+    void keepsLegacyMemoryDeltaIngestionForExistingRuntimes() throws Exception {
         when(authenticator.authenticate(99L, "tok"))
                 .thenReturn(DaemonUploadAuthenticator.AuthResult.success(10L, 20L, 30L));
         when(storage.put(anyString(), anyString(), any(byte[].class)))
@@ -207,7 +207,7 @@ class DaemonArtifactControllerTest {
 
         controller.upload(99L, "tok", null, metadata, files);
 
-        verify(memorySedimentation).ingest(eq(10L), eq(30L), eq(99L), eq(content));
+        verify(memorySedimentation).ingest(10L, 30L, 99L, content);
     }
 
     @Test

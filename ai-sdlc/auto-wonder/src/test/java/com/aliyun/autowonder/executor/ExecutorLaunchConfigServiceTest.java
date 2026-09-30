@@ -374,6 +374,130 @@ class ExecutorLaunchConfigServiceTest {
         assertEquals("17001", ex.getCode());
     }
 
+    // ---------- updateConfig：历史缺失类型执行器的恢复 ----------
+
+    private UpdateExecutorLaunchConfigRequest recoveryReq(String clientKind, Integer version, String memoryMode,
+                                                          String model, String reasoningEffort, String contextWindow) {
+        UpdateExecutorLaunchConfigRequest request = req(version, memoryMode, model, reasoningEffort, contextWindow);
+        request.setClientKind(clientKind);
+        return request;
+    }
+
+    @Test
+    void updateConfig_recovers_a_legacy_kindless_executor_with_the_chosen_qoder_kind() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, null, "{\"memoryMode\":\"platform\"}", 1));
+        when(executorDao.updateLaunchConfigWithClientKind(eq(9L), eq(TENANT), anyString(), eq("QODER_CN_CLI"),
+                eq(1), eq(USER))).thenReturn(1);
+
+        ExecutorLaunchConfigVO vo = service.updateConfig(9L, TENANT,
+                recoveryReq("QODER_CN_CLI", 1, "none", "qmodel_38max", "low", "400000"), USER);
+
+        // 类型与启动配置一次写入：返回值反映补选后数据库应持有的内容
+        assertEquals("qmodel_38max", vo.getModel());
+        assertEquals("none", vo.getMemoryMode());
+        assertEquals(2, vo.getVersion());
+        ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+        verify(executorDao).updateLaunchConfigWithClientKind(eq(9L), eq(TENANT), json.capture(), eq("QODER_CN_CLI"),
+                eq(1), eq(USER));
+        assertTrue(json.getValue().contains("\"model\":\"qmodel_38max\""));
+        verify(executorDao, never()).updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong());
+    }
+
+    @Test
+    void updateConfig_canonicalizes_the_recovered_kind_and_fills_the_dialog_defaults() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, "  ", null, 1));
+        when(executorDao.updateLaunchConfigWithClientKind(eq(9L), eq(TENANT), anyString(), eq("QODER_CLI"),
+                eq(1), eq(USER))).thenReturn(1);
+
+        // 空白类型的执行器同样走恢复路径；小写输入被归一成规范枚举值，未传字段按弹窗默认值补齐
+        ExecutorLaunchConfigVO vo = service.updateConfig(9L, TENANT,
+                recoveryReq("qoder_cli", 1, null, "qmodel_38max", null, null), USER);
+
+        assertEquals("qmodel_38max", vo.getModel());
+        assertEquals("platform", vo.getMemoryMode());
+        assertEquals("medium", vo.getReasoningEffort());
+        assertEquals("260000", vo.getContextWindow());
+        verify(executorDao).updateLaunchConfigWithClientKind(eq(9L), eq(TENANT), anyString(), eq("QODER_CLI"),
+                eq(1), eq(USER));
+    }
+
+    @Test
+    void updateConfig_rejects_a_kindless_save_without_a_client_kind() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, null, "{\"memoryMode\":\"platform\"}", 1));
+
+        // 不带类型保存仍然生成不了命令，必须一次补齐而不是继续攒下不完整状态
+        BizException ex = assertThrows(BizException.class, () -> service.updateConfig(9L, TENANT,
+                req(1, "platform", "qmodel_38max", "medium", "260000"), USER));
+        assertEquals("17011", ex.getCode());
+        verify(executorDao, never()).updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong());
+        verify(executorDao, never()).updateLaunchConfigWithClientKind(anyLong(), anyLong(), anyString(), anyString(),
+                anyInt(), anyLong());
+    }
+
+    @Test
+    void updateConfig_rejects_a_recovery_kind_outside_the_creatable_set() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, null, null, 1));
+
+        BizException ex = assertThrows(BizException.class, () -> service.updateConfig(9L, TENANT,
+                recoveryReq("CLAUDE_CODE", 1, "platform", "qmodel_38max", "medium", "260000"), USER));
+        assertEquals("17009", ex.getCode());
+        verify(executorDao, never()).updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong());
+        verify(executorDao, never()).updateLaunchConfigWithClientKind(anyLong(), anyLong(), anyString(), anyString(),
+                anyInt(), anyLong());
+    }
+
+    @Test
+    void updateConfig_reports_a_conflict_when_the_kind_recovery_write_loses_the_version_race() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, null, null, 1));
+        when(executorDao.updateLaunchConfigWithClientKind(eq(9L), eq(TENANT), anyString(), eq("QODER_CLI"),
+                eq(1), eq(USER))).thenReturn(0);
+
+        BizException ex = assertThrows(BizException.class, () -> service.updateConfig(9L, TENANT,
+                recoveryReq("QODER_CLI", 1, "platform", "qmodel_38max", "medium", "260000"), USER));
+        assertEquals("17005", ex.getCode());
+    }
+
+    @Test
+    void updateConfig_ignores_the_same_kind_on_a_typed_executor_and_keeps_the_original_write() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, "QODER_CLI", null, 1));
+        when(executorDao.updateLaunchConfig(eq(9L), eq(TENANT), anyString(), eq(1), eq(USER))).thenReturn(1);
+
+        // 旧客户端误带同名类型不改变任何行为：仍走原更新路径，类型列不动
+        ExecutorLaunchConfigVO vo = service.updateConfig(9L, TENANT,
+                recoveryReq("qoder_cli", 1, "platform", "qmodel_38max", "medium", "260000"), USER);
+
+        assertEquals("qmodel_38max", vo.getModel());
+        verify(executorDao).updateLaunchConfig(eq(9L), eq(TENANT), anyString(), eq(1), eq(USER));
+        verify(executorDao, never()).updateLaunchConfigWithClientKind(anyLong(), anyLong(), anyString(), anyString(),
+                anyInt(), anyLong());
+    }
+
+    @Test
+    void updateConfig_refuses_to_rewrite_the_kind_of_a_typed_executor() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, "QODER_CLI", null, 1));
+
+        BizException ex = assertThrows(BizException.class, () -> service.updateConfig(9L, TENANT,
+                recoveryReq("QODER_CN_CLI", 1, "platform", "qmodel_38max", "medium", "260000"), USER));
+        assertEquals("10001", ex.getCode());
+        assertTrue(ex.getMessage().contains("QODER_CLI"));
+        verify(executorDao, never()).updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong());
+        verify(executorDao, never()).updateLaunchConfigWithClientKind(anyLong(), anyLong(), anyString(), anyString(),
+                anyInt(), anyLong());
+    }
+
+    @Test
+    void updateConfig_validates_the_recovered_config_against_the_chosen_qoder_kind() {
+        when(executorDao.findById(9L)).thenReturn(executor(9L, null, null, 1));
+
+        // 恢复路径的模型校验与正常保存一致：不可用模型直接拒绝，且不落任何写入
+        BizException ex = assertThrows(BizException.class, () -> service.updateConfig(9L, TENANT,
+                recoveryReq("QODER_CLI", 1, "platform", "removed-model", "medium", "260000"), USER));
+        assertEquals("17006", ex.getCode());
+        verify(executorDao, never()).updateLaunchConfig(anyLong(), anyLong(), anyString(), anyInt(), anyLong());
+        verify(executorDao, never()).updateLaunchConfigWithClientKind(anyLong(), anyLong(), anyString(), anyString(),
+                anyInt(), anyLong());
+    }
+
     // ---------- resolveForCreate：创建时的校验与默认值 ----------
 
     private CreateExecutorRequest create(String clientKind, String memoryMode, String model,

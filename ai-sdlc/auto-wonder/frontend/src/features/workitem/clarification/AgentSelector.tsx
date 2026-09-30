@@ -27,7 +27,7 @@ export function AgentSelector({ agents, selectedAgentId, onSelect, loading }: Ag
   if (agents.length === 0) {
     return (
       <Typography.Text type="secondary" style={{ padding: '12px', display: 'block', textAlign: 'center' }}>
-        暂无可用数字人
+        暂无可用数字员工
       </Typography.Text>
     );
   }
@@ -52,7 +52,7 @@ export function AgentSelector({ agents, selectedAgentId, onSelect, loading }: Ag
                 padding: '10px 12px',
                 cursor: agent.executorOnline ? 'pointer' : 'not-allowed',
                 borderBottomColor: CLARIFICATION_THEME.hairline,
-                backgroundColor: isSelected ? '#e6f7ff' : undefined,
+                backgroundColor: isSelected ? 'rgba(var(--aw-accent-rgb),.10)' : undefined,
                 opacity: agent.executorOnline ? 1 : 0.5,
               }}
               onClick={() => agent.executorOnline && onSelect(agent.agentId)}

@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.taskpackage;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.storage.InMemoryObjectStorage;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { Button, Popconfirm, Alert } from 'antd';
+import { Button, Popconfirm, Alert, Space } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import type { StatusNode, StatusTransition, NodeCategory } from '../types';
 import { TransitionFormModal } from './TransitionFormModal';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const categoryBorder: Record<string, string> = {
-  INIT: '#91d5ff', IN_PROGRESS: '#ffd591', DONE: '#b7eb8f', CANCELED: '#ffa39e',
+  INIT: 'color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))', IN_PROGRESS: 'color-mix(in srgb, var(--aw-warning) 30%, var(--aw-border))', DONE: 'color-mix(in srgb, var(--aw-success) 30%, var(--aw-border))', CANCELED: 'color-mix(in srgb, var(--aw-error) 30%, var(--aw-border))',
 };
 const categoryBg: Record<string, string> = {
-  INIT: '#e6f7ff', IN_PROGRESS: '#fff7e6', DONE: '#f6ffed', CANCELED: '#fff1f0',
+  INIT: 'color-mix(in srgb, var(--aw-info) 10%, var(--aw-panel))', IN_PROGRESS: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))', DONE: 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))', CANCELED: 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))',
 };
 
 interface Props {
@@ -49,10 +50,10 @@ export function TransitionEditor({ transitions, nodes, onCreate, onUpdate, onDel
 
   const renderNodeTag = (nodeId: number) => {
     const node = nodeMap[nodeId];
-    if (!node) return <span style={{ padding: '2px 8px', background: '#f5f5f5', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: 11 }}>?</span>;
+    if (!node) return <span style={{ padding: '2px 8px', background: 'var(--aw-raised)', border: '1px solid var(--aw-border)', borderRadius: 4, fontSize: 11 }}>?</span>;
     const cat = node.category as NodeCategory;
     return (
-      <span style={{ padding: '2px 8px', background: categoryBg[cat] || '#f5f5f5', border: `1px solid ${categoryBorder[cat] || '#d9d9d9'}`, borderRadius: 4, fontSize: 11 }}>
+      <span style={{ padding: '2px 8px', background: categoryBg[cat] || 'var(--aw-raised)', border: `1px solid ${categoryBorder[cat] || 'var(--aw-border)'}`, borderRadius: 4, fontSize: 11 }}>
         {node.code}
       </span>
     );
@@ -60,27 +61,30 @@ export function TransitionEditor({ transitions, nodes, onCreate, onUpdate, onDel
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         <span style={{ fontWeight: 600, fontSize: 14 }}>推荐流转 (快捷操作)</span>
-        <span style={{ marginLeft: 8, fontSize: 12, color: '#999' }}>定义工单页面的快捷状态变更按钮</span>
+        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--aw-muted)' }}>定义工单页面的快捷状态变更按钮</span>
+        <Button icon={<PlusOutlined />} onClick={openCreate} style={{ marginLeft: 'auto' }}>添加推荐流转</Button>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {transitions.map((tr) => (
-          <div key={tr.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#fafafa', borderRadius: 6, border: '1px solid #f0f0f0' }}>
-            {renderNodeTag(tr.fromNodeId)}
-            <span style={{ color: '#999' }}>→</span>
-            {renderNodeTag(tr.toNodeId)}
-            <span style={{ marginLeft: 12, fontSize: 12, color: '#333' }}>{tr.name}</span>
-            <span style={{ marginLeft: 'auto', fontSize: 11, color: '#1890ff', cursor: 'pointer' }} onClick={() => openEdit(tr)}>
-              <EditOutlined /> 编辑
-            </span>
-            <Popconfirm title="确认删除该流转？" onConfirm={() => onDelete(tr.id)} okText="删除" cancelText="取消">
-              <span style={{ fontSize: 11, color: '#ff4d4f', cursor: 'pointer' }}><DeleteOutlined /> 删除</span>
-            </Popconfirm>
-          </div>
-        ))}
-        <Button type="dashed" block icon={<PlusOutlined />} onClick={openCreate} style={{ borderRadius: 6 }}>添加推荐流转</Button>
-      </div>
+      <Table<StatusTransition>
+        rowKey="id"
+        dataSource={transitions}
+        pagination={false}
+        scroll={{ x: 'max-content' }}
+        columns={[
+          { title: '起始状态', dataIndex: 'fromNodeId', render: renderNodeTag },
+          { title: '目标状态', dataIndex: 'toNodeId', render: renderNodeTag },
+          { title: '操作名称', dataIndex: 'name', align: 'left' },
+          { title: '操作', width: 180, render: (_, tr) => (
+            <Space>
+              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(tr)}>编辑</Button>
+              <Popconfirm title="确认删除该流转？" onConfirm={() => onDelete(tr.id)} okText="删除" cancelText="取消">
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+              </Popconfirm>
+            </Space>
+          ) },
+        ]}
+      />
       <Alert
         type="warning"
         showIcon

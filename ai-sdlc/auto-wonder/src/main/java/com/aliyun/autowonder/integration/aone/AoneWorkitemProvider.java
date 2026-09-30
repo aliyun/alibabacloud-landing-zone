@@ -1,9 +1,8 @@
 package com.aliyun.autowonder.integration.aone;
 
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.integration.provider.ExternalComment;
-import com.aliyun.autowonder.integration.provider.ExternalIssueType;
 import com.aliyun.autowonder.integration.provider.ExternalPrincipalRef;
 import com.aliyun.autowonder.integration.provider.ExternalStatusOption;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemDetail;
@@ -205,54 +204,6 @@ public class AoneWorkitemProvider implements ExternalWorkitemProvider {
         JSONObject result = client.get(config, "/issue/openapi/IssueTopService/getById",
                 Map.of("id", externalWorkitemId));
         return mapper.toDetail(result);
-    }
-
-    @Override
-    public List<ExternalIssueType> listEnabledIssueTypes(AoneOpenApiConfig config, String akProjectId, String staffId,
-                                                         String stamp) {
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("akProjectId", akProjectId);
-        params.put("stamp", stamp);
-        params.put("staffId", staffId);
-        JSONObject result = client.get(config, "/issue/openapi/IssueTopService/getEnabledIssueTypes", params);
-        List<ExternalIssueType> issueTypes = new ArrayList<>();
-        for (Object item : arrayFrom(result)) {
-            if (item instanceof JSONObject obj) {
-                ExternalIssueType issueType = new ExternalIssueType();
-                issueType.setExternalId(str(obj, "id"));
-                issueType.setStamp(str(obj, "stamp"));
-                issueType.setName(str(obj, "name"));
-                issueTypes.add(issueType);
-            }
-        }
-        return issueTypes;
-    }
-
-    @Override
-    public List<ExternalStatusOption> listStatusRules(AoneOpenApiConfig config, String akProjectId, int issueTypeId) {
-        JSONObject workflow = client.get(config, "/issue/openapi/IssueTopService/getTemplateAndWorkflowInfo",
-                Map.of("akProjectId", akProjectId, "issueTypeId", issueTypeId));
-        Integer workflowId = workflow.getInteger("workflowId");
-        if (workflowId == null) {
-            return List.of();
-        }
-        JSONObject result = client.get(config, "/issue/openapi/IssueTopService/getWorkflowStatusDetail",
-                Map.of("akProjectId", akProjectId, "workflowId", workflowId));
-        List<ExternalStatusOption> options = new ArrayList<>();
-        List<JSONObject> statuses = new ArrayList<>();
-        for (Object item : arrayFrom(result)) {
-            if (item instanceof JSONObject status) {
-                statuses.add(status);
-            }
-        }
-        statuses.sort(Comparator.comparingInt(status -> status.getIntValue("position")));
-        for (JSONObject status : statuses) {
-            ExternalStatusOption option = new ExternalStatusOption();
-            option.setExternalId(str(status, "id"));
-            option.setName(str(status, "name"));
-            options.add(option);
-        }
-        return options;
     }
 
     @Override

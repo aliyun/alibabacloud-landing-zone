@@ -8,11 +8,13 @@ import com.aliyun.autowonder.memory.dto.*;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/memories")
+@ConditionalOnProperty(name = "autowonder.memory.legacy-api-enabled", havingValue = "true")
 @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看记忆")
 public class MemoryController {
 
@@ -84,26 +86,6 @@ public class MemoryController {
     public Result<Void> delete(@PathVariable("id") Long id) {
         memoryService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
-    }
-
-    @PostMapping("/{id}/review")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "审核记忆")
-    public Result<Void> review(@PathVariable("id") Long id, @RequestBody ReviewRequest req) {
-        memoryService.review(id, req, currentWorkspaceId(), currentUserId());
-        return Result.ok(null);
-    }
-
-    @GetMapping("/reviews")
-    public Result<List<MemoryVO>> pendingReviews(
-            @RequestParam(value = "page", defaultValue = "1") int page,
-            @RequestParam(value = "size", defaultValue = "20") int size) {
-        return Result.ok(memoryService.list(currentWorkspaceId(), null, null, null, "PENDING", page, size));
-    }
-
-    @GetMapping("/reviews/count")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "查看待审核记忆数量")
-    public Result<Long> countPendingReviews() {
-        return Result.ok(memoryService.countPendingReviews(currentWorkspaceId()));
     }
 
     @PostMapping("/from-artifact")

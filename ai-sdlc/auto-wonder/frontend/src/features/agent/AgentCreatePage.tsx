@@ -1,6 +1,8 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { type FocusEvent, useRef, type KeyboardEvent, useState } from 'react';
 import { Alert, AutoComplete, Button, Card, Form, Input, Space, Typography, message } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
+import { SaveOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
@@ -104,12 +106,9 @@ export function AgentCreatePage() {
 
   return (
     <div>
-      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/agents')} style={{ marginBottom: 16, padding: 0 }}>
-        返回列表
-      </Button>
 
       <Card
-        title="新建数字员工"
+        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/agents" label="返回列表" /><span>新建数字员工</span></span>} />}
         extra={
           <Space wrap>
             <Button onClick={() => navigate('/agents')}>取消</Button>
@@ -147,7 +146,7 @@ export function AgentCreatePage() {
               message="高级表单"
               description={<Text type="secondary">请填写必填配置后创建数字员工。</Text>}
             />
-            <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ maxWidth: 800 }}>
+            <Form form={form} layout="vertical" onFinish={handleSubmit}>
               <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}> 
                 <Input placeholder="如: 前端开发 Agent" maxLength={128} />
               </Form.Item>

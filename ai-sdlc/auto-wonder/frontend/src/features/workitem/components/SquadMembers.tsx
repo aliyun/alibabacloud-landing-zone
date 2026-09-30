@@ -1,5 +1,6 @@
 import { Card, Avatar, Space, Typography, Spin, Tag, Tabs, Empty } from 'antd';
-import { RobotOutlined, UserOutlined } from '@ant-design/icons';
+import { UserOutlined } from '@ant-design/icons';
+import { RobotHeadIcon } from '@/shared/ui/RobotHeadIcon';
 import type { Participant } from '@/shared/types/workitem';
 
 const { Text } = Typography;
@@ -40,7 +41,7 @@ export function SquadMembers({ participants, loading }: SquadMembersProps) {
 
   const renderAgentList = () => {
     if (agentParticipants.length === 0) {
-      return emptyBlock('暂无数字人成员');
+      return emptyBlock('暂无数字员工成员');
     }
     return (
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -55,14 +56,14 @@ export function SquadMembers({ participants, loading }: SquadMembersProps) {
                 gap: 10,
                 padding: '8px',
                 borderRadius: 10,
-                background: p.online ? 'linear-gradient(135deg, #f0fff6 0%, #ffffff 75%)' : '#fff',
-                border: p.online ? '1px solid #b7ebc6' : '1px solid #f0f0f0',
+                background: p.online ? 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))' : 'var(--aw-panel)',
+                border: p.online ? '1px solid color-mix(in srgb, var(--aw-success) 35%, var(--aw-border))' : '1px solid var(--aw-border)',
               }}
             >
               <Avatar
                 size={32}
-                icon={<RobotOutlined />}
-                style={{ backgroundColor: p.online ? '#16a34a' : '#8c8c8c', flexShrink: 0 }}
+                icon={<RobotHeadIcon />}
+                style={{ backgroundColor: 'var(--aw-raised)', color: p.online ? 'var(--aw-success)' : 'var(--aw-muted)', flexShrink: 0 }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -100,8 +101,8 @@ export function SquadMembers({ participants, loading }: SquadMembersProps) {
               gap: 10,
               padding: '8px',
               borderRadius: 10,
-              background: '#fff',
-              border: '1px solid #f0f0f0',
+              background: 'var(--aw-panel)',
+              border: '1px solid var(--aw-border)',
             }}
           >
             <Avatar
@@ -109,9 +110,9 @@ export function SquadMembers({ participants, loading }: SquadMembersProps) {
               size={32}
               icon={<UserOutlined />}
               style={{
-                backgroundColor: '#fff7e6',
-                color: '#fa8c16',
-                border: '1px solid #ffd591',
+                backgroundColor: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))',
+                color: 'var(--aw-warning)',
+                border: '1px solid color-mix(in srgb, var(--aw-warning) 35%, var(--aw-border))',
                 flexShrink: 0,
               }}
             />
@@ -134,7 +135,7 @@ export function SquadMembers({ participants, loading }: SquadMembersProps) {
         animated={false}
         destroyOnHidden
         items={[
-          { key: 'agents', label: '数字人成员', children: renderAgentList() },
+          { key: 'agents', label: '数字员工成员', children: renderAgentList() },
           { key: 'humans', label: '真人参与者', children: renderHumanList() },
         ]}
       />

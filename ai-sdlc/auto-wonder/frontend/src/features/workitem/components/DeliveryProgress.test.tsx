@@ -60,7 +60,9 @@ describe('DeliveryProgress', () => {
       { id: 7, dispatchId: 302, name: 'artifacts/output/handoff/metadata.json', type: 'HANDOFF' },
     ].map(file => ({ ...file, workitemId: 100, size: null, gmtCreate: '' }));
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
-    fireEvent.click(screen.getByText(/产物/));
+    // Narrow the query to the collapse header inside the progress card: the forceRendered
+    // ArtifactPreviewModal keeps a hidden "产物预览" title in the DOM, which /产物/ also matched.
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
     expect(screen.queryByText('current.md')).not.toBeInTheDocument();
     expect(screen.queryByText('old.md')).not.toBeInTheDocument();
     expect(screen.queryByText('snapshot.md')).not.toBeInTheDocument();
@@ -242,7 +244,7 @@ describe('DeliveryProgress', () => {
     const stepCard = screen.getByTestId('delivery-step-11');
     const feed = await within(stepCard).findByTestId('dispatch-activities-301');
     expect(within(feed).getByText('正在分析工单评论。')).toBeInTheDocument();
-    expect(within(feed).getByText('Runtime 10067 执行失败，正在切换其他在线 Runtime')).toHaveStyle({ color: 'rgb(207, 19, 34)' });
+    expect(within(feed).getByText('Runtime 10067 执行失败，正在切换其他在线 Runtime')).toHaveClass('ant-typography-danger');
     expect(requests).toBe(1);
   });
 
@@ -1024,7 +1026,7 @@ describe('DeliveryProgress', () => {
 
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
-    fireEvent.click(screen.getByText(/产物/));
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
     fireEvent.click(screen.getByText(/其他文件（/));
     fireEvent.click(screen.getByRole('button', { name: '预览产物 dev-summary.md' }));
 
@@ -1069,7 +1071,7 @@ describe('DeliveryProgress', () => {
 
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
-    fireEvent.click(screen.getByText(/产物/));
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
     fireEvent.click(screen.getByText(/其他文件（/));
     fireEvent.click(screen.getByRole('button', { name: '下载产物 dev-summary.md' }));
 
@@ -1650,7 +1652,7 @@ describe('DeliveryProgress', () => {
     expect(screen.getAllByText(/6 artifacts/).length).toBeGreaterThan(0);
     expect(screen.queryByText('artifact-1.md')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByText(/产物/));
+    fireEvent.click(within(screen.getByTestId('delivery-progress-card')).getByText(/^产物（/));
 
     fireEvent.click(screen.getByText(/其他文件（/));
     expect(screen.getByText('artifact-1.md')).toBeInTheDocument();

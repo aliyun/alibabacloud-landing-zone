@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import './MarkdownView.css';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Artifact } from '@/shared/types/workitem';
@@ -17,7 +18,7 @@ export const markdownAllowedElements = [
   'article', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'ul', 'ol', 'li', 'a', 'strong', 'em', 'code', 'pre',
   'blockquote', 'hr', 'br', 'table', 'thead', 'tbody',
-  'tr', 'th', 'td', 'del', 'span',
+  'tr', 'th', 'td', 'del', 'span', 'input',
 ];
 
 export const markdownSanitizeSchema = {
@@ -27,6 +28,7 @@ export const markdownSanitizeSchema = {
     ...defaultSchema.attributes,
     a: ['href', 'target', 'rel', 'title'],
     span: ['data-type', 'dataType', 'data-artifact-id', 'data-artifact-name', 'data-artifact-path'],
+    input: ['type', 'checked', 'disabled'],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -95,7 +97,7 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
       style={{
         border: 0,
         background: 'transparent',
-        color: '#0958d9',
+        color: 'var(--aw-accent-text)',
         padding: 0,
         cursor: artifact ? 'pointer' : 'default',
         textDecoration: 'underline',
@@ -108,7 +110,7 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
 
   return (
     <div
-      className={className}
+      className={['aw-markdown', className].filter(Boolean).join(' ')}
       style={{
         lineHeight: 1.7,
         maxWidth: '100%',
@@ -122,6 +124,7 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
       <ReactMarkdown
         allowedElements={markdownAllowedElements}
         components={{
+          input: ({ node: _node, checked }) => <input type="checkbox" checked={checked} disabled aria-label={checked ? '已完成任务' : '待办任务'} />,
           // pre 的 UA 默认 white-space:pre 会关闭折行，外层 div 的 overflowWrap/wordBreak
           // 因此对代码块整体失效，超长行会溢出正文右边界。这里只把溢出收敛成块内横向滚动。
           pre: ({ node: _node, ...props }) => (
@@ -159,8 +162,8 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
               <span
                 {...props}
                 style={dataType === 'mention' ? {
-                  color: '#0958d9',
-                  backgroundColor: '#e6f4ff',
+                  color: 'var(--aw-accent-text)',
+                  backgroundColor: 'rgba(var(--aw-accent-rgb),.10)',
                   borderRadius: 4,
                   padding: '0 4px',
                   fontWeight: 600,

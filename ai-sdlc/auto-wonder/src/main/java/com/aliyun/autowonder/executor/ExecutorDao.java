@@ -24,6 +24,15 @@ public interface ExecutorDao {
                            @Param("launchConfig") String launchConfig,
                            @Param("expectedVersion") Integer expectedVersion,
                            @Param("modifierId") Long modifierId);
+    /**
+     * 恢复历史缺失类型（client_kind 为 NULL/空白）的执行器：除启动配置外把补选的 client_kind 一并写入。
+     * SQL 守卫「当前类型仍为空」，并发下已补齐或本就有类型的执行器不会被覆盖。
+     */
+    int updateLaunchConfigWithClientKind(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                                         @Param("launchConfig") String launchConfig,
+                                         @Param("clientKind") String clientKind,
+                                         @Param("expectedVersion") Integer expectedVersion,
+                                         @Param("modifierId") Long modifierId);
     List<ExecutorDO> listByClientKind(@Param("clientKind") String clientKind);
     /**
      * Scan source for automatic upgrades: identity columns only. The reported version is presence

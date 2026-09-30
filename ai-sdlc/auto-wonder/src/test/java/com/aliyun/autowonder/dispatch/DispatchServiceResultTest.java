@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.dispatch;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDao;
 import com.aliyun.autowonder.audit.AuditLogRecord;

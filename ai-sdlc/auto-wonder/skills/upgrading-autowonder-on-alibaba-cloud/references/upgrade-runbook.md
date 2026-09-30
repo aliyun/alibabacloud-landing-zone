@@ -472,6 +472,133 @@ health checks, while all remaining nodes remain stopped for the same plan. Neith
 the old application nor failed SQL is automatically retried. Do not edit
 risk classifications, stop evidence, or `rollingAllowed` to bypass these gates.
 
+### V075 live report checkpoint
+
+Plans containing `V075__unify_status_kanban.sql` require maintenance even if their
+other migrations permit rolling execution. **Before `maintenance-stop` or any
+A/B database mutation, verify the report inspection access described below.**
+
+Use the ECS console's interactive Session Manager terminal for this private,
+no-SSH deployment. Prerequisites are a Running ECS instance, a healthy Cloud
+Assistant Agent, existing outbound connectivity to its service, and Session
+Manager already enabled for the account. The operator needs
+`ecs:StartTerminalSession` scoped to the verified migration ECS, plus
+`ecs:DescribeCloudAssistantStatus` and `ecs:DescribeUserBusinessBehavior` for
+console checks. See the [official console procedure and permission requirements](https://www.alibabacloud.com/help/en/ecs/user-guide/connect-to-an-instance-by-using-session-manager-1).
+This workflow does not require `ecs:ModifyCloudAssistantSettings` or a broad
+administrator role; it must not enable account settings, grant RAM/sudo access,
+change security groups or outbound networking, or add SSH, EIP, NAT or inbound
+rules. If any prerequisite is missing, stop before maintenance/A/B, record the
+specific access prerequisite, and return it to the deployment owner for a
+separately authorized resolution.
+
+From the approved manifest, identify the exact verified migration node selected
+by the entrypoint: Bash uses the first ECS ID in resource-inventory enumeration
+order; PowerShell uses the first ID after sorting unique IDs. Keep the same
+entrypoint and approved inventory for this upgrade. In the ECS console select the
+manifest's account, region and resource group, then **Instances & Images →
+Instances → that instance ID → Connect → Show Other Logon Methods → Session
+Manager → Secret-free login**. Confirm the console instance ID matches the
+selected verified node before opening the terminal; do not choose a similar name
+or a different cluster node. If the Session Manager switch is off, stop instead
+of enabling it as part of this workflow.
+
+Linux sessions normally use `ecs-assist-user`. Verify its existing sudo policy
+permits the exact report-reading commands below, including `sha256sum` and
+`python3`; a successful terminal login alone is insufficient. In that interactive
+terminal, these read-only probes check that the commands can run and Python has
+root access, without reading environment files or customer report data:
+
+```bash
+sudo -n sha256sum /dev/null
+sudo -n python3 -c 'import os; assert os.geteuid() == 0; print("ROOT_READ_PREFLIGHT_OK")'
+```
+
+If the existing policy restricts command arguments, verify it also covers the
+report paths and read commands below; do not change sudo policy to pass the
+probe. Missing access blocks the upgrade before writers are stopped. Record the
+verified node and access check in the upgrade change record. The [official
+Session Manager guide](https://www.alibabacloud.com/help/en/ecs/user-guide/connect-to-an-instance-by-using-session-manager-2/)
+describes the Linux login account, authorized sudo use and session recording.
+Interactive session audit records may include report contents: follow the
+customer's existing audit access/retention policy and never disable auditing.
+Do not send report contents through ordinary Cloud Assistant RunCommand output,
+CI logs, chat, or shared terminal recordings.
+
+After this access check, backups and staging, run `maintenance-stop`, then
+`database-migrate --confirm-migrations` (PowerShell:
+`database-migrate -ConfirmMigrations`). The runner checks the complete immutable
+SQL checksum, holds the migration lock, applies A/B, and executes C against the
+stopped deployment's database. It returns successfully with the manifest
+`upgrade.databaseMigration.status=awaiting-review`. This is a review checkpoint,
+not migration completion: D, subsequent migrations and activation remain blocked.
+
+The checkpoint records `instanceId`, `reportPath`, `reportSha256` and
+`planFingerprint`. Confirm its node is the one whose access you verified, and
+reconnect through the same console route to that exact node. Keep the report
+root-private; do not change its ownership or mode. In the interactive terminal,
+substitute the digest from the manifest and confirm the derived path below equals
+its recorded `reportPath`. Check the digest before displaying the report:
+
+```bash
+set -euo pipefail
+REPORT_SHA256='<reportSha256 from the approved manifest checkpoint>'
+REPORT_PATH="/opt/autowonder/migration-reports/$REPORT_SHA256.json"
+printf '%s  %s\n' "$REPORT_SHA256" "$REPORT_PATH" | sudo -n sha256sum --check --strict -
+sudo -n python3 -m json.tool "$REPORT_PATH" | less
+# Display every C result set with literal tabs/newlines; read through to EOF.
+sudo -n python3 -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["output"])' \
+  "$REPORT_PATH" | less
+```
+
+Compare JSON `plan` with the manifest's `upgrade.planFingerprint` and checkpoint
+`planFingerprint`; `source`/`target` with `upgrade.fromCommit`/`upgrade.toCommit`;
+`migrationSha256` with the V075 entry in `upgrade.pendingMigrations`; and
+`database.host`, `database.port`, `database.name` with the approved deployment/RDS
+inventory for that manifest. Do not read or print secret environment files to
+perform this comparison. A wrong node/path, missing or unreadable report, digest
+mismatch, incomplete output or identity mismatch blocks approval and D.
+
+Read all four C query results against the immutable SQL: affected templates,
+each workitem's target/rule, unmapped workitems and nodes needing category review.
+Paging is allowed; a truncated screen or command-success marker is not a complete
+review. Retain the protected report for the observation period and record its
+verified identity, digest and the operator's review in the upgrade change record
+without copying customer contents into ordinary logs.
+
+Only after reviewing that exact live report, continue from the control host:
+
+```bash
+scripts/upgrade-operations.sh database-migrate --manifest "$MANIFEST" \
+  --confirm-migrations --reviewed-v075-report <reviewed-report-sha256>
+```
+
+```powershell
+scripts/upgrade-operations.ps1 database-migrate -Manifest $Manifest `
+  -ConfirmMigrations -ReviewedV075Report <reviewed-report-sha256>
+```
+
+Both entrypoints use the same staged runner. It rechecks stopped writers and the
+live C output under the migration lock, rejects missing/changed reports and stale
+identity or data, then marks D as applying before executing it. It records success
+with the original whole-file checksum, and only then runs subsequent migrations.
+Any C output drift, including row-order drift, requires a fresh review. Without
+an approval argument, a healthy awaiting-review checkpoint can be re-read or a
+fresh report generated without rerunning A/B or executing D. Do not restart any
+writers during review; database access by other writers must remain suspended.
+
+The existing history `error_message` stores `v075-preparing`,
+`v075-review:<reportSha256>`, or `v075-applying` while `success=0`; no migration
+schema or immutable SQL is changed. Only `v075-review` is a resumable review
+checkpoint. Interruption during A/B, between report retention and its ledger
+checkpoint, or during/after D before success acknowledgement requires reviewed
+DBA recovery using the ledger, backups and retained report. The controller also
+blocks retries after an unknown/failed invocation: reconcile that invocation and
+live ledger before repairing the controller checkpoint. Never clear failed
+history or replay D automatically. Successful V075 history skips reexecution.
+Application-only rollback remains blocked once A/B has begun; SQL E is a separate
+reviewed observation-period recovery procedure, never automatic upgrade work.
+
 `DROP INDEX` requires maintenance review but does not delete application rows.
 For the V052–V070 batch, also review V059's expanded retry uniqueness, V062's
 invalidation of old conversation tokens, and the existing administrator required

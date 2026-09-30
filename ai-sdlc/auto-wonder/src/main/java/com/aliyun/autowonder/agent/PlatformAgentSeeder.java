@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.agent;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 

@@ -1,29 +1,32 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Alert, Button, Tooltip } from 'antd';
 import { ExclamationCircleFilled } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/shared/auth/store';
+import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
 import {
   getPlatformAgentStatus,
   platformAgentStatusQueryKey,
 } from '@/features/agent/platformAgentStatusApi';
 
 const VALUE_PROPOSITION =
-  '平台智能体 Chief of Staff 是项目组的智能管家：自动接单并拆解需求、调度数字人协作交付、沉淀团队记忆，让研发流程进入自动驾驶。配置执行器并保持在线后，工单即可全自动流转。';
+  '平台智能体 Chief of Staff 是项目组的智能管家：自动接单并拆解需求、调度数字员工协作交付、沉淀团队记忆，让研发流程进入自动驾驶。配置执行器并保持在线后，工单即可全自动流转。';
 
 // 常驻横幅按此间隔复查，执行器上线后无需手动刷新即可消失。
 export const PLATFORM_AGENT_STATUS_POLL_MS = 30_000;
 
 const VALUE_PROPOSITION_TRIGGER = '平台智能体能力说明';
+const DISMISSED_KEY = 'autowonder.platform-agent-status.dismissed';
 
 // 横幅贴在 60px Header 下方,与内容区争高度,故压成单行细条:继承 Header 的水平内边距与 1px 分隔线,
 // 去掉 Alert 自带边框/圆角与默认 8px 内边距,字号降到 12px 次级文字级别。
 const BANNER_STYLE: CSSProperties = {
   alignItems: 'center',
   border: 'none',
-  borderBottom: '1px solid rgba(0, 0, 0, 0.04)',
+  borderBottom: '1px solid var(--aw-border)',
   borderRadius: 0,
+  flexShrink: 0,
   lineHeight: '20px',
   minHeight: 32,
   padding: '5px 24px',
@@ -41,12 +44,14 @@ const MESSAGE_STYLE: CSSProperties = {
 const TITLE_STYLE: CSSProperties = { fontWeight: 400 };
 
 const HINT_STYLE: CSSProperties = {
-  color: 'rgba(0, 0, 0, 0.45)',
+  color: 'var(--aw-muted)',
   cursor: 'help',
   fontSize: 12,
 };
 
 export function PlatformAgentStatusBanner() {
+  const [dismissed, setDismissed] = useState(() =>
+    readViewPreference(DISMISSED_KEY, ['1', '0'], '0') === '1');
   const navigate = useNavigate();
   const isAdmin = useAuthStore((s) => s.hasAccess('ADMIN'));
   const workspaceId = useAuthStore((s) => s.currentWorkspace?.id ?? null);
@@ -54,11 +59,11 @@ export function PlatformAgentStatusBanner() {
   const { data } = useQuery({
     queryKey: platformAgentStatusQueryKey(workspaceId),
     queryFn: getPlatformAgentStatus,
-    enabled: isAdmin && workspaceId != null,
+    enabled: isAdmin && workspaceId != null && !dismissed,
     refetchInterval: PLATFORM_AGENT_STATUS_POLL_MS,
   });
 
-  if (!data || data.state === 'OK') {
+  if (dismissed || !data || data.state === 'OK') {
     return null;
   }
 
@@ -80,6 +85,11 @@ export function PlatformAgentStatusBanner() {
 
   return (
     <Alert
+      closable={{ closeIcon: true, 'aria-label': '关闭系统通知' }}
+      onClose={() => {
+        setDismissed(true);
+        writeViewPreference(DISMISSED_KEY, '1');
+      }}
       action={(
         <Button
           size="small"

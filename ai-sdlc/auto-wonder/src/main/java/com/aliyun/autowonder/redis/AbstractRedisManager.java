@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.redis;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.util.GzipCompressor;
 import com.aliyun.autowonder.util.TranscoderUtil;
 import org.apache.commons.codec.binary.Hex;

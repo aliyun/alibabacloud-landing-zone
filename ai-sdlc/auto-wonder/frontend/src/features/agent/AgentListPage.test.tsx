@@ -83,10 +83,13 @@ describe('AgentListPage', () => {
     );
     renderPage();
 
-    await userEvent.click(await screen.findByRole('button', { name: /新建$/ }));
+    await screen.findByText('暂无数字员工');
+    expect(screen.getAllByRole('button', { name: /新建/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: /新建$/ }));
 
     expect(error).toHaveBeenCalledWith('当前为只读权限，新建数字员工需要读写权限');
-    expect(screen.getByRole('heading', { name: '数字员工' })).toBeInTheDocument();
+    await userEvent.hover(screen.getByRole('button', { name: '配置说明' }));
+    expect(await screen.findByText('点击任一数字员工卡片进入详情与配置。')).toBeInTheDocument();
   });
 
   it('shows configuration guidance and one accessible detail link per card', async () => {
@@ -118,7 +121,8 @@ describe('AgentListPage', () => {
     renderPage();
     await screen.findByText('Alpha');
 
-    expect(screen.getByText('点击任一数字人卡片进入详情与配置。')).toBeInTheDocument();
+    await userEvent.hover(screen.getByRole('button', { name: '配置说明' }));
+    expect(await screen.findByText('点击任一数字员工卡片进入详情与配置。')).toBeInTheDocument();
     expect(screen.getByText('可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。')).toBeInTheDocument();
 
     const detailLink = screen.getByRole('link', { name: '查看 Alpha 的详情与配置' });
@@ -173,8 +177,8 @@ describe('AgentListPage', () => {
       }),
     );
     renderPage();
-    expect(await screen.findByRole('tab', { name: '数字员工' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: '系统平台智能体' })).toBeInTheDocument();
+    expect(await screen.findByRole('radio', { name: '标准数字员工' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '系统平台智能体' })).toBeInTheDocument();
     await screen.findByText('暂无数字员工');
     expect(kinds).toContain('STANDARD');
   });
@@ -215,7 +219,7 @@ describe('AgentListPage', () => {
       }),
     );
     renderPage();
-    await user.click(await screen.findByRole('tab', { name: '系统平台智能体' }));
+    await user.click(await screen.findByText('系统平台智能体'));
     expect(await screen.findByText('Chief of Staff')).toBeInTheDocument();
     expect(screen.getByText('平台')).toBeInTheDocument();
     expect(kinds).toContain('PLATFORM');
@@ -251,8 +255,8 @@ describe('AgentListPage', () => {
     renderPage();
 
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Squad A' })).toHaveAttribute('href', '/squads?squadId=7');
-    expect(screen.getByRole('link', { name: 'Squad B' })).toHaveAttribute('href', '/squads?squadId=8');
+    expect(screen.getByRole('link', { name: 'Squad A' })).toHaveAttribute('href', '/agents?tab=squads&squadId=7');
+    expect(screen.getByRole('link', { name: 'Squad B' })).toHaveAttribute('href', '/agents?tab=squads&squadId=8');
     expect(screen.getByText('未分组')).toBeInTheDocument();
   });
 
@@ -317,16 +321,69 @@ describe('AgentListPage', () => {
     const { container } = renderPage();
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
     expect(container.querySelectorAll('.agent-squad-group-header')).toHaveLength(0);
+    // 列表视图现在是表格，且不再渲染分页。
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByText('共 3 条')).not.toBeInTheDocument();
 
     await user.click(screen.getByText('分组'));
 
     await waitFor(() => expect(container.querySelectorAll('.agent-squad-group-header')).toHaveLength(3));
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(window.localStorage.getItem('autowonder.agents.view')).toBe('grouped');
 
     await user.click(screen.getByText('列表'));
 
     await waitFor(() => expect(container.querySelectorAll('.agent-squad-group-header')).toHaveLength(0));
     expect(window.localStorage.getItem('autowonder.agents.view')).toBe('list');
+  });
+
+  it('renders the table with ID first, short executor text and a trailing 详情 action', async () => {
+    window.localStorage.setItem('autowonder.agents.view', 'list');
+    useSquadsAndAgents([agentRow(1, 'Alpha', [7], ['Squad A'])]);
+
+    renderPage();
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    const headerCells = [...screen.getAllByRole('columnheader')].map((cell) => cell.textContent ?? '');
+    expect(headerCells[0]).toBe('ID');
+    expect(headerCells).not.toContain('创建时间');
+    expect(headerCells[headerCells.length - 1]).toBe('操作');
+
+    // 表格执行器列省略「执行器」前缀；卡片视图的完整文案不受影响。
+    expect(screen.getByText('离线')).toBeInTheDocument();
+    expect(screen.queryByText('执行器离线')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '详情' })).toHaveAttribute('href', '/agents/1');
+  });
+
+  it('filters the table server-side by the selected status', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem('autowonder.agents.view', 'list');
+    const seen: string[] = [];
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list: [], total: 0, pageNum: 1, pageSize: 100 },
+      })),
+      http.get('/api/agents', ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        seen.push(`status=${params.get('status')}`);
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: [agentRow(1, 'Alpha', [7], ['Squad A'])],
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByRole('table')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: '按状态筛选' }));
+    await user.click(await screen.findByText('使用中', { selector: '.ant-select-item-option-content' }));
+
+    await waitFor(() => expect(seen.some((entry) => entry === 'status=ONLINE')).toBe(true));
+    // 分组模式下没有状态筛选；切回分组不携带 status 参数。
+    await user.click(screen.getByText('分组'));
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: '按状态筛选' })).not.toBeInTheDocument());
   });
 
   it('falls back to the grouped view when the stored view value is invalid', async () => {

@@ -114,9 +114,9 @@ export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: 
   return (
     <div data-testid="live-activity-panel" style={{ padding: '4px 0' }}>
       {enabled && currentAction && (
-        <div style={{ marginBottom: 4, padding: '4px 8px', background: '#e6f4ff', borderRadius: 4 }}>
+        <div style={{ marginBottom: 4, padding: '4px 8px', background: 'rgba(var(--aw-accent-rgb),.10)', borderRadius: 4 }}>
           <Space size={4}>
-            <LoadingOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+            <LoadingOutlined style={{ color: 'var(--aw-accent-text)', fontSize: 12 }} />
             <Text strong style={{ fontSize: 12 }} data-testid="live-activity-current">
               {currentAction.summary ?? ACTION_TYPE_LABELS[currentAction.actionType] ?? currentAction.actionType}
             </Text>
@@ -151,7 +151,7 @@ export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: 
             </div>
           ),
         }]}
-        style={{ borderRadius: 4, background: '#fafafa' }}
+        style={{ borderRadius: 4, background: 'var(--aw-raised)' }}
       />
     </div>
   );

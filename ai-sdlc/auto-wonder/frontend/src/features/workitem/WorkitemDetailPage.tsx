@@ -97,11 +97,13 @@ export function WorkitemDetailPage() {
   const { data: artifacts = [], isLoading: artifactsLoading } = useArtifacts(id || '');
   const { data: requirementDocuments = [], isLoading: requirementDocumentsLoading } = useRequirementDocuments(id || '');
 
-  if (!id) return <Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />;
+  if (!id) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}><Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} /></div>;
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
   if (isError) return (
-    <Result status="error" title="加载失败" subTitle={error?.message || '请稍后重试'}
-      extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+      <Result status="error" title="加载失败" subTitle={error?.message || '请稍后重试'}
+        extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    </div>
   );
   if (!workitem) return null;
 
@@ -144,10 +146,13 @@ export function WorkitemDetailPage() {
     CLARIFY_MIN_WIDTH,
     Math.min(720, window.innerWidth * 0.65, window.innerWidth - 480),
   );
-  const nodeById = new Map((templateDetail?.nodes ?? []).map((node) => [Number(node.id), node]));
-  const availableTransitions = (templateDetail?.transitions ?? []).filter(
-    (transition) => Number(transition.fromNodeId) === currentStatusNodeId,
-  );
+  // 流转候选（规格 3.3）：当前模板内除当前节点外的全部节点；推荐边只决定排序与推荐标记，不拦截。
+  const recommendedNodeIds = new Set((templateDetail?.transitions ?? [])
+    .filter((transition) => Number(transition.fromNodeId) === currentStatusNodeId)
+    .map((transition) => Number(transition.toNodeId)));
+  const transitionCandidates = (templateDetail?.nodes ?? [])
+    .filter((node) => Number(node.id) !== currentStatusNodeId)
+    .sort((a, b) => Number(recommendedNodeIds.has(Number(b.id))) - Number(recommendedNodeIds.has(Number(a.id))));
   const handleTransition = (toNodeId: number) => {
     accessCommand('READ_WRITE', '流转工单状态', () => {
       transitionMutation.mutate(
@@ -173,14 +178,16 @@ export function WorkitemDetailPage() {
   };
 
   return (
-    <div style={{ display: 'flex', gap: 0, height: '100%', overflow: 'hidden' }}>
+    <div className="aw-split-page" style={{ display: 'flex', gap: 0, height: '100%', overflow: 'hidden' }}>
       {/* Left Panel */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div ref={leftScrollRef} data-testid="workitem-left-scroll" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: 24, paddingBottom: 12, overflowY: 'auto' }}>
+        <div
+          data-testid="workitem-scroll-region"
+          style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}
+        >
+          <div ref={leftScrollRef} data-testid="workitem-left-scroll" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: 24, paddingRight: 38, paddingBottom: 12, overflowY: 'auto' }}>
           <WorkitemHeader
             title={workitem.title}
-            statusName={workitem.statusName ?? null}
-            workType={workitem.workType}
             workitemId={workitem.id}
             origin={workitem.origin}
             scheduledStartAt={workitem.scheduledStartAt}
@@ -188,8 +195,9 @@ export function WorkitemDetailPage() {
             gmtCreate={workitem.gmtCreate}
             usage={progress?.totalUsage ?? null}
           />
-          <HumanInterventionAlert item={workitem} />
           <WorkitemMeta
+            workType={workitem.workType}
+            statusName={workitem.statusName ?? null}
             priority={workitem.priority}
             assigneeName={workitem.assigneeName ?? null}
             assigneeDisplayName={workitem.assigneeDisplayName ?? null}
@@ -203,7 +211,8 @@ export function WorkitemDetailPage() {
             assigneeType={workitem.assigneeType}
             scheduledStartAt={workitem.scheduledStartAt}
           />
-          <WorkitemActionBar
+          <RecoveryControls workitemId={id} renderActions={(deliveryControl) => <WorkitemActionBar
+            deliveryControl={deliveryControl}
             hasSdlc={hasSdlc}
             watched={!!workitem.watched}
             onToggleWatch={() => watchMutation.mutate({ id, watched: !!workitem.watched })}
@@ -225,8 +234,8 @@ export function WorkitemDetailPage() {
             deleteLoading={deleteMutation.isPending}
             deleteDisabled={workitem.deletable === false}
             deleteDisabledReason={workitem.deletableReason}
-          />
-          <RecoveryControls workitemId={id} />
+          />} />
+          <HumanInterventionAlert item={workitem} />
           <WorkitemContent
             title={workitem.title}
             contentMd={workitem.contentMd}
@@ -240,14 +249,16 @@ export function WorkitemDetailPage() {
             loading={requirementDocumentsLoading}
           />
           {AI_CLARIFICATION_ENABLED ? <ClarificationResult clarification={clarification} /> : null}
-          <UnifiedTimeline
-            items={timeline}
-            participants={participants}
-            artifacts={artifacts}
-            loading={timelineLoading}
-          />
+            <UnifiedTimeline
+              items={timeline}
+              participants={participants}
+              artifacts={artifacts}
+              loading={timelineLoading}
+            />
+          </div>
+          <ScrollToEdgeButton containerRef={leftScrollRef} />
         </div>
-        <div data-testid="workitem-sticky-comment" style={{ flexShrink: 0, padding: '0 24px 16px', borderTop: '1px solid #f0f0f0' }}>
+        <div data-testid="workitem-sticky-comment" style={{ flexShrink: 0, padding: '0 24px 16px', borderTop: '1px solid var(--aw-border)' }}>
           <CommentInput
             workitemId={id}
             participants={participants}
@@ -255,7 +266,6 @@ export function WorkitemDetailPage() {
             onMentionQueryChange={setMentionQuery}
           />
         </div>
-        <ScrollToEdgeButton containerRef={leftScrollRef} />
       </div>
 
       {/* Right Panel */}
@@ -337,30 +347,33 @@ export function WorkitemDetailPage() {
           <Empty description="当前工单未绑定状态模板" />
         ) : templateLoading ? (
           <Spin style={{ display: 'block', margin: '32px auto' }} />
-        ) : availableTransitions.length === 0 ? (
-          <Empty description="当前状态暂无可用流转" />
+        ) : transitionCandidates.length === 0 ? (
+          <Empty description="当前模板暂无可流转的状态节点" />
         ) : (
           <List
-            dataSource={availableTransitions}
-            renderItem={(transition) => {
-              const targetNode = nodeById.get(Number(transition.toNodeId));
+            dataSource={transitionCandidates}
+            renderItem={(node) => {
+              const recommended = recommendedNodeIds.has(Number(node.id));
               return (
                 <List.Item
                   actions={[
                     <Button
                       key="transition"
-                      type="primary"
+                      type={recommended ? 'primary' : 'default'}
                       loading={transitionMutation.isPending}
                       disabled={transitionMutation.isPending}
-                      onClick={() => handleTransition(Number(transition.toNodeId))}
+                      aria-label={`流转到${node.name}`}
+                      onClick={() => handleTransition(Number(node.id))}
                     >
-                      {transition.name}
+                      流转
                     </Button>,
                   ]}
                 >
                   <Space direction="vertical" size={4}>
-                    <Typography.Text strong>{transition.name}</Typography.Text>
-                    {targetNode ? <Tag color="blue">目标状态：{targetNode.name}</Tag> : null}
+                    <Typography.Text strong>{node.name}</Typography.Text>
+                    {recommended
+                      ? <Tag color="blue">推荐流转</Tag>
+                      : <Tag>非推荐流转</Tag>}
                   </Space>
                 </List.Item>
               );

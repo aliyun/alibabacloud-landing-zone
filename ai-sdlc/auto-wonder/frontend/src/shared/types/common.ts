@@ -20,6 +20,8 @@ export interface UserInfo {
   email: string;
   /** 平台管理员标志（user.is_admin），由登录响应下发的服务端事实。 */
   isAdmin?: boolean | null;
+  /** 联系方式（user.phone），由个人中心基本信息维护写入。 */
+  phone?: string | null;
 }
 
 export interface WorkspaceInfo {

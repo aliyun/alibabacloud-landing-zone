@@ -395,4 +395,3 @@ class WorkspaceLifecycleDaoSqlTest {
         return xml.substring(statementStart, statementEnd).trim();
     }
 }
-

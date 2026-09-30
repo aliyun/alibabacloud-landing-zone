@@ -27,7 +27,64 @@ class PlatformBrandingServiceTest {
             "${autowonder.runtime.recommended-version:";
     private static final String YAML_RECOMMENDED_VERSION_PLACEHOLDER =
             "${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:";
-    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.2.163";
+    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.3.3";
+
+    @Test
+    void uploadLogoSupportsAdditionalFormatsAndPreservesBytes() {
+        for (String type : new String[]{"image/svg+xml", "image/gif", "image/x-icon", "image/vnd.microsoft.icon", "image/avif"}) {
+            PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+            PlatformBrandingDO row = row("AutoWonder", "#f97316", null);
+            when(dao.findActive()).thenReturn(row);
+            when(dao.updateLogo(anyString(), anyString(), eq(100L))).thenAnswer(call -> {
+                row.setLogoOssRef(call.getArgument(0));
+                row.setLogoContentType(call.getArgument(1));
+                return 1;
+            });
+            PlatformBrandingService service = newService(dao, new InMemoryObjectStorage());
+            byte[] bytes = "<svg xmlns='http://www.w3.org/2000/svg'><defs><linearGradient id='g'><stop offset='0' stop-color='red'/></linearGradient></defs><path style='fill:url(#g);stroke:red' d='M0 0h10v10z'/></svg>".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            service.uploadLogo(100L, new MockMultipartFile("file", "logo", type, bytes));
+            assertArrayEquals(bytes, service.logoBytes());
+            assertEquals(type, service.logoContentType());
+        }
+    }
+
+    @Test
+    void uploadLogoRejectsUnsafeSvgBeforeStorage() {
+        String[] invalid = {
+            "<svg", "<html/>",
+            "<svg xmlns='http://www.w3.org/1999/xhtml'/>",
+            "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><use xlink:href='javascript:alert(1)'/></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><path style='fill:u&#114;l(https://example.com/x)'/></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><style>@import url(https://example.com/x);</style></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><path style='fill:url(https://example.com/x)'/></svg>",
+            "<!DOCTYPE svg [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><svg xmlns='http://www.w3.org/2000/svg'>&x;</svg>",
+            "<?xml-stylesheet href='https://example.com/x.css'?><svg xmlns='http://www.w3.org/2000/svg'/>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'/>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><foreignObject/></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><use href='https://example.com/x.svg#a'/></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><path fill='url(https://example.com/a)'/></svg>",
+            "<svg xmlns='http://www.w3.org/2000/svg'><animate attributeName='href' to='javascript:alert(1)'/></svg>"
+        };
+        ObjectStorage storage = mock(ObjectStorage.class);
+        PlatformBrandingService service = newService(mock(PlatformBrandingDao.class), storage);
+        for (String svg : invalid) {
+            assertThrows(BizException.class, () -> service.uploadLogo(100L,
+                    new MockMultipartFile("file", "logo.svg", "image/svg+xml", svg.getBytes(java.nio.charset.StandardCharsets.UTF_8))), svg);
+        }
+        verifyNoInteractions(storage);
+    }
+
+    @Test
+    void uploadLogoStillRejectsOversizedAndUnsupportedFiles() {
+        ObjectStorage storage = mock(ObjectStorage.class);
+        PlatformBrandingService service = newService(mock(PlatformBrandingDao.class), storage);
+        assertThrows(BizException.class, () -> service.uploadLogo(100L,
+                new MockMultipartFile("file", "logo.gif", "image/gif", new byte[512 * 1024 + 1])));
+        assertThrows(BizException.class, () -> service.uploadLogo(100L,
+                new MockMultipartFile("file", "logo.pdf", "application/pdf", new byte[]{1})));
+        verifyNoInteractions(storage);
+    }
 
     @Test
     void publicConfigFallsBackWhenDatabaseRowIsMissing() {
@@ -37,6 +94,7 @@ class PlatformBrandingServiceTest {
         var config = service.publicConfig();
 
         assertEquals("AutoWonder", config.getPlatformName());
+        assertEquals("/logo.svg", config.getLogoUrl());
         assertEquals("#f97316", config.getPrimaryColor());
         assertNull(config.getDomain());
         assertEquals("https://daily.auto-wonder.example.com/api/mcp", config.getMcpBaseUrl());

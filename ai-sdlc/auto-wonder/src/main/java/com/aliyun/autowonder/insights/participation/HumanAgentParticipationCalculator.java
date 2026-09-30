@@ -1,10 +1,9 @@
 package com.aliyun.autowonder.insights.participation;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 
 import java.time.*;
-import java.time.temporal.IsoFields;
 import java.time.temporal.WeekFields;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -44,9 +43,23 @@ public class HumanAgentParticipationCalculator {
         public HumanAgentParticipationFact p90() { return p90; }
         public List<HumanAgentParticipationFact> slowTail() { return slowTail; }
         public List<TrendBucket> trend() { return trend; }
+        public double medianTotalSeconds() {
+            long[] durations = eligibleFacts.stream().mapToLong(HumanAgentParticipationFact::totalDurationSeconds).sorted().toArray();
+            int n = durations.length;
+            return n == 0 ? 0 : durations[n / 2] / 2.0 + durations[(n - 1) / 2] / 2.0;
+        }
+        public long agentWorkitemCount() { return eligibleFacts.stream().filter(HumanAgentParticipationFact::agentParticipated).count(); }
+        public long totalHumanSeconds() { return eligibleFacts.stream().mapToLong(HumanAgentParticipationFact::humanDurationSeconds).sum(); }
+        public long totalAgentSeconds() { return eligibleFacts.stream().mapToLong(HumanAgentParticipationFact::agentDurationSeconds).sum(); }
     }
 
     public static class TrendBucket {
+        private int sampleSize;
+        private long totalHumanSeconds;
+        private long totalAgentSeconds;
+        public int sampleSize() { return sampleSize; }
+        public long totalHumanSeconds() { return totalHumanSeconds; }
+        public long totalAgentSeconds() { return totalAgentSeconds; }
         private final String label;
         private final long averageTotalSeconds;
         private final long averageHumanSeconds;
@@ -68,6 +81,12 @@ public class HumanAgentParticipationCalculator {
 
     public List<HumanAgentParticipationFact> reconstruct(
             List<HumanAgentParticipationRawEventRow> rows, Instant cutoff) {
+        return reconstructWithQuality(rows, cutoff).stream()
+                .filter(f -> f.exclusionReason() == null).collect(Collectors.toList());
+    }
+
+    public List<HumanAgentParticipationFact> reconstructWithQuality(
+            List<HumanAgentParticipationRawEventRow> rows, Instant cutoff) {
         Map<Long, List<HumanAgentParticipationRawEventRow>> grouped = rows.stream()
                 .collect(Collectors.groupingBy(HumanAgentParticipationRawEventRow::getWorkitemId,
                         LinkedHashMap::new, Collectors.toList()));
@@ -77,6 +96,17 @@ public class HumanAgentParticipationCalculator {
             HumanAgentParticipationFact fact = reconstructOne(entry.getValue(), cutoff);
             if (fact != null) {
                 facts.add(fact);
+            } else {
+                // Only identifiable completions have a date that can be included in range coverage.
+                entry.getValue().stream().filter(e -> "STATUS_CHANGE".equals(e.getEventType()) && e.isTerminal()
+                                && e.getEventAt() != null && e.getEventAt().toInstant().isBefore(cutoff))
+                        .findFirst().ifPresent(done -> {
+                            HumanAgentParticipationFact excluded = new HumanAgentParticipationFact(
+                                    done.getWorkitemId(), done.getTitle(), done.getEventAt().toInstant(), 0, 0, 0);
+                            excluded.setExclusionReason("CREATE".equals(entry.getValue().get(0).getEventType())
+                                    ? "INVALID_TIMELINE" : "MISSING_CREATE");
+                            facts.add(excluded);
+                        });
             }
         }
         return facts;
@@ -96,6 +126,9 @@ public class HumanAgentParticipationCalculator {
         long humanSeconds = 0;
         boolean foundTerminal = false;
         Instant terminalAt = null;
+        boolean agentParticipated = false;
+        boolean inferredAssignment = false;
+        boolean unknownAssignment = false;
 
         for (int i = 1; i < events.size(); i++) {
             HumanAgentParticipationRawEventRow e = events.get(i);
@@ -104,8 +137,10 @@ public class HumanAgentParticipationCalculator {
                 String toType = parseAssignmentType(e.getDetailJson());
                 if (toType == null) {
                     toType = normalizeAssignmentType(e.getInferredToType());
+                    inferredAssignment = inferredAssignment || toType != null;
                 }
-                if (toType == null) continue;
+                if (toType == null) { unknownAssignment = true; continue; }
+                agentParticipated = agentParticipated || "AGENT".equals(toType);
                 Instant eventAt = e.getEventAt().toInstant();
                 if (eventAt.isBefore(cursor)) return null;
                 long intervalSeconds = Duration.between(cursor, eventAt).getSeconds();
@@ -136,9 +171,14 @@ public class HumanAgentParticipationCalculator {
         if (!foundTerminal) return null;
 
         long totalSeconds = Duration.between(createdAt, terminalAt).getSeconds();
-        return new HumanAgentParticipationFact(
+        HumanAgentParticipationFact fact = new HumanAgentParticipationFact(
                 first.getWorkitemId(), first.getTitle(), terminalAt,
                 totalSeconds, humanSeconds, agentSeconds);
+        fact.setCreatedAt(createdAt);
+        fact.setAgentParticipated(agentParticipated);
+        fact.setInferredAssignment(inferredAssignment);
+        if (unknownAssignment) fact.setExclusionReason("UNKNOWN_ASSIGNEE");
+        return fact;
     }
 
     static String parseAssignmentType(String detailJson) {
@@ -162,6 +202,7 @@ public class HumanAgentParticipationCalculator {
                                            LocalDate start, LocalDate end,
                                            Granularity granularity, ZoneId zone) {
         List<HumanAgentParticipationFact> inRange = allFacts.stream()
+                .filter(f -> f.exclusionReason() == null)
                 .filter(f -> {
                     LocalDate completedDate = f.completedAt().atZone(zone).toLocalDate();
                     return !completedDate.isBefore(start) && !completedDate.isAfter(end);
@@ -201,19 +242,22 @@ public class HumanAgentParticipationCalculator {
                 .limit(tailSize)
                 .collect(Collectors.toList());
 
-        List<TrendBucket> trend = buildTrend(inRange, granularity, zone);
+        List<TrendBucket> trend = buildTrend(inRange, granularity, zone, start, end);
 
         return new ParticipationSummary(inRange, avgTotal, avgHuman, avgAgent, p90, sortedDesc, trend);
     }
 
     private List<TrendBucket> buildTrend(List<HumanAgentParticipationFact> facts,
-                                          Granularity granularity, ZoneId zone) {
+                                          Granularity granularity, ZoneId zone, LocalDate start, LocalDate end) {
         Map<String, List<HumanAgentParticipationFact>> buckets = new TreeMap<>();
         for (HumanAgentParticipationFact f : facts) {
             String label = bucketLabel(f.completedAt(), granularity, zone);
             buckets.computeIfAbsent(label, k -> new ArrayList<>()).add(f);
         }
 
+        for (LocalDate day = start; !day.isAfter(end); day = day.plusDays(1)) {
+            buckets.putIfAbsent(bucketLabel(day.atStartOfDay(zone).toInstant(), granularity, zone), Collections.emptyList());
+        }
         List<TrendBucket> result = new ArrayList<>();
         for (Map.Entry<String, List<HumanAgentParticipationFact>> entry : buckets.entrySet()) {
             List<HumanAgentParticipationFact> bucketFacts = entry.getValue();
@@ -224,10 +268,14 @@ public class HumanAgentParticipationCalculator {
                 bHuman += f.humanDurationSeconds();
                 bAgent += f.agentDurationSeconds();
             }
-            long bAvgTotal = bTotal / count;
-            long bAvgHuman = bHuman / count;
-            long bAvgAgent = bAgent / count;
-            result.add(new TrendBucket(entry.getKey(), bAvgTotal, bAvgHuman, bAvgAgent));
+            long bAvgTotal = count == 0 ? 0 : bTotal / count;
+            long bAvgHuman = count == 0 ? 0 : bHuman / count;
+            long bAvgAgent = count == 0 ? 0 : bAgent / count;
+            TrendBucket bucket = new TrendBucket(entry.getKey(), bAvgTotal, bAvgHuman, bAvgAgent);
+            bucket.sampleSize = count;
+            bucket.totalHumanSeconds = bHuman;
+            bucket.totalAgentSeconds = bAgent;
+            result.add(bucket);
         }
         return result;
     }

@@ -12,6 +12,14 @@ type StoredLaunchConfig = {
 // 每个用例开始前必须调用 resetExecutorLaunchConfigStore() 清空，避免用例间串扰。
 const executorLaunchConfigStore = new Map<number, StoredLaunchConfig>();
 
+// 每次 PUT launch-config 的请求体按执行器 id 记录（含被拒绝的尝试），
+// 供用例断言保存 payload，例如历史缺类型执行器恢复时携带的 clientKind。
+const executorLaunchConfigUpdates = new Map<number, Record<string, unknown>[]>();
+
+export function launchConfigUpdatesFor(id: number): Record<string, unknown>[] {
+  return executorLaunchConfigUpdates.get(id) ?? [];
+}
+
 type ExecutorFixture = { clientKind: string | null; token: string };
 
 // 生成命令要用到执行器自身的类型与 token，两者都不属于启动配置，单独用 fixture 提供
@@ -20,6 +28,13 @@ const executorFixtures = new Map<number, ExecutorFixture>();
 export function resetExecutorLaunchConfigStore(): void {
   executorLaunchConfigStore.clear();
   executorFixtures.clear();
+  executorLaunchConfigUpdates.clear();
+}
+
+// 补选恢复成功后 fixture 的类型会被 PUT 处理器更新，列表等读接口应读到这里
+// 的最新值，而不是用例 seed 时的旧值，否则「保存后重开弹窗」类断言会失真。
+export function executorFixtureClientKind(id: number): string | null | undefined {
+  return executorFixtures.get(id)?.clientKind;
 }
 
 export function setExecutorLaunchFixture(id: number, fixture: Partial<ExecutorFixture>): void {
@@ -56,7 +71,7 @@ function emptyLaunchConfig(): StoredLaunchConfig {
 }
 
 const MOCK_WS_URL = 'wss://community.example/ws/executor';
-const MOCK_RUNTIME_VERSION = '0.2.163';
+const MOCK_RUNTIME_VERSION = '0.3.3';
 const MOCK_POWERSHELL_UTF8_PREAMBLE = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ';
 const MOCK_PROVIDERS: Record<string, string> = {
   QODER_CN_CLI: 'qodercn',
@@ -293,8 +308,39 @@ export const handlers = [
   }),
   http.put('/api/executors/:id/launch-config', async ({ params, request }) => {
     const id = Number(params.id);
-    const body = await request.json() as Partial<StoredLaunchConfig>;
+    const body = await request.json() as Partial<StoredLaunchConfig> & { clientKind?: string | null };
+    const recorded = executorLaunchConfigUpdates.get(id) ?? [];
+    recorded.push(body as Record<string, unknown>);
+    executorLaunchConfigUpdates.set(id, recorded);
     const current = executorLaunchConfigStore.get(id) ?? emptyLaunchConfig();
+    const fixture = executorFixtures.get(id);
+    // 与服务端恢复语义一致：缺类型执行器必须携带 clientKind 一并补齐；
+    // 已有类型只接受同名值，不同值拒绝，绝不改写正常执行器的类型。
+    let clientKind = body.clientKind ?? null;
+    if (fixture) {
+      const existingKind = fixture.clientKind ?? null;
+      const existingMissing = existingKind == null || existingKind.trim() === '';
+      if (!existingMissing) {
+        if (clientKind != null && clientKind.trim() !== existingKind.trim()) {
+          return HttpResponse.json({
+            success: false,
+            code: '10001',
+            message: `执行器客户端类型已存在（${existingKind}），不允许通过启动配置修改`,
+            data: null,
+            traceId: null,
+          });
+        }
+        clientKind = null;
+      } else if (clientKind == null || clientKind.trim() === '') {
+        return HttpResponse.json({
+          success: false,
+          code: '17011',
+          message: '该执行器缺少客户端类型，请在保存启动配置时选择客户端类型',
+          data: null,
+          traceId: null,
+        });
+      }
+    }
     if (body.version == null || body.version !== current.version) {
       return HttpResponse.json({
         success: false,
@@ -312,6 +358,9 @@ export const handlers = [
       version: current.version + 1,
     };
     executorLaunchConfigStore.set(id, next);
+    if (clientKind && fixture) {
+      executorFixtures.set(id, { ...fixture, clientKind });
+    }
     return HttpResponse.json({
       success: true,
       code: '0',
@@ -357,7 +406,7 @@ export const handlers = [
       message: '',
       data: {
         platformName: 'AutoWonder',
-        logoUrl: '/logo.png',
+        logoUrl: '/logo.svg',
         themeKey: 'aliyun-orange',
         primaryColor: '#f97316',
         domain: 'https://community.example',
@@ -377,7 +426,7 @@ export const handlers = [
       message: '',
       data: {
         platformName: 'AutoWonder',
-        logoUrl: '/logo.png',
+        logoUrl: '/logo.svg',
         themeKey: 'aliyun-orange',
         primaryColor: '#f97316',
         domain: 'https://community.example',

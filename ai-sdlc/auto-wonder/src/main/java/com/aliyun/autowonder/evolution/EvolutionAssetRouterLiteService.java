@@ -29,7 +29,8 @@ public class EvolutionAssetRouterLiteService {
         }
         EvolutionProposalCommand proposalCommand;
         if ("MEMORY".equals(cmd.getAssetType())) {
-            proposalCommand = memoryProposalBuilder.build(cmd);
+            throw new BizException(ErrorCode.CONFLICT,
+                    "Memory is managed directly through the canonical memory store");
         } else if ("REPO_RELATION".equals(cmd.getAssetType())) {
             proposalCommand = repoMapProposalBuilder.build(cmd);
         } else if ("SKILL".equals(cmd.getAssetType())) {

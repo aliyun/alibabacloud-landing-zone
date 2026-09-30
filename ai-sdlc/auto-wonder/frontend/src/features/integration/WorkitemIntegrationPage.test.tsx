@@ -100,7 +100,7 @@ describe('WorkitemIntegrationPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('最近成功同步')).toBeInTheDocument();
+    expect(await screen.findByRole('columnheader', { name: '最近成功同步' })).toBeInTheDocument();
     expect(await screen.findByText('最近同步失败')).toBeInTheDocument();
     expect(screen.getByText(/2026\/8\/6/)).toBeInTheDocument();
   });

@@ -31,4 +31,5 @@ public class WorkitemDO {
     private Date scheduledStartAt;
     private Date scheduledStartTriggeredAt;
     private String tags;
+    private String externalShareToken;
 }

@@ -13,6 +13,31 @@ function ok(data: unknown) {
   return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
 }
 
+const WORKITEM_FIXTURES = [
+  { id: 100, workType: 'REQ', title: '登录页改版', contentMd: '', templateId: null, statusNodeId: 1, statusName: '开发中', statusCategory: 'IN_PROGRESS', sdlcId: 1, sdlcName: '前端标准流', assigneeType: 'AGENT', assigneeRef: 1, assigneeName: 'Alpha', priority: 2, version: 0, gmtCreate: '2026-07-10', gmtModified: '2026-07-10' },
+  { id: 101, workType: 'BUG', title: '下拉框错位', contentMd: '', templateId: null, statusNodeId: 2, statusName: '待决策', statusCategory: 'PENDING_DECISION', sdlcId: 2, sdlcName: 'Bug修复流', assigneeType: 'AGENT', assigneeRef: 1, assigneeName: 'Alpha', priority: 1, version: 0, gmtCreate: '2026-07-11', gmtModified: '2026-07-11' },
+  { id: 102, workType: 'TASK', title: '埋点接入', contentMd: '', templateId: null, statusNodeId: 3, statusName: '已发布', statusCategory: 'DONE', sdlcId: 1, sdlcName: '前端标准流', assigneeType: 'AGENT', assigneeRef: 1, assigneeName: 'Alpha', priority: 3, version: 0, gmtCreate: '2026-07-08', gmtModified: '2026-07-08' },
+];
+
+/** 任务列表 Tab 走服务端分页（page/size/statusCategory 下推），按查询参数返回对应子集。 */
+function mockWorkitemsEndpoint(list = WORKITEM_FIXTURES) {
+  server.use(
+    http.get('/api/workitems', ({ request }) => {
+      const url = new URL(request.url);
+      const category = url.searchParams.get('statusCategory');
+      const page = Number(url.searchParams.get('page') ?? '1');
+      const size = Number(url.searchParams.get('size') ?? '20');
+      const filtered = category ? list.filter(w => w.statusCategory === category) : list;
+      return ok({
+        list: filtered.slice((page - 1) * size, page * size),
+        total: filtered.length,
+        pageNum: page,
+        pageSize: size,
+      });
+    }),
+  );
+}
+
 function mockAgent(overrides: Record<string, unknown> = {}) {
   server.use(
     http.get('/api/agents/1', () =>
@@ -21,22 +46,19 @@ function mockAgent(overrides: Record<string, unknown> = {}) {
     http.get('/api/agents/1/versions', () =>
       ok([{ id: 10, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', gmtCreate: '2026-07-01' }]),
     ),
+    http.get('/api/agents/1/versions/2', () =>
+      ok({
+        id: 10, agentId: 1, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+        businessBackground: '', responsibilities: '', sdlcId: null, identityJson: null, evolutionMode: null,
+        reviewerId: null, reviewComment: null, reviewedAt: null, version: 1, gmtCreate: '2026-07-01',
+        repoPerms: [], skills: [], memoryRefs: [], environmentVariables: [],
+      }),
+    ),
     http.get('/api/agents/1/memories', () =>
       ok([{ memoryId: 900, source: 'DIRECT' }, { memoryId: 901, source: 'DIRECT' }]),
     ),
-    http.get('/api/workitems', () =>
-      ok({
-        list: [
-          { id: 100, workType: 'REQ', title: '登录页改版', contentMd: '', templateId: null, statusNodeId: 1, statusName: '开发中', sdlcId: 1, sdlcName: '前端标准流', assigneeType: 'AGENT', assigneeRef: 1, assigneeName: 'Alpha', priority: 2, version: 0, gmtCreate: '2026-07-10', gmtModified: '2026-07-10' },
-          { id: 101, workType: 'BUG', title: '下拉框错位', contentMd: '', templateId: null, statusNodeId: 2, statusName: '待决策', sdlcId: 2, sdlcName: 'Bug修复流', assigneeType: 'AGENT', assigneeRef: 1, assigneeName: 'Alpha', priority: 1, version: 0, gmtCreate: '2026-07-11', gmtModified: '2026-07-11' },
-          { id: 102, workType: 'TASK', title: '埋点接入', contentMd: '', templateId: null, statusNodeId: 3, statusName: '已发布', sdlcId: 1, sdlcName: '前端标准流', assigneeType: 'AGENT', assigneeRef: 1, assigneeName: 'Alpha', priority: 3, version: 0, gmtCreate: '2026-07-08', gmtModified: '2026-07-08' },
-        ],
-        total: 3,
-        pageNum: 1,
-        pageSize: 100,
-      }),
-    ),
   );
+  mockWorkitemsEndpoint();
 }
 
 function renderPage() {
@@ -111,8 +133,9 @@ describe('AgentDetailPage', () => {
     renderPage();
     expect(await screen.findByText('登录页改版')).toBeInTheDocument();
     expect(screen.getByText('下拉框错位')).toBeInTheDocument();
-    fireEvent.click(screen.getByText(/待决策 1/));
-    expect(screen.getByText('下拉框错位')).toBeInTheDocument();
+    // 筛选已下推服务端：切换后需等新查询返回
+    fireEvent.click(await screen.findByText(/待决策 1/));
+    expect(await screen.findByText('下拉框错位')).toBeInTheDocument();
     expect(screen.queryByText('登录页改版')).not.toBeInTheDocument();
   });
 
@@ -128,6 +151,8 @@ describe('AgentDetailPage', () => {
     server.use(
       http.get('/api/agents/1', () => ok({ id: 1, name: 'Alpha', avatarUrl: null, status: 'ONLINE', onlineVersionId: 5, editingVersionId: null, latestVersionNo: 2, version: 1, gmtCreate: '2026-07-01' })),
       http.get('/api/agents/1/versions', () => ok([])),
+      http.get('/api/agents/1/versions/2', () =>
+        ok({ id: 10, agentId: 1, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV', businessBackground: '', responsibilities: '', sdlcId: null, identityJson: null, evolutionMode: null, reviewerId: null, reviewComment: null, reviewedAt: null, version: 1, gmtCreate: '2026-07-01', repoPerms: [], skills: [], memoryRefs: [], environmentVariables: [] })),
       http.get('/api/agents/1/memories', () => ok([])),
       http.get('/api/workitems', () => ok({ list: [], total: 0, pageNum: 1, pageSize: 100 })),
     );
@@ -249,13 +274,29 @@ describe('AgentDetailPage', () => {
     expect(screen.getByText(/其默认拥有平台所有的仓库的读取权限，进行平台智能的管理。/)).toBeInTheDocument();
   });
 
-  it('shows the sdlc template and evolution mode of the effective version', async () => {
+  it('shows the sdlc template name and evolution mode of the effective version', async () => {
     mockAgent({ roleName: 'Frontend Dev', sdlcId: 7, evolutionMode: 'AUTO_PROPOSAL' });
+    server.use(
+      http.get('/api/sdlcs/7', () =>
+        ok({ id: 7, name: '标准需求开发流程', description: '', workType: null, status: 'ENABLED', isDefault: 0, entryStepId: null, version: 1 })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('SDLC 模版：标准需求开发流程')).toBeInTheDocument();
+    expect(screen.getByText('自进化模式：自动生成候选')).toBeInTheDocument();
+  });
+
+  it('falls back to the sdlc id while the template name has not resolved', async () => {
+    mockAgent({ roleName: 'Frontend Dev', sdlcId: 7 });
+    // 名称接口挂掉时退回 #id 展示，而不是空白
+    server.use(
+      http.get('/api/sdlcs/7', () => HttpResponse.json({ success: false, code: '500', message: 'boom' }, { status: 500 })),
+    );
 
     renderPage();
 
     expect(await screen.findByText('SDLC 模版：#7')).toBeInTheDocument();
-    expect(screen.getByText('自进化模式：自动生成候选')).toBeInTheDocument();
   });
 
   it('falls back to unset labels when sdlc and evolution mode are missing', async () => {
@@ -265,6 +306,47 @@ describe('AgentDetailPage', () => {
 
     expect(await screen.findByText('SDLC 模版：未绑定')).toBeInTheDocument();
     expect(screen.getByText('自进化模式：未设置')).toBeInTheDocument();
+  });
+
+  it('shows repo permissions, skills and environment variables from the online version', async () => {
+    mockAgent({
+      environmentVariables: [{ id: 1, name: 'API_KEY', description: '接口凭证', value: '**' }],
+      squadNames: ['交付小队'],
+      executorOnlineCount: 2,
+      executorTotalCount: 3,
+    });
+    server.use(
+      http.get('/api/agents/1/versions/2', () =>
+        ok({
+          id: 10, agentId: 1, versionNo: 2, status: 'ONLINE', roleName: 'Frontend Dev', roleCode: 'FRONTEND_DEV',
+          businessBackground: '', responsibilities: '', sdlcId: null, identityJson: null, evolutionMode: null,
+          reviewerId: null, reviewComment: null, reviewedAt: null, version: 1, gmtCreate: '2026-07-01',
+          repoPerms: [
+            { repoId: 30, repoName: 'frontend-app', permLevel: 'WRITE', allowedBranchPatterns: ['feature/*'] },
+            { repoId: 31, repoName: 'shared-lib', permLevel: 'READ', allowedBranchPatterns: [] },
+          ],
+          skills: [{ skillId: 40, skillName: '代码评审' }],
+          memoryRefs: [], environmentVariables: [],
+        })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('交付小队')).toBeInTheDocument();
+    expect(screen.getByText(/执行器：2\/3 在线/)).toBeInTheDocument();
+    // 版本详情查询返回后，tab 标题带上数量；tab 内容懒渲染，逐个点开后断言
+    expect(await screen.findByRole('tab', { name: /仓库权限 \(2\)/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /仓库权限 \(2\)/ }));
+    expect(await screen.findByText('frontend-app')).toBeInTheDocument();
+    expect(screen.getByText('feature/*')).toBeInTheDocument();
+    expect(screen.getByText('不限制')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /能力配置 \(1\)/ }));
+    expect(await screen.findByText('代码评审')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /环境变量 \(1\)/ }));
+    expect(await screen.findByText('API_KEY')).toBeInTheDocument();
+    expect(screen.getByText('接口凭证')).toBeInTheDocument();
   });
 
   it('warns about an unpublished draft and compares it with the effective config', async () => {

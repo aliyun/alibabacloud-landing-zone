@@ -1,57 +1,60 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
+import { AuditOutlined, CheckCircleOutlined, CodeOutlined, CloudUploadOutlined, ExperimentOutlined, FileTextOutlined, PlayCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { PageHeader } from '@/shared/ui/PageHeader';
+import { AppearanceSwitch } from '@/shared/theme/AppearanceProvider';
 import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
 import './AuthEntryShell.css';
 
-interface AuthEntryShellProps {
-  children: ReactNode;
-}
+const returnPath = 'M600 80H624Q640 80 640 96V160Q640 180 620 180H20Q0 180 0 160V96Q0 80 16 80H40';
 
-const stats = [
-  { value: '6', label: '上手步骤' },
-  { value: '3', label: 'Agent 角色' },
-  { value: '∞', label: '记忆沉淀' },
+const deliverySteps = [
+  { label: '需求澄清', icon: <FileTextOutlined /> },
+  { label: '启动', icon: <PlayCircleOutlined /> },
+  { label: '开发', icon: <CodeOutlined />, accent: true },
+  { label: '验证', icon: <SafetyCertificateOutlined />, accent: true },
+  { label: '评审', icon: <AuditOutlined />, accent: true },
+  { label: '部署', icon: <CloudUploadOutlined />, accent: true },
+  { label: '测试', icon: <ExperimentOutlined />, accent: true },
+  { label: '交付', icon: <CheckCircleOutlined />, accent: true },
 ];
 
-const workflow = [
-  { title: '工单系统集成', tone: 'dark' },
-  { title: '托管仓库', tone: 'light' },
-  { title: '绑定 SDLC 小队', tone: 'orange' },
-  { title: '沉淀记忆与产物', tone: 'green' },
-];
-
-export function AuthEntryShell({ children }: AuthEntryShellProps) {
+export function AuthEntryShell({ children }: { children: ReactNode }) {
+  const gridId = useId();
   return (
-    <div className="auth-entry-page">
-      <div className="auth-entry-help"><HelpCenterLink /></div>
-      <section className="auth-entry-story" aria-label="AutoWonder 产品理念">
-        <div>
-          <div className="auth-entry-eyebrow">AutoWonder · AI Native SDLC Platform</div>
-          <h1>登录后，把工单交给数字员工小队</h1>
-          <p>工单系统、仓库、SDLC、执行器和工作空间记忆在入口第一屏形成完整认知。</p>
-        </div>
-
-        <div className="auth-entry-stats" aria-label="AutoWonder 能力摘要">
-          {stats.map((stat) => (
-            <div className="auth-entry-stat-card" key={stat.label}>
-              <b>{stat.value}</b>
-              <span>{stat.label}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="auth-entry-workflow" aria-label="AutoWonder 交付闭环">
-          {workflow.map((item, index) => (
-            <div className={`auth-entry-workflow-card auth-entry-workflow-${item.tone}`} key={item.title}>
-              <span>{String(index + 1).padStart(2, '0')}</span>
-              {item.title}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="auth-entry-form-panel">
-        {children}
-      </section>
-    </div>
+    <>
+      <PageHeader actions={<><HelpCenterLink /><AppearanceSwitch /></>} />
+      <main className="auth-entry-page">
+        <section className="auth-entry-story" aria-label="平台介绍">
+          <div className="auth-entry-intro">
+            <p className="auth-entry-eyebrow">AI Native SDLC Platform</p>
+            <h1>软件产品自动交付平台</h1>
+          </div>
+          <figure className="auth-delivery" aria-label="软件自动交付流程示意：需求澄清、启动、开发、验证、评审、部署、测试、交付，持续迭代">
+            <svg className="auth-delivery-lines" viewBox="0 0 640 240" fill="none" aria-hidden="true">
+              <defs>
+                <pattern id={gridId} width="20" height="20" patternUnits="userSpaceOnUse">
+                  <circle cx="10" cy="10" r=".7" fill="var(--aw-border)" />
+                </pattern>
+              </defs>
+              <rect x="-20" y="0" width="680" height="240" fill={`url(#${gridId})`} />
+              <path className="auth-delivery-track" d="M40 80H600" />
+              <path className="auth-delivery-return" d={returnPath} />
+              <path className="auth-delivery-flow" pathLength="100" d="M40 80H600" />
+              <path className="auth-delivery-flow auth-delivery-flow--return" pathLength="100" d={returnPath} />
+            </svg>
+            <ol className="auth-delivery-steps">
+              {deliverySteps.map(({ label, icon, accent }) => (
+                <li key={label}>
+                  <span className="auth-delivery-node">{icon}</span>
+                  <span className={accent ? 'auth-delivery-label auth-delivery-label--accent' : 'auth-delivery-label'}>{label}</span>
+                </li>
+              ))}
+            </ol>
+            <figcaption>持续迭代</figcaption>
+          </figure>
+        </section>
+        <section className="auth-entry-form-panel" aria-label="账号入口">{children}</section>
+      </main>
+    </>
   );
 }

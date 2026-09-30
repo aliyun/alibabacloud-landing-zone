@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -114,6 +115,59 @@ class WorkitemScheduledStartScannerTest {
 
         scanner.scanDue();
 
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void dispatchDueFiresRestartEventForPendingRestartRound() {
+        WorkitemDO w = scheduledWorkitem();
+        DeliveryRestartStore restartStore = mock(DeliveryRestartStore.class);
+        scanner.bindRestartStore(restartStore);
+        when(workitemDao.fireScheduledStartAt(500L, 100L, 3)).thenReturn(1);
+        when(restartStore.pendingScheduledRound(100L, 500L)).thenReturn(2);
+
+        scanner.dispatchDue(w);
+
+        ArgumentCaptor<WorkitemDeliveryRestartedEvent> captor =
+                ArgumentCaptor.forClass(WorkitemDeliveryRestartedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        WorkitemDeliveryRestartedEvent event = captor.getValue();
+        assertEquals(100L, event.getTenantId());
+        assertEquals(500L, event.getWorkitemId());
+        assertEquals(300031L, event.getSdlcStepId());
+        assertEquals(40013L, event.getAgentId());
+        assertEquals("restart:2:500", event.getIdempotencyKey());
+        // A deferred restart must never fall back to a plain assignment event: that
+        // would enqueue an untracked dispatch next to the restart round.
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+    }
+
+    @Test
+    void dispatchDueFiresAssignedEventWhenNoRestartRoundIsPending() {
+        WorkitemDO w = scheduledWorkitem();
+        DeliveryRestartStore restartStore = mock(DeliveryRestartStore.class);
+        scanner.bindRestartStore(restartStore);
+        when(workitemDao.fireScheduledStartAt(500L, 100L, 3)).thenReturn(1);
+        when(restartStore.pendingScheduledRound(100L, 500L)).thenReturn(null);
+
+        scanner.dispatchDue(w);
+
+        ArgumentCaptor<WorkitemAssignedEvent> captor = ArgumentCaptor.forClass(WorkitemAssignedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertEquals(40013L, captor.getValue().getAgentId());
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemDeliveryRestartedEvent.class));
+    }
+
+    @Test
+    void dispatchDueSkipsRestartLookupWhenCasClearLosesRace() {
+        WorkitemDO w = scheduledWorkitem();
+        DeliveryRestartStore restartStore = mock(DeliveryRestartStore.class);
+        scanner.bindRestartStore(restartStore);
+        when(workitemDao.fireScheduledStartAt(500L, 100L, 3)).thenReturn(0);
+
+        scanner.dispatchDue(w);
+
+        verify(restartStore, never()).pendingScheduledRound(anyLong(), anyLong());
         verify(eventPublisher, never()).publishEvent(any());
     }
 

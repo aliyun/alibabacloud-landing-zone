@@ -10,7 +10,8 @@ import {
   ReloadOutlined,
   RocketOutlined,
 } from '@ant-design/icons';
-import { Alert, Button, Card, Col, Collapse, Form, Input, message, Modal, Row, Space, Statistic, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Col, Collapse, Form, Input, message, Modal, Row, Space, Statistic, Tabs, Tag, Typography } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import type { ColumnsType } from 'antd/es/table';
 import {
   BRANDING_QUERY_KEY,
@@ -73,7 +74,7 @@ const CAPABILITIES: CapabilityMeta[] = [
   },
   {
     key: 'agent',
-    title: '数字人管理',
+    title: '数字员工管理',
     description: '数字员工创建、查询和详情读取。',
     color: 'cyan',
     match: (name) => name.includes('agent'),
@@ -297,17 +298,17 @@ export function McpTokenSettingsPanel() {
   ];
 
   const schemaColumns: ColumnsType<SchemaRow> = [
-    { title: '字段', dataIndex: 'name', width: 260, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
+    { title: '字段', dataIndex: 'name', align: 'left', width: 260, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
     { title: '类型', dataIndex: 'type', width: 120, render: (value: string) => <Tag>{value}</Tag> },
     { title: '必填', dataIndex: 'required', width: 90, render: (value: boolean) => value ? <Tag color="red">是</Tag> : <Tag>否</Tag> },
-    { title: '说明', dataIndex: 'description', width: 480, render: (value: string) => value || '-' },
+    { title: '说明', dataIndex: 'description', align: 'left', width: 480, render: (value: string) => value || '-' },
   ];
 
   const renderToolDetail = (tool: McpTool) => {
     const inputRows = schemaRows(tool.inputSchema);
     const outputRows = schemaRows(tool.outputSchema);
     return (
-      <div style={{ padding: 12, background: '#fafafa' }}>
+      <div style={{ padding: 12, background: 'var(--aw-raised)' }}>
         <Paragraph style={{ marginBottom: 12 }}>{tool.description}</Paragraph>
         <Row gutter={[12, 12]}>
           <Col xs={24} lg={24} xl={12}>
@@ -342,8 +343,8 @@ export function McpTokenSettingsPanel() {
   };
 
   const toolColumns: ColumnsType<McpTool> = [
-    { title: '工具', dataIndex: 'name', width: 360, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
-    { title: '说明', dataIndex: 'description', width: 720 },
+    { title: '工具', dataIndex: 'name', align: 'left', width: 360, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
+    { title: '说明', dataIndex: 'description', align: 'left', width: 720 },
   ];
 
   const endpointUnavailableText = brandingQuery.isLoading

@@ -246,6 +246,8 @@ def migrate():
     if REQUEST.get('maintenance'):
         maintenance_verify()
     migrations = sorted(REQUEST["migrations"], key=lambda item: item["version"])
+    staged_v075 = any(item["file"] == "docs/migration/V075__unify_status_kanban.sql" for item in migrations)
+    require(not staged_v075 or REQUEST.get('maintenance'), "V075 requires stopped-writer maintenance")
     release = APP / "releases" / REQUEST["target"][:12] / "migration"
     seen = set()
     for migration in migrations:
@@ -274,13 +276,65 @@ def migrate():
         readable, _, _ = select.select([lock.stdout], [], [], 35)
         require(readable and lock.stdout.readline().strip() == "1", "Migration lock unavailable")
         sql("CREATE TABLE IF NOT EXISTS autowonder_schema_history (migration_version BIGINT NOT NULL PRIMARY KEY,filename VARCHAR(255) NOT NULL,checksum CHAR(64) NOT NULL,source_commit CHAR(40) NOT NULL,installed_on TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),execution_ms BIGINT NULL,success TINYINT(1) NOT NULL,error_message VARCHAR(512) NULL)")
+        if staged_v075:
+            maintenance_verify()  # Recheck after acquiring the database lock.
         for migration in migrations:
             require(lock.poll() is None, "Migration lock connection was lost")
             version, sha, filename = migration["version"], migration["sha256"], Path(migration["file"]).name
             existing = sql("SELECT CONCAT(checksum, ' ', success) FROM autowonder_schema_history WHERE migration_version=%d" % version)
-            if existing:
-                require(existing == sha + " 1", "Previous failed migration or ledger checksum mismatch requires review")
+            is_v075 = filename == "V075__unify_status_kanban.sql"
+            if existing == sha + " 1":
                 continue
+            if is_v075:
+                state = sql("SELECT error_message FROM autowonder_schema_history WHERE migration_version=75") if existing else ""
+                require(not existing or (existing == sha + " 0" and re.fullmatch(r"v075-review:[0-9a-f]{64}", state)),
+                        "Previous failed V075 phase or ledger checksum mismatch requires reviewed recovery")
+                content = (release / filename).read_bytes()
+                c_marker = b"-- C. dry-run"
+                d_marker = "-- D. 实际迁移".encode()
+                require(content.count(c_marker) == 1 and content.count(d_marker) == 1,
+                        "V075 section boundaries do not match the reviewed migration")
+                c_start, d_start = content.index(c_marker), content.index(d_marker)
+                require(c_start < d_start, "V075 section order is invalid")
+                approval = REQUEST.get('reviewedV075Report', '')
+                require(not approval or re.fullmatch(r"[0-9a-f]{64}", approval), "Invalid reviewed V075 report digest")
+                require(not approval or state == "v075-review:" + approval, "V075 approval is absent or stale")
+                if not existing:
+                    sql("INSERT INTO autowonder_schema_history(migration_version,filename,checksum,source_commit,success,error_message) VALUES(75,'%s','%s','%s',0,'v075-preparing; completion unverified')" % (filename, sha, REQUEST["target"]))
+                    command(mysql, input=content[:c_start], env=environment)
+                output = command([arg for arg in mysql if arg != "--skip-column-names"],
+                                 input=content[c_start:d_start], env=environment).decode()
+                report = {"plan": REQUEST["plan"], "target": REQUEST["target"], "source": REQUEST["from"],
+                          "migrationSha256": sha, "database": {"host": connection.hostname, "port": connection.port or 3306, "name": database},
+                          "output": output}
+                encoded = json.dumps(report, sort_keys=True, ensure_ascii=False).encode()
+                report_sha = hashlib.sha256(encoded).hexdigest()
+                reports = APP / "migration-reports"
+                report_path = reports / (report_sha + ".json")
+                if not approval:
+                    reports.mkdir(mode=0o700, exist_ok=True)
+                    if not report_path.exists():
+                        with report_path.open('xb') as saved:
+                            saved.write(encoded)
+                            saved.flush()
+                            os.fsync(saved.fileno())
+                    require(digest(report_path) == report_sha, "Retained V075 report checksum mismatch")
+                    require(lock.poll() is None, "Migration lock connection was lost")
+                    sql("UPDATE autowonder_schema_history SET error_message='v075-review:%s' WHERE migration_version=75 AND checksum='%s' AND success=0" % (report_sha, sha))
+                    print("V075_REVIEW_REQUIRED=" + report_sha)
+                    print("V075_REPORT_PATH=" + str(report_path))
+                    return
+                require(report_sha == approval and report_path.is_file() and digest(report_path) == approval,
+                        "V075 live report or identity changed; review a new report before applying")
+                maintenance_verify()
+                require(lock.poll() is None, "Migration lock connection was lost")
+                sql("UPDATE autowonder_schema_history SET error_message='v075-applying' WHERE migration_version=75 AND checksum='%s' AND success=0" % sha)
+                started = time.time()
+                command(mysql, input=content[d_start:], env=environment)
+                require(lock.poll() is None, "Migration lock connection was lost")
+                sql("UPDATE autowonder_schema_history SET success=1,error_message=NULL,execution_ms=%d WHERE migration_version=75 AND checksum='%s'" % (int((time.time() - started) * 1000), sha))
+                continue
+            require(not existing, "Previous failed migration or ledger checksum mismatch requires review")
             if filename.endswith("__platform_admin_init.sql"):
                 admin_count = sql("SELECT COUNT(*) FROM `user` WHERE is_deleted = 0 AND is_admin = 1")
                 require(admin_count.isdigit() and int(admin_count) > 0,

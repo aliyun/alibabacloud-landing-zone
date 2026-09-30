@@ -9,6 +9,12 @@ import { server } from '@/test/mocks/server';
 import { useAuthStore } from '@/shared/auth/store';
 import { SdlcListPage } from './SdlcListPage';
 
+function sdlcPageResponse(body: { data: unknown[]; [key: string]: unknown }) {
+  return HttpResponse.json({ ...body, data: {
+    list: body.data, total: body.data.length, pageNum: 1, pageSize: 10,
+  } });
+}
+
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -23,13 +29,14 @@ describe('SdlcListPage', () => {
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     window.localStorage.removeItem('autowonder.sdlcs.view');
+    window.localStorage.removeItem('autowonder.sdlcs.pageSize');
     vi.restoreAllMocks();
   });
 
   it('renders SDLC template table with create button', async () => {
     server.use(
-      http.get('/api/sdlcs', () => {
-        return HttpResponse.json({
+      http.get('/api/sdlcs/page', () => {
+        return sdlcPageResponse({
           success: true, code: '0', message: '', traceId: null,
           data: [
             { id: '1', name: '标准开发流程', description: '4步标准流', status: 'ENABLED', workType: 'REQUIREMENT', isDefault: 0, entryStepId: null, version: 1, gmtCreate: '2026-07-01', steps: [] },
@@ -45,7 +52,7 @@ describe('SdlcListPage', () => {
 
   it('hides the AI generate entry', async () => {
     server.use(
-      http.get('/api/sdlcs', () => HttpResponse.json({
+      http.get('/api/sdlcs/page', () => sdlcPageResponse({
         success: true, code: '0', message: '', traceId: null, data: [],
       })),
     );
@@ -61,7 +68,7 @@ describe('SdlcListPage', () => {
     );
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
     server.use(
-      http.get('/api/sdlcs', () => HttpResponse.json({
+      http.get('/api/sdlcs/page', () => sdlcPageResponse({
         success: true, code: '0', message: '', traceId: null, data: [],
       })),
       http.get('/api/squad-templates', () => HttpResponse.json({
@@ -82,7 +89,7 @@ describe('SdlcListPage', () => {
     );
     const backendMessage = '流程被引用,无法删除: 引用源: 工单 1 个(#77); 数字员工 1 个(小码(ID:5))。请先解除上述引用后再删除。';
     server.use(
-      http.get('/api/sdlcs', () => HttpResponse.json({
+      http.get('/api/sdlcs/page', () => sdlcPageResponse({
         success: true, code: '0', message: '', traceId: null,
         data: [
           { id: '40098', name: '代码评审SDLC', description: '', status: 'DISABLED', workType: null, isDefault: 0, entryStepId: null, version: 1, gmtCreate: '2026-07-01', steps: [] },
@@ -114,7 +121,7 @@ describe('SdlcListPage', () => {
         success: true, code: '0', message: '', traceId: null,
         data: { list: [{ id: 7, name: 'Squad A' }, { id: 8, name: 'Squad B' }], total: 2, pageNum: 1, pageSize: 100 },
       })),
-      http.get('/api/sdlcs', () => HttpResponse.json({
+      http.get('/api/sdlcs/page', () => sdlcPageResponse({
         success: true, code: '0', message: '', traceId: null, data: sdlcs,
       })),
       http.get('/api/squad-templates', () => HttpResponse.json({
@@ -143,8 +150,8 @@ describe('SdlcListPage', () => {
 
     expect(await screen.findByText('全栈交付')).toBeInTheDocument();
     expect(screen.getByText('所属小队')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Squad A' })).toHaveAttribute('href', '/squads?squadId=7');
-    expect(screen.getByRole('link', { name: 'Squad B' })).toHaveAttribute('href', '/squads?squadId=8');
+    expect(screen.getByRole('link', { name: 'Squad A' })).toHaveAttribute('href', '/agents?tab=squads&squadId=7');
+    expect(screen.getByRole('link', { name: 'Squad B' })).toHaveAttribute('href', '/agents?tab=squads&squadId=8');
     expect(screen.getByText('未分组')).toBeInTheDocument();
   });
 
@@ -156,9 +163,9 @@ describe('SdlcListPage', () => {
         success: true, code: '0', message: '', traceId: null,
         data: { list: [{ id: 7, name: 'Squad A' }, { id: 8, name: 'Squad B' }], total: 2, pageNum: 1, pageSize: 100 },
       })),
-      http.get('/api/sdlcs', ({ request }) => {
+      http.get('/api/sdlcs/page', ({ request }) => {
         seen.push(new URL(request.url).search);
-        return HttpResponse.json({
+        return sdlcPageResponse({
           success: true, code: '0', message: '', traceId: null,
           data: [sdlcRow(1, '全栈交付', [7], ['Squad A'])],
         });
@@ -289,5 +296,63 @@ describe('SdlcListPage', () => {
     renderPage();
 
     expect((await rowOf('快速全栈开发')).getByText('0')).toBeInTheDocument();
+  });
+});
+
+describe('SDLC server pagination', () => {
+  it.each(['grouped', 'list'])('recovers when the last page disappears in %s view', async (view) => {
+    window.localStorage.setItem('autowonder.sdlcs.view', view);
+    window.localStorage.removeItem('autowonder.sdlcs.pageSize');
+    let shrunk = false;
+    const seen: number[] = [];
+    server.use(http.get('/api/sdlcs/page', ({ request }) => {
+      const page = Number(new URL(request.url).searchParams.get('page'));
+      seen.push(page);
+      if (page === 2) shrunk = true;
+      const list = page === 1 ? Array.from({ length: 10 }, (_, i) => ({
+        id: i + 1, name: `remaining-${i}`, status: 'DRAFT', squadIds: [],
+      })) : [];
+      return HttpResponse.json({ success: true, code: '0', data: {
+        list, total: shrunk ? 10 : 11, pageNum: page, pageSize: 10,
+      } });
+    }));
+    renderPage();
+    await screen.findByText('remaining-0');
+    await userEvent.click(screen.getByTitle('2'));
+    await waitFor(() => expect(seen).toEqual([1, 2, 1]));
+    expect(await screen.findByText('remaining-0')).toBeInTheDocument();
+    expect(screen.getByText('共 10 条')).toBeInTheDocument();
+  });
+
+  it.each(['grouped', 'list'])('reaches the eleventh flow in %s view', async (view) => {
+    window.localStorage.setItem('autowonder.sdlcs.view', view);
+    window.localStorage.removeItem('autowonder.sdlcs.pageSize');
+    const rows = Array.from({ length: 11 }, (_, index) => ({
+      id: String(40024 - index), name: index === 10 ? 'AW自迭代-研发SDLC' : `流程-${index}`,
+      description: '', status: 'ENABLED', stepCount: 4, squadIds: [], squadNames: [],
+    }));
+    const requests: number[] = [];
+    const respond = (request: Request, paged: boolean) => {
+      const params = new URL(request.url).searchParams;
+      const page = Number(params.get('page') || 1);
+      const size = Number(params.get('size') || 10);
+      requests.push(page);
+      const list = rows.slice((page - 1) * size, page * size);
+      return HttpResponse.json({ success: true, code: '0', data: paged
+        ? { list, total: rows.length, pageNum: page, pageSize: size } : list });
+    };
+    server.use(
+      http.get('/api/sdlcs', ({ request }) => respond(request, false)),
+      http.get('/api/sdlcs/page', ({ request }) => respond(request, true)),
+    );
+    renderPage();
+    await screen.findByText('流程-0');
+    expect(screen.getByText('共 11 条')).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle('2'));
+    expect(await screen.findByText('AW自迭代-研发SDLC')).toBeInTheDocument();
+    expect(requests).toContain(2);
+    expect(screen.getByText('共 11 条')).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle('1'));
+    expect(await screen.findByText('流程-0')).toBeInTheDocument();
   });
 });

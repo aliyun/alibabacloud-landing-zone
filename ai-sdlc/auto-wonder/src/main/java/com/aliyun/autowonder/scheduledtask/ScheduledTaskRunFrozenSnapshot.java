@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.scheduledtask;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 
 import java.util.LinkedHashSet;
 import java.util.Set;

@@ -37,9 +37,11 @@ public class RepoService {
         if (req.getUrl() == null || req.getUrl().isBlank()) {
             throw new BizException(ErrorCode.REPO_URL_REQUIRED);
         }
+        String name = req.getName().trim();
+        rejectInvalidName(name);
         RepoDO repo = new RepoDO();
         repo.setTenantId(tenantId);
-        repo.setName(req.getName().trim());
+        repo.setName(name);
         repo.setUrl(req.getUrl().trim());
         repo.setDefaultBranch(req.getDefaultBranch());
         repo.setDescription(req.getDescription());
@@ -84,6 +86,7 @@ public class RepoService {
         }
         String name = requiredField(req.isNamePresent(), req.getName(), repo.getName(),
                 ErrorCode.REPO_NAME_REQUIRED);
+        rejectInvalidName(name);
         String url = requiredField(req.isUrlPresent(), req.getUrl(), repo.getUrl(),
                 ErrorCode.REPO_URL_REQUIRED);
         String defaultBranch = optionalField(req.isDefaultBranchPresent(),
@@ -106,6 +109,13 @@ public class RepoService {
             throw new BizException(missing);
         }
         return value.trim();
+    }
+
+    private void rejectInvalidName(String name) {
+        String problem = RepoNameValidator.validate(name);
+        if (problem != null) {
+            throw new BizException(ErrorCode.REPO_NAME_INVALID, problem);
+        }
     }
 
     private String optionalField(boolean present, String value, String current) {

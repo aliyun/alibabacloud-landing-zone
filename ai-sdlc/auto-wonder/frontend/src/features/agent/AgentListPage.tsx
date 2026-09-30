@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Alert, Button, Empty, Pagination, Spin, Tabs, Tag } from 'antd';
-import { ApiOutlined, ArrowRightOutlined, DatabaseOutlined, PlusOutlined, RobotOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Button, Empty, Segmented, Select, Spin, Tag, Tooltip } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import { ApiOutlined, DatabaseOutlined, InfoCircleOutlined, PlusOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
+import { Table } from '@/shared/theme/ThemedTable';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAgentList } from './hooks';
 import type { Agent, AgentKind } from './api';
 import { SquadFilterBar, useSquadOptions } from '@/features/squad/SquadFilterBar';
@@ -25,20 +28,14 @@ const statusMap: Record<string, { color: string; label: string; className: strin
 export function AgentListPage() {
   const navigate = useNavigate();
   const accessCommand = useAccessCommand();
-  const [page, setPage] = useState(1);
-  const [size, setSize] = useState(20);
   const [kindTab, setKindTab] = useState<AgentKind>('STANDARD');
   const [squadFilter, setSquadFilter] = useState<number[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [grouped, setGrouped] = useState(
     () => readViewPreference(AGENTS_VIEW_STORAGE_KEY, AGENTS_VIEW_OPTIONS, 'grouped') === 'grouped',
   );
   const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
-  const { data: agents = [], isLoading } = useAgentList(page, size, undefined, kindTab, squadFilter);
-
-  // The squad filter is applied server-side, so page 1 is the only page that can hold the new result set.
-  useEffect(() => {
-    setPage(1);
-  }, [squadFilter]);
+  const { data: agents = [], isLoading } = useAgentList(statusFilter, kindTab, squadFilter);
 
   const activeCount = agents.filter((agent) => agent.status === 'ONLINE').length;
   const executorOnlineCount = agents.reduce((sum, agent) => sum + (agent.executorOnlineCount ?? 0), 0);
@@ -51,35 +48,15 @@ export function AgentListPage() {
 
   return (
     <section className="agent-card-page">
-      <div className="agent-card-header">
-        <div>
-          <h2>数字员工</h2>
-          <div className="agent-card-subtitle">按角色、启用状态和执行器在线状态快速扫描</div>
-        </div>
-        {kindTab === 'STANDARD' && (
-          <Button type="primary" icon={<PlusOutlined />}
-            onClick={() => accessCommand('READ_WRITE', '新建数字员工', () => navigate('/agents/new'))}>新建</Button>
-        )}
-      </div>
-
-      <Tabs
-        activeKey={kindTab}
-        onChange={(key) => { setKindTab(key as AgentKind); setPage(1); }}
-        items={[
-          { key: 'STANDARD', label: '数字员工' },
-          { key: 'PLATFORM', label: '系统平台智能体' },
-        ]}
-      />
-
-      <Alert
-        className="agent-card-guidance"
-        type="info"
-        showIcon
-        message="点击任一数字人卡片进入详情与配置。"
-        description="可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。"
-      />
-
-      <div className="agent-filter-bar">
+      <div className="agent-list-toolbar">
+        <Segmented
+          value={kindTab}
+          onChange={(key) => setKindTab(key as AgentKind)}
+          options={[
+            { label: '标准数字员工', value: 'STANDARD' },
+            { label: '系统平台智能体', value: 'PLATFORM' },
+          ]}
+        />
         <SquadFilterBar
           options={squadOptions}
           value={squadFilter}
@@ -91,6 +68,21 @@ export function AgentListPage() {
           }}
           loading={squadsLoading}
         />
+        {!grouped && (
+          <Select
+            allowClear
+            placeholder="按状态筛选"
+            style={{ minWidth: 140 }}
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={Object.entries(statusMap).map(([value, meta]) => ({ value, label: meta.label }))}
+            aria-label="按状态筛选"
+          />
+        )}
+        {kindTab === 'STANDARD' && (
+          <Button type="primary" icon={<PlusOutlined />}
+            onClick={() => accessCommand('READ_WRITE', '新建数字员工', () => navigate('/agents/new'))}>新建</Button>
+        )}
       </div>
 
       <div className="agent-summary-strip">
@@ -98,6 +90,9 @@ export function AgentListPage() {
         <SummaryPill label="使用中" value={activeCount} />
         <SummaryPill label="执行器在线" value={executorOnlineCount} />
         <SummaryPill label="待审核" value={reviewCount} />
+        <Tooltip title={<><div>点击任一数字员工卡片进入详情与配置。</div><div>可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。</div></>}>
+          <Button type="text" size="small" aria-label="配置说明" icon={<InfoCircleOutlined />} className="agent-config-help">配置说明</Button>
+        </Tooltip>
       </div>
 
       <Spin spinning={isLoading}>
@@ -105,12 +100,7 @@ export function AgentListPage() {
           kindTab === 'PLATFORM' ? (
             <Empty description="暂无平台智能体" />
           ) : (
-            <Empty description="暂无数字员工">
-              <Button type="primary" icon={<PlusOutlined />}
-                onClick={() => accessCommand('READ_WRITE', '新建数字员工', () => navigate('/agents/new'))}>
-                新建数字员工
-              </Button>
-            </Empty>
+            <Empty description="暂无数字员工" />
           )
         ) : grouped ? (
           <div className="agent-squad-groups">
@@ -120,7 +110,7 @@ export function AgentListPage() {
                   {group.squadId == null ? (
                     <span>{group.label}</span>
                   ) : (
-                    <Link to={`/squads?squadId=${group.squadId}`}>{group.label}</Link>
+                    <Link to={`/agents?tab=squads&squadId=${group.squadId}`}>{group.label}</Link>
                   )}
                   <span className="agent-squad-group-count">{group.items.length} 个</span>
                 </header>
@@ -133,29 +123,73 @@ export function AgentListPage() {
             ))}
           </div>
         ) : (
-          <div className="agent-card-grid">
-            {agents.map((agent, index) => (
-              <AgentCard key={agent.id} agent={agent} index={index} />
-            ))}
-          </div>
+          <Table<Agent>
+            className="agent-list-table"
+            rowKey="id"
+            columns={agentColumns}
+            dataSource={agents}
+            pagination={false}
+            locale={{ emptyText: kindTab === 'PLATFORM' ? '暂无平台智能体' : '暂无数字员工' }}
+            tableLayout="fixed"
+            scroll={{ x: 900 }}
+          />
         )}
       </Spin>
-
-      <Pagination
-        className="agent-card-pagination"
-        current={page}
-        pageSize={size}
-        total={agents.length}
-        showSizeChanger
-        showTotal={(total) => `共 ${total} 条`}
-        onChange={(nextPage, nextSize) => {
-          setPage(nextPage);
-          setSize(nextSize);
-        }}
-      />
     </section>
   );
 }
+
+const agentColumns: ColumnsType<Agent> = [
+  { title: 'ID', dataIndex: 'id', width: 84 },
+  {
+    title: '名称',
+    dataIndex: 'name',
+    align: 'left',
+    width: 220,
+    render: (_, agent) => (
+      <EllipsisText tooltip={agent.name}>
+        <Link to={`/agents/${agent.id}`}>{agent.name}</Link>
+      </EllipsisText>
+    ),
+  },
+  {
+    title: '角色',
+    dataIndex: 'roleName',
+    align: 'left',
+    width: 200,
+    render: (_, agent) => (
+      <EllipsisText tooltip={agent.roleName || agent.roleCode}>
+        {agent.roleName || agent.roleCode || '-'}
+      </EllipsisText>
+    ),
+  },
+  {
+    title: '状态',
+    render: (_, agent) => (
+      <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
+        {statusMeta(agent).label}
+      </Tag>
+    ),
+  },
+  {
+    title: '执行器',
+    render: (_, agent) => executorShortText(agent),
+  },
+  {
+    title: '小队',
+    align: 'left',
+    render: (_, agent) => <SquadTags squadIds={agent.squadIds} squadNames={agent.squadNames} />,
+  },
+  { title: '技能', width: 72, render: (_, agent) => agent.skillCount ?? 0 },
+  { title: '记忆', width: 72, render: (_, agent) => agent.memoryCount ?? 0 },
+  { title: '仓库', width: 72, render: (_, agent) => agent.repoPermCount ?? 0 },
+  { title: '版本', width: 76, render: (_, agent) => versionText(agent) },
+  {
+    title: '操作',
+    width: 76,
+    render: (_, agent) => <Link to={`/agents/${agent.id}`}>详情</Link>,
+  },
+];
 
 function AgentCard({ agent, index }: { agent: Agent; index: number }) {
   return (
@@ -164,18 +198,17 @@ function AgentCard({ agent, index }: { agent: Agent; index: number }) {
         className="agent-card-detail-link"
         to={`/agents/${agent.id}`}
         aria-label={`查看 ${agent.name} 的详情与配置`}
-      >
-        <span className="agent-card-open-hint" aria-hidden="true">
-          <span>查看详情与配置</span>
-          <ArrowRightOutlined />
-        </span>
-      </Link>
+      />
       <div className="agent-card-content">
         <div className="agent-card-topline" />
         <div className="agent-card-main">
           <div className="agent-card-avatar">
-            <RobotOutlined />
-            <span>{agentInitials(agent, index)}</span>
+            {agent.avatarUrl ? (
+              <img className="agent-card-avatar-img" src={agent.avatarUrl} alt={agent.name} />
+            ) : (
+              <span className="agent-card-avatar-initials">{(agent.name || '?').slice(0, 2)}</span>
+            )}
+            <span className="agent-card-avatar-badge">{agentInitials(agent, index)}</span>
           </div>
           <div className="agent-card-title-area">
             <div className="agent-card-title">
@@ -183,10 +216,12 @@ function AgentCard({ agent, index }: { agent: Agent; index: number }) {
             </div>
             <div className="agent-card-role">{agent.roleName || agent.roleCode || versionText(agent)}</div>
           </div>
+          <div className="agent-card-status">
           <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
             {statusMeta(agent).label}
           </Tag>
           {agent.kind === 'PLATFORM' && <Tag color="gold">平台</Tag>}
+          </div>
         </div>
 
         <div className="agent-executor-row">
@@ -242,6 +277,16 @@ function executorText(agent: Agent) {
   const total = agent.executorTotalCount ?? 0;
   if (total <= 1) {
     return online > 0 ? '执行器在线' : '执行器离线';
+  }
+  return `${online}/${total} 在线`;
+}
+
+// 表格列里省略「执行器」前缀，列头已说明含义；卡片视图仍用完整文案。
+function executorShortText(agent: Agent) {
+  const online = agent.executorOnlineCount ?? 0;
+  const total = agent.executorTotalCount ?? 0;
+  if (total <= 1) {
+    return online > 0 ? '在线' : '离线';
   }
   return `${online}/${total} 在线`;
 }

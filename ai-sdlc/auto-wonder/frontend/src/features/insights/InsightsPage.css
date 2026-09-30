@@ -1,0 +1,115 @@
+.insight-stat .ant-statistic-title,
+.insight-stat .ant-statistic-content { color: var(--aw-accent-text); }
+.insight-stat { text-align: center; }
+
+/* Human / Agent series share one palette across charts, legends and tables. */
+:root { --insight-human: #6bc7bb; --insight-agent: #fb923c; }
+:root[data-appearance=light] { --insight-human: #147d78; --insight-agent: #c2410c; }
+
+.participation-page { min-width: 0; }
+.participation-slow-tail-title { display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; line-height: 24px; }
+.participation-slow-tail-title .ant-tag { display: inline-flex; align-items: center; margin: 0; line-height: 20px; font-weight: 500; }
+.participation-slow-tail-table .ant-table-cell { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.participation-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.participation-scope { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; color: var(--aw-muted); font-size: 12px; line-height: 20px; }
+.participation-scope-summary { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.participation-scope-summary .participation-help { margin: 0; }
+.participation-scope strong { color: var(--aw-accent-text); font-variant-numeric: tabular-nums; }
+.participation-state { display: grid; place-items: center; min-height: 300px; }
+.participation-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.participation-stat .ant-card-body { padding: 16px 20px; }
+.participation-stat .ant-statistic-title { font-size: 12px; color: var(--aw-muted); margin-bottom: 8px; }
+.participation-stat .ant-statistic-content { font-size: clamp(18px, 1.7vw, 26px); font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.025em; color: var(--aw-text); }
+.participation-stat.is-human .ant-statistic-content { color: var(--insight-human); }
+.participation-stat.is-agent .ant-statistic-content { color: var(--insight-agent); }
+.participation-chart-grid { display: grid; grid-template-columns: minmax(300px, .85fr) minmax(0,1.65fr); gap: 16px; margin-bottom: 16px; }
+.participation-chart { min-width: 0; padding: 20px; border: 1px solid var(--aw-border); border-radius: 12px; background: var(--aw-panel); }
+.participation-chart--duration { grid-column: 1 / -1; }
+.participation-chart-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.participation-chart-header h3 { margin: 0; font-size: 15px; line-height: 1.5; font-weight: 600; color: var(--aw-text); }
+.participation-chart-header p { margin: 4px 0 0; font-size: 12px; color: var(--aw-muted); }
+.participation-chart-tools { display: flex; flex-wrap: wrap; gap: 2px; margin-left: auto; }
+.participation-chart-tools .ant-btn { color: var(--aw-muted); }
+.participation-chart-legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 18px 0 8px; }
+.participation-chart-legend button { display: inline-flex; gap: 7px; align-items: center; padding: 2px 0; background: none; border: 0; color: var(--aw-text); font: inherit; font-size: 12px; cursor: pointer; }
+.participation-chart-legend button:disabled { cursor: default; }
+.participation-chart-legend button.is-muted { opacity: .4; text-decoration: line-through; }
+.participation-chart-legend i { display: block; width: 9px; height: 9px; border-radius: 2px; }
+.participation-chart-canvas { width: 100%; height: 290px; min-width: 0; }
+.participation-chart--distribution .participation-chart-canvas { height: 208px; }
+.participation-chart--duration .participation-chart-canvas { height: 310px; }
+.participation-chart.is-expanded .participation-chart-canvas { height: min(62vh, 650px); min-height: 260px; }
+.participation-chart.is-expanded { border: 0; padding: 0; }
+.participation-chart-note { margin: 12px 0 0; color: var(--aw-muted); font-size: 11px; line-height: 1.6; }
+.participation-chart-empty { min-height: 270px; display: grid; place-items: center; }
+.participation-distribution-values { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding-top: 12px; }
+.participation-distribution-values > span { display: grid; grid-template-columns: auto 1fr; gap: 5px 7px; font-size: 12px; color: var(--aw-muted); }
+.participation-distribution-values i { width: 3px; grid-row: 1 / 4; border-radius: 2px; background: var(--insight-human); }
+.participation-distribution-values i.is-agent { background: var(--insight-agent); }
+.participation-distribution-values strong { font-size: 23px; color: var(--aw-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.participation-distribution-values small { font-size: 12px; }
+.participation-chart-table { max-height: 310px; overflow: auto; }
+.participation-chart-table table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; font-variant-numeric: tabular-nums; }
+.participation-chart-table caption { text-align: left; color: var(--aw-muted); padding: 12px 0; }
+.participation-chart-table th, .participation-chart-table td { padding: 10px 12px; border-bottom: 1px solid var(--aw-border); white-space: nowrap; }
+.participation-chart-table thead { background: var(--aw-raised); }
+@media (max-width: 1100px) { .participation-chart-grid { grid-template-columns: minmax(0,1fr); } .participation-chart--distribution .participation-chart-canvas { height: 240px; } }
+@media (max-width: 600px) {
+  .participation-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .participation-stat .ant-card-body { padding: 12px; }
+  .participation-controls .ant-picker { width: 100%; }
+  .participation-chart { padding: 14px; }
+  .participation-chart-tools { gap: 0; }
+}
+
+/* Shared analytical layout: compact filters, comparable numbers, bounded detail lists. */
+.insights-page { container-type: inline-size; min-width: 0; }
+.insight-toolbar, .insight-filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.insight-toolbar { margin-bottom: 16px; }
+.insight-realtime > .insight-toolbar { justify-content: space-between; }
+.insight-realtime-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; align-items: stretch; }
+.insight-realtime-grid > .ant-card { display: flex; flex-direction: column; }
+.insight-realtime-grid > .ant-card > .ant-card-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.insight-squad-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 12px; }
+.insight-workstation-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 10px; }
+.insight-truncate { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.insight-workstation:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 3px; }
+.insight-activity-list { max-height: 330px; overflow-y: auto; }
+.insight-activity-row { display: grid; grid-template-columns: 66px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--aw-border); font-size: 12px; }
+.insight-activity-row:last-child { border-bottom: 0; }
+.insight-activity-status { display: flex; align-items: center; gap: 6px; }
+.insight-activity-content, .insight-activity-time { display: grid; gap: 5px; min-width: 0; }
+.insight-activity-content > :first-child { color: var(--aw-text); }
+.insight-activity-content > :last-child, .insight-activity-time > :last-child { color: var(--aw-muted); font-size: 11px; }
+.insight-activity-time { text-align: right; font-variant-numeric: tabular-nums; }
+.insight-activity-time strong { color: var(--aw-accent-text); font-weight: 500; white-space: nowrap; }
+.insight-detail-row { gap: 16px; flex-wrap: wrap; }
+.insight-realtime-metric { color: var(--aw-accent-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.insight-caption { font-size: 12px; color: var(--aw-muted); margin: 0 0 12px; }
+.insight-member-page > .ant-card, .insight-member-page > .ant-alert { margin-bottom: 16px; }
+.insight-member-bar { display: flex; gap: 12px; align-items: center; }
+.insight-member-bar strong { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+.insight-member-bar > span { display: block; flex: 1; height: 7px; border-radius: 4px; background: var(--aw-border); overflow: hidden; }
+.insight-member-bar i { display: block; height: 100%; background: var(--aw-accent-text); border-radius: inherit; }
+.participation-chart-table td { text-align: right; }
+.participation-chart-table thead th:not(:first-child) { text-align: right; }
+.participation-chart-table thead { position: sticky; top: 0; }
+.participation-chart-legend button:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 4px; }
+@container (max-width: 900px) {
+  .insight-realtime-grid { grid-template-columns: minmax(0,1fr); }
+  .participation-chart-grid { grid-template-columns: minmax(0,1fr); }
+}
+@container (max-width: 560px) {
+  .participation-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .insight-toolbar .ant-picker { max-width: 100%; }
+  .insight-activity-row { gap: 8px; }
+  .insights-page .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px; padding: 12px 0; }
+  .insights-page .ant-card-head-title { white-space: normal; }
+}
+
+.participation-help { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 2px; border: 0; background: transparent; color: var(--aw-muted); font: inherit; cursor: help; }
+.participation-help:hover { color: var(--aw-accent-text); }
+.participation-help:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; border-radius: 3px; }
+.participation-stat-detail { margin-top: 10px; font-size: 11px; line-height: 1.6; color: var(--aw-muted); overflow-wrap: anywhere; }
+.participation-stat-detail .is-human { color: var(--insight-human); }
+.participation-stat-detail .is-agent { color: var(--insight-agent); }

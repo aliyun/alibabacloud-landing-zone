@@ -6,11 +6,13 @@ import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.mcp.dto.McpRpcResponse;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
+import com.aliyun.autowonder.memory.store.MemoryStoreApplicationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -28,7 +30,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.times;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class McpControllerTest {
@@ -52,6 +56,24 @@ class McpControllerTest {
         assertTrue(patterns.contains("/{pathToken}/"));
         assertTrue(patterns.contains("/{pathToken}/rpc"));
         assertTrue(patterns.contains("/{pathToken}/rpc/"));
+    }
+
+    @Test
+    void streamableHttpGetProbeIsRejectedInsideMcpController() throws Exception {
+        Method method = McpController.class.getMethod("rejectGetProbe");
+        GetMapping mapping = method.getAnnotation(GetMapping.class);
+        assertNotNull(mapping);
+        assertTrue(List.of(mapping.value()).contains(""));
+        assertTrue(List.of(mapping.value()).contains("/{pathToken}"));
+
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+                new McpController(mock(McpAccessTokenService.class), mock(McpToolService.class)))
+                .build();
+        mvc.perform(get("/api/mcp")
+                        .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string("Allow", "POST"))
+                .andExpect(content().string(""));
     }
 
     @Test
@@ -87,6 +109,23 @@ class McpControllerTest {
         assertTrue(json.has("error"));
         assertEquals("流程非草稿状态,无法编辑结构", json.path("error").path("message").asText());
         assertTrue(!json.has("result"));
+    }
+
+    @Test
+    void rpcReturnsStableRetryableErrorForMemoryMaintenanceLease() {
+        McpAccessTokenService tokenService = mock(McpAccessTokenService.class);
+        McpToolService toolService = mock(McpToolService.class);
+        McpAccessTokenService.Principal principal = principal(WorkspaceAccessLevel.READ_WRITE);
+        when(tokenService.authenticate(null, "awmcp_query_token")).thenReturn(principal);
+        when(toolService.call(principal, "autowonder.create_memory", Map.of()))
+                .thenThrow(new MemoryStoreApplicationService.MemoryMaintenanceLeaseConflictException());
+
+        McpRpcResponse response = new McpController(tokenService, toolService).rpc(null, "awmcp_query_token", Map.of(
+                "id", 1, "method", "tools/call",
+                "params", Map.of("name", "autowonder.create_memory", "arguments", Map.of())));
+
+        assertEquals(-32009, response.getError().getCode());
+        assertEquals("MEMORY_MAINTENANCE_LOCKED: retry later", response.getError().getMessage());
     }
 
     @Test

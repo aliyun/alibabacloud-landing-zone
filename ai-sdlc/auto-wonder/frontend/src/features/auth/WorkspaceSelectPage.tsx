@@ -1,7 +1,6 @@
 import { useState, type CSSProperties } from 'react';
 import { Button, Card, Form, Input, Typography, message, Spin, Tabs } from 'antd';
 import {
-  ArrowRightOutlined,
   BgColorsOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -11,7 +10,8 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/shared/api/client';
-import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
+import { PageHeader } from '@/shared/ui/PageHeader';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAuthStore } from '@/shared/auth/store';
 import type { WorkspaceInfo, SwitchWorkspaceResponse } from '@/shared/types/common';
 import { ApiError } from '@/shared/types/common';
@@ -20,20 +20,14 @@ import { AllWorkspacesTab } from './AllWorkspacesTab';
 import { WorkspaceEditModal } from './WorkspaceEditModal';
 import { WorkspaceDeleteModal } from './WorkspaceDeleteModal';
 import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
-import {
-  BRANDING_QUERY_KEY,
-  DEFAULT_BRANDING,
-  getPublicBranding,
-} from '@/features/platform/brandingApi';
 import './workspaceLifecycle.css';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-const BRAND_ORANGE = '#ff6a00';
-const BRAND_ORANGE_DARK = '#ea580c';
-const BRAND_ORANGE_LINE = '#fed7aa';
-const WORKSPACE_CARD_SHADOW = '0 0 0 2px rgba(255, 106, 0, 0.08), 0 14px 28px rgba(255, 106, 0, 0.12)';
+const ACCENT_COLOR = 'var(--aw-accent-text)';
+const BORDER_COLOR = 'var(--aw-border)';
+const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
 
 export function WorkspaceSelectPage() {
   const [creating, setCreating] = useState(false);
@@ -48,10 +42,6 @@ export function WorkspaceSelectPage() {
   const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
   const user = useAuthStore((s) => s.user);
   const [form] = Form.useForm();
-  const { data: publicBranding = DEFAULT_BRANDING } = useQuery({
-    queryKey: BRANDING_QUERY_KEY,
-    queryFn: getPublicBranding,
-  });
   const { data: workspaces, isLoading, refetch } = useQuery({
     queryKey: myWorkspacesQueryKey(user?.id ?? null),
     queryFn: async () => {
@@ -101,29 +91,26 @@ export function WorkspaceSelectPage() {
 
   return (
     <div style={pageShellStyle}>
-      <div style={contentStyle}>
+      <PageHeader brandTo="/workspaces" />
+      <div style={{ padding: 24 }}>
         <div style={headerStyle}>
-          <div>
-            <Title level={2} style={{ margin: 0, color: '#111827', letterSpacing: 0 }}>选择工作空间</Title>
-            <Text style={{ display: 'block', marginTop: 8, color: '#697386' }}>请选择要进入的 {publicBranding.platformName} 工作空间</Text>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <HelpCenterLink />
-            <Button
-              icon={<BgColorsOutlined />}
-              onClick={() => navigate('/workspaces/branding')}
-            >
-              平台配置
-            </Button>
-            <div style={userPanelStyle}>
-              <Text strong style={{ display: 'block', color: '#111827' }}>{currentWorkspace?.name || '未选择工作空间'}</Text>
-              <Text style={{ color: '#697386', fontSize: 12 }}>当前工作空间</Text>
-            </div>
-          </div>
+          <Title level={2} style={{ margin: 0, color: 'var(--aw-text)', letterSpacing: 0 }}>选择工作空间</Title>
+          <Button icon={<BgColorsOutlined />} onClick={() => navigate('/workspaces/branding')}>平台配置</Button>
         </div>
 
         <Tabs
           defaultActiveKey="mine"
+          tabBarExtraContent={
+          <button
+            type="button"
+            className="aw-recycle-bin-entry"
+            data-testid="workspace-recycle-bin-entry"
+            aria-label="打开工作空间回收站"
+            onClick={() => navigate('/workspaces/recycle-bin')}
+          >
+            <RestOutlined /> 工作空间回收站
+          </button>
+          }
           items={[
             {
               key: 'mine',
@@ -142,7 +129,7 @@ export function WorkspaceSelectPage() {
                             data-testid={`workspace-card-shell-${workspace.id}`}
                             style={getOrgCardStyle(active)}
                             onMouseEnter={(event) => {
-                              event.currentTarget.style.borderColor = BRAND_ORANGE;
+                              event.currentTarget.style.borderColor = ACCENT_COLOR;
                               event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
                               event.currentTarget.style.transform = 'translateY(-1px)';
                             }}
@@ -153,7 +140,7 @@ export function WorkspaceSelectPage() {
                               event.currentTarget.style.transform = String(nextStyle.transform || 'none');
                             }}
                             onFocus={(event) => {
-                              event.currentTarget.style.borderColor = BRAND_ORANGE;
+                              event.currentTarget.style.borderColor = ACCENT_COLOR;
                               event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
                             }}
                             onBlur={(event) => {
@@ -171,11 +158,8 @@ export function WorkspaceSelectPage() {
                               onClick={() => handleSwitch(workspace)}
                             >
                               <span style={orgMarkStyle}>{getOrgInitial(workspace.name)}</span>
-                              <span style={orgNameStyle}>{workspace.name}</span>
-                              <span style={orgDescStyle}>{workspace.description || '暂无描述'}</span>
-                              <span style={orgActionStyle}>
-                                进入工作空间 <ArrowRightOutlined />
-                              </span>
+                              <EllipsisText tooltip={workspace.name} style={orgNameStyle}>{workspace.name}</EllipsisText>
+                              <EllipsisText tooltip={workspace.description || '暂无描述'} lines={2} style={orgDescStyle}>{workspace.description || '暂无描述'}</EllipsisText>
                             </button>
                             {/* F1.2: siblings of the enter button rather than children of it. A
                                 control nested inside a <button> is invalid HTML and its click
@@ -259,7 +243,7 @@ export function WorkspaceSelectPage() {
                             type="primary"
                             htmlType="submit"
                             loading={creating}
-                            style={{ marginRight: 8, background: BRAND_ORANGE, borderColor: BRAND_ORANGE }}
+                            style={{ marginRight: 8 }}
                           >
                             创建
                           </Button>
@@ -281,20 +265,6 @@ export function WorkspaceSelectPage() {
           ]}
         />
 
-        {/* F4.1: bottom-right of the list page, a real button (icon + text) rather than a
-            decorative element, and it only ever carries workspaces. */}
-        <div style={recycleBinBarStyle}>
-          <button
-            type="button"
-            className="aw-recycle-bin-entry"
-            data-testid="workspace-recycle-bin-entry"
-            aria-label="打开工作空间回收站"
-            onClick={() => navigate('/workspaces/recycle-bin')}
-          >
-            <RestOutlined /> 工作空间回收站
-          </button>
-        </div>
-
         <WorkspaceEditModal workspace={editTarget} onClose={() => setEditTarget(null)} />
         <WorkspaceDeleteModal
           workspace={deleteTarget}
@@ -313,39 +283,23 @@ function getOrgInitial(name: string) {
 function getOrgCardStyle(active: boolean): CSSProperties {
   return {
     ...orgCardStyle,
-    borderColor: active ? BRAND_ORANGE : '#e5e7eb',
+    borderColor: active ? ACCENT_COLOR : 'var(--aw-border)',
     boxShadow: active ? WORKSPACE_CARD_SHADOW : 'none',
   };
 }
 
 const pageShellStyle: CSSProperties = {
   minHeight: '100vh',
-  padding: '42px 24px',
-  background: 'radial-gradient(circle at 18% 0%, rgba(255, 106, 0, 0.12), transparent 28%), linear-gradient(180deg, #fff7ed 0%, #ffffff 34%, #ffffff 100%)',
-};
-
-const contentStyle: CSSProperties = {
-  width: 'min(1120px, 100%)',
-  margin: '0 auto',
+  background: 'var(--aw-bg)',
 };
 
 const headerStyle: CSSProperties = {
   display: 'flex',
-  alignItems: 'flex-end',
+  alignItems: 'center',
   justifyContent: 'space-between',
   gap: 24,
-  marginBottom: 26,
+  marginBottom: 12,
   flexWrap: 'wrap',
-};
-
-const userPanelStyle: CSSProperties = {
-  minWidth: 190,
-  border: `1px solid ${BRAND_ORANGE_LINE}`,
-  background: 'rgba(255,255,255,0.86)',
-  borderRadius: 10,
-  padding: '12px 14px',
-  textAlign: 'right',
-  boxShadow: '0 8px 24px rgba(255, 106, 0, 0.08)',
 };
 
 const orgGridStyle: CSSProperties = {
@@ -355,10 +309,11 @@ const orgGridStyle: CSSProperties = {
 };
 
 const orgCardStyle: CSSProperties = {
+  minWidth: 0,
   position: 'relative',
   minHeight: 178,
-  border: '1px solid #e5e7eb',
-  background: '#fff',
+  border: '1px solid var(--aw-border)',
+  background: 'var(--aw-panel)',
   borderRadius: 8,
   padding: 18,
   cursor: 'pointer',
@@ -395,17 +350,11 @@ const cardManageAreaStyle: CSSProperties = {
   marginTop: 12,
 };
 
-const recycleBinBarStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  marginTop: 18,
-};
-
 const createCardStyle: CSSProperties = {
   ...orgCardStyle,
   borderStyle: 'dashed',
-  borderColor: '#fdba74',
-  background: 'rgba(255, 247, 237, 0.72)',
+  borderColor: 'var(--aw-border)',
+  background: 'var(--aw-raised)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -420,8 +369,8 @@ const orgMarkStyle: CSSProperties = {
   display: 'grid',
   placeItems: 'center',
   marginBottom: 18,
-  background: `linear-gradient(135deg, ${BRAND_ORANGE}, #f59e0b)`,
-  color: '#fff',
+  background: 'var(--aw-primary)',
+  color: 'var(--aw-primary-ink)',
   fontWeight: 800,
   fontSize: 16,
 };
@@ -430,9 +379,9 @@ const plusMarkStyle: CSSProperties = {
   width: 44,
   height: 44,
   borderRadius: 8,
-  border: '1px solid #fdba74',
-  color: BRAND_ORANGE,
-  background: '#fff',
+  border: '1px solid var(--aw-border)',
+  color: ACCENT_COLOR,
+  background: 'var(--aw-panel)',
   display: 'grid',
   placeItems: 'center',
   fontSize: 24,
@@ -445,15 +394,18 @@ const currentBadgeStyle: CSSProperties = {
   right: 12,
   padding: '3px 8px',
   borderRadius: 999,
-  background: BRAND_ORANGE,
-  color: '#fff',
+  background: 'var(--aw-primary)',
+  color: 'var(--aw-primary-ink)',
   fontSize: 12,
   fontWeight: 700,
 };
 
 const orgNameStyle: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
   display: 'block',
-  color: '#111827',
+  color: 'var(--aw-text)',
   fontSize: 18,
   fontWeight: 700,
   lineHeight: 1.3,
@@ -461,27 +413,21 @@ const orgNameStyle: CSSProperties = {
 };
 
 const orgDescStyle: CSSProperties = {
-  display: 'block',
-  color: '#697386',
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+  color: 'var(--aw-muted)',
   fontSize: 13,
   lineHeight: 1.6,
   minHeight: 42,
 };
 
-const orgActionStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  marginTop: 18,
-  color: BRAND_ORANGE_DARK,
-  fontSize: 13,
-  fontWeight: 700,
-};
-
 const emptyStateStyle: CSSProperties = {
   minHeight: 178,
-  border: `1px dashed ${BRAND_ORANGE_LINE}`,
-  background: '#fff',
+  border: `1px dashed ${BORDER_COLOR}`,
+  background: 'var(--aw-panel)',
   borderRadius: 8,
   display: 'grid',
   placeItems: 'center',
@@ -490,6 +436,6 @@ const emptyStateStyle: CSSProperties = {
 
 const createFormCardStyle: CSSProperties = {
   marginTop: 18,
-  borderColor: BRAND_ORANGE_LINE,
-  boxShadow: '0 10px 28px rgba(255, 106, 0, 0.08)',
+  borderColor: BORDER_COLOR,
+  boxShadow: 'none',
 };

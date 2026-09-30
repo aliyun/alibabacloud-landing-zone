@@ -79,10 +79,11 @@ describe('SkillListPage', () => {
     expect(screen.getByText('全部')).toBeInTheDocument();
     expect(screen.getAllByText('MCP 服务').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('技能').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('接入方式').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('更新时间').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('更新人').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('命令行接入')).toBeInTheDocument();
+    // 接入方式/更新时间/更新人/版本 列已从列表移除（列过多导致横向滚动），详情弹窗中仍展示
+    expect(within(screen.getByRole('table')).queryByText('接入方式')).toBeNull();
+    expect(within(screen.getByRole('table')).queryByText('更新时间')).toBeNull();
+    expect(within(screen.getByRole('table')).queryByText('更新人')).toBeNull();
+    expect(within(screen.getByRole('table')).queryByText('版本')).toBeNull();
     expect(screen.getAllByText('详情').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('删除')[0].closest('td')).toHaveClass('ant-table-cell-fix-right');
     expect(screen.queryByText('npx @anthropic/mcp-server-github')).not.toBeInTheDocument();

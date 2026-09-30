@@ -1,0 +1,14 @@
+.hub-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.hub-page-tabs .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.hub-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

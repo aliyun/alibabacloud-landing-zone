@@ -1,5 +1,8 @@
 package com.aliyun.autowonder.integration;
 
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.integration.aone.AoneOpenApiConfig;
 import com.aliyun.autowonder.integration.aone.AoneIntegrationProperties;
 import com.aliyun.autowonder.integration.common.ExternalCommentLinkDO;
@@ -10,7 +13,6 @@ import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO;
 import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDao;
 import com.aliyun.autowonder.integration.dto.AoneSyncResult;
 import com.aliyun.autowonder.integration.provider.ExternalComment;
-import com.aliyun.autowonder.integration.provider.ExternalStatusOption;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemDetail;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemProvider;
 import com.aliyun.autowonder.integration.provider.ExternalWorkitemSummary;
@@ -19,6 +21,9 @@ import com.aliyun.autowonder.notification.NotifyEvent;
 import com.aliyun.autowonder.notification.NotifyService;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
+import com.aliyun.autowonder.statemachine.StatusNodeDao;
+import com.aliyun.autowonder.statemachine.StatusTemplateDO;
+import com.aliyun.autowonder.statemachine.StatusTemplateDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
 import com.aliyun.autowonder.workitem.WorkitemDO;
@@ -33,9 +38,11 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.HashSet;
@@ -62,9 +69,11 @@ public class AoneInboundSyncService {
     private final ExternalWorkitemLinkDao linkDao;
     private final ExternalCommentLinkDao commentLinkDao;
     private final ExternalProjectBindingDao bindingDao;
-    private final ExternalStatusBootstrapService statusBootstrapService;
+    private final StatusTemplateDao templateDao;
+    private final StatusNodeDao nodeDao;
     private final ExternalPrincipalService principalService;
     private final NotifyService notifyService;
+    private final GuidanceService guidanceService;
     private final AoneIntegrationProperties properties;
 
     @Autowired
@@ -72,10 +81,10 @@ public class AoneInboundSyncService {
                                   WorkitemDao workitemDao, WorkitemCommentDao commentDao, WorkitemEventDao eventDao,
                                   ExternalWorkitemLinkDao linkDao, ExternalCommentLinkDao commentLinkDao,
                                   ExternalProjectBindingDao bindingDao,
-                                  ExternalStatusBootstrapService statusBootstrapService,
+                                  StatusTemplateDao templateDao, StatusNodeDao nodeDao,
                                   ExternalPrincipalService principalService,
                                   NotifyService notifyService,
-                                  AoneIntegrationProperties properties) {
+                                  GuidanceService guidanceService, AoneIntegrationProperties properties) {
         this.workitemProvider = workitemProvider;
         this.secretCrypto = secretCrypto;
         this.workitemDao = workitemDao;
@@ -84,9 +93,11 @@ public class AoneInboundSyncService {
         this.linkDao = linkDao;
         this.commentLinkDao = commentLinkDao;
         this.bindingDao = bindingDao;
-        this.statusBootstrapService = statusBootstrapService;
+        this.templateDao = templateDao;
+        this.nodeDao = nodeDao;
         this.principalService = principalService;
         this.notifyService = notifyService;
+        this.guidanceService = guidanceService;
         this.properties = properties;
     }
 
@@ -94,21 +105,30 @@ public class AoneInboundSyncService {
                            WorkitemDao workitemDao, WorkitemCommentDao commentDao, WorkitemEventDao eventDao,
                            ExternalWorkitemLinkDao linkDao, ExternalCommentLinkDao commentLinkDao,
                            ExternalProjectBindingDao bindingDao,
-                           ExternalStatusBootstrapService statusBootstrapService,
+                           StatusTemplateDao templateDao, StatusNodeDao nodeDao,
                            ExternalPrincipalService principalService,
-                           AoneIntegrationProperties properties) {
+                           NotifyService notifyService, AoneIntegrationProperties properties) {
         this(workitemProvider, secretCrypto, workitemDao, commentDao, eventDao, linkDao, commentLinkDao,
-                bindingDao, statusBootstrapService, principalService, null, properties);
+                bindingDao, templateDao, nodeDao, principalService, notifyService, null, properties);
     }
 
     AoneInboundSyncService(ExternalWorkitemProvider workitemProvider, SecretCrypto secretCrypto,
                            WorkitemDao workitemDao, WorkitemCommentDao commentDao, WorkitemEventDao eventDao,
                            ExternalWorkitemLinkDao linkDao, ExternalCommentLinkDao commentLinkDao,
                            ExternalProjectBindingDao bindingDao,
-                           ExternalStatusBootstrapService statusBootstrapService,
-                           AoneIntegrationProperties properties) {
+                           StatusTemplateDao templateDao, StatusNodeDao nodeDao,
+                           ExternalPrincipalService principalService, AoneIntegrationProperties properties) {
         this(workitemProvider, secretCrypto, workitemDao, commentDao, eventDao, linkDao, commentLinkDao,
-                bindingDao, statusBootstrapService, null, null, properties);
+                bindingDao, templateDao, nodeDao, principalService, null, properties);
+    }
+
+    AoneInboundSyncService(ExternalWorkitemProvider workitemProvider, SecretCrypto secretCrypto,
+                           WorkitemDao workitemDao, WorkitemCommentDao commentDao, WorkitemEventDao eventDao,
+                           ExternalWorkitemLinkDao linkDao, ExternalCommentLinkDao commentLinkDao,
+                           ExternalProjectBindingDao bindingDao,
+                           StatusTemplateDao templateDao, StatusNodeDao nodeDao, AoneIntegrationProperties properties) {
+        this(workitemProvider, secretCrypto, workitemDao, commentDao, eventDao, linkDao, commentLinkDao,
+                bindingDao, templateDao, nodeDao, null, null, properties);
     }
 
     @Transactional
@@ -274,6 +294,8 @@ public class AoneInboundSyncService {
                     }
                 }
             }
+            // Community retains scheduled comment intake here; the separate comment-cursor poller
+            // is not part of the optional Community integration.
             syncDetails(binding, config, externalIds, details, userId, true);
         }
 
@@ -302,7 +324,7 @@ public class AoneInboundSyncService {
                                        List<ExternalWorkitemDetail> details, long userId, boolean includeComments) {
         AoneSyncResult result = new AoneSyncResult();
         for (ExternalWorkitemDetail detail : details) {
-            UpsertResult upsert = upsertWorkitem(binding, config, detail, userId);
+            UpsertResult upsert = upsertWorkitem(binding, detail, userId);
             if (upsert.created) result.setImported(result.getImported() + 1);
             if (upsert.updated) result.setUpdated(result.getUpdated() + 1);
             result.getWorkitemIds().add(upsert.workitemId);
@@ -310,56 +332,31 @@ public class AoneInboundSyncService {
         if (includeComments && !ids.isEmpty()) {
             importComments(binding, config, ids, result, userId);
         }
-        bindingDao.markSyncSuccess(binding.getId(), binding.getTenantId(), new Date());
         return result;
     }
 
-    private Map<String, List<ExternalStatusOption>> loadStatusRules(ExternalProjectBindingDO binding,
-                                                                    AoneOpenApiConfig config,
-                                                                    List<ExternalWorkitemDetail> details) {
-        Map<String, List<ExternalStatusOption>> result = new LinkedHashMap<>();
-        details.stream()
-                .map(ExternalWorkitemDetail::getWorkType)
-                .filter(Objects::nonNull)
-                .distinct()
-                .forEach(workType -> {
-                    try {
-                        Integer issueTypeId = details.stream()
-                                .filter(detail -> workType.equals(detail.getWorkType()))
-                                .map(ExternalWorkitemDetail::getExternalIssueTypeId)
-                                .map(this::intValue)
-                                .filter(Objects::nonNull)
-                                .findFirst()
-                                .orElseGet(() -> issueTypeId(workType));
-                        List<ExternalStatusOption> statuses = workitemProvider.listStatusRules(
-                                config, binding.getExternalProjectId(), issueTypeId);
-                        result.put(workType, statuses);
-                    } catch (RuntimeException e) {
-                        log.warn("Aone status rules lookup failed bindingId={} workType={} error={}",
-                                binding.getId(), workType, e.getMessage());
-                        log.debug("Aone status rules lookup exception", e);
-                    }
-                });
-        return result;
-    }
-
-    private int issueTypeId(String workType) {
-        return switch (workType) {
-            case "REQ" -> 9;
-            case "BUG" -> 6;
-            default -> 8;
-        };
-    }
-
-    private Integer intValue(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
+    /**
+     * 首次导入统一进入默认模板初始节点（规格 3.5）：与 Aone 当前状态无关，不再按来源状态
+     * 选择/创建节点，也不再按名称/顺序推断类别。来源状态只写入 link 快照（applySnapshot）
+     * 作只读展示，不参与任何分类或结束判断。
+     *
+     * <p>后台轮询链路没有请求工作空间上下文，TenantInterceptor 不生效，必须按绑定的
+     * tenantId 显式查默认模板，避免把其他工作空间的模板写进本空间工单。
+     */
+    private StatusNodeDO defaultInitNode(long tenantId, String workType) {
+        String type = workType == null || workType.isBlank() ? "TASK" : workType;
+        StatusTemplateDO template = templateDao.listByWorkType(tenantId, type).stream()
+                .filter(t -> t.getIsDefault() != null && t.getIsDefault() == 1)
+                .findFirst()
+                .orElse(null);
+        if (template == null) {
+            throw new BizException(ErrorCode.STATUS_TEMPLATE_NOT_FOUND);
         }
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException ignored) {
-            return null;
+        StatusNodeDO init = nodeDao.findInitNode(template.getId());
+        if (init == null) {
+            throw new BizException(ErrorCode.STATUS_TEMPLATE_NOT_FOUND);
         }
+        return init;
     }
 
     private void importComments(ExternalProjectBindingDO binding, AoneOpenApiConfig config, List<String> ids,
@@ -374,10 +371,23 @@ public class AoneInboundSyncService {
                                     AoneSyncResult result, long userId) {
         List<ExternalComment> comments = loadComments(binding, config, ids);
         for (ExternalComment comment : comments) {
-            if (importComment(binding, comment, userId)) {
+            CommentImportResult imported = importComment(binding, comment, userId, null);
+            if (imported.changed()) {
                 result.setCommentsImported(result.getCommentsImported() + 1);
             }
+            triggerGuidance(binding, comment, imported, userId);
         }
+    }
+
+    /** Persists a fetched detail independently of comments; never imports an unlinked workitem. */
+    @Transactional
+    public void syncLinkedWorkitem(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail, long userId) {
+        ExternalWorkitemLinkDO link = linkDao.findByExternalScope(
+                binding.getTenantId(), binding.getId(), detail.getExternalId());
+        if (link == null || workitemDao.findById(link.getWorkitemId()) == null) {
+            return;
+        }
+        updateExistingLink(binding, detail, link, hash(detail.getRawJson()), userId);
     }
 
     private List<ExternalComment> loadComments(ExternalProjectBindingDO binding, AoneOpenApiConfig config,
@@ -408,16 +418,13 @@ public class AoneInboundSyncService {
         return comments;
     }
 
-    private UpsertResult upsertWorkitem(ExternalProjectBindingDO binding, AoneOpenApiConfig config,
-                                        ExternalWorkitemDetail detail, long userId) {
+    private UpsertResult upsertWorkitem(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail, long userId) {
         String hash = hash(detail.getRawJson());
         ExternalWorkitemLinkDO link = linkDao.findByExternalScope(
                 binding.getTenantId(), binding.getId(), detail.getExternalId());
         if (link == null) {
             ExternalPrincipalService.IdentitySnapshot identity = resolveIdentity(binding, detail, null);
-            List<ExternalStatusOption> statuses = loadStatusRules(binding, config, List.of(detail))
-                    .getOrDefault(detail.getWorkType() == null ? "TASK" : detail.getWorkType(), List.of());
-            StatusNodeDO node = statusBootstrapService.ensureStatus(binding, detail, statuses, userId);
+            StatusNodeDO node = defaultInitNode(binding.getTenantId(), detail.getWorkType());
             WorkitemDO workitem = new WorkitemDO();
             workitem.setTenantId(binding.getTenantId());
             workitem.setWorkType(detail.getWorkType());
@@ -467,14 +474,14 @@ public class AoneInboundSyncService {
                                 + " bindingId={} externalWorkitemId={} workitemId={}",
                         binding.getId(), detail.getExternalId(), concurrentLink.getWorkitemId());
                 workitemDao.softDelete(workitem.getId(), binding.getTenantId(), workitem.getVersion(), userId);
-                return updateExistingLink(binding, config, detail, concurrentLink, hash, userId);
+                return updateExistingLink(binding, detail, concurrentLink, hash, userId);
             }
             return new UpsertResult(workitem.getId(), true, false);
         }
-        return updateExistingLink(binding, config, detail, link, hash, userId);
+        return updateExistingLink(binding, detail, link, hash, userId);
     }
 
-    private UpsertResult updateExistingLink(ExternalProjectBindingDO binding, AoneOpenApiConfig config,
+    private UpsertResult updateExistingLink(ExternalProjectBindingDO binding,
                                             ExternalWorkitemDetail detail, ExternalWorkitemLinkDO link,
                                             String hash, long userId) {
         if (isPendingOutboundStaleSnapshot(link, hash)) {
@@ -485,7 +492,7 @@ public class AoneInboundSyncService {
         }
         WorkitemDO existing = workitemDao.findById(link.getWorkitemId());
         ExternalPrincipalService.IdentitySnapshot identity = resolveIdentity(binding, detail, link);
-        boolean updated = syncExistingWorkitem(binding, detail, existing, link, userId);
+        boolean updated = syncExistingWorkitem(binding, detail, existing, userId);
         Long previousBusinessOwnerId = link.getBusinessOwnerPrincipalId();
         String previousLifecycle = link.getSourceLifecycle();
         applySnapshot(link, detail, identity, hash);
@@ -502,16 +509,12 @@ public class AoneInboundSyncService {
     }
 
     private boolean syncExistingWorkitem(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail,
-                                         WorkitemDO existing, ExternalWorkitemLinkDO link, long userId) {
+                                         WorkitemDO existing, long userId) {
         if (existing == null) {
             return false;
         }
-        int version = existing.getVersion();
-        boolean statusChanged = false;
-        if (syncExternalStatus(binding, detail, existing, link, version, userId)) {
-            statusChanged = true;
-            version++;
-        }
+        // 对账/同步/重复导入只更新标题、正文与优先级（规格 3.5）：AW 业务状态由 AW 独立管理，
+        // 不随 Aone 状态覆盖或重置；来源状态仅写入 link 快照（applySnapshot）作只读展示。
         String title = detail.getTitle() == null ? existing.getTitle() : truncateTitle(detail.getTitle());
         String contentMd = detail.getContentMd() == null ? existing.getContentMd() : detail.getContentMd();
         Integer priority = detail.getPriority() == null ? existing.getPriority() : detail.getPriority();
@@ -520,39 +523,13 @@ public class AoneInboundSyncService {
                 || !Objects.equals(priority, existing.getPriority());
         if (contentChanged) {
             int rows = workitemDao.updateExternalContent(existing.getId(), binding.getTenantId(), title, contentMd,
-                    priority, version, userId);
+                    priority, existing.getVersion(), userId);
             if (rows == 0) {
                 throw new IllegalStateException("external workitem content version conflict");
             }
             writeEvent(binding.getTenantId(), existing.getId(), WorkitemEventType.AONE_UPDATE.code(), null, detail.getExternalId(), userId);
         }
-        return statusChanged || contentChanged;
-    }
-
-    private boolean syncExternalStatus(ExternalProjectBindingDO binding, ExternalWorkitemDetail detail,
-                                       WorkitemDO existing, ExternalWorkitemLinkDO link, int version, long userId) {
-        // Imported workitems track the source status only until delivery starts; once a squad/agent
-        // owns the workitem the delivery state machine is authoritative and Aone drift must not
-        // overwrite it.
-        if (!"EXTERNAL".equals(existing.getAssigneeType())) {
-            return false;
-        }
-        String incomingStatus = detail.getStatusName();
-        if (incomingStatus == null || incomingStatus.isBlank()
-                || incomingStatus.equals(link.getSourceStatusName())) {
-            return false;
-        }
-        StatusNodeDO node = statusBootstrapService.ensureStatus(binding, detail, List.of(), userId);
-        if (node == null || node.getId().equals(existing.getStatusNodeId())) {
-            return false;
-        }
-        int rows = workitemDao.updateStatus(existing.getId(), binding.getTenantId(), node.getId(), version, userId);
-        if (rows == 0) {
-            throw new IllegalStateException("external workitem status version conflict");
-        }
-        writeEvent(binding.getTenantId(), existing.getId(), WorkitemEventType.STATUS_CHANGE.code(),
-                link.getSourceStatusName(), node.getName(), userId);
-        return true;
+        return contentChanged;
     }
 
     private boolean isPendingOutboundStaleSnapshot(ExternalWorkitemLinkDO link, String remoteHash) {
@@ -568,9 +545,10 @@ public class AoneInboundSyncService {
                 && detail.getUpdatedAt().before(link.getRemoteUpdatedAt());
     }
 
-    private boolean importComment(ExternalProjectBindingDO binding, ExternalComment comment, long userId) {
+    private CommentImportResult importComment(ExternalProjectBindingDO binding, ExternalComment comment, long userId,
+                                              ExternalWorkitemLinkDO knownWorkitemLink) {
         if (comment.getExternalId() == null) {
-            return false;
+            return CommentImportResult.ignored();
         }
         ExternalCommentLinkDO existingCommentLink = commentLinkDao.findByExternalScope(
                 binding.getTenantId(), binding.getId(), comment.getExternalWorkitemId(), comment.getExternalId());
@@ -578,13 +556,15 @@ public class AoneInboundSyncService {
             // 本地评论写回 Aone 后会被下一轮拉取再次返回。OUTBOUND 关联仅用于关联回写结果，
             // 不能再按外部评论回灌，否则会重复写入 EXTERNAL_COMMENT_EDIT 事件。
             if ("OUTBOUND".equals(existingCommentLink.getDirection())) {
-                return false;
+                return CommentImportResult.ignored();
             }
-            return updateExternalComment(binding, existingCommentLink, comment, userId);
+            boolean changed = updateExternalComment(binding, existingCommentLink, comment, userId);
+            return new CommentImportResult(changed, false, existingCommentLink.getWorkitemCommentId(), null);
         }
-        ExternalWorkitemLinkDO link = linkDao.findByExternalScope(
-                binding.getTenantId(), binding.getId(), comment.getExternalWorkitemId());
-        if (link == null) return false;
+        ExternalWorkitemLinkDO link = knownWorkitemLink == null
+                ? linkDao.findByExternalScope(binding.getTenantId(), binding.getId(), comment.getExternalWorkitemId())
+                : knownWorkitemLink;
+        if (link == null) return CommentImportResult.ignored();
         WorkitemCommentDO local = new WorkitemCommentDO();
         local.setTenantId(binding.getTenantId());
         local.setWorkitemId(link.getWorkitemId());
@@ -606,7 +586,21 @@ public class AoneInboundSyncService {
         cl.setSourceStatus(comment.getSourceStatus());
         commentLinkDao.insert(cl);
         notifyExternalReply(binding, link.getWorkitemId(), comment);
-        return true;
+        return new CommentImportResult(true, true, local.getId(), link.getWorkitemId());
+    }
+
+    private void triggerGuidance(ExternalProjectBindingDO binding, ExternalComment comment,
+                                 CommentImportResult imported, long userId) {
+        if (guidanceService == null || !imported.created() || imported.localCommentId() == null
+                || imported.workitemId() == null || comment.getContentMd() == null
+                || "DELETED".equals(comment.getSourceStatus())
+                || Objects.equals(binding.getWritebackStaffId(), comment.getAuthorStaffId())) {
+            return;
+        }
+        // GuidanceService owns plain-text and Aone rich-text mention resolution. Always delegate
+        // newly imported comments so an HTML <span data-type="mention"> is not rejected here.
+        guidanceService.createForComment(binding.getTenantId(), imported.workitemId(),
+                imported.localCommentId(), comment.getContentMd(), null, userId);
     }
 
     private void notifyExternalReply(ExternalProjectBindingDO binding, long workitemId, ExternalComment comment) {
@@ -746,6 +740,19 @@ public class AoneInboundSyncService {
         }
     }
 
+    private String normalizedCommentCursor(String cursor) {
+        return cursor == null || cursor.isBlank() ? "0" : cursor.trim();
+    }
+
+    private int compareCommentIds(String left, String right) {
+        String a = normalizedCommentCursor(left);
+        String b = normalizedCommentCursor(right);
+        if (!a.chars().allMatch(Character::isDigit) || !b.chars().allMatch(Character::isDigit)) {
+            throw new IllegalArgumentException("Aone commentId must be numeric");
+        }
+        return new BigInteger(a).compareTo(new BigInteger(b));
+    }
+
     private void writeEvent(long tenantId, long workitemId, String eventType, String from, String to, long userId) {
         WorkitemEventDO event = new WorkitemEventDO();
         event.setTenantId(tenantId);
@@ -768,5 +775,14 @@ public class AoneInboundSyncService {
     }
 
     private record UpsertResult(long workitemId, boolean created, boolean updated) {
+    }
+
+    private record CommentImportResult(boolean changed, boolean created, Long localCommentId, Long workitemId) {
+        private static CommentImportResult ignored() {
+            return new CommentImportResult(false, false, null, null);
+        }
+    }
+
+    public record CommentSyncResult(int processed, int imported, int changed, String cursor) {
     }
 }

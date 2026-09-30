@@ -1,0 +1,13 @@
+.aw-markdown { color: var(--aw-text); }
+.aw-markdown pre { background: var(--aw-raised); border: 1px solid var(--aw-border); border-radius: 8px; padding: 12px; }
+.aw-markdown code { background: var(--aw-raised); border-radius: 4px; padding: 1px 4px; }
+.aw-markdown pre code { background: transparent; padding: 0; }
+.aw-markdown blockquote { border-left: 3px solid var(--aw-border); color: var(--aw-muted); padding-left: 12px; }
+.aw-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.aw-markdown th, .aw-markdown td { border: 1px solid var(--aw-border); padding: 6px 10px; }
+.aw-markdown th { background: var(--aw-raised); text-align: center; }
+.aw-markdown a { color: var(--aw-accent-text); }
+.aw-markdown hr { border: 0; border-top: 1px solid var(--aw-border); }
+.aw-markdown ul.contains-task-list { list-style: none; padding-left: 1.4em; }
+.aw-markdown li.task-list-item { list-style: none; }
+.aw-markdown li.task-list-item > input { margin-right: .4em; }

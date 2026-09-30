@@ -14,8 +14,8 @@ interface CommentInputProps {
 }
 
 const mentionOptionHighlightStyle: CSSProperties = {
-  color: '#0958d9',
-  background: '#e6f4ff',
+  color: 'var(--aw-accent-text)',
+  background: 'rgba(var(--aw-accent-rgb),.10)',
   borderRadius: 4,
   padding: '0 4px',
   fontWeight: 600,
@@ -37,8 +37,9 @@ const mentionMenuStyle: CSSProperties = {
   bottom: '100%',
   marginBottom: 6,
   padding: '4px 0',
-  background: '#fff',
-  border: '1px solid #d9d9d9',
+  background: 'var(--aw-glass)',
+  backdropFilter: 'blur(18px)',
+  border: '1px solid var(--aw-border)',
   borderRadius: 6,
   boxShadow: '0 6px 16px rgba(0, 0, 0, 0.08)',
   zIndex: 20,
@@ -52,12 +53,13 @@ const mentionMenuItemStyle: CSSProperties = {
   padding: '6px 12px',
   border: 0,
   background: 'transparent',
+  color: 'var(--aw-text)',
   textAlign: 'left',
   cursor: 'pointer',
 };
 
 const activeMentionMenuItemStyle: CSSProperties = {
-  background: '#f0f7ff',
+  background: 'rgba(var(--aw-accent-rgb),.10)',
 };
 
 function findActiveMentionQuery(value: string, caretIndex: number): string | null {
@@ -107,7 +109,7 @@ export function CommentInput({ workitemId, participants = [], mentionCandidates,
       .map((item) => {
         const targetType: 'AGENT' | 'HUMAN' = item.isAgent ? 'AGENT' : 'HUMAN';
         const targetId = Number(item.userId);
-        const kindLabel = item.isAgent ? '数字人' : '真人';
+        const kindLabel = item.isAgent ? '数字员工' : '真人';
         return {
           value: item.name,
           label: (
@@ -115,8 +117,8 @@ export function CommentInput({ workitemId, participants = [], mentionCandidates,
               <span style={mentionOptionHighlightStyle}>
                 @{item.name}
               </span>
-              <span style={{ marginLeft: 6, color: item.isAgent ? '#fa8c16' : '#1677ff' }}>{kindLabel}</span>
-              {item.displayId ? <span style={{ marginLeft: 6, color: '#8c8c8c' }}>{item.displayId}</span> : null}
+              <span style={{ marginLeft: 6, color: item.isAgent ? 'var(--aw-warning)' : 'var(--aw-accent-text)' }}>{kindLabel}</span>
+              {item.displayId ? <span style={{ marginLeft: 6, color: 'var(--aw-muted)' }}>{item.displayId}</span> : null}
               {item.isAgent && !item.online ? '（离线，稍后送达）' : ''}
             </span>
           ),
@@ -314,7 +316,7 @@ export function CommentInput({ workitemId, participants = [], mentionCandidates,
           icon={<SendOutlined />}
           style={{
             alignSelf: 'stretch', height: 'auto', padding: '0 18px',
-            background: '#fff7ed', borderColor: '#fdba74', color: '#c2410c',
+            background: 'rgba(var(--aw-accent-rgb),.10)', borderColor: 'var(--aw-accent)', color: 'var(--aw-accent-text)',
           }}
           onClick={handleSend}
           loading={isPending}

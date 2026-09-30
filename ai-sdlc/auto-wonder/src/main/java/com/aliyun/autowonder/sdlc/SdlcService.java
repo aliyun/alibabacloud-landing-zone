@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.sdlc;
 
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDao;
@@ -93,6 +94,14 @@ public class SdlcService {
             squadAttributionService.fillSdlcSquads(tenantId, result);
         }
         return result;
+    }
+
+    public PageResult<SdlcVO> listPage(Long tenantId, String workType, String status,
+                                      List<Long> squadIds, int page, int size) {
+        int p = Math.max(page, 1);
+        int sz = Math.min(size < 1 ? 20 : size, 100);
+        List<SdlcVO> items = list(tenantId, workType, status, squadIds, p, sz);
+        return new PageResult<>(items, sdlcDao.count(workType, status, tenantId, squadIds), p, sz);
     }
 
     // 列表 VO 的 steps 恒为 null（不拉 MEDIUMTEXT 明细），改用一次聚合查询填 stepCount，

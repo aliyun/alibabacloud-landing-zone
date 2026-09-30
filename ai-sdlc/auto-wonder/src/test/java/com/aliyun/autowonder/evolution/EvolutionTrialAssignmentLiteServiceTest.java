@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.evolution;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao;
@@ -133,7 +133,7 @@ class EvolutionTrialAssignmentLiteServiceTest {
         proposal.setAssetType("SKILL");
         proposal.setAssetId(88L);
         proposal.setStatus("TRIAL");
-        proposal.setPolicyJson(JSONObject.toJSONString(Map.of("action", action)));
+        proposal.setPolicyJson(JSON.toJSONString(Map.of("action", action)));
         proposal.setCandidatePatchJson(patch);
         proposal.setTrialJson("{\"taskPatternKey\":\"coding:repo-a:coding\"}");
         return proposal;

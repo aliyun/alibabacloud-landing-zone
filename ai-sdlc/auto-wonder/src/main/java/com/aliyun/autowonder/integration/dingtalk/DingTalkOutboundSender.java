@@ -41,13 +41,13 @@ public class DingTalkOutboundSender {
         if (e != null && e.expireAtMs > nowMs + 60_000) {
             return e.token;
         }
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("appKey", appKey);
         payload.put("appSecret", appSecret);
         String resp = http.post(resolvedBaseUrl + "/v1.0/oauth2/accessToken",
                 payload.toJSONString(), java.util.Map.of());
-        String token = com.alibaba.fastjson.JSON.parseObject(resp).getString("accessToken");
-        long expiresIn = com.alibaba.fastjson.JSON.parseObject(resp).getLongValue("expireIn");
+        String token = com.aliyun.autowonder.json.JSON.parseObject(resp).getString("accessToken");
+        long expiresIn = com.aliyun.autowonder.json.JSON.parseObject(resp).getLongValue("expireIn");
         if (token == null || token.isBlank()) {
             throw new IllegalStateException("DingTalk access token response is incomplete");
         }
@@ -69,15 +69,15 @@ public class DingTalkOutboundSender {
 
     public void sendSessionWebhookMarkdown(String sessionWebhook, String markdown,
             List<String> atUserIds) {
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("msgtype", "markdown");
 
-        com.alibaba.fastjson.JSONObject markdownPayload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject markdownPayload = new com.aliyun.autowonder.json.JSONObject(true);
         markdownPayload.put("title", "Auto Wonder");
         markdownPayload.put("text", markdown);
         payload.put("markdown", markdownPayload);
 
-        com.alibaba.fastjson.JSONObject at = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject at = new com.aliyun.autowonder.json.JSONObject(true);
         at.put("isAtAll", false);
         at.put("atUserIds", atUserIds == null ? List.of() : atUserIds);
         payload.put("at", at);
@@ -86,14 +86,14 @@ public class DingTalkOutboundSender {
     }
 
     public void sendSessionWebhookText(String sessionWebhook, String text, List<String> atUserIds) {
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("msgtype", "text");
 
-        com.alibaba.fastjson.JSONObject textPayload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject textPayload = new com.aliyun.autowonder.json.JSONObject(true);
         textPayload.put("content", text);
         payload.put("text", textPayload);
 
-        com.alibaba.fastjson.JSONObject at = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject at = new com.aliyun.autowonder.json.JSONObject(true);
         at.put("isAtAll", false);
         at.put("atUserIds", atUserIds == null ? List.of() : atUserIds);
         payload.put("at", at);
@@ -105,11 +105,11 @@ public class DingTalkOutboundSender {
             String openConversationId, String markdown, List<String> atUserIds, long nowMs) {
         String resolvedBaseUrl = resolveBaseUrl(baseUrl);
         String token = accessToken(appKey, appSecret, baseUrl, nowMs);
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("robotCode", robotCode);
         payload.put("openConversationId", openConversationId);
         payload.put("msgKey", "sampleMarkdown");
-        com.alibaba.fastjson.JSONObject param = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject param = new com.aliyun.autowonder.json.JSONObject(true);
         param.put("title", "Auto Wonder");
         param.put("text", markdown);
         if (atUserIds != null && !atUserIds.isEmpty()) {
@@ -124,11 +124,11 @@ public class DingTalkOutboundSender {
             String openConversationId, String text, List<String> atUserIds, long nowMs) {
         String resolvedBaseUrl = resolveBaseUrl(baseUrl);
         String token = accessToken(appKey, appSecret, baseUrl, nowMs);
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("robotCode", robotCode);
         payload.put("openConversationId", openConversationId);
         payload.put("msgKey", "sampleText");
-        com.alibaba.fastjson.JSONObject param = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject param = new com.aliyun.autowonder.json.JSONObject(true);
         param.put("content", text);
         if (atUserIds != null && !atUserIds.isEmpty()) {
             param.put("atUserIds", atUserIds);
@@ -142,11 +142,11 @@ public class DingTalkOutboundSender {
             List<String> userIds, String markdown, long nowMs) {
         String resolvedBaseUrl = resolveBaseUrl(baseUrl);
         String token = accessToken(appKey, appSecret, baseUrl, nowMs);
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("robotCode", robotCode);
         payload.put("userIds", userIds == null ? List.of() : userIds);
         payload.put("msgKey", "sampleMarkdown");
-        com.alibaba.fastjson.JSONObject param = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject param = new com.aliyun.autowonder.json.JSONObject(true);
         param.put("title", "Auto Wonder");
         param.put("text", markdown);
         payload.put("msgParam", param.toJSONString());
@@ -170,13 +170,13 @@ public class DingTalkOutboundSender {
             String robotCode, String openConversationId, String openMsgId, String path, long nowMs) {
         String resolvedBaseUrl = resolveBaseUrl(baseUrl);
         String token = accessToken(appKey, appSecret, baseUrl, nowMs);
-        com.alibaba.fastjson.JSONObject payload = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject payload = new com.aliyun.autowonder.json.JSONObject(true);
         payload.put("robotCode", robotCode);
         payload.put("openConversationId", openConversationId);
         payload.put("openMsgId", openMsgId);
         payload.put("emotionType", 2);
         payload.put("emotionName", "🤔思考中");
-        com.alibaba.fastjson.JSONObject textEmotion = new com.alibaba.fastjson.JSONObject(true);
+        com.aliyun.autowonder.json.JSONObject textEmotion = new com.aliyun.autowonder.json.JSONObject(true);
         textEmotion.put("emotionId", "2659900");
         textEmotion.put("emotionName", "🤔思考中");
         textEmotion.put("text", "🤔思考中");

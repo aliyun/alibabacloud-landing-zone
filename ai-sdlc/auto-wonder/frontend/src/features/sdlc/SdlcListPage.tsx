@@ -1,9 +1,11 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo, useState } from 'react';
-import { Table, Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs, Pagination, Spin, Empty } from 'antd';
+import { Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs, Pagination, Spin, Empty } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listSdlcTemplates, createSdlcTemplate, deleteSdlcTemplate, enableSdlcTemplate, disableSdlcTemplate } from './api';
+import { listSdlcTemplatesPage, createSdlcTemplate, deleteSdlcTemplate, enableSdlcTemplate, disableSdlcTemplate } from './api';
 import type { SdlcTemplate } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { SquadTemplateGallery } from './SquadTemplateGallery';
@@ -13,9 +15,12 @@ import { SquadTags } from '@/features/squad/SquadTags';
 import { groupBySquad } from '@/features/squad/squadGrouping';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 
 const SDLCS_VIEW_STORAGE_KEY = 'autowonder.sdlcs.view';
 const SDLCS_VIEW_OPTIONS = ['list', 'grouped'] as const;
+const SDLCS_PAGE_SIZE_STORAGE_KEY = 'autowonder.sdlcs.pageSize';
 
 const statusMap: Record<string, { color: string; label: string }> = {
   DRAFT: { color: 'default', label: '草稿' },
@@ -28,8 +33,9 @@ export function SdlcListPage() {
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
   const [page, setPage] = useState(1);
-  const [size, setSize] = useState(20);
+  const [size, setSize] = usePageSizePreference(SDLCS_PAGE_SIZE_STORAGE_KEY, [10, 20, 50, 100], 10);
   const [createOpen, setCreateOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('templates');
   const [squadFilter, setSquadFilter] = useState<number[]>([]);
   const [grouped, setGrouped] = useState(
     () => readViewPreference(SDLCS_VIEW_STORAGE_KEY, SDLCS_VIEW_OPTIONS, 'grouped') === 'grouped',
@@ -37,15 +43,26 @@ export function SdlcListPage() {
   const [form] = Form.useForm();
   const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
 
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['sdlcs', page, size, squadFilter],
-    queryFn: () => listSdlcTemplates({ page, size, squadIds: squadFilter }),
+  const { data: result, isLoading } = useQuery({
+    queryKey: ['sdlcs', 'page', page, size, squadFilter],
+    queryFn: () => listSdlcTemplatesPage({ page, size, squadIds: squadFilter }),
   });
+
+  const data = result?.list ?? [];
+  const total = result?.total ?? 0;
 
   // The squad filter is applied server-side, so page 1 is the only page that can hold the new result set.
   useEffect(() => {
     setPage(1);
   }, [squadFilter]);
+
+  // Deleting the last row (or a concurrent change) can invalidate the current page.
+  useEffect(() => {
+    if (result) {
+      const lastPage = Math.max(1, Math.ceil(result.total / size));
+      if (page > lastPage) setPage(lastPage);
+    }
+  }, [result, page, size]);
 
   const squadGroups = useMemo(
     () => groupBySquad(data, (sdlc) => sdlc.squadIds, squadNameById),
@@ -84,10 +101,14 @@ export function SdlcListPage() {
   const columns: ColumnsType<SdlcTemplate> = [
     { title: 'ID', dataIndex: 'id', width: 70 },
     {
-      title: '名称', dataIndex: 'name',
-      render: (name: string, record) => <a onClick={() => navigate(`/sdlcs/${record.id}`)}>{name}</a>,
+      title: '名称', dataIndex: 'name', align: 'left', ellipsis: { showTitle: false },
+      render: (name: string, record) => (
+        <EllipsisText tooltip={name}>
+          <a onClick={() => navigate(`/sdlcs/${record.id}`)}>{name}</a>
+        </EllipsisText>
+      ),
     },
-    { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: '描述', dataIndex: 'description', align: 'left', ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText> },
     { title: '工单类型', dataIndex: 'workType', width: 90, render: (v: string | null) => v || '通用' },
     { title: '步骤数', width: 80, render: (_, record) => record.stepCount ?? record.steps?.length ?? 0 },
     {
@@ -135,8 +156,29 @@ export function SdlcListPage() {
   ];
 
   return (
+    <div>
+      <PageHeading
+        title="SDLC 流程模版"
+        extra={activeTab === 'templates' && (
+          <Space>
+            {SDLC_AI_ENABLED && (
+              <Button onClick={() => accessCommand(
+                'READ_WRITE',
+                'AI 生成 SDLC',
+                () => navigate('/sdlcs/generate'),
+              )}>AI 生成</Button>
+            )}
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => accessCommand(
+              'READ_WRITE',
+              '新建 SDLC 模版',
+              () => setCreateOpen(true),
+            )}>新建</Button>
+          </Space>
+        )}
+      />
     <Tabs
-      defaultActiveKey="templates"
+      activeKey={activeTab}
+      onChange={setActiveTab}
       items={[
         {
           key: 'templates',
@@ -156,25 +198,7 @@ export function SdlcListPage() {
                   loading={squadsLoading}
                 />
               </div>
-              <Card
-                title="SDLC 流程模版"
-                extra={
-                  <Space>
-                    {SDLC_AI_ENABLED && (
-                      <Button onClick={() => accessCommand(
-                        'READ_WRITE',
-                        'AI 生成 SDLC',
-                        () => navigate('/sdlcs/generate'),
-                      )}>AI 生成</Button>
-                    )}
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => accessCommand(
-                      'READ_WRITE',
-                      '新建 SDLC 模版',
-                      () => setCreateOpen(true),
-                    )}>新建</Button>
-                  </Space>
-                }
-              >
+              <Card className="aw-content-card">
                 {grouped ? (
                   <Spin spinning={isLoading}>
                     {!isLoading && data.length === 0 ? (
@@ -188,10 +212,10 @@ export function SdlcListPage() {
                                 {group.squadId == null ? (
                                   group.label
                                 ) : (
-                                  <Link to={`/squads?squadId=${group.squadId}`}>{group.label}</Link>
+                                  <Link to={`/agents?tab=squads&squadId=${group.squadId}`}>{group.label}</Link>
                                 )}
                               </strong>
-                              <span style={{ color: '#64748b', fontSize: 12 }}>{group.items.length} 个</span>
+                              <span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{group.items.length} 个</span>
                             </Space>
                             <Table
                               rowKey="id"
@@ -202,17 +226,17 @@ export function SdlcListPage() {
                             />
                           </section>
                         ))}
-                        <Pagination
-                          current={page}
-                          pageSize={size}
-                          total={data.length}
-                          showSizeChanger
-                          showTotal={(t) => `共 ${t} 条`}
-                          onChange={(p, ps) => { setPage(p); setSize(ps); }}
-                          style={{ marginTop: 8, textAlign: 'right' }}
-                        />
                       </>
                     )}
+                    <Pagination
+                      current={page}
+                      pageSize={size}
+                      total={total}
+                      showSizeChanger
+                      showTotal={(t) => `共 ${t} 条`}
+                      onChange={(p, ps) => { setPage(ps !== size ? 1 : p); setSize(ps); }}
+                      style={{ marginTop: 8, textAlign: 'right' }}
+                    />
                   </Spin>
                 ) : (
                   <Table
@@ -221,8 +245,9 @@ export function SdlcListPage() {
                     dataSource={data}
                     loading={isLoading}
                     pagination={{
-                      current: page, pageSize: size,
-                      onChange: (p, ps) => { setPage(p); setSize(ps); },
+                      current: page, pageSize: size, total,
+                      onChange: (p, ps) => { setPage(ps !== size ? 1 : p); setSize(ps); },
+                      showSizeChanger: true,
                       showTotal: (t) => `共 ${t} 条`,
                     }}
                   />
@@ -267,5 +292,6 @@ export function SdlcListPage() {
         },
       ]}
     />
+    </div>
   );
 }

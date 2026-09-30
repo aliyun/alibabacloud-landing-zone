@@ -31,6 +31,12 @@ describe('WorkitemCreatePage', () => {
     vi.restoreAllMocks();
   });
 
+  it('returns to the workitem list from the title without submitting', async () => {
+    renderPage();
+    await userEvent.click(screen.getByRole('button', { name: '返回工单列表' }));
+    expect(screen.getByText('工单列表')).toBeInTheDocument();
+  });
+
   it('does not render deprecated SDLC field nor the scheduled delivery module', () => {
     renderPage();
 

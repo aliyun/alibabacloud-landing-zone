@@ -1,0 +1,23 @@
+.file-preview-content { max-height: 70vh; overflow: auto; color: var(--aw-text); }
+.file-preview-empty { padding: 48px 24px; text-align: center; color: var(--aw-muted); }
+.file-preview-content > img { max-width: 100%; max-height: 70vh; display: block; margin: auto; }
+.file-preview-content > video { width: 100%; max-height: 70vh; display: block; background: var(--aw-bg); }
+.file-preview-content > iframe, .file-preview-content > object { width: 100%; height: 70vh; border: 0; background: var(--aw-panel); display: block; }
+.file-preview-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.file-preview-markdown { font-size: 15px; }
+.file-preview-markdown > :first-child { margin-top: 0; }
+.file-preview-markdown h1, .file-preview-markdown h2 { border-bottom: 1px solid var(--aw-border); padding-bottom: .5em; margin-top: 1.6em; line-height: 1.4; }
+.file-preview-markdown h1 { font-size: 1.8em; }
+.file-preview-markdown h2 { font-size: 1.4em; }
+.file-preview-markdown h3 { font-size: 1.15em; margin-top: 1.5em; }
+.file-preview-markdown p, .file-preview-markdown ul, .file-preview-markdown ol { margin: .8em 0; }
+.file-preview-markdown li + li { margin-top: .35em; }
+.file-preview-markdown table { display: block; overflow-x: auto; border-collapse: collapse; margin: 18px 0; }
+.file-preview-markdown th, .file-preview-markdown td { padding: 10px 14px; border: 1px solid var(--aw-border); text-align: left; }
+.file-preview-markdown th { background: var(--aw-raised); font-weight: 600; text-align: center; }
+.file-preview-markdown tr:nth-child(even) { background: var(--aw-raised); }
+.file-preview-markdown pre { padding: 16px; border: 1px solid var(--aw-border); border-radius: 8px; background: var(--aw-raised); }
+.file-preview-markdown code { padding: 2px 5px; border-radius: 4px; background: var(--aw-raised); font-size: .88em; }
+.file-preview-markdown pre code { padding: 0; background: transparent; }
+.file-preview-markdown blockquote { margin: 18px 0; padding: 2px 18px; border-left: 3px solid var(--aw-border); color: var(--aw-muted); background: var(--aw-raised); }
+.file-preview-markdown a { color: var(--aw-accent-text); text-decoration: underline; text-underline-offset: 3px; }

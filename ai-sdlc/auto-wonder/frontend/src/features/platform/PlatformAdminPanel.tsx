@@ -1,5 +1,7 @@
+import { Table } from '@/shared/theme/ThemedTable';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useState, type ReactNode } from 'react';
-import { Alert, Button, Popconfirm, Select, Space, Table, Tag, Tooltip, message } from 'antd';
+import { Alert, Button, Popconfirm, Select, Space, Tag, Tooltip, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -86,23 +88,42 @@ export function PlatformAdminPanel() {
 
   const columns: ColumnsType<PlatformAdmin> = [
     {
-      title: '用户',
-      key: 'user',
+      title: '管理员',
+      key: 'administrator',
+      width: '24%',
       render: (_, admin) => (
-        <div>
-          <Space size={6}>
-            <span style={{ fontWeight: 500 }}>{displayName(admin)}</span>
-            {admin.self && <Tag color="blue">我</Tag>}
-            {!admin.active && <Tag color="orange">已停用</Tag>}
-          </Space>
-          <div style={{ fontSize: 12, color: '#666' }}>{admin.email || '-'}</div>
-        </div>
+        <span style={{ position: 'relative' }}>
+          <span style={{ fontWeight: 500 }}>{displayName(admin)}</span>
+          {admin.self && <Tag color="blue" style={{ position: 'absolute', marginLeft: 6, whiteSpace: 'nowrap' }}>我</Tag>}
+        </span>
+      ),
+    },
+    {
+      title: '登录账号',
+      dataIndex: 'username',
+      width: '20%',
+      ellipsis: { showTitle: false },
+      render: (v: string) => <EllipsisText tooltip={v}>{v ?? '—'}</EllipsisText>,
+    },
+    {
+      title: '联系邮箱',
+      dataIndex: 'email',
+      width: '32%',
+      ellipsis: { showTitle: false },
+      render: (email: string | null) => <EllipsisText tooltip={email ?? undefined}>{email || '-'}</EllipsisText>,
+    },
+    {
+      title: '账号状态',
+      key: 'status',
+      width: '12%',
+      render: (_, admin) => (
+        <Tag color={admin.active ? 'success' : 'orange'}>{admin.active ? '正常' : '已停用'}</Tag>
       ),
     },
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: '12%',
       render: (_, admin) => {
         const reason = canManage ? admin.removeDisabledReason : NOT_PLATFORM_ADMIN;
         const enabled = canManage && admin.removable;
@@ -186,6 +207,7 @@ export function PlatformAdminPanel() {
         dataSource={admins}
         loading={isLoading || removeMutation.isPending}
         pagination={false}
+        scroll={{ x: 920 }}
       />
     </div>
   );

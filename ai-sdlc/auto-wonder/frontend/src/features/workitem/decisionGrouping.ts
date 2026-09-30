@@ -1,11 +1,12 @@
-import { classifyWorkitemStatus } from './constants';
+import { statusCategoryOf } from './constants';
 import { displayNameWithoutId } from './nameDisplay';
 import type { Workitem } from '@/shared/types/workitem';
 
 /**
  * 待决策按人分类工具。
  *
- * 工单「待决策」状态由 {@link classifyWorkitemStatus} 判定（综合后端 pendingDecision 标记与状态名）。
+ * 工单「待决策」状态由服务端统一下发的看板分类（statusCategory，规格 3.1）判定，
+ * 与「需人工」标签完全同条件；状态名称不参与判断。
  * 本模块在此基础上提供「按决策人分组」与「只看当前登录人决策」两个纯函数，供看板与单测复用。
  */
 
@@ -20,7 +21,7 @@ export interface DecisionGroup {
 const UNASSIGNED_LABEL = '未指派';
 
 export function isPendingDecision(item: Workitem): boolean {
-  return classifyWorkitemStatus(item) === 'PENDING_DECISION';
+  return statusCategoryOf(item) === 'PENDING_DECISION';
 }
 
 /**
@@ -40,6 +41,7 @@ function assigneeKey(item: Workitem): string {
 }
 
 function assigneeLabel(item: Workitem): string {
+  if (item.assigneeType === 'EXTERNAL') return '待认领（外部负责人）';
   return displayNameWithoutId(item.assigneeDisplayName, item.assigneeName) ?? UNASSIGNED_LABEL;
 }
 

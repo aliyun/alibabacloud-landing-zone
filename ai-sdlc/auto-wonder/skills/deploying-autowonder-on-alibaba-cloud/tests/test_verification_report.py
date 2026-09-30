@@ -33,6 +33,38 @@ class VerificationReportTests(unittest.TestCase):
             self.assertNotEqual(environment['HOME'], os.environ.get('HOME'))
             self.assertFalse(Path(environment['HOME']).exists(), 'temporary home must be cleaned')
 
+    def test_interop_worker_is_dispatched_and_its_result_controls_exit(self):
+        good = {'tests': 2, 'failures': [], 'errors': [], 'skipped': [], 'seconds': 0.1}
+        cases = [(good, 0), ({**good, 'failures': ['interop.failure']}, 1),
+                 ({**good, 'errors': ['interop.import_error']}, 1),
+                 ({**good, 'tests': 0}, 1)]
+        for interop, expected in cases:
+            with self.subTest(result=interop):
+                def response(command, **kwargs):
+                    value = interop if command[-1] == 'cloud-skill-interop' else good
+                    return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode())
+                output = io.StringIO()
+                with patch.object(verify.subprocess, 'run', side_effect=response) as run, \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(expected, verify.main([]))
+                self.assertEqual([*verify.SKILLS, 'cloud-skill-interop'],
+                                 [call.args[0][-1] for call in run.call_args_list])
+                report = json.loads(output.getvalue())
+                self.assertEqual('cloud-skill-interop', report['suites'][-1]['skill'])
+                self.assertIn('seconds', report['suites'][-1])
+
+    def test_interop_worker_failure_does_not_expose_output(self):
+        good = {'tests': 1, 'failures': [], 'errors': [], 'skipped': []}
+        def response(command, **kwargs):
+            if command[-1] == 'cloud-skill-interop':
+                return SimpleNamespace(returncode=1, stdout=b'FAKE_MASTER_SECRET')
+            return SimpleNamespace(returncode=0, stdout=json.dumps(good).encode())
+        output = io.StringIO()
+        with patch.object(verify.subprocess, 'run', side_effect=response), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(1, verify.main([]))
+        self.assertNotIn('FAKE_MASTER_SECRET', output.getvalue())
+
     def test_skips_are_incomplete_when_strict(self):
         result = {'tests': 12, 'failures': [], 'errors': [], 'skipped': ['native Windows unavailable']}
         self.assertEqual(verify.verdict([result], strict=False), 'passed-with-skips')

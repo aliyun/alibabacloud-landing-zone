@@ -73,7 +73,7 @@ describe('SquadMembers', () => {
     render(<SquadMembers participants={participants} />);
 
     expect(screen.getByText('成员')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '数字人成员' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '数字员工成员' })).toBeInTheDocument();
     expect(screen.getByText('Agent Dev')).toBeInTheDocument();
     expect(screen.queryByText('蔡何')).not.toBeInTheDocument();
     expect(screen.getByText(/Executor: OFFLINE/)).toBeInTheDocument();
@@ -84,11 +84,7 @@ describe('SquadMembers', () => {
 
     expect(await screen.findByText('蔡何')).toBeInTheDocument();
     expect(screen.getByText('工号: 10000 · 真人')).toBeInTheDocument();
-    expect(screen.getByLabelText('真人参与者头像')).toHaveStyle({
-      backgroundColor: '#fff7e6',
-      color: '#fa8c16',
-      border: '1px solid #ffd591',
-    });
+    expect(screen.getByLabelText('真人参与者头像')).toContainElement(screen.getByLabelText('user'));
     expect(screen.queryByText('Agent Dev')).not.toBeInTheDocument();
     expect(screen.queryByText('离线')).not.toBeInTheDocument();
     expect(screen.queryByText(/Executor:/)).not.toBeInTheDocument();

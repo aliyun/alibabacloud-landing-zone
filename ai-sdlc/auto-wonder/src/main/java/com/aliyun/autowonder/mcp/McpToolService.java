@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.mcp;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -57,6 +57,7 @@ import com.aliyun.autowonder.scheduledtask.dto.UpdateScheduledTaskRequest;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
 import com.aliyun.autowonder.mcp.dto.PlatformSkillVO;
 import com.aliyun.autowonder.memory.MemoryService;
+import com.aliyun.autowonder.memory.store.McpMemoryDocumentAdapter;
 import com.aliyun.autowonder.memory.dto.CreateMemoryRequest;
 import com.aliyun.autowonder.memory.dto.MemoryVO;
 import com.aliyun.autowonder.memory.dto.UpdateMemoryRequest;
@@ -128,6 +129,7 @@ public class McpToolService {
     private static final String WORKITEM_CLI_DOWNLOAD_TOKEN = "autowonder.workitem_cli_download_token";
     private static final String LIST_WORKITEM_DOCUMENTS = "autowonder.list_workitem_documents";
     private static final String DELETE_WORKITEM_DOCUMENT = "autowonder.delete_workitem_document";
+    private static final String EXPOSE_WORKITEM_ARTIFACT = "autowonder.expose_workitem_artifact";
     private static final String TRANSITION_WORKITEM = "autowonder.transition_workitem";
     private static final String PAUSE_WORKITEM = "autowonder.pause_workitem";
     private static final String RESUME_WORKITEM = "autowonder.resume_workitem";
@@ -156,10 +158,8 @@ public class McpToolService {
     private static final String GET_AGENT_VERSION_STATUS = "autowonder.get_agent_version_status";
     private static final String BIND_AGENT_REPOS = "autowonder.bind_agent_repos";
     private static final String BIND_AGENT_SKILLS = "autowonder.bind_agent_skills";
-    private static final String BIND_AGENT_MEMORIES = "autowonder.bind_agent_memories";
     private static final String UNBIND_AGENT_REPOS = "autowonder.unbind_agent_repos";
     private static final String UNBIND_AGENT_SKILLS = "autowonder.unbind_agent_skills";
-    private static final String UNBIND_AGENT_MEMORIES = "autowonder.unbind_agent_memories";
     private static final String CREATE_SKILL = "autowonder.create_skill";
     private static final String LIST_SKILLS = "autowonder.list_skills";
     private static final String GET_SKILL = "autowonder.get_skill";
@@ -183,8 +183,6 @@ public class McpToolService {
     private static final String GET_MEMORY = "autowonder.get_memory";
     private static final String UPDATE_MEMORY = "autowonder.update_memory";
     private static final String DEPRECATE_MEMORY = "autowonder.deprecate_memory";
-    private static final String REVIEW_MEMORY = "autowonder.review_memory";
-    private static final String COUNT_PENDING_MEMORIES = "autowonder.count_pending_memories";
     private static final String DELETE_MEMORY = "autowonder.delete_memory";
     private static final String LIST_REPOS = "autowonder.list_repos";
     private static final String GET_REPO = "autowonder.get_repo";
@@ -296,6 +294,8 @@ public class McpToolService {
                             workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_WORKITEM_DOCUMENT,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
+                    Map.entry(EXPOSE_WORKITEM_ARTIFACT,
+                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(TRANSITION_WORKITEM,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(PAUSE_WORKITEM,
@@ -352,13 +352,9 @@ public class McpToolService {
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(BIND_AGENT_SKILLS,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
-                    Map.entry(BIND_AGENT_MEMORIES,
-                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UNBIND_AGENT_REPOS,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(UNBIND_AGENT_SKILLS,
-                            workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
-                    Map.entry(UNBIND_AGENT_MEMORIES,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(CREATE_SKILL,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
@@ -406,8 +402,6 @@ public class McpToolService {
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(DEPRECATE_MEMORY,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
-                    Map.entry(REVIEW_MEMORY, workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
-                    Map.entry(COUNT_PENDING_MEMORIES, workspaceTool(WorkspaceAccessLevel.READ_ONLY)),
                     Map.entry(DELETE_MEMORY,
                             workspaceTool(WorkspaceAccessLevel.READ_WRITE)),
                     Map.entry(LIST_REPOS,
@@ -531,8 +525,15 @@ public class McpToolService {
     private ScheduledTaskRunDispatchControlService scheduledTaskRunDispatchControlService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ArtifactService artifactService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.artifact.ExternalArtifactShareService externalArtifactShareService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.aliyun.autowonder.artifact.ArtifactShareRequestService artifactShareRequestService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DispatchRuntimeEventDao dispatchRuntimeEventDao;
+    @org.springframework.beans.factory.annotation.Autowired
+    private McpMemoryDocumentAdapter mcpMemoryDocumentAdapter;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ExecutorService executorService;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -654,8 +655,9 @@ public class McpToolService {
                         + "All filters are optional. Defaults: page=1, size=20.",
                         schema(prop("workType", "string", "Optional. Filter by workitem type: REQ, BUG, or TASK."),
                                 prop("statusNodeId", "integer", "Optional. Filter by current status node id."),
-                                prop("statusCategory", "string", "Optional. Filter by kanban status category: "
-                                        + "NEW, IN_PROGRESS, PENDING_DECISION, or DONE."),
+                                prop("statusCategory", "string", "Optional. Filter by unified kanban status category: "
+                                        + "NEW, IN_PROGRESS, PENDING_DECISION, DONE, or CANCELED. CANCELED workitems are "
+                                        + "hidden from the default board and only visible through this filter."),
                                 prop("assigneeType", "string", "Optional. Filter by assignee type: HUMAN or AGENT."),
                                 prop("assigneeRef", "integer", "Optional. Filter by assignee reference id (userId or agentId)."),
                                 prop("pendingDecisionOnly", "boolean", "Optional. When true, return only workitems pending human decision."),
@@ -678,7 +680,12 @@ public class McpToolService {
                         + "names a specific SDLC id to bind. "
                         + "squadId is optional and only validated when assigneeType=AGENT with assigneeRef. "
                         + "Assigning to an AGENT triggers SDLC binding (first time), an ASSIGN event, and dispatch scheduling; "
-                        + "it does NOT change the workitem status node. To reassign from HUMAN to an AGENT, pass "
+                        + "it does NOT change the workitem status node. Reassigning an AGENT workitem whose delivery "
+                        + "already started is an explicit delivery restart: old formal executions are stopped first "
+                        + "(durable stop intent, late results fenced) and a new formal round starts from the SDLC "
+                        + "entry, whether the assignee is the same agent or a different one; a closed delivery is "
+                        + "reopened for the restart. Each explicit assign_workitem call allocates one new restart "
+                        + "round. To reassign from HUMAN to an AGENT, pass "
                         + "assigneeType=AGENT, assigneeRef=<agentId>, and optionally squadId. "
                         + "IMPORTANT: Before assigning to an AGENT, all requirement/design documents must be uploaded first "
                         + "via upload_workitem_document. Assigning triggers dispatch scheduling and cannot be used as a "
@@ -700,6 +707,10 @@ public class McpToolService {
                                         + "assigneeType=AGENT. Do not fill this parameter unless the user explicitly "
                                         + "requests scheduled execution; omit it to dispatch immediately."))),
                 tool(ADD_WORKITEM_COMMENT, "Add a comment to an AutoWonder workitem. "
+                                + "Before posting a conclusion with external artifacts, call expose_workitem_artifact "
+                                + "for each vetted file and include all returned artifactUrl links at the end of this "
+                                + "same comment. PENDING links become readable after successful completion; do not wait "
+                                + "for SHARED before completing the dispatch or post separate per-file comments. "
                                 + "Pass targetAgentIds to create structured worker interactions. "
                                 + "Pass targetHumanIds when the comment mentions real users so the UI can highlight "
                                 + "the mention and the platform can notify them.",
@@ -787,6 +798,28 @@ public class McpToolService {
                                         "Optional. Owner type of the attachment: WORKITEM (default) or SCHEDULED_TASK. "
                                                 + "id is the workitem id or the scheduled task id accordingly."),
                                 prop("artifactId", "integer", "Required. Artifact id to delete."))),
+                tool(EXPOSE_WORKITEM_ARTIFACT,
+                        "Share vetted final artifacts with external readers without an AutoWonder login. "
+                                + "Never expose sensitive internals or intermediate files. For a current dispatch, "
+                                + "compute the file SHA-256, then call this tool with id, output-relative name and "
+                                + "sha256 BEFORE posting your conclusion comment and completing the step. "
+                                + "Dispatch credentials are pinned to their own dispatch. PENDING returns a stable "
+                                + "artifactUrl immediately: collect links for all vetted files and include them together "
+                                + "at the end of your original conclusion comment. Use the returned URLs verbatim. "
+                                + "While PENDING, readers see a generating page, not file content. Include the files in "
+                                + "normal completion evidenceRefs so Runtime uploads them; do not wait for SHARED "
+                                + "before completion. After dispatch success the server checks the exact digest and "
+                                + "freezes the bytes at the same URLs. It never creates or edits comments for you. "
+                                + "Repeat the same request to inspect status (PENDING/SHARED/REJECTED). "
+                                + "A changed digest for the same dispatch/path is rejected. Personal credentials can "
+                                + "also expose an already uploaded artifact immediately without sha256. Shared URLs "
+                                + "always serve the first frozen snapshot, even after later uploads.",
+                        schema(required("id"),
+                                prop("id", "integer", "Required. Workitem id."),
+                                prop("artifactId", "integer", "Existing artifact id; either artifactId or name is required."),
+                                prop("name", "string", "Output-relative path, e.g. deliverables/report.md. Required before upload."),
+                                prop("sha256", "string", "64 hexadecimal characters of the vetted file bytes. Required for dispatch credentials; enables durable pending sharing."),
+                                prop("dispatchId", "integer", "Required with sha256 for personal credentials; inferred and fixed for dispatch credentials."))),
                 tool(TRANSITION_WORKITEM, "Transition an AutoWonder workitem to a status node.",
                         schema(required("id", "toNodeId"), prop("id", "integer"), prop("toNodeId", "integer"))),
                 tool(PAUSE_WORKITEM, "Pause a workitem by transitioning it to the configured pause status node.",
@@ -934,11 +967,6 @@ public class McpToolService {
                         schema(required("agentId", "skillIds"),
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("skillIds", "integer", "Required. Capability ids to bind."))),
-                tool(BIND_AGENT_MEMORIES, "Bind multiple memories to an AutoWonder digital worker. Repeated ids are ignored.",
-                        schema(required("agentId", "memoryIds"),
-                                prop("agentId", "integer", "Required. Agent id."),
-                                primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to bind."),
-                                prop("source", "string", "Optional binding source; defaults to DIRECT."))),
                 tool(UNBIND_AGENT_REPOS, "Unbind exact repositories from an AutoWonder digital worker. Repeated ids are ignored. "
                         + "Platform agents (kind=PLATFORM) are rejected: their workspace-wide read access is granted "
                         + "by the platform and cannot be removed.",
@@ -949,10 +977,6 @@ public class McpToolService {
                         schema(required("agentId", "skillIds"),
                                 prop("agentId", "integer", "Required. Agent id."),
                                 primitiveArrayProp("skillIds", "integer", "Required. Capability ids to unbind."))),
-                tool(UNBIND_AGENT_MEMORIES, "Unbind exact memories from an AutoWonder digital worker. Repeated ids are ignored.",
-                        schema(required("agentId", "memoryIds"),
-                                prop("agentId", "integer", "Required. Agent id."),
-                                primitiveArrayProp("memoryIds", "integer", "Required. Memory ids to unbind."))),
                 tool(CREATE_SKILL, "Create a skill, MCP server, or plugin record. Runtime hooks must use the validated package endpoint.",
                         schema(required("type", "name"), prop("type", "string"), prop("name", "string"),
                                 prop("installSpec", "string"), prop("description", "string"))),
@@ -1027,35 +1051,20 @@ public class McpToolService {
                                 primitiveArrayProp("skillIds", "integer", "Required. Skill ids to tag."),
                                 nullableProp("categoryId", "integer",
                                         "Required. Target category id, or explicit null to clear all tags."))),
-                tool(CREATE_MEMORY, "Record a reusable memory (lesson learned, best practice, architecture or interface "
-                        + "constraint, tool usage, domain knowledge) directly into the AutoWonder server memory store. "
-                        + "Use this instead of writing a learning delta file; nothing is passed through local files. "
-                        + "Use contentMd for the markdown body. Do not pass content or entries; those fields belong "
-                        + "to learning_delta/memory_delta.json files, not this MCP tool. Valid scope values are "
-                        + "AGENT, SQUAD, and ORG. Do not pass GLOBAL; use ORG for workspace-wide memories. "
-                        + "Personal or long-lived MCP tokens must pass scope explicitly. Dispatch-scoped SDLC "
-                        + "workers should omit scope and ownerRef; the server will force AGENT scope and ownerRef "
-                        + "to the current worker agent. "
-                        + "Provenance is filled in server-side from the calling credential: when called with a dispatch "
-                        + "credential the source agent, workitem and dispatch are recorded automatically, and the memory "
-                        + "is always AGENT-scoped and owned by that agent. Promotion to SQUAD or ORG is a separate review "
-                        + "decision, so a dispatch credential passing scope=SQUAD or scope=ORG is rejected. New memories "
-                        + "are created with status PENDING and become reusable only after adoption through review_memory or the console. Repeating "
-                        + "the same title and content is idempotent and returns the existing memory; pass idempotencyKey "
-                        + "to control that explicitly. Reusing an idempotencyKey with different content after the memory "
-                        + "has been adopted or rejected is refused, so review decisions can never be silently overwritten.",
+                tool(CREATE_MEMORY, "Persist an explicit user request to remember reusable knowledge in this "
+                        + "digital worker's personal memory. Success is the persistence acknowledgement; on failure, "
+                        + "do not claim the fact was remembered. Opportunistic learning should maintain the memory "
+                        + "directory described in the system instructions instead.",
                         schema(required("title"),
                                 prop("title", "string", "Required. Short memory title."),
                                 prop("contentMd", "string", "Markdown memory body; state the reusable conclusion, not this task's narrative."),
-                                prop("type", "string", "Optional memory type such as PITFALL, BEST_PRACTICE, CONSTRAINT, TOOL_USAGE, DOMAIN."),
+                                enumProp("type", List.of("user", "feedback", "project", "reference"),
+                                        "Optional Claude-compatible memory type; defaults to reference."),
                                 prop("scope", "string", "Visibility scope. Dispatch credentials may only use AGENT (the default). Required for long-lived tokens, which may also use SQUAD or ORG."),
                                 prop("ownerRef", "integer", "Optional scope owner id; always ignored for dispatch credentials, which own their AGENT memories themselves."),
                                 prop("idempotencyKey", "string", "Optional key making a repeated write target the same memory instead of duplicating it."))),
-                tool(SEARCH_MEMORIES, "Search the AutoWonder server memory store while reasoning or deciding. "
-                        + "Pass keyword to match memory title and content. Defaults to status=ADOPTED so only "
-                        + "approved memories are returned; pass status explicitly to inspect PENDING or REJECTED "
-                        + "entries. Credentials can read all AGENT, SQUAD and "
-                        + "ORG memories in their authorized workspace, including other agents. Defaults: page=1, size=20. Use count_pending_memories for backlog size; agent memoryCount counts bindings.",
+                tool(SEARCH_MEMORIES, "Search this digital worker's canonical memory topics, primarily to locate "
+                        + "an existing topic before an explicit correction or deletion. Defaults: page=1, size=20.",
                         schema(prop("keyword", "string", "Optional free-text filter matched against title and content."),
                                 prop("scope", "string", "Optional visibility scope filter: AGENT, SQUAD, or ORG."),
                                 prop("ownerRef", "integer", "Optional scope owner id filter."),
@@ -1063,38 +1072,23 @@ public class McpToolService {
                                 prop("status", "string", "Optional status filter: PENDING, ADOPTED, or REJECTED; defaults to ADOPTED."),
                                 prop("page", "integer", "Optional page number, 1-based; defaults to 1."),
                                 prop("size", "integer", "Optional page size; defaults to 20."))),
-                tool(GET_MEMORY, "Get one memory by id from the AutoWonder server memory store.",
+                tool(GET_MEMORY, "Get one canonical personal memory topic by id.",
                         schema(required("id"), prop("id", "integer", "Required. Memory id."))),
-                tool(UPDATE_MEMORY, "Correct or refine an existing memory in place when it is out of date or inaccurate. "
-                        + "Requires workspace write access; may update memories owned by other agents in the same workspace.",
+                tool(UPDATE_MEMORY, "Persist an explicit user correction to an existing personal memory topic. "
+                        + "Only claim success after this tool returns successfully.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Memory id."),
                                 prop("title", "string", "Optional new title; omit to keep the current one."),
                                 prop("contentMd", "string", "Optional new Markdown body; omit to keep the current one."),
-                                prop("type", "string", "Optional new memory type; omit to keep the current one."))),
-                tool(DEPRECATE_MEMORY, "Retire a memory that has become stale or turned out to be wrong. The memory is "
-                        + "marked REJECTED so it stops being reused, the row and its audit trail are kept, and unlike "
-                        + "review_memory this also works on already adopted memories. Use delete_memory when the memory should be removed together with its worker bindings. "
-                        + "Requires workspace write access, including for other agents in the same workspace.",
+                                enumProp("type", List.of("user", "feedback", "project", "reference"),
+                                        "Optional new Claude-compatible memory type; omit to keep the current one."))),
+                tool(DEPRECATE_MEMORY, "Remove a stale or incorrect personal memory topic while retaining the "
+                        + "operation's audit history. Only claim success after this tool returns successfully.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Memory id."),
                                 prop("comment", "string", "Optional reason recorded in the memory audit trail."))),
-                tool(REVIEW_MEMORY, "Review a PENDING memory in the authorized workspace, including another agent's memory. "
-                        + "Use decision=ADOPT to adopt or REJECT to reject after checking the facts. Requires workspace write access. "
-                        + "Records a review audit and uses the same distribution workflow as console review: adoption binds "
-                        + "affected worker editing versions; those versions still need approval before dispatch injection. "
-                        + "Already reviewed memories cannot be reviewed again; use deprecate_memory to retire adopted memories.",
-                        schema(required("id", "decision"), prop("id", "integer", "Required. Memory id."),
-                                enumProp("decision", List.of("ADOPT", "REJECT"), "Required review decision."),
-                                prop("comment", "string", "Review rationale and verification evidence."),
-                                prop("editedContentMd", "string", "Optional corrected content; saved atomically with adoption."),
-                                prop("editedType", "string", "Optional corrected memory type; saved atomically with adoption."),
-                                enumProp("scope", List.of("AGENT", "SQUAD", "ORG"), "Optional adopted scope; omitted keeps current scope."),
-                                prop("ownerRef", "integer", "Required when specifying AGENT or SQUAD scope; ORG clears the owner."))),
-                tool(COUNT_PENDING_MEMORIES, "Count all PENDING memories in the authorized workspace, across agents. "
-                        + "Counts memory rows, not worker bindings. Use search_memories with status=PENDING to inspect them.", schema()),
-                tool(DELETE_MEMORY, "Soft delete a memory and atomically remove its worker bindings, retaining audit records and historical dispatch snapshots. Requires workspace write access; other agents' memories "
-                        + "in the same workspace may also be deleted.",
+                tool(DELETE_MEMORY, "Persist an explicit user request to forget a personal memory topic. "
+                        + "Only claim success after this tool returns successfully.",
                         schema(required("id"), prop("id", "integer", "Required. Memory id."))),
                 tool(LIST_REPOS, "List repositories registered in AutoWonder. Use this to discover repo ids before reading or maintaining the Repo Map.",
                         schema(prop("page", "integer", "Optional page number, 1-based; defaults to 1."),
@@ -1113,14 +1107,14 @@ public class McpToolService {
                         schema(required("id"), prop("id", "integer", "Required. Repo relation id."))),
                 tool(CREATE_REPO, "Create a new repository in AutoWonder. The repository will be registered under the specified workspace.",
                         schema(required("name", "url"),
-                                prop("name", "string", "Required. Repository name."),
+                                prop("name", "string", "Required. Repository name: a single path segment (no / or \\, not . or .., no absolute paths), used as the workspace repos directory name. For a namespace/repo-name Git URL, put the full identifier in the url field and only the single-segment name here."),
                                 prop("url", "string", "Required. Git repository URL (e.g. git@github.com:group/project.git)."),
                                 prop("defaultBranch", "string", "Optional. Default branch name."),
                                 prop("description", "string", "Optional. Repository description."))),
                 tool(UPDATE_REPO, "Update an existing repository registered in AutoWonder. Partial update semantics: fields omitted from the arguments are kept unchanged; explicitly passing null clears a nullable field (defaultBranch, description). name and url cannot be cleared.",
                         schema(required("id"),
                                 prop("id", "integer", "Required. Repository id."),
-                                prop("name", "string", "Optional. New repository name. Omit to keep unchanged; null or blank is rejected."),
+                                prop("name", "string", "Optional. New repository name: a single path segment (no / or \\, not . or .., no absolute paths). Omit to keep unchanged; null or blank is rejected."),
                                 prop("url", "string", "Optional. New Git repository URL. Omit to keep unchanged; null or blank is rejected."),
                                 prop("defaultBranch", "string", "Optional. New default branch name. Omit to keep unchanged; pass null explicitly to clear it."),
                                 prop("description", "string", "Optional. New repository description. Omit to keep unchanged; pass null explicitly to clear it."))),
@@ -1371,11 +1365,19 @@ public class McpToolService {
                         + "optimistic lock from autowonder.get_executor_launch_config; a stale one is reported as a "
                         + "conflict. An invalid value or a model the provider catalog no longer offers fails "
                         + "explicitly instead of being substituted, and the response returns what the database now "
-                        + "holds. Changing the config never restarts a running executor.",
+                        + "holds. Changing the config never restarts a running executor. Legacy executors created "
+                        + "before client kinds were enforced have a missing kind: for those pass clientKind "
+                        + "(QODER_CLI or QODER_CN_CLI) so the kind and the config are persisted together; executors "
+                        + "that already have a kind refuse a different one.",
                         schema(required("id", "version"),
                                 prop("id", "integer", "Required. Executor id."),
                                 prop("version", "integer", "Required. Optimistic-lock version read from "
                                         + "autowonder.get_executor_launch_config; a stale version is a conflict."),
+                                enumProp("clientKind", ExecutorLaunchOptionsService.creatableClientKindValues(),
+                                        "Optional. QODER_CLI or QODER_CN_CLI, only for an executor whose client kind "
+                                        + "is missing (legacy rows created before client kinds were enforced); it is "
+                                        + "persisted with the config in the same write. Required for such executors "
+                                        + "and refused when it differs from the kind an executor already has."),
                                 prop("maxConcurrentDispatches", "integer", "Optional. Integer from 1 to 10. Defaults to 5 on create; omitted updates preserve the current value. Use the new launch command to apply."),
                                 enumProp("memoryMode", ExecutorLaunchOptionsService.memoryModeValues(),
                                         "Optional. Memory mode to persist; defaults to platform."),
@@ -1787,6 +1789,30 @@ public class McpToolService {
                 }
                 yield Map.of("deleted", true);
             }
+            case EXPOSE_WORKITEM_ARTIFACT -> {
+                long id = requiredLong(safeArgs, "id");
+                Long dispatchId = lng(safeArgs, "dispatchId");
+                if (isDispatchCredential(context)) {
+                    // dispatch 凭证只能暴露自己所在工单、本轮派发的产物：防止跨工单放大公开面，
+                    // 也防止本轮产物尚未上传时按 name 静默回退到上一轮同名产物
+                    DispatchDO owner = requireDispatchOwner(context);
+                    if (owner.executionSourceType() != ExecutionSourceType.WORKITEM
+                            || !Objects.equals(owner.getWorkitemId(), id)
+                            || (dispatchId != null && !Objects.equals(dispatchId, owner.getId()))) {
+                        throw new BizException(ErrorCode.NO_PERMISSION);
+                    }
+                    dispatchId = owner.getId();
+                }
+                if (isDispatchCredential(context) || safeArgs.containsKey("sha256")) {
+                    if (dispatchId == null || dispatchId <= 0) {
+                        throw new BizException(ErrorCode.PARAM_INVALID, "pending 分享需要有效的 dispatchId");
+                    }
+                    yield artifactShareRequestService.request(context.workspaceId(), id, dispatchId,
+                            lng(safeArgs, "artifactId"), str(safeArgs, "name"), str(safeArgs, "sha256"));
+                }
+                yield externalArtifactShareService.expose(context.workspaceId(), id, dispatchId,
+                        lng(safeArgs, "artifactId"), str(safeArgs, "name"));
+            }
             case TRANSITION_WORKITEM, PAUSE_WORKITEM, RESUME_WORKITEM -> {
                 yield workitemService.transition(requiredLong(safeArgs, "id"), requiredLong(safeArgs, "toNodeId"),
                         context.workspaceId(), context.userId());
@@ -1931,18 +1957,6 @@ public class McpToolService {
                 }
                 yield Map.of("skillIds", skillIds);
             }
-            case BIND_AGENT_MEMORIES -> {
-                long agentId = requiredLong(safeArgs, "agentId");
-                List<Long> memoryIds = requiredLongList(safeArgs, "memoryIds");
-                String source = str(safeArgs, "source");
-                for (Long memoryId : memoryIds) {
-                    MemoryRefRequest request = new MemoryRefRequest();
-                    request.setMemoryId(memoryId);
-                    request.setSource(source);
-                    agentService.addMemoryRef(agentId, request, context.workspaceId(), context.userId());
-                }
-                yield Map.of("memoryIds", memoryIds);
-            }
             case UNBIND_AGENT_REPOS -> {
                 long agentId = requiredLong(safeArgs, "agentId");
                 List<Long> repoIds = requiredLongList(safeArgs, "repoIds");
@@ -1958,14 +1972,6 @@ public class McpToolService {
                     agentService.removeSkill(agentId, skillId, context.workspaceId(), context.userId());
                 }
                 yield Map.of("skillIds", skillIds);
-            }
-            case UNBIND_AGENT_MEMORIES -> {
-                long agentId = requiredLong(safeArgs, "agentId");
-                List<Long> memoryIds = requiredLongList(safeArgs, "memoryIds");
-                for (Long memoryId : memoryIds) {
-                    agentService.removeMemoryRef(agentId, memoryId, context.workspaceId(), context.userId());
-                }
-                yield Map.of("memoryIds", memoryIds);
             }
             case CREATE_SKILL -> {
                 yield skillService.create(toBean(safeArgs, CreateSkillRequest.class),
@@ -2050,32 +2056,32 @@ public class McpToolService {
             }
             case CREATE_MEMORY -> createMemory(context, safeArgs);
             case SEARCH_MEMORIES -> searchMemories(context, safeArgs);
-            case GET_MEMORY -> requireVisibleMemory(context, requiredLong(safeArgs, "id"));
+            case GET_MEMORY -> getMemory(context, requiredLong(safeArgs, "id"));
             case UPDATE_MEMORY -> {
                 long memoryId = requiredLong(safeArgs, "id");
-                requireMutableMemory(context, memoryId);
-                yield memoryService.update(memoryId, toBean(safeArgs, UpdateMemoryRequest.class),
-                        context.workspaceId(), context.userId());
+                requireDispatchMemoryCredential(context);
+                DispatchDO dispatch = requireDispatchOwner(context);
+                yield mcpMemoryDocumentAdapter.update(context.workspaceId(), dispatch.getId(),
+                        dispatch.getAgentId(), context.userId(), memoryId,
+                        toBean(safeArgs, UpdateMemoryRequest.class),
+                        memoryMutationDedupeKey(dispatch.getId(), memoryId, "update", safeArgs));
             }
             case DEPRECATE_MEMORY -> {
                 long memoryId = requiredLong(safeArgs, "id");
-                requireMutableMemory(context, memoryId);
-                yield memoryService.deprecateFromMcp(memoryId, str(safeArgs, "comment"),
-                        context.workspaceId(), context.userId());
+                requireDispatchMemoryCredential(context);
+                DispatchDO dispatch = requireDispatchOwner(context);
+                mcpMemoryDocumentAdapter.delete(context.workspaceId(), dispatch.getId(),
+                        dispatch.getAgentId(), context.userId(), memoryId,
+                        memoryMutationDedupeKey(dispatch.getId(), memoryId, "deprecate", safeArgs));
+                yield Map.of("deprecated", true);
             }
-            case REVIEW_MEMORY -> {
-                long memoryId = requiredLong(safeArgs, "id");
-                requireMutableMemory(context, memoryId);
-                memoryService.review(memoryId,
-                        toBean(safeArgs, com.aliyun.autowonder.memory.dto.ReviewRequest.class),
-                        context.workspaceId(), context.userId());
-                yield memoryService.getScoped(memoryId, context.workspaceId());
-            }
-            case COUNT_PENDING_MEMORIES -> Map.of("count", memoryService.countPendingReviews(context.workspaceId()));
             case DELETE_MEMORY -> {
                 long memoryId = requiredLong(safeArgs, "id");
-                requireMutableMemory(context, memoryId);
-                memoryService.delete(memoryId, context.workspaceId(), context.userId());
+                requireDispatchMemoryCredential(context);
+                DispatchDO dispatch = requireDispatchOwner(context);
+                mcpMemoryDocumentAdapter.delete(context.workspaceId(), dispatch.getId(),
+                        dispatch.getAgentId(), context.userId(), memoryId,
+                        memoryMutationDedupeKey(dispatch.getId(), memoryId, "delete", safeArgs));
                 yield Map.of("deleted", true);
             }
             case LIST_REPOS -> repoService.list(context.workspaceId(), integer(safeArgs, "page", 1),
@@ -2325,6 +2331,7 @@ public class McpToolService {
         }
         UpdateExecutorLaunchConfigRequest request = new UpdateExecutorLaunchConfigRequest();
         request.setVersion(version.intValue());
+        request.setClientKind(str(args, "clientKind"));
         request.setMemoryMode(str(args, "memoryMode"));
         request.setMaxConcurrentDispatches(executorConcurrency(args));
         request.setModel(str(args, "model"));
@@ -2899,8 +2906,8 @@ public class McpToolService {
     private MemoryVO createMemory(ToolExecutionContext context, Map<String, Object> args) {
         CreateMemoryRequest req = toBean(args, CreateMemoryRequest.class);
         if (!isDispatchCredential(context)) {
-            req.setScope(requiredMemoryScope(req.getScope()));
-            return memoryService.create(req, context.workspaceId(), context.userId());
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+                    "持久记忆只能由数字人任务维护；人工管理请使用 memory-stores API");
         }
         DispatchDO dispatch = requireDispatchOwner(context);
         if (!MEMORY_SCOPE_AGENT.equals(memoryScope(req.getScope(), MEMORY_SCOPE_AGENT))) {
@@ -2908,33 +2915,33 @@ public class McpToolService {
         }
         req.setScope(MEMORY_SCOPE_AGENT);
         req.setOwnerRef(dispatch.getAgentId());
-        return memoryService.createFromMcp(req, context.workspaceId(), dispatch.getId(),
+        return mcpMemoryDocumentAdapter.create(req, context.workspaceId(), dispatch.getId(),
                 dispatch.getWorkitemId(), dispatch.getAgentId(), context.userId(),
                 memoryDedupeKey(dispatch.getId(), str(args, "idempotencyKey"), req));
     }
 
     private List<MemoryVO> searchMemories(ToolExecutionContext context, Map<String, Object> args) {
         String scope = memoryScope(str(args, "scope"), null);
-        String status = str(args, "status");
-        return memoryService.list(context.workspaceId(), scope, lng(args, "ownerRef"),
-                str(args, "type"), status == null ? "ADOPTED" : status, str(args, "keyword"),
-                null, integer(args, "page", 1), integer(args, "size", 20));
-    }
-
-    private MemoryVO requireVisibleMemory(ToolExecutionContext context, long memoryId) {
-        return memoryService.getScoped(memoryId, context.workspaceId());
-    }
-
-    private void requireMutableMemory(ToolExecutionContext context, long memoryId) {
-        // Per-call workspace write authorization is enforced before invoking a mutation.
-        memoryService.getScoped(memoryId, context.workspaceId());
-    }
-
-    private String requiredMemoryScope(String scope) {
-        if (scope == null || scope.isBlank()) {
+        requireDispatchMemoryCredential(context);
+        DispatchDO dispatch = requireDispatchOwner(context);
+        if (scope != null && !MEMORY_SCOPE_AGENT.equals(scope)) {
             throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID);
         }
-        return memoryScope(scope, null);
+        return mcpMemoryDocumentAdapter.search(context.workspaceId(), dispatch.getAgentId(), context.userId(),
+                str(args, "keyword"), integer(args, "page", 1), integer(args, "size", 20));
+    }
+
+    private MemoryVO getMemory(ToolExecutionContext context, long memoryId) {
+        requireDispatchMemoryCredential(context);
+        DispatchDO dispatch = requireDispatchOwner(context);
+        return mcpMemoryDocumentAdapter.get(context.workspaceId(), dispatch.getAgentId(), context.userId(), memoryId);
+    }
+
+    private void requireDispatchMemoryCredential(ToolExecutionContext context) {
+        if (!isDispatchCredential(context)) {
+            throw new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
+                    "持久记忆只能由数字人任务维护；人工管理请使用 memory-stores API");
+        }
     }
 
     private String memoryScope(String scope, String defaultScope) {
@@ -2953,6 +2960,14 @@ public class McpToolService {
                 ? sha256Hex(req.getTitle() + "\n" + (req.getContentMd() == null ? "" : req.getContentMd()))
                 : idempotencyKey.trim();
         return "dispatch:" + dispatchId + ":mcp:" + key;
+    }
+
+    private String memoryMutationDedupeKey(long dispatchId, long memoryId, String operation,
+                                           Map<String, Object> args) {
+        String supplied = str(args, "idempotencyKey");
+        String suffix = supplied == null || supplied.isBlank()
+                ? sha256Hex(String.valueOf(args)) : supplied.trim();
+        return "dispatch:" + dispatchId + ":mcp:" + operation + ":" + memoryId + ":" + suffix;
     }
 
     private String sha256Hex(String value) {
@@ -3071,6 +3086,19 @@ public class McpToolService {
                             "Downloadable attachment extensions."));
             case LIST_WORKITEM_DOCUMENTS -> listOutputSchema(artifactSchema());
             case DELETE_WORKITEM_DOCUMENT -> schema(prop("deleted", "boolean", "Whether the document was deleted."));
+            case EXPOSE_WORKITEM_ARTIFACT -> schema(
+                    prop("requestId", "integer", "Durable share request id, when sha256 was supplied."),
+                    prop("status", "string", "PENDING has a reserved URL; SHARED serves the verified snapshot; REJECTED serves no content."),
+                    prop("sha256", "string", "Requested content SHA-256."),
+                    prop("error", "string", "Rejection reason, if any."),
+                    prop("artifactId", "integer", "Exposed artifact id."),
+                    prop("name", "string", "Artifact logical name (artifact-root prefix stripped)."),
+                    prop("type", "string", "Artifact classification, e.g. DELIVERABLE/EVIDENCE."),
+                    prop("artifactUrl", "string", "Login-free stable read-only URL of this artifact; embed it as a "
+                            + "markdown link in the original conclusion comment, including while PENDING. "
+                            + "PENDING returns a generating page; only SHARED serves file content."),
+                    prop("directoryUrl", "string", "Login-free stable read-only URL listing every exposed artifact "
+                            + "of the workitem."));
             case LIST_STATUS_TEMPLATES -> listOutputSchema(statusTemplateSchema());
             case GET_STATUS_TEMPLATE -> statusTemplateDetailSchema();
             case CREATE_SDLC, GET_SDLC, UPDATE_SDLC, ENABLE_SDLC -> sdlcSchema();
@@ -3088,10 +3116,8 @@ public class McpToolService {
             case GET_AGENT_VERSION_STATUS -> agentVersionStatusSchema();
             case BIND_AGENT_REPOS -> schema(primitiveArrayProp("repoIds", "integer", "Bound repository ids."));
             case BIND_AGENT_SKILLS -> schema(primitiveArrayProp("skillIds", "integer", "Bound capability ids."));
-            case BIND_AGENT_MEMORIES -> schema(primitiveArrayProp("memoryIds", "integer", "Bound memory ids."));
             case UNBIND_AGENT_REPOS -> schema(primitiveArrayProp("repoIds", "integer", "Unbound repository ids."));
             case UNBIND_AGENT_SKILLS -> schema(primitiveArrayProp("skillIds", "integer", "Unbound capability ids."));
-            case UNBIND_AGENT_MEMORIES -> schema(primitiveArrayProp("memoryIds", "integer", "Unbound memory ids."));
             case CREATE_SKILL, GET_SKILL, UPDATE_SKILL, INSTALL_PLATFORM_SKILL,
                     CREATE_SKILL_FROM_PACKAGE, UPDATE_SKILL_PACKAGE -> skillSchema();
             case LIST_SKILLS -> listOutputSchema(skillSchema());
@@ -3108,8 +3134,7 @@ public class McpToolService {
             case INSPECT_SKILL_PACKAGE -> skillPackageInspectSchema();
             case UPLOAD_SKILL_PACKAGE -> skillPackageUploadSchema();
             case LIST_PLATFORM_SKILLS -> listOutputSchema(platformSkillSchema());
-            case CREATE_MEMORY, GET_MEMORY, UPDATE_MEMORY, DEPRECATE_MEMORY, REVIEW_MEMORY -> memorySchema();
-            case COUNT_PENDING_MEMORIES -> schema(prop("count", "integer", "Number of pending memory rows in the workspace."));
+            case CREATE_MEMORY, GET_MEMORY, UPDATE_MEMORY, DEPRECATE_MEMORY -> memorySchema();
             case SEARCH_MEMORIES -> listOutputSchema(memorySchema());
             case DELETE_MEMORY -> schema(prop("deleted", "boolean", "Whether the memory was deleted."));
             case GET_REPO -> repoSchema();
@@ -3207,6 +3232,12 @@ public class McpToolService {
                 nullableProp("templateId", "integer", "Status template id."),
                 nullableProp("statusNodeId", "integer", "Current status node id."),
                 nullableProp("statusName", "string", "Current status name; null when the node cannot be resolved."),
+                nullableProp("statusCategory", "string", "Server-computed unified kanban classification: "
+                        + "NEW, IN_PROGRESS, PENDING_DECISION, DONE or CANCELED. The status name is display-only "
+                        + "and never drives classification; CANCELED items are hidden from the default board."),
+                nullableProp("transitionWarning", "string",
+                        "Present only on transition results whose edge is outside the template's recommended "
+                        + "transitions: the transition is still applied but flagged with a warning message."),
                 nullableProp("sdlcId", "integer", "Bound SDLC flow id."),
                 nullableProp("sdlcName", "string", "Bound SDLC flow name."),
                 nullableProp("assigneeType", "string", "Assignee type; null when unassigned."),

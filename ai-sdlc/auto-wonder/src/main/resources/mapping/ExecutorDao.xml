@@ -83,6 +83,15 @@
             modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND config_version = #{expectedVersion} AND is_deleted = 0
     </update>
+    <!-- 恢复缺失类型的历史执行器：类型守卫为「仍为空」，并发下已补齐或本就有类型的执行器不会被改写。
+         空白判定必须用 TRIM：executor 表为 utf8mb4 无显式 COLLATE，MySQL 8 默认 utf8mb4_0900_ai_ci（NO PAD），
+         纯空白 '  ' <> ''，等值守卫会漏掉这类历史行导致恢复 UPDATE 匹配 0 行。 -->
+    <update id="updateLaunchConfigWithClientKind">
+        UPDATE executor SET client_kind = #{clientKind}, launch_config = #{launchConfig},
+            config_version = config_version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND config_version = #{expectedVersion}
+            AND is_deleted = 0 AND (client_kind IS NULL OR TRIM(client_kind) = '')
+    </update>
     <select id="listByIds" resultType="com.aliyun.autowonder.executor.ExecutorDO">
         SELECT * FROM executor
         WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND id IN

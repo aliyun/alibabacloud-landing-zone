@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
-import { ApiOutlined, CloudSyncOutlined, SaveOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Tag, Tooltip, Typography, message } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
+import { ApiOutlined, CloudSyncOutlined, InfoCircleOutlined, SaveOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -18,8 +19,9 @@ import {
   type ExternalProject,
 } from './aoneApi';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import './Integrations.css';
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 type IntegrationForm = AoneBindingRequest & {
   provider: 'AONE';
@@ -84,7 +86,6 @@ function AoneIntegrationPanel() {
       const values = await readSaveValues();
       const selected = selectedProjects(values.selectedProjectIds || []);
       let reusedCount = 0;
-      let statusSyncedCount = 0;
       for (const project of selected) {
         const binding = await createAoneBinding({
           ...values,
@@ -94,26 +95,15 @@ function AoneIntegrationPanel() {
         if (binding.reusedExistingBinding) {
           reusedCount++;
         }
-        if (binding.statusTemplateSynced) {
-          statusSyncedCount++;
-        }
       }
-      return { savedCount: selected.length, reusedCount, statusSyncedCount };
+      return { savedCount: selected.length, reusedCount };
     },
-    onSuccess: ({ savedCount, reusedCount, statusSyncedCount }) => {
+    onSuccess: ({ savedCount, reusedCount }) => {
       const createdCount = savedCount - reusedCount;
-      if (statusSyncedCount === savedCount) {
-        if (createdCount > 0) {
-          message.success(`已保存 ${createdCount} 个托管项目；Aone 状态信息同步成功，工单仍会自动定时同步。`);
-        } else {
-          message.success('Aone 状态信息同步成功，工单仍会自动定时同步。');
-        }
-      } else if (statusSyncedCount > 0) {
-        message.warning(`已处理 ${savedCount} 个托管项目，其中 ${statusSyncedCount} 个完成 Aone 状态信息同步；工单仍会自动定时同步，请查看后端日志。`);
-      } else if (reusedCount > 0) {
-        message.warning('已检测到重复托管项目，但 Aone 状态规则返回为空；工单仍会自动定时同步，请查看后端日志。');
-      } else if (createdCount > 0) {
-        message.warning(`已保存 ${savedCount} 个托管项目，但 Aone 状态规则返回为空；工单仍会自动定时同步，请查看后端日志。`);
+      if (reusedCount > 0) {
+        message.success(`已处理 ${savedCount} 个托管项目：新建 ${createdCount} 个，复用已有 ${reusedCount} 个。`);
+      } else {
+        message.success(`已保存 ${savedCount} 个托管项目。`);
       }
       queryClient.invalidateQueries({ queryKey: ['aone-bindings'] });
     },
@@ -144,7 +134,7 @@ function AoneIntegrationPanel() {
   const bindingColumns: ColumnsType<AoneBinding> = [
     { title: 'ID', dataIndex: 'id', width: 80 },
     { title: '平台', dataIndex: 'provider', width: 90, render: () => <Tag color="blue">Aone</Tag> },
-    { title: '托管项目', dataIndex: 'externalProjectName', render: (v, r) => v || r.externalProjectId },
+    { title: '托管项目', dataIndex: 'externalProjectName', align: 'left', render: (v, r) => v || r.externalProjectId },
     { title: '项目ID', dataIndex: 'externalProjectId', width: 120 },
     { title: 'ClientName', dataIndex: 'clientKey', width: 150 },
     { title: '写回身份', dataIndex: 'writebackStaffId', width: 180, render: (v) => v || '-' },
@@ -218,23 +208,23 @@ function AoneIntegrationPanel() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card>
-        <Space direction="vertical" size={4} style={{ width: '100%' }}>
-          <Title level={4} style={{ margin: 0 }}>工单平台集成</Title>
-          <Text type="secondary">
-            统一配置外部工单平台凭证和托管项目。当前支持 Aone，后续 Jira、云效等平台会复用同一套托管模型。
-          </Text>
-        </Space>
-      </Card>
-
-      <Card title="平台配置">
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="第一次导入前先完成平台凭证和托管项目配置"
-          description="AutoWonder 会以外部平台为事实源同步需求、缺陷、任务、评论和状态；本地评论会带 AutoWonder 签名后写回。"
-        />
+      <Card title={<Space size={8}>
+        平台配置
+        <Tooltip trigger={['hover', 'focus']} title="第一次导入前先完成平台凭证和托管项目配置。平台会以外部平台为事实源同步需求、缺陷、任务、评论和状态；本地评论会带平台签名后写回。">
+          <Button type="text" size="small" aria-label="首次导入说明" icon={<InfoCircleOutlined />} />
+        </Tooltip>
+      </Space>} extra={<Space>
+          <Button icon={<ApiOutlined />} loading={testMutation.isPending} onClick={() =>
+            runAccessCommand('ADMIN', '测试工单平台连接', runConnectionTest)
+          }>
+            测试连接
+          </Button>
+          <Button type="primary" icon={<SaveOutlined />} loading={createMutation.isPending} onClick={() =>
+            runAccessCommand('ADMIN', '保存托管项目', () => createMutation.mutate())
+          }>
+            保存托管项目
+          </Button>
+        </Space>}>
         <Form
           form={form}
           layout="vertical"
@@ -246,8 +236,8 @@ function AoneIntegrationPanel() {
             pollIntervalSeconds: 3,
           }}
         >
-          <Space align="start" size={16} wrap>
-            <Form.Item label="平台" name="provider" rules={[{ required: true }]} style={{ width: 180 }}>
+          <div className="integration-fields">
+            <Form.Item label="平台" name="provider" rules={[{ required: true }]}>
               <Select
                 options={[
                   { label: 'Aone', value: 'AONE' },
@@ -259,54 +249,42 @@ function AoneIntegrationPanel() {
             <Form.Item label="Base URL" name="baseUrl" rules={[{ required: true }]} style={{ width: 300 }}>
               <Input />
             </Form.Item>
-            <Form.Item label="ClientName / AppName" name="clientKey" rules={[{ required: true }]} style={{ width: 220 }}>
+            <Form.Item label="ClientName / AppName" name="clientKey" rules={[{ required: true }]}>
               <Input />
             </Form.Item>
-            <Form.Item label="Access Secret" name="accessSecret" rules={[{ required: true }]} style={{ width: 300 }}>
+            <Form.Item label="Access Secret" name="accessSecret" rules={[{ required: true }]}>
               <Input.Password />
             </Form.Item>
-          </Space>
-          <Space align="start" size={16} wrap>
-            <Form.Item label="RegionId" name="regionId" style={{ width: 120 }}>
+
+            <Form.Item label="RegionId" name="regionId">
               <Input />
             </Form.Item>
             <Form.Item
               label="写回身份 StaffId"
               name="writebackStaffId"
               rules={[{ required: true, message: '请输入写回身份 StaffId' }]}
-              style={{ width: 240 }}
             >
               <Input />
             </Form.Item>
-            <Form.Item label="轮询秒数" name="pollIntervalSeconds" style={{ width: 140 }}>
+            <Form.Item label="轮询秒数" name="pollIntervalSeconds">
               <InputNumber min={3} max={3600} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item label="项目关键词" name="projectQuery" style={{ width: 260 }}>
-              <Input placeholder="项目名或关键字" />
+            <Form.Item label="项目关键词" htmlFor="projectQuery">
+              <Space.Compact style={{ width: '100%' }}>
+                <Form.Item name="projectQuery" noStyle>
+                  <Input placeholder="项目名或关键字" />
+                </Form.Item>
+                <Button icon={<SearchOutlined />} aria-label="搜索可托管项目" loading={searchMutation.isPending} onClick={() =>
+                  runAccessCommand('ADMIN', '搜索可托管项目', () => searchMutation.mutate())
+                }>搜索</Button>
+              </Space.Compact>
             </Form.Item>
-          </Space>
-          <Space>
-            <Button icon={<SearchOutlined />} loading={searchMutation.isPending} onClick={() =>
-              runAccessCommand('ADMIN', '搜索可托管项目', () => searchMutation.mutate())
-            }>
-              搜索可托管项目
-            </Button>
-            <Button icon={<ApiOutlined />} loading={testMutation.isPending} onClick={() =>
-              runAccessCommand('ADMIN', '测试工单平台连接', runConnectionTest)
-            }>
-              测试连接
-            </Button>
-            <Button type="primary" icon={<SaveOutlined />} loading={createMutation.isPending} onClick={() =>
-              runAccessCommand('ADMIN', '保存托管项目', () => createMutation.mutate())
-            }>
-              保存托管项目
-            </Button>
-          </Space>
+          </div>
           <Form.Item
             label="托管项目"
             name="selectedProjectIds"
             rules={[{ required: true, message: '请选择至少一个托管项目' }]}
-            style={{ marginTop: 16 }}
+            style={{ marginBottom: 0 }}
           >
             <Select mode="multiple" options={projectOptions} placeholder="先搜索项目，再多选托管项目" />
           </Form.Item>
@@ -323,34 +301,36 @@ function AoneIntegrationPanel() {
 
       <Card title="手动同步与写回">
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <Input
-            value={issueIdsText}
-            placeholder="输入外部工单 ID，多个用英文逗号分隔；留空则同步托管项目内全部工单"
-            onChange={(event) => setIssueIdsText(event.target.value)}
-          />
-          <Space>
-            <Button
-              icon={<CloudSyncOutlined />}
-              disabled={!selectedBindingId}
-              loading={syncMutation.isPending}
-              onClick={() => {
-                runAccessCommand('ADMIN', '手动同步工单', () => {
-                  const issueIds = issueIdsText
-                    .split(',')
-                    .map((v: string) => v.trim())
-                    .filter(Boolean);
-                  syncMutation.mutate({ bindingId: selectedBindingId, issueIds });
-                });
-              }}
-            >
-              同步选中 ID
-            </Button>
-            <Button icon={<SendOutlined />} loading={dispatchMutation.isPending} onClick={() =>
-              runAccessCommand('ADMIN', '处理工单写回队列', () => dispatchMutation.mutate())
-            }>
-              处理写回队列
-            </Button>
-          </Space>
+          <div className="integration-sync-toolbar">
+            <Input
+              value={issueIdsText}
+              placeholder="输入外部工单 ID，多个用英文逗号分隔；留空则同步托管项目内全部工单"
+              onChange={(event) => setIssueIdsText(event.target.value)}
+            />
+            <Space>
+              <Button
+                icon={<CloudSyncOutlined />}
+                disabled={!selectedBindingId}
+                loading={syncMutation.isPending}
+                onClick={() => {
+                  runAccessCommand('ADMIN', '手动同步工单', () => {
+                    const issueIds = issueIdsText
+                      .split(',')
+                      .map((v: string) => v.trim())
+                      .filter(Boolean);
+                    syncMutation.mutate({ bindingId: selectedBindingId, issueIds });
+                  });
+                }}
+              >
+                同步选中 ID
+              </Button>
+              <Button icon={<SendOutlined />} loading={dispatchMutation.isPending} onClick={() =>
+                runAccessCommand('ADMIN', '处理工单写回队列', () => dispatchMutation.mutate())
+              }>
+                处理写回队列
+              </Button>
+            </Space>
+          </div>
           {syncResult && (
             <Alert
               type="success"
@@ -362,7 +342,7 @@ function AoneIntegrationPanel() {
       </Card>
 
       <Card title="已托管项目">
-        <Table rowKey="id" columns={bindingColumns} dataSource={bindings} loading={bindingsLoading} pagination={false} />
+        <Table scroll={{ x: 1100 }} rowKey="id" columns={bindingColumns} dataSource={bindings} loading={bindingsLoading} pagination={false} />
       </Card>
     </Space>
   );

@@ -5,6 +5,8 @@ import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.user.dto.ChangePasswordRequest;
 import com.aliyun.autowonder.user.dto.DeactivationRequest;
 import com.aliyun.autowonder.user.dto.DeactivationStatusVO;
+import com.aliyun.autowonder.user.dto.UpdateProfileRequest;
+import com.aliyun.autowonder.user.dto.UserProfileVO;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -17,6 +19,16 @@ public class UserAccountController {
                                  AccountDeactivationService deactivationService) {
         this.userService = userService;
         this.deactivationService = deactivationService;
+    }
+
+    @GetMapping("/profile")
+    public Result<UserProfileVO> getProfile() {
+        return Result.ok(userService.getProfile(AutoWonderContext.get().getUserId()));
+    }
+
+    @PutMapping("/profile")
+    public Result<UserProfileVO> updateProfile(@RequestBody UpdateProfileRequest req) {
+        return Result.ok(userService.updateProfile(AutoWonderContext.get().getUserId(), req));
     }
 
     @PutMapping("/password")

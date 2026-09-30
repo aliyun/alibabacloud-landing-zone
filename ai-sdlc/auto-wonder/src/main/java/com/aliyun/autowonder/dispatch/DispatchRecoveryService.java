@@ -6,6 +6,7 @@ import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -37,6 +38,14 @@ public class DispatchRecoveryService {
     private ExecutorRegistry executorRegistry;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setExecutorRegistry(ExecutorRegistry value) { executorRegistry = value; }
+    private com.aliyun.autowonder.workitem.DeliveryRestartStore restartStore;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRestartStore(com.aliyun.autowonder.workitem.DeliveryRestartStore value) { restartStore = value; }
+    // Resolve the callback only after a stop has committed. The orchestrator itself
+    // depends on recovery (and DispatchService), so eager injection forms a bean cycle.
+    private ObjectProvider<DeliveryRestartOrchestrator> restartOrchestrator;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRestartOrchestrator(ObjectProvider<DeliveryRestartOrchestrator> value) { restartOrchestrator = value; }
     private void audit(long tenantId, long subjectId, long userId, String action, String targetType) {
         if (audit == null) return;
         var record = new com.aliyun.autowonder.audit.AuditLogRecord();
@@ -141,6 +150,8 @@ public class DispatchRecoveryService {
         DispatchDO d = requireWorkitem(tenantId, workitemId, dispatchId);
         tx.executeWithoutResult(s -> { lockSubject(d); cancelLocked(dispatches.findById(dispatchId), userId, force); });
         sendStop(dispatches.findById(dispatchId));
+        // A forced cancel may have been the last blocker of a waiting restart round.
+        advanceWaitingRestarts(tenantId, workitemId);
         return state(tenantId, workitemId);
     }
 
@@ -188,7 +199,8 @@ public class DispatchRecoveryService {
 
     /** Both existing TASK_PAUSED and TASK_RESULT prove that this owned execution stopped. */
     public boolean onStopped(long tenantId, long executorId, long dispatchId) {
-        return tx.execute(s -> {
+        long[] stoppedWorkitem = new long[1];
+        boolean stopped = tx.execute(s -> {
             DispatchDO d = dispatches.findById(dispatchId);
             if (d == null || !Objects.equals(d.getTenantId(), tenantId) || !Objects.equals(d.getExecutorId(), executorId)) return false;
             lockSubject(d);
@@ -202,8 +214,41 @@ public class DispatchRecoveryService {
             } else {
                 projectTerminal(d, DispatchStatus.CANCELED, "USER_CANCELED");
             }
+            stoppedWorkitem[0] = d.getWorkitemId() == null ? 0L : d.getWorkitemId();
             return true;
         });
+        if (stopped && stoppedWorkitem[0] != 0L) {
+            // The confirmed stop may have been the last blocker of a waiting restart round.
+            advanceWaitingRestarts(tenantId, stoppedWorkitem[0]);
+        }
+        return stopped;
+    }
+
+    /** Resumes restart rounds that were waiting for this workitem's old executions to stop. */
+    private void advanceWaitingRestarts(long tenantId, long workitemId) {
+        if (restartOrchestrator == null) {
+            return;
+        }
+        try {
+            DeliveryRestartOrchestrator orchestrator = restartOrchestrator.getIfAvailable();
+            if (orchestrator != null) {
+                orchestrator.advanceWaitingRestarts(tenantId, workitemId);
+            }
+        } catch (RuntimeException e) {
+            log.warn("delivery restart advancement after stop failed workitemId={}", workitemId, e);
+        }
+    }
+
+    /**
+     * Durable stop intent raised by a delivery restart. Same protocol as a user cancel
+     * (cancel_requested + stop_pending, delivered through the existing stop sweep) so
+     * late results of the old round stay fenced; the executor isolation guard stays
+     * armed because stop_pending is never cleared here.
+     */
+    public void requestRestartStop(long tenantId, long workitemId, long dispatchId, long userId) {
+        DispatchDO d = requireWorkitem(tenantId, workitemId, dispatchId);
+        tx.executeWithoutResult(s -> { lockSubject(d); cancelLocked(dispatches.findById(dispatchId), userId, false); });
+        sendStop(dispatches.findById(dispatchId));
     }
 
     public Map<String, Object> close(long tenantId, long workitemId, long userId, boolean force) {
@@ -252,7 +297,9 @@ public class DispatchRecoveryService {
             row.put("retryable", Set.of("FAILED", "TIMEOUT", "CANCELED", "PAUSED").contains(d.getStatus()));
             return row;
         }).toList();
-        return Map.of("closed", closed(tenantId, workitemId), "executions", executions);
+        var restarts = restartStore == null ? List.<Map<String, Object>>of()
+                : restartStore.listRounds(tenantId, workitemId, 10);
+        return Map.of("closed", closed(tenantId, workitemId), "executions", executions, "restarts", restarts);
     }
 
     public boolean ready(DispatchDO d) {

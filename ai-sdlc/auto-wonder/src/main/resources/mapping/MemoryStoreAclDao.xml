@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.memory.store.MemoryStoreAclDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.memory.store.MemoryStoreAclDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_store_acl
+        (tenant_id, store_id, subject_type, subject_ref, permission, creator_id)
+        VALUES (#{tenantId}, #{storeId}, #{subjectType}, #{subjectRef}, #{permission}, #{creatorId})
+        ON DUPLICATE KEY UPDATE permission = VALUES(permission), modifier_id = VALUES(creator_id)
+    </insert>
+    <select id="listByStore" resultType="com.aliyun.autowonder.memory.store.MemoryStoreAclDO">
+        SELECT * FROM memory_store_acl
+        WHERE tenant_id = #{tenantId} AND store_id = #{storeId}
+        ORDER BY subject_type, subject_ref
+    </select>
+    <select id="listForSubject" resultType="com.aliyun.autowonder.memory.store.MemoryStoreAclDO">
+        SELECT * FROM memory_store_acl
+        WHERE tenant_id = #{tenantId} AND subject_type = #{subjectType} AND subject_ref = #{subjectRef}
+        ORDER BY store_id
+    </select>
+    <delete id="delete">
+        DELETE FROM memory_store_acl
+        WHERE tenant_id = #{tenantId} AND store_id = #{storeId} AND id = #{id}
+    </delete>
+</mapper>

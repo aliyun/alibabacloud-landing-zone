@@ -25,15 +25,16 @@ describe('clarification theme', () => {
     expect(agentBlockStyle()).not.toHaveProperty('whiteSpace');
   });
 
-  it('exposes a white surface and hairline instead of grey fills', () => {
-    // 这里刻意写字面值而不是引用 CLARIFICATION_THEME：这些色值与尺度是已定稿的视觉决策。
-    // 若只拿常量和自己比，把 userBubble 退回旧的 antd 蓝 #e6f7ff、codeSurface 退回旧灰
-    // #fafafa / #f6f8fa、radiusBubble 退回 8，测试依旧全绿——旧灰蓝配色就能悄悄回来。
-    expect(CLARIFICATION_THEME.surface).toBe('#ffffff');
-    expect(CLARIFICATION_THEME.hairline).toBe('rgba(0,0,0,0.06)');
-    expect(CLARIFICATION_THEME.userBubble).toBe('#f4f4f5');
-    expect(CLARIFICATION_THEME.codeSurface).toBe('#f7f7f8');
-    expect(CLARIFICATION_THEME.codeBorder).toBe('rgba(0,0,0,0.05)');
+  it('uses the shared appearance tokens for every surface', () => {
+    // 锁定公共外观令牌，避免澄清面板回退为固定浅色。
+    expect(CLARIFICATION_THEME.surface).toBe('var(--aw-panel)');
+    expect(CLARIFICATION_THEME.hairline).toBe('var(--aw-border)');
+    expect(CLARIFICATION_THEME.controlBorder).toBe('var(--aw-border)');
+    expect(CLARIFICATION_THEME.textPrimary).toBe('var(--aw-text)');
+    expect(CLARIFICATION_THEME.textMuted).toBe('var(--aw-muted)');
+    expect(CLARIFICATION_THEME.userBubble).toBe('var(--aw-raised)');
+    expect(CLARIFICATION_THEME.codeSurface).toBe('var(--aw-raised)');
+    expect(CLARIFICATION_THEME.codeBorder).toBe('var(--aw-border)');
     expect(CLARIFICATION_THEME.radiusBubble).toBe(14);
   });
 

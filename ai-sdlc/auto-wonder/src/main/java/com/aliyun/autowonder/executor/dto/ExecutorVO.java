@@ -30,7 +30,7 @@ public class ExecutorVO {
     private Date gmtCreate;
     private boolean restartSupported;
     private boolean updateRestartSupported;
-    private com.alibaba.fastjson.JSONObject restart;
+    private com.aliyun.autowonder.json.JSONObject restart;
     /** Whether the connected client understands the {@code EXECUTOR_UPGRADE} command. */
     private boolean upgradeSupported;
     /** Whether {@link #version} is a parseable stable version strictly below {@link #targetVersion}. */

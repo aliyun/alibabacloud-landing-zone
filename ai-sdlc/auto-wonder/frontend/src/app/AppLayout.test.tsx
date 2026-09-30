@@ -8,11 +8,8 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import {
   AppLayout,
-  buildHeaderContext,
-  buildUserDisplay,
   getWorkspaceDeepLinkId,
   removeWorkspaceDeepLink,
-  shouldUseMobileLayout,
 } from './AppLayout';
 import { useAuthStore } from '@/shared/auth/store';
 import { refreshCurrentMembership } from '@/shared/auth/refreshCurrentMembership';
@@ -58,60 +55,13 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { name: '帮助正文' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '返回平台' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /返回工单列表/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '帮助中心' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /登\s*录/ })).toBeInTheDocument();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /菜单/ })).not.toBeInTheDocument();
     window.dispatchEvent(new Event('focus'));
     await waitFor(() => expect(refreshCurrentMembership).not.toHaveBeenCalled());
-  });
-
-  it('builds workspace-aware header context for nested routes', () => {
-    expect(buildHeaderContext('/settings/environment-variables', '星云工坊')).toEqual({
-      workspaceName: '星云工坊',
-      sectionTitle: '系统设置',
-      pageTitle: '环境变量',
-    });
-    expect(buildHeaderContext('/settings/roles', '星云工坊')).toEqual({
-      workspaceName: '星云工坊',
-      sectionTitle: '系统设置',
-      pageTitle: '成员管理',
-    });
-    expect(buildHeaderContext('/repos/map', '星云工坊')).toEqual({
-      workspaceName: '星云工坊',
-      sectionTitle: '仓库',
-      pageTitle: '仓库关系图',
-    });
-    expect(buildHeaderContext('/open-platform', '星云工坊')).toEqual({
-      workspaceName: '星云工坊',
-      sectionTitle: '',
-      pageTitle: '',
-    });
-    expect(buildHeaderContext('/about', '星云工坊')).toEqual({
-      workspaceName: '星云工坊',
-      sectionTitle: '',
-      pageTitle: '关于 AutoWonder',
-    });
-  });
-
-  it('builds complete user display information', () => {
-    expect(buildUserDisplay({
-      id: 1,
-      username: 'alice',
-      nickname: '爱丽丝',
-      email: 'alice@example.com',
-    })).toEqual({
-      primaryText: '爱丽丝',
-      secondaryText: 'alice@example.com',
-      avatarText: '爱',
-    });
-  });
-
-  it('uses the mobile shell only for real narrow breakpoints', () => {
-    expect(shouldUseMobileLayout({ xs: true, md: false })).toBe(true);
-    expect(shouldUseMobileLayout({ xs: true, md: true })).toBe(false);
-    expect(shouldUseMobileLayout({ xs: false, md: false })).toBe(false);
   });
 
   it('refreshes current membership on mount and when the window regains focus', () => {
@@ -143,7 +93,27 @@ describe('AppLayout', () => {
     expect(removeWorkspaceDeepLink('?workspaceId=8')).toBe('');
   });
 
-  it('renders workspace context and complete user information in the header', () => {
+  it('aligns the sidebar brand divider with the page header divider', () => {
+    useAuthStore.getState().setCurrentWorkspace(
+      { id: 7, name: '星云工坊', description: '' },
+      'READ_ONLY',
+    );
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/workitems']}>
+        <Routes>
+          <Route element={<AppLayout />}>
+            <Route path="/workitems" element={<div>工单页</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const brand = screen.getByRole('link', { name: /返回工单列表/ });
+    expect(brand.parentElement).toHaveStyle({ height: '60px' });
+  });
+
+  it('renders workspace context and only a compact user avatar in the header', () => {
     useAuthStore.getState().setUser({
       id: 1,
       username: 'alice',
@@ -166,13 +136,15 @@ describe('AppLayout', () => {
     const workspaceInitialMarks = screen.getAllByText('星');
     expect(workspaceInitialMarks).toHaveLength(1);
     workspaceInitialMarks.forEach((mark) => {
-      expect(mark).toHaveStyle({ color: '#ff6a00', borderColor: 'rgba(255, 106, 0, 0.28)' });
+      expect(mark).toHaveClass('aw-initial-mark');
     });
-    expect(screen.getByText('爱')).toHaveStyle({ color: '#ff6a00', borderColor: 'rgba(255, 106, 0, 0.28)' });
-    expect(screen.getAllByText('系统设置')).toHaveLength(1);
-    expect(screen.getAllByText('成员管理').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('爱丽丝')).toBeInTheDocument();
-    expect(screen.getByText('alice@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '用户菜单' })).toHaveTextContent('爱');
+    expect(screen.queryByText('系统设置')).not.toBeInTheDocument();
+    expect(screen.getAllByText('成员管理')).toHaveLength(1);
+    expect(screen.getByRole('region', { name: '页面内容' })).toContainElement(screen.getByText('角色权限页'));
+    expect(document.querySelector('.aw-page-header-context')?.textContent).toBe('');
+    expect(screen.queryByText('爱丽丝')).not.toBeInTheDocument();
+    expect(screen.queryByText('alice@example.com')).not.toBeInTheDocument();
     expect(screen.getByText('角色权限页')).toBeInTheDocument();
   });
 
@@ -196,7 +168,7 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByText('爱丽丝'));
+    await userEvent.click(screen.getByRole('button', { name: '用户菜单' }));
     await userEvent.click(await screen.findByText('个人设置'));
 
     expect(await screen.findByText('个人设置页')).toBeInTheDocument();
@@ -371,7 +343,7 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByText('爱丽丝'));
+    await userEvent.click(screen.getByRole('button', { name: '用户菜单' }));
     expect(screen.queryByText('切换工作空间')).not.toBeInTheDocument();
     expect(screen.getByText('个人设置')).toBeInTheDocument();
     expect(screen.getByText('退出登录')).toBeInTheDocument();
@@ -400,7 +372,7 @@ describe('AppLayout', () => {
     queryClient.setQueryData(['workspaces', 'mine', 1], [{ id: 7, name: '星云工坊', description: '研发工作空间' }]);
     queryClient.setQueryData(['workitems', { page: 1, size: 20 }], { content: [{ id: 101, title: '租户数据' }] });
 
-    await userEvent.click(screen.getByText('爱丽丝'));
+    await userEvent.click(screen.getByRole('button', { name: '用户菜单' }));
     await userEvent.click(screen.getByText('退出登录'));
 
     await waitFor(() => {
@@ -412,7 +384,7 @@ describe('AppLayout', () => {
     expect(queryClient.getQueryData(['workitems', { page: 1, size: 20 }])).toBeUndefined();
   });
 
-  it('applies truncation constraints for long workspace and user text', () => {
+  it('truncates workspace text and hides long user names and email', () => {
     const longWorkspaceName = '超长工作空间名称'.repeat(12);
     const longNickname = '超长昵称'.repeat(12);
     const longEmail = `${'verylong'.repeat(8)}@example.com`;
@@ -435,11 +407,14 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
 
-    const workspaceTexts = screen.getAllByTitle(longWorkspaceName);
-    expect(workspaceTexts).toHaveLength(1);
-    expect(workspaceTexts[0]).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-    expect(screen.getByTitle(longNickname)).toHaveStyle({ textOverflow: 'ellipsis', maxWidth: '220px' });
-    expect(screen.getByTitle(longEmail)).toHaveStyle({ textOverflow: 'ellipsis', maxWidth: '220px' });
-    expect(screen.getByTitle('状态模版')).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+    // The switcher name no longer carries an unconditional native title; the hover tooltip is
+    // owned by EllipsisText and only appears when the text actually overflows (no layout in
+    // jsdom, so it never appears here). The ellipsis styling itself is still asserted.
+    const workspaceText = screen.getByText(longWorkspaceName);
+    expect(workspaceText).toHaveStyle({ textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+    expect(screen.queryByTitle(longNickname)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(longEmail)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '用户菜单' })).toHaveStyle({ width: '36px', height: '36px', borderRadius: '50%' });
+    expect(screen.queryByTitle('状态模版')).not.toBeInTheDocument();
   });
 });

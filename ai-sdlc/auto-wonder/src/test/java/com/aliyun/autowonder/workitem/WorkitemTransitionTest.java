@@ -6,8 +6,11 @@ import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.statemachine.StatusTemplateDao;
 import com.aliyun.autowonder.statemachine.StatusTransitionDO;
 import com.aliyun.autowonder.statemachine.StatusTransitionDao;
+import com.aliyun.autowonder.workitem.dto.WorkitemVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -61,7 +64,15 @@ class WorkitemTransitionTest {
     private StatusNodeDO node(long id, String code) {
         StatusNodeDO n = new StatusNodeDO();
         n.setId(id);
+        n.setTenantId(100L);
+        n.setTemplateId(10L);
         n.setCode(code);
+        return n;
+    }
+
+    private StatusNodeDO nodeWithCategory(long id, String code, String category) {
+        StatusNodeDO n = node(id, code);
+        n.setCategory(category);
         return n;
     }
 
@@ -78,13 +89,17 @@ class WorkitemTransitionTest {
         when(nodeDao.findById(21L)).thenReturn(node(21L, "verifying"));
         when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), eq(9L))).thenReturn(1);
 
-        service.transition(5L, 21L, 100L, 9L);
+        WorkitemVO vo = service.transition(5L, 21L, 100L, 9L);
 
         verify(workitemDao).updateStatus(5L, 100L, 21L, 0, 9L);
+        assertNull(vo.getTransitionWarning());
         verify(eventDao).insert(argThat((WorkitemEventDO e) ->
                 "STATUS_CHANGE".equals(e.getEventType())
                         && "developing".equals(e.getFromVal())
-                        && "verifying".equals(e.getToVal())));
+                        && "verifying".equals(e.getToVal())
+                        && e.getDetailJson() != null
+                        && e.getDetailJson().contains("\"source\":\"HUMAN\"")
+                        && !e.getDetailJson().contains("outOfTemplate")));
     }
 
     @Test
@@ -111,14 +126,24 @@ class WorkitemTransitionTest {
     }
 
     @Test
-    void transitionIllegalThrows13004() {
+    void transitionOutOfTemplateIsAllowedWithWarningAndAudit() {
         WorkitemDO w = workitem(5L, 10L, 20L, 0);
         when(workitemDao.findById(5L)).thenReturn(w);
         when(transitionDao.findByTemplateFromTo(10L, 20L, 99L)).thenReturn(null);
+        when(nodeDao.findById(20L)).thenReturn(node(20L, "new"));
+        when(nodeDao.findById(99L)).thenReturn(node(99L, "released"));
+        when(workitemDao.updateStatus(eq(5L), eq(100L), eq(99L), eq(0), eq(9L))).thenReturn(1);
 
-        BizException ex = assertThrows(BizException.class, () -> service.transition(5L, 99L, 100L, 9L));
-        assertEquals("13004", ex.getCode());
-        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+        WorkitemVO vo = service.transition(5L, 99L, 100L, 9L);
+
+        verify(workitemDao).updateStatus(5L, 100L, 99L, 0, 9L);
+        assertEquals(WorkitemService.OUT_OF_TEMPLATE_TRANSITION_WARNING, vo.getTransitionWarning());
+        verify(eventDao).insert(argThat((WorkitemEventDO e) ->
+                "STATUS_CHANGE".equals(e.getEventType())
+                        && "HUMAN".equals(e.getActorType())
+                        && e.getDetailJson() != null
+                        && e.getDetailJson().contains("\"source\":\"HUMAN\"")
+                        && e.getDetailJson().contains("outOfTemplate")));
     }
 
     @Test
@@ -162,18 +187,23 @@ class WorkitemTransitionTest {
     }
 
     @Test
-    void checkedTransitionStillRequiresLegalEdge() {
+    void checkedTransitionOutOfTemplateStillAppliesWithWarning() {
         when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
-        BizException ex = assertThrows(BizException.class,
-                () -> service.transition(5L, 99L, 100L, 9L, 20L, 1));
-        assertEquals("13004", ex.getCode());
-        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 99L)).thenReturn(null);
+        when(nodeDao.findById(anyLong())).thenReturn(node(20L, "new"));
+        when(workitemDao.updateStatus(eq(5L), eq(100L), eq(99L), eq(1), eq(9L))).thenReturn(1);
+
+        WorkitemVO vo = service.transition(5L, 99L, 100L, 9L, 20L, 1);
+
+        verify(workitemDao).updateStatus(5L, 100L, 99L, 1, 9L);
+        assertEquals(WorkitemService.OUT_OF_TEMPLATE_TRANSITION_WARNING, vo.getTransitionWarning());
     }
 
     @Test
     void checkedTransitionUpdatesMatchingSnapshot() {
         when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
         when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(new StatusTransitionDO());
+        when(nodeDao.findById(21L)).thenReturn(node(21L, "verifying"));
         when(workitemDao.updateStatus(5L, 100L, 21L, 1, 9L)).thenReturn(1);
         service.transition(5L, 21L, 100L, 9L, 20L, 1);
         verify(workitemDao).updateStatus(5L, 100L, 21L, 1, 9L);
@@ -201,6 +231,39 @@ class WorkitemTransitionTest {
     }
 
     @Test
+    void transitionRejectsMissingTargetNode() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
+        when(nodeDao.findById(21L)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 21L, 100L, 9L));
+        assertEquals("13004", ex.getCode());
+        verifyNoInteractions(transitionDao, eventDao);
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void transitionRejectsTargetNodeFromOtherTenantOrTemplate() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 1));
+        StatusNodeDO foreignTenant = node(21L, "developing");
+        foreignTenant.setTenantId(200L);
+        when(nodeDao.findById(21L)).thenReturn(foreignTenant);
+        BizException ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 21L, 100L, 9L));
+        assertEquals("13004", ex.getCode());
+
+        StatusNodeDO foreignTemplate = node(22L, "developing");
+        foreignTemplate.setTemplateId(999L);
+        when(nodeDao.findById(22L)).thenReturn(foreignTemplate);
+        ex = assertThrows(BizException.class,
+                () -> service.transition(5L, 22L, 100L, 9L));
+        assertEquals("13004", ex.getCode());
+
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
+        verify(eventDao, never()).insert(any(WorkitemEventDO.class));
+    }
+
+    @Test
     void agentTransitionResolvesCodeAndWritesAgentEvent() {
         WorkitemDO w = workitem(5L, 10L, 20L, 0);
         when(workitemDao.findById(5L)).thenReturn(w);
@@ -209,6 +272,7 @@ class WorkitemTransitionTest {
         tr.setToNodeId(21L);
         when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(tr);
         when(nodeDao.findById(20L)).thenReturn(node(20L, "developing"));
+        when(nodeDao.findById(21L)).thenReturn(node(21L, "verifying"));
         when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), eq(555L))).thenReturn(1);
 
         service.agentTransition(5L, "verifying", 100L, 555L);
@@ -240,6 +304,7 @@ class WorkitemTransitionTest {
         StatusTransitionDO transition = new StatusTransitionDO();
         transition.setToNodeId(21L);
         when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(transition);
+        when(nodeDao.findById(21L)).thenReturn(released);
         when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), eq(555L))).thenReturn(1);
 
         when(nodeDao.findById(20L)).thenReturn(node(20L, "pending-decision"));
@@ -252,5 +317,113 @@ class WorkitemTransitionTest {
                         && "AGENT".equals(e.getActorType())
                         && e.getActorRef() == 555L
                         && "released".equals(e.getToVal())));
+    }
+
+    @Test
+    void agentTransitionOutOfTemplateIsAllowedWithWarningAndAudit() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        when(nodeDao.findByTemplateAndCode(10L, "released")).thenReturn(node(21L, "released"));
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(null);
+        when(nodeDao.findById(20L)).thenReturn(node(20L, "developing"));
+        when(nodeDao.findById(21L)).thenReturn(node(21L, "released"));
+        when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), eq(555L))).thenReturn(1);
+
+        WorkitemVO vo = service.agentTransition(5L, "released", 100L, 555L);
+
+        verify(workitemDao).updateStatus(5L, 100L, 21L, 0, 555L);
+        assertEquals(WorkitemService.OUT_OF_TEMPLATE_TRANSITION_WARNING, vo.getTransitionWarning());
+        verify(eventDao).insert(argThat((WorkitemEventDO e) ->
+                "AGENT".equals(e.getActorType())
+                        && e.getDetailJson() != null
+                        && e.getDetailJson().contains("\"source\":\"AGENT\"")
+                        && e.getDetailJson().contains("outOfTemplate")));
+    }
+
+    @Test
+    void autoAdvanceOnDeliveryStartMovesInitWorkitemToFirstInProgressNode() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        when(nodeDao.findById(20L)).thenReturn(nodeWithCategory(20L, "new", "INIT"));
+        when(nodeDao.listByTemplateId(10L)).thenReturn(List.of(
+                nodeWithCategory(20L, "new", "INIT"),
+                nodeWithCategory(21L, "developing", "IN_PROGRESS"),
+                nodeWithCategory(22L, "verifying", "IN_PROGRESS")));
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(new StatusTransitionDO());
+        when(nodeDao.findById(21L)).thenReturn(nodeWithCategory(21L, "developing", "IN_PROGRESS"));
+        when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), isNull())).thenReturn(1);
+
+        assertTrue(service.autoAdvanceOnDeliveryStart(100L, 5L));
+
+        verify(workitemDao).updateStatus(5L, 100L, 21L, 0, null);
+        verify(eventDao).insert(argThat((WorkitemEventDO e) ->
+                "STATUS_CHANGE".equals(e.getEventType())
+                        && "SYSTEM".equals(e.getActorType())
+                        && e.getActorRef() == null
+                        && "new".equals(e.getFromVal())
+                        && "developing".equals(e.getToVal())
+                        && e.getDetailJson() != null
+                        && e.getDetailJson().contains("SYSTEM_DELIVERY_START")));
+    }
+
+    @Test
+    void autoAdvanceOnDeliveryStartIsCaseInsensitiveOnNodeCategory() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        when(nodeDao.findById(20L)).thenReturn(nodeWithCategory(20L, "new", "init"));
+        when(nodeDao.listByTemplateId(10L)).thenReturn(List.of(
+                nodeWithCategory(20L, "new", "init"),
+                nodeWithCategory(21L, "developing", "in_progress")));
+        when(nodeDao.findById(21L)).thenReturn(nodeWithCategory(21L, "developing", "in_progress"));
+        when(transitionDao.findByTemplateFromTo(10L, 20L, 21L)).thenReturn(new StatusTransitionDO());
+        when(workitemDao.updateStatus(eq(5L), eq(100L), eq(21L), eq(0), isNull())).thenReturn(1);
+
+        assertTrue(service.autoAdvanceOnDeliveryStart(100L, 5L));
+        verify(workitemDao).updateStatus(5L, 100L, 21L, 0, null);
+    }
+
+    @Test
+    void autoAdvanceOnDeliveryStartSkipsNonInitWorkitem() {
+        WorkitemDO w = workitem(5L, 10L, 21L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        when(nodeDao.findById(21L)).thenReturn(nodeWithCategory(21L, "developing", "IN_PROGRESS"));
+
+        assertFalse(service.autoAdvanceOnDeliveryStart(100L, 5L));
+
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), any());
+        verify(eventDao, never()).insert(any(WorkitemEventDO.class));
+    }
+
+    @Test
+    void autoAdvanceOnDeliveryStartDoesNothingWithoutInProgressNode() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        when(nodeDao.findById(20L)).thenReturn(nodeWithCategory(20L, "new", "INIT"));
+        when(nodeDao.listByTemplateId(10L)).thenReturn(List.of(
+                nodeWithCategory(20L, "new", "INIT"),
+                nodeWithCategory(23L, "released", "DONE")));
+
+        assertFalse(service.autoAdvanceOnDeliveryStart(100L, 5L));
+
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), any());
+    }
+
+    @Test
+    void autoAdvanceOnDeliveryStartIgnoresMissingOrForeignWorkitem() {
+        when(workitemDao.findById(404L)).thenReturn(null);
+        assertFalse(service.autoAdvanceOnDeliveryStart(100L, 404L));
+
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 10L, 20L, 0));
+        assertFalse(service.autoAdvanceOnDeliveryStart(200L, 5L));
+
+        verify(workitemDao, never()).updateStatus(anyLong(), anyLong(), anyLong(), anyInt(), any());
+    }
+
+    @Test
+    void transitionDetailJsonRecordsSourceReasonAndOut_ofTemplateFlag() {
+        assertEquals("{\"source\":\"HUMAN\"}", WorkitemService.transitionDetailJson("HUMAN", null, false));
+        assertEquals("{\"source\":\"HUMAN\",\"reason\":\"r\",\"outOfTemplate\":true}",
+                WorkitemService.transitionDetailJson("HUMAN", "r", true));
+        assertNull(WorkitemService.transitionDetailJson(null, null, false));
     }
 }

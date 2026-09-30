@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -36,7 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -794,6 +795,8 @@ public class SkillPackageService {
         int count = 0;
         long inflatedSize = 0;
         String rootText = null;
+        List<String> names = new ArrayList<>();
+        Map<String, byte[]> wrappedRoots = new HashMap<>();
         byte[] buffer = new byte[8192];
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             ZipEntry entry;
@@ -804,8 +807,10 @@ public class SkillPackageService {
                 }
                 String name = entry.getName();
                 validateEntryName(name);
+                names.add(name);
                 if (!entry.isDirectory()) {
-                    ByteArrayOutputStreamWithLimit rootBytes = rootFileName.equals(name)
+                    String wrapper = wrappedRootSegment(name, rootFileName);
+                    ByteArrayOutputStreamWithLimit rootBytes = wrapper != null || rootFileName.equals(name)
                             ? new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE) : null;
                     int read;
                     while ((read = zis.read(buffer)) >= 0) {
@@ -818,7 +823,11 @@ public class SkillPackageService {
                         }
                     }
                     if (rootBytes != null) {
-                        rootText = new String(rootBytes.toByteArray(), StandardCharsets.UTF_8);
+                        if (wrapper != null) {
+                            wrappedRoots.put(wrapper, rootBytes.toByteArray());
+                        } else {
+                            rootText = new String(rootBytes.toByteArray(), StandardCharsets.UTF_8);
+                        }
                     }
                 }
             }
@@ -826,9 +835,44 @@ public class SkillPackageService {
             throw invalid();
         }
         if (rootText == null) {
+            rootText = wrappedRootText(names, wrappedRoots);
+        }
+        if (rootText == null) {
             throw invalid();
         }
         return rootText;
+    }
+
+    /**
+     * macOS 右键压缩 / zip -r folder.zip dir/ 会把全部内容包进单一首层目录。
+     * 与前端目录上传（skillPackage.ts 剥掉 webkitRelativePath 首段）对齐：
+     * 全部条目共享同一首层目录时，剥掉该目录再定位根文件。
+     */
+    private static String wrappedRootText(List<String> names, Map<String, byte[]> wrappedRoots) {
+        String wrapper = null;
+        for (String name : names) {
+            int slash = name.indexOf('/');
+            if (slash < 0) {
+                return null;
+            }
+            String segment = name.substring(0, slash);
+            if (wrapper == null) {
+                wrapper = segment;
+            } else if (!wrapper.equals(segment)) {
+                return null;
+            }
+        }
+        byte[] content = wrapper == null ? null : wrappedRoots.get(wrapper);
+        return content == null ? null : new String(content, StandardCharsets.UTF_8);
+    }
+
+    /** name 形如 <dir>/rootFileName 且 dir 内不再嵌套时返回 dir，否则 null。 */
+    private static String wrappedRootSegment(String name, String rootFileName) {
+        int slash = name.indexOf('/');
+        if (slash < 0 || name.indexOf('/', slash + 1) >= 0) {
+            return null;
+        }
+        return rootFileName.equals(name.substring(slash + 1)) ? name.substring(0, slash) : null;
     }
 
     private String readRootSkillMdFromTarGz(byte[] bytes) {
@@ -852,6 +896,8 @@ public class SkillPackageService {
         int files = 0;
         long inflatedSize = 0;
         String rootText = null;
+        List<String> names = new ArrayList<>();
+        Map<String, byte[]> wrappedRoots = new HashMap<>();
         try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
             byte[] header = new byte[512];
             while (readFully(gis, header) == 512) {
@@ -868,6 +914,7 @@ public class SkillPackageService {
                 if (type == '2') {
                     throw invalid();
                 }
+                names.add(name);
                 if (type != '5') {
                     files++;
                     inflatedSize += size;
@@ -881,13 +928,25 @@ public class SkillPackageService {
                         }
                         rootText = new String(content, StandardCharsets.UTF_8);
                     } else {
-                        skipFully(gis, size);
+                        String wrapper = rootFileName == null ? null : wrappedRootSegment(name, rootFileName);
+                        if (wrapper != null) {
+                            byte[] content = gis.readNBytes(Math.toIntExact(size));
+                            if (content.length != size) {
+                                throw invalid();
+                            }
+                            wrappedRoots.put(wrapper, content);
+                        } else {
+                            skipFully(gis, size);
+                        }
                     }
                     skipFully(gis, tarPadding(size));
                 }
             }
         } catch (IOException | ArithmeticException e) {
             throw invalid();
+        }
+        if (rootText == null) {
+            rootText = wrappedRootText(names, wrappedRoots);
         }
         return new TarGzReadResult(files, rootText);
     }

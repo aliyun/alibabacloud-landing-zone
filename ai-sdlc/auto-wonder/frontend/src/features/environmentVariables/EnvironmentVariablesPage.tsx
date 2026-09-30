@@ -1,3 +1,4 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -10,10 +11,9 @@ import {
   Modal,
   Popconfirm,
   Space,
-  Table,
   Typography,
-  message,
-} from 'antd';
+  message} from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -36,7 +36,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import { ApiError } from '@/shared/types/common';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
 
-const { Paragraph, Text, Title } = Typography;
+const { Text } = Typography;
 
 interface VariableFormValues extends CreateEnvironmentVariableInput {
   replaceValue?: boolean;
@@ -297,15 +297,9 @@ export function EnvironmentVariablesPage() {
 
   return (
     <Space direction="vertical" size={20} style={{ width: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
-        <div>
-          <Title level={3} style={{ margin: 0 }}>环境变量</Title>
-          <Paragraph type="secondary" style={{ margin: '6px 0 0' }}>
-            集中管理数字员工运行时使用的敏感配置。变量值默认隐藏，仅在需要时按项查看。
-          </Paragraph>
-        </div>
-        {isAdmin && <Button aria-label="新增环境变量" type="primary" icon={<PlusOutlined />} onClick={showCreate}>新增环境变量</Button>}
-      </div>
+      <PageHeading title="环境变量" description="集中管理数字员工运行时使用的敏感配置。变量值默认隐藏，仅在需要时按项查看。"
+        extra={isAdmin && <Button aria-label="新增环境变量" type="primary" icon={<PlusOutlined />} onClick={showCreate}>新增环境变量</Button>} />
+
 
       {operationError && <Alert closable type="error" showIcon message="操作未完成" description={operationError} onClose={() => setOperationError(undefined)} />}
       {query.isError && <Alert type="error" showIcon message="环境变量加载失败" description={errorMessage(query.error, '请稍后重试')} />}
@@ -323,7 +317,7 @@ export function EnvironmentVariablesPage() {
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无环境变量" /> }}
           scroll={{ x: 760 }}
           columns={[
-            { title: '名称', dataIndex: 'name', width: 190, render: (name: string) => <Text code>{name}</Text> },
+            { title: '名称', dataIndex: 'name', align: 'left', width: 190, render: (name: string) => <Text code>{name}</Text> },
             {
               title: '值',
               width: 280,
@@ -344,7 +338,7 @@ export function EnvironmentVariablesPage() {
                 </Space>;
               },
             },
-            { title: '说明', dataIndex: 'description', render: (value: string | null) => value || <Text type="secondary">—</Text> },
+            { title: '说明', dataIndex: 'description', align: 'left', render: (value: string | null) => value || <Text type="secondary">—</Text> },
             { title: '更新时间', dataIndex: 'gmtModified', width: 180, render: formatDate },
             ...(isAdmin ? [{
               title: '操作',

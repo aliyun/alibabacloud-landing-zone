@@ -1,3 +1,4 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   Alert, Button, Card, Empty, List, Pagination, Popconfirm, Space, Tabs, Tag, Typography, message,
@@ -146,7 +147,7 @@ export function NotificationCenterPage() {
 
   return (
     <Card
-      title="通知中心"
+      className="aw-content-card" title={<PageHeading title="通知中心" />}
       extra={
         <Button onClick={handleMarkAllRead} loading={markAllRead.isPending}>
           全部已读

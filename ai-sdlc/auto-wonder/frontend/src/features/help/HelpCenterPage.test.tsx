@@ -178,12 +178,11 @@ describe('帮助中心静态文档', () => {
     expect(steps).toHaveLength(6);
     for (const step of steps) {
       expect(screen.getByRole('heading', { level: 3, name: step.title })).toHaveAttribute('id', step.id);
-      const links = screen.getAllByRole('link', { name: step.navTitle });
-      expect(links[1]).toHaveAttribute('title', step.title);
-      expect(links).toHaveLength(2);
-      expect(links[1]).toHaveAttribute('href', `/help?chapter=project-onboarding#${step.id}`);
-      fireEvent.click(links[1]);
-      expect(links[1]).toHaveClass('help-outline-step');
+      const link = screen.getByRole('link', { name: step.navTitle });
+      expect(link).toHaveAttribute('title', step.title);
+      expect(link).toHaveAttribute('href', `/help?chapter=project-onboarding#${step.id}`);
+      fireEvent.click(link);
+      expect(link).toHaveClass('help-outline-step');
     }
   });
 

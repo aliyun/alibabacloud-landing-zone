@@ -21,9 +21,10 @@ export interface ElicitationFieldProps {
 const optionBlockStyle = {
   display: 'flex' as const,
   alignItems: 'flex-start' as const,
-  padding: '6px 8px',
-  marginBottom: 4,
-  border: `1px solid ${CLARIFICATION_THEME.controlBorder}`,
+  padding: '10px 12px',
+  lineHeight: 1.7,
+  marginBottom: 8,
+  borderWidth: 1, borderStyle: 'solid', borderColor: CLARIFICATION_THEME.controlBorder,
   borderRadius: CLARIFICATION_THEME.radiusBlock,
   backgroundColor: CLARIFICATION_THEME.surface,
   whiteSpace: 'normal' as const,
@@ -35,10 +36,10 @@ const otherOptionBlockStyle = { ...optionBlockStyle, borderStyle: 'dashed' as co
 
 function OptionLabel({ option }: { option: ElicitationOption }) {
   return (
-    <span style={{ fontSize: 12 }}>
+    <span style={{ fontSize: 16 }}>
       {option.label}
       {option.hint ? (
-        <span style={{ display: 'block', fontSize: 11, color: CLARIFICATION_THEME.textMuted }}>{option.hint}</span>
+        <span style={{ display: 'block', fontSize: 14, color: CLARIFICATION_THEME.textMuted }}>{option.hint}</span>
       ) : null}
     </span>
   );
@@ -109,7 +110,7 @@ export function ElicitationField({
             data-testid={`elicitation-option-${field.name}-other`}
             style={otherOptionBlockStyle}
           >
-            <span style={{ fontSize: 12 }}>有其他想法</span>
+            <span style={{ fontSize: 16 }}>有其他想法</span>
           </Radio>
         </Radio.Group>
         {value === OTHER_SENTINEL ? otherInput : null}
@@ -141,7 +142,7 @@ export function ElicitationField({
             data-testid={`elicitation-option-${field.name}-other`}
             style={otherOptionBlockStyle}
           >
-            <span style={{ fontSize: 12 }}>有其他想法</span>
+            <span style={{ fontSize: 16 }}>有其他想法</span>
           </Checkbox>
         </Checkbox.Group>
         {arr.includes(OTHER_SENTINEL) ? otherInput : null}
@@ -180,11 +181,11 @@ export function ElicitationField({
         />
         {field.rawSchema !== undefined ? (
           <details style={{ marginTop: 4 }}>
-            <summary style={{ cursor: 'pointer', fontSize: 11, color: CLARIFICATION_THEME.textMuted }}>原始 Schema</summary>
+            <summary style={{ cursor: 'pointer', fontSize: 14, color: CLARIFICATION_THEME.textMuted }}>原始 Schema</summary>
             <pre
               data-testid={`elicitation-raw-schema-${field.name}`}
               style={{
-                fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto',
+                fontSize: 14, whiteSpace: 'pre-wrap', maxHeight: 150, overflow: 'auto',
                 padding: '6px 10px', color: CLARIFICATION_THEME.textSecondary,
                 backgroundColor: CLARIFICATION_THEME.codeSurface,
                 border: `1px solid ${CLARIFICATION_THEME.codeBorder}`,
@@ -216,7 +217,7 @@ export function ElicitationField({
       {error ? (
         <div
           data-testid={`elicitation-error-${field.name}`}
-          style={{ color: '#cf1322', fontSize: 11, marginTop: 2 }}
+          style={{ color: 'var(--aw-error)', fontSize: 14, marginTop: 2 }}
         >
           {error}
         </div>

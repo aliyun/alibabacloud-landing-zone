@@ -13,8 +13,8 @@ interface RunCommentInputProps {
 const DEFAULT_DISABLED_REASON = '不在本次运行的冻结快照中，无法 @ 触发执行';
 
 const mentionOptionHighlightStyle: CSSProperties = {
-  color: '#0958d9',
-  background: '#e6f4ff',
+  color: 'var(--aw-accent-text)',
+  background: 'rgba(var(--aw-accent-rgb),.10)',
   borderRadius: 4,
   padding: '0 4px',
   fontWeight: 600,
@@ -36,8 +36,9 @@ const mentionMenuStyle: CSSProperties = {
   bottom: '100%',
   marginBottom: 6,
   padding: '4px 0',
-  background: '#fff',
-  border: '1px solid #d9d9d9',
+  background: 'var(--aw-glass)',
+  backdropFilter: 'blur(18px)',
+  border: '1px solid var(--aw-border)',
   borderRadius: 6,
   boxShadow: '0 6px 16px rgba(0, 0, 0, 0.08)',
   zIndex: 20,
@@ -51,16 +52,17 @@ const mentionMenuItemStyle: CSSProperties = {
   padding: '6px 12px',
   border: 0,
   background: 'transparent',
+  color: 'var(--aw-text)',
   textAlign: 'left',
   cursor: 'pointer',
 };
 
 const activeMentionMenuItemStyle: CSSProperties = {
-  background: '#f0f7ff',
+  background: 'rgba(var(--aw-accent-rgb),.10)',
 };
 
 const disabledMentionMenuItemStyle: CSSProperties = {
-  color: '#bfbfbf',
+  color: 'var(--aw-muted)',
   cursor: 'not-allowed',
 };
 
@@ -127,18 +129,18 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
           disabled,
           disabledReason,
           label: disabled ? (
-            <span style={{ color: '#bfbfbf' }}>
+            <span style={{ color: 'var(--aw-muted)' }}>
               <span>@{candidate.name}</span>
-              <span style={{ marginLeft: 6 }}>{targetType === 'AGENT' ? '数字人' : '真人'}</span>
+              <span style={{ marginLeft: 6 }}>{targetType === 'AGENT' ? '数字员工' : '真人'}</span>
               <span style={{ marginLeft: 6 }}>（{disabledReason}）</span>
             </span>
           ) : (
             <span>
               <span style={mentionOptionHighlightStyle}>@{candidate.name}</span>
-              <span style={{ marginLeft: 6, color: targetType === 'AGENT' ? '#fa8c16' : '#1677ff' }}>
-                {targetType === 'AGENT' ? '数字人' : '真人'}
+              <span style={{ marginLeft: 6, color: targetType === 'AGENT' ? 'var(--aw-warning)' : 'var(--aw-accent-text)' }}>
+                {targetType === 'AGENT' ? '数字员工' : '真人'}
               </span>
-              {candidate.displayId ? <span style={{ marginLeft: 6, color: '#8c8c8c' }}>{candidate.displayId}</span> : null}
+              {candidate.displayId ? <span style={{ marginLeft: 6, color: 'var(--aw-muted)' }}>{candidate.displayId}</span> : null}
               {targetType === 'AGENT' && candidate.online === false ? '（离线，稍后送达）' : ''}
             </span>
           ),

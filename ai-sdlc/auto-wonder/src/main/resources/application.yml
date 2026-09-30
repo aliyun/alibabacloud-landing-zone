@@ -56,7 +56,7 @@ autowonder:
   # 支持环境变量 AUTOWONDER_COMMUNITY_EDITION 覆盖。
   community-edition: ${AUTOWONDER_COMMUNITY_EDITION:true}
   runtime:
-    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.2.163}
+    recommended-version: ${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:0.3.3}
     # 全局自动升级开关：开启后服务端发现执行器版本落后就自动下发升级指令。默认开启；
     # 关闭请改这里（或设同名环境变量）后重启服务端，手动与批量升级不受它影响。
     executor-auto-update-enabled: ${AUTOWONDER_RUNTIME_EXECUTOR_AUTO_UPDATE_ENABLED:true}
@@ -132,3 +132,7 @@ feishu:
   inbox:
     poll-ms: ${FEISHU_INBOX_POLL_MS:3000}
     initial-delay-ms: ${FEISHU_INBOX_INITIAL_DELAY_MS:15000}
+
+memory:
+  document-store:
+    enabled: ${AUTOWONDER_MEMORY_DOCUMENT_STORE_ENABLED:true}

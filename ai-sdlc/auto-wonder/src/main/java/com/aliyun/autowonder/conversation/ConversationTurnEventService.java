@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.conversation;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.websocket.ConversationRealtimePublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -148,7 +148,7 @@ public class ConversationTurnEventService {
 
     private void updateCliSessionRefIfPresent(long tenantId, long conversationId, String payload) {
         try {
-            com.alibaba.fastjson.JSONObject json = JSON.parseObject(payload);
+            com.aliyun.autowonder.json.JSONObject json = JSON.parseObject(payload);
             String sessionId = json.getString("sessionId");
             if (sessionId != null && !sessionId.isBlank()) {
                 convDao.updateCliSessionRef(tenantId, conversationId, sessionId);

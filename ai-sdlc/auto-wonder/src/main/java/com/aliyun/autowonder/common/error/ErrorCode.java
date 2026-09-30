@@ -129,6 +129,7 @@ public enum ErrorCode {
     REPO_RELATION_SELF_REF("20008", "仓库不能与自身建立关系"),
     REPO_RELATION_NOT_FOUND("20009", "仓库关系不存在"),
     REPO_ALREADY_SCANNING("20010", "仓库正在扫描中"),
+    REPO_NAME_INVALID("20011", "仓库名称必须为单级目录名，不能包含路径分隔符、绝对路径或路径穿越片段"),
     // 21xxx 记忆中心
     MEMORY_NOT_FOUND("21001", "记忆不存在"),
     MEMORY_TITLE_REQUIRED("21002", "记忆标题不能为空"),

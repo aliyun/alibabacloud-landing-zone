@@ -64,6 +64,7 @@ export async function assignWorkitem(
   sdlcId?: number | string,
   squadId?: number | string,
   scheduledStartAt?: string,
+  restartToken?: string,
 ): Promise<Workitem> {
   const resp = await apiClient.put<Workitem>(`/api/workitems/${id}/assignee`, {
     assigneeType,
@@ -71,6 +72,7 @@ export async function assignWorkitem(
     ...(sdlcId != null ? { sdlcId } : {}),
     ...(squadId != null ? { squadId } : {}),
     ...(scheduledStartAt ? { scheduledStartAt } : {}),
+    ...(restartToken ? { restartToken } : {}),
   });
   return resp.data;
 }

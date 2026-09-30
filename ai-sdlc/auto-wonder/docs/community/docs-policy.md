@@ -46,6 +46,8 @@ All published product Skills are managed under the root `skills/` directory
 the root `.agents/` directory are both part of the community distribution and
 synced to the external GitHub repository.
 
+- `docs/executor-client-kind-recovery.md`: recovery of historical executor client configuration.
+
 ## Excluded Documents
 
 Do not publish these categories in `community`:

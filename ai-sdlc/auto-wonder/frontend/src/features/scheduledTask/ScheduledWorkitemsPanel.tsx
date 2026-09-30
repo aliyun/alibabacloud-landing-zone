@@ -1,10 +1,13 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState } from 'react';
-import { Button, DatePicker, Input, Modal, Segmented, Space, Table, Tag, Tooltip, message } from 'antd';
+import { Button, Card, DatePicker, Input, Modal, Segmented, Space, Tag, Tooltip, message } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs, { type Dayjs } from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import { useUpdateScheduledStart, useWorkitemList } from '@/features/workitem/hooks';
 import type { Workitem, WorkitemScheduledPhase } from '@/shared/types/workitem';
 
@@ -18,11 +21,9 @@ const PHASE_META: Record<WorkitemScheduledPhase, { label: string; color: string 
 type Scope = 'ALL' | 'CREATED';
 
 const SCOPE_OPTIONS: { value: Scope; label: string }[] = [
-  { value: 'ALL', label: '查看全部' },
+  { value: 'ALL', label: '全部' },
   { value: 'CREATED', label: '我创建的' },
 ];
-
-const PAGE_SIZE = 20;
 
 /** 已触发的工单定时字段已被清空，三个操作都失去意义，因此按钮常驻但置灰并说明原因。 */
 function disabledReason(phase?: WorkitemScheduledPhase | null): string {
@@ -117,9 +118,10 @@ export function ScheduledWorkitemsPanel() {
   const [scope, setScope] = useState<Scope>('ALL');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = usePageSizePreference('autowonder.scheduledWorkitems.pageSize', [10, 20, 50], 10);
   const { data, isLoading } = useWorkitemList({
     page,
-    size: PAGE_SIZE,
+    size: pageSize,
     scheduledStart: 'ALL',
     ...(scope === 'CREATED' ? { mineScope: 'CREATED' } : {}),
     ...(keyword ? { keyword } : {}),
@@ -128,8 +130,9 @@ export function ScheduledWorkitemsPanel() {
 
   const columns: ColumnsType<Workitem> = [
     {
-      title: '工单',
+      title: '工单', align: 'left',
       dataIndex: 'title',
+      width: 240,
       render: (title: string, record) => <a onClick={() => navigate(`/workitems/${record.id}`)}>{title}</a>,
     },
     {
@@ -145,7 +148,7 @@ export function ScheduledWorkitemsPanel() {
   ];
 
   return (
-    <>
+    <Card className="aw-content-card aw-scheduled-list" title={<PageHeading title="定时工单" description={<>共 <span className="aw-heading-number">{data?.total ?? items.length}</span> 个</>} />}>
       <Space style={{ marginBottom: 16 }} wrap>
         <Segmented
           aria-label="定时工单范围"
@@ -163,17 +166,23 @@ export function ScheduledWorkitemsPanel() {
         />
       </Space>
       <Table
+        scroll={{ x: 980 }}
         rowKey="id"
         columns={columns}
         dataSource={items}
         loading={isLoading}
         pagination={{
           current: page,
-          pageSize: PAGE_SIZE,
+          pageSize,
           total: data?.total,
-          onChange: (next) => setPage(next),
+          onChange: (nextPage, nextSize) => {
+            setPage(nextPage);
+            if (nextSize !== pageSize) { setPageSize(nextSize); setPage(1); }
+          },
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
         }}
       />
-    </>
+    </Card>
   );
 }

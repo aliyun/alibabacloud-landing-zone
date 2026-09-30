@@ -1,7 +1,9 @@
-import { Button, Space, Tooltip } from 'antd';
+import type { ReactNode } from 'react';
+import { Button, Tooltip } from 'antd';
 import { SwapOutlined, UserSwitchOutlined, CommentOutlined, RocketOutlined, SyncOutlined, DeleteOutlined, UserAddOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 
 interface WorkitemActionBarProps {
+  deliveryControl?: ReactNode;
   hasSdlc?: boolean;
   watched?: boolean;
   onStartDelivery?: () => void;
@@ -19,6 +21,7 @@ interface WorkitemActionBarProps {
 }
 
 export function WorkitemActionBar({
+  deliveryControl,
   hasSdlc,
   watched,
   onStartDelivery,
@@ -35,54 +38,37 @@ export function WorkitemActionBar({
   deleteDisabledReason,
 }: WorkitemActionBarProps) {
   return (
-    <div data-testid="workitem-action-bar" style={{ background: '#f5f5f5', borderRadius: 8, padding: '12px 0' }}>
-      <Space wrap>
+    <div data-testid="workitem-action-bar" className="aw-workitem-actions">
+      <Button type="primary" icon={hasSdlc ? <UserSwitchOutlined /> : <RocketOutlined />} onClick={onStartDelivery}>
+        {hasSdlc ? '重新指派' : '启动交付'}
+      </Button>
+      <Button icon={<UserAddOutlined />} onClick={onAssignHuman}>指派给真人</Button>
+      <Button icon={<SwapOutlined />} onClick={onTransition}>流转状态</Button>
+      <Tooltip title={watched ? '取消关注工单' : '关注工单'}>
         <Button
           data-testid="workitem-watch-toggle"
           type={watched ? 'primary' : 'default'}
           ghost={watched}
           icon={watched ? <StarFilled /> : <StarOutlined />}
           aria-label={watched ? '取消关注工单' : '关注工单'}
-          style={watched ? { background: '#ff6a00', borderColor: '#ff6a00' } : undefined}
+          aria-pressed={!!watched}
           onClick={onToggleWatch}
           loading={watchLoading}
-        >
-          {watched ? '已关注' : '关注'}
-        </Button>
-        <Button
-          type="primary"
-          icon={hasSdlc ? <UserSwitchOutlined /> : <RocketOutlined />}
-          style={{ background: '#ff6a00', borderColor: '#ff6a00' }}
-          onClick={onStartDelivery}
-        >
-          {hasSdlc ? '重新指派' : '启动交付'}
-        </Button>
-        <Button icon={<UserAddOutlined />} onClick={onAssignHuman}>
-          指派给真人
-        </Button>
-        <Button icon={<SwapOutlined />} onClick={onTransition}>
-          流转状态
-        </Button>
-        <Button icon={<SyncOutlined />} onClick={onSyncExternal} loading={syncExternalLoading}>
-          立即对账
-        </Button>
-        <Button icon={<CommentOutlined />} onClick={onAddComment}>
-          添加评论
-        </Button>
-        <Tooltip title={deleteDisabled ? deleteDisabledReason : null}>
-          <span>
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={onDelete}
-              loading={deleteLoading}
-              disabled={deleteDisabled}
-            >
-              删除工单
-            </Button>
-          </span>
-        </Tooltip>
-      </Space>
+        />
+      </Tooltip>
+      <Tooltip title="立即对账">
+        <Button aria-label="立即对账" icon={<SyncOutlined />} onClick={onSyncExternal} loading={syncExternalLoading} />
+      </Tooltip>
+      <Tooltip title="添加评论">
+        <Button aria-label="添加评论" icon={<CommentOutlined />} onClick={onAddComment} />
+      </Tooltip>
+      <Tooltip title={deleteDisabled ? deleteDisabledReason : '删除工单'}>
+        <span>
+          <Button danger aria-label="删除工单" icon={<DeleteOutlined />} onClick={onDelete}
+            loading={deleteLoading} disabled={deleteDisabled} />
+        </span>
+      </Tooltip>
+      {deliveryControl}
     </div>
   );
 }

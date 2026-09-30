@@ -1,7 +1,6 @@
 import { Menu, Badge } from 'antd';
 import {
   FileTextOutlined,
-  RobotOutlined,
   TeamOutlined,
   ThunderboltOutlined,
   BranchesOutlined,
@@ -11,14 +10,11 @@ import {
   NodeIndexOutlined,
   SettingOutlined,
   AuditOutlined,
-  ShareAltOutlined,
-  SafetyCertificateOutlined,
   LineChartOutlined,
   HistoryOutlined,
   ClockCircleOutlined,
   ApiOutlined,
   CompassOutlined,
-  MessageOutlined,
   ExperimentOutlined,
   KeyOutlined,
 } from '@ant-design/icons';
@@ -26,9 +22,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import type { MenuProps } from 'antd';
 import type { ItemType } from 'antd/es/menu/interface';
 import { useAgentPendingReviewCount } from '@/features/agent/hooks';
-import { useMemoryPendingReviewCount } from '@/features/memory/hooks';
 import { useScheduledTaskCapability } from '@/features/scheduledTask/hooks';
 import { isScheduledTaskCapabilityQueryReady } from '@/features/scheduledTask/ScheduledTaskCapabilityGate';
+import { RobotHeadIcon } from '@/shared/ui/RobotHeadIcon';
+import './Sidebar.css';
 
 export interface NavItem {
   key: string;
@@ -62,9 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'workers-group',
     label: '数字员工',
     items: [
-      { key: '/agents', label: '数字员工', icon: <RobotOutlined /> },
-      { key: '/agents/reviews', label: '版本审核', icon: <SafetyCertificateOutlined /> },
-      { key: '/squads', label: '小队', icon: <TeamOutlined /> },
+      { key: '/agents', label: '数字员工管理', icon: <RobotHeadIcon /> },
       { key: '/executors', label: '执行器', icon: <ThunderboltOutlined /> },
     ],
   },
@@ -73,7 +68,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: '知识',
     items: [
       { key: '/repos', label: '仓库', icon: <BranchesOutlined /> },
-      { key: '/repos/map', label: '仓库关系图', icon: <ShareAltOutlined /> },
       { key: '/memories', label: '记忆', icon: <BookOutlined /> },
       { key: '/skills', label: '能力', icon: <BulbOutlined /> },
     ],
@@ -84,8 +78,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: '/sdlcs', label: 'SDLC 流程', icon: <ApartmentOutlined /> },
       { key: '/status-templates', label: '状态模版', icon: <NodeIndexOutlined /> },
-      { key: '/integrations', label: '工单平台集成', icon: <ApiOutlined /> },
-      { key: '/integrations/channels', label: '消息渠道集成', icon: <MessageOutlined /> },
+      { key: '/integrations', label: '平台集成', icon: <ApiOutlined /> },
       {
         key: '/settings/members',
         label: '成员管理',
@@ -110,7 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'about-group',
     label: '了解',
     items: [
-      { key: '/about', label: '关于 AutoWonder', icon: <CompassOutlined /> },
+      { key: '/about', label: '关于平台', icon: <CompassOutlined /> },
     ],
   },
 ];
@@ -155,12 +148,10 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const location = useLocation();
 
   const { data: agentCount = 0 } = useAgentPendingReviewCount();
-  const { data: memoryCount = 0 } = useMemoryPendingReviewCount();
   const scheduledTaskCapability = useScheduledTaskCapability();
 
   const badges: Record<string, number> = {};
-  if (agentCount > 0) badges['/agents/reviews'] = agentCount;
-  if (memoryCount > 0) badges['/memories'] = memoryCount;
+  if (agentCount > 0) badges['/agents'] = agentCount;
 
   const menuItems: MenuProps['items'] = buildMenuItems(
     badges,
@@ -172,13 +163,14 @@ export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const selectedKey = resolveSelectedNavKey(location.pathname);
 
   return (
-    <Menu
-      mode="inline"
-      inlineCollapsed={collapsed}
-      selectedKeys={[selectedKey]}
-      items={menuItems}
-      onClick={({ key }) => navigate(key)}
-      style={{ height: '100%', borderRight: 0 }}
-    />
+      <Menu
+        className="app-sidebar"
+        mode="inline"
+        inlineCollapsed={collapsed}
+        selectedKeys={[selectedKey]}
+        items={menuItems}
+        onClick={({ key }) => navigate(key)}
+        style={{ height: '100%', borderRight: 0 }}
+      />
   );
 }

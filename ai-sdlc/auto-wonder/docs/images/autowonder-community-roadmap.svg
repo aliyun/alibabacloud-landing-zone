@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1588" viewBox="0 0 1280 1588" role="img" aria-labelledby="title description">
+  <title id="title">AutoWonder Community Roadmap · 2026 年 9—11 月</title>
+  <desc id="description">社区版规划：六个时间节点、十一项能力，覆盖记忆管理与进化、人机协作、平台智能管家、流水线自进化、沙箱托管、管理看板、需求到原型及完整交付、智能编排、数字人共享、环境初始化和闲时智能调度。全部为计划能力。</desc>
+  <style>
+    text { font-family: "PingFang SC", ".PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+    .date { font-size: 25px; font-weight: 600; fill: #285780; }
+    .name { font-size: 27px; font-weight: 600; fill: #172B3A; }
+    .detail { font-size: 23px; font-weight: 400; fill: #495C6B; }
+    .rule { stroke: #DDE4EA; stroke-width: 1; }
+  </style>
+  <rect width="1280" height="1588" fill="#FFFFFF"/>
+  <text x="64" y="86" font-size="40" font-weight="650" fill="#172B3A">AutoWonder Community</text>
+  <text x="64" y="133" font-size="27" fill="#495C6B">产品路线图 · 2026 年 9—11 月</text>
+  <rect x="1120" y="53" width="96" height="38" rx="5" fill="#EDF3F8"/>
+  <text x="1168" y="79" text-anchor="middle" font-size="20" fill="#285780">规划中</text>
+  <line x1="64" y1="169" x2="1216" y2="169" stroke="#285780" stroke-width="2"/>
+
+  <g id="milestone-1">
+    <text class="date" x="64" y="223">9 月底</text>
+    <g id="capability-1-1">
+      <text class="name" x="272" y="223">记忆全自动管理与进化</text>
+      <text class="detail" x="272" y="260">自动管理记忆，支持记忆全自动进化。</text>
+    </g>
+  </g>
+  <line class="rule" x1="64" y1="304" x2="1216" y2="304"/>
+  <g id="milestone-2">
+    <text class="date" x="64" y="343">10 月中旬</text>
+    <g id="capability-2-1">
+      <text class="name" x="272" y="343">SDLC 人机协作</text>
+      <text class="detail" x="272" y="380">支持人工卡口配置，以及 SDLC 流程中的人机交互。</text>
+    </g>
+    <g id="capability-2-2">
+      <text class="name" x="272" y="443">平台智能管家 · Chief of Staff</text>
+      <text class="detail" x="272" y="480">全方位管理工作空间与平台，内置效率优化、成本优化技能；</text>
+      <text class="detail" x="272" y="512">支持任务推进、整理、答疑与流程优化。</text>
+    </g>
+  </g>
+  <line class="rule" x1="64" y1="558" x2="1216" y2="558"/>
+  <g id="milestone-3">
+    <text class="date" x="64" y="597">10 月底</text>
+    <g id="capability-3-1">
+      <text class="name" x="272" y="597">SDLC 流水线自进化</text>
+      <text class="detail" x="272" y="634">自动优化交付流水线的执行效率。</text>
+    </g>
+    <g id="capability-3-2">
+      <text class="name" x="272" y="697">容器沙箱托管</text>
+      <text class="detail" x="272" y="734">平台统一创建沙箱并管理执行器全生命周期，无需手动维护执行器。</text>
+    </g>
+    <g id="capability-3-3">
+      <text class="name" x="272" y="797">组织级管理看板</text>
+      <text class="detail" x="272" y="834">面向组织与管理人员，呈现人员、数字人、成本和交付效率的整体视角。</text>
+    </g>
+    <g id="capability-3-4">
+      <text class="name" x="272" y="897">需求 → 原型 → 完整交付</text>
+      <text class="detail" x="272" y="934">从 PRD／需求生成原型设计，自动衔接后续完整 SDLC 流水线交付。</text>
+    </g>
+  </g>
+  <line class="rule" x1="64" y1="982" x2="1216" y2="982"/>
+  <g id="milestone-4">
+    <text class="date" x="64" y="1021">11 月上旬</text>
+    <g id="capability-4-1">
+      <text class="name" x="272" y="1021">SDLC 智能编排</text>
+      <text class="detail" x="272" y="1058">按特定场景灵活选择与编排步骤，无需每次执行完整流程，</text>
+      <text class="detail" x="272" y="1090">提升交付效率与灵活性。</text>
+    </g>
+  </g>
+  <line class="rule" x1="64" y1="1114" x2="1216" y2="1114"/>
+  <g id="milestone-5">
+    <text class="date" x="64" y="1153">11 月中旬</text>
+    <g id="capability-5-1">
+      <text class="name" x="272" y="1153">跨团队数字人共享</text>
+      <text class="detail" x="272" y="1190">跨团队、工作空间共享通用数字人，</text>
+      <text class="detail" x="272" y="1222">例如统一的 CR（代码审查）数字人。</text>
+    </g>
+  </g>
+  <line class="rule" x1="64" y1="1246" x2="1216" y2="1246"/>
+  <g id="milestone-6">
+    <text class="date" x="64" y="1285">11 月下旬</text>
+    <g id="capability-6-1">
+      <text class="name" x="272" y="1285">执行环境智能初始化</text>
+      <text class="detail" x="272" y="1322">自动准备 Node.js、npm、Go、Maven 等依赖，</text>
+      <text class="detail" x="272" y="1354">无需人工逐一运维和初始化执行器环境。</text>
+    </g>
+    <g id="capability-6-2">
+      <text class="name" x="272" y="1417">闲时智能调度</text>
+      <text class="detail" x="272" y="1454">对接 Qoder 计费策略，利用低谷折扣时段智能调度任务，优化成本。</text>
+    </g>
+  </g>
+  <line class="rule" x1="64" y1="1486" x2="1216" y2="1486"/>
+  <text x="64" y="1535" font-size="20" fill="#637687">以上为计划里程碑，具体进度以社区发布为准。</text>
+</svg>

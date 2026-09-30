@@ -1,13 +1,10 @@
 package com.aliyun.autowonder.evolution;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
-import com.aliyun.autowonder.memory.MemoryService;
-import com.aliyun.autowonder.memory.dto.CreateMemoryRequest;
-import com.aliyun.autowonder.memory.dto.MemoryVO;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.repo.dto.CreateRelationRequest;
 import com.aliyun.autowonder.repo.dto.RepoRelationVO;
@@ -26,18 +23,15 @@ public class EvolutionProposalService {
 
     private final EvolutionProposalDao proposalDao;
     private final BayesianEvidenceLiteService evidenceService;
-    private final MemoryService memoryService;
     private final RepoService repoService;
     private final SkillService skillService;
     private final EvolutionReleaseStateCaptureService stateCaptureService;
 
     public EvolutionProposalService(EvolutionProposalDao proposalDao, BayesianEvidenceLiteService evidenceService,
-                                    MemoryService memoryService, RepoService repoService,
-                                    SkillService skillService,
+                                    RepoService repoService, SkillService skillService,
                                     EvolutionReleaseStateCaptureService stateCaptureService) {
         this.proposalDao = proposalDao;
         this.evidenceService = evidenceService;
-        this.memoryService = memoryService;
         this.repoService = repoService;
         this.skillService = skillService;
         this.stateCaptureService = stateCaptureService;
@@ -46,6 +40,10 @@ public class EvolutionProposalService {
     public EvolutionProposalDO propose(EvolutionProposalCommand cmd, long tenantId, long userId) {
         if (cmd == null || blank(cmd.getAssetType()) || blank(cmd.getTriggerType())) {
             throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        if ("MEMORY".equals(cmd.getAssetType())) {
+            throw new BizException(ErrorCode.CONFLICT,
+                    "Memory proposals are retired; use the canonical memory store");
         }
         requireEvidence(cmd.getRootEvidenceJson());
         requirePatch(cmd.getCandidatePatchJson());
@@ -120,6 +118,10 @@ public class EvolutionProposalService {
         if (!"APPROVED".equals(proposal.getStatus()) || !releaseEvidencePassed(proposal)) {
             throw new BizException(ErrorCode.CONFLICT);
         }
+        if ("MEMORY".equals(proposal.getAssetType())) {
+            throw new BizException(ErrorCode.CONFLICT,
+                    "Memory proposals are retired; use the canonical memory store");
+        }
         JSONObject patch = requireObject(proposal.getCandidatePatchJson());
         Map<String, Object> release = new LinkedHashMap<>();
         release.put("proposalId", proposalId);
@@ -127,12 +129,7 @@ public class EvolutionProposalService {
         String beforeJson = stateCaptureService.captureBefore(proposal, tenantId);
         String afterJson;
 
-        if ("MEMORY".equals(proposal.getAssetType())) {
-            MemoryVO memory = memoryService.createFromEvolutionProposal(
-                    toMemoryRequest(patch), tenantId, proposalId, userId);
-            release.put("assetId", memory.getId());
-            afterJson = stateCaptureService.memoryAfterJson(memory);
-        } else if ("REPO_RELATION".equals(proposal.getAssetType())) {
+        if ("REPO_RELATION".equals(proposal.getAssetType())) {
             RepoRelationVO relation = repoService.createRelation(toRelationRequest(patch), tenantId, userId);
             release.put("assetId", relation.getId());
             afterJson = stateCaptureService.relationAfterJson(relation);
@@ -254,16 +251,6 @@ public class EvolutionProposalService {
         } catch (RuntimeException e) {
             return false;
         }
-    }
-
-    private CreateMemoryRequest toMemoryRequest(JSONObject patch) {
-        CreateMemoryRequest req = new CreateMemoryRequest();
-        req.setScope(patch.getString("scope"));
-        req.setOwnerRef(patch.getLong("ownerRef"));
-        req.setType(patch.getString("type"));
-        req.setTitle(patch.getString("title"));
-        req.setContentMd(patch.getString("contentMd"));
-        return req;
     }
 
     private CreateRelationRequest toRelationRequest(JSONObject patch) {

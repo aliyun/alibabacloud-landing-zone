@@ -127,6 +127,24 @@ export async function listAgents(params: {
   return resp.data;
 }
 
+// 后端单页 size 上限 100 且不返回 total，翻到不足一页为止，否则第 100 个之后的数字员工会静默消失。
+export async function listAllAgents(params: {
+  status?: string;
+  kind?: AgentKind;
+  squadIds?: number[];
+}): Promise<Agent[]> {
+  const all: Agent[] = [];
+  let page = 1;
+  for (;;) {
+    const batch = await listAgents({ page, size: 100, ...params });
+    all.push(...batch);
+    if (batch.length < 100) {
+      return all;
+    }
+    page += 1;
+  }
+}
+
 export async function getAgent(id: number): Promise<Agent> {
   const resp = await apiClient.get<Agent>(`/api/agents/${id}`);
   return resp.data;

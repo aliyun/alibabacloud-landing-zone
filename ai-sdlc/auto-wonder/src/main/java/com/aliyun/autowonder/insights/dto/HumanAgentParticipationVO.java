@@ -1,8 +1,37 @@
 package com.aliyun.autowonder.insights.dto;
 
 import java.util.List;
+import java.util.Map;
 
 public class HumanAgentParticipationVO {
+
+    private double medianTotalSeconds;
+    public double getMedianTotalSeconds() { return medianTotalSeconds; }
+    public void setMedianTotalSeconds(double value) { medianTotalSeconds = value; }
+    private long agentWorkitemCount;
+    public long getAgentWorkitemCount() { return agentWorkitemCount; }
+    public void setAgentWorkitemCount(long value) { agentWorkitemCount = value; }
+    private int executionSampleSize;
+    public int getExecutionSampleSize() { return executionSampleSize; }
+    public void setExecutionSampleSize(int value) { executionSampleSize = value; }
+    private Double averageExecutionSeconds;
+    public Double getAverageExecutionSeconds() { return averageExecutionSeconds; }
+    public void setAverageExecutionSeconds(Double value) { averageExecutionSeconds = value; }
+    private int executionMissingCount;
+    public int getExecutionMissingCount() { return executionMissingCount; }
+    public void setExecutionMissingCount(int value) { executionMissingCount = value; }
+    private int executionIncompleteCount;
+    public int getExecutionIncompleteCount() { return executionIncompleteCount; }
+    public void setExecutionIncompleteCount(int value) { executionIncompleteCount = value; }
+    private int identifiedCompletedCount;
+    public int getIdentifiedCompletedCount() { return identifiedCompletedCount; }
+    public void setIdentifiedCompletedCount(int value) { identifiedCompletedCount = value; }
+    private int inferredAssignmentCount;
+    public int getInferredAssignmentCount() { return inferredAssignmentCount; }
+    public void setInferredAssignmentCount(int value) { inferredAssignmentCount = value; }
+    private Map<String, Integer> exclusions;
+    public Map<String, Integer> getExclusions() { return exclusions; }
+    public void setExclusions(Map<String, Integer> value) { exclusions = value; }
 
     private boolean available;
     private String generatedAt;
@@ -31,6 +60,9 @@ public class HumanAgentParticipationVO {
     public void setTrend(List<TrendEntry> trend) { this.trend = trend; }
 
     public static class DurationSummary {
+        private Double humanShare;
+        public Double getHumanShare() { return humanShare; }
+        public void setHumanShare(Double value) { humanShare = value; }
         private long totalDurationSeconds;
         private long humanDurationSeconds;
         private long agentDurationSeconds;
@@ -73,6 +105,12 @@ public class HumanAgentParticipationVO {
     }
 
     public static class TrendEntry {
+        private int sampleSize;
+        private Double humanShare;
+        public int getSampleSize() { return sampleSize; }
+        public void setSampleSize(int value) { sampleSize = value; }
+        public Double getHumanShare() { return humanShare; }
+        public void setHumanShare(Double value) { humanShare = value; }
         private String label;
         private long averageTotalSeconds;
         private long averageHumanSeconds;

@@ -3,6 +3,7 @@ package com.aliyun.autowonder.sdlc;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
@@ -41,6 +42,17 @@ public class SdlcController {
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "size", defaultValue = "20") int size) {
         return Result.ok(sdlcService.list(currentWorkspaceId(), workType, status, squadIds, page, size));
+    }
+
+    // Keep the array endpoint for existing integrations and reference-data consumers.
+    @GetMapping("/page")
+    public Result<PageResult<SdlcVO>> listPage(
+            @RequestParam(value = "workType", required = false) String workType,
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "squadIds", required = false) List<Long> squadIds,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        return Result.ok(sdlcService.listPage(currentWorkspaceId(), workType, status, squadIds, page, size));
     }
 
     @PutMapping("/{id}")

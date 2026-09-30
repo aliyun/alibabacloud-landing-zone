@@ -3,11 +3,13 @@ import { render, screen, waitFor, within, fireEvent } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { BrandingConfigPage } from './BrandingConfigPage';
 import type { UpdateDingTalkImChannelParams } from './brandingApi';
+import * as brandingApi from './brandingApi';
+import { AppearanceProvider } from '@/shared/theme/AppearanceProvider';
 import { useAuthStore } from '@/shared/auth/store';
 
 function brandingPayload() {
@@ -100,11 +102,92 @@ describe('BrandingConfigPage', () => {
       () => undefined as unknown as ReturnType<typeof message.error>,
     );
     useAuthStore.getState().clear();
+    window.localStorage.clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
     server.use(
       http.get('/api/platform/branding', () => HttpResponse.json(brandingPayload())),
       http.get('/api/platform/im-channels', () => HttpResponse.json(imChannelsPayload())),
     );
+  });
+
+  it('rejects logos above 512 KB and accepts the exact limit', async () => {
+    const upload = vi.spyOn(brandingApi, 'uploadBrandingLogo').mockResolvedValue({ logoUrl: '/api/platform/branding/logo?v=2' });
+    const { container } = renderPage();
+    await screen.findByText('上传 Logo');
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.upload(input, new File([new Uint8Array(512 * 1024 + 1)], 'large.png', { type: 'image/png' }));
+    await waitFor(() => expect(message.error).toHaveBeenCalledWith('Logo 文件不能超过 512 KB'));
+    expect(upload).not.toHaveBeenCalled();
+    const nextInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(nextInput, new File([new Uint8Array(512 * 1024)], 'logo.png', { type: 'image/png' }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+  });
+
+  it('uploads each supported logo format through the file picker', async () => {
+    const upload = vi.spyOn(brandingApi, 'uploadBrandingLogo').mockResolvedValue({ logoUrl: '/api/platform/branding/logo?v=2' });
+    const { container } = renderPage();
+    await screen.findByText('上传 Logo');
+    const files = [
+      ['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'],
+      ['webp', 'image/webp'], ['svg', 'image/svg+xml'], ['gif', 'image/gif'],
+      ['ico', 'image/x-icon'], ['ico', 'image/vnd.microsoft.icon'], ['avif', 'image/avif'],
+    ];
+    for (const [ext, type] of files) {
+      const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await waitFor(() => expect(input).not.toBeDisabled());
+      const count = upload.mock.calls.length;
+      await userEvent.upload(input, new File(['logo'], `logo.${ext}`, { type }));
+      await waitFor(() => expect(upload).toHaveBeenCalledTimes(count + 1));
+      expect(upload.mock.calls[count][0]).toMatchObject({ name: `logo.${ext}`, type });
+      await waitFor(() => {
+        expect(screen.getByRole('img', { name: 'AutoWonder' })).toHaveAttribute('src', '/api/platform/branding/logo?v=2');
+        expect(screen.getByRole('link', { name: /AutoWonder，返回工作空间列表/ }).querySelector('img'))
+          .toHaveAttribute('src', '/api/platform/branding/logo?v=2');
+      });
+    }
+  });
+
+  it('applies saved preset and custom colors to the current theme without rereading stale config', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const initial = { ...brandingApi.DEFAULT_BRANDING, ...brandingPayload().data };
+    queryClient.setQueryData(brandingApi.BRANDING_QUERY_KEY, { ...initial, canManage: false });
+    server.use(
+      // A subsequent GET may still read the old configuration.
+      http.get('/api/platform/branding/public', () => HttpResponse.json(brandingPayload())),
+      http.put('/api/platform/branding', async ({ request }) => HttpResponse.json({
+        ...brandingPayload(),
+        data: { ...initial, ...await request.json() as object },
+      })),
+    );
+    function ThemedPage() {
+      const { data = initial } = useQuery({
+        queryKey: brandingApi.BRANDING_QUERY_KEY,
+        queryFn: brandingApi.getPublicBranding,
+      });
+      return <AppearanceProvider accent={data.primaryColor}><BrandingConfigPage /></AppearanceProvider>;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter><ThemedPage /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const save = await screen.findByRole('button', { name: /保存配置/ });
+    await waitFor(() => expect(save).toBeEnabled());
+    await userEvent.click(screen.getByText('海洋蓝'));
+    expect(document.documentElement.style.getPropertyValue('--aw-accent')).toBe('#f97316');
+    await userEvent.click(save);
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue('--aw-accent')).toBe('#2563eb');
+      expect(save).toBeEnabled();
+    });
+    fireEvent.change(screen.getByLabelText('选择主色'), { target: { value: '#123456' } });
+    await userEvent.click(save);
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue('--aw-accent')).toBe('#123456');
+      expect(queryClient.getQueryData(brandingApi.BRANDING_ADMIN_QUERY_KEY)).toMatchObject({ primaryColor: '#123456' });
+      expect(queryClient.getQueryData(brandingApi.BRANDING_QUERY_KEY)).toMatchObject({ primaryColor: '#123456', canManage: false });
+    });
   });
 
   it('loads existing branding and saves updates', async () => {
@@ -340,33 +423,33 @@ describe('BrandingConfigPage', () => {
 
     fireEvent.error(logoImg);
 
-    expect(logoImg.getAttribute('src')).toBe('/logo.png');
+    expect(logoImg.getAttribute('src')).toBe('/logo.svg');
   });
 
-  it('shows an enabled back-to-home entry beside the page title', async () => {
+  it('shows an enabled back-to-workspaces entry beside the page title', async () => {
     renderPage();
 
-    const backButton = await screen.findByRole('button', { name: /返回首页/ });
+    const backButton = await screen.findByRole('button', { name: /返回工作空间列表/ });
     await waitFor(() => expect(backButton).toBeEnabled());
     expect(screen.getByText('平台配置')).toBeInTheDocument();
   });
 
-  it('navigates back to the platform home when the back entry is clicked', async () => {
+  it('navigates back to the workspace list when the back entry is clicked', async () => {
     renderPageWithLocation();
 
     expect(await screen.findByTestId('location-path')).toHaveTextContent('/workspaces/branding');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回首页/ }));
+    await userEvent.click(screen.getByRole('button', { name: /返回工作空间列表/ }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/$/);
+      expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/workspaces$/);
     });
   });
 
   it('keeps the back entry above the collaboration notice section', async () => {
     renderPage();
 
-    const backButton = await screen.findByRole('button', { name: /返回首页/ });
+    const backButton = await screen.findByRole('button', { name: /返回工作空间列表/ });
     const noticeSection = await screen.findByText('协作通知');
 
     expect(
@@ -382,10 +465,10 @@ describe('BrandingConfigPage', () => {
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, 'WonderHub');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回首页/ }));
+    await userEvent.click(screen.getByRole('button', { name: /返回工作空间列表/ }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/$/);
+      expect(screen.getByTestId('location-path')).toHaveTextContent(/^\/workspaces$/);
     });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -401,6 +484,49 @@ describe('BrandingConfigPage', () => {
     // have to hunt for the form.
     const saveButton = await screen.findByRole('button', { name: /保存配置/ });
     await waitFor(() => expect(saveButton).toBeEnabled());
+  });
+
+  it('restores the last selected platform configuration tab after remounting', async () => {
+    const firstRender = renderPage();
+
+    await openNotificationTab();
+    expect(window.localStorage.getItem('autowonder.platform-config.tab')).toBe('notification');
+
+    firstRender.unmount();
+    renderPage();
+
+    expect(await screen.findByRole('tab', { name: '协作通知' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to branding when the saved platform configuration tab is invalid', async () => {
+    window.localStorage.setItem('autowonder.platform-config.tab', 'unknown');
+
+    renderPage();
+
+    expect(await screen.findByRole('tab', { name: '品牌与主题' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to branding when browser storage is unavailable', async () => {
+    vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole('tab', { name: '品牌与主题' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps tab switching available when browser storage rejects writes', async () => {
+    const setItem = window.localStorage.setItem.bind(window.localStorage);
+    vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+      if (key === 'autowonder.platform-config.tab') throw new Error('storage unavailable');
+      setItem(key, value);
+    });
+
+    renderPage();
+    await openNotificationTab();
+
+    expect(screen.getByRole('tab', { name: /协作通知/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('does not fetch the platform admin roster until its tab is opened', async () => {

@@ -69,6 +69,7 @@ async function revealValueProposition() {
 describe('PlatformAgentStatusBanner', () => {
   beforeEach(() => {
     requestCount = 0;
+    localStorage.removeItem('autowonder.platform-agent-status.dismissed');
     useAuthStore.getState().clear();
   });
 
@@ -114,6 +115,22 @@ describe('PlatformAgentStatusBanner', () => {
     expect(await screen.findByText('平台智能体 Chief of Staff 未配置执行器')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '去配置执行器' })).toBeInTheDocument();
     await revealValueProposition();
+  });
+
+  it('remembers dismissal in this browser after remounting', async () => {
+    mockStatus({ state: 'NOT_CONFIGURED', agentId: 11, executorCount: 0, onlineExecutorCount: 0 });
+    enterWorkspaceAs('ADMIN');
+    const { unmount } = renderBanner();
+    await screen.findByText('平台智能体 Chief of Staff 未配置执行器');
+
+    await userEvent.click(screen.getByRole('button', { name: '关闭系统通知' }));
+    expect(screen.queryByText('平台智能体 Chief of Staff 未配置执行器')).not.toBeInTheDocument();
+    expect(localStorage.getItem('autowonder.platform-agent-status.dismissed')).toBe('1');
+
+    unmount();
+    renderBanner();
+    expect(screen.queryByText(/平台智能体 Chief of Staff/)).not.toBeInTheDocument();
+    expect(requestCount).toBe(1);
   });
 
   it('warns admins when every configured executor is offline and keeps the value reachable on hover', async () => {

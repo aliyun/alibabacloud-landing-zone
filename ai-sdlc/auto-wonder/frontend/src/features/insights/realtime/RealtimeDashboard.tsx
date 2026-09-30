@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { Alert, Button, Segmented, Spin } from 'antd';
+import { useInsightPreference } from '../useInsightPreference';
+import { Alert, Button, Empty, Segmented, Spin } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { useRealtimeDashboard, type RefreshInterval } from './hooks';
+import { useRealtimeCost, useRealtimeDashboard, type RefreshInterval } from './hooks';
 import { BRAND } from './theme';
+import RealtimeCostPanel from './RealtimeCostPanel';
 import KpiRow from './KpiRow';
 import KpiDetailModal from './KpiDetailModal';
 import type { KpiKey } from './KpiRow';
@@ -27,36 +29,28 @@ function formatUpdatedAt(iso: string | undefined): string {
 }
 
 export default function RealtimeDashboard() {
-  const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>(15000);
+  const [refreshInterval, setRefreshInterval] = useInsightPreference<RefreshInterval>('realtime.interval', 15000, v => v === false || v === 10000 || v === 15000 || v === 30000);
   const [activeKpi, setActiveKpi] = useState<KpiKey | null>(null);
   const { data, isLoading, isError, error, isFetching, refetch } = useRealtimeDashboard(refreshInterval);
+  const cost = useRealtimeCost();
 
   return (
-    <div>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 12,
-        }}
-      >
+    <div className="insight-realtime">
+      <div className="insight-toolbar">
         <div style={{ fontSize: 12, color: BRAND.textMuted }}>
           刷新时间 {formatUpdatedAt(data?.generatedAt)}
           {isFetching && <span style={{ marginLeft: 8, color: BRAND.orange }}>更新中…</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Segmented
-            size="small"
+          <Segmented aria-label="自动刷新频率"
             value={refreshInterval}
             onChange={(v) => setRefreshInterval(v as RefreshInterval)}
             options={INTERVAL_OPTIONS}
           />
           <Button
-            size="small"
             icon={<ReloadOutlined />}
             loading={isFetching}
-            onClick={() => refetch()}
+            onClick={() => { refetch(); void cost.refetch(); }}
           >
             刷新
           </Button>
@@ -69,28 +63,38 @@ export default function RealtimeDashboard() {
           showIcon
           message="看板数据加载失败"
           description={(error as Error)?.message ?? '请稍后重试'}
-          style={{ marginBottom: 12 }}
+          style={{ marginBottom: 16 }}
         />
       )}
+
+      <RealtimeCostPanel
+        workerId={cost.workerId}
+        onWorkerChange={cost.setWorkerId}
+        timeRange={cost.timeRange}
+        onTimeRangeChange={cost.setTimeRange}
+        workers={cost.workers}
+        metrics={cost.metrics}
+        isLoading={cost.isLoading}
+        isError={cost.isError}
+        error={cost.error}
+      />
 
       {isLoading && !data ? (
         <div style={{ textAlign: 'center', padding: '80px 0' }}>
           <Spin />
         </div>
       ) : data ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <KpiRow kpi={data.kpi} onKpiClick={(key) => setActiveKpi(key)} />
-          <SquadLines squads={data.squads} />
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
-            <WorkstationWall workstations={data.workstations} />
+          <div className="insight-realtime-grid">
             <InventoryPanel inventory={data.inventory} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
             <HealthPanel health={data.health} />
-            <ActivityFeed running={data.runningFeed} recent={data.recentFeed} />
           </div>
+          <SquadLines squads={data.squads} />
+          <WorkstationWall workstations={data.workstations} />
+          <ActivityFeed running={data.runningFeed} recent={data.recentFeed} />
         </div>
-      ) : null}
+      ) : !isError ? <Empty description="暂无实时数据，请稍后刷新" /> : null}
 
       <KpiDetailModal kpiKey={activeKpi} onClose={() => setActiveKpi(null)} />
     </div>

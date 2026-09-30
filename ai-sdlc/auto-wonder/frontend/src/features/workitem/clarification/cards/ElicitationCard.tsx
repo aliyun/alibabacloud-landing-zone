@@ -44,8 +44,8 @@ export function ElicitationCard({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: resolved ? 8 : 0 }}>
-        <QuestionCircleOutlined style={{ color: '#1677ff' }} />
-        <Typography.Text strong style={{ fontSize: 13, flex: 1 }}>
+        <QuestionCircleOutlined style={{ color: 'var(--aw-accent-text)' }} />
+        <Typography.Text strong style={{ fontSize: 16, flex: 1 }}>
           {message || form.title || '需要你的确认'}
         </Typography.Text>
         {resolved ? (
@@ -79,19 +79,19 @@ function ResolvedAnswers({
         const question = field?.description;
         return (
           <div key={key} style={{ marginBottom: 8 }}>
-            <Typography.Text strong style={{ fontSize: 12 }}>
+            <Typography.Text strong style={{ fontSize: 14 }}>
               {field?.label ?? key}
             </Typography.Text>
             {question ? (
               <div style={{
-                fontSize: 12, color: CLARIFICATION_THEME.textSecondary,
+                fontSize: 14, color: CLARIFICATION_THEME.textSecondary,
                 whiteSpace: 'pre-wrap', marginTop: 2,
               }}>
                 {question}
               </div>
             ) : null}
-            <div style={{ marginTop: 4, fontSize: 12, whiteSpace: 'pre-wrap' }}>
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>答：</Typography.Text>
+            <div style={{ marginTop: 4, fontSize: 14, whiteSpace: 'pre-wrap' }}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>答：</Typography.Text>
               <span data-testid={`elicitation-answer-${key}`}>
                 {typeof value === 'string' ? value : JSON.stringify(value)}
               </span>

@@ -149,7 +149,13 @@ class SquadFilterSqlTest {
             int bodyStart = xml.indexOf('>', start) + 1;
             int bodyEnd = xml.indexOf("</select>", bodyStart);
             assertTrue(bodyStart > 0 && bodyEnd > bodyStart, "Malformed select " + id);
-            return xml.substring(bodyStart, bodyEnd).replaceAll("\\s+", " ").trim();
+            String body = xml.substring(bodyStart, bodyEnd);
+            if (body.contains("<include refid=\"listFilters\"/>")) {
+                int fragmentStart = xml.indexOf("<sql id=\"listFilters\">") + "<sql id=\"listFilters\">".length();
+                body = body.replace("<include refid=\"listFilters\"/>",
+                        xml.substring(fragmentStart, xml.indexOf("</sql>", fragmentStart)));
+            }
+            return body.replaceAll("\\s+", " ").trim();
         }
     }
 }

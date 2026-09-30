@@ -50,104 +50,69 @@
           AND is_deleted = 0
         ORDER BY id DESC
     </select>
-    <!-- 最新一次派发已成功（与 WorkitemService.applyPendingDecision 的 latest dispatch 语义一致） -->
-    <sql id="latestDispatchSucceeded" databaseId="autowonder-legacy">
+    <!-- 派发事实：历史上成功启动过派发（离开排队/打包即视为已启动；
+         与 WorkitemClassificationEvaluator.dispatchStarted 同语义） -->
+    <sql id="dispatchStarted" databaseId="autowonder-legacy">
         EXISTS (
             SELECT 1 FROM dispatch d
-            WHERE d.id = (
-                SELECT MAX(d2.id) FROM dispatch d2
-                WHERE d2.tenant_id = w.tenant_id
-                  AND d2.workitem_id = w.id
-                  AND d2.is_deleted = 0
-            )
-              AND d.status = 'SUCCEEDED'
+            WHERE d.tenant_id = w.tenant_id
+              AND d.workitem_id = w.id
               AND d.is_deleted = 0
+              AND d.status IN ('DISPATCHED','ACKED','RUNNING','PAUSING','PAUSED','PAUSE_FAILED',
+                               'WAITING_FOR_PAUSE','SUCCEEDED','FAILED','TIMEOUT','CANCELED')
         )
     </sql>
-    <sql id="latestDispatchSucceeded" databaseId="autowonder-source-aware">
+    <sql id="dispatchStarted" databaseId="autowonder-source-aware">
         EXISTS (
             SELECT 1 FROM dispatch d
-            WHERE d.id = (
-                SELECT MAX(d2.id) FROM dispatch d2
-                WHERE d2.tenant_id = w.tenant_id
-                  AND d2.source_type = 'WORKITEM'
-                  AND d2.workitem_id = w.id
-                  AND d2.is_deleted = 0
-            )
+            WHERE d.tenant_id = w.tenant_id
               AND d.source_type = 'WORKITEM'
-              AND d.status = 'SUCCEEDED'
+              AND d.workitem_id = w.id
               AND d.is_deleted = 0
+              AND d.status IN ('DISPATCHED','ACKED','RUNNING','PAUSING','PAUSED','PAUSE_FAILED',
+                               'WAITING_FOR_PAUSE','SUCCEEDED','FAILED','TIMEOUT','CANCELED')
         )
     </sql>
-    <!-- 状态节点未完成（与 WorkitemService.isDoneStatus 语义一致） -->
-    <sql id="notDoneNodeFilter">
-        NOT EXISTS (
-            SELECT 1 FROM status_node sn
-            WHERE sn.id = w.status_node_id
-              AND (
-                  UPPER(COALESCE(sn.category, '')) = 'DONE'
-                  OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
-                  OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
-                  OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
-                  OR COALESCE(sn.name, '') LIKE '%完成%'
-                  OR COALESCE(sn.name, '') LIKE '%关闭%'
-                  OR COALESCE(sn.name, '') LIKE '%发布%'
-                  OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
-                  OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
-                  OR UPPER(COALESCE(sn.name, '')) LIKE '%FIXED%'
-                  OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
-              )
-        )
-    </sql>
-    <!-- 以下三段与前端 classifyStatus 的状态名关键词分类保持一致 -->
-    <sql id="statusNameDone">
+    <!-- 当前存在活跃派发（已成功启动且未到终态，含暂停族状态；排队/打包中不算活跃） -->
+    <sql id="dispatchActive" databaseId="autowonder-legacy">
         EXISTS (
-            SELECT 1 FROM status_node snc
-            WHERE snc.id = w.status_node_id
-              AND (
-                  snc.name LIKE '%完成%'
-                  OR snc.name LIKE '%关闭%'
-                  OR snc.name LIKE '%发布%'
-                  OR UPPER(snc.name) LIKE '%DONE%'
-                  OR UPPER(snc.name) LIKE '%CLOSED%'
-                  OR UPPER(snc.name) LIKE '%FIXED%'
-                  OR UPPER(snc.name) LIKE '%PUBLISHED%'
-              )
+            SELECT 1 FROM dispatch d
+            WHERE d.tenant_id = w.tenant_id
+              AND d.workitem_id = w.id
+              AND d.is_deleted = 0
+              AND d.status IN ('DISPATCHED','ACKED','RUNNING','PAUSING','PAUSED',
+                               'PAUSE_FAILED','WAITING_FOR_PAUSE')
         )
     </sql>
-    <sql id="statusNameInProgress">
+    <sql id="dispatchActive" databaseId="autowonder-source-aware">
         EXISTS (
-            SELECT 1 FROM status_node snc
-            WHERE snc.id = w.status_node_id
-              AND (
-                  snc.name LIKE '%执行%'
-                  OR snc.name LIKE '%开发%'
-                  OR snc.name LIKE '%验证%'
-                  OR UPPER(snc.name) LIKE '%PROGRESS%'
-                  OR UPPER(snc.name) LIKE '%RUNNING%'
-              )
+            SELECT 1 FROM dispatch d
+            WHERE d.tenant_id = w.tenant_id
+              AND d.source_type = 'WORKITEM'
+              AND d.workitem_id = w.id
+              AND d.is_deleted = 0
+              AND d.status IN ('DISPATCHED','ACKED','RUNNING','PAUSING','PAUSED',
+                               'PAUSE_FAILED','WAITING_FOR_PAUSE')
         )
     </sql>
-    <!-- 待决策：人工持单且最新派发成功且未完成，或状态名本身命中待决策关键词 -->
-    <sql id="statusPendingDecision">
-        (
-            (
-                w.assignee_type = 'HUMAN'
-                AND <include refid="latestDispatchSucceeded"/>
-                AND <include refid="notDoneNodeFilter"/>
-            )
-            OR EXISTS (
-                SELECT 1 FROM status_node snc
-                WHERE snc.id = w.status_node_id
-                  AND (
-                      snc.name LIKE '%决策%'
-                      OR snc.name LIKE '%审核%'
-                      OR snc.name LIKE '%阻塞%'
-                      OR UPPER(snc.name) LIKE '%DECISION%'
-                      OR UPPER(snc.name) LIKE '%REVIEW%'
-                  )
-            )
-        )
+    <!-- 看板统一分类（工单 #55395 规格 3.1）：与 WorkitemClassificationEvaluator.classify 同语义。
+         状态名称不参与判断；优先级自上而下：CANCELED > DONE > 待决策 > 执行中 > 待处理。 -->
+    <sql id="kanbanCategoryExpr">
+        CASE
+            WHEN EXISTS (SELECT 1 FROM status_node sn WHERE sn.id = w.status_node_id
+                             AND UPPER(COALESCE(sn.category, '')) = 'CANCELED') THEN 'CANCELED'
+            WHEN EXISTS (SELECT 1 FROM status_node sn WHERE sn.id = w.status_node_id
+                             AND UPPER(COALESCE(sn.category, '')) = 'DONE') THEN 'DONE'
+            WHEN EXISTS (SELECT 1 FROM status_node sn WHERE sn.id = w.status_node_id
+                             AND UPPER(COALESCE(sn.category, '')) IN ('INIT', 'IN_PROGRESS'))
+                AND ((w.assignee_type = 'HUMAN' AND w.assignee_ref IS NOT NULL)
+                     OR (w.assignee_type = 'EXTERNAL' AND NOT <include refid="dispatchActive"/>))
+                AND <include refid="dispatchStarted"/> THEN 'PENDING_DECISION'
+            WHEN <include refid="dispatchActive"/> THEN 'IN_PROGRESS'
+            WHEN EXISTS (SELECT 1 FROM status_node sn WHERE sn.id = w.status_node_id
+                             AND UPPER(COALESCE(sn.category, '')) = 'IN_PROGRESS') THEN 'IN_PROGRESS'
+            ELSE 'NEW'
+        END
     </sql>
     <sql id="listFilter">
         w.tenant_id = #{tenantId}
@@ -173,26 +138,10 @@
             AND (w.title LIKE CONCAT('%', #{keyword}, '%')
             <if test="keywordId != null">OR w.id = #{keywordId}</if>)
         </if>
-        <!-- 看板状态列过滤：先按状态过滤再分页，避免翻页找执行中工单 -->
-        <choose>
-            <when test="statusCategory == 'DONE'">
-                AND <include refid="statusNameDone"/>
-            </when>
-            <when test="statusCategory == 'PENDING_DECISION'">
-                AND NOT <include refid="statusNameDone"/>
-                AND <include refid="statusPendingDecision"/>
-            </when>
-            <when test="statusCategory == 'IN_PROGRESS'">
-                AND NOT <include refid="statusNameDone"/>
-                AND NOT <include refid="statusPendingDecision"/>
-                AND <include refid="statusNameInProgress"/>
-            </when>
-            <when test="statusCategory == 'NEW'">
-                AND NOT <include refid="statusNameDone"/>
-                AND NOT <include refid="statusPendingDecision"/>
-                AND NOT <include refid="statusNameInProgress"/>
-            </when>
-        </choose>
+        <!-- 看板状态列过滤：按统一分类（节点类别+指派+派发事实）先过滤再分页，避免翻页找执行中工单 -->
+        <if test="statusCategory != null">
+            AND <include refid="kanbanCategoryExpr"/> = #{statusCategory}
+        </if>
         <if test="tag != null and tag != ''">
             AND JSON_CONTAINS(w.tags, JSON_QUOTE(#{tag}))
         </if>
@@ -211,71 +160,14 @@
             </when>
         </choose>
     </sql>
-    <sql id="pendingDecisionDispatchFilter" databaseId="autowonder-legacy">
+    <!-- 「待我决策」：统一分类 = PENDING_DECISION 且当前责任人 = 当前登录人
+         （未结束 + 真人负责 + 历史成功启动过派发；外部待认领不属于任何人的「待我决策」）。
+         复用 kanbanCategoryExpr 保持分类规则不漂移；legacy/source-aware 差异由
+         dispatchStarted/dispatchActive 的 databaseId 变体承担。 -->
+    <sql id="pendingDecisionDispatchFilter">
+            AND <include refid="kanbanCategoryExpr"/> = 'PENDING_DECISION'
             AND w.assignee_type = 'HUMAN'
             AND w.assignee_ref = #{currentUserId}
-            AND EXISTS (
-                SELECT 1 FROM dispatch d
-                WHERE d.id = (
-                    SELECT MAX(d2.id) FROM dispatch d2
-                    WHERE d2.tenant_id = w.tenant_id
-                      AND d2.workitem_id = w.id
-                      AND d2.is_deleted = 0
-                )
-                  AND d.status = 'SUCCEEDED'
-                  AND d.is_deleted = 0
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM status_node sn
-                WHERE sn.id = w.status_node_id
-                  AND (
-                      UPPER(COALESCE(sn.category, '')) = 'DONE'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
-                      OR COALESCE(sn.name, '') LIKE '%完成%'
-                      OR COALESCE(sn.name, '') LIKE '%关闭%'
-                      OR COALESCE(sn.name, '') LIKE '%发布%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%FIXED%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
-                  )
-            )
-    </sql>
-    <sql id="pendingDecisionDispatchFilter" databaseId="autowonder-source-aware">
-            AND w.assignee_type = 'HUMAN'
-            AND w.assignee_ref = #{currentUserId}
-            AND EXISTS (
-                SELECT 1 FROM dispatch d
-                WHERE d.id = (
-                    SELECT MAX(d2.id) FROM dispatch d2
-                    WHERE d2.tenant_id = w.tenant_id
-                      AND d2.source_type = 'WORKITEM'
-                      AND d2.workitem_id = w.id
-                      AND d2.is_deleted = 0
-                )
-                  AND d.source_type = 'WORKITEM'
-                  AND d.status = 'SUCCEEDED'
-                  AND d.is_deleted = 0
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM status_node sn
-                WHERE sn.id = w.status_node_id
-                  AND (
-                      UPPER(COALESCE(sn.category, '')) = 'DONE'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%DONE%'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%CLOSED%'
-                      OR UPPER(COALESCE(sn.code, '')) LIKE '%RELEASED%'
-                      OR COALESCE(sn.name, '') LIKE '%完成%'
-                      OR COALESCE(sn.name, '') LIKE '%关闭%'
-                      OR COALESCE(sn.name, '') LIKE '%发布%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%DONE%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%CLOSED%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%FIXED%'
-                      OR UPPER(COALESCE(sn.name, '')) LIKE '%RELEASED%'
-                  )
-            )
     </sql>
     <select id="list" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
         SELECT w.* FROM workitem w
@@ -397,5 +289,14 @@
         UPDATE workitem SET tags = #{tags},
             version = version + 1, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="findByExternalShareToken" resultType="com.aliyun.autowonder.workitem.WorkitemDO">
+        SELECT * FROM workitem
+        WHERE external_share_token = #{externalShareToken} AND is_deleted = 0
+        LIMIT 1
+    </select>
+    <update id="updateExternalShareTokenIfAbsent">
+        UPDATE workitem SET external_share_token = #{externalShareToken}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND external_share_token IS NULL AND is_deleted = 0
     </update>
 </mapper>

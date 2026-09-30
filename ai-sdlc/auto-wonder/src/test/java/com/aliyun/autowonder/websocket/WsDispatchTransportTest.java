@@ -9,11 +9,15 @@ import com.aliyun.autowonder.dispatch.ExecutorProtocolCompatibilityException;
 import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.mcp.DispatchMcpTokenService;
+import com.aliyun.autowonder.memory.store.MemoryStoreApplicationService;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.websocket.RemoteEndpoint;
 import javax.websocket.Session;
@@ -115,11 +119,35 @@ class WsDispatchTransportTest {
         assertTrue(sent.contains("\"packageRefreshPath\":\"/api/daemon/dispatches/99/package-url\""));
         assertTrue(sent.contains("\"artifactUploadPath\":\"/api/daemon/dispatches/99/artifacts\""));
         assertTrue(sent.contains("\"checkpointUploadPath\":\"/api/daemon/dispatches/99/checkpoint\""));
+		assertTrue(sent.contains("\"memorySnapshotPath\":\"/api/daemon/dispatches/99/memory/snapshot\""));
+		assertTrue(sent.contains("\"memoryChangesPath\":\"/api/daemon/dispatches/99/memory/changes\""));
+        assertTrue(sent.contains("\"memoryMutationPath\":\"/api/daemon/dispatches/99/memory/mutations\""));
 		assertTrue(sent.contains("\"dispatchMcpToken\":\"awdispatch_signed\""));
+        assertFalse(sent.contains("\"$ref\""), "wire payload must not alias independent empty maps");
         InOrder order = inOrder(tokens, basic);
         order.verify(tokens).issue(any());
         order.verify(basic).sendText(anyString());
         verify(redisManager, never()).publish(anyString(), anyString());
+    }
+
+    @Test
+    void nonEmptyMemoryRevisionsRemainValidJsonOnTheWire() throws Exception {
+        MemoryStoreApplicationService memories = mock(MemoryStoreApplicationService.class);
+        when(memories.startingRevisionsForAgent(100L, 7L)).thenReturn(Map.of(123L, 2L));
+        ReflectionTestUtils.setField(transport, "memoryStoreApplicationService", memories);
+        Session ws = mock(Session.class);
+        RemoteEndpoint.Basic basic = mock(RemoteEndpoint.Basic.class);
+        when(ws.getBasicRemote()).thenReturn(basic);
+        when(ws.isOpen()).thenReturn(true);
+        when(sessionRegistry.findByExecutorId(5L))
+                .thenReturn(new ExecutorSession(5L, 10L, 100L, ws));
+
+        transport.dispatch(dispatch(99L, 5L), pkg());
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(basic).sendText(payload.capture());
+        JsonNode frame = new ObjectMapper().readTree(payload.getValue());
+        assertEquals(2L, frame.path("memoryStartingRevisions").path("123").asLong());
     }
 
     @Test
@@ -257,7 +285,7 @@ class WsDispatchTransportTest {
 
         ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
         verify(redisManager).publish(eq("node:dispatch:broadcast"), json.capture());
-        com.alibaba.fastjson.JSONObject frame = com.alibaba.fastjson.JSON.parseObject(json.getValue());
+        com.aliyun.autowonder.json.JSONObject frame = com.aliyun.autowonder.json.JSON.parseObject(json.getValue());
         assertEquals(41001L, frame.getLongValue("workitemId"));
         assertFalse(frame.containsKey("sourceType"));
     }
@@ -282,8 +310,8 @@ class WsDispatchTransportTest {
 
         ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
         verify(basic).sendText(cap.capture());
-        com.alibaba.fastjson.JSONObject frame = com.alibaba.fastjson.JSON.parseObject(cap.getValue());
-        com.alibaba.fastjson.JSONObject debugLog = frame.getJSONObject("debugLog");
+        com.aliyun.autowonder.json.JSONObject frame = com.aliyun.autowonder.json.JSON.parseObject(cap.getValue());
+        com.aliyun.autowonder.json.JSONObject debugLog = frame.getJSONObject("debugLog");
         assertNotNull(debugLog);
         assertTrue(debugLog.getBooleanValue("enabled"));
         assertEquals(209715200L, debugLog.getLongValue("maxBytes"));
@@ -379,9 +407,9 @@ class WsDispatchTransportTest {
         verify(redisManager, times(2)).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL),
                 payload.capture());
         assertEquals(Map.of("ALPHA", "first", "ZETA", "last"),
-                com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(0))
-                        .getJSONObject("environmentVariables").getInnerMap());
-        assertEquals("updated", com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(1))
+                com.aliyun.autowonder.json.JSON.parseObject(payload.getAllValues().get(0))
+                        .getJSONObject("environmentVariables"));
+        assertEquals("updated", com.aliyun.autowonder.json.JSON.parseObject(payload.getAllValues().get(1))
                 .getJSONObject("environmentVariables").getString("ALPHA"));
         verify(resolver, times(2)).resolve(100L, 8L);
     }

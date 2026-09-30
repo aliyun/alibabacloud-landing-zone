@@ -18,5 +18,6 @@ public class ArtifactDO {
     private String ossRef;
     private Long size;
     private String metaJson;
+    private String externalShareRef;
     private Date gmtCreate;
 }
