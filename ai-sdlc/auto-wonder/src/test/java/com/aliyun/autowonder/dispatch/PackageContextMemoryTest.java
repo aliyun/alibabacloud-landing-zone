@@ -16,6 +16,18 @@ import static org.mockito.Mockito.*;
 
 class PackageContextMemoryTest {
 
+    @Test void migratedMemoryIsNotDeliveredAgainAsStaleVersionBoundContext() {
+        var refs = mock(AgentMemoryRefDao.class);
+        var memories = mock(MemoryDao.class);
+        var ref = new AgentMemoryRefDO(); ref.setTenantId(7L); ref.setMemoryId(41L);
+        when(refs.listByVersion(401L)).thenReturn(List.of(ref));
+        var source = new MemoryDO(); source.setId(41L); source.setTenantId(7L);
+        source.setStatus("ADOPTED"); source.setContentMd("已被新体系纠正的旧信息");
+        when(memories.findById(41L)).thenReturn(source);
+        when(memories.isMigrated(7L, 41L)).thenReturn(true);
+        assertTrue(PackageContextAssembler.buildMemoryMap(refs, memories, 7L, 401L).isEmpty());
+    }
+
     @Test
     void buildMemoryMap_loadsAdoptedMemoryFromRefs() {
         AgentMemoryRefDao refDao = mock(AgentMemoryRefDao.class);

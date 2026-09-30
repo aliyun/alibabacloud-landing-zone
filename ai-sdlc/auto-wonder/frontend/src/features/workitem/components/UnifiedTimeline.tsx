@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Typography, Avatar, Spin } from 'antd';
-import { RobotOutlined, UserOutlined } from '@ant-design/icons';
+import { UserOutlined } from '@ant-design/icons';
+import { CommentRobotIcon } from './CommentRobotIcon';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { CopyContentMenu } from '@/shared/ui/CopyContentMenu';
 import type { Artifact, Participant, TimelineItem } from '@/shared/types/workitem';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
+import { CommentInteractionCard } from './CommentInteractionCard';
 
 const { Text } = Typography;
 
@@ -45,7 +47,7 @@ function CommentCard({
   artifacts?: Artifact[];
   onArtifactClick?: (artifact: Artifact) => void;
 }) {
-  const bgColor = item.isAgent ? '#ff6a00' : '#1677ff';
+  const bgColor = item.isAgent ? 'rgba(var(--aw-accent-rgb),.10)' : 'var(--aw-raised)';
   const mentionNames = participants
     ?.map((participant) => participant.name)
     .filter((name): name is string => Boolean(name)) ?? [];
@@ -54,9 +56,9 @@ function CommentCard({
     <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
       <Avatar
         size={32}
-        style={{ background: bgColor, flexShrink: 0 }}
-        icon={item.isAgent ? <RobotOutlined /> : <UserOutlined />}
-      />
+        style={{ background: bgColor, color: item.isAgent ? 'var(--aw-accent-text)' : 'var(--aw-info)', flexShrink: 0 }}
+        icon={item.isAgent ? <CommentRobotIcon /> : item.authorName ? undefined : <UserOutlined />}
+      >{!item.isAgent && item.authorName ? Array.from(item.authorName)[0] : null}</Avatar>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <Text strong style={{ fontSize: 13 }}>{item.authorName || '未知'}</Text>
@@ -65,7 +67,7 @@ function CommentCard({
             <CopyContentMenu contentMd={item.content} tooltip="复制评论" />
           </span>
         </div>
-        <div style={{ background: '#fafafa', borderRadius: 6, padding: '8px 12px' }}>
+        <div style={{ background: item.isAgent ? 'rgba(var(--aw-accent-rgb),.10)' : 'var(--aw-raised)', borderRadius: 6, padding: '9px 12px', fontSize: 13 }}>
           <MarkdownView
             content={item.content}
             mentionNames={mentionNames}
@@ -73,41 +75,10 @@ function CommentCard({
             onArtifactClick={onArtifactClick}
           />
         </div>
-        {item.interactions?.map((interaction) => interaction.replyContent ? (
-          <div key={interaction.guidanceId} data-testid="comment-interaction-reply" style={{
-            marginTop: 8,
-            marginLeft: 12,
-            borderLeft: '3px solid #ff6a00',
-            borderRadius: 6,
-            background: '#fff7e6',
-            padding: '9px 12px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-              <RobotOutlined style={{ color: '#ff6a00' }} />
-              <Text strong style={{ color: '#ad4e00', fontSize: 12 }}>
-                {interaction.targetAgentName} 回复了这个问题
-              </Text>
-              {interaction.repliedAt && (
-                <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(interaction.repliedAt)}</Text>
-              )}
-              <span style={{ marginLeft: 'auto' }}>
-                <CopyContentMenu contentMd={interaction.replyContent} tooltip="复制回复" />
-              </span>
-            </div>
-            <MarkdownView
-              content={interaction.replyContent}
-              artifacts={artifacts}
-              onArtifactClick={onArtifactClick}
-            />
-          </div>
-        ) : interaction.status !== 'APPLIED' ? (
-          <div key={interaction.guidanceId} data-testid="comment-interaction-status"
-            style={{ marginTop: 6, color: interaction.status === 'FAILED' ? '#cf1322' : '#8c8c8c', fontSize: 12 }}>
-            {interaction.status === 'CANCELED' ? `${interaction.targetAgentName} 已取消` : interaction.status === 'FAILED'
-              ? `${interaction.targetAgentName} 回复失败${interaction.error ? `：${interaction.error}` : ''}`
-              : <><Spin size="small" /> <span style={{ marginLeft: 6 }}>{interaction.targetAgentName} {interaction.status === 'QUEUED' ? ({ PENDING: '排队中…', PACKAGING: '正在打包…', DISPATCHED: '等待接单…' }[interaction.executionStatus || ''] || '正在启动…') : '正在思考…'}</span></>}
-          </div>
-        ) : null)}
+        {item.interactions?.filter(interaction => interaction.status !== 'APPLIED' || interaction.replyContent).map(interaction => (
+          <CommentInteractionCard key={`${interaction.guidanceId}-${interaction.dispatchId || ''}`} interaction={interaction}
+            createdAt={item.gmtCreate} artifacts={artifacts} onArtifactClick={onArtifactClick} />
+        ))}
       </div>
     </div>
   );
@@ -148,11 +119,11 @@ function SystemCard({ item, participants }: { item: TimelineItem; participants?:
   return (
     <div
       style={{
-        borderLeft: '3px solid #ff6a00',
+        borderLeft: '3px solid var(--aw-accent-text)',
         paddingLeft: 12,
         marginBottom: 16,
         fontSize: 12,
-        color: '#666',
+        color: 'var(--aw-muted)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
@@ -171,8 +142,8 @@ export function UnifiedTimeline({ items, participants = [], artifacts = [], load
     <div
       data-testid="workitem-timeline-section"
       style={{
-        background: '#fff',
-        border: '1px solid #e5e7eb',
+        background: 'var(--aw-panel)',
+        border: '1px solid var(--aw-border)',
         borderRadius: 8,
         padding: 16,
         marginTop: 16,

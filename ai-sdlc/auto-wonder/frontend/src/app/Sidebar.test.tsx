@@ -92,12 +92,13 @@ describe('Sidebar helpers', () => {
     expect(resolveSelectedNavKey('/settings/environment-variables')).toBe('/settings/environment-variables');
   });
 
-  it('exposes the about AutoWonder page', () => {
+  it('exposes the about platform page', () => {
     const items = buildMenuItems();
     const aboutGroup = items.find((item) => item?.key === 'about-group');
 
     expect(isGroupItem(aboutGroup)).toBe(true);
     expect(childKeys(aboutGroup)).toContain('/about');
+    expect(NAV_GROUPS.flatMap((group) => group.items).find((item) => item.key === '/about')?.label).toBe('关于平台');
     expect(resolveSelectedNavKey('/about')).toBe('/about');
   });
 
@@ -243,38 +244,59 @@ describe('Sidebar helpers', () => {
   });
 
   it('matches the most specific navigation item for nested and legacy routes', () => {
-    expect(resolveSelectedNavKey('/agents/reviews')).toBe('/agents/reviews');
+    expect(resolveSelectedNavKey('/agents/reviews')).toBe('/agents');
+    expect(resolveSelectedNavKey('/agents/42')).toBe('/agents');
+    expect(resolveSelectedNavKey('/repos/map')).toBe('/repos');
+    expect(resolveSelectedNavKey('/integrations/channels')).toBe('/integrations');
     expect(resolveSelectedNavKey('/settings/members-roles/roles')).toBe('/settings/members');
     expect(resolveSelectedNavKey('/settings/roles')).toBe('/settings/members');
   });
 
-  it('renders badge count on matching items when count > 0', () => {
-    const items = buildMenuItems({ '/agents/reviews': 5 });
+  it('merges workers, repos and integrations entries into single hub navigation items', () => {
+    const items = buildMenuItems();
+    const visibleKeys = items.flatMap(childKeys);
+    const workersGroup = NAV_GROUPS.find((item) => item.key === 'workers-group');
+    const knowledgeGroup = NAV_GROUPS.find((item) => item.key === 'knowledge-group');
+
+    expect(workersGroup?.items.map((item) => item.key)).toEqual(['/agents', '/executors']);
+    expect(workersGroup?.items.find((item) => item.key === '/agents')?.label).toBe('数字员工管理');
+    expect(knowledgeGroup?.items.map((item) => item.key)).toEqual(['/repos', '/memories', '/skills']);
+    expect(knowledgeGroup?.items.find((item) => item.key === '/repos')?.label).toBe('仓库');
+    expect(childKeys(items.find((item) => item?.key === 'config-group'))).toContain('/integrations');
+    expect(visibleKeys).not.toContain('/agents/reviews');
+    expect(visibleKeys).not.toContain('/squads');
+    expect(visibleKeys).not.toContain('/repos/map');
+    expect(visibleKeys).not.toContain('/integrations/channels');
+    expect(visibleKeys).not.toContain('/integrations/workitem');
+  });
+
+  it('renders badge count on the merged agents entry when count > 0', () => {
+    const items = buildMenuItems({ '/agents': 5 });
     const workersGroup = items.find((item) => item?.key === 'workers-group');
-    const reviewItem = isGroupItem(workersGroup)
-      ? (workersGroup.children ?? []).find((child) => child?.key === '/agents/reviews')
+    const agentsItem = isGroupItem(workersGroup)
+      ? (workersGroup.children ?? []).find((child) => child?.key === '/agents')
       : undefined;
 
-    expect(reviewItem && 'label' in reviewItem ? reviewItem.label : undefined).not.toBe('版本审核');
+    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).not.toBe('数字员工管理');
   });
 
   it('keeps plain label when badge count is 0 or absent', () => {
-    const items = buildMenuItems({ '/agents/reviews': 0 });
+    const items = buildMenuItems({ '/agents': 0 });
     const workersGroup = items.find((item) => item?.key === 'workers-group');
-    const reviewItem = isGroupItem(workersGroup)
-      ? (workersGroup.children ?? []).find((child) => child?.key === '/agents/reviews')
+    const agentsItem = isGroupItem(workersGroup)
+      ? (workersGroup.children ?? []).find((child) => child?.key === '/agents')
       : undefined;
 
-    expect(reviewItem && 'label' in reviewItem ? reviewItem.label : undefined).toBe('版本审核');
+    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).toBe('数字员工管理');
   });
 
   it('renders badge dot on icon in collapsed mode when count > 0', () => {
-    const items = buildMenuItems({ '/agents/reviews': 3 }, true);
+    const items = buildMenuItems({ '/agents': 3 }, true);
     const workersGroup = items.find((item) => item?.key === 'workers-group');
-    const reviewItem = isGroupItem(workersGroup)
-      ? (workersGroup.children ?? []).find((child) => child?.key === '/agents/reviews')
+    const agentsItem = isGroupItem(workersGroup)
+      ? (workersGroup.children ?? []).find((child) => child?.key === '/agents')
       : undefined;
 
-    expect(reviewItem && 'label' in reviewItem ? reviewItem.label : undefined).toBe('版本审核');
+    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).toBe('数字员工管理');
   });
 });

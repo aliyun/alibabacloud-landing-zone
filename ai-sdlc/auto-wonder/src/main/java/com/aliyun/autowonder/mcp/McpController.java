@@ -1,13 +1,16 @@
 package com.aliyun.autowonder.mcp;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.mcp.dto.McpRpcResponse;
 import com.aliyun.autowonder.mcp.dto.McpToolCallRequest;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
+import com.aliyun.autowonder.memory.store.MemoryStoreApplicationService;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +34,17 @@ public class McpController {
     public McpController(McpAccessTokenService tokenService, McpToolService toolService) {
         this.tokenService = tokenService;
         this.toolService = toolService;
+    }
+
+    @GetMapping(value = {
+            "", "/rpc",
+            "/{pathToken}", "/{pathToken}/",
+            "/{pathToken}/rpc", "/{pathToken}/rpc/"
+    })
+    public ResponseEntity<Void> rejectGetProbe() {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .allow(HttpMethod.POST)
+                .build();
     }
 
     @GetMapping("/tools")
@@ -86,6 +100,8 @@ public class McpController {
         try {
             McpAccessTokenService.Principal principal = tokenService.authenticate(authorization, token);
             return withContext(principal, () -> handleRpc(principal, id, request));
+        } catch (MemoryStoreApplicationService.MemoryMaintenanceLeaseConflictException e) {
+            return McpRpcResponse.error(id, -32009, "MEMORY_MAINTENANCE_LOCKED: retry later");
         } catch (BizException e) {
             return McpRpcResponse.error(id, -32000, e.getMessage());
         } catch (Exception e) {

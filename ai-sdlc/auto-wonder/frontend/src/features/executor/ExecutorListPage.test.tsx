@@ -8,10 +8,11 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import {
   resetExecutorLaunchConfigStore, setExecutorLaunchConfig, setExecutorLaunchFixture, resolveLaunchCommand,
+  launchConfigUpdatesFor, executorFixtureClientKind,
 } from '@/test/mocks/handlers';
 import type { SeededLaunchConfig } from '@/test/mocks/handlers';
 import {
-  ExecutorListPage, isQoderClientKind, CREATABLE_CLIENT_KINDS, isLaunchConfigured, launchErrorMessage,
+  ExecutorListPage, isQoderClientKind, isClientKindMissing, CREATABLE_CLIENT_KINDS, isLaunchConfigured, launchErrorMessage,
   isUpdateInProgress, updateStatusLabel, updateStatusColor, upgradeBlockReason, describeUpdateAllResult,
 } from './ExecutorListPage';
 import type { ExecutorUpdateAllResultVO, ExecutorUpdateVO, ExecutorVO } from './api';
@@ -571,6 +572,16 @@ describe('ExecutorListPage', () => {
     expect(isQoderClientKind(undefined)).toBe(false);
   });
 
+  // 0.8 及更早版本落库的 client_kind 可能是 NULL、空串或空白串，三者都属于「类型缺失」
+  it('treats null, empty and blank client kinds as missing legacy data', () => {
+    expect(isClientKindMissing(null)).toBe(true);
+    expect(isClientKindMissing(undefined)).toBe(true);
+    expect(isClientKindMissing('')).toBe(true);
+    expect(isClientKindMissing('   ')).toBe(true);
+    expect(isClientKindMissing('QODER_CLI')).toBe(false);
+    expect(isClientKindMissing('CLAUDE_CODE')).toBe(false);
+  });
+
   it('restricts creatable client kinds to the two Qoder CLIs', () => {
     expect(CREATABLE_CLIENT_KINDS.map((kind) => kind.value)).toEqual(['QODER_CN_CLI', 'QODER_CLI']);
   });
@@ -658,7 +669,10 @@ describe('ExecutorListPage', () => {
         success: true, code: '0', message: '', traceId: null, data: [],
       })),
       http.get('/api/executors', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [executor],
+        // 补选保存后 fixture 类型会被更新，列表重取须读最新类型，
+        // 否则「保存后重开弹窗」断言看到的历史缺类型入口是旧数据。
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ ...executor, clientKind: executorFixtureClientKind(id) ?? executor.clientKind }],
       })),
       http.get('/api/executors/10000/token', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: 'exec_test_token',
@@ -737,6 +751,179 @@ describe('ExecutorListPage', () => {
 
     expect(await screen.findByText(/启动命令 · dev-machine-01/)).toBeInTheDocument();
     expect(screen.queryByText('Qoder 模型')).not.toBeInTheDocument();
+  });
+
+  // ---------- 历史缺类型（client_kind NULL/空白）执行器的恢复 ----------
+
+  const KIND_MISSING_ALERT = '该执行器缺少客户端类型（历史数据），请先选择客户端类型并保存，才能生成启动命令';
+
+  it('flags a legacy kindless executor in the startup modal with a recovery entry', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: null });
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    // 明确提示缺类型并提供补选入口；未补选前不展示模型参数，预览如实显示 17011
+    expect(within(dialog).getByText(KIND_MISSING_ALERT)).toBeInTheDocument();
+    formItemSelect(dialog, '客户端类型');
+    expect(within(dialog).queryByText('Qoder 模型')).not.toBeInTheDocument();
+    expect(await within(dialog).findByText('该执行器缺少客户端类型，无法生成启动命令')).toBeInTheDocument();
+  });
+
+  it('treats a blank client kind as missing and offers the same recovery entry', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: '' });
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    expect(within(dialog).getByText(KIND_MISSING_ALERT)).toBeInTheDocument();
+    formItemSelect(dialog, '客户端类型');
+  });
+
+  it('refuses to save a kindless executor until a client kind is picked', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: null });
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
+
+    // 类型必选：校验拦住保存，不发出任何 PUT
+    expect(await within(dialog).findByText('请选择客户端类型')).toBeInTheDocument();
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+  });
+
+  it('recovers a kindless executor by picking Qoder CN and copying the command', async () => {
+    const user = userEvent.setup();
+    const writeText = mockClipboardWrite();
+    serveExecutor({ clientKind: null });
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    await selectInForm(user, dialog, '客户端类型', 'Qoder CLI CN');
+    // 补选后模型参数按所选类型展示，并带出默认值
+    expect(within(dialog).getByText('Qoder 模型')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('Auto (default)');
+    });
+
+    await user.click(within(dialog).getByRole('button', { name: '复制启动命令' }));
+
+    // 保存 payload 携带补选类型与完整模型四项，随后命令按 qodercn 生成并复制
+    const bodies = launchConfigUpdatesFor(10000);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      clientKind: 'QODER_CN_CLI', memoryMode: 'platform', maxConcurrentDispatches: 5,
+      model: 'auto', reasoningEffort: 'medium', contextWindow: '260000', version: 1,
+    });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toMatch(/--provider qodercn /);
+    expect(writeText.mock.calls[0][0]).toMatch(/--model auto /);
+    expect(await screen.findByText('启动命令已复制')).toBeInTheDocument();
+  });
+
+  it('recovers a kindless executor with Qoder and keeps the kind after reopening the dialog', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: null });
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    let dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    await selectInForm(user, dialog, '客户端类型', 'Qoder CLI');
+    await waitFor(() => {
+      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('Auto (default)');
+    });
+    await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
+    expect(await screen.findByText(/启动配置已保存/)).toBeInTheDocument();
+
+    // 保存成功即更新弹窗内记录：缺类型提示在同弹窗内立即消失
+    await waitFor(() => {
+      expect(within(dialog).queryByText(KIND_MISSING_ALERT)).not.toBeInTheDocument();
+    });
+
+    // 关闭弹窗，等列表刷新出补齐后的类型（「类型缺失」标记消失），再重开弹窗走正常链路
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(screen.queryByText('类型缺失')).not.toBeInTheDocument();
+    });
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    expect(within(dialog).queryByText(KIND_MISSING_ALERT)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('客户端类型', { selector: 'label' })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('Auto (default)');
+    });
+  });
+
+  it('separates a missing client kind from a missing launch config in the same flow', async () => {
+    const user = userEvent.setup();
+    // 连启动配置都没有的旧记录：两种缺失要能区分，且能在同一流程中补齐
+    serveExecutor({ clientKind: null }, null);
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    expect(within(dialog).getByText(KIND_MISSING_ALERT)).toBeInTheDocument();
+    expect(await within(dialog).findByText('该执行器尚未配置启动参数，请先选择并保存')).toBeInTheDocument();
+    expect(await within(dialog).findByText('未配置：请先选择启动参数并保存后再生成命令')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '复制启动命令' })).toBeDisabled();
+
+    await selectInForm(user, dialog, '客户端类型', 'Qoder CLI CN');
+    await selectInForm(user, dialog, '记忆模式', '平台记忆（推荐）');
+    await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
+
+    expect(await screen.findByText(/启动配置已保存/)).toBeInTheDocument();
+    const bodies = launchConfigUpdatesFor(10000);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      clientKind: 'QODER_CN_CLI', memoryMode: 'platform', maxConcurrentDispatches: 5,
+      model: 'auto', reasoningEffort: 'medium', contextWindow: '260000', version: 1,
+    });
+    // 类型与参数补齐后，同一弹窗内即可预览并复制正确命令
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: '复制启动命令' })).toBeEnabled();
+    });
+    expect(await within(dialog).findByText(/--provider qodercn /)).toBeInTheDocument();
+  });
+
+  it('keeps typed executors on the original save path without sending a clientKind', async () => {
+    const user = userEvent.setup();
+    const writeText = mockClipboardWrite();
+    serveExecutor({ clientKind: 'QODER_CLI' });
+    renderPage();
+
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(await screen.findByRole('button', { name: /启动命令/ }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+
+    expect(within(dialog).queryByText(KIND_MISSING_ALERT)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('客户端类型', { selector: 'label' })).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: '复制启动命令' }));
+
+    // 正常执行器不携带 clientKind，也不改类型，仅保存启动参数
+    const bodies = launchConfigUpdatesFor(10000);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty('clientKind');
+    expect(bodies[0]).toMatchObject({ memoryMode: 'platform', model: 'auto', version: 1 });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toMatch(/--provider qoder /);
   });
 
   function mockClipboardWrite() {
@@ -2029,7 +2216,7 @@ describe('ExecutorListPage', () => {
     expectExpanded(opened, true);
     expect(within(opened).getByText('a-runner')).toBeInTheDocument();
     const squadLink = within(opened).getByRole('link', { name: '查看小队：Squad A' });
-    expect(squadLink).toHaveAttribute('href', '/squads?squadId=7');
+    expect(squadLink).toHaveAttribute('href', '/agents?tab=squads&squadId=7');
     await user.click(squadLink);
     expectExpanded(opened, true);
   });

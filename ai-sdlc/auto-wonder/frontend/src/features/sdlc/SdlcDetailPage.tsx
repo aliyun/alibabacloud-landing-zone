@@ -1,11 +1,13 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useState } from 'react';
 import type { ReactNode, CSSProperties } from 'react';
 import {
   Card, Descriptions, Tag, Spin, Button, Result, Space, Modal, Form, Input, Select,
-  Popconfirm, Table, message, Tooltip, Drawer, Alert, Switch, InputNumber, Empty, Popover,
-} from 'antd';
+  Popconfirm, message, Tooltip, Drawer, Alert, Switch, InputNumber, Empty, Popover} from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import {
-  ArrowLeftOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined,
   ArrowUpOutlined, ArrowDownOutlined, CheckCircleOutlined, StopOutlined, BulbOutlined,
   QuestionCircleOutlined,
 } from '@ant-design/icons';
@@ -170,7 +172,7 @@ export function SdlcDetailPage() {
 
   const stepColumns: ColumnsType<SdlcStep> = [
     { title: '#', width: 50, render: (_, __, idx) => idx + 1 },
-    { title: '步骤名称', dataIndex: 'name', width: 140 },
+    { title: '步骤名称', dataIndex: 'name', align: 'left', width: 140 },
     { title: '类型', dataIndex: 'kind', width: 110, render: (v: string | null) => v ? <Tag>{v}</Tag> : '-' },
     { title: '必需', dataIndex: 'required', width: 80, render: (v: boolean) => v === false ? '否' : '是' },
     {
@@ -226,11 +228,9 @@ export function SdlcDetailPage() {
 
   return (
     <div>
-      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/sdlcs')} style={{ marginBottom: 16, padding: 0 }}>
-        返回列表
-      </Button>
 
       <Card
+        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/sdlcs" label="返回列表" /><span>{sdlc.name}</span></span>} />}
         extra={
           <Space>
             {!editingInfo && !isEnabled && (
@@ -284,7 +284,7 @@ export function SdlcDetailPage() {
             </Space>
           </Form>
         ) : (
-          <Descriptions title={sdlc.name} column={2}>
+          <Descriptions column={2}>
             <Descriptions.Item label="状态">
               <Tag color={statusMap[sdlc.status]?.color}>{statusMap[sdlc.status]?.label || sdlc.status}</Tag>
             </Descriptions.Item>
@@ -302,12 +302,12 @@ export function SdlcDetailPage() {
         data-testid="sdlc-step-overview-card"
         style={{
           marginTop: 16,
-          background: '#fff',
-          borderColor: '#ff6a00',
-          boxShadow: '0 0 0 2px rgba(255, 106, 0, 0.08), 0 8px 20px rgba(255, 106, 0, 0.08)',
+          background: 'var(--aw-panel)',
+          borderColor: 'var(--aw-accent-text)',
+          boxShadow: 'none',
         }}
         styles={{ body: { padding: '14px 16px' } }}
-        extra={<span style={{ color: '#64748b', fontSize: 12 }}>{steps.length} steps</span>}
+        extra={<span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{steps.length} steps</span>}
       >
         {steps.length === 0 ? (
           <Empty
@@ -358,7 +358,7 @@ export function SdlcDetailPage() {
                         {index + 1}
                       </span>
                       <span style={{
-                        color: '#0f172a',
+                        color: 'var(--aw-text)',
                         fontSize: 13,
                         fontWeight: 600,
                         overflow: 'hidden',
@@ -408,7 +408,7 @@ export function SdlcDetailPage() {
         }
       >
         {isEnabled && (
-          <div style={{ marginBottom: 12, color: '#faad14' }}>
+          <div style={{ marginBottom: 12, color: 'var(--aw-warning)' }}>
             模版已启用，如需编辑步骤请先禁用。
           </div>
         )}
@@ -495,15 +495,15 @@ export function SdlcDetailPage() {
 function getStepKindTone(kind?: string | null) {
   switch (kind) {
     case 'analysis':
-      return { border: '#38bdf8', background: '#f0f9ff', text: '#0369a1', line: '#bae6fd' };
+      return { border: 'color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))', background: 'color-mix(in srgb, var(--aw-info) 10%, var(--aw-panel))', text: 'var(--aw-info)', line: 'color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))' };
     case 'implementation':
-      return { border: '#22c55e', background: '#f0fdf4', text: '#15803d', line: '#bbf7d0' };
+      return { border: 'var(--aw-success)', background: 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))', text: 'var(--aw-success)', line: 'color-mix(in srgb, var(--aw-success) 30%, var(--aw-border))' };
     case 'test':
-      return { border: '#f59e0b', background: '#fffbeb', text: '#b45309', line: '#fde68a' };
+      return { border: '#f59e0b', background: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))', text: 'var(--aw-warning)', line: 'color-mix(in srgb, var(--aw-warning) 30%, var(--aw-border))' };
     case 'review':
-      return { border: '#8b5cf6', background: '#f5f3ff', text: '#6d28d9', line: '#ddd6fe' };
+      return { border: '#8b5cf6', background: 'var(--aw-raised)', text: 'var(--aw-text)', line: '#ddd6fe' };
     default:
-      return { border: '#94a3b8', background: '#f8fafc', text: '#475569', line: '#cbd5e1' };
+      return { border: 'var(--aw-muted)', background: 'var(--aw-raised)', text: 'var(--aw-muted)', line: 'var(--aw-border)' };
   }
 }
 
@@ -531,7 +531,7 @@ function ChecklistPreview({ raw }: { raw: string }) {
           <div key={idx}>
             • {typeof item === 'string' ? item : typeof item?.text === 'string' ? item.text : JSON.stringify(item)}
             {item && typeof item === 'object' && item.allowNotApplicable === true && (
-              <div style={{ color: '#666' }}>允许不适用：{typeof item.notApplicableWhen === 'string' ? item.notApplicableWhen : '未填写有效条件'}</div>
+              <div style={{ color: 'var(--aw-muted)' }}>允许不适用：{typeof item.notApplicableWhen === 'string' ? item.notApplicableWhen : '未填写有效条件'}</div>
             )}
           </div>
         ))}
@@ -591,7 +591,7 @@ export function RetryBudgetTooltipContent() {
 
 function StepFieldHelp({ text, help, popover }: { text: string; help: ReactNode; popover?: boolean }) {
   const icon = (
-    <QuestionCircleOutlined style={{ marginLeft: 4, color: '#8c8c8c', cursor: 'help' }} />
+    <QuestionCircleOutlined style={{ marginLeft: 4, color: 'var(--aw-muted)', cursor: 'help' }} />
   );
   return (
     <span>

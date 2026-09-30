@@ -5,6 +5,7 @@ param(
     [string]$EnvFile,
     [string]$TerraformDirectory,
     [switch]$ConfirmMigrations,
+    [ValidatePattern('^[0-9a-f]{64}$')][string]$ReviewedV075Report,
     [switch]$ConfirmRollingCompatible,
     [switch]$ConfirmRollback
 )
@@ -116,6 +117,8 @@ switch ($Operation) {
             break
         }
         Assert-UpgradeStaging $data
+        $hasV075=@($pending | Where-Object { $_.file -eq 'docs/migration/V075__unify_status_kanban.sql' }).Count -gt 0
+        if ($hasV075 -and $data.upgrade.executionMode -ne 'maintenance') { throw 'V075 requires stopped-writer maintenance' }
         if (-not $ConfirmMigrations -or ($data.upgrade.executionMode -ne 'maintenance' -and -not $ConfirmRollingCompatible)) { throw 'Explicit migration and rolling compatibility confirmation is required' }
         $existing=$data.upgrade['databaseMigration']
         if ($existing -and $existing.status -in @('running','failed')) { throw 'An interrupted or failed migration requires reviewed recovery before retry' }
@@ -140,7 +143,14 @@ switch ($Operation) {
         }
         try {
             $request=New-UpgradeRemoteRequest $data $Operation;$request.migrations=$pending;$request.maintenance=($data.upgrade.executionMode -eq 'maintenance')
+            $request.reviewedV075Report=$ReviewedV075Report
             $result=Invoke-UpgradePayload $data $instanceIds[0] $request -ManifestPath $Manifest
+            if ($hasV075 -and [string]$result.output -match '(?m)^V075_REVIEW_REQUIRED=([0-9a-f]{64})\r?$') {
+                $reportSha=$Matches[1];$reportPath="/opt/autowonder/migration-reports/$reportSha.json"
+                Update-JsonFileAtomic $Manifest {param($document)$document.upgrade.databaseMigration=@{status='awaiting-review';applied=@();planFingerprint=$planFingerprint;reportSha256=$reportSha;reportPath=$reportPath;instanceId=$instanceIds[0];invocationId=$result.invocationId};$document.phase='database-migrate';$document.status='awaiting-review';$document}
+                Write-Host "V075 live report requires review on $($instanceIds[0]): $reportPath (SHA256 $reportSha); D and activation remain blocked"
+                break
+            }
             $count=Get-UpgradeResultValue $result 'MIGRATIONS_APPLIED' '[0-9]+'
             if ([int]$count -ne $pending.Count) { throw 'Migration completion count differs from approved plan' }
             Update-JsonFileAtomic $Manifest {param($document)$document.upgrade.databaseMigration=@{status='passed';applied=$pending;invocationId=$result.invocationId;planFingerprint=$planFingerprint};$document.phase='database-migrate';$document.status='ready';$document}

@@ -1,6 +1,5 @@
 package com.aliyun.autowonder.evolution;
 
-import com.aliyun.autowonder.memory.MemoryService;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.skill.SkillService;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,7 +11,6 @@ import static org.mockito.Mockito.*;
 class EvolutionReleaseRollbackLiteServiceTest {
 
     private EvolutionProposalDao proposalDao;
-    private MemoryService memoryService;
     private RepoService repoService;
     private SkillService skillService;
     private EvolutionReleaseRollbackLiteService rollbackService;
@@ -20,22 +18,17 @@ class EvolutionReleaseRollbackLiteServiceTest {
     @BeforeEach
     void setUp() {
         proposalDao = mock(EvolutionProposalDao.class);
-        memoryService = mock(MemoryService.class);
         repoService = mock(RepoService.class);
         skillService = mock(SkillService.class);
-        rollbackService = new EvolutionReleaseRollbackLiteService(proposalDao, memoryService, repoService, skillService);
+        rollbackService = new EvolutionReleaseRollbackLiteService(proposalDao, repoService, skillService);
     }
 
     @Test
-    void rollsBackReleasedMemoryByDeletingCreatedMemory() {
+    void rejectsRollbackThroughRetiredLegacyMemoryAuthority() {
         when(proposalDao.findById(101L)).thenReturn(proposal("MEMORY", 0,
                 null, "{\"id\":301,\"title\":\"Use pnpm\"}"));
-        when(proposalDao.markRolledBack(eq(101L), eq(1L), contains("DELETE_CREATED_MEMORY"), eq(0), eq(2L))).thenReturn(1);
-
-        EvolutionRollbackResult result = rollbackService.rollback(101L, 1L, 2L);
-
-        assertEquals("ROLLED_BACK", result.getStatus());
-        verify(memoryService).delete(301L, 1L, 2L);
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> rollbackService.rollback(101L, 1L, 2L));
     }
 
     @Test

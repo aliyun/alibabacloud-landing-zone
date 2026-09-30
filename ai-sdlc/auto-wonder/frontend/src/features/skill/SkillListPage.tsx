@@ -1,9 +1,11 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Key, ReactNode } from 'react';
 import {
-  Table, Card, Collapse, Tag, Button, Space, Segmented, Modal, Form, Input, Select, Popconfirm, message,
-  Radio, Alert, Typography, Descriptions, Divider, InputNumber, Checkbox, Tooltip, Tree, TreeSelect, Spin, Switch, Empty,
-} from 'antd';
+  Card, Collapse, Tag, Button, Space, Segmented, Modal, Form, Input, Select, Popconfirm, message,
+  Radio, Alert, Typography, Descriptions, Divider, InputNumber, Checkbox, Tooltip, Tree, TreeSelect, Spin, Switch, Empty} from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, FolderOpenOutlined, FileTextOutlined,
   MinusCircleOutlined, DownloadOutlined, ApartmentOutlined,
@@ -23,6 +25,7 @@ import type { ColumnsType } from 'antd/es/table';
 import type { DataNode } from 'antd/es/tree';
 import { buildDirectoryZip, buildPackageTree, formatBytes } from './skillPackage';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { useAuthStore } from '@/shared/auth/store';
 import { listExecutors } from '@/features/executor/api';
@@ -99,7 +102,7 @@ export function SkillListPage() {
   const queryClient = useQueryClient();
   const runWithAccess = useAccessCommand();
   const [page, setPage] = useState(1);
-  const [size, setSize] = useState(20);
+  const [size, setSize] = usePageSizePreference('autowonder.skills.pageSize', [10, 20, 50, 100], 10);
   const [typeFilter, setTypeFilter] = useState('');
 
   const [formOpen, setFormOpen] = useState(false);
@@ -788,14 +791,21 @@ export function SkillListPage() {
 
   const columns: ColumnsType<Skill> = [
     { title: 'ID', dataIndex: 'id', width: 70 },
-    { title: '名称', dataIndex: 'name', width: 220 },
-    { title: '描述', dataIndex: 'description', width: 320, ellipsis: true },
+    {
+      title: '名称', dataIndex: 'name', align: 'left',
+      render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText>,
+    },
+    {
+      // 描述内容普遍很长，悬停提示意义不大：纯省略，不加 tooltip
+      title: '描述', dataIndex: 'description', align: 'left', ellipsis: true,
+      render: (v: string) => v ?? '—',
+    },
     {
       title: '类型', dataIndex: 'type', width: 90,
       render: (t: Skill['type']) => <Tag color={typeColor[t]}>{typeLabel[t]}</Tag>,
     },
     {
-      title: '分类', key: 'category', width: 150,
+      title: '分类', key: 'category', width: 160,
       render: (_, record) => activeCategorySkillId === record.id ? (
         <TreeSelect
           autoFocus
@@ -839,7 +849,7 @@ export function SkillListPage() {
           disabled={savingCategoryIds.includes(record.id)}
           onClick={() => runWithAccess('READ_WRITE', '设置能力分类', () => setActiveCategorySkillId(record.id))}
           style={{ border: 0, background: 'none', padding: 0, font: 'inherit',
-            color: record.categoryId == null ? '#8c8c8c' : 'inherit', cursor: 'pointer',
+            color: record.categoryId == null ? 'var(--aw-muted)' : 'inherit', cursor: 'pointer',
             maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}
         >
           {savingCategoryIds.includes(record.id) ? '保存中…' : (record.categoryPath || '—')}
@@ -847,20 +857,7 @@ export function SkillListPage() {
       ),
     },
     {
-      title: '接入方式', dataIndex: 'installSpec', width: 140,
-      render: (_, record) => accessLabel(record),
-    },
-    { title: '版本', dataIndex: 'version', width: 60 },
-    {
-      title: '更新时间', dataIndex: 'gmtModified', width: 170,
-      render: (value: string | undefined) => formatDateTime(value),
-    },
-    {
-      title: '更新人', dataIndex: 'modifierName', width: 120, ellipsis: true,
-      render: (_, record) => record.modifierName || (record.modifierId ? `用户 #${record.modifierId}` : '-'),
-    },
-    {
-      title: '操作', width: 330, fixed: 'right',
+      title: '操作', width: 280, fixed: 'right',
       render: (_, record) => {
         const connectionResult = connectionResults[record.id];
         return (
@@ -922,7 +919,7 @@ export function SkillListPage() {
   return (
     <>
       <Card
-        title="能力库"
+        className="aw-content-card" title={<PageHeading title="能力库" />}
         extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增能力</Button>}
       >
         <div style={{
@@ -982,9 +979,10 @@ export function SkillListPage() {
               pagination={{
                 current: page, pageSize: size, total,
                 onChange: (p, ps) => { setPage(p); setSize(ps); },
+                showSizeChanger: true,
                 showTotal: (t) => `共 ${t} 条`,
               }}
-              scroll={{ x: 1520 }}
+              scroll={{ x: 900 }}
             />
           </>
         )}
@@ -1042,8 +1040,8 @@ export function SkillListPage() {
               <div style={{
                 marginTop: 8,
                 padding: 12,
-                background: '#fafafa',
-                border: '1px solid #f0f0f0',
+                background: 'var(--aw-raised)',
+                border: '1px solid var(--aw-border)',
                 borderRadius: 8,
                 whiteSpace: 'pre-wrap',
               }}>
@@ -1055,8 +1053,8 @@ export function SkillListPage() {
               <pre style={{
                 marginTop: 8,
                 padding: 12,
-                background: '#111827',
-                color: '#e5e7eb',
+                background: 'var(--aw-raised)',
+                color: 'var(--aw-text)',
                 borderRadius: 8,
                 overflowX: 'auto',
                 whiteSpace: 'pre-wrap',
@@ -1099,7 +1097,7 @@ export function SkillListPage() {
                           flexShrink: 0,
                           maxHeight: 300,
                           overflow: 'auto',
-                          border: '1px solid #f0f0f0',
+                          border: '1px solid var(--aw-border)',
                           borderRadius: 8,
                           padding: 8,
                         }}
@@ -1125,7 +1123,7 @@ export function SkillListPage() {
                           minWidth: 0,
                           maxHeight: 300,
                           overflow: 'auto',
-                          border: '1px solid #f0f0f0',
+                          border: '1px solid var(--aw-border)',
                           borderRadius: 8,
                           padding: 12,
                         }}
@@ -1366,7 +1364,7 @@ export function SkillListPage() {
               flexShrink: 0,
               maxHeight: 420,
               overflow: 'auto',
-              border: '1px solid #f0f0f0',
+              border: '1px solid var(--aw-border)',
               borderRadius: 8,
               padding: 12,
             }}
@@ -1473,7 +1471,7 @@ export function SkillListPage() {
               </Form.Item>
               <Form.Item style={{ marginBottom: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
-                  borderTop: '1px solid #f0f0f0', paddingTop: 16 }}>
+                  borderTop: '1px solid var(--aw-border)', paddingTop: 16 }}>
                   <Space>
                     <Button onClick={() => setCategoryManageOpen(false)}>取消</Button>
                     <Button

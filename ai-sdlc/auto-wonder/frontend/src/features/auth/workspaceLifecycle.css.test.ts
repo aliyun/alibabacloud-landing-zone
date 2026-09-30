@@ -36,13 +36,11 @@ function expectInteractiveStates(selector: string) {
 }
 
 describe('workspaceLifecycle.css', () => {
-  it('styles the apply button as an outlined brand control rather than a disabled-looking one', () => {
+  it('styles the apply button with the shared appearance tokens', () => {
     const base = rule('.aw-apply-access-button');
-    // F7.1/F7.2: orange outline on white with high-contrast text. The lighter brand
-    // #ff6a00 is only 2.9:1 against white, so it must never be the text or border colour.
-    expect(base).toContain('border: 1px solid #ea580c');
-    expect(base).toContain('background: #fff');
-    expect(base).toContain('color: #c2410c');
+    expect(base).toContain('border: 1px solid var(--aw-accent-text)');
+    expect(base).toContain('background: var(--aw-panel)');
+    expect(base).toContain('color: var(--aw-accent-text)');
     expect(base).not.toContain('#ff6a00');
     expect(base).toContain('cursor: pointer');
     expect(base).not.toContain('cursor: not-allowed');
@@ -51,12 +49,12 @@ describe('workspaceLifecycle.css', () => {
 
   it('gives the apply button distinct hover, active and visible-focus states', () => {
     expectInteractiveStates('.aw-apply-access-button');
-    expect(rule('.aw-apply-access-button:hover')).toContain('background: #fff7ed');
-    expect(rule('.aw-apply-access-button:active')).toContain('background: #ffedd5');
+    expect(rule('.aw-apply-access-button:hover')).toContain('background: var(--aw-button-hover)');
+    expect(rule('.aw-apply-access-button:active')).toContain('background: var(--aw-button-active)');
     // F7.3: an outline is the only focus affordance that survives Windows high-contrast
     // mode, and the offset keeps it off the border so the two do not merge into one line.
     const focus = rule('.aw-apply-access-button:focus-visible');
-    expect(focus).toContain('outline: 2px solid #c2410c');
+    expect(focus).toContain('outline: 2px solid var(--aw-accent-text)');
     expect(focus).toContain('outline-offset: 2px');
   });
 
@@ -75,17 +73,17 @@ describe('workspaceLifecycle.css', () => {
     // F1.2: these sit beside the enter control, so they cannot inherit the card's border
     // highlight as their focus signal — they need a ring of their own.
     expectInteractiveStates('.aw-card-manage-button');
-    expect(rule('.aw-card-manage-button:focus-visible')).toContain('outline: 2px solid #c2410c');
+    expect(rule('.aw-card-manage-button:focus-visible')).toContain('outline: 2px solid var(--aw-accent-text)');
     const danger = rule('.aw-card-manage-button--danger:hover');
-    expect(danger).toContain('border-color: #dc2626');
-    expect(danger).toContain('color: #b91c1c');
-    expect(rule('.aw-card-manage-button--danger:focus-visible')).toContain('outline-color: #b91c1c');
+    expect(danger).toContain('border-color: var(--aw-error)');
+    expect(danger).toContain('color: var(--aw-error)');
+    expect(rule('.aw-card-manage-button--danger:focus-visible')).toContain('outline-color: var(--aw-error)');
   });
 
   it('gives the recycle bin entry the same focus affordance', () => {
     // F4.1: the entry is a real control, so it has to be reachable and visibly focusable.
     expectInteractiveStates('.aw-recycle-bin-entry');
-    expect(rule('.aw-recycle-bin-entry:focus-visible')).toContain('outline: 2px solid #c2410c');
-    expect(rule('.aw-recycle-bin-entry')).toContain('color: #c2410c');
+    expect(rule('.aw-recycle-bin-entry:focus-visible')).toContain('outline: 2px solid var(--aw-accent-text)');
+    expect(rule('.aw-recycle-bin-entry')).toContain('color: var(--aw-accent-text)');
   });
 });

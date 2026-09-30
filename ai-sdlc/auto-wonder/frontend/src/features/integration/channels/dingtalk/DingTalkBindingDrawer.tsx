@@ -138,14 +138,14 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
     >
       <Form form={form} layout="vertical">
         <Form.Item
-          label="关联数字人"
+          label="关联数字员工"
           name="agentId"
-          rules={[{ required: true, message: '请选择关联数字人' }]}
+          rules={[{ required: true, message: '请选择关联数字员工' }]}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="选择本租户数字人"
+            placeholder="选择本租户数字员工"
             options={agentOptions}
           />
         </Form.Item>

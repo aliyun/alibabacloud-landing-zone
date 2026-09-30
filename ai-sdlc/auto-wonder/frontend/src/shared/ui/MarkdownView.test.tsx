@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -319,6 +320,15 @@ describe('MarkdownView', () => {
     expect(del).toHaveTextContent('已废弃');
   });
 
+  it('renders task list checkboxes as read-only markdown', () => {
+    render(<MarkdownView content={'- [x] 完成\n- [ ] 待办'} />);
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0]).toBeChecked();
+    expect(boxes[1]).not.toBeChecked();
+    expect(boxes.every((box) => (box as HTMLInputElement).disabled)).toBe(true);
+  });
+
   it('keeps unmatched artifact-looking paths as plain text', () => {
     render(<MarkdownView content="证据：artifacts/output/deliverables/missing.md" artifacts={[]} />);
 
@@ -356,7 +366,10 @@ describe('MarkdownView', () => {
     );
 
     const mention = screen.getByText('@张三');
-    expect(mention).toHaveStyle({ color: '#0958d9', backgroundColor: '#e6f4ff' });
+    expect(mention).toHaveAttribute('data-type', 'mention');
+    const html = renderToStaticMarkup(<MarkdownView content="请 @张三 确认结论" mentionNames={['张三']} />);
+    expect(html).toContain('color:var(--aw-accent-text)');
+    expect(html).toContain('background-color:rgba(var(--aw-accent-rgb),.10)');
     expect(screen.getByText(/确认结论/)).toBeInTheDocument();
   });
 

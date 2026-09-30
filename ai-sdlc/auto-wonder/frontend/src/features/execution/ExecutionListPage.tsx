@@ -1,15 +1,18 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Card, Table, Tag, Select, Input, Segmented, Button, Space, Modal, Typography } from 'antd';
+import { Card, Tag, Select, Input, Segmented, Button, Space } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import { useQuery } from '@tanstack/react-query';
 import { useDispatches } from './hooks';
 import { listAgents } from '@/features/agent/api';
-import { statusMeta, ACCENT } from './statusMeta';
+import { statusMeta } from './statusMeta';
 import type { DispatchVO, DispatchTimeRange } from './types';
 import { ExecutionDetailDrawer } from './components/ExecutionDetailDrawer';
-import { MarkdownView } from '@/shared/ui/MarkdownView';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 
 const STATUS_OPTIONS = [
   'PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'TIMEOUT', 'CANCELED',
@@ -18,13 +21,12 @@ const STATUS_OPTIONS = [
 export function ExecutionListPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = usePageSizePreference('autowonder.executions.pageSize', [10, 20, 50, 100, 200], 10);
   const [status, setStatus] = useState<string | undefined>();
   const [agentId, setAgentId] = useState<number | undefined>();
   const [workitemId, setWorkitemId] = useState<number | undefined>();
   const [timeRange, setTimeRange] = useState<DispatchTimeRange>('30d');
   const [detailId, setDetailId] = useState<number | null>(null);
-  const [resultPreview, setResultPreview] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const handleWorkitemIdChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     clearTimeout(debounceRef.current);
@@ -43,41 +45,26 @@ export function ExecutionListPage() {
   const columns: ColumnsType<DispatchVO> = [
     { title: '时间', dataIndex: 'gmtCreate', width: 160,
       render: (v: string) => new Date(v).toLocaleString('zh-CN', { hour12: false }) },
-    { title: '工单', dataIndex: 'workitemTitle', width: 220, ellipsis: true,
-      render: (_: unknown, r) => r.workitemId
-        ? <a onClick={(e) => { e.stopPropagation(); navigate(`/workitems/${r.workitemId}`); }}>#{r.workitemId} {r.workitemTitle}</a>
+    { title: '工单', align: 'left', dataIndex: 'workitemTitle', ellipsis: { showTitle: false },
+      render: (_: unknown, r) => r.workitemId && r.workitemTitle
+        ? (
+          <EllipsisText tooltip={r.workitemTitle}>
+            <a onClick={(e) => { e.stopPropagation(); navigate(`/workitems/${r.workitemId}`); }}>{r.workitemTitle}</a>
+          </EllipsisText>
+        )
         : '—' },
     { title: 'Agent', dataIndex: 'agentName', width: 120, render: (v: string | null) => v ?? '—' },
     { title: '执行器', dataIndex: 'executorName', width: 120, render: (v: string | null) => v ?? '—' },
     { title: '状态', dataIndex: 'status', width: 130,
       render: (s: string) => <Tag color={statusMeta(s).color}>{statusMeta(s).label}</Tag> },
     { title: '尝试', dataIndex: 'attempt', width: 70, render: (v: number | null) => v ?? '—' },
-    {
-      title: '结果', dataIndex: 'resultSummary', width: 260, ellipsis: true,
-      render: (v: string | null) => v ? (
-        <Space size={8} style={{ maxWidth: 240 }}>
-          <Typography.Text ellipsis style={{ maxWidth: 150 }}>{v}</Typography.Text>
-          <Button
-            type="link"
-            size="small"
-            style={{ padding: 0 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setResultPreview(v);
-            }}
-          >
-            查看完整结果
-          </Button>
-        </Space>
-      ) : '—',
-    },
-    { title: '操作', width: 80, fixed: 'right' as const,
+    { title: '操作', width: 80,
       render: (_: unknown, r) => <a onClick={(e) => { e.stopPropagation(); setDetailId(r.id); }}>详情</a> },
   ];
 
   return (
     <Card
-      title={<span style={{ borderLeft: `4px solid ${ACCENT}`, paddingLeft: 10, fontWeight: 600 }}>执行记录</span>}
+      className="aw-content-card" title={<PageHeading title="执行记录" />}
       extra={<Button icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button>}
     >
       <Space wrap style={{ marginBottom: 16 }}>
@@ -97,7 +84,6 @@ export function ExecutionListPage() {
         loading={isFetching}
         columns={columns}
         dataSource={data?.list ?? []}
-        scroll={{ x: 'max-content' }}
         onRow={(r) => ({ onClick: () => setDetailId(r.id) })}
         pagination={{
           current: page,
@@ -110,15 +96,6 @@ export function ExecutionListPage() {
       />
 
       <ExecutionDetailDrawer dispatchId={detailId} open={detailId != null} onClose={() => setDetailId(null)} />
-      <Modal
-        title="完整结果"
-        open={resultPreview != null}
-        onCancel={() => setResultPreview(null)}
-        footer={null}
-        width={760}
-      >
-        {resultPreview ? <MarkdownView content={resultPreview} /> : null}
-      </Modal>
     </Card>
   );
 }

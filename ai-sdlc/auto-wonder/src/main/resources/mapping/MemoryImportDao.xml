@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.memory.store.MemoryImportDao">
+    <insert id="upsertSource" parameterType="com.aliyun.autowonder.memory.store.MemoryImportSourceDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_import_source
+        (tenant_id, agent_id, target_store_id, provider_family, logical_path,
+         installation_fingerprint, last_observed_sanitized_sha256,
+         last_imported_sanitized_sha256, last_observed_executor_id, last_seen_at, status, version)
+        VALUES (#{tenantId}, #{agentId}, #{targetStoreId}, #{providerFamily}, #{logicalPath},
+                #{installationFingerprint}, #{lastObservedSanitizedSha256},
+                #{lastImportedSanitizedSha256}, #{lastObservedExecutorId}, #{lastSeenAt}, #{status}, 0)
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id),
+            last_observed_sanitized_sha256 = COALESCE(VALUES(last_observed_sanitized_sha256), last_observed_sanitized_sha256),
+            last_observed_executor_id = VALUES(last_observed_executor_id),
+            last_seen_at = VALUES(last_seen_at),
+            status = CASE
+                WHEN status IN ('PAUSED', 'RETIRED', 'RECURATE_REQUESTED') THEN status
+                WHEN VALUES(status) IN ('MISSING', 'TOO_LARGE') THEN VALUES(status)
+                WHEN status = 'ACTIVE' AND VALUES(status) = 'OBSERVED' THEN status
+                WHEN status IN ('MISSING', 'TOO_LARGE', 'STALE') AND VALUES(status) = 'OBSERVED'
+                    AND last_imported_sanitized_sha256 IS NOT NULL THEN 'ACTIVE'
+                ELSE VALUES(status)
+            END,
+            version = version + 1
+    </insert>
+    <select id="findSource" resultType="com.aliyun.autowonder.memory.store.MemoryImportSourceDO">
+        SELECT * FROM memory_import_source
+        WHERE tenant_id = #{tenantId} AND agent_id = #{agentId}
+          AND provider_family = #{providerFamily} AND logical_path = #{logicalPath}
+          AND installation_fingerprint = #{installationFingerprint} LIMIT 1
+    </select>
+    <select id="findSourceById" resultType="com.aliyun.autowonder.memory.store.MemoryImportSourceDO">
+        SELECT * FROM memory_import_source WHERE tenant_id = #{tenantId} AND id = #{sourceId} LIMIT 1
+    </select>
+    <insert id="insertSnapshot" parameterType="com.aliyun.autowonder.memory.store.MemoryImportSnapshotDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_import_snapshot
+        (tenant_id, source_id, sanitized_content_sha256, sanitized_content, byte_size,
+         source_modified_at, scan_summary_json, status)
+        VALUES (#{tenantId}, #{sourceId}, #{sanitizedContentSha256}, #{sanitizedContent},
+                #{byteSize}, #{sourceModifiedAt}, #{scanSummaryJson}, #{status})
+    </insert>
+    <delete id="deleteSnapshotsBeforeLatestTwo">
+        DELETE FROM memory_import_snapshot
+        WHERE tenant_id = #{tenantId} AND source_id = #{sourceId}
+          AND id IN (
+            SELECT id FROM (
+              SELECT id FROM memory_import_snapshot
+              WHERE tenant_id = #{tenantId} AND source_id = #{sourceId}
+              ORDER BY id DESC LIMIT 18446744073709551615 OFFSET 2
+            ) old_snapshots
+          )
+    </delete>
+    <select id="listLatestSnapshots" resultType="com.aliyun.autowonder.memory.store.MemoryImportSnapshotDO">
+        SELECT * FROM memory_import_snapshot
+        WHERE tenant_id = #{tenantId} AND source_id = #{sourceId}
+        ORDER BY id DESC LIMIT 2
+    </select>
+    <select id="findSnapshotByHash" resultType="com.aliyun.autowonder.memory.store.MemoryImportSnapshotDO">
+        SELECT * FROM memory_import_snapshot
+        WHERE tenant_id = #{tenantId} AND source_id = #{sourceId}
+          AND sanitized_content_sha256 = #{sanitizedContentSha256}
+        LIMIT 1
+    </select>
+    <insert id="insertReceipt" parameterType="com.aliyun.autowonder.memory.store.MemoryImportReceiptDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_import_receipt
+        (tenant_id, agent_id, source_id, snapshot_id, sanitized_content_sha256,
+         curation_dispatch_id, outcome, target_versions_json, redaction_count)
+        VALUES (#{tenantId}, #{agentId}, #{sourceId}, #{snapshotId}, #{sanitizedContentSha256},
+                #{curationDispatchId}, #{outcome}, #{targetVersionsJson}, #{redactionCount})
+    </insert>
+    <insert id="upsertReceipt" parameterType="com.aliyun.autowonder.memory.store.MemoryImportReceiptDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_import_receipt
+        (tenant_id, agent_id, source_id, snapshot_id, sanitized_content_sha256,
+         curation_dispatch_id, outcome, target_versions_json, redaction_count)
+        VALUES (#{tenantId}, #{agentId}, #{sourceId}, #{snapshotId}, #{sanitizedContentSha256},
+                #{curationDispatchId}, #{outcome}, #{targetVersionsJson}, #{redactionCount})
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), source_id = VALUES(source_id),
+            snapshot_id = VALUES(snapshot_id), curation_dispatch_id = VALUES(curation_dispatch_id),
+            outcome = VALUES(outcome), target_versions_json = VALUES(target_versions_json),
+            redaction_count = VALUES(redaction_count)
+    </insert>
+    <update id="markSourceImported">
+        UPDATE memory_import_source
+        SET last_imported_sanitized_sha256 = #{sanitizedContentSha256}, status = 'ACTIVE',
+            version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{sourceId}
+    </update>
+    <update id="markSnapshotStatus">
+        UPDATE memory_import_snapshot SET status = #{status}
+        WHERE tenant_id = #{tenantId} AND id = #{snapshotId}
+    </update>
+    <update id="claimSnapshot">
+        UPDATE memory_import_snapshot
+        SET status = 'RUNNING', curation_lease_id = #{leaseId}, curation_lease_until = #{leaseUntil}
+        WHERE tenant_id = #{tenantId} AND id = #{snapshotId}
+          AND (status IN ('QUEUED', 'FAILED')
+               OR (status = 'RUNNING' AND curation_lease_until &lt; #{now}))
+    </update>
+    <update id="renewSnapshot">
+        UPDATE memory_import_snapshot SET curation_lease_until = #{leaseUntil}
+        WHERE tenant_id = #{tenantId} AND id = #{snapshotId} AND status = 'RUNNING'
+          AND curation_lease_id = #{leaseId} AND curation_lease_until &gt; #{now}
+    </update>
+    <update id="releaseSnapshot">
+        UPDATE memory_import_snapshot
+        SET status = 'QUEUED', curation_lease_id = NULL, curation_lease_until = NULL
+        WHERE tenant_id = #{tenantId} AND id = #{snapshotId} AND status = 'RUNNING'
+          AND curation_lease_id = #{leaseId}
+    </update>
+    <update id="completeSnapshot">
+        UPDATE memory_import_snapshot
+        SET status = 'SUCCEEDED', curation_lease_id = NULL, curation_lease_until = NULL
+        WHERE tenant_id = #{tenantId} AND id = #{snapshotId} AND status = 'RUNNING'
+          AND curation_lease_id = #{leaseId} AND curation_lease_until &gt; #{now}
+    </update>
+    <select id="findSuccessfulReceiptByHash" resultType="com.aliyun.autowonder.memory.store.MemoryImportReceiptDO">
+        SELECT * FROM memory_import_receipt
+        WHERE tenant_id = #{tenantId} AND agent_id = #{agentId}
+          AND sanitized_content_sha256 = #{sanitizedContentSha256} AND outcome = 'SUCCEEDED'
+        LIMIT 1
+    </select>
+    <select id="listSources" resultType="com.aliyun.autowonder.memory.store.MemoryImportSourceDO">
+        SELECT * FROM memory_import_source
+        WHERE tenant_id = #{tenantId}
+        ORDER BY id DESC
+    </select>
+    <select id="listReceipts" resultType="com.aliyun.autowonder.memory.store.MemoryImportReceiptDO">
+        SELECT * FROM memory_import_receipt
+        WHERE tenant_id = #{tenantId} AND source_id = #{sourceId}
+        ORDER BY id DESC LIMIT #{limit}
+    </select>
+    <update id="updateSourceStatus">
+        UPDATE memory_import_source
+        SET status = #{status}, version = version + 1
+        WHERE tenant_id = #{tenantId} AND id = #{sourceId} AND version = #{version}
+    </update>
+    <update id="markStaleBefore">
+        UPDATE memory_import_source
+        SET status = 'STALE', version = version + 1
+        WHERE status IN ('OBSERVED', 'ACTIVE') AND last_seen_at &lt; #{cutoff}
+    </update>
+</mapper>

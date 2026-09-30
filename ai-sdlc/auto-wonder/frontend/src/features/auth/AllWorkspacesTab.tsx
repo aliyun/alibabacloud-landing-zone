@@ -8,6 +8,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import { ApiError } from '@/shared/types/common';
 import type { SwitchWorkspaceResponse, WorkspaceInfo, WorkspaceListItem } from '@/shared/types/common';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { refreshTenantScopedQueries } from '@/features/workitem/queryCache';
 import { useAllWorkspaces, useCancelAccessRequest } from './workspaceDiscoveryApi';
 import { AccessRequestModal } from './AccessRequestModal';
@@ -20,10 +21,9 @@ const { Text } = Typography;
 const PAGE_SIZE = 20;
 const KEYWORD_DEBOUNCE_MS = 300;
 
-const BRAND_ORANGE = '#ff6a00';
-const BRAND_ORANGE_DARK = '#ea580c';
-const BRAND_ORANGE_LINE = '#fed7aa';
-const WORKSPACE_CARD_SHADOW = '0 0 0 2px rgba(255, 106, 0, 0.08), 0 14px 28px rgba(255, 106, 0, 0.12)';
+const ACCENT_COLOR = 'var(--aw-accent-text)';
+const BORDER_COLOR = 'var(--aw-border)';
+const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
 
 export function AllWorkspacesTab() {
   const [keyword, setKeyword] = useState('');
@@ -180,8 +180,8 @@ export function AllWorkspacesTab() {
           style={{ maxWidth: 320 }}
         />
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: '#697386' }}>共 {total} 个工作空间</Text>
-          {refetching && <LoadingOutlined data-testid="all-workspaces-refetching" style={{ color: BRAND_ORANGE }} />}
+          <Text style={{ color: 'var(--aw-muted)' }}>共 {total} 个工作空间</Text>
+          {refetching && <LoadingOutlined data-testid="all-workspaces-refetching" style={{ color: ACCENT_COLOR }} />}
         </div>
       </div>
 
@@ -292,14 +292,37 @@ function WorkspaceDiscoveryCard({
   const canManage = workspace.canManage === true;
   const enterable = isMember || canManage;
   const testId = `all-workspace-card-${workspace.id}`;
+  // Hover highlight lives on the card shell (same as the "my workspaces" tab), not on the
+  // inner enter button, so the accent frame hugs the card's own border and covers the
+  // manage buttons area too.
+  const cardHoverProps = {
+    onMouseEnter: (event: React.MouseEvent<HTMLDivElement>) => {
+      event.currentTarget.style.borderColor = ACCENT_COLOR;
+      event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
+      event.currentTarget.style.transform = 'translateY(-1px)';
+    },
+    onMouseLeave: (event: React.MouseEvent<HTMLDivElement>) => {
+      event.currentTarget.style.borderColor = 'var(--aw-border)';
+      event.currentTarget.style.boxShadow = 'none';
+      event.currentTarget.style.transform = 'none';
+    },
+    onFocus: (event: React.FocusEvent<HTMLDivElement>) => {
+      event.currentTarget.style.borderColor = ACCENT_COLOR;
+      event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
+    },
+    onBlur: (event: React.FocusEvent<HTMLDivElement>) => {
+      event.currentTarget.style.borderColor = 'var(--aw-border)';
+      event.currentTarget.style.boxShadow = 'none';
+    },
+  };
 
   const description = (
     <>
       {workspace.membershipStatus === 'PENDING' && <span style={pendingBadgeStyle}>审批中</span>}
       {workspace.membershipStatus === 'NOT_MEMBER' && <span style={notMemberBadgeStyle}>未加入</span>}
       <span style={markStyle}>{getWorkspaceInitial(workspace.name)}</span>
-      <span style={nameStyle}>{workspace.name}</span>
-      <span style={descStyle}>{workspace.description || '暂无描述'}</span>
+      <EllipsisText tooltip={workspace.name} style={nameStyle}>{workspace.name}</EllipsisText>
+      <EllipsisText tooltip={workspace.description || '暂无描述'} lines={2} style={descStyle}>{workspace.description || '暂无描述'}</EllipsisText>
     </>
   );
   // F7.5: the fade covers the descriptive half only, and only for cards the user cannot
@@ -308,7 +331,7 @@ function WorkspaceDiscoveryCard({
 
   if (enterable) {
     return (
-      <div data-testid={testId} style={cardStyle}>
+      <div data-testid={testId} style={cardStyle} {...cardHoverProps}>
         <button
           type="button"
           data-testid={`all-workspace-enter-${workspace.id}`}
@@ -323,24 +346,6 @@ function WorkspaceDiscoveryCard({
           // Blocked by any in-flight switch, not just this card's: two racing successful
           // switches would pair one workspace's token with another's currentWorkspace.
           disabled={switchBlocked}
-          onMouseEnter={(event) => {
-            event.currentTarget.style.borderColor = BRAND_ORANGE;
-            event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
-            event.currentTarget.style.transform = 'translateY(-1px)';
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.borderColor = 'transparent';
-            event.currentTarget.style.boxShadow = 'none';
-            event.currentTarget.style.transform = 'none';
-          }}
-          onFocus={(event) => {
-            event.currentTarget.style.borderColor = BRAND_ORANGE;
-            event.currentTarget.style.boxShadow = WORKSPACE_CARD_SHADOW;
-          }}
-          onBlur={(event) => {
-            event.currentTarget.style.borderColor = 'transparent';
-            event.currentTarget.style.boxShadow = 'none';
-          }}
           onClick={() => onEnter(workspace)}
         >
           {body}
@@ -388,7 +393,7 @@ function WorkspaceDiscoveryCard({
   // button below, so the card itself must not be exposed as a button to keyboard or
   // screen-reader users.
   return (
-    <div data-testid={testId} style={cardStyle}>
+    <div data-testid={testId} style={cardStyle} {...cardHoverProps}>
       {body}
       {workspace.membershipStatus === 'NOT_MEMBER' ? (
         // F7.4: the non-member card is a <div>, not a button, so there is no enter handler here
@@ -403,7 +408,7 @@ function WorkspaceDiscoveryCard({
         </button>
       ) : (
         <div style={pendingActionStyle}>
-          <span style={{ color: '#9ca3af' }}>申请审批中</span>
+          <span style={{ color: 'var(--aw-muted)' }}>申请审批中</span>
           <button
             type="button"
             style={cancelButtonStyle}
@@ -465,12 +470,13 @@ const gridStyle: CSSProperties = {
 };
 
 const cardStyle: CSSProperties = {
+  minWidth: 0,
   position: 'relative',
   display: 'flex',
   flexDirection: 'column',
   minHeight: 178,
-  border: '1px solid #e5e7eb',
-  background: '#fff',
+  border: '1px solid var(--aw-border)',
+  background: 'var(--aw-panel)',
   borderRadius: 8,
   padding: 18,
   textAlign: 'left',
@@ -485,15 +491,18 @@ const markStyle: CSSProperties = {
   display: 'grid',
   placeItems: 'center',
   marginBottom: 18,
-  background: `linear-gradient(135deg, ${BRAND_ORANGE}, #f59e0b)`,
-  color: '#fff',
+  background: 'var(--aw-primary)',
+  color: 'var(--aw-primary-ink)',
   fontWeight: 800,
   fontSize: 16,
 };
 
 const nameStyle: CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
   display: 'block',
-  color: '#111827',
+  color: 'var(--aw-text)',
   fontSize: 18,
   fontWeight: 700,
   lineHeight: 1.3,
@@ -501,8 +510,12 @@ const nameStyle: CSSProperties = {
 };
 
 const descStyle: CSSProperties = {
-  display: 'block',
-  color: '#697386',
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+  color: 'var(--aw-muted)',
   fontSize: 13,
   lineHeight: 1.6,
   minHeight: 42,
@@ -513,7 +526,7 @@ const actionStyle: CSSProperties = {
   alignItems: 'center',
   gap: 6,
   marginTop: 18,
-  color: BRAND_ORANGE_DARK,
+  color: ACCENT_COLOR,
   fontSize: 13,
   fontWeight: 700,
 };
@@ -527,9 +540,9 @@ const pendingActionStyle: CSSProperties = {
 };
 
 const cancelButtonStyle: CSSProperties = {
-  border: '1px solid #fecaca',
-  background: '#fff',
-  color: '#dc2626',
+  border: '1px solid var(--aw-error)',
+  background: 'var(--aw-panel)',
+  color: 'var(--aw-error)',
   borderRadius: 6,
   padding: '4px 12px',
   fontSize: 13,
@@ -549,21 +562,21 @@ const badgeBaseStyle: CSSProperties = {
 
 const pendingBadgeStyle: CSSProperties = {
   ...badgeBaseStyle,
-  background: '#fff7ed',
-  border: `1px solid ${BRAND_ORANGE_LINE}`,
-  color: BRAND_ORANGE_DARK,
+  background: 'var(--aw-raised)',
+  border: `1px solid ${BORDER_COLOR}`,
+  color: ACCENT_COLOR,
 };
 
 const notMemberBadgeStyle: CSSProperties = {
   ...badgeBaseStyle,
-  background: '#f3f4f6',
-  border: '1px solid #e5e7eb',
-  color: '#6b7280',
+  background: 'var(--aw-raised)',
+  border: '1px solid var(--aw-border)',
+  color: 'var(--aw-muted)',
 };
 
 const emptyStateStyle: CSSProperties = {
-  border: `1px dashed ${BRAND_ORANGE_LINE}`,
-  background: '#fff',
+  border: `1px dashed ${BORDER_COLOR}`,
+  background: 'var(--aw-panel)',
   borderRadius: 8,
   padding: 32,
 };

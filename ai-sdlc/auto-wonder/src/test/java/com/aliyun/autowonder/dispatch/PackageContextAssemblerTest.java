@@ -1468,6 +1468,59 @@ class PackageContextAssemblerTest {
     }
 
     @Test
+    void buildReposFailsFastOnBoundRepoWithIllegalName() {
+        AgentRepoPermDO permission = new AgentRepoPermDO();
+        permission.setTenantId(TENANT);
+        permission.setAgentVersionId(401L);
+        permission.setRepoId(10L);
+        permission.setPermLevel("WRITE");
+        when(repoPermDao.listByVersion(401L)).thenReturn(List.of(permission));
+        when(repoDao.findById(10L)).thenReturn(repo(10L, "api-tool-agent/terraform-provider-alicloud"));
+
+        com.aliyun.autowonder.common.error.BizException ex = assertThrows(
+                com.aliyun.autowonder.common.error.BizException.class,
+                () -> assembler.buildRepos(TENANT, 401L, null));
+        assertEquals(com.aliyun.autowonder.common.error.ErrorCode.REPO_NAME_INVALID.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("api-tool-agent/terraform-provider-alicloud"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("#10"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("仓库中心"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("namespace/repo-name"), ex.getMessage());
+    }
+
+    @Test
+    void buildAllTenantReposFailsFastOnIllegalNameForPlatformAgent() {
+        AgentDO platform = agent(400L, TENANT, "PLATFORM");
+        when(repoDao.listAllByTenant(TENANT))
+                .thenReturn(List.of(repo(10L, "service"), repo(11L, "group\\repo")));
+
+        com.aliyun.autowonder.common.error.BizException ex = assertThrows(
+                com.aliyun.autowonder.common.error.BizException.class,
+                () -> assembler.buildRepos(TENANT, 401L, platform));
+        assertEquals(com.aliyun.autowonder.common.error.ErrorCode.REPO_NAME_INVALID.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("group\\repo"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("#11"), ex.getMessage());
+    }
+
+    @Test
+    void buildReposAcceptsLegalSingleSegmentNames() {
+        AgentRepoPermDO permission = new AgentRepoPermDO();
+        permission.setTenantId(TENANT);
+        permission.setAgentVersionId(401L);
+        permission.setRepoId(10L);
+        permission.setPermLevel("WRITE");
+        when(repoPermDao.listByVersion(401L)).thenReturn(List.of(permission));
+        RepoDO legal = repo(10L, "terraform-provider-alicloud");
+        legal.setDefaultBranch("main");
+        when(repoDao.findById(10L)).thenReturn(legal);
+
+        List<Map<String, Object>> repos = assembler.buildRepos(TENANT, 401L, null);
+
+        assertEquals(1, repos.size());
+        assertEquals("terraform-provider-alicloud", repos.get(0).get("name"));
+        assertEquals("terraform-provider-alicloud", repos.get(0).get("path"));
+    }
+
+    @Test
     void agentWithoutTenantOrWithNullAgentIsNotTreatedAsPlatformAgent() {
         when(repoPermDao.listByVersion(401L)).thenReturn(List.of());
         AgentDO tenantless = new AgentDO();

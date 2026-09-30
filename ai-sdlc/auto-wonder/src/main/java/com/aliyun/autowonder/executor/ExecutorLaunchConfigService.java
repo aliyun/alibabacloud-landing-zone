@@ -86,6 +86,10 @@ public class ExecutorLaunchConfigService {
      * Page and MCP write path. Validates every value against the same source of truth the create form uses; a model
      * the catalog no longer offers is rejected so a dead id is never persisted, and a stale version is a conflict the
      * page turns into "刷新后重试". The returned VO is what the database now holds.
+     *
+     * <p>Executors created before client kinds were enforced (client_kind NULL/blank) recover here: the caller must
+     * pick QODER_CLI/QODER_CN_CLI once and the kind is persisted with the config in the same guarded write, so the
+     * row is command-ready afterwards. An executor that already has a kind never has it changed.
      */
     public ExecutorLaunchConfigVO updateConfig(long id, long tenantId, UpdateExecutorLaunchConfigRequest req,
             long userId) {
@@ -94,16 +98,46 @@ public class ExecutorLaunchConfigService {
             throw new BizException(ErrorCode.PARAM_INVALID, "缺少启动配置版本号");
         }
         int expectedVersion = req.getVersion();
-        LaunchConfig stored = resolve(executor.getClientKind(), req.getMemoryMode(), req.getModel(),
+        String kindToPersist = resolveRecoveryClientKind(executor.getClientKind(), req.getClientKind());
+        LaunchConfig stored = resolve(kindToPersist != null ? kindToPersist : executor.getClientKind(),
+                req.getMemoryMode(), req.getModel(),
                 req.getReasoningEffort(), req.getContextWindow(), true);
         stored.maxConcurrentDispatches = resolveMaxConcurrentDispatches(req.getMaxConcurrentDispatches() != null
                 ? req.getMaxConcurrentDispatches() : parse(executor.getLaunchConfig()).maxConcurrentDispatches);
-        int rows = executorDao.updateLaunchConfig(id, tenantId, toJson(stored), expectedVersion, userId);
+        int rows = kindToPersist != null
+                ? executorDao.updateLaunchConfigWithClientKind(id, tenantId, toJson(stored), kindToPersist,
+                        expectedVersion, userId)
+                : executorDao.updateLaunchConfig(id, tenantId, toJson(stored), expectedVersion, userId);
         if (rows == 0) {
             throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
         }
         return toVo(stored.model, stored.reasoningEffort, stored.contextWindow, stored.memoryMode, stored.maxConcurrentDispatches,
                 expectedVersion + 1);
+    }
+
+    /**
+     * Resolves the client kind a legacy-kindless executor should be recovered with: null means the executor already
+     * has one and this write must not touch it. A kindless executor must pick a creatable Qoder kind in the same
+     * save, because a config saved without a kind still cannot produce a command; a typed executor asked for a
+     * different kind is refused instead of silently rewritten.
+     */
+    private static String resolveRecoveryClientKind(String currentKind, String requestedKind) {
+        if (isNotBlank(currentKind)) {
+            if (isNotBlank(requestedKind) && !currentKind.trim().equalsIgnoreCase(requestedKind.trim())) {
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "执行器客户端类型已存在（" + currentKind + "），不允许通过启动配置修改");
+            }
+            return null;
+        }
+        if (!isNotBlank(requestedKind)) {
+            throw new BizException(ErrorCode.EXECUTOR_CLIENT_KIND_MISSING,
+                    "该执行器缺少客户端类型，请在保存启动配置时选择客户端类型");
+        }
+        String canonical = ExecutorLaunchOptionsService.canonicalClientKind(requestedKind);
+        if (!ExecutorLaunchOptionsService.isCreatableClientKind(canonical)) {
+            throw new BizException(ErrorCode.EXECUTOR_CLIENT_KIND_INVALID);
+        }
+        return canonical;
     }
 
     /**

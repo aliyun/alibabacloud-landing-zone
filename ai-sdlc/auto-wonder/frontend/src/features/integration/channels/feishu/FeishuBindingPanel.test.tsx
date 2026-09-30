@@ -37,7 +37,7 @@ describe('FeishuBindingPanel', () => {
     await user.type(screen.getByLabelText('App ID'), 'cli_test');
     await user.type(screen.getByLabelText('App Secret'), 'new-secret');
     await user.type(screen.getByLabelText('Verification Token'), 'verify');
-    await user.click(screen.getByLabelText('关联数字人'));
+    await user.click(screen.getByLabelText('关联数字员工'));
     await user.click(await screen.findByText('Alpha'));
     await user.click(screen.getByRole('button', { name: '保 存' }));
     expect(await screen.findByText('回调地址（复制到飞书事件订阅）')).toBeInTheDocument();

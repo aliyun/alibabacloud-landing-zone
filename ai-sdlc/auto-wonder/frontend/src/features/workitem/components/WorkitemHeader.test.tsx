@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WorkitemHeader } from './WorkitemHeader';
@@ -11,19 +11,30 @@ function renderHeader(props: Partial<React.ComponentProps<typeof WorkitemHeader>
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <WorkitemHeader title="工单标题" statusName="开发中" workType="REQ" {...props} />
+        <WorkitemHeader title="工单标题" {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe('WorkitemHeader', () => {
-  it('renders title, status and type', () => {
+  it('shows the full long title in a tooltip on hover', async () => {
+    const title = '这是一个需要自动省略的超长工单标题'.repeat(20);
+    renderHeader({ title });
+
+    fireEvent.mouseEnter(screen.getByRole('heading', { name: title }));
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(title);
+  });
+
+  it('renders the title and back button', () => {
     renderHeader();
 
     expect(screen.getByRole('heading', { name: '工单标题' })).toBeInTheDocument();
-    expect(screen.getByText('开发中')).toBeInTheDocument();
-    expect(screen.getByText('需求')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '返回工单列表' })).toBeInTheDocument();
+    expect(screen.queryByText('交付任务')).not.toBeInTheDocument();
+    expect(screen.queryByText('开发中')).not.toBeInTheDocument();
+    expect(screen.queryByText('需求')).not.toBeInTheDocument();
   });
 
   it('shows the accumulated workitem credits at the top', () => {

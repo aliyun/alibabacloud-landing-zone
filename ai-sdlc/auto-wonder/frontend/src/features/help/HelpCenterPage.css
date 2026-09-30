@@ -13,10 +13,10 @@
 .help-chapters { padding: 30px 16px; border-right: 1px solid var(--help-border); display: flex; flex-direction: column; min-height: 0; }
 .help-nav-title { padding: 0 16px 24px; font-size: 18px; font-weight: 600; }
 .help-chapter-links { display: flex; flex-direction: column; gap: 6px; }
-.help-chapter-links a { position: relative; padding: 12px 16px; border-radius: var(--help-radius); color: var(--help-text); font-size: 15px; line-height: 24px; }
+.help-chapter-links a { position: relative; padding: 12px 22px; border-radius: var(--help-radius); color: var(--help-text); font-size: 15px; line-height: 24px; }
 .help-chapter-links a:hover { background: var(--help-fill); }
 .help-chapter-links a[aria-current] { color: var(--help-primary); background: var(--help-selected); font-weight: 500; }
-.help-chapter-links a[aria-current]::before { position: absolute; content: ''; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 2px; background: var(--help-primary); }
+.help-chapter-links a[aria-current]::before { position: absolute; content: ''; left: 8px; top: 50%; width: 6px; height: 6px; transform: translateY(-50%); border-radius: 50%; background: var(--help-primary); }
 .help-article { min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 28px 24px; }
 .help-reading-width { min-width: 0; }
 .help-breadcrumb { color: var(--help-muted); font-size: 14px; line-height: 22px; }
@@ -37,26 +37,12 @@
 .help-outline > div { margin: 0 0 18px 14px; color: var(--help-muted); }
 .help-outline a { display: block; padding: 9px 14px; color: var(--help-muted); border-left: 2px solid var(--help-border); line-height: 1.6; }
 .help-outline a[aria-current] { border-left-color: var(--help-primary); color: var(--help-primary); }
-.help-mobile-sections { display: none; }
 .help-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-@media (min-width: 1101px) { .help-center-no-outline { grid-template-columns: 200px minmax(0, 1fr); } }
+.help-center-no-outline { grid-template-columns: 200px minmax(0, 1fr); }
 @media (max-width: 1100px) {
-  .help-center { grid-template-columns: 184px minmax(0, 1fr); }
-  .help-outline { display: none; }
+  .help-center { grid-template-columns: 184px minmax(0, 1fr) 150px; }
+  .help-center-no-outline { grid-template-columns: 184px minmax(0, 1fr); }
   .help-article { padding: 24px; }
-  .help-mobile-sections { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 20px; font-size: 14px; }
-  .help-mobile-sections a { color: var(--help-muted); }
-}
-@media (max-width: 680px) {
-  .help-center { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .help-chapters { padding: 12px; border-right: 0; border-bottom: 1px solid var(--help-border); }
-  .help-nav-title { display: none; }
-  .help-chapter-links { flex-direction: row; overflow-x: auto; gap: 4px; }
-  .help-chapter-links a { flex-shrink: 0; padding: 8px 12px; font-size: 14px; }
-  .help-chapter-links a[aria-current]::before { display: none; }
-  .help-article { padding: 22px 20px; }
-  .help-center h1 { font-size: 28px; margin-top: 20px; }
-  .help-center h2 { font-size: 22px; }
 }
 
 .help-load-state { padding: 48px 24px; color: var(--help-muted); text-align: center; }
@@ -74,32 +60,27 @@
 .help-markdown .help-code { margin: 20px 0; }
 .help-markdown table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 20px 0; }
 .help-markdown th, .help-markdown td { border: 1px solid var(--help-border); padding: 10px 14px; text-align: left; }
-.help-markdown th { background: var(--help-fill); }
+.help-markdown th { background: var(--help-fill); text-align: center; }
 .help-markdown hr { border: 0; border-top: 1px solid var(--help-border); margin: 28px 0; }
 
-.help-code { background: #161b22; border-color: #30363d; color: #e6edf3; }
-.help-code-toolbar { background: #21262d; color: #b8c1cc; border-bottom-color: #30363d; }
-.help-code-toolbar .ant-btn { color: #e6edf3; }
-.help-code-toolbar .ant-btn:hover { color: #fff !important; background: #30363d !important; }
-.help-code pre { color: #e6edf3; }
-.help-code-toolbar .ant-btn:focus-visible { outline: 2px solid #8cb4ff; outline-offset: 2px; }
 .help-faq { margin: 20px 0; padding: 6px 22px; border: 1px solid var(--help-border); border-radius: var(--help-radius); }
 .help-faq > p:first-child { font-size: 18px; line-height: 1.7; }
-.help-image-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 16px; margin: 24px 0; }
+/* 等高两列：列宽按两图宽高比分配（01: 1.9286，02: 1.7692） */
+.help-image-pair { display: grid; grid-template-columns: 1.9286fr 1.7692fr; align-items: center; gap: 16px; margin: 24px 0; }
 .help-image-pair img { width: 100%; height: auto; margin: 0; box-sizing: border-box; }
 .help-markdown .help-download { color: var(--help-primary); border-color: var(--help-primary); background: var(--help-selected); }
 
 .help-image-row { display: grid; align-items: center; gap: 16px; margin: 24px auto; }
-/* Column ratios match the original images so both images retain the same height. */
-.help-image-row-clarification { grid-template-columns: 2.38057325fr 1.09263658fr; max-width: 920px; }
-.help-image-row-delivery { grid-template-columns: 4.76394850fr 1.47040498fr; max-width: 1400px; }
+/* Column ratios match the refreshed dark-mode screenshots so both images retain the same height. */
+.help-image-row-clarification { grid-template-columns: 1.5192fr 4.3478fr; max-width: 1000px; }
+.help-image-row-delivery { grid-template-columns: 5.625fr 1.2683fr; max-width: 1200px; }
 .help-image-row img { width: 100%; height: auto; min-width: 0; margin: 0; box-sizing: border-box; }
 
-.help-image-row-mcp { grid-template-columns: 3.06443914fr 1.68828214fr; max-width: 1200px; }
+.help-image-row-mcp { grid-template-columns: 3.7624fr 1.2593fr; max-width: 1100px; }
 
-.help-image-row-im { grid-template-columns: 3fr 2.71428571fr; max-width: 1200px; }
+.help-image-row-im { grid-template-columns: 3.0303fr 3.1226fr; max-width: 1200px; }
 
-.help-image-row-im-project { grid-template-columns: 2.22633136fr 1.71949829fr; max-width: 1100px; }
+.help-image-row-im-project { grid-template-columns: 2.896fr 1.2fr; max-width: 1100px; }
 
 .help-article img[src^="/help/assets/05-"],
 .help-article img[src^="/help/assets/10-"] {

@@ -33,6 +33,31 @@ candidate was proved, not assumed: `25371cb1` is an ancestor of the community ti
 
 ## History
 
+### 2026-09-29: candidate sync to `cc41f3163` — v0.10.0
+
+- Fixed master: `cc41f31632dd7ab5f5a8bd7d7916962445dcd02e`.
+- Community before sync: `64a278433086f8e190f5b61610cab0134d8a8d97`.
+- Recorded verified baseline remains `25371cb104ac019fb26674f0c495c410c01e5041`;
+  the actual merge-base is `d795eea3a8261a0fe22c2d2c8572d774699f3386`.
+- Audit window: 1,101 commits / 1,641 paths; newly incorporated: 232 commits /
+  832 paths, including 110 overlaps.
+- Version 0.9.0 → 0.10.0; see `releases/release_v0.10.0_20260929.md`.
+- Preserves master memory/document ACL and migration semantics, delivery restart,
+  immutable artifact sharing, unified status categories, new UI and runtime 0.3.3.
+- Community boundaries: SecretCrypto/public storage/SLS, optional disabled Aone,
+  Qoder-only creation; standalone Aone iterations excluded, shared state contracts
+  retained. Published V036–V070 unchanged; new V071–V075 preserve upstream bytes.
+- The entire pre-sync Community E2E tree is unchanged. New environment contract
+  is the memory-document-store YAML binding; deploy/upgrade derive runtime from
+  source and already collect this placeholder. See release for staged data impact.
+- Main/test compilation, migration identity and E2E-tree preservation pass.
+  Complete exact-SHA quality verification and independent review are pending;
+  no old-SHA test result is asserted for this candidate. Final reports, findings,
+  lifecycle identity/ports/check/cleanup evidence and decision ledger belong to
+  the MR quality manifest outside the immutable source tree.
+- No internal MR or GitHub PR yet; no tag authorized. Do not advance the verified
+  baseline until quality review and protected-branch merge complete.
+
 ### 2026-09-19: candidate sync to `d795eea3a` — verified iteration and review follow-up
 
 - Fixed upstream source: `d795eea3a8261a0fe22c2d2c8572d774699f3386`.

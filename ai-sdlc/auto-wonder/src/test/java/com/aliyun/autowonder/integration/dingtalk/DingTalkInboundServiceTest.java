@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.conversation.AgentConversationService;
 import java.util.List;
 import org.junit.jupiter.api.Test;

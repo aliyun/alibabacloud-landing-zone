@@ -17,13 +17,14 @@ export interface ResizeHandleProps {
   onChange: (value: number) => void;
   /** 可选：双击手柄回调（如恢复自动模式）；不传则与现状一致 */
   onDoubleClick?: () => void;
+  showIndicator?: boolean;
   'aria-label'?: string;
 }
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
-export function ResizeHandle({ direction, value, measureValue, measureMax, min, max, onChange, onDoubleClick, ...rest }: ResizeHandleProps) {
+export function ResizeHandle({ direction, value, measureValue, measureMax, min, max, onChange, onDoubleClick, showIndicator = true, ...rest }: ResizeHandleProps) {
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
   const startRef = useRef<{ pointer: number; size: number; max: number } | null>(null);
@@ -80,11 +81,11 @@ export function ResizeHandle({ direction, value, measureValue, measureMax, min, 
         zIndex: 10,
       }}
     >
-      <div
+      {showIndicator && <div
         aria-hidden
         style={{
           position: 'absolute',
-          background: '#1677ff',
+          background: 'var(--aw-accent-text)',
           opacity: dragging ? 0.9 : hovered ? 0.45 : 0,
           transition: 'opacity 0.15s ease',
           pointerEvents: 'none',
@@ -92,7 +93,7 @@ export function ResizeHandle({ direction, value, measureValue, measureMax, min, 
             ? { left: 3, top: 0, bottom: 0, width: 2 }
             : { left: 0, right: 0, top: 3, height: 2 }),
         }}
-      />
+      />}
     </div>
   );
 }

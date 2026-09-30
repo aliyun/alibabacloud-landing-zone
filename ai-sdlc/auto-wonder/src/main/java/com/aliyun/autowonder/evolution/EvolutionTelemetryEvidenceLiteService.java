@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.evolution;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentSkillDO;
 import com.aliyun.autowonder.agent.AgentSkillDao;
 import com.aliyun.autowonder.common.error.BizException;

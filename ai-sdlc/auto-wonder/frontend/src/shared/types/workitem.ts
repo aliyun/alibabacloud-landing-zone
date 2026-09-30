@@ -33,6 +33,9 @@ export interface ExternalCollaboration {
 /** 定时工单当前所处阶段，由后端从定时字段、最新 dispatch 与状态节点派生；非定时工单为 null。 */
 export type WorkitemScheduledPhase = 'PENDING' | 'READY' | 'RUNNING' | 'DONE';
 
+/** 看板统一分类（规格 3.1），由服务端口径下发；名称仅展示。 */
+export type WorkitemStatusCategory = 'NEW' | 'IN_PROGRESS' | 'PENDING_DECISION' | 'DONE' | 'CANCELED';
+
 export interface Workitem {
   executionStatus?: string | null;
   id: number;
@@ -44,7 +47,7 @@ export interface Workitem {
   statusName: string | null;
   sdlcId: number | null;
   sdlcName: string | null;
-  assigneeType: 'HUMAN' | 'AGENT';
+  assigneeType: 'HUMAN' | 'AGENT' | 'EXTERNAL';
   assigneeRef: number | null;
   assigneeName: string | null;
   assigneeDisplayName?: string | null;
@@ -64,6 +67,10 @@ export interface Workitem {
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
   pendingDecision?: boolean | null;
+  /** 看板统一分类（规格 3.1），服务端派生；为空时前端按 NEW 兜底。 */
+  statusCategory?: WorkitemStatusCategory | string | null;
+  /** 最近一次流转不在模板推荐范围内时的提示（规格 3.3）。 */
+  transitionWarning?: string | null;
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
   sourceProvider?: string | null;
   sourceUrl?: string | null;
@@ -116,7 +123,7 @@ export interface WorkitemDetail {
   statusName: string | null;
   sdlcId: number | null;
   sdlcName: string | null;
-  assigneeType: 'HUMAN' | 'AGENT';
+  assigneeType: 'HUMAN' | 'AGENT' | 'EXTERNAL';
   assigneeRef: number | null;
   assigneeName: string | null;
   assigneeDisplayName?: string | null;
@@ -135,6 +142,10 @@ export interface WorkitemDetail {
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
   pendingDecision?: boolean | null;
+  /** 看板统一分类（规格 3.1），服务端派生；为空时前端按 NEW 兜底。 */
+  statusCategory?: WorkitemStatusCategory | string | null;
+  /** 最近一次流转不在模板推荐范围内时的提示（规格 3.3）。 */
+  transitionWarning?: string | null;
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
   deletable?: boolean | null;
   deletableReason?: string | null;

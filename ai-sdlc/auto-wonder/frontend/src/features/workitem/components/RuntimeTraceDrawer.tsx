@@ -71,7 +71,7 @@ function Payload({ title, value }: { title: string; value: unknown }) {
   return (
     <section style={{ marginTop: 18 }}>
       <Text strong style={{ fontSize: 12 }}>{title}</Text>
-      <pre style={{ margin: '7px 0 0', padding: 12, maxHeight: 380, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#f7f8fa', border: '1px solid #eceff3', borderRadius: 8, fontSize: 12 }}>{content}</pre>
+      <pre style={{ margin: '7px 0 0', padding: 12, maxHeight: 380, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--aw-raised)', border: '1px solid var(--aw-border)', borderRadius: 8, fontSize: 12 }}>{content}</pre>
     </section>
   );
 }
@@ -82,7 +82,7 @@ function ObservationTree({ items, onSelect }: { items: RuntimeTraceObservation[]
       <button
         type="button"
         onClick={() => onSelect(item)}
-        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '7px 8px', border: 0, borderLeft: '2px solid #d8dee8', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7, padding: '7px 8px', border: 0, borderLeft: '2px solid var(--aw-border)', background: 'transparent', cursor: 'pointer', color: 'var(--aw-text)', textAlign: 'left' }}
       >
         <Tag style={{ margin: 0, minWidth: 50, textAlign: 'center' }}>{item.type}</Tag>
         <Text ellipsis style={{ flex: 1, fontSize: 12 }}>{item.name || item.type}</Text>
@@ -100,7 +100,7 @@ function TraceTimeline({ trace, onSelect }: { trace: RuntimeTrace; onSelect: (se
       <Text strong style={{ fontSize: 12 }}>Runtime &amp; SDLC</Text>
       {runtimeEvents.map((event, index) => {
         const failureReason = FAILURE_EVENT_TYPES.has(event.eventType) && typeof event.detail?.reason === 'string' ? event.detail.reason : null;
-        return <button key={event.eventId || index} type="button" onClick={() => onSelect({ kind: 'boundary', boundary: { eventId: event.eventId, kind: event.eventType, label: event.eventType, eventTime: event.eventTime, detail: event.detail } })} style={{ display: 'block', width: '100%', padding: '6px 8px', border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+        return <button key={event.eventId || index} type="button" onClick={() => onSelect({ kind: 'boundary', boundary: { eventId: event.eventId, kind: event.eventType, label: event.eventType, eventTime: event.eventTime, detail: event.detail } })} style={{ display: 'block', width: '100%', padding: '6px 8px', border: 0, background: 'transparent', cursor: 'pointer', color: 'var(--aw-text)', textAlign: 'left' }}>
           <Text code style={{ fontSize: 11 }}>{event.eventType}</Text>
           {failureReason && <Text type="danger" style={{ marginLeft: 8, fontSize: 11 }}>{failureReason}</Text>}
         </button>;
@@ -113,7 +113,7 @@ function TraceTimeline({ trace, onSelect }: { trace: RuntimeTrace; onSelect: (se
       ].sort((a, b) => a.time.localeCompare(b.time));
       return (
         <div key={session.sessionId} style={{ marginBottom: 18 }}>
-          <button type="button" onClick={() => onSelect({ kind: 'session', session })} style={{ width: '100%', padding: '9px 10px', border: '1px solid #e4e8ee', borderRadius: 8, background: '#fff', cursor: 'pointer', textAlign: 'left' }}>
+          <button type="button" onClick={() => onSelect({ kind: 'session', session })} style={{ width: '100%', padding: '9px 10px', border: '1px solid var(--aw-border)', borderRadius: 8, background: 'var(--aw-panel)', cursor: 'pointer', color: 'var(--aw-text)', textAlign: 'left' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <Text strong ellipsis style={{ flex: 1 }}>Session {session.sessionId}</Text>
               {session.parentSessionId && <Tag color="blue">Fork</Tag>}
@@ -121,14 +121,14 @@ function TraceTimeline({ trace, onSelect }: { trace: RuntimeTrace; onSelect: (se
             </div>
             <Text type="secondary" style={{ fontSize: 11 }}>{session.provider || trace.provider || 'provider'} · {duration(session.durationMs)}{usage(session.tokenUsage)}</Text>
           </button>
-          <div style={{ marginLeft: 15, borderLeft: '1px solid #dfe4eb', paddingLeft: 10 }}>
+          <div style={{ marginLeft: 15, borderLeft: '1px solid var(--aw-border)', paddingLeft: 10 }}>
             {rows.map((row) => row.kind === 'boundary' ? (
-              <button key={row.key} type="button" onClick={() => onSelect({ kind: 'boundary', boundary: row.boundary })} style={{ display: 'block', width: '100%', padding: '7px 8px', border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
-                <Text style={{ fontSize: 12, color: '#ad6800' }}>◆ {row.boundary.label || row.boundary.kind || row.boundary.type}</Text>
+              <button key={row.key} type="button" onClick={() => onSelect({ kind: 'boundary', boundary: row.boundary })} style={{ display: 'block', width: '100%', padding: '7px 8px', border: 0, background: 'transparent', cursor: 'pointer', color: 'var(--aw-text)', textAlign: 'left' }}>
+                <Text style={{ fontSize: 12, color: 'var(--aw-warning)' }}>◆ {row.boundary.label || row.boundary.kind || row.boundary.type}</Text>
               </button>
             ) : (
               <div key={row.key} style={{ marginTop: 4 }}>
-                <button type="button" onClick={() => onSelect({ kind: 'turn', session, turn: row.turn })} style={{ width: '100%', display: 'flex', gap: 8, alignItems: 'center', padding: '9px 8px', border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left' }}>
+                <button type="button" onClick={() => onSelect({ kind: 'turn', session, turn: row.turn })} style={{ width: '100%', display: 'flex', gap: 8, alignItems: 'center', padding: '9px 8px', border: 0, background: 'transparent', cursor: 'pointer', color: 'var(--aw-text)', textAlign: 'left' }}>
                   <Text strong style={{ fontSize: 12 }}>Turn {row.turn.turnId}</Text>
                   <Text type="secondary" ellipsis style={{ flex: 1, fontSize: 11 }}>{row.turn.stepName || ''}</Text>
                   <Text type="secondary" style={{ fontSize: 11 }}>{duration(row.turn.durationMs)}</Text>
@@ -146,7 +146,7 @@ function TraceTimeline({ trace, onSelect }: { trace: RuntimeTrace; onSelect: (se
 function SpanDetails({ spans }: { spans: RuntimeTraceSpan[] }) {
   if (!spans.length) return null;
   return <section style={{ marginTop: 18 }}><Text strong style={{ fontSize: 12 }}>Live observations</Text>{spans.map((span) => (
-    <div key={`${span.kind}:${span.spanId}`} style={{ marginTop: 8, padding: 10, border: '1px solid #eceff3', borderRadius: 8 }}>
+    <div key={`${span.kind}:${span.spanId}`} style={{ marginTop: 8, padding: 10, border: '1px solid var(--aw-border)', borderRadius: 8 }}>
       <Space><Tag>{span.kind}</Tag><Text strong>{span.name || span.kind}</Text><Text type="secondary">{duration(span.durationMs)}</Text></Space>
       <Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 11 }}>{usage(span.tokenUsage, '')}</Text>
       <Payload title="Input" value={span.input ?? span.inputSummary} />
@@ -276,7 +276,7 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
   return <Drawer open={node != null} onClose={onClose} width={1100} title={node ? `${node.agentName} · ${node.stepName || '执行 Trace'}` : '执行 Trace'} destroyOnClose
     styles={{ body: { display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 } }}>
     <div data-testid="runtime-trace-drawer" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {node && <div data-testid="runtime-trace-dispatch-summary" style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0, paddingBottom: 14, borderBottom: '1px solid #eceff3' }}>
+      {node && <div data-testid="runtime-trace-dispatch-summary" style={{ display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0, paddingBottom: 14, borderBottom: '1px solid var(--aw-border)' }}>
         <Text strong>Dispatch #{node.dispatchId}</Text><Tag color={statusColor(node.status)}>{node.status || 'UNKNOWN'}</Tag>
         {continuity.previous != null && <Text type="secondary">恢复自 #{continuity.previous}</Text>}
         {continuity.next != null && <Text type="secondary">继续到 #{continuity.next}</Text>}
@@ -286,8 +286,8 @@ export function RuntimeTraceDrawer({ node, processGraph, onClose }: RuntimeTrace
       {failureReason && <Alert data-testid="dispatch-failure-reason" style={{ marginTop: 12, flexShrink: 0 }} type="error" showIcon message="Dispatch 失败原因" description={failureReason} />}
       {error && <Alert closable onClose={() => setError(null)} style={{ marginTop: 12, flexShrink: 0 }} type="error" showIcon message={error} />}
       {loading && !trace ? <div style={{ textAlign: 'center', padding: 60 }}><Spin /></div> : trace && (
-        <div data-testid="runtime-trace-panes" style={{ display: 'grid', gridTemplateColumns: '42% 58%', flex: 1, minHeight: 0, marginTop: 14, border: '1px solid #e5e9ef', borderRadius: 10, overflow: 'hidden' }}>
-          <div data-testid="runtime-trace-timeline-pane" style={{ padding: 14, overflow: 'auto', borderRight: '1px solid #e5e9ef', background: '#fafbfc' }}>
+        <div data-testid="runtime-trace-panes" style={{ display: 'grid', gridTemplateColumns: '42% 58%', flex: 1, minHeight: 0, marginTop: 14, border: '1px solid var(--aw-border)', borderRadius: 10, overflow: 'hidden' }}>
+          <div data-testid="runtime-trace-timeline-pane" style={{ padding: 14, overflow: 'auto', borderRight: '1px solid var(--aw-border)', background: 'var(--aw-raised)' }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}><Title level={5} style={{ margin: 0, flex: 1 }}>Trace timeline</Title><Tag>{trace.source || 'LIVE'}</Tag></div>
             <TraceTimeline trace={trace} onSelect={(next) => void select(next)} />
             {!trace.sessions.length && <Empty description="Runtime 尚未上报 Session Trace" />}

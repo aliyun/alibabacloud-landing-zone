@@ -146,7 +146,7 @@ describe('DingTalkBindingPanel', () => {
 
     await user.click(await screen.findByText('新建绑定'));
     // select the agent (click the combobox via its label, then pick the option)
-    await user.click(await screen.findByLabelText('关联数字人'));
+    await user.click(await screen.findByLabelText('关联数字员工'));
     await user.click(await screen.findByText('Alpha（评审工程师）'));
     // fill credentials
     await user.type(screen.getByPlaceholderText('dingxxxxxx'), 'dingkey');

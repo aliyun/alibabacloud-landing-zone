@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkitemDaoMappingTest {
@@ -47,18 +48,47 @@ class WorkitemDaoMappingTest {
 
     @Test
     void listAndCountShareTenantScopedPendingDecisionFilter() throws Exception {
-        String xml = new String(
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+
+        assertTrue(xmlText().contains("<sql id=\"listFilter\">"));
+        assertTrue(xmlText().contains("w.tenant_id = #{tenantId}"));
+        assertTrue(xmlText().contains("<select id=\"count\" resultType=\"long\">"));
+
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", true);
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+            String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+            assertTrue(sql.contains("<include refid=\"listFilter\"/>") || sql.contains("CASE"),
+                    "list and count must share the same filter");
+            assertTrue(sql.contains("w.assignee_type = 'HUMAN'"),
+                    "pending decision requires a human assignee");
+            assertTrue(sql.contains("w.assignee_ref = ?"),
+                    "pending decision requires the current user as assignee");
+            assertTrue(sql.contains("IN ('INIT', 'IN_PROGRESS')"),
+                    "pending decision requires an unfinished node category");
+            assertTrue(sql.contains("d.source_type = 'WORKITEM'"),
+                    "pending decision requires a historically started workitem dispatch");
+            assertTrue(sql.contains("'SUCCEEDED'"),
+                    "dispatchStarted must recognize terminal successes as started dispatches");
+            assertTrue(sql.contains("'DISPATCHED'"),
+                    "dispatchActive must list active states");
+            assertFalse(sql.contains("'PACKAGING'"),
+                    "pending decision excludes workitems with an active (queued/packaging) dispatch");
+        }
+    }
+
+    private String xmlText() throws Exception {
+        return new String(
                 getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
                 StandardCharsets.UTF_8);
-
-        assertTrue(xml.contains("<sql id=\"listFilter\">"));
-        assertTrue(xml.contains("w.tenant_id = #{tenantId}"));
-        assertTrue(xml.contains("<select id=\"count\" resultType=\"long\">"));
-        assertTrue(xml.contains("w.assignee_type = 'HUMAN'"));
-        assertTrue(xml.contains("w.assignee_ref = #{currentUserId}"));
-        assertTrue(xml.contains("d.status = 'SUCCEEDED'"));
-        assertTrue(xml.contains("SELECT MAX(d2.id) FROM dispatch d2"));
-        assertTrue(xml.contains("UPPER(COALESCE(sn.category, '')) = 'DONE'"));
     }
 
     @Test
@@ -136,56 +166,160 @@ class WorkitemDaoMappingTest {
     }
 
     @Test
-    void statusCategoryFilterIsAppliedInsideListFilterBeforePagination() throws Exception {
+    void statusCategoryFilterComparesUnifiedKanbanCategoryInsideListFilter() throws Exception {
         String xml = new String(
                 getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
                 StandardCharsets.UTF_8);
 
-        assertTrue(xml.contains("<when test=\"statusCategory == 'IN_PROGRESS'\">"),
-                "listFilter should support IN_PROGRESS status category");
-        assertTrue(xml.contains("<when test=\"statusCategory == 'DONE'\">"),
-                "listFilter should support DONE status category");
-        assertTrue(xml.contains("<when test=\"statusCategory == 'PENDING_DECISION'\">"),
-                "listFilter should support PENDING_DECISION status category");
-        assertTrue(xml.contains("<when test=\"statusCategory == 'NEW'\">"),
-                "listFilter should support NEW status category");
+        assertTrue(xml.contains("<if test=\"statusCategory != null\">"),
+                "status category filter should be guarded by a null check");
+        assertTrue(xml.contains("AND <include refid=\"kanbanCategoryExpr\"/> = #{statusCategory}"),
+                "status category filter should compare the unified kanban classification expression");
 
-        int filterEnd = xml.indexOf("</sql>", xml.indexOf("<sql id=\"listFilter\">"));
-        int statusCategoryIdx = xml.indexOf("statusCategory == 'DONE'");
-        assertTrue(statusCategoryIdx > xml.indexOf("<sql id=\"listFilter\">") && statusCategoryIdx < filterEnd,
+        int filterStart = xml.indexOf("<sql id=\"listFilter\">");
+        int filterEnd = xml.indexOf("</sql>", filterStart);
+        int categoryIdx = xml.indexOf("kanbanCategoryExpr\"/> = #{statusCategory}");
+        assertTrue(categoryIdx > filterStart && categoryIdx < filterEnd,
                 "status category filter must live inside listFilter so LIMIT pagination applies after it");
+        assertTrue(xml.contains("<include refid=\"listFilter\"/>"),
+                "list and count should both include listFilter");
     }
 
     @Test
-    void statusCategoryInProgressExcludesDoneAndPendingDecision() throws Exception {
+    void kanbanCategoryExprMirrorsEvaluatorPriority() throws Exception {
         String xml = new String(
                 getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
                 StandardCharsets.UTF_8);
 
-        int start = xml.indexOf("<when test=\"statusCategory == 'IN_PROGRESS'\">");
-        int end = xml.indexOf("</when>", start);
-        String block = xml.substring(start, end);
-        assertTrue(block.contains("AND NOT <include refid=\"statusNameDone\"/>"),
-                "IN_PROGRESS must exclude done workitems");
-        assertTrue(block.contains("AND NOT <include refid=\"statusPendingDecision\"/>"),
-                "IN_PROGRESS must exclude pending-decision workitems, matching kanban column semantics");
-        assertTrue(block.contains("AND <include refid=\"statusNameInProgress\"/>"),
-                "IN_PROGRESS must match in-progress status names");
+        int start = xml.indexOf("<sql id=\"kanbanCategoryExpr\">");
+        assertTrue(start > 0, "kanbanCategoryExpr must exist");
+        String block = xml.substring(start, xml.indexOf("</sql>", start));
+
+        int canceledIdx = block.indexOf("= 'CANCELED')");
+        int doneIdx = block.indexOf("= 'DONE')");
+        int activeIdx = block.indexOf("WHEN <include refid=\"dispatchActive\"/>");
+        int pendingIdx = block.indexOf("<include refid=\"dispatchStarted\"/>");
+        int inProgressNodeIdx = block.lastIndexOf("= 'IN_PROGRESS')");
+        assertTrue(canceledIdx >= 0 && doneIdx > canceledIdx && pendingIdx > doneIdx && activeIdx > pendingIdx,
+                "CASE priority must be CANCELED > DONE > pending decision > active dispatch");
+        assertTrue(block.contains("w.assignee_type = 'HUMAN'"),
+                "pending decision requires a human assignee");
+        assertTrue(block.contains("w.assignee_ref IS NOT NULL"),
+                "pending decision requires a resolved assignee ref");
+        assertTrue(block.contains("IN ('INIT', 'IN_PROGRESS')"),
+                "pending decision only applies to unfinished node categories");
+        assertTrue(pendingIdx < inProgressNodeIdx,
+                "pending decision outranks the plain IN_PROGRESS node branch");
+        assertTrue(block.contains("ELSE 'NEW'"),
+                "everything else falls back to NEW");
     }
 
     @Test
-    void statusNameDoneRecognizesAoneFixedWithoutUsingStatusCategory() throws Exception {
+    void pendingDecisionQueriesIncludeHumanHandoffsAndIdleExternalOwners() throws Exception {
+        for (String databaseId : java.util.List.of("autowonder-legacy", "autowonder-source-aware")) {
+            var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                    "jdbc:h2:mem:kanban-" + databaseId + ";MODE=MySQL", "sa", "");
+            try (var connection = ds.getConnection(); var statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE status_node (id BIGINT PRIMARY KEY, category VARCHAR(20))");
+                statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                        + "status_node_id BIGINT, assignee_type VARCHAR(20), assignee_ref BIGINT, "
+                        + "is_deleted INT DEFAULT 0, gmt_create TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+                statement.execute("CREATE TABLE dispatch (tenant_id BIGINT, workitem_id BIGINT, "
+                        + "source_type VARCHAR(32) DEFAULT 'WORKITEM', status VARCHAR(20), is_deleted INT DEFAULT 0)");
+                statement.execute("INSERT INTO status_node VALUES (1,'INIT'),(2,'IN_PROGRESS'),(3,'DONE'),(4,'CANCELED')");
+                statement.execute("""
+                        INSERT INTO workitem (id,tenant_id,status_node_id,assignee_type,assignee_ref) VALUES
+                        (1,7,1,'HUMAN',42),(2,7,2,'EXTERNAL',0),(3,7,2,'EXTERNAL',0),
+                        (4,7,2,'AGENT',42),(5,7,1,'EXTERNAL',0),(6,7,2,'HUMAN',NULL),
+                        (7,7,3,'HUMAN',42),(8,7,4,'EXTERNAL',0),(9,8,1,'HUMAN',42),
+                        (10,7,2,'EXTERNAL',42),(11,7,1,'EXTERNAL',0),(12,7,1,'HUMAN',42)
+                        """);
+                statement.execute("""
+                        INSERT INTO dispatch (tenant_id,workitem_id,status) VALUES
+                        (7,1,'PAUSED'),(7,1,'SUCCEEDED'),(7,2,'SUCCEEDED'),(7,3,'RUNNING'),
+                        (7,4,'SUCCEEDED'),(7,6,'SUCCEEDED'),(7,7,'PAUSED'),(7,8,'SUCCEEDED'),
+                        (8,9,'SUCCEEDED'),(7,10,'SUCCEEDED'),(7,11,'SUCCEEDED'),(8,12,'SUCCEEDED')
+                        """);
+                statement.execute("INSERT INTO dispatch VALUES (7,11,'SCHEDULED_TASK_RUN','RUNNING',0)");
+
+                var configuration = new org.apache.ibatis.session.Configuration();
+                configuration.setDatabaseId(databaseId);
+                configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                        new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), ds));
+                try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+                    new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                            "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+                }
+                try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder()
+                        .build(configuration).openSession()) {
+                    var params = new java.util.HashMap<String, Object>();
+                    params.put("tenantId", 7L);
+                    params.put("currentUserId", 42L);
+                    params.put("pendingDecisionOnly", false);
+                    params.put("offset", 0);
+                    params.put("limit", 100);
+                    boolean sourceAware = databaseId.equals("autowonder-source-aware");
+                    var expected = java.util.Map.of(
+                            "PENDING_DECISION", sourceAware ? java.util.List.of(1L,2L,10L,11L) : java.util.List.of(1L,2L,10L),
+                            "IN_PROGRESS", sourceAware ? java.util.List.of(3L,4L,6L) : java.util.List.of(3L,4L,6L,11L),
+                            "NEW", java.util.List.of(5L,12L), "DONE", java.util.List.of(7L), "CANCELED", java.util.List.of(8L));
+                    for (var entry : expected.entrySet()) {
+                        params.put("statusCategory", entry.getKey());
+                        java.util.List<WorkitemDO> rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+                        org.junit.jupiter.api.Assertions.assertEquals(entry.getValue(), rows.stream()
+                                .map(WorkitemDO::getId).sorted().toList(), databaseId + " " + entry.getKey());
+                        org.junit.jupiter.api.Assertions.assertEquals((long) entry.getValue().size(),
+                                (long) session.selectOne(WorkitemDao.class.getName() + ".count", params));
+                    }
+                    params.remove("statusCategory");
+                    params.put("pendingDecisionOnly", true);
+                    java.util.List<WorkitemDO> mine = session.selectList(WorkitemDao.class.getName() + ".list", params);
+                    org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(1L),
+                            mine.stream().map(WorkitemDO::getId).toList(), "external refs must not match a local user");
+                }
+            }
+        }
+    }
+
+    @Test
+    void mapperDropsStatusNameKeywordClassification() throws Exception {
         String xml = new String(
                 getClass().getResourceAsStream("/mapping/WorkitemDao.xml").readAllBytes(),
                 StandardCharsets.UTF_8);
 
-        int start = xml.indexOf("<sql id=\"statusNameDone\">");
-        int end = xml.indexOf("</sql>", start);
-        String block = xml.substring(start, end);
-        assertTrue(block.contains("UPPER(snc.name) LIKE '%FIXED%'"),
-                "Aone Fixed status names should be included in the DONE kanban column");
-        assertTrue(!block.contains("category"),
-                "DONE kanban classification should remain status-name based");
+        assertTrue(!xml.contains("statusNameDone") && !xml.contains("statusNameInProgress")
+                && !xml.contains("statusPendingDecision") && !xml.contains("notDoneNodeFilter"),
+                "status-name keyword fragments must be removed from the mapper");
+        assertTrue(!xml.contains("LIKE '%FIXED%'") && !xml.contains("LIKE '%DONE%'"),
+                "status names are display-only and must not drive SQL classification");
+    }
+
+    @Test
+    void statusCategoryFilterBindsUnifiedCategoryInBothListAndCount() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", false);
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+            params.put("statusCategory", "CANCELED");
+            String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+            assertTrue(sql.contains("CASE"), "filtered queries must embed the unified classification CASE");
+            assertTrue(sql.contains("THEN 'CANCELED'"),
+                    "CANCELED workitems must be reachable through the explicit filter");
+            assertTrue(sql.contains("d.source_type = 'WORKITEM'"),
+                    "source-aware dispatch facts must scope to workitem deliveries");
+            params.remove("statusCategory");
+            org.junit.jupiter.api.Assertions.assertFalse(
+                    mapped.getBoundSql(params).getSql().contains("CASE"),
+                    "unfiltered queries must not pay for the classification expression");
+        }
     }
 
     @Test

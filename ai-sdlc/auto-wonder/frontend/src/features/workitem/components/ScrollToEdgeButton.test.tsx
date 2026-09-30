@@ -8,6 +8,7 @@ function createMockContainer(opts: {
   scrollTop?: number;
 }) {
   const el = document.createElement('div');
+  el.style.paddingRight = '38px';
   Object.defineProperty(el, 'scrollHeight', { value: opts.scrollHeight, configurable: true });
   Object.defineProperty(el, 'clientHeight', { value: opts.clientHeight, configurable: true });
   Object.defineProperty(el, 'scrollTop', { value: opts.scrollTop ?? 0, writable: true, configurable: true });
@@ -26,11 +27,22 @@ function Wrapper({ containerEl }: { containerEl: HTMLElement }) {
 }
 
 describe('ScrollToEdgeButton', () => {
-  it('renders both buttons when content is scrollable', () => {
+  it('renders compact buttons anchored inside the scroll region', () => {
     const el = createMockContainer({ scrollHeight: 2000, clientHeight: 600 });
-    render(<Wrapper containerEl={el} />);
+    const { container } = render(<Wrapper containerEl={el} />);
     expect(screen.getByTitle('回到顶部')).toBeInTheDocument();
     expect(screen.getByTitle('到达底部')).toBeInTheDocument();
+
+    // jsdom 中 offsetWidth === clientWidth，相当于叠加滚动条：
+    // 居中偏移 = (轨道 38 - 按钮 22) / 2 = 8px
+    expect(container.querySelector('[data-testid="scroll-edge-controls"]')).toHaveStyle({
+      position: 'absolute',
+      right: '8px',
+      bottom: '12px',
+    });
+    container.querySelectorAll('button').forEach((button) => {
+      expect(button).toHaveStyle({ width: '22px', height: '22px', padding: '0px' });
+    });
   });
 
   it('calls scrollTo with top=scrollHeight when clicking "到达底部"', () => {

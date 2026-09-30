@@ -17,13 +17,12 @@
         WHERE is_deleted = 0 AND id IN
         <foreach collection="ids" item="sid" open="(" separator="," close=")">#{sid}</foreach>
     </select>
-    <select id="list" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
-        SELECT * FROM sdlc
+    <sql id="listFilters">
         <where>
             is_deleted = 0
             <if test="workType != null">AND work_type = #{workType}</if>
             <if test="status != null">AND status = #{status}</if>
-            <!-- tenantId scopes only the squad subquery; the sdlc list itself stays workspace-agnostic -->
+            <!-- TenantInterceptor scopes the outer sdlc table; scope derived references explicitly. -->
             <if test="squadIds != null and squadIds.size() > 0">
                 AND id IN (
                     SELECT av.sdlc_id FROM agent_version av
@@ -40,7 +39,15 @@
                 )
             </if>
         </where>
+    </sql>
+    <select id="list" resultType="com.aliyun.autowonder.sdlc.SdlcDO">
+        SELECT * FROM sdlc
+        <include refid="listFilters"/>
         ORDER BY id DESC LIMIT #{offset}, #{limit}
+    </select>
+    <select id="count" resultType="long">
+        SELECT COUNT(*) FROM sdlc
+        <include refid="listFilters"/>
     </select>
     <update id="update">
         UPDATE sdlc SET name = #{name}, description = #{description}, work_type = #{workType},

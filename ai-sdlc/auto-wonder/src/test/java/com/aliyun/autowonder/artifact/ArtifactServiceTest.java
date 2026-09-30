@@ -304,6 +304,17 @@ class ArtifactServiceTest {
     }
 
     @Test
+    void preview_supports_pdf_and_source_documents_under_existing_size_and_owner_checks() {
+        for (String name : List.of("requirements/design.pdf", "requirements/example.py", "requirements/config.yaml")) {
+            ArtifactDO a = new ArtifactDO();
+            a.setId(1L); a.setTenantId(100L); a.setName(name); a.setOssRef("b/k"); a.setSize(3L);
+            when(artifactDao.findById(1L)).thenReturn(a);
+            when(storage.get("b/k")).thenReturn("abc".getBytes(StandardCharsets.UTF_8));
+            assertEquals(name, service.getPreviewContent(1L, 100L).getName());
+        }
+    }
+
+    @Test
     void preview_large_artifact_throws_without_reading_storage() {
         ArtifactDO a = new ArtifactDO();
         a.setId(1L); a.setTenantId(100L); a.setName("artifacts/output/large.png");

@@ -14,7 +14,7 @@ import {
   type OtherText,
 } from './elicitationAnswer';
 
-const PRIMARY = '#1677ff';
+const PRIMARY = 'var(--aw-accent-text)';
 const AUTO_ADVANCE_MS = 300;
 
 interface ElicitationWizardProps {
@@ -120,19 +120,19 @@ export function ElicitationWizard({
       aria-label={message || form.title || '需要你的确认'}
       style={{
         margin: fullscreen ? '12px 24px' : '8px 12px',
-        maxHeight: 'min(56%, 360px)',
+        maxHeight: fullscreen ? 'min(60%, 480px)' : 'min(56%, 360px)',
         display: 'flex', flexDirection: 'column', flexShrink: 0,
         backgroundColor: CLARIFICATION_THEME.surface,
         border: `1px solid ${CLARIFICATION_THEME.controlBorder}`,
         borderRadius: CLARIFICATION_THEME.radiusControl,
-        boxShadow: '0 -2px 14px rgba(0,0,0,0.07)',
+        boxShadow: 'none',
         overflow: 'hidden',
       }}
     >
       <div style={{ borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px 4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px 8px' }}>
           <span style={{
-            fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0,
+            fontSize: 16, fontWeight: 600, flex: 1, minWidth: 0,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
             {message || form.title || '需要你的确认'}
@@ -143,12 +143,12 @@ export function ElicitationWizard({
             disabled={submitting}
             data-testid={`elicitation-skip-${requestId}`}
             onClick={() => onReply({ action: 'decline' })}
-            style={{ fontSize: 12, color: CLARIFICATION_THEME.textMuted }}
+            style={{ fontSize: 14, color: CLARIFICATION_THEME.textMuted }}
           >
             跳过
           </Button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px 8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {fields.map((f, i) => {
               const current = i === stepIndex;
@@ -161,11 +161,11 @@ export function ElicitationWizard({
                   title={`第${i + 1}题：${f.label}`}
                   onClick={() => gotoStep(i)}
                   style={{
-                    width: 22, height: 22, padding: 0, borderRadius: '50%', cursor: 'pointer',
-                    fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 28, height: 28, padding: 0, borderRadius: '50%', cursor: 'pointer',
+                    fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     border: `1px solid ${current || answered ? PRIMARY : CLARIFICATION_THEME.controlBorder}`,
-                    backgroundColor: current ? PRIMARY : (answered ? '#e6f0ff' : CLARIFICATION_THEME.surface),
-                    color: current ? '#fff' : (answered ? PRIMARY : CLARIFICATION_THEME.textSecondary),
+                    backgroundColor: current ? 'var(--aw-primary)' : (answered ? 'rgba(var(--aw-accent-rgb),.10)' : CLARIFICATION_THEME.surface),
+                    color: current ? 'var(--aw-primary-ink)' : (answered ? PRIMARY : CLARIFICATION_THEME.textSecondary),
                     fontWeight: current ? 600 : 400,
                   }}
                 >
@@ -176,22 +176,22 @@ export function ElicitationWizard({
           </div>
           <span
             data-testid={`elicitation-count-${requestId}`}
-            style={{ fontSize: 12, color: CLARIFICATION_THEME.textSecondary }}
+            style={{ fontSize: 14, color: CLARIFICATION_THEME.textSecondary }}
           >
             第 {stepIndex + 1}/{total} 题
           </span>
         </div>
       </div>
 
-      <div style={{ padding: 12, overflow: 'auto', flex: 1, minHeight: 0 }}>
+      <div style={{ padding: 16, lineHeight: 1.7, overflow: 'auto', flex: 1, minHeight: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <QuestionCircleOutlined style={{ color: PRIMARY }} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{field.label}</span>
-          {field.required ? <span style={{ color: '#cf1322' }}> *</span> : null}
+          <span style={{ fontSize: 16, fontWeight: 600 }}>{field.label}</span>
+          {field.required ? <span style={{ color: 'var(--aw-error)' }}> *</span> : null}
         </div>
         {field.description ? (
           <div style={{
-            fontSize: 11, color: CLARIFICATION_THEME.textSecondary,
+            fontSize: 14, color: CLARIFICATION_THEME.textSecondary,
             whiteSpace: 'pre-wrap', margin: '4px 0 8px',
           }}>
             {field.description}

@@ -52,6 +52,14 @@ describe('ScheduledTaskRunDetailPage', () => {
     expect(screen.queryByText('运行产物')).not.toBeInTheDocument();
     expect(screen.queryByText('failure-analysis.md')).not.toBeInTheDocument();
     expect(screen.getByText('BUG #13892')).toBeInTheDocument();
+
+    const scrollRegion = screen.getByTestId('scheduled-run-scroll-region');
+    const scrollArea = screen.getByTestId('scheduled-run-left-scroll');
+    const commentBar = screen.getByTestId('scheduled-run-sticky-comment');
+    expect(scrollRegion).toHaveStyle({ position: 'relative', flex: '1', minHeight: '0', overflow: 'hidden' });
+    expect(scrollRegion.contains(scrollArea)).toBe(true);
+    expect(scrollArea).toHaveStyle({ overflowY: 'auto', paddingRight: '38px' });
+    expect(commentBar.previousElementSibling).toBe(scrollRegion);
   });
 
   it('posts a comment to the Run resource', async () => {

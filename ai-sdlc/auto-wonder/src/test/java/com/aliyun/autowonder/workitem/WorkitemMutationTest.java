@@ -30,6 +30,7 @@ class WorkitemMutationTest {
     com.aliyun.autowonder.dispatch.DispatchDao dispatchDao;
     ExternalWorkitemLinkDao externalWorkitemLinkDao;
     ApplicationEventPublisher eventPublisher;
+    com.aliyun.autowonder.dispatch.AgentSdlcResolver sdlcResolver;
     WorkitemService service;
 
     @BeforeEach
@@ -43,13 +44,14 @@ class WorkitemMutationTest {
         dispatchDao = mock(com.aliyun.autowonder.dispatch.DispatchDao.class);
         externalWorkitemLinkDao = mock(ExternalWorkitemLinkDao.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
+        sdlcResolver = mock(com.aliyun.autowonder.dispatch.AgentSdlcResolver.class);
         service = new WorkitemService(workitemDao, commentDao, eventDao,
                 templateDao, nodeDao, transitionDao,
                 mock(com.aliyun.autowonder.sdlc.SdlcDao.class), mock(com.aliyun.autowonder.sdlc.SdlcStepDao.class),
                 dispatchDao,
                 mock(com.aliyun.autowonder.dispatch.DispatchRuntimeEventDao.class),
                 mock(com.aliyun.autowonder.agent.AgentDao.class),
-                mock(com.aliyun.autowonder.dispatch.AgentSdlcResolver.class),
+                sdlcResolver,
                 mock(com.aliyun.autowonder.squad.SquadMemberDao.class),
                 mock(com.aliyun.autowonder.executor.ExecutorDao.class),
                 mock(com.aliyun.autowonder.user.UserDao.class),
@@ -154,8 +156,99 @@ class WorkitemMutationTest {
     }
 
     @Test
-    void reassignSameAgentWithoutScheduledStartStaysNoOp() {
+    void reassignSameAgentWithStartedDeliveryRestartsInsteadOfNoOp() {
+        WorkitemServiceRestartHandler restartHandler = mock(WorkitemServiceRestartHandler.class);
+        service.bindRestartHandler(restartHandler);
+        com.aliyun.autowonder.sdlc.SdlcStepDO entry = new com.aliyun.autowonder.sdlc.SdlcStepDO();
+        entry.setId(88L);
+        entry.setTenantId(100L);
+        when(sdlcResolver.firstStep(100L, 77L)).thenReturn(entry);
         when(workitemDao.findById(5L)).thenReturn(agentAssigned(5L, 1));
+
+        WorkitemVO vo = service.assign(5L, "AGENT", 40013L, null, null, 100L, 7L);
+
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
+        verify(workitemDao, never()).updateScheduledStartAt(anyLong(), anyLong(), any(), anyInt(), anyLong());
+        verify(eventDao, never()).insert(any());
+        verify(eventPublisher, never()).publishEvent(any());
+        verify(restartHandler).restartAgentDelivery(eq(5L), eq(100L), eq(40013L), eq(88L),
+                isNull(), isNull(), eq(7L), any());
+        assertEquals(5L, vo.getId());
+    }
+
+    @Test
+    void reassignImmediateRestartClearsLeftoverScheduledStart() {
+        WorkitemServiceRestartHandler restartHandler = mock(WorkitemServiceRestartHandler.class);
+        service.bindRestartHandler(restartHandler);
+        com.aliyun.autowonder.sdlc.SdlcStepDO entry = new com.aliyun.autowonder.sdlc.SdlcStepDO();
+        entry.setId(88L);
+        entry.setTenantId(100L);
+        when(sdlcResolver.firstStep(100L, 77L)).thenReturn(entry);
+        java.util.Date leftover = new java.util.Date(System.currentTimeMillis() + 3_600_000);
+        WorkitemDO scheduled = agentAssigned(5L, 1);
+        scheduled.setScheduledStartAt(leftover);
+        when(workitemDao.findById(5L)).thenReturn(scheduled, agentAssigned(5L, 2));
+        when(workitemDao.clearScheduledStartAt(5L, 100L, 1)).thenReturn(1);
+
+        service.assign(5L, "AGENT", 40013L, null, null, 100L, 7L);
+
+        verify(workitemDao).clearScheduledStartAt(5L, 100L, 1);
+        verify(restartHandler).restartAgentDelivery(eq(5L), eq(100L), eq(40013L), eq(88L),
+                isNull(), isNull(), eq(7L), any());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void reassignImmediateRestartScheduleClearConflictThrows13005() {
+        WorkitemServiceRestartHandler restartHandler = mock(WorkitemServiceRestartHandler.class);
+        service.bindRestartHandler(restartHandler);
+        java.util.Date leftover = new java.util.Date(System.currentTimeMillis() + 3_600_000);
+        WorkitemDO scheduled = agentAssigned(5L, 1);
+        scheduled.setScheduledStartAt(leftover);
+        when(workitemDao.findById(5L)).thenReturn(scheduled);
+        when(workitemDao.clearScheduledStartAt(5L, 100L, 1)).thenReturn(0);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.assign(5L, "AGENT", 40013L, null, null, 100L, 7L));
+        assertEquals("13005", ex.getCode());
+        verify(restartHandler, never()).restartAgentDelivery(anyLong(), anyLong(), anyLong(),
+                anyLong(), any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void assignRejectsOverlongRestartToken() {
+        when(workitemDao.findById(5L)).thenReturn(workitem(5L, 0, 9L));
+        String overlong = "t".repeat(65);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.assign(5L, "AGENT", 40013L, null, null, null, overlong, 100L, 7L));
+        assertEquals("10001", ex.getCode());
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
+        verify(workitemDao, never()).clearScheduledStartAt(anyLong(), anyLong(), anyInt());
+    }
+
+    @Test
+    void assignAcceptsRestartTokenUpTo64Characters() {
+        WorkitemServiceRestartHandler restartHandler = mock(WorkitemServiceRestartHandler.class);
+        service.bindRestartHandler(restartHandler);
+        com.aliyun.autowonder.sdlc.SdlcStepDO entry = new com.aliyun.autowonder.sdlc.SdlcStepDO();
+        entry.setId(88L);
+        entry.setTenantId(100L);
+        when(sdlcResolver.firstStep(100L, 77L)).thenReturn(entry);
+        when(workitemDao.findById(5L)).thenReturn(agentAssigned(5L, 1));
+
+        service.assign(5L, "AGENT", 40013L, null, null, null, "t".repeat(64), 100L, 7L);
+
+        verify(restartHandler).restartAgentDelivery(eq(5L), eq(100L), eq(40013L), eq(88L),
+                eq("t".repeat(64)), isNull(), eq(7L), any());
+    }
+
+    @Test
+    void reassignSameAgentWithoutStartedDeliveryStaysNoOp() {
+        WorkitemDO assigned = agentAssigned(5L, 1);
+        assigned.setSdlcId(null);
+        assigned.setCurrentStepId(null);
+        when(workitemDao.findById(5L)).thenReturn(assigned);
 
         WorkitemVO vo = service.assign(5L, "AGENT", 40013L, null, null, 100L, 7L);
 

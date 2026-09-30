@@ -50,7 +50,7 @@ function identityPayload(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function renderPage(initialEntry = '/profile/settings') {
+function renderPage(initialEntry = '/profile/settings?tab=im') {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
     <QueryClientProvider client={queryClient}>
@@ -140,7 +140,34 @@ describe('ProfileSettingsPage', () => {
     useAuthStore.getState().clear();
     server.use(
       http.get('/api/users/me/im-identities', () => HttpResponse.json(identityPayload())),
+      http.get('/api/users/me/profile', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: {
+          id: 1,
+          username: 'alice',
+          nickname: '爱丽丝',
+          email: 'alice@example.com',
+          phone: '+86 138-0000-0000',
+        },
+      })),
     );
+  });
+
+  it('opens the basic info tab by default and keeps the legacy tabs reachable', async () => {
+    renderPage('/profile/settings');
+
+    expect(await screen.findByText('用户名是登录标识，不可修改。')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('昵称')).toHaveValue('爱丽丝'));
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['基本信息', 'IM 工号', 'MCP 令牌', '修改密码', '账号注销']);
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'IM 工号' }));
+    expect(await screen.findByLabelText('钉钉工号')).toBeInTheDocument();
   });
 
   it('loads existing DINGTALK identity and saves updated staff id', async () => {
@@ -454,19 +481,19 @@ describe('ProfileSettingsPage', () => {
     expect(screen.getByText('autowonder.list_repos')).toBeInTheDocument();
   });
 
-  it('uses a wider shell for MCP tab than for IM tab', async () => {
+  it('keeps IM and MCP tabs equally fluid without a maximum width', async () => {
     stubMcpEndpoints();
 
-    renderPage('/profile/settings');
+    renderPage();
 
     const imShell = await screen.findByTestId('profile-settings-shell');
-    expect(imShell.style.maxWidth).toBe('1100px');
+    expect(imShell.style.maxWidth).toBe('');
 
     document.body.innerHTML = '';
     renderPage('/profile/settings?tab=mcp');
 
     const mcpShell = await screen.findByTestId('profile-settings-shell');
-    expect(mcpShell.style.maxWidth).toBe('1440px');
+    expect(mcpShell.style.maxWidth).toBe('');
   });
 
   it('renders MCP tools table and schema tables with stable test ids', async () => {

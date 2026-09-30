@@ -1,4 +1,5 @@
 import { apiClient } from '@/shared/api/client';
+import type { PageResult } from '@/shared/types/common';
 import { csvParam } from '@/shared/api/csvParam';
 
 export type SdlcId = string | number;
@@ -42,6 +43,15 @@ export async function listSdlcTemplates(params: {
   squadIds?: number[];
 }): Promise<SdlcTemplate[]> {
   const resp = await apiClient.get<SdlcTemplate[]>('/api/sdlcs', {
+    params: { ...params, squadIds: csvParam(params.squadIds) },
+  });
+  return resp.data;
+}
+
+export async function listSdlcTemplatesPage(
+  params: Parameters<typeof listSdlcTemplates>[0],
+): Promise<PageResult<SdlcTemplate>> {
+  const resp = await apiClient.get<PageResult<SdlcTemplate>>('/api/sdlcs/page', {
     params: { ...params, squadIds: csvParam(params.squadIds) },
   });
   return resp.data;

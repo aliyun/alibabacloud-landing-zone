@@ -17,7 +17,7 @@ import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.im.notification.WorkitemCommentMentionedEvent;
 import com.aliyun.autowonder.redis.RedisManager;
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.insights.participation;
 
 import com.aliyun.autowonder.insights.InsightsDao;
+import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
+import java.util.stream.Collectors;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -123,11 +125,23 @@ public class HumanAgentParticipationRefreshService implements DisposableBean {
             }
             offset += pageSize;
         }
-        List<HumanAgentParticipationFact> facts = calculator.reconstruct(allRows, cutoff);
+        List<HumanAgentParticipationFact> facts = calculator.reconstructWithQuality(allRows, cutoff);
+        List<HumanAgentParticipationFact> eligible = facts.stream()
+                .filter(f -> f.exclusionReason() == null).collect(Collectors.toList());
+        for (int from = 0; from < eligible.size(); from += 500) {
+            List<HumanAgentParticipationFact> batch = eligible.subList(from, Math.min(from + 500, eligible.size()));
+            List<Long> ids = batch.stream().map(HumanAgentParticipationFact::workitemId).collect(Collectors.toList());
+            Map<Long, List<DispatchRuntimeEventDO>> runtime = insightsDao
+                    .listParticipationExecutionEvents(tenantId, ids, cutoffDate).stream()
+                    .collect(Collectors.groupingBy(DispatchRuntimeEventDO::getWorkitemId));
+            for (HumanAgentParticipationFact fact : batch) {
+                ParticipationExecutionCalculator.enrich(fact, runtime.getOrDefault(fact.workitemId(), Collections.emptyList()));
+            }
+        }
         Instant now = Instant.now();
         store.write(tenantId, facts, dataThrough.toString(), now);
         log.info("Participation refresh completed tenantId={} dataThrough={} events={} eligible={}",
-                tenantId, dataThrough, allRows.size(), facts.size());
+                tenantId, dataThrough, allRows.size(), eligible.size());
     }
 
     public void refresh(long tenantId, LocalDate dataThrough) {

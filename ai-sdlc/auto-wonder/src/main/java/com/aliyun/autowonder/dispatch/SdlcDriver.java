@@ -16,6 +16,10 @@ import org.springframework.stereotype.Component;
  * SDLC is an agent-internal workflow/runbook. TASK_RESULT closes the current
  * dispatch. Any next owner is requested explicitly by the executor through
  * TASK_HANDOFF or platform APIs, according to the SDLC step instructions.
+ *
+ * 启动交付自动推进（工单 #55395 规格 3.3 唯一自动流转）是工单状态管理职责而非 SDLC 路由：
+ * 派发开始执行时由 {@link #onDeliveryStart} 把仍处于 INIT 类别的工单推进到模板首个
+ * IN_PROGRESS 节点；执行成功/失败均不改业务状态。
  */
 @Component
 public class SdlcDriver {
@@ -24,11 +28,28 @@ public class SdlcDriver {
 
     private final WorkitemDao workitemDao;
     private final SdlcStepDao stepDao;
+    private final WorkitemService workitemService;
 
     public SdlcDriver(WorkitemDao workitemDao, WorkitemService workitemService,
             SdlcStepDao stepDao, StatusNodeDao nodeDao, AgentRoleResolver roleResolver) {
         this.workitemDao = workitemDao;
+        this.workitemService = workitemService;
         this.stepDao = stepDao;
+    }
+
+    /**
+     * 派发开始执行（送达执行方）时的自动推进入口。交付主流程不容忍这里的失败：
+     * 推进异常只记录日志，绝不影响派发本身。
+     */
+    public void onDeliveryStart(Long tenantId, Long workitemId) {
+        if (tenantId == null || workitemId == null) {
+            return;
+        }
+        try {
+            workitemService.autoAdvanceOnDeliveryStart(tenantId, workitemId);
+        } catch (RuntimeException e) {
+            log.warn("workitem delivery-start auto-advance failed workitemId={}", workitemId, e);
+        }
     }
 
     public DriveResult onSuccess(long tenantId, long workitemId, long currentStepId) {

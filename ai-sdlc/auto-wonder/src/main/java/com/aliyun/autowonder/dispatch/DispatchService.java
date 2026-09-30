@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.dispatch;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
@@ -77,6 +77,9 @@ public class DispatchService {
     private ScheduledTaskNotificationService scheduledTaskNotificationService;
     private DebugLogService debugLogService;
     private DispatchLiveActivityPublisher liveActivityPublisher;
+    @org.springframework.context.annotation.Lazy
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
     private DispatchRecoveryService recoveryService;
     @Autowired
     public void setRecoveryService(DispatchRecoveryService service) { this.recoveryService = service; }
@@ -312,6 +315,29 @@ public class DispatchService {
             int assignmentVersion, long userId) {
         String idem = "assignment:" + workitemId + ":" + sdlcStepId + ":" + agentId
                 + ":" + assignmentVersion;
+        return enqueueAssignmentWithKey(workspaceId, workitemId, sdlcStepId, agentId, idem, userId);
+    }
+
+    /**
+     * New formal round of a delivery restart, idempotent on the restart-round key: one
+     * round per user-initiated restart, duplicated retries of the same submission map to
+     * the same row, the next explicit reassignment allocates the next round.
+     */
+    public DispatchDO enqueueRestartAssignment(long workspaceId, long workitemId, long sdlcStepId,
+            long agentId, String restartKey, long userId) {
+        return enqueueAssignmentWithKey(workspaceId, workitemId, sdlcStepId, agentId, restartKey, userId);
+    }
+
+    public DispatchDO findByIdempotencyKey(long workspaceId, String idempotencyKey) {
+        return dispatchDao.findByIdempotencyKey(workspaceId, idempotencyKey);
+    }
+
+    public List<DispatchDO> listByWorkitem(long workspaceId, long workitemId) {
+        return dispatchDao.listByWorkitem(workspaceId, workitemId);
+    }
+
+    private DispatchDO enqueueAssignmentWithKey(long workspaceId, long workitemId, long sdlcStepId,
+            long agentId, String idem, long userId) {
         DispatchDO existing = dispatchDao.findByIdempotencyKey(workspaceId, idem);
         if (existing != null) {
             log.info("assignment enqueue idempotent hit key={}", idem);
@@ -1076,6 +1102,11 @@ public class DispatchService {
             if (!transition(d, DispatchStatus.DISPATCHED, null, executorId, pkg.getOssRef(), null, null)) {
                 return true;
             }
+            // 派发开始执行：工单仍处于 INIT 类别时自动推进到模板首个 IN_PROGRESS 节点（规格 3.3）。
+            // 定时任务派发的 workitemId 列存的是 run ID，不是工单 ID，绝不能参与自动推进。
+            if (d.executionSourceType() == ExecutionSourceType.WORKITEM) {
+                sdlcDriver.onDeliveryStart(d.getTenantId(), d.getWorkitemId());
+            }
             try {
                 transport.dispatch(d, pkg);
             } catch (EnvironmentSnapshotResolutionException resolutionFailure) {
@@ -1577,6 +1608,12 @@ public class DispatchService {
         recordAgentAudit(d, success ? "COMPLETE_DISPATCH" : "FAIL_DISPATCH",
                 success ? "dispatch.succeeded" : "dispatch.failed", "runtime.result", resultDetail);
         recordEvolutionTelemetryEvidence(d, success, resultSummary, error);
+        // 产物上传在 runtime 轮结束时已完成，成功终态后发布事件让监听者
+        //（如对外分享 DispatchShareListener）在数据就绪的前提下执行
+        if (success && eventPublisher != null) {
+            eventPublisher.publishEvent(new DispatchSucceededEvent(
+                    d.getTenantId(), d.getWorkitemId(), d.getId(), d.getAgentId()));
+        }
         // Run guidance is a detached conversational turn.  It shares the Run
         // owner solely for packaging/audit; it must not advance or terminalize
         // the formal Run state machine.

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.memory.store.MemoryChangeDao">
+    <select id="findLegacyMigration" resultType="com.aliyun.autowonder.memory.store.MemoryChangeDO">
+        SELECT * FROM memory_change WHERE tenant_id = #{tenantId} AND actor_type = 'LEGACY_MIGRATION'
+          AND idempotency_key = CONCAT('legacy-adopted:', #{memoryId}, ':topic') LIMIT 1
+    </select>
+    <insert id="insert" parameterType="com.aliyun.autowonder.memory.store.MemoryChangeDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_change
+        (tenant_id, store_id, document_id, store_revision, operation, path, document_version,
+         content_sha256, actor_type, actor_ref, dispatch_id, provider_session_id, idempotency_key,
+         request_fingerprint)
+        VALUES (#{tenantId}, #{storeId}, #{documentId}, #{storeRevision}, #{operation}, #{path},
+                #{documentVersion}, #{contentSha256}, #{actorType}, #{actorRef}, #{dispatchId},
+                #{providerSessionId}, #{idempotencyKey}, #{requestFingerprint})
+    </insert>
+    <select id="findByIdempotencyKey" resultType="com.aliyun.autowonder.memory.store.MemoryChangeDO">
+        SELECT * FROM memory_change
+        WHERE tenant_id = #{tenantId} AND store_id = #{storeId}
+          AND idempotency_key = #{idempotencyKey} LIMIT 1
+    </select>
+    <select id="listAfterRevision" resultType="com.aliyun.autowonder.memory.store.MemoryChangeDO">
+        SELECT * FROM memory_change
+        WHERE tenant_id = #{tenantId} AND store_id = #{storeId}
+          AND store_revision &gt; #{afterRevision}
+        ORDER BY store_revision ASC LIMIT #{limit}
+    </select>
+</mapper>

@@ -16,7 +16,7 @@ import com.aliyun.autowonder.skill.dto.SkillPackageFilesVO;
 import com.aliyun.autowonder.skill.dto.SkillPackageInspectVO;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;

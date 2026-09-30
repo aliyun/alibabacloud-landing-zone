@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.taskpackage;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.storage.InMemoryObjectStorage;
 import org.junit.jupiter.api.Test;
 

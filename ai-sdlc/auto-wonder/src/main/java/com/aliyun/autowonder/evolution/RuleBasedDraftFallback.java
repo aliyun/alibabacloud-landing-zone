@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.evolution;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;

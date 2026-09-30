@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal, Form, Select, DatePicker, message } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { listSquads, getSquadMembers } from '@/features/squad/api';
@@ -20,11 +20,29 @@ interface StartDeliveryModalProps {
   onClose: () => void;
 }
 
+function createRestartToken(): string {
+  const webCrypto = globalThis.crypto;
+  if (typeof webCrypto?.randomUUID === 'function') {
+    return webCrypto.randomUUID();
+  }
+  return `restart-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: StartDeliveryModalProps) {
   const [form] = Form.useForm();
   const assignMut = useAssignWorkitem();
   const accessCommand = useAccessCommand();
+  const queryClient = useQueryClient();
   const squadId = Form.useWatch('squadId', form);
+  // One token per modal session: duplicate submits and network retries of this
+  // reassignment converge onto one restart round server-side; reopening the modal
+  // and reassigning again is an explicit new round.
+  const restartTokenRef = useRef(createRestartToken());
+  useEffect(() => {
+    if (open) {
+      restartTokenRef.current = createRestartToken();
+    }
+  }, [open]);
 
   // Prefill from the most recent AI clarification selection when opening the
   // modal for a fresh (non-reassign) delivery.
@@ -49,17 +67,26 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
 
   const handleOk = async () => {
     const values = await form.validateFields();
+    const scheduledStartAt = values.scheduledStartAt
+      ? (values.scheduledStartAt as Dayjs).toISOString()
+      : undefined;
     accessCommand('READ_WRITE', hasSdlc ? '重新指派工单' : '启动工单交付', async () => {
       try {
         await assignMut.mutateAsync({
           id: workitemId,
           assigneeRef: values.agentId,
           squadId: values.squadId,
-          scheduledStartAt: values.scheduledStartAt
-            ? (values.scheduledStartAt as Dayjs).toISOString()
-            : undefined,
+          scheduledStartAt,
+          restartToken: restartTokenRef.current,
         });
-        message.success(hasSdlc ? '已重新指派' : '已启动交付');
+        // The restart itself is asynchronous (stop old executions, then start the
+        // new round); its live progress shows in the delivery recovery panel.
+        if (hasSdlc) {
+          message.success(scheduledStartAt ? '已重新指派，将在计划时间重启交付' : '已重新指派，正在重启交付');
+        } else {
+          message.success('已启动交付');
+        }
+        queryClient.invalidateQueries({ queryKey: ['workitem-recovery', String(workitemId)] });
         if (!hasSdlc) {
           clearClarificationPrefill(workitemId);
         }

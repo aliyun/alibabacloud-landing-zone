@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.websocket;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.artifact.ArtifactService;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
@@ -615,7 +615,7 @@ public class InboundFrameRouter {
 
     private java.util.Set<Long> requiredLongSet(JSONObject json, String field, int maxSize) {
         Object value = json.get(field);
-        if (!(value instanceof com.alibaba.fastjson.JSONArray raw)) {
+        if (!(value instanceof com.aliyun.autowonder.json.JSONArray raw)) {
             throw new IllegalArgumentException(field + "_MISSING");
         }
         if (raw.size() > maxSize) {
@@ -644,7 +644,7 @@ public class InboundFrameRouter {
             return null;
         }
         Object value = json.get("runningDispatchIds");
-        if (!(value instanceof com.alibaba.fastjson.JSONArray raw)) {
+        if (!(value instanceof com.aliyun.autowonder.json.JSONArray raw)) {
             return null;
         }
         java.util.List<Long> ids = new java.util.ArrayList<>();
@@ -669,7 +669,7 @@ public class InboundFrameRouter {
         }
         java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
         collectLongArray(json.getJSONArray("runningConversationTurnIds"), ids);
-        com.alibaba.fastjson.JSONArray turns = json.getJSONArray("runningConversationTurns");
+        com.aliyun.autowonder.json.JSONArray turns = json.getJSONArray("runningConversationTurns");
         if (turns != null) {
             for (int i = 0; i < turns.size() && ids.size() < 50; i++) {
                 JSONObject turn = turns.getJSONObject(i);
@@ -686,7 +686,7 @@ public class InboundFrameRouter {
     }
 
     private java.util.List<String> protocolFeatures(JSONObject json) {
-        com.alibaba.fastjson.JSONArray raw = json.getJSONArray("protocolFeatures");
+        com.aliyun.autowonder.json.JSONArray raw = json.getJSONArray("protocolFeatures");
         if (raw == null || raw.isEmpty()) {
             return null;
         }
@@ -700,7 +700,7 @@ public class InboundFrameRouter {
         return features;
     }
 
-    private void collectLongArray(com.alibaba.fastjson.JSONArray raw, java.util.Set<Long> ids) {
+    private void collectLongArray(com.aliyun.autowonder.json.JSONArray raw, java.util.Set<Long> ids) {
         if (raw == null) {
             return;
         }

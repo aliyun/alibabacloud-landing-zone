@@ -85,4 +85,29 @@ class ExecutorDaoSqlTest {
         assertTrue(xml.contains("tenant_id = #{tenantId}"),
                 "updateLaunchConfig must filter by tenant_id");
     }
+
+    @Test
+    void updateLaunchConfigWithClientKindGuardsLegacyKindlessRowsOnly() throws Exception {
+        String xml = Files.readString(MAPPER_XML);
+        int start = xml.indexOf("<update id=\"updateLaunchConfigWithClientKind\"");
+        int end = xml.indexOf("</update>", start);
+        assertTrue(start >= 0 && end > start, "mapper must contain the recovery update statement");
+        String update = xml.substring(start, end);
+
+        assertTrue(update.contains("client_kind = #{clientKind}"),
+                "the recovery update must write the chosen client kind");
+        assertTrue(update.contains("launch_config = #{launchConfig}"),
+                "the recovery update must write the launch config in the same statement");
+        assertTrue(update.contains("config_version = config_version + 1"),
+                "the recovery update must bump config_version on success");
+        assertTrue(update.contains("config_version = #{expectedVersion}"),
+                "the recovery update must keep the optimistic-lock guard");
+        assertTrue(update.contains("tenant_id = #{tenantId}"),
+                "the recovery update must stay tenant scoped");
+        assertTrue(update.contains("is_deleted = 0"),
+                "the recovery update must skip soft-deleted executors");
+        assertTrue(update.contains("(client_kind IS NULL OR TRIM(client_kind) = '')"),
+                "the recovery update must only touch rows whose kind is still missing, and blank must be "
+                        + "judged with TRIM because utf8mb4_0900_ai_ci (NO PAD) makes '  ' <> ''");
+    }
 }

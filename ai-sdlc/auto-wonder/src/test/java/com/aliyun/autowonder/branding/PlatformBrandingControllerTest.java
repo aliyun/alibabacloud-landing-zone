@@ -23,6 +23,17 @@ class PlatformBrandingControllerTest {
     }
 
     @Test
+    void logoReturnsSvgWithRestrictiveHeaders() {
+        PlatformBrandingService service = mock(PlatformBrandingService.class);
+        when(service.logoBytes()).thenReturn(new byte[]{1});
+        when(service.logoContentType()).thenReturn("image/svg+xml");
+        var response = new PlatformBrandingController(service, mock(SystemAdminService.class)).logo();
+        assertEquals("image/svg+xml", response.getHeaders().getContentType().toString());
+        assertEquals("nosniff", response.getHeaders().getFirst("X-Content-Type-Options"));
+        assertEquals("sandbox; default-src 'none'; style-src 'unsafe-inline'", response.getHeaders().getFirst("Content-Security-Policy"));
+    }
+
+    @Test
     void adminConfigIsVisibleAndReturnsWhetherCurrentUserCanManage() {
         PlatformBrandingService brandingService = mock(PlatformBrandingService.class);
         SystemAdminService systemAdminService = mock(SystemAdminService.class);

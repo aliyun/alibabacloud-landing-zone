@@ -55,6 +55,6 @@ export function WorkspaceDeleteModal({ workspace, onDeleted, onClose }: Workspac
 const listStyle: CSSProperties = {
   margin: '0 0 12px',
   paddingLeft: 20,
-  color: '#374151',
+  color: 'var(--aw-text)',
   lineHeight: 1.9,
 };

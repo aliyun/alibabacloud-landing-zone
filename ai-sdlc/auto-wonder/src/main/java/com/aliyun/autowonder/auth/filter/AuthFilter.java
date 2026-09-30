@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.auth.filter;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.auth.jwt.TokenPayload;
@@ -47,6 +47,10 @@ public class AuthFilter extends OncePerRequestFilter {
             Pattern.compile("^/api/cli/workitems/[0-9]+/requirement-documents/index$");
     private static final Pattern CLI_WORKITEM_DOWNLOAD_CONTENT_PATH =
             Pattern.compile("^/api/cli/workitems/[0-9]+/requirement-documents/[0-9]+/content$");
+    // 对外只读分享：仅 GET 且令牌形态匹配（awshare_ + 43 位 base64url）才放行，
+    // 其余 /api/share/** 仍走登录校验；端点自身只返回已显式暴露的产物。
+    private static final Pattern SHARE_WORKITEM_PATH =
+            Pattern.compile("^/api/share/workitems/awshare_[A-Za-z0-9_-]{43}(/(artifacts|requests)/[0-9]+)?$");
     // path 模式 MCP 入口：/api/mcp/<个人令牌>[/(rpc)[/]]，放行后由 McpController 做令牌鉴权
     private static final Pattern PERSONAL_MCP_PATH_TOKEN_PATH =
             Pattern.compile("^/api/mcp/awmcp_[A-Za-z0-9_-]{43}(?:/(?:rpc/?)?)?$");
@@ -184,7 +188,8 @@ public class AuthFilter extends OncePerRequestFilter {
         }
         if ("GET".equalsIgnoreCase(request.getMethod())
                 && (CLI_WORKITEM_DOWNLOAD_INDEX_PATH.matcher(path).matches()
-                    || CLI_WORKITEM_DOWNLOAD_CONTENT_PATH.matcher(path).matches())) {
+                    || CLI_WORKITEM_DOWNLOAD_CONTENT_PATH.matcher(path).matches()
+                    || SHARE_WORKITEM_PATH.matcher(path).matches())) {
             return true;
         }
         if (PERSONAL_MCP_PATH_TOKEN_PATH.matcher(path).matches()) {

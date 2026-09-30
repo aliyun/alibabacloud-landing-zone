@@ -1,20 +1,18 @@
-/* Codex 风格的 markdown 块级样式，作用域限定在澄清面板内。
-   MarkdownView 是 14 个页面共用的组件且对 pre/code 完全没有样式，
-   直接改它会影响全站，所以走 className 作用域。 */
+/* 澄清面板保留紧凑正文尺度，色值与公共 MarkdownView 共用外观令牌。 */
 .aw-clarify-md pre {
-  background-color: #f7f7f8;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  background-color: var(--aw-raised);
+  border: 1px solid var(--aw-border);
   border-radius: 8px;
   padding: 10px 12px;
   margin: 8px 0;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
 .aw-clarify-md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -29,26 +27,27 @@
 .aw-clarify-md blockquote {
   margin: 8px 0;
   padding: 2px 0 2px 12px;
-  border-left: 2px solid rgba(0, 0, 0, 0.08);
-  color: #6b7280;
+  border-left: 2px solid var(--aw-border);
+  color: var(--aw-muted);
 }
 
 .aw-clarify-md table {
   border-collapse: collapse;
   margin: 8px 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .aw-clarify-md th,
 .aw-clarify-md td {
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--aw-border);
   padding: 6px 10px;
   text-align: left;
 }
 
 .aw-clarify-md th {
-  background-color: #f7f7f8;
+  background-color: var(--aw-raised);
   font-weight: 600;
+  text-align: center;
 }
 
 .aw-clarify-md p:first-child {
@@ -101,3 +100,11 @@
     min-width: 24px;
   }
 }
+
+.aw-clarification-panel { min-width: 0; color: var(--aw-text); background: var(--aw-panel); }
+.aw-clarification-panel .aw-clarify-md { font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+.aw-clarification-panel textarea.ant-input { font-size: 16px; line-height: 1.7; padding: 12px; background: var(--aw-field); }
+.aw-clarification-panel summary { line-height: 1.7; }
+.aw-clarification-panel.is-fullscreen > :first-child { background: var(--aw-raised); }
+
+.aw-clarification-panel .aw-clarify-thinking .aw-clarify-md { font-size: 15px; }

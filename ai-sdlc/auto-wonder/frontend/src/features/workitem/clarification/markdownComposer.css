@@ -1,0 +1,146 @@
+/* 钉钉文档式 Markdown 即输即渲染编辑器（需求澄清输入框）。
+   样式对齐 .aw-clarify-md 的渲染观感，编辑态与发送后的气泡保持一致。 */
+
+.aw-markdown-composer {
+  border: 1px solid var(--aw-border);
+  border-radius: 8px;
+  background: var(--aw-field);
+  padding: 12px 14px;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--aw-text);
+  cursor: text;
+}
+
+.aw-markdown-composer:focus-within {
+  border-color: var(--aw-accent-text);
+}
+
+.aw-markdown-composer.is-disabled {
+  background: var(--aw-raised);
+  color: var(--aw-muted);
+  cursor: not-allowed;
+}
+
+.aw-markdown-composer .ProseMirror {
+  outline: none;
+  min-height: 1.7em;
+}
+
+.aw-markdown-composer .ProseMirror p {
+  margin: 0 0 0.5em;
+}
+
+.aw-markdown-composer .ProseMirror p:last-child,
+.aw-markdown-composer .ProseMirror ul:last-child,
+.aw-markdown-composer .ProseMirror ol:last-child,
+.aw-markdown-composer .ProseMirror pre:last-child,
+.aw-markdown-composer .ProseMirror blockquote:last-child,
+.aw-markdown-composer .ProseMirror h1:last-child,
+.aw-markdown-composer .ProseMirror h2:last-child,
+.aw-markdown-composer .ProseMirror h3:last-child,
+.aw-markdown-composer .ProseMirror table:last-child {
+  margin-bottom: 0;
+}
+
+.aw-markdown-composer .ProseMirror h1,
+.aw-markdown-composer .ProseMirror h2,
+.aw-markdown-composer .ProseMirror h3,
+.aw-markdown-composer .ProseMirror h4 {
+  margin: 0.6em 0 0.4em;
+  line-height: 1.4;
+}
+
+.aw-markdown-composer .ProseMirror h1 { font-size: 1.4em; }
+.aw-markdown-composer .ProseMirror h2 { font-size: 1.25em; }
+.aw-markdown-composer .ProseMirror h3 { font-size: 1.1em; }
+
+.aw-markdown-composer .ProseMirror ul,
+.aw-markdown-composer .ProseMirror ol {
+  padding-left: 1.4em;
+  margin: 0 0 0.5em;
+}
+
+.aw-markdown-composer .ProseMirror ul { list-style: disc; }
+.aw-markdown-composer .ProseMirror ol { list-style: decimal; }
+
+.aw-markdown-composer .ProseMirror li > p { margin: 0; }
+.aw-markdown-composer .ProseMirror li { margin: 0.15em 0; }
+
+.aw-markdown-composer .ProseMirror ul[data-type='taskList'] { list-style: none; padding-left: 0; }
+.aw-markdown-composer .ProseMirror li[data-type='taskItem'] { display: flex; gap: 8px; }
+.aw-markdown-composer .ProseMirror li[data-type='taskItem'] > div { flex: 1; min-width: 0; }
+
+.aw-markdown-composer .ProseMirror blockquote {
+  border-left: 3px solid var(--aw-border);
+  color: var(--aw-muted);
+  padding-left: 12px;
+  margin: 0 0 0.5em;
+}
+
+.aw-markdown-composer .ProseMirror code {
+  background: var(--aw-raised);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 0.9em;
+}
+
+.aw-markdown-composer .ProseMirror pre {
+  background: var(--aw-raised);
+  border: 1px solid var(--aw-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0 0 0.5em;
+  overflow-x: auto;
+  font-size: 0.9em;
+}
+
+.aw-markdown-composer .ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.aw-markdown-composer .ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0 0 0.5em;
+  overflow: hidden;
+}
+
+.aw-markdown-composer .ProseMirror th,
+.aw-markdown-composer .ProseMirror td {
+  border: 1px solid var(--aw-border);
+  padding: 6px 10px;
+  vertical-align: top;
+}
+
+.aw-markdown-composer .ProseMirror th {
+  background: var(--aw-raised);
+  text-align: center;
+  font-weight: 600;
+}
+
+.aw-markdown-composer .ProseMirror hr {
+  border: 0;
+  border-top: 1px solid var(--aw-border);
+  margin: 0.8em 0;
+}
+
+.aw-markdown-composer .ProseMirror a {
+  color: var(--aw-accent-text);
+}
+
+/* Placeholder（tiptap Placeholder 扩展在空段落上打 data-placeholder） */
+.aw-markdown-composer .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--aw-muted);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.aw-markdown-composer .ProseMirror-selectednode,
+.aw-markdown-composer .ProseMirror-selected {
+  outline: 2px solid var(--aw-accent-text);
+}

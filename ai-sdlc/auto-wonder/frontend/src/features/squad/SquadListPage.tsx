@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Button, Space, Modal, Form, Input, Popconfirm, message, Tag, List, Select, Spin, Popover, Empty, Pagination, Switch,
+  Button, Space, Modal, Form, Input, Popconfirm, message, Tag, List, Select, Spin, Empty, Switch,
 } from 'antd';
-import { PlusOutlined, TeamOutlined, EditOutlined, DeleteOutlined, UserAddOutlined, EyeOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserAddOutlined, EyeOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  listSquads, createSquad, updateSquad, deleteSquad, getSquad,
+  listAllSquads, createSquad, updateSquad, deleteSquad, getSquad,
   getSquadMembers, addSquadMember, removeSquadMember,
 } from './api';
 import { listAgents } from '@/features/agent/api';
@@ -17,8 +17,6 @@ import './SquadListPage.css';
 export function SquadListPage() {
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
-  const [pageNum, setPageNum] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingSquad, setEditingSquad] = useState<Squad | null>(null);
@@ -32,14 +30,13 @@ export function SquadListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['squads', pageNum, pageSize],
-    queryFn: () => listSquads({ pageNum, pageSize }),
+    queryKey: ['squads'],
+    queryFn: () => listAllSquads(),
   });
 
-  // Squad tags on the agent / SDLC / executor pages link here as /squads?squadId=<id>; there is no
-  // per-squad route, so the param drives this Modal. The list is paginated, so the target can sit on
-  // any page: resolve it by id instead of searching the loaded rows. The param is consumed up front,
-  // otherwise a stale one reopens the Modal every time the user changes page.
+  // Squad tags on the agent / SDLC / executor pages link here as /agents?tab=squads&squadId=<id>; there is
+  // no per-squad route, so the param drives this Modal. The param is consumed up front, otherwise a
+  // stale one reopens the Modal every time the list refreshes.
   const [deepLinkSquadId, setDeepLinkSquadId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -192,7 +189,7 @@ export function SquadListPage() {
   const sdlcGroups = buildSdlcGroups(detailMembers);
   const detailExecutors = detailSquadFull?.executors ?? [];
   const detailSdlcs = detailSquadFull?.sdlcs ?? [];
-  const squads = data?.list ?? [];
+  const squads = data ?? [];
   const memberTotal = squads.reduce((sum, squad) => sum + (squad.memberCount ?? 0), 0);
   const executorOnlineTotal = squads.reduce((sum, squad) => sum + (squad.executorOnlineCount ?? 0), 0);
   const sdlcTotal = squads.reduce((sum, squad) => sum + (squad.sdlcCount ?? 0), 0);
@@ -200,35 +197,27 @@ export function SquadListPage() {
   return (
     <>
       <section className="squad-card-page">
-        <div className="squad-card-header">
-          <div>
-            <h2>小队管理</h2>
-            <div className="squad-card-subtitle">按小队规模、角色构成和执行器状态查看交付阵容</div>
+        <div className="squad-list-toolbar">
+          <div className="squad-summary-strip">
+            <SummaryPill label="小队总数" value={squads.length} />
+            <SummaryPill label="数字员工总数" value={memberTotal} />
+            <SummaryPill label="执行器在线" value={executorOnlineTotal} />
+            <SummaryPill label="关联 SDLC" value={sdlcTotal} />
           </div>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建小队</Button>
         </div>
 
-        <div className="squad-summary-strip">
-          <SummaryPill label="小队总数" value={data?.total ?? squads.length} />
-          <SummaryPill label="数字员工总数" value={memberTotal} />
-          <SummaryPill label="执行器在线" value={executorOnlineTotal} />
-          <SummaryPill label="关联 SDLC" value={sdlcTotal} />
-        </div>
-
         <Spin spinning={isLoading}>
           {squads.length === 0 && !isLoading ? (
-            <Empty description="暂无小队">
-              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建小队</Button>
-            </Empty>
+            <Empty description="暂无小队" />
           ) : (
             <div className="squad-card-grid">
-              {squads.map((squad, index) => (
+              {squads.map((squad) => (
                 <article key={squad.id} className="squad-summary-card">
                   <div className="squad-card-topline" />
                   <div className="squad-card-main">
                     <div className="squad-team-avatar">
-                      <TeamOutlined />
-                      <span>{index + 1}</span>
+                      {(squad.name || '?').slice(0, 2)}
                     </div>
                     <div className="squad-card-title-area">
                       <div className="squad-card-title">
@@ -265,19 +254,6 @@ export function SquadListPage() {
             </div>
           )}
         </Spin>
-
-        <Pagination
-          className="squad-card-pagination"
-          current={pageNum}
-          pageSize={pageSize}
-          total={data?.total ?? squads.length}
-          showSizeChanger
-          showTotal={(total) => `共 ${total} 条`}
-          onChange={(nextPage, nextSize) => {
-            setPageNum(nextPage);
-            setPageSize(nextSize);
-          }}
-        />
       </section>
 
       <Modal
@@ -299,7 +275,7 @@ export function SquadListPage() {
               name="debugLogEnabled"
               label="Debug 日志收集"
               valuePropName="checked"
-              extra="开启后，该小队数字人每轮执行的全量日志将自动压缩上传，保留 60 天（下一轮生效）"
+              extra="开启后，该小队数字员工每轮执行的全量日志将自动压缩上传，保留 60 天（下一轮生效）"
             >
               <Switch data-testid="debug-log-switch" />
             </Form.Item>
@@ -316,15 +292,15 @@ export function SquadListPage() {
       >
         <div style={{ margin: '-20px -24px 0' }}>
           <div style={{
-            padding: '22px 26px',
-            borderBottom: '1px solid #e5e7eb',
-            background: '#f8fbff',
+            padding: '22px 56px 22px 26px',
+            borderBottom: '1px solid var(--aw-border)',
+            background: 'var(--aw-raised)',
           }}>
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
                 <div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#111827' }}>{detailSquad?.name}</div>
-                  <div style={{ marginTop: 6, color: '#6b7280' }}>{detailSquad?.description || '暂无描述'}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--aw-text)' }}>{detailSquad?.name}</div>
+                  <div style={{ marginTop: 6, color: 'var(--aw-muted)' }}>{detailSquad?.description || '暂无描述'}</div>
                 </div>
                 <Space>
                   <Tag color="cyan">{detailMembers.length || detailSquad?.memberCount || 0} 位成员</Tag>
@@ -339,58 +315,52 @@ export function SquadListPage() {
             {detailLoading ? <Spin /> : (
               <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 0.65fr', gap: 18 }}>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#374151', marginBottom: 12 }}>数字人阵容</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginBottom: 12 }}>数字员工阵容</div>
                   {detailMembers.length === 0 ? (
                     <Empty description="暂无成员，请先在成员管理中添加数字员工" />
                   ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
                     {detailMembers.map((member, index) => (
-                      <Popover
-                        key={member.agentId}
-                        title={member.roleName || member.roleCode || '未配置角色'}
-                        content={<MemberPopover member={member} />}
-                      >
-                        <div style={{
-                          border: `1px solid ${avatarPalette(index).border}`,
-                          background: avatarPalette(index).background,
-                          borderRadius: 8,
-                          padding: 14,
-                          textAlign: 'center',
-                          cursor: 'default',
-                          minHeight: 190,
-                        }}>
-                          <DigitalHeadAvatar member={member} index={index} />
-                          <div style={{ fontWeight: 800, color: '#0f172a', marginTop: 10 }}>{member.agentName}</div>
-                          <div style={{ color: avatarPalette(index).text, fontSize: 12, marginTop: 4 }}>
-                            {member.roleName || member.roleCode || '未配置角色'}
-                          </div>
-                          <div style={{
-                            color: '#64748b',
-                            fontSize: 12,
-                            marginTop: 10,
-                            lineHeight: 1.5,
-                            minHeight: 36,
-                          }}>
-                            {member.responsibilities || '暂无职责说明'}
-                          </div>
+                      <div key={member.agentId} style={{
+                        border: `1px solid ${avatarPalette(index).border}`,
+                        background: avatarPalette(index).background,
+                        borderRadius: 8,
+                        padding: 14,
+                        textAlign: 'center',
+                        cursor: 'default',
+                        minHeight: 190,
+                      }}>
+                        <DigitalHeadAvatar member={member} />
+                        <div style={{ fontWeight: 800, color: 'var(--aw-text)', marginTop: 10 }}>{member.agentName}</div>
+                        <div style={{ color: avatarPalette(index).text, fontSize: 12, marginTop: 4 }}>
+                          {member.roleName || member.roleCode || '未配置角色'}
                         </div>
-                      </Popover>
+                        <div style={{
+                          color: 'var(--aw-muted)',
+                          fontSize: 12,
+                          marginTop: 10,
+                          lineHeight: 1.5,
+                          minHeight: 36,
+                        }}>
+                          {member.responsibilities || '暂无职责说明'}
+                        </div>
+                      </div>
                     ))}
                   </div>
                   )}
                 </div>
 
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#374151', marginBottom: 12 }}>角色构成</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginBottom: 12 }}>角色构成</div>
                   <div style={{ display: 'grid', gap: 10 }}>
                     {roleStats.map((role) => (
                       <div key={role.name} style={{
                         display: 'flex',
                         justifyContent: 'space-between',
-                        border: '1px solid #e5e7eb',
+                        border: '1px solid var(--aw-border)',
                         borderRadius: 8,
                         padding: 12,
-                        background: '#fff',
+                        background: 'var(--aw-panel)',
                       }}>
                         <span>{role.name}</span>
                         <b>{role.count}</b>
@@ -398,26 +368,26 @@ export function SquadListPage() {
                     ))}
                   </div>
 
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#374151', marginTop: 20, marginBottom: 6 }}>SDLC 流程</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginTop: 20, marginBottom: 6 }}>SDLC 流程</div>
                   <div style={{ display: 'grid', gap: 12 }}>
                     {sdlcGroups.map((group) => (
                       <div key={group.id} style={{
-                        border: '1px solid #e5e7eb',
+                        border: '1px solid var(--aw-border)',
                         borderRadius: 8,
                         padding: 12,
-                        background: '#fff',
+                        background: 'var(--aw-panel)',
                       }}>
-                        <div style={{ fontWeight: 800, color: '#111827' }}>{group.name}</div>
-                        <div style={{ color: '#6b7280', fontSize: 12, marginTop: 3, marginBottom: 10 }}>
+                        <div style={{ fontWeight: 800, color: 'var(--aw-text)' }}>{group.name}</div>
+                        <div style={{ color: 'var(--aw-muted)', fontSize: 12, marginTop: 3, marginBottom: 10 }}>
                           {group.roles.length > 0 ? group.roles.join(' / ') : '暂无角色'}
                         </div>
-                        <div style={{ borderLeft: '3px solid #dbeafe', paddingLeft: 12, display: 'grid', gap: 10 }}>
+                        <div style={{ borderLeft: '3px solid color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))', paddingLeft: 12, display: 'grid', gap: 10 }}>
                           {group.steps.length === 0 ? (
-                            <span style={{ color: '#94a3b8' }}>暂无步骤</span>
+                            <span style={{ color: 'var(--aw-muted)' }}>暂无步骤</span>
                           ) : group.steps.map((step) => (
                             <div key={step.id}>
                               <b>{step.name}</b>
-                              <div style={{ fontSize: 12, color: '#6b7280' }}>{step.handlerRoleRef || step.handlerType || '-'}</div>
+                              <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{step.handlerRoleRef || step.handlerType || '-'}</div>
                             </div>
                           ))}
                         </div>
@@ -425,24 +395,24 @@ export function SquadListPage() {
                     ))}
                   </div>
 
-                  <div style={{ fontSize: 14, fontWeight: 800, color: '#374151', marginTop: 20, marginBottom: 6 }}>关联执行器</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginTop: 20, marginBottom: 6 }}>关联执行器</div>
                   <div style={{ display: 'grid', gap: 8 }}>
                     {detailExecutors.length === 0 ? (
-                      <span style={{ color: '#94a3b8' }}>暂无执行器</span>
+                      <span style={{ color: 'var(--aw-muted)' }}>暂无执行器</span>
                     ) : detailExecutors.map((executor) => (
                       <div key={executor.id} style={{
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
                         gap: 8,
-                        border: '1px solid #e5e7eb',
+                        border: '1px solid var(--aw-border)',
                         borderRadius: 8,
                         padding: '8px 12px',
-                        background: '#fff',
+                        background: 'var(--aw-panel)',
                       }}>
                         <div>
-                          <div style={{ fontWeight: 700, color: '#111827' }}>{executor.name}</div>
-                          <div style={{ fontSize: 12, color: '#6b7280' }}>{executor.agentName || '未知 Agent'}</div>
+                          <div style={{ fontWeight: 700, color: 'var(--aw-text)' }}>{executor.name}</div>
+                          <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{executor.agentName || '未知 Agent'}</div>
                         </div>
                         <Tag color={executor.status === 'ONLINE' ? 'green' : 'default'}>{executor.status}</Tag>
                       </div>
@@ -592,102 +562,15 @@ function buildSdlcGroups(members: SquadMember[]) {
 
 function avatarPalette(index: number) {
   const palettes = [
-    { border: '#38bdf8', background: '#f0f9ff', ring: '#0284c7', body: '#2563eb', text: '#0369a1' },
-    { border: '#86efac', background: '#f0fdf4', ring: '#16a34a', body: '#22c55e', text: '#15803d' },
-    { border: '#fdba74', background: '#fff7ed', ring: '#ea580c', body: '#f97316', text: '#c2410c' },
-    { border: '#fcd34d', background: '#fffbeb', ring: '#d97706', body: '#f59e0b', text: '#b45309' },
-    { border: '#c4b5fd', background: '#f5f3ff', ring: '#7c3aed', body: '#8b5cf6', text: '#6d28d9' },
+    { border: 'color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))', background: 'color-mix(in srgb, var(--aw-info) 10%, var(--aw-panel))', text: 'var(--aw-info)' },
+    { border: 'color-mix(in srgb, var(--aw-success) 30%, var(--aw-border))', background: 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))', text: 'var(--aw-success)' },
+    { border: '#fdba74', background: 'rgba(var(--aw-accent-rgb), .10)', text: 'var(--aw-accent-text)' },
+    { border: '#fcd34d', background: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))', text: 'var(--aw-warning)' },
+    { border: '#c4b5fd', background: 'var(--aw-raised)', text: 'var(--aw-text)' },
   ];
   return palettes[index % palettes.length];
 }
 
-function roleBadge(member: SquadMember) {
-  const code = member.roleCode || member.roleName || 'NA';
-  const parts = code.split(/[_\s-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-  }
-  return code.slice(0, 2).toUpperCase();
-}
-
-function DigitalHeadAvatar({ member, index }: { member: SquadMember; index: number }) {
-  const palette = avatarPalette(index);
-  const skin = ['#f8d8bd', '#f1c8a8', '#ddb18c', '#e7bc98', '#c9936d'][index % 5];
-  return (
-    <div style={{
-      width: 68,
-      height: 68,
-      margin: '0 auto',
-      borderRadius: '50%',
-      background: '#fff',
-      border: `4px solid ${palette.ring}`,
-      position: 'relative',
-      overflow: 'hidden',
-      display: 'grid',
-      placeItems: 'center',
-      boxShadow: '0 8px 18px rgba(15, 23, 42, 0.12)',
-    }}>
-      <div style={{
-        position: 'absolute',
-        top: 11,
-        width: 26,
-        height: 26,
-        borderRadius: '50%',
-        background: skin,
-        zIndex: 2,
-      }} />
-      <div style={{
-        position: 'absolute',
-        top: 8,
-        width: 30,
-        height: 15,
-        borderRadius: '15px 15px 8px 8px',
-        background: '#334155',
-        zIndex: 3,
-      }} />
-      <div style={{
-        position: 'absolute',
-        bottom: 6,
-        width: 46,
-        height: 28,
-        borderRadius: '24px 24px 10px 10px',
-        background: palette.body,
-        zIndex: 1,
-      }} />
-      <div style={{
-        position: 'absolute',
-        right: -3,
-        bottom: 1,
-        background: palette.ring,
-        color: '#fff',
-        borderRadius: 999,
-        fontSize: 10,
-        lineHeight: '16px',
-        minWidth: 22,
-        height: 16,
-        padding: '0 4px',
-        zIndex: 4,
-      }}>
-        {roleBadge(member)}
-      </div>
-    </div>
-  );
-}
-
-function MemberPopover({ member }: { member: SquadMember }) {
-  return (
-    <div style={{ maxWidth: 300 }}>
-      <div style={{ color: '#64748b', marginBottom: 8 }}>{member.roleCode || '-'}</div>
-      <div style={{ marginBottom: 12, lineHeight: 1.6 }}>
-        {member.responsibilities || '暂无职责说明'}
-      </div>
-      <div style={{ fontWeight: 700, marginBottom: 8 }}>{member.sdlcName || '未关联 SDLC'}</div>
-      <Space size={[6, 6]} wrap>
-        {(member.sdlcSteps || []).map((step) => (
-          <Tag key={step.id}>{step.stepOrder} {step.name}</Tag>
-        ))}
-        {(member.sdlcSteps || []).length === 0 && <Tag>暂无步骤</Tag>}
-      </Space>
-    </div>
-  );
+function DigitalHeadAvatar({ member }: { member: SquadMember }) {
+  return <div aria-label={member.agentName} style={{ width: 68, height: 68, margin: '0 auto', borderRadius: '50%', background: 'color-mix(in srgb, var(--aw-accent) 20%, var(--aw-raised))', color: 'var(--aw-accent-text)', fontWeight: 800, fontSize: 22, display: 'grid', placeItems: 'center' }}>{(member.agentName || '?').slice(0, 2)}</div>;
 }

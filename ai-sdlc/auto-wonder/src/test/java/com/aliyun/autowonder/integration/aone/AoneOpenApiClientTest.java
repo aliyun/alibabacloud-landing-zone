@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.integration.aone;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import okhttp3.OkHttpClient;

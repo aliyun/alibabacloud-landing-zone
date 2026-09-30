@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.integration;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.integration.common.ExternalPrincipalDO;
 import com.aliyun.autowonder.integration.common.ExternalPrincipalDao;
 import com.aliyun.autowonder.integration.common.ExternalWorkitemLinkDO;

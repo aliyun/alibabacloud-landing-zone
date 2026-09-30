@@ -82,7 +82,9 @@ describe('ScheduledWorkitemsPanel', () => {
 
     expect(await screen.findByText('定时需求A')).toBeInTheDocument();
     expect(screen.getByText('定时需求B')).toBeInTheDocument();
-    expect(screen.getByText('当前所处阶段')).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === '共 2 个' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
+    expect(screen.getByText('全部')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '当前所处阶段' })).toBeInTheDocument();
     expect(screen.getByText('待触发')).toBeInTheDocument();
     expect(screen.getByText('已完成')).toBeInTheDocument();
     expect(screen.getByText('新建')).toBeInTheDocument();

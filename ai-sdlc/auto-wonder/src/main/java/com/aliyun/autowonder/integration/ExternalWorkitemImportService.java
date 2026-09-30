@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.integration;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.common.error.BizException;

@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Drawer, Input, Space, Switch, Table, Typography } from 'antd';
+import { Alert, Button, Drawer, Input, Space, Switch, Typography } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { ReloadOutlined } from '@ant-design/icons';
 import { aggregateRuntimeMessages, type RuntimeLogRow } from './runtimeLogMessages';
 import { getRuntimeLog } from '../api';
 import type { RuntimeTraceEvent } from '@/shared/types/workitem';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 
 export function RuntimeLogDrawer({ dispatchId, onClose }: { dispatchId: number; onClose: () => void }) {
   const [events, setEvents] = useState<RuntimeTraceEvent[]>([]);
+  const [pageSize, setPageSize] = usePageSizePreference('autowonder.runtimeLog.pageSize', [10, 20, 50, 100], 10);
   const [aggregate, setAggregate] = useState(true);
   const [auto, setAuto] = useState(true);
   const [query, setQuery] = useState('');
@@ -59,12 +62,12 @@ export function RuntimeLogDrawer({ dispatchId, onClose }: { dispatchId: number; 
     {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}
     <Table dataSource={[...filtered].reverse()} loading={loading && !events.length} size="small"
       rowKey={event => event.eventId ?? `${event.seq}-${event.eventType}`}
-      pagination={{ defaultPageSize: 50, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: total => `共 ${total} 条` }}
+      pagination={{ pageSize, showSizeChanger: true, pageSizeOptions: [20, 50, 100], onChange: (_p, ps) => setPageSize(ps), showTotal: total => `共 ${total} 条` }}
       columns={[
         { title: '序号', width: 110, render: (_, event) => event.fragments && event.fragments.length > 1 ? `${event.seq}–${event.endSeq}` : event.seq },
         { title: '时间', dataIndex: 'eventTime', width: 190, render: (value: string) => value ? new Date(value).toLocaleString() : '—' },
         { title: '事件', dataIndex: 'eventType', width: 190 },
-        { title: '内容', render: (_, event) => <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 100, overflow: 'auto' }}>{event.messageText ?? String(event.detail.outputSummary || event.detail.inputSummary || event.detail.contentSummary || event.detail.message || event.eventType)}</div> },
+        { title: '内容', align: 'left', render: (_, event) => <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 100, overflow: 'auto' }}>{event.messageText ?? String(event.detail.outputSummary || event.detail.inputSummary || event.detail.contentSummary || event.detail.message || event.eventType)}</div> },
       ]}
       expandable={{ expandedRowRender: event => <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '55vh', overflow: 'auto' }}>{JSON.stringify(event.fragments && event.fragments.length > 1 ? { message: event.messageText, fragmentCount: event.fragments.length, events: event.fragments } : event.detail, null, 2)}</pre> }} />
   </Drawer>;

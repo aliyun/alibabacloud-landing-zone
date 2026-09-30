@@ -13,15 +13,23 @@ import com.aliyun.autowonder.user.dto.LoginRequest;
 import com.aliyun.autowonder.user.dto.LoginResponse;
 import com.aliyun.autowonder.user.dto.LogoutRequest;
 import com.aliyun.autowonder.user.dto.RegisterRequest;
+import com.aliyun.autowonder.user.dto.UpdateProfileRequest;
 import com.aliyun.autowonder.user.dto.UserVO;
+import com.aliyun.autowonder.user.dto.UserProfileVO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 public class UserService {
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$");
+    private static final Pattern PHONE_PATTERN = Pattern.compile("^\\+?[0-9][0-9 -]*$");
+
     private final UserDao userDao;
     private final JwtService jwtService;
     private final SessionService sessionService;
@@ -136,6 +144,72 @@ public class UserService {
             throw new BizException(ErrorCode.UNAUTHORIZED, "旧密码不正确");
         }
         userDao.updatePasswordHash(userId, PasswordEncoderUtil.encode(req.getNewPassword()));
+    }
+
+    public UserProfileVO getProfile(Long userId) {
+        UserDO user = userDao.findById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        return toProfileVO(user);
+    }
+
+    public UserProfileVO updateProfile(Long userId, UpdateProfileRequest req) {
+        if (req == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请求不能为空");
+        }
+        String nickname = trimToNull(req.getNickname());
+        if (nickname == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "昵称不能为空");
+        }
+        if (nickname.length() > 64) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "昵称最多 64 个字符");
+        }
+        String email = trimToNull(req.getEmail());
+        if (email != null) {
+            if (email.length() > 128) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "邮箱最多 128 个字符");
+            }
+            if (!EMAIL_PATTERN.matcher(email).matches()) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "邮箱格式不正确");
+            }
+        }
+        String phone = trimToNull(req.getPhone());
+        if (phone != null) {
+            if (phone.length() > 32) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "联系方式最多 32 个字符");
+            }
+            if (!PHONE_PATTERN.matcher(phone).matches()) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "联系方式仅支持数字、空格、连字符，可带国际区号前缀 +");
+            }
+        }
+        if (userDao.findById(userId) == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        try {
+            userDao.updateProfile(userId, nickname, email, phone);
+        } catch (DuplicateKeyException e) {
+            throw new BizException(ErrorCode.CONFLICT, "邮箱已被使用");
+        }
+        return getProfile(userId);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private UserProfileVO toProfileVO(UserDO user) {
+        UserProfileVO vo = new UserProfileVO();
+        vo.setId(user.getId());
+        vo.setUsername(user.getUsername());
+        vo.setNickname(user.getNickname());
+        vo.setEmail(user.getEmail());
+        vo.setPhone(user.getPhone());
+        return vo;
     }
 
     private UserVO toVO(UserDO user) {

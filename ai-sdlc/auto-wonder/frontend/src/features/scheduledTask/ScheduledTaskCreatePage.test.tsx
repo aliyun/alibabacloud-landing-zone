@@ -43,7 +43,7 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, container: HTM
   await user.type(screen.getByLabelText('任务指令'), '每天对主干进行回归并汇总结果。');
   await user.click(screen.getByLabelText('小队'));
   await user.click(await screen.findByText('研发小队'));
-  await user.click(screen.getByLabelText('首个数字人'));
+  await user.click(screen.getByLabelText('首个数字员工'));
   await user.click(await screen.findByText('回归工程师'));
   await user.click(screen.getByText('每天'));
   if (!documentName) return;
@@ -91,12 +91,13 @@ describe('ScheduledTaskCreatePage', () => {
     );
 
     renderPage();
+    expect(screen.getByRole('button', { name: '返回定时任务列表' })).toBeInTheDocument();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('任务名称'), '主干夜间回归');
     await user.type(screen.getByLabelText('任务指令'), '每天对主干进行回归并汇总结果。');
     await user.click(screen.getByLabelText('小队'));
     await user.click(await screen.findByText('研发小队'));
-    await user.click(screen.getByLabelText('首个数字人'));
+    await user.click(screen.getByLabelText('首个数字员工'));
     await user.click(await screen.findByText('回归工程师'));
     await user.click(screen.getByText('每天'));
     await user.click(screen.getByRole('button', { name: '创建并启用' }));

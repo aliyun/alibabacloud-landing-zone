@@ -1,0 +1,3 @@
+html .execution-detail-descriptions.ant-descriptions-bordered > .ant-descriptions-view > table {
+  table-layout: fixed;
+}

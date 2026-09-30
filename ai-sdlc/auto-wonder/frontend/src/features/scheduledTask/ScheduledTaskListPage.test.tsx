@@ -83,8 +83,33 @@ describe('ScheduledTaskListPage', () => {
     expect(screen.getByText('启用中')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '立即运行' })).toBeInTheDocument();
     expect(await screen.findByText('成功')).toBeInTheDocument();
-    expect(screen.getByText(/共 41 个/)).toBeInTheDocument();
-    expect(await screen.findByText(/运行中 2/)).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === '共 41 个' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element?.textContent === '运行中 2' && !Array.from(element.children).some(child => child.textContent === element.textContent))).toBeInTheDocument();
+  });
+
+  it('filters by the current creator on the server and resets pagination', async () => {
+    const user = userEvent.setup();
+    useAuthStore.setState({ user: { id: 42, username: 'tester', nickname: 'Tester', email: 'tester@example.com' } });
+    const requests: URLSearchParams[] = [];
+    server.use(...readHandlers());
+    server.use(http.get('/api/scheduled-tasks', ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      requests.push(params);
+      return HttpResponse.json({ success: true, code: '0', data: {
+        list: [TASK], total: params.has('creatorId') ? 1 : 41,
+      } });
+    }));
+    renderList('READ_WRITE');
+    await screen.findByText((_, element) => element?.textContent === '共 41 个' && !Array.from(element.children).some(child => child.textContent === element.textContent));
+    await user.click(screen.getByTitle('2'));
+    await waitFor(() => expect(requests.at(-1)?.get('offset')).toBe('10'));
+    await user.click(screen.getByText('我创建的'));
+    await screen.findByText((_, element) => element?.textContent === '共 1 个' && !Array.from(element.children).some(child => child.textContent === element.textContent));
+    expect(requests.at(-1)?.get('creatorId')).toBe('42');
+    expect(requests.at(-1)?.get('offset')).toBe('0');
+    await user.click(screen.getByText('全部'));
+    await screen.findByText((_, element) => element?.textContent === '共 41 个' && !Array.from(element.children).some(child => child.textContent === element.textContent));
+    await waitFor(() => expect(requests.at(-1)?.has('creatorId')).toBe(false));
   });
 
   it('deletes a task after confirmation and sends the optimistic version', async () => {

@@ -474,6 +474,28 @@ esac
         combined = state.__str__() + summary.read_text()
         self.assertNotIn("must-not-persist", combined)
 
+    def test_v075_review_checkpoint_never_advertises_application_rollback(self):
+        self.create_deployment()
+        located = self.locate()
+        self.assertEqual(0, located.returncode, located.stderr)
+        manifest = Path(json.loads(located.stdout)["manifest"])
+        data = json.loads(manifest.read_text())
+        data["status"] = "awaiting-review"
+        data["upgrade"] = {
+            "databaseMutationStarted": True,
+            "databaseMigration": {"status": "awaiting-review", "applied": []},
+            "rollbackBackup": {"status": "passed"},
+        }
+        manifest.write_text(json.dumps(data))
+        result = self.run_cli("sync-manifest", "--project-root", str(self.project),
+                              "--manifest", str(manifest), "--operation", "database-migrate")
+        self.assertEqual(0, result.returncode, result.stderr)
+        state = json.loads((manifest.parent / "upgrade-state.json").read_text())
+        self.assertEqual("awaiting-review", state["migrationStatus"])
+        self.assertFalse(state["rollbackBoundary"]["applicationRollbackAvailable"])
+        summary = json.loads((manifest.parent / "runs" / state["latestRunId"] / "summary.json").read_text())
+        self.assertFalse(summary["rollbackBoundary"]["applicationRollbackAvailable"])
+
 
 if __name__ == "__main__":
     unittest.main()

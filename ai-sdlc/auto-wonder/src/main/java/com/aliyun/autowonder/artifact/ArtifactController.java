@@ -112,9 +112,28 @@ public class ArtifactController {
                 return MediaType.valueOf("application/x-ndjson;charset=UTF-8");
             case "csv":
                 return MediaType.valueOf("text/csv;charset=UTF-8");
+            case "tsv":
+            case "yaml":
+            case "yml":
+            case "xml":
+            case "java":
+            case "py":
+            case "js":
+            case "jsx":
+            case "ts":
+            case "tsx":
+            case "css":
+            case "sh":
+            case "sql":
+            case "tf":
+            case "toml":
+            case "go":
+            case "rs":
             case "txt":
             case "log":
                 return MediaType.TEXT_PLAIN;
+            case "pdf":
+                return MediaType.APPLICATION_PDF;
             case "png":
                 return MediaType.IMAGE_PNG;
             case "jpg":

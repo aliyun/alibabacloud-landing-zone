@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.integration.receipt;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.integration.AoneIntegrationService;
 import com.aliyun.autowonder.integration.aone.AoneOpenApiConfig;
 import com.aliyun.autowonder.integration.common.ExternalCommentLinkDO;

@@ -1,3 +1,5 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { Card, Form, Input, Select, Button, message } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { useCreateWorkitem } from './hooks';
@@ -34,7 +36,7 @@ export function WorkitemCreatePage() {
   };
 
   return (
-    <Card title="新建工单" style={{ maxWidth: 720, margin: '0 auto' }}>
+    <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/workitems" label="返回工单列表" /><span>新建工单</span></span>} />}>
       <Form form={form} layout="vertical" onFinish={handleSubmit} initialValues={{ workType: 'REQ', priority: 2 }}>
         <Form.Item name="workType" label="类型" rules={[{ required: true }]}>
           <Select

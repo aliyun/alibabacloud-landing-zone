@@ -1,0 +1,15 @@
+.insight-kpi-container { container-type: inline-size; }
+.insight-kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@container (min-width: 760px) {
+  .insight-kpi-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .insight-kpi:nth-child(n+7) { grid-column: span 2; }
+}
+@container (min-width: 1120px) {
+  .insight-kpi-grid { grid-template-columns: repeat(9, minmax(0, 1fr)); }
+  .insight-kpi:nth-child(n+7) { grid-column: auto; }
+}
+.insight-kpi { text-align: center; min-width: 0; padding: 16px; border: 1px solid var(--aw-border); border-radius: 12px; background: var(--aw-panel); color: var(--aw-text); }
+.insight-kpi[role="button"]:hover { background: var(--aw-raised); }
+.insight-kpi[role="button"]:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; }
+.insight-kpi-label { font-size: 12px; line-height: 1.5; color: var(--aw-muted); margin-bottom: 8px; }
+.insight-kpi-value { color: var(--aw-accent-text); font-size: clamp(18px, 1.65vw, 24px); font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; white-space: nowrap; }

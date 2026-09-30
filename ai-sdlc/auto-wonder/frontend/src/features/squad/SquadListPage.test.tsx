@@ -166,7 +166,7 @@ describe('SquadListPage', () => {
     expect(await screen.findByText('Team Alpha')).toBeInTheDocument();
     await user.click(screen.getByText('详情'));
 
-    expect(await screen.findByText('数字人阵容')).toBeInTheDocument();
+    expect(await screen.findByText('数字员工阵容')).toBeInTheDocument();
     expect(screen.getByText('前端 Alpha')).toBeInTheDocument();
     expect(screen.getAllByText('前端开发工程师').length).toBeGreaterThan(0);
     expect(screen.getByText('负责页面实现、组件拆分、接口联调')).toBeInTheDocument();
@@ -325,17 +325,18 @@ describe('SquadListPage', () => {
       })),
     );
 
-    renderPageAt('/squads?squadId=1');
+    renderPageAt('/agents?tab=squads&squadId=1');
 
     // Squad tags on the agent / SDLC / executor pages link here; no click is involved.
     expect(await screen.findByText('dev-machine-01')).toBeInTheDocument();
     expect(screen.getByText('关联执行器')).toBeInTheDocument();
     // Consumed once matched, otherwise closing the modal would immediately reopen it.
-    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('(empty)'));
+    // Only squadId is consumed; the hub keeps its tab param so the pane stays put.
+    await waitFor(() => expect(screen.getByTestId('location-search')).not.toHaveTextContent('squadId'));
+    expect(screen.getByTestId('location-search')).toHaveTextContent('tab=squads');
   });
 
   it('resolves a ?squadId= deep link whose squad sits beyond the first page', async () => {
-    const user = userEvent.setup();
     const detailCalls: string[] = [];
     const firstPage = Array.from({ length: 20 }, (_, index) => ({
       id: index + 1, name: `小队 ${index + 1}`, description: '', memberCount: 0, gmtCreate: '2026-07-01',
@@ -371,19 +372,17 @@ describe('SquadListPage', () => {
       })),
     );
 
-    renderPageAt('/squads?squadId=25');
+    renderPageAt('/agents?tab=squads&squadId=25');
 
     // 第 1 页的 20 行里没有 id=25，只能按 id 直取详情；旧实现在这里静默什么都不做。
     expect(await screen.findByText('paged-executor')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('(empty)'));
-    const callsAfterResolve = detailCalls.length;
-    expect(callsAfterResolve).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByTestId('location-search')).not.toHaveTextContent('squadId'));
+    expect(detailCalls.length).toBeGreaterThan(0);
 
-    // 参数已消费：翻页不得重新解析深链，也不得把参数写回 URL。
-    await user.click(screen.getByTitle('2'));
+    // 分页已移除：所有小队一次拉全，第 2 页的行直接可见，参数也不会写回 URL。
     expect(await screen.findByText('小队 21')).toBeInTheDocument();
-    expect(detailCalls).toHaveLength(callsAfterResolve);
-    expect(screen.getByTestId('location-search')).toHaveTextContent('(empty)');
+    expect(screen.getByTestId('location-search')).toHaveTextContent('tab=squads');
+    expect(screen.getByTestId('location-search')).not.toHaveTextContent('squadId');
   });
 
   it('warns instead of failing silently when a deep-linked squad cannot be resolved', async () => {
@@ -403,12 +402,12 @@ describe('SquadListPage', () => {
       })),
     );
 
-    renderPageAt('/squads?squadId=999');
+    renderPageAt('/agents?tab=squads&squadId=999');
 
     // 深链失败不得阻塞列表页，也不得静默：给出可见提示，且参数照样被消费。
     expect(await screen.findByText('Team Alpha')).toBeInTheDocument();
     await waitFor(() => expect(warning).toHaveBeenCalledWith('小队 #999 不存在或当前账号无权访问'));
-    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('(empty)'));
+    await waitFor(() => expect(screen.getByTestId('location-search')).not.toHaveTextContent('squadId'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 

@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.dispatch;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 
 public final class StepOutcome {
 

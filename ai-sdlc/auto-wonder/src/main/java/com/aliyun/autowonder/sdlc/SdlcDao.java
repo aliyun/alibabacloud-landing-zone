@@ -15,6 +15,8 @@ public interface SdlcDao {
                       @Param("tenantId") Long tenantId,
                       @Param("squadIds") Collection<Long> squadIds,
                       @Param("offset") int offset, @Param("limit") int limit);
+    long count(@Param("workType") String workType, @Param("status") String status,
+               @Param("tenantId") Long tenantId, @Param("squadIds") Collection<Long> squadIds);
     int update(@Param("id") Long id, @Param("tenantId") Long tenantId,
                @Param("name") String name, @Param("description") String description,
                @Param("workType") String workType, @Param("version") Integer version,

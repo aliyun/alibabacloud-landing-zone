@@ -663,6 +663,7 @@ class DispatchServiceRunPendingTest {
                 eq(410L), eq(9L), isNull(), isNull(), isNull(), anyInt(), anyLong());
         verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.DISPATCHED),
                 any(), eq(9L), eq("oss://b/500.zip"), isNull(), isNull(), anyInt(), anyLong());
+        verify(sdlcDriver).onDeliveryStart(TENANT, 200L);
         verify(transport).dispatch(eq(d), eq(pkg));
         verify(redisManager).releaseLock(eq("dispatch:agent-capacity:400"), anyString());
         verify(redisManager).releaseLock(eq("dispatch:lock:500"), anyString());
@@ -911,6 +912,7 @@ class DispatchServiceRunPendingTest {
 
         verify(agentVersionDao).findById(401L);
         verify(agentVersionDao, never()).findById(410L);
+        verify(sdlcDriver, never()).onDeliveryStart(anyLong(), anyLong());
         verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.PACKAGING),
                 eq(401L), eq(9L), isNull(), isNull(), isNull(), anyInt(), anyLong());
     }

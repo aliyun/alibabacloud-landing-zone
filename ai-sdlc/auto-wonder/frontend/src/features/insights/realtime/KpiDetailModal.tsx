@@ -1,4 +1,4 @@
-import { Empty, List, Modal, Spin } from 'antd';
+import { Alert, Button, Empty, List, Modal, Spin } from 'antd';
 import type { KpiKey } from './KpiRow';
 import type { CompletedWorkitem, RunningTask } from './api';
 import { useRunningAll, useTodayCompleted, useWeekCompleted } from './hooks';
@@ -20,6 +20,7 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
   const completedWeek = useWeekCompleted(kpiKey === 'weekCompletedTasks');
   const running = useRunningAll(kpiKey === 'runningDispatches');
 
+  const query = kpiKey === 'runningDispatches' ? running : kpiKey === 'todayCompletedTasks' ? completedToday : completedWeek;
   const isLoading =
     (kpiKey === 'todayCompletedTasks' && completedToday.isLoading) ||
     (kpiKey === 'weekCompletedTasks' && completedWeek.isLoading) ||
@@ -42,9 +43,10 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
       onCancel={onClose}
       footer={null}
       width={560}
-      destroyOnClose
+      destroyOnHidden
+      styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
     >
-      {isLoading ? (
+      {query.isError ? <Alert type="error" showIcon message="工单加载失败" action={<Button onClick={() => { void query.refetch(); }}>重试</Button>} /> : isLoading ? (
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
           <Spin />
         </div>
@@ -55,12 +57,12 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
           <List
             dataSource={runningList}
             renderItem={(item) => (
-              <List.Item>
-                <a href={`/workitems/${item.workitemId}`} style={{ fontWeight: 500 }}>
+              <List.Item className="insight-detail-row">
+                <a href={`/workitems/${item.workitemId}`} style={{ fontWeight: 500, overflowWrap: 'anywhere', minWidth: 0 }}>
                   #{item.workitemId} {item.workitemTitle ?? ''}
                 </a>
-                <span style={{ marginLeft: 'auto', color: '#999', fontSize: 12 }}>
-                  {item.agentName} · {item.runningMinutes} 分钟
+                <span style={{ marginLeft: 'auto', color: 'var(--aw-muted)', fontSize: 12 }}>
+                  {item.agentName} · <span className="insight-realtime-metric">{item.runningMinutes} 分钟</span>
                 </span>
               </List.Item>
             )}
@@ -72,8 +74,8 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
         <List
           dataSource={completedList}
           renderItem={(item) => (
-            <List.Item>
-              <a href={`/workitems/${item.workitemId}`} style={{ fontWeight: 500 }}>
+            <List.Item className="insight-detail-row">
+              <a href={`/workitems/${item.workitemId}`} style={{ fontWeight: 500, overflowWrap: 'anywhere', minWidth: 0 }}>
                 #{item.workitemId} {item.title}
               </a>
             </List.Item>

@@ -11,7 +11,7 @@ import { useAuthStore } from '@/shared/auth/store';
 
 const mockWorkitem = {
   id: '1', workType: 'REQ', title: '跨境支付重构', contentMd: '# 背景\n重构支付',
-  templateId: '1', statusNodeId: '1', statusName: '开发中', sdlcId: '10',
+  templateId: '1', statusNodeId: '1', statusName: '开发中', statusCategory: 'IN_PROGRESS', sdlcId: '10',
   sdlcName: '标准流程', assigneeType: 'AGENT', assigneeRef: '100',
   assigneeName: 'Coder-01', priority: 1, version: 3,
   gmtCreate: '2026-07-01T10:00:00Z', gmtModified: '2026-07-09T12:00:00Z',
@@ -228,6 +228,7 @@ describe('WorkitemDetailPage', () => {
         data: {
           ...mockWorkitem,
           assigneeType: 'HUMAN', assigneeRef: '10000', assigneeName: 'caihe', assigneeDisplayName: '蔡何',
+          statusCategory: 'PENDING_DECISION',
         },
       })),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
@@ -253,7 +254,7 @@ describe('WorkitemDetailPage', () => {
         data: {
           ...mockWorkitem,
           assigneeType: 'HUMAN', assigneeRef: '10000', assigneeName: 'caihe', assigneeDisplayName: '蔡何',
-          statusName: '已完成',
+          statusName: '已完成', statusCategory: 'DONE',
         },
       })),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
@@ -271,7 +272,7 @@ describe('WorkitemDetailPage', () => {
         data: {
           ...mockWorkitem,
           assigneeType: 'HUMAN', assigneeRef: '10000', assigneeName: 'caihe', assigneeDisplayName: '蔡何',
-          statusName: '已取消',
+          statusName: '已取消', statusCategory: 'CANCELED',
         },
       })),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
@@ -286,7 +287,7 @@ describe('WorkitemDetailPage', () => {
     server.use(
       http.get('/api/workitems/1', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
-        data: { ...mockWorkitem, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null },
+        data: { ...mockWorkitem, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, statusCategory: 'PENDING_DECISION' },
       })),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
     );
@@ -637,13 +638,11 @@ describe('WorkitemDetailPage', () => {
     renderPage();
 
     expect(await screen.findByText('@Coder-01')).toHaveStyle({
-      color: '#0958d9',
-      background: '#e6f4ff',
       fontWeight: '600',
     });
   });
 
-  it('shows one live thinking status below an mentioned worker comment', async () => {
+  it('shows one activity card while waiting for the mentioned worker', async () => {
     server.use(
       http.get('/api/workitems/1/unified-timeline', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
@@ -660,7 +659,7 @@ describe('WorkitemDetailPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('开发环境DBA运维 正在思考…')).toBeInTheDocument();
+    expect(await screen.findByText('等待执行器上报活动')).toBeInTheDocument();
     expect(screen.getAllByTestId('comment-interaction-status')).toHaveLength(1);
   });
 
@@ -748,8 +747,8 @@ describe('WorkitemDetailPage', () => {
     server.use(...setupHandlers());
     renderPage();
 
-    expect(await screen.findByTestId('workitem-content-section')).toHaveStyle('border: 1px solid #e5e7eb');
-    expect(screen.getByTestId('workitem-timeline-section')).toHaveStyle('border: 1px solid #e5e7eb');
+    expect(await screen.findByTestId('workitem-content-section')).toHaveStyle('border-radius: 8px');
+    expect(screen.getByTestId('workitem-timeline-section')).toHaveStyle('border-radius: 8px');
     expect(screen.getByTestId('workitem-right-panel')).toHaveStyle('width: clamp(340px, 28vw, 420px)');
   });
 
@@ -791,7 +790,7 @@ describe('WorkitemDetailPage', () => {
     expect(panel.style.width).toBe('320px');
     firePointer('pointerup', handle, { clientX: 1200, clientY: 200 });
 
-    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    await userEvent.click(screen.getByRole('button', { name: '返回' }));
     // 返回进度同样经 Router 的异步导航提交，等待父级布局与手柄一起更新。
     await waitFor(() => {
       expect(screen.queryByTestId('resize-handle-horizontal')).not.toBeInTheDocument();
@@ -812,7 +811,9 @@ describe('WorkitemDetailPage', () => {
     server.use(...setupHandlers());
     renderPage();
 
-    expect((await screen.findByText(/优先级:/)).parentElement).toHaveStyle('margin-top: 14px');
+    // 副标题元信息区间距已迁到 crystal.css 的 .aw-workitem-meta（margin-top: 12px），
+    // vitest 不加载 CSS 文件（css 未开启），改为断言类名装配；评论区间距仍是内联样式可直接断言。
+    expect((await screen.findByText(/优先级:/)).parentElement).toHaveClass('aw-workitem-meta');
     expect(screen.getByTestId('workitem-comment-input')).toHaveStyle('margin-top: 14px');
   });
 
@@ -843,8 +844,6 @@ describe('WorkitemDetailPage', () => {
     const option = await screen.findByRole('menuitem', { name: /Coder-01/ });
 
     expect(within(option).getByText('@Coder-01')).toHaveStyle({
-      color: '#0958d9',
-      background: '#e6f4ff',
       padding: '0px 4px',
       fontWeight: '600',
     });
@@ -1121,8 +1120,6 @@ describe('WorkitemDetailPage', () => {
     expect(sendButton).toHaveStyle({
       alignSelf: 'stretch',
       height: 'auto',
-      background: '#fff7ed',
-      color: '#c2410c',
     });
     expect(sendButton).not.toHaveStyle({
       minHeight: '86px',
@@ -1133,9 +1130,9 @@ describe('WorkitemDetailPage', () => {
     server.use(...setupHandlers());
     renderPage();
 
-    expect(await screen.findByTestId('workitem-action-bar')).toHaveStyle({
-      padding: '12px 0',
-    });
+    // 对齐间距在 crystal.css 的 .aw-workitem-actions（padding: 12px 0）上，组件只负责挂类名；
+    // vitest 不加载 CSS 文件（css 未开启），这里改为断言类名装配。
+    expect(await screen.findByTestId('workitem-action-bar')).toHaveClass('aw-workitem-actions');
   });
 
   it('edits and saves the workitem title and markdown content', async () => {
@@ -1183,7 +1180,7 @@ describe('WorkitemDetailPage', () => {
         requestedBody = await request.json() as Record<string, unknown>;
         return HttpResponse.json({
           success: true, code: '0', message: '', traceId: null,
-          data: { ...mockWorkitem, statusNodeId: '2', statusName: '验证中', version: 4 },
+          data: { ...mockWorkitem, statusNodeId: '2', statusName: '验证中', statusCategory: 'IN_PROGRESS', version: 4 },
         });
       }),
     );
@@ -1191,9 +1188,28 @@ describe('WorkitemDetailPage', () => {
     renderPage();
 
     await userEvent.click(await screen.findByRole('button', { name: /流转状态/ }));
-    await userEvent.click(await screen.findByRole('button', { name: /提交验证/ }));
+    await userEvent.click(await screen.findByRole('button', { name: '流转到验证中' }));
 
     expect(requestedBody).toEqual({ toNodeId: 2 });
+  });
+
+  it('surfaces the out-of-template transition warning from the server', async () => {
+    server.use(
+      ...setupHandlers(),
+      http.post('/api/workitems/1/transition', () => {
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { ...mockWorkitem, statusNodeId: '2', statusName: '验证中', statusCategory: 'IN_PROGRESS', version: 4, transitionWarning: '该流转不在模板推荐范围内' },
+        });
+      }),
+    );
+
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: /流转状态/ }));
+    await userEvent.click(await screen.findByRole('button', { name: '流转到验证中' }));
+
+    expect(await screen.findByText('该流转不在模板推荐范围内')).toBeInTheDocument();
   });
 
   it('syncs the current workitem from Aone on demand', async () => {
@@ -1329,8 +1345,6 @@ describe('WorkitemDetailPage', () => {
 
     await waitFor(() => expect(participantsCallCount).toBeGreaterThanOrEqual(2));
     expect(await screen.findByText('@李四')).toHaveStyle({
-      color: '#0958d9',
-      background: '#e6f4ff',
       fontWeight: '600',
     });
   });
@@ -1437,7 +1451,7 @@ describe('WorkitemDetailPage', () => {
     expect(await screen.findByText('补充风控口径')).toBeInTheDocument();
   });
 
-  it('renders CommentInput outside the scrollable area in a sticky bottom container', async () => {
+  it('keeps scroll controls inside the content region above the sticky comment composer', async () => {
     server.use(...setupHandlers());
     renderPage();
 
@@ -1448,8 +1462,12 @@ describe('WorkitemDetailPage', () => {
     expect(stickyBar.contains(commentInput)).toBe(true);
 
     const scrollArea = screen.getByTestId('workitem-left-scroll');
-    expect(scrollArea.contains(commentInput)).toBe(false);
-    expect(scrollArea).toHaveStyle({ overflowY: 'auto' });
+    const scrollRegion = screen.getByTestId('workitem-scroll-region');
+    expect(scrollRegion).toHaveStyle({ position: 'relative', flex: '1', minHeight: '0', overflow: 'hidden' });
+    expect(scrollRegion.contains(scrollArea)).toBe(true);
+    expect(scrollRegion.contains(commentInput)).toBe(false);
+    expect(stickyBar.previousElementSibling).toBe(scrollRegion);
+    expect(scrollArea).toHaveStyle({ overflowY: 'auto', paddingRight: '38px' });
   });
 
   it('uses parent-relative height on root container to prevent viewport clipping', async () => {
@@ -1627,7 +1645,7 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     const box = await screen.findByTestId('clarify-resize-box');
     expect(box).toHaveStyle('position: fixed');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    await userEvent.click(screen.getByRole('button', { name: '返回' }));
 
     await waitFor(() => expect(currentSearch()).toBe(''));
     expect(screen.getByRole('button', { name: /AI 需求澄清/ })).toBeInTheDocument();
@@ -1733,7 +1751,7 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     // 会话正文只在恢复落定后才可能渲染（选人屏是早返回），所以它就是落定的信号
     expect(await screen.findByText('刷新前的澄清结论')).toBeInTheDocument();
     expect(screen.queryByTestId('clarification-selection-column')).toBeNull();
-    expect(screen.queryByText('选择数字人')).toBeNull();
+    expect(screen.queryByText('选择数字员工')).toBeNull();
 
     // 恢复源没被自己的写回抹掉：URL 仍是同一个工单的同一条澄清会话
     expect(currentSearch()).toContain('agent=2');
@@ -1833,6 +1851,13 @@ describe('WorkitemDetailPage start-delivery clarify reminder (工单 53315 / 548
     return screen.getByRole('checkbox', REMEMBER_CHECKBOX);
   }
 
+  /** 详情页常驻两个 forceRender 的隐藏产物预览弹窗，全局取第一个 .ant-modal-close 会点错弹窗；
+   *  以引导弹窗标题为锚点，只在它所属的 .ant-modal 里找关闭按钮。 */
+  function reminderCloseIcon(): Element | null {
+    const reminderModal = screen.getByText('建议先完成需求澄清').closest('.ant-modal');
+    return reminderModal?.querySelector('.ant-modal-close') ?? null;
+  }
+
   /** 关掉启动交付弹窗，好用例能再点一次「启动交付」验证同一次会话内引导是否已被抑制。 */
   async function closeDeliveryModal() {
     await userEvent.click(screen.getByRole('button', { name: CANCEL_BUTTON }));
@@ -1885,10 +1910,10 @@ describe('WorkitemDetailPage start-delivery clarify reminder (工单 53315 / 548
   });
 
   it('only dismisses itself through the close icon', async () => {
-    const { baseElement } = renderReminderPage();
+    renderReminderPage();
     await openReminder();
 
-    const closeIcon = baseElement.querySelector('.ant-modal-close');
+    const closeIcon = reminderCloseIcon();
     expect(closeIcon).not.toBeNull();
     await userEvent.click(closeIcon as Element);
 
@@ -1994,11 +2019,11 @@ describe('WorkitemDetailPage start-delivery clarify reminder (工单 53315 / 548
   });
 
   it('does not persist the opt-out when dismissed through the close icon', async () => {
-    const { baseElement } = renderReminderPage();
+    renderReminderPage();
     await openReminder();
 
     await userEvent.click(rememberCheckbox());
-    const closeIcon = baseElement.querySelector('.ant-modal-close');
+    const closeIcon = reminderCloseIcon();
     expect(closeIcon).not.toBeNull();
     await userEvent.click(closeIcon as Element);
 
@@ -2029,7 +2054,7 @@ describe('WorkitemDetailPage 关注入口装配', () => {
 
     const toggle = await screen.findByTestId('workitem-watch-toggle');
     expect(toggle).toHaveAccessibleName('取消关注工单');
-    expect(toggle).toHaveTextContent('已关注');
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('点击未关注工单的操作栏入口发起 POST /watch', async () => {

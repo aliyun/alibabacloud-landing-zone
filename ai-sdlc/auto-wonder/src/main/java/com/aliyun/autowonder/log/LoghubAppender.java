@@ -32,8 +32,6 @@ import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.format.DateTimeFormat;
 import org.joda.time.format.DateTimeFormatter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 @Plugin(name = "RoagLoghub", category = "Core", elementType = "appender", printObject = true)
@@ -42,8 +40,6 @@ public class LoghubAppender extends AbstractAppender {
     private static final String DEFAULT_TIME_FORMAT = "yyyy-MM-dd'T'HH:mm:ss,SSSZ";
 
     private static final String DEFAULT_TIME_ZONE = "UTC";
-
-    private static final Logger logger = LoggerFactory.getLogger(LoghubAppender.class);
 
     protected String project;
     protected String logStore;
@@ -132,12 +128,13 @@ public class LoghubAppender extends AbstractAppender {
     }
 
     @Override
-    public void start() {
+    public synchronized void start() {
+        // Log4j lifecycle is ready before optional public SLS activation; console/file retain bootstrap logs.
+        super.start();
         if(started.get()) {
             return;
         }
 
-        super.start();
         if (!enabled) {
             started.set(true);
             return;
@@ -156,7 +153,7 @@ public class LoghubAppender extends AbstractAppender {
         producer.putProjectConfig(new ProjectConfig(project, endpoint, ak, sk));
 
         started.set(true);
-        logger.info("sls credential is ready. Remote LogHub init finished!");
+        LOGGER.info("sls credential is ready. Remote LogHub init finished!");
     }
 
 

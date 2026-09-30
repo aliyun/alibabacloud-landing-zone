@@ -39,8 +39,8 @@ export function WatcherList({ workitemId }: WatcherListProps) {
                 gap: 10,
                 padding: '8px',
                 borderRadius: 10,
-                background: '#fff',
-                border: '1px solid #f0f0f0',
+                background: 'var(--aw-panel)',
+                border: '1px solid var(--aw-border)',
               }}
             >
               <Avatar
@@ -48,9 +48,9 @@ export function WatcherList({ workitemId }: WatcherListProps) {
                 size={32}
                 icon={<EyeOutlined />}
                 style={{
-                  backgroundColor: '#fff7e6',
-                  color: '#fa8c16',
-                  border: '1px solid #ffd591',
+                  backgroundColor: 'color-mix(in srgb, var(--aw-warning) 10%, var(--aw-panel))',
+                  color: 'var(--aw-warning)',
+                  border: '1px solid color-mix(in srgb, var(--aw-warning) 35%, var(--aw-border))',
                   flexShrink: 0,
                 }}
               />

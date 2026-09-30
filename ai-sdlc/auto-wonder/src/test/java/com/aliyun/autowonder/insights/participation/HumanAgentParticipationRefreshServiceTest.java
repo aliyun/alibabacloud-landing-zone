@@ -100,7 +100,7 @@ class HumanAgentParticipationRefreshServiceTest {
         verify(redis).tryAcquireLock(eq("autowonder:insights:human-agent:refresh-lock:10002"),
                 anyString(), eq(3600000L));
         verify(redis).releaseLock(eq("autowonder:insights:human-agent:refresh-lock:10002"), anyString());
-        verify(redis).setWithExpire(eq("autowonder:insights:human-agent:v1:10002"), anyString(), eq(97200L));
+        verify(redis).setWithExpire(eq("autowonder:insights:human-agent:v2:10002"), anyString(), eq(97200L));
         verify(redis).del(eq("autowonder:insights:human-agent:refresh-inflight:10002"));
         verify(dao).listParticipationLifecycleEvents(eq(10002L), any(), eq(0), eq(5000));
 
@@ -147,7 +147,7 @@ class HumanAgentParticipationRefreshServiceTest {
         service.refresh(10002L, LocalDate.of(2026, 8, 5));
 
         verify(dao, never()).listParticipationLifecycleEvents(anyLong(), any(), anyInt(), anyInt());
-        verify(redis, never()).setWithExpire(eq("autowonder:insights:human-agent:v1:10002"), anyString(), anyLong());
+        verify(redis, never()).setWithExpire(eq("autowonder:insights:human-agent:v2:10002"), anyString(), anyLong());
 
         service.destroy();
     }
@@ -179,7 +179,7 @@ class HumanAgentParticipationRefreshServiceTest {
         HumanAgentParticipationRefreshService service =
                 new HumanAgentParticipationRefreshService(dao, store, redis, props);
 
-        String snapshotJson = "{\"schemaVersion\":1,\"generatedAt\":\"2026-08-05T03:00:00Z\",\"dataThrough\":\"2026-08-04\",\"items\":[]}";
+        String snapshotJson = "{\"schemaVersion\":2,\"generatedAt\":\"2026-08-05T03:00:00Z\",\"dataThrough\":\"2026-08-04\",\"items\":[]}";
         when(redis.getString(anyString())).thenReturn(null).thenReturn(snapshotJson);
         when(redis.exists(anyString())).thenReturn(true);
 
@@ -234,4 +234,24 @@ class HumanAgentParticipationRefreshServiceTest {
         HumanAgentParticipationProperties props = new HumanAgentParticipationProperties();
         assertEquals(300000, props.getCacheMissWaitMs());
     }
+    @Test
+    void snapshotRoundTripPreservesUnknownExecutionAndExclusions() {
+        RedisManager redis = mock(RedisManager.class);
+        var store = new HumanAgentParticipationSnapshotStore(redis, new HumanAgentParticipationProperties());
+        var complete = new HumanAgentParticipationFact(1, "A", java.time.Instant.parse("2026-09-01T00:00:00Z"), 10, 0, 10);
+        complete.setExecution(0L, "COMPLETE");
+        complete.setInferredAssignment(true);
+        var excluded = new HumanAgentParticipationFact(2, "B", complete.completedAt(), 0, 0, 0);
+        excluded.setExclusionReason("MISSING_CREATE");
+        store.write(1L, java.util.List.of(complete, excluded), "2026-09-01", complete.completedAt());
+        var json = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(redis).setWithExpire(eq(HumanAgentParticipationSnapshotStore.KEY_PREFIX + 1), json.capture(), anyLong());
+        var parsed = store.parse(json.getValue()).orElseThrow();
+        assertEquals(0L, parsed.items().get(0).executionSeconds());
+        assertTrue(parsed.items().get(0).inferredAssignment());
+        assertEquals("MISSING_CREATE", parsed.items().get(1).exclusionReason());
+        assertNull(parsed.items().get(1).executionSeconds());
+        assertTrue(store.parse("{\"schemaVersion\":1,\"items\":[]}").isEmpty());
+    }
+
 }

@@ -58,15 +58,15 @@ export function SlashCommandPicker({ commands, query, onSelect }: SlashCommandPi
           }}
         >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <Typography.Text strong style={{ fontSize: 12 }}>{`/${command.name}`}</Typography.Text>
+            <Typography.Text strong style={{ fontSize: 14 }}>{`/${command.name}`}</Typography.Text>
             {command.input?.hint ? (
-              <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                 {command.input.hint}
               </Typography.Text>
             ) : null}
           </div>
           {command.description ? (
-            <div style={{ fontSize: 11, color: CLARIFICATION_THEME.textMuted }}>
+            <div style={{ fontSize: 13, color: CLARIFICATION_THEME.textMuted }}>
               {command.description}
             </div>
           ) : null}

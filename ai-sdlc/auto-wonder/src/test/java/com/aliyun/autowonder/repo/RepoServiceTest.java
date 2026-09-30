@@ -181,6 +181,98 @@ class RepoServiceTest {
     }
 
     @Test
+    void createRejectsPathLikeNameWithoutPersisting() {
+        CreateRepoRequest req = new CreateRepoRequest();
+        req.setName("api-tool-agent/terraform-provider-alicloud");
+        req.setUrl("https://github.com/api-tool-agent/terraform-provider-alicloud.git");
+
+        BizException ex = assertThrows(BizException.class, () -> service.create(req, 1L, 2L));
+        assertEquals(ErrorCode.REPO_NAME_INVALID.getCode(), ex.getCode());
+        assertTrue(ex.getMessage().contains("单级目录名"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("「api-tool-agent/terraform-provider-alicloud」"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("namespace/repo-name"), ex.getMessage());
+        verify(repoDao, never()).insert(any());
+    }
+
+    @Test
+    void updateRejectsPathLikeNameWithoutPersisting() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+
+        UpdateRepoRequest req = new UpdateRepoRequest();
+        req.setNamePresent(true);
+        req.setName("group\\repo");
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+        assertEquals(ErrorCode.REPO_NAME_INVALID.getCode(), ex.getCode());
+        verify(repoDao, never()).update(anyLong(), anyLong(), anyString(), anyString(),
+                any(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void updateRejectsDotSegmentName() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+
+        UpdateRepoRequest req = new UpdateRepoRequest();
+        req.setNamePresent(true);
+        req.setName("..");
+
+        BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+        assertEquals(ErrorCode.REPO_NAME_INVALID.getCode(), ex.getCode());
+    }
+
+    @Test
+    void updateRejectsAbsoluteAndTraversalNames() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("my-repo");
+        repo.setUrl("https://github.com/workspace/repo.git");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+
+        for (String bad : new String[]{"/etc/passwd", "C:repo", "repo/../../secret"}) {
+            UpdateRepoRequest req = new UpdateRepoRequest();
+            req.setNamePresent(true);
+            req.setName(bad);
+
+            BizException ex = assertThrows(BizException.class, () -> service.update(1L, req, 1L, 2L));
+            assertEquals(ErrorCode.REPO_NAME_INVALID.getCode(), ex.getCode(), bad + " 应被拒绝");
+        }
+    }
+
+    @Test
+    void updateWithoutNameFieldKeepsStoredLegalName() {
+        RepoDO repo = new RepoDO();
+        repo.setId(1L);
+        repo.setTenantId(1L);
+        repo.setName("terraform-provider-alicloud");
+        repo.setUrl("https://github.com/api-tool-agent/terraform-provider-alicloud.git");
+        repo.setVersion(3);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(repoDao.update(1L, 1L, "terraform-provider-alicloud",
+                "https://github.com/api-tool-agent/terraform-provider-alicloud.git",
+                null, null, 3, 2L)).thenReturn(1);
+
+        service.update(1L, new UpdateRepoRequest(), 1L, 2L);
+
+        verify(repoDao).update(1L, 1L, "terraform-provider-alicloud",
+                "https://github.com/api-tool-agent/terraform-provider-alicloud.git",
+                null, null, 3, 2L);
+    }
+
+    @Test
     void deleteInUseThrows() {
         RepoDO repo = new RepoDO();
         repo.setId(1L);

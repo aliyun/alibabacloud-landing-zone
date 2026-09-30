@@ -98,6 +98,28 @@ class UserDaoStatementBindingTest {
                 "candidates must stay bounded, got: " + statement);
     }
 
+    @Test
+    void updateProfileStatementIsRegisteredAndOnlyTouchesProfileColumns() throws IOException {
+        Configuration configuration = MybatisXmlConfigurationSupport.loadConfigurationFromMapperXml();
+        String statementId = "com.aliyun.autowonder.user.UserDao.updateProfile";
+        assertTrue(configuration.hasStatement(statementId),
+                "missing MyBatis statement: " + statementId);
+
+        String statement = statement("updateProfile", "update");
+        assertTrue(statement.contains("nickname = #{nickname}")
+                        && statement.contains("email = #{email}")
+                        && statement.contains("phone = #{phone}"),
+                "updateProfile must write the three self-service profile columns, got: " + statement);
+        assertTrue(statement.contains("is_deleted = 0"),
+                "updateProfile must not resurrect a deleted row, got: " + statement);
+        assertFalse(statement.contains("password_hash"),
+                "updateProfile must not touch credentials, got: " + statement);
+        assertFalse(statement.contains("username")
+                        || statement.contains("is_admin")
+                        || statement.contains("status ="),
+                "updateProfile must not touch identity/role/status columns, got: " + statement);
+    }
+
     private String statement(String id, String tag) throws IOException {
         String xml = new String(getClass().getResourceAsStream("/mapping/UserDao.xml").readAllBytes(),
                 StandardCharsets.UTF_8);

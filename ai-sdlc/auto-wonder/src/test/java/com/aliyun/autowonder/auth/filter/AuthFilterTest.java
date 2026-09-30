@@ -114,6 +114,43 @@ class AuthFilterTest {
     }
 
     @Test
+    void share_token_paths_pass_without_jwt_but_only_for_wellformed_gets() throws Exception {
+        AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), mock(UserDao.class));
+        String token = "awshare_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0UvW";
+
+        for (String[] probe : new String[][]{
+                {"GET", "/api/share/workitems/" + token},
+                {"GET", "/api/share/workitems/" + token + "/artifacts/16904"},
+                {"GET", "/api/share/workitems/" + token + "/requests/41"}}) {
+            MockHttpServletRequest req = new MockHttpServletRequest(probe[0], probe[1]);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+            filter.doFilter(req, resp, chain);
+            assertEquals(200, resp.getStatus(), probe[1]);
+            assertNotNull(chain.getRequest(), probe[1]);
+        }
+
+        // 非 GET、令牌形态不符（长度/前缀）、未知子路径都不放行
+        for (String[] probe : new String[][]{
+                {"POST", "/api/share/workitems/" + token},
+                {"GET", "/api/share/workitems/awshare_short"},
+                {"GET", "/api/share/workitems/" + token + "/artifacts/abc"},
+                {"POST", "/api/share/workitems/" + token + "/requests/41"},
+                {"GET", "/api/share/workitems/" + token + "/requests/abc"},
+                {"GET", "/api/share/workitems/" + token + "/requests/41/extra"},
+                {"GET", "/api/share/workitems/" + token + "/artifacts/1/extra"},
+                {"GET", "/api/share/workitems/not-a-token"}}) {
+            MockHttpServletRequest req = new MockHttpServletRequest(probe[0], probe[1]);
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+            filter.doFilter(req, resp, chain);
+            assertEquals(401, resp.getStatus(), probe[1]);
+            assertNull(chain.getRequest(), probe[1]);
+        }
+    }
+
+    @Test
     void mcp_path_token_urls_pass_without_platform_jwt() throws Exception {
         AuthFilter filter = new AuthFilter(newJwtService(), mock(SessionService.class),
                 mock(WorkspaceMemberDao.class), usableWorkspaceDao(), mock(UserDao.class));

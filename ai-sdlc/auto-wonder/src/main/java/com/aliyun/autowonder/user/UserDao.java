@@ -45,6 +45,12 @@ public interface UserDao {
 
     int updatePasswordHash(@Param("id") Long id, @Param("passwordHash") String passwordHash);
 
+    /** Updates only the self-service basic-profile columns; email uniqueness stays with uk_email. */
+    int updateProfile(@Param("id") Long id,
+                      @Param("nickname") String nickname,
+                      @Param("email") String email,
+                      @Param("phone") String phone);
+
     int updateDeactivation(@Param("id") Long id,
                            @Param("deactivatedAt") java.util.Date deactivatedAt,
                            @Param("coolingOffExpiresAt") java.util.Date coolingOffExpiresAt);

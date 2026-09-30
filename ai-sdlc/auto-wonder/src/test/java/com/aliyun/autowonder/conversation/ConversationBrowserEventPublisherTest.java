@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.conversation;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.websocket.ConversationRealtimePublisher;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

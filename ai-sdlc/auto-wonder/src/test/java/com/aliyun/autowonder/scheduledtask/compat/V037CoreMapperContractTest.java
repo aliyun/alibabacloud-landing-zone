@@ -80,12 +80,24 @@ class V037CoreMapperContractTest {
         assertEquals(1, elements(mapper, "listByOrigin").size());
         assertNotNull(element(mapper, "listByOrigin", SOURCE_AWARE));
 
-        String legacyPending = sql(mapper, "sql", "pendingDecisionDispatchFilter", LEGACY);
-        assertFalse(legacyPending.contains("source_type"));
-        assertTrue(legacyPending.contains("d2.tenant_id = w.tenant_id"));
-        String sourceAwarePending = sql(mapper, "sql", "pendingDecisionDispatchFilter", SOURCE_AWARE);
-        assertTrue(sourceAwarePending.contains("d2.source_type = 'WORKITEM'"));
-        assertTrue(sourceAwarePending.contains("d.source_type = 'WORKITEM'"));
+        // 「待我决策」过滤是单一共享片段：分类规则复用 kanbanCategoryExpr，
+        // legacy/source-aware 差异由 dispatchStarted/dispatchActive 的 databaseId 变体承担。
+        List<Element> pendingFilters = elements(mapper, "pendingDecisionDispatchFilter");
+        assertEquals(1, pendingFilters.size(), "pendingDecisionDispatchFilter must be a single shared fragment");
+        assertFalse(pendingFilters.get(0).hasAttribute("databaseId"),
+                "pendingDecisionDispatchFilter must not pin a databaseId");
+
+        String legacyStarted = sql(mapper, "sql", "dispatchStarted", LEGACY);
+        assertFalse(legacyStarted.contains("source_type"));
+        assertTrue(legacyStarted.contains("d.tenant_id = w.tenant_id"));
+        String sourceAwareStarted = sql(mapper, "sql", "dispatchStarted", SOURCE_AWARE);
+        assertTrue(sourceAwareStarted.contains("d.source_type = 'WORKITEM'"));
+        assertTrue(sourceAwareStarted.contains("'SUCCEEDED'"));
+        String sourceAwareActive = sql(mapper, "sql", "dispatchActive", SOURCE_AWARE);
+        assertTrue(sourceAwareActive.contains("d.source_type = 'WORKITEM'"));
+        assertTrue(sourceAwareActive.contains("'DISPATCHED'"));
+        assertFalse(sourceAwareActive.contains("'PACKAGING'"),
+                "排队/打包中不算活跃派发（与 WorkitemClassificationEvaluator.dispatchActive 同语义）");
     }
 
     @Test
@@ -143,7 +155,29 @@ class V037CoreMapperContractTest {
                 .getBoundSql(statusFilter).getSql().replaceAll("\\s+", " ");
         assertFalse(legacyStatusSql.contains("source_type"));
         assertTrue(occurrences(sourceStatusSql, "source_type = 'WORKITEM'") >= 2);
-        assertTrue(sourceStatusSql.contains("d2.tenant_id = w.tenant_id"));
+        assertTrue(sourceStatusSql.contains("CASE"));
+        assertTrue(sourceStatusSql.contains("d.tenant_id = w.tenant_id"));
+
+        // 「待我决策」共享片段在两种 databaseId 下都展开为正确的分类表达式。
+        Map<String, Object> mineFilter = new HashMap<>();
+        mineFilter.put("workspaceId", 1L);
+        mineFilter.put("pendingDecisionOnly", true);
+        mineFilter.put("currentUserId", 2L);
+        mineFilter.put("offset", 0);
+        mineFilter.put("limit", 20);
+        String legacyMineSql = legacyWorkitem.getMappedStatement(
+                "com.aliyun.autowonder.workitem.WorkitemDao.list")
+                .getBoundSql(mineFilter).getSql().replaceAll("\\s+", " ");
+        String sourceMineSql = sourceWorkitem.getMappedStatement(
+                "com.aliyun.autowonder.workitem.WorkitemDao.list")
+                .getBoundSql(mineFilter).getSql().replaceAll("\\s+", " ");
+        assertTrue(legacyMineSql.contains("CASE"));
+        assertTrue(legacyMineSql.contains("= 'PENDING_DECISION'"));
+        assertTrue(legacyMineSql.contains("w.assignee_type = 'HUMAN'"));
+        assertTrue(legacyMineSql.contains("w.assignee_ref = ?"));
+        assertFalse(legacyMineSql.contains("source_type"));
+        assertTrue(occurrences(sourceMineSql, "source_type = 'WORKITEM'") >= 2);
+        assertTrue(sourceMineSql.contains("= 'PENDING_DECISION'"));
 
         assertFalse(mybatis("ScheduledTaskDao.xml", LEGACY)
                 .hasStatement("com.aliyun.autowonder.scheduledtask.ScheduledTaskDao.findById"));

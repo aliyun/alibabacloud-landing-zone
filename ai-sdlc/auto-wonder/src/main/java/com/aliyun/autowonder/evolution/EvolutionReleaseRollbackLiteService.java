@@ -1,10 +1,9 @@
 package com.aliyun.autowonder.evolution;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
-import com.aliyun.autowonder.memory.MemoryService;
 import com.aliyun.autowonder.repo.RepoService;
 import com.aliyun.autowonder.skill.SkillService;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
@@ -18,16 +17,13 @@ import java.util.Map;
 public class EvolutionReleaseRollbackLiteService {
 
     private final EvolutionProposalDao proposalDao;
-    private final MemoryService memoryService;
     private final RepoService repoService;
     private final SkillService skillService;
 
     public EvolutionReleaseRollbackLiteService(EvolutionProposalDao proposalDao,
-                                               MemoryService memoryService,
                                                RepoService repoService,
                                                SkillService skillService) {
         this.proposalDao = proposalDao;
-        this.memoryService = memoryService;
         this.repoService = repoService;
         this.skillService = skillService;
     }
@@ -47,10 +43,7 @@ public class EvolutionReleaseRollbackLiteService {
         if (assetId == null) {
             throw new BizException(ErrorCode.CONFLICT);
         }
-        if ("MEMORY".equals(proposal.getAssetType())) {
-            memoryService.delete(assetId, tenantId, userId);
-            action = "DELETE_CREATED_MEMORY";
-        } else if ("REPO_RELATION".equals(proposal.getAssetType())) {
+        if ("REPO_RELATION".equals(proposal.getAssetType())) {
             repoService.deleteRelation(assetId, tenantId);
             action = "DELETE_CREATED_REPO_RELATION";
         } else if ("SKILL".equals(proposal.getAssetType())) {

@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.scheduledtask;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.notification.NotifyEvent;
 import com.aliyun.autowonder.notification.NotifyService;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;

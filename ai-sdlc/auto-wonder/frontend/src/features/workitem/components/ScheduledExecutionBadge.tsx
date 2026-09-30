@@ -27,7 +27,7 @@ export function ScheduledExecutionBadge({
   if (scheduledStartAt) {
     return (
       <Tooltip title={`定时执行: ${formatTime(scheduledStartAt)}`}>
-        <ClockCircleOutlined aria-label="定时执行" style={{ color: '#1677ff' }} />
+        <ClockCircleOutlined aria-label="定时执行" style={{ color: 'var(--aw-accent-text)' }} />
       </Tooltip>
     );
   }
@@ -35,14 +35,14 @@ export function ScheduledExecutionBadge({
     const taskName = origin.scheduledTaskName || origin.scheduledTaskId;
     return (
       <Tooltip title={`定时任务${taskName ? ` ${taskName}` : ''} 执行: ${formatTime(gmtCreate)}`}>
-        <ClockCircleOutlined aria-label="定时任务执行" style={{ color: '#52c41a' }} />
+        <ClockCircleOutlined aria-label="定时任务执行" style={{ color: 'var(--aw-success)' }} />
       </Tooltip>
     );
   }
   if (scheduledStartTriggeredAt) {
     return (
       <Tooltip title={`定时执行已触发: ${formatTime(scheduledStartTriggeredAt)}`}>
-        <ClockCircleOutlined aria-label="定时执行已触发" style={{ color: '#8c8c8c' }} />
+        <ClockCircleOutlined aria-label="定时执行已触发" style={{ color: 'var(--aw-muted)' }} />
       </Tooltip>
     );
   }

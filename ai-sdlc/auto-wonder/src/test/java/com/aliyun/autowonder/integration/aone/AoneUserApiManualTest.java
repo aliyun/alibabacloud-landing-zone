@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.integration.aone;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;

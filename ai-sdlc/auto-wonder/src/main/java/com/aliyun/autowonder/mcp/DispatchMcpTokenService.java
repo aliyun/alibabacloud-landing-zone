@@ -6,6 +6,7 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.DispatchStatus;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
@@ -24,6 +25,7 @@ public class DispatchMcpTokenService {
     private static final String PURPOSE = "dispatch-mcp";
     private static final long TTL_SECONDS = 24 * 60 * 60;
     private static final Set<String> ACTIVE = Set.of("PACKAGING", "PENDING", "DISPATCHED", "ACKED", "RUNNING", "PAUSING");
+    private static final Set<String> MEMORY_TERMINAL = Set.of(DispatchStatus.SUCCEEDED);
 
     private com.aliyun.autowonder.dispatch.DispatchRecoveryService recovery;
     @org.springframework.beans.factory.annotation.Autowired
@@ -77,6 +79,27 @@ public class DispatchMcpTokenService {
     }
 
     public McpAccessTokenService.Principal authenticate(String token) {
+        DispatchPrincipal principal = authenticateDispatch(token);
+        return new McpAccessTokenService.Principal(
+                principal.workspaceId(), principal.userId(), -principal.dispatchId(), principal.accessLevel(),
+                McpAccessTokenService.CredentialType.DISPATCH);
+    }
+
+    public DispatchPrincipal authenticateDispatch(String token) {
+        return authenticateDispatch(token, false);
+    }
+
+    /**
+     * Memory synchronization or mandatory index repair may finish just after a dispatch is
+     * acknowledged. The signed dispatch capability remains agent/workspace scoped and expires
+     * after 24 hours, but unlike general MCP access it survives RUNNING -> SUCCEEDED for
+     * already-acquired lease continuation. Other terminal states stay rejected.
+     */
+    public DispatchPrincipal authenticateMemoryDispatch(String token) {
+        return authenticateDispatch(token, true);
+    }
+
+    private DispatchPrincipal authenticateDispatch(String token, boolean allowMemoryTerminal) {
         try {
             if (token == null || !token.startsWith(PREFIX)) {
                 throw new IllegalArgumentException("invalid prefix");
@@ -88,17 +111,22 @@ public class DispatchMcpTokenService {
             long dispatchId = ((Number) claims.get("subjectId")).longValue();
             long workspaceId = ((Number) claims.get("workspace")).longValue();
             DispatchDO dispatch = dispatchDao.findById(dispatchId);
-            if (dispatch == null || !workspaceIdEquals(dispatch, workspaceId) || !ACTIVE.contains(dispatch.getStatus()) || (recovery != null && recovery.fenced(dispatch))) {
+            if (dispatch == null || !workspaceIdEquals(dispatch, workspaceId)
+                    || (!ACTIVE.contains(dispatch.getStatus())
+                    && !(allowMemoryTerminal && MEMORY_TERMINAL.contains(dispatch.getStatus())))
+                    || (recovery != null && recovery.fenced(dispatch))) {
                 throw new IllegalArgumentException("dispatch is inactive");
             }
             long userId = ((Number) claims.get("uid")).longValue();
             WorkspaceAccessLevel level = resolveAccessLevel(workspaceId, userId);
-            return new McpAccessTokenService.Principal(
-                    workspaceId, userId, -dispatchId, level,
-                    McpAccessTokenService.CredentialType.DISPATCH);
+            return new DispatchPrincipal(workspaceId, userId, dispatchId, dispatch.getAgentId(), level);
         } catch (Exception e) {
             throw new BizException(ErrorCode.UNAUTHORIZED);
         }
+    }
+
+    public record DispatchPrincipal(long workspaceId, long userId, long dispatchId, Long agentId,
+                                    WorkspaceAccessLevel accessLevel) {
     }
 
     private boolean workspaceIdEquals(DispatchDO dispatch, long workspaceId) {

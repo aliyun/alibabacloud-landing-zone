@@ -1,6 +1,5 @@
 package com.aliyun.autowonder.websocket;
 
-import com.alibaba.fastjson.JSON;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchTransport;
 import com.aliyun.autowonder.dispatch.DispatchCheckpointService;
@@ -11,6 +10,8 @@ import com.aliyun.autowonder.environment.AgentEnvironmentVariableResolver;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.mcp.DispatchMcpTokenService;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
+import com.aliyun.autowonder.memory.store.MemoryStoreApplicationService;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.taskpackage.TaskPackageResult;
 import com.aliyun.autowonder.websocket.frame.DebugLogDirective;
 import com.aliyun.autowonder.websocket.frame.TaskDispatchFrame;
@@ -40,6 +41,8 @@ public class WsDispatchTransport implements DispatchTransport {
     private final DispatchMcpTokenService dispatchMcpTokenService;
     private final PresenceManager presenceManager;
     private final SecretCrypto secretCrypto;
+    @Autowired(required = false)
+    private MemoryStoreApplicationService memoryStoreApplicationService;
     private final AgentEnvironmentVariableResolver environmentVariableResolver;
 
     @Autowired
@@ -93,7 +96,7 @@ public class WsDispatchTransport implements DispatchTransport {
                 dispatch.getId(), dispatch.getExecutorId(), frame.getDownloadUrl(),
                 frame.getPackageRefreshPath(), frame.getArtifactUploadPath(),
                 frame.getCheckpointUploadPath(), frame.getResumeMode(), frame.getResumeCheckpointUrl());
-        String frameJson = JSON.toJSONString(frame);
+        String frameJson = serializeFrame(frame);
 
         ExecutorSession es = sessionRegistry.findByExecutorId(dispatch.getExecutorId());
         if (es != null && es.getSession().isOpen()) {
@@ -177,6 +180,16 @@ public class WsDispatchTransport implements DispatchTransport {
         f.setPackageRefreshPath("/api/daemon/dispatches/" + dispatch.getId() + "/package-url");
         f.setArtifactUploadPath("/api/daemon/dispatches/" + dispatch.getId() + "/artifacts");
         f.setCheckpointUploadPath("/api/daemon/dispatches/" + dispatch.getId() + "/checkpoint");
+        String memoryBase = "/api/daemon/dispatches/" + dispatch.getId() + "/memory";
+        f.setMemorySnapshotPath(memoryBase + "/snapshot");
+        f.setMemoryChangesPath(memoryBase + "/changes");
+        f.setMemoryMutationPath(memoryBase + "/mutations");
+        f.setMemoryRecallPath(memoryBase + "/recalls");
+        f.setMemoryStartingRevisions(java.util.Map.of());
+        if (memoryStoreApplicationService != null && dispatch.getAgentId() != null) {
+            f.setMemoryStartingRevisions(memoryStoreApplicationService.startingRevisionsForAgent(
+                    dispatch.getTenantId(), dispatch.getAgentId()));
+        }
         applyDebugLogDirective(f, dispatch);
         if (dispatchMcpTokenService != null) {
             f.setDispatchMcpToken(dispatchMcpTokenService.issue(dispatch));
@@ -209,6 +222,10 @@ public class WsDispatchTransport implements DispatchTransport {
         requireEnvironmentVariableProtocol(dispatch.getExecutorId(), environmentVariables);
         f.setEnvironmentVariables(environmentVariables);
         return f;
+    }
+
+    private static String serializeFrame(TaskDispatchFrame frame) {
+        return JSON.toJSONString(frame);
     }
 
     private void requireEnvironmentVariableProtocol(long executorId,

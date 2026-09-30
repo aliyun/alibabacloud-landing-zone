@@ -8,7 +8,7 @@ AutoWonder MCP supports uploading complete Skill packages and creating or updati
 - `.tar.gz`
 - Directory contents via `files` (relative path → base64 file content), packed into ZIP by the server.
 
-Packages must use safe relative paths. Root `SKILL.md` is required for `SKILL` packages. Directories such as `references/`, `scripts/`, `assets/`, and dot-prefixed files are preserved when the archive is stored. Absolute paths, backslashes, `..` traversal, symlink entries in tar archives, over-large archives, too many entries, inflated-size overflow, and digest mismatches are rejected.
+Packages must use safe relative paths. Root `SKILL.md` is required for `SKILL` packages; archives whose entries all sit under a single shared top-level directory (the common output of macOS right-click compress or `zip -r pkg.zip dir/`) are accepted, with that directory treated as the package root when locating `SKILL.md` / `hook.yaml`. Directories such as `references/`, `scripts/`, `assets/`, and dot-prefixed files are preserved when the archive is stored. Absolute paths, backslashes, `..` traversal, symlink entries in tar archives, over-large archives, too many entries, inflated-size overflow, and digest mismatches are rejected.
 
 ## MCP tools
 

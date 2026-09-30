@@ -1,5 +1,7 @@
+import { PlusOutlined } from '@ant-design/icons';
 import { useState } from 'react';
-import { Alert, Button, Checkbox, Drawer, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Checkbox, Drawer, Form, Input, Popconfirm, Select, Space, Tag, Typography, message } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listAgents } from '@/features/agent/api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -38,15 +40,17 @@ export function FeishuBindingPanel() {
       try { const values = await form.validateFields(); save.mutate(values); } catch { /* Form shows validation errors. */ }
     });
   }
-  return <Space direction="vertical" size={16} style={{ width: '100%' }}>
+  return <Card title="飞书机器人绑定" extra={
+    <Button type="primary" icon={<PlusOutlined />} aria-label="新建飞书绑定" onClick={() => edit()}>新建飞书绑定</Button>
+  }>
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
     <Alert type="info" showIcon message="飞书企业自建应用机器人"
-      description="通过 HTTP 回调接收消息。支持单聊文本和群内 @机器人多轮对话，回复以文本发送。请先在飞书开放平台启用机器人，并为数字人配置在线执行器。" />
-    <Button type="primary" onClick={() => edit()}>新建飞书绑定</Button>
+      description="通过 HTTP 回调接收消息。支持单聊文本和群内 @机器人多轮对话，回复以文本发送。请先在飞书开放平台启用机器人，并为数字员工配置在线执行器。" />
     {bindings.isError && <Alert type="error" message="飞书绑定加载失败" description={(bindings.error as Error).message} action={<Button onClick={() => bindings.refetch()}>重试</Button>} />}
     <Table<FeishuBinding> rowKey="id" dataSource={bindings.data ?? []} loading={bindings.isLoading}
       locale={{ emptyText: '暂无飞书绑定' }} scroll={{ x: 900 }} columns={[
         { title: 'App ID', dataIndex: 'appId' },
-        { title: '数字人', dataIndex: 'agentId', render: (id: number) => agents.data?.find(a => a.id === id)?.name ?? `#${id}` },
+        { title: '数字员工', dataIndex: 'agentId', render: (id: number) => agents.data?.find(a => a.id === id)?.name ?? `#${id}` },
         { title: '状态', dataIndex: 'status', render: (status: string) => <Tag color={status === 'ENABLED' ? 'green' : 'default'}>{status === 'ENABLED' ? '已启用' : '已停用'}</Tag> },
         { title: '最近成功处理', dataIndex: 'lastSuccessAt', render: (date: string | null) => date ? new Date(date).toLocaleString() : '尚无记录' },
         { title: '最近异常', dataIndex: 'lastError', render: (error: string | null) => error || '—' },
@@ -73,10 +77,10 @@ export function FeishuBindingPanel() {
           <Input.Password autoComplete="new-password" maxLength={512} />
         </Form.Item>
         {record?.encryptKeyConfigured && <Form.Item name="clearEncryptKey" valuePropName="checked"><Checkbox>清除 Encrypt Key（需同时关闭飞书端加密）</Checkbox></Form.Item>}
-        <Form.Item name="agentId" label="关联数字人" rules={[{ required: true, message: '请选择数字人' }]}>
+        <Form.Item name="agentId" label="关联数字员工" rules={[{ required: true, message: '请选择数字员工' }]}>
           <Select showSearch optionFilterProp="label" loading={agents.isLoading} options={(agents.data ?? []).map(a => ({ label: a.name, value: a.id }))} />
         </Form.Item>
-        {agents.isError && <Alert type="error" message="数字人列表加载失败" />}
+        {agents.isError && <Alert type="error" message="数字员工列表加载失败" />}
         <Form.Item name="status" label="绑定状态"><Select options={[{ label: '启用', value: 'ENABLED' }, { label: '停用', value: 'DISABLED' }]} /></Form.Item>
       </Form>
       {record && <Alert type="success" message="回调地址（复制到飞书事件订阅）" description={<Typography.Paragraph copyable style={{ wordBreak: 'break-all', marginBottom: 0 }}>
@@ -88,5 +92,6 @@ export function FeishuBindingPanel() {
       </Typography.Paragraph>
       <Typography.Link href="https://open.feishu.cn/document/server-docs/im-v1/message/events/receive" target="_blank" rel="noreferrer">飞书接收消息文档</Typography.Link>
     </Drawer>
-  </Space>;
+    </Space>
+  </Card>;
 }

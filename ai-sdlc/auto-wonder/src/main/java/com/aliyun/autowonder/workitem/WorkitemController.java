@@ -99,7 +99,8 @@ public class WorkitemController {
     @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "指派工作项")
     public Result<WorkitemVO> assign(@PathVariable("id") Long id, @RequestBody AssignRequest req) {
         return Result.ok(workitemService.assign(id, req.getAssigneeType(), req.getAssigneeRef(),
-                req.getSdlcId(), req.getSquadId(), req.getScheduledStartAt(), currentWorkspaceId(), currentUserId()));
+                req.getSdlcId(), req.getSquadId(), req.getScheduledStartAt(), req.getRestartToken(),
+                currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/scheduled-start")

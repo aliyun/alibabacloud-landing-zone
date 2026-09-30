@@ -9,6 +9,7 @@ import java.util.List;
 public interface SquadDao {
     void insert(SquadDO squad);
     SquadDO findById(@Param("id") Long id);
+    List<SquadDO> listByTenant(@Param("tenantId") long tenantId);
     List<SquadDO> listByIds(@Param("ids") Collection<Long> ids);
     List<SquadDO> list(@Param("offset") int offset, @Param("limit") int limit);
     int update(@Param("id") Long id, @Param("tenantId") Long tenantId,

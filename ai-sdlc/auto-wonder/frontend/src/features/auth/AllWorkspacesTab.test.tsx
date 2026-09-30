@@ -103,7 +103,38 @@ function renderTab() {
   };
 }
 
+// jsdom has no layout, so EllipsisText cannot detect truncation on its own. These prototype
+// getters make every ellipsis span report overflow (width for 1-line, height for line-clamped),
+// which is what turns the hover tooltip on.
+function mockEllipsisOverflow() {
+  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => 200 });
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 100 });
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 200 });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 100 });
+  return () => {
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    delete proto.scrollWidth;
+    delete proto.clientWidth;
+    delete proto.scrollHeight;
+    delete proto.clientHeight;
+  };
+}
+
 describe('AllWorkspacesTab', () => {
+  it.each(['name', 'description'] as const)('shows the complete long %s on hover', async (field) => {
+    const restoreMeasurements = mockEllipsisOverflow();
+    try {
+      const workspace = { ...memberWorkspace, [field]: '超长工作空间内容'.repeat(30) };
+      useListHandler(() => pageEnvelope([workspace]));
+      renderTab();
+      const card = await screen.findByTestId('all-workspace-card-1');
+      await userEvent.hover(within(card).getByText(workspace[field]!));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(workspace[field]!);
+    } finally {
+      restoreMeasurements();
+    }
+  });
+
   beforeAll(() => {
     server.events.on('request:start', recordStartedRequest);
   });

@@ -1,6 +1,9 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { RobotHeadIcon } from '@/shared/ui/RobotHeadIcon';
 import { useEffect, useMemo, useState } from 'react';
-import { Card, Table, Tag, Badge, Button, Space, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Typography, Dropdown, Tooltip, Segmented, Collapse, Drawer, Descriptions } from 'antd';
-import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CodeOutlined, RobotOutlined, EyeOutlined, EyeInvisibleOutlined, CodeSandboxOutlined, DownOutlined, BugOutlined, TeamOutlined, CloudUploadOutlined, LinkOutlined } from '@ant-design/icons';
+import { Card, Tag, Badge, Button, Space, Modal, Form, Input, InputNumber, Select, message, Popconfirm, Alert, Typography, Dropdown, Tooltip, Segmented, Collapse, Drawer, Descriptions } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
+import { PlusOutlined, DeleteOutlined, CopyOutlined, CheckCircleFilled, CodeOutlined, EyeOutlined, EyeInvisibleOutlined, CodeSandboxOutlined, DownOutlined, BugOutlined, TeamOutlined, CloudUploadOutlined, LinkOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listExecutors, createExecutor, deleteExecutor, getExecutorToken, getExecutorModelCatalog, restartExecutor,
@@ -31,18 +34,23 @@ import { copyTextToClipboard } from '@/shared/lib/clipboard';
 import { readViewPreference, writeViewPreference } from '@/shared/lib/viewPreference';
 import { detectStartupOs } from './startupOs';
 
-const CLIENT_KINDS: { value: string; label: string; color: string; Icon: typeof CodeOutlined }[] = [
-  { value: 'QODER_CN_CLI', label: 'Qoder CLI CN', color: '#1677ff', Icon: CodeOutlined },
-  { value: 'QODER_CLI', label: 'Qoder CLI', color: '#1677ff', Icon: CodeOutlined },
-  { value: 'CLAUDE_CODE', label: 'Claude Code', color: '#d4380d', Icon: RobotOutlined },
+const CLIENT_KINDS: { value: string; label: string; color: string; Icon: typeof CodeOutlined | typeof RobotHeadIcon }[] = [
+  { value: 'QODER_CN_CLI', label: 'Qoder CLI CN', color: 'var(--aw-accent-text)', Icon: CodeOutlined },
+  { value: 'QODER_CLI', label: 'Qoder CLI', color: 'var(--aw-accent-text)', Icon: CodeOutlined },
+  { value: 'CLAUDE_CODE', label: 'Claude Code', color: '#d4380d', Icon: RobotHeadIcon },
   { value: 'CODEX_CLI', label: 'Codex CLI', color: '#13a8a8', Icon: CodeSandboxOutlined },
-  { value: 'CURSOR_CLI', label: 'Cursor CLI', color: '#141414', Icon: CodeSandboxOutlined },
+  { value: 'CURSOR_CLI', label: 'Cursor CLI', color: 'var(--aw-text)', Icon: CodeSandboxOutlined },
 ];
 
 const clientKindMap = Object.fromEntries(CLIENT_KINDS.map((k) => [k.value, k]));
 
 export function isQoderClientKind(kind?: string | null): boolean {
   return kind === 'QODER_CLI' || kind === 'QODER_CN_CLI';
+}
+
+// 0.8 及更早版本创建的执行器 client_kind 可为 NULL/空白（历史数据），这类执行器需要先补齐类型
+export function isClientKindMissing(kind?: string | null): boolean {
+  return !kind || !kind.trim();
 }
 
 // 新建执行器仅开放 Qoder 系执行器，其余类型在列表中仍正常展示
@@ -191,7 +199,7 @@ function CommandPreview({ text }: { text: string }) {
   return (
     <div style={{
       marginTop: 4, padding: '8px 12px',
-      background: '#f5f5f5', borderRadius: 6, fontFamily: 'monospace', fontSize: 13,
+      background: 'var(--aw-raised)', borderRadius: 6, fontFamily: 'monospace', fontSize: 13,
       wordBreak: 'break-all', lineHeight: 1.6,
     }}>
       {text}
@@ -214,19 +222,19 @@ function ClientKindSelect({ value, onChange }: { value?: string; onChange?: (v: 
               alignItems: 'center',
               gap: 10,
               padding: '12px 16px',
-              border: `2px solid ${selected ? '#1677ff' : '#d9d9d9'}`,
+              border: `2px solid ${selected ? 'var(--aw-accent-text)' : 'var(--aw-border)'}`,
               borderRadius: 8,
               cursor: 'pointer',
-              background: selected ? '#f0f5ff' : '#fff',
+              background: selected ? 'rgba(var(--aw-accent-rgb), .10)' : 'var(--aw-panel)',
               transition: 'all 0.2s',
               position: 'relative',
             }}
           >
-            <Icon style={{ fontSize: 24, color }} />
+            <span style={{ fontSize: 24, color }}><Icon /></span>
             <span style={{ fontWeight: 500 }}>{label}</span>
             {selected && (
               <CheckCircleFilled
-                style={{ position: 'absolute', top: 8, right: 8, color: '#1677ff', fontSize: 16 }}
+                style={{ position: 'absolute', top: 8, right: 8, color: 'var(--aw-accent-text)', fontSize: 16 }}
               />
             )}
           </div>
@@ -239,7 +247,7 @@ function ClientKindSelect({ value, onChange }: { value?: string; onChange?: (v: 
 function ExecutorGroupHeader({ group }: { group: ExecutorAgentGroup }) {
   return (
     <Space size={8} wrap>
-      <RobotOutlined style={{ color: '#1677ff' }} />
+      <RobotHeadIcon />
       <Typography.Text strong>{group.label}</Typography.Text>
       <Tag>{`${group.executors.length} 个执行器`}</Tag>
       <Badge status="success" text={`在线 ${group.statusSummary.online}`} />
@@ -252,13 +260,13 @@ function ExecutorGroupHeader({ group }: { group: ExecutorAgentGroup }) {
 function ExecutorSquadGroupHeader({ group }: { group: SquadGroup<ExecutorVO> }) {
   return (
     <Space size={8} wrap>
-      <TeamOutlined style={{ color: '#1677ff' }} />
+      <TeamOutlined style={{ color: 'var(--aw-accent-text)' }} />
       <Typography.Text strong>
         {group.label}
       </Typography.Text>
       {group.squadId != null && (
         <Tooltip title="查看小队">
-          <Link to={`/squads?squadId=${group.squadId}`} aria-label={`查看小队：${group.label}`}
+          <Link to={`/agents?tab=squads&squadId=${group.squadId}`} aria-label={`查看小队：${group.label}`}
             onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
             <LinkOutlined />
           </Link>
@@ -281,6 +289,8 @@ interface CreateExecutorFormValues {
 }
 
 interface StartupFormValues {
+  // 仅历史缺类型执行器出现该项：补选的客户端类型随启动配置一并保存
+  clientKind?: string;
   memoryMode: string;
   maxConcurrentDispatches: number;
   model?: string;
@@ -320,8 +330,13 @@ export function ExecutorListPage() {
   const clientKind = Form.useWatch('clientKind', form);
   const qoderModel = Form.useWatch('model', form) ?? 'auto';
   const startupQoderModel = Form.useWatch('model', startupForm) ?? 'auto';
+  // 历史缺类型执行器的模型参数由补选的表单类型驱动；正常执行器仍用列表记录里的类型
+  const startupKindMissing = isClientKindMissing(startupTarget?.clientKind);
+  const startupFormClientKind = Form.useWatch('clientKind', startupForm);
+  const startupQoderProvider = qoderProviderForClientKind(
+    startupKindMissing ? startupFormClientKind : startupTarget?.clientKind,
+  );
   const createQoderProvider = createModalOpen ? qoderProviderForClientKind(clientKind) : undefined;
-  const startupQoderProvider = qoderProviderForClientKind(startupTarget?.clientKind);
 
   const qoderCatalogQuery = useQuery({
     queryKey: ['executor-model-catalog', 'qoder'],
@@ -364,6 +379,21 @@ export function ExecutorListPage() {
       contextWindow: options.defaultContextWindow,
     });
   }, [createQoderModelOptions, createQoderProvider, form]);
+
+  // 历史缺类型执行器补选客户端类型后，按所选 provider 把模型四项默认值补齐，
+  // 保证恢复保存提交的启动参数完整；正常执行器不走该路径（值来自服务端读回）。
+  useEffect(() => {
+    if (!startupTarget || !startupKindMissing) return;
+    if (!startupQoderProvider) return;
+    const model = chooseQoderModel(startupQoderModelOptions, startupForm.getFieldValue('model'));
+    if (!model || model === startupForm.getFieldValue('model')) return;
+    const options = qoderOptionsForModel(model);
+    startupForm.setFieldsValue({
+      model,
+      reasoningEffort: options.defaultReasoningEffort,
+      contextWindow: options.defaultContextWindow,
+    });
+  }, [startupKindMissing, startupQoderModelOptions, startupQoderProvider, startupForm, startupTarget]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents', 1, 100],
@@ -670,21 +700,30 @@ export function ExecutorListPage() {
       return false;
     }
     const version = config.version;
-    const isQoder = isQoderClientKind(record.clientKind);
+    const kindMissing = isClientKindMissing(record.clientKind);
+    // 缺类型执行器按表单补选的类型决定模型参数是否提交；正常执行器沿用记录里的类型
+    const effectiveKind = kindMissing ? values.clientKind : record.clientKind;
+    const isQoder = isQoderClientKind(effectiveKind);
     setStartupSaving(true);
     try {
-      const saved = await updateExecutorLaunchConfig(record.id, isQoder
-        ? {
-            memoryMode: values.memoryMode,
-            maxConcurrentDispatches: values.maxConcurrentDispatches,
-            model: values.model,
-            reasoningEffort: values.reasoningEffort,
-            contextWindow: values.contextWindow,
-            version,
-          }
-        : { memoryMode: values.memoryMode, maxConcurrentDispatches: values.maxConcurrentDispatches, version });
+      const saved = await updateExecutorLaunchConfig(record.id, {
+        ...(kindMissing ? { clientKind: values.clientKind } : {}),
+        memoryMode: values.memoryMode,
+        maxConcurrentDispatches: values.maxConcurrentDispatches,
+        ...(isQoder ? {
+          model: values.model,
+          reasoningEffort: values.reasoningEffort,
+          contextWindow: values.contextWindow,
+        } : {}),
+        version,
+      });
       setStartupConfig(saved);
       setStartupModelInvalid(false);
+      if (kindMissing && values.clientKind) {
+        // 类型补齐成功：更新弹窗内的记录并刷新列表，去掉「类型缺失」标记
+        setStartupTarget({ ...record, clientKind: values.clientKind });
+        queryClient.invalidateQueries({ queryKey: ['executors'] });
+      }
       // 保存成功后预览必须重新向服务端索取，确保展示的就是数据库里的配置
       await queryClient.invalidateQueries({ queryKey: ['executor-launch-command', record.id] });
       return true;
@@ -739,9 +778,9 @@ export function ExecutorListPage() {
   const formatTime = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '未上报';
   const restartLabels: Record<string, string> = { REQUESTED: '等待响应', UPDATING: '准备更新', RESTARTING: '正在重启', COMPLETED: '重启成功', FAILED: '重启失败', TIMED_OUT: '等待超时' };
   const columns: ColumnsType<ExecutorVO> = [
-    { title: '执行器', dataIndex: 'name', width: 180, render: (name, record) => (
+    { title: '执行器', dataIndex: 'name', align: 'left', width: 180, render: (name, record) => (
       <div><Button type="link" style={{ padding: 0, maxWidth: '100%' }} onClick={() => setDetailId(record.id)}>{name}</Button>
-        <div style={{ color: '#8c8c8c', fontSize: 12 }}>ID {record.id}</div></div>
+        <div style={{ color: 'var(--aw-muted)', fontSize: 12 }}>ID {record.id}</div></div>
     ) },
     { title: '归属', width: 180, render: (_, record) => (
       <div><div>{record.agentName ?? '-'}</div><SquadTags squadIds={record.squadIds} squadNames={record.squadNames} /></div>
@@ -846,26 +885,9 @@ export function ExecutorListPage() {
           </div>
         </Space>}
       </Drawer>
-      <Card title="执行器管理"
+      <Card className="aw-content-card" title={<PageHeading title="执行器管理" />}
         extra={
           <Space wrap>
-            <SquadFilterBar
-              options={squadOptions}
-              value={squadFilter}
-              onChange={setSquadFilter}
-              grouped={squadGrouped}
-              onGroupedChange={(next) => {
-                setSquadGrouped(next);
-                writeViewPreference(EXECUTORS_VIEW_STORAGE_KEY, next ? 'squad' : 'agent');
-              }}
-              loading={squadsQuery.isLoading}
-              listLabel="按 Agent 分组"
-              groupLabel="按小队分组"
-            />
-            <Select placeholder="选择 Agent" style={{ width: 200 }} value={selectedAgentId}
-              onChange={setSelectedAgentId} allowClear showSearch optionFilterProp="label"
-              options={agents.map(a => ({ value: a.id, label: a.name }))}
-            />
             {/* Tooltip 要靠子元素的 ref 定位，Space 是组件不是 DOM 节点，包一层 span 最稳妥。 */}
             <Tooltip title="开启后，服务端发现执行器版本落后于目标版本时，会在派单间隙自动下发升级指令；开关由服务端 application.yml 配置（默认开启）">
               <span>
@@ -906,6 +928,25 @@ export function ExecutorListPage() {
           </Space>
         }
       >
+        <Space wrap className="aw-list-toolbar" aria-label="执行器筛选">
+          <SquadFilterBar
+            options={squadOptions}
+            value={squadFilter}
+            onChange={setSquadFilter}
+            grouped={squadGrouped}
+            onGroupedChange={(next) => {
+              setSquadGrouped(next);
+              writeViewPreference(EXECUTORS_VIEW_STORAGE_KEY, next ? 'squad' : 'agent');
+            }}
+            loading={squadsQuery.isLoading}
+            listLabel="按 Agent 分组"
+            groupLabel="按小队分组"
+          />
+          <Select placeholder="选择 Agent" style={{ width: 200 }} value={selectedAgentId}
+            onChange={setSelectedAgentId} allowClear showSearch optionFilterProp="label"
+            options={agents.map(a => ({ value: a.id, label: a.name }))}
+          />
+        </Space>
         {squadGrouped ? (
           squadGroups.length > 0 ? (
             <Collapse
@@ -1033,6 +1074,10 @@ export function ExecutorListPage() {
         {startupConfigError && (
           <Alert type="error" showIcon style={{ marginBottom: 16 }} message={startupConfigError} />
         )}
+        {startupKindMissing && (
+          <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+            message="该执行器缺少客户端类型（历史数据），请先选择客户端类型并保存，才能生成启动命令" />
+        )}
         {!startupConfigError && startupConfig && !startupConfigured && (
           <Alert type="warning" showIcon style={{ marginBottom: 16 }}
             message="该执行器尚未配置启动参数，请先选择并保存" />
@@ -1042,6 +1087,13 @@ export function ExecutorListPage() {
             message="当前模型已不可用，请重新选择" />
         )}
         <Form form={startupForm} layout="vertical" initialValues={{ maxConcurrentDispatches: 5 }}>
+          {startupKindMissing && (
+            <Form.Item label="客户端类型" name="clientKind"
+              rules={[{ required: true, message: '请选择客户端类型' }]}
+              extra="仅历史缺类型数据需要补选，保存后不可更改">
+              <Select options={CREATABLE_CLIENT_KINDS.map(({ value, label }) => ({ value, label }))} />
+            </Form.Item>
+          )}
           <Form.Item label="最大并发任务数" name="maxConcurrentDispatches"
             rules={[{ required: true, type: 'integer', min: 1, max: 10, message: '请输入 1 到 10 的整数' }]}
             extra={<span style={{ whiteSpace: 'nowrap' }}>默认 5，范围 1–10，重启生效。</span>}>

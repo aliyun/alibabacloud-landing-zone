@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within, act } from '@testing-library/react';
+import { typeComposer, pressComposerKey, waitForComposerFocus } from './composerTestUtils';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { message } from 'antd';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { resetUserSettingStore, seedUserSetting } from '@/test/mocks/handlers';
@@ -130,38 +132,38 @@ describe('需求澄清面板自动聚焦（FR-001~FR-004）', () => {
 
   it('AC-01: 进入非全屏面板后输入框自动获得焦点，不需要用户再点一次', async () => {
     mockBackend();
-    const { textarea } = await openPanel();
+    await openPanel();
 
-    await waitFor(() => expect(textarea).toHaveFocus());
+    await waitForComposerFocus({ focused: true });
   });
 
   it('AC-02: 全屏模式进入后同样自动聚焦', async () => {
     mockBackend();
-    const { textarea } = await openPanel({ fullscreen: true });
+    await openPanel({ fullscreen: true });
 
-    await waitFor(() => expect(textarea).toHaveFocus());
+    await waitForComposerFocus({ focused: true });
   });
 
   it('AC-02: 由非全屏切入全屏时重新聚焦（RightPanel 复用同一实例，不会重新挂载）', async () => {
     mockBackend();
-    const { textarea, rerenderWith } = await openPanel();
-    await waitFor(() => expect(textarea).toHaveFocus());
+    const { rerenderWith } = await openPanel();
+    await waitForComposerFocus({ focused: true });
 
-    textarea.blur();
-    expect(textarea).not.toHaveFocus();
+    await act(async () => { (document.activeElement as HTMLElement | null)?.blur(); });
+    await waitForComposerFocus({ focused: false });
 
     rerenderWith({ fullscreen: true });
-    await waitFor(() => expect(textarea).toHaveFocus());
+    await waitForComposerFocus({ focused: true });
   });
 
   it('FR-003: 切换会话不会把焦点抢回输入框', async () => {
     mockBackend([conversationPayload(202, '最新会话消息'), conversationPayload(101, '历史会话消息')]);
-    const { textarea } = await openPanel();
-    await waitFor(() => expect(textarea).toHaveFocus());
+    await openPanel();
+    await waitForComposerFocus({ focused: true });
     expect(await screen.findByText('最新会话消息')).toBeInTheDocument();
 
     // 用户已经把焦点移到别处（例如去点消息上的复制按钮）
-    textarea.blur();
+    await act(async () => { (document.activeElement as HTMLElement | null)?.blur(); });
 
     const selector = screen.getByTestId('clarification-conversation-select');
     fireEvent.mouseDown(within(selector).getByRole('combobox'));
@@ -187,13 +189,13 @@ describe('需求澄清面板自动聚焦（FR-001~FR-004）', () => {
     const { textarea, queryClient } = await openPanel();
     expect(textarea).toBeDisabled();
     await settle();
-    expect(textarea).not.toHaveFocus();
+    expect(document.activeElement).not.toBe(document.querySelector('.ProseMirror'));
 
     payload = { ...payload, processingStatus: null, processingTurnId: null };
     queryClient.invalidateQueries();
 
     await waitFor(() => expect(textarea).not.toBeDisabled());
-    await waitFor(() => expect(textarea).toHaveFocus());
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
   });
 });
 
@@ -219,13 +221,13 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
     mockBackend();
     const { textarea } = await openPanel();
 
-    fireEvent.change(textarea, { target: { value: '第一行' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    await typeComposer('第一行');
+    pressComposerKey({ key: 'Enter' });
     await settle();
     expect(submittedContents).toEqual([]);
     expect(textarea).toHaveValue('第一行');
 
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    pressComposerKey({ key: 'Enter', shiftKey: true });
     await waitFor(() => expect(submittedContents).toEqual(['第一行']));
     // 发送即清空输入框，说明 Shift+回车没有被当成换行注入内容
     expect(textarea).toHaveValue('');
@@ -238,13 +240,13 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
     await chooseSendMode(SEND_MODE_LABELS.enter);
     await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS.enter));
 
-    fireEvent.change(textarea, { target: { value: '走回车' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await typeComposer('走回车');
+    pressComposerKey({ key: 'Enter', shiftKey: true });
     await settle();
     expect(submittedContents).toEqual([]);
     expect(textarea).toHaveValue('走回车');
 
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    pressComposerKey({ key: 'Enter' });
     await waitFor(() => expect(submittedContents).toEqual(['走回车']));
   });
 
@@ -254,15 +256,19 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
     const { textarea } = await openPanel();
     await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS.enter));
 
-    fireEvent.change(textarea, { target: { value: '候选词' } });
-    fireEvent.compositionStart(textarea);
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    await typeComposer('候选词');
+    const pm = () => document.querySelector('.ProseMirror') as HTMLElement;
+    fireEvent.compositionStart(pm());
+    // jsdom 的 KeyboardEvent 不带 isComposing，构造后手工补上（等价于 IME 组合期的回车）
+    const composingEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    Object.defineProperty(composingEnter, 'isComposing', { value: true });
+    pm().dispatchEvent(composingEnter);
     await settle();
     expect(submittedContents).toEqual([]);
     expect(textarea).toHaveValue('候选词');
 
-    fireEvent.compositionEnd(textarea);
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    fireEvent.compositionEnd(pm());
+    pressComposerKey({ key: 'Enter' });
     await waitFor(() => expect(submittedContents).toEqual(['候选词']));
   });
 
@@ -274,11 +280,11 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
 
     // 模拟刷新页面 / 换设备：全新 QueryClient，只能靠服务端存的偏好恢复
     first.view.unmount();
-    const { textarea } = await openPanel();
+    await openPanel();
     await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS.enter));
 
-    fireEvent.change(textarea, { target: { value: '刷新后' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    await typeComposer('刷新后');
+    pressComposerKey({ key: 'Enter' });
     await waitFor(() => expect(submittedContents).toEqual(['刷新后']));
     // 这条用例要挂载两次完整面板（模拟刷新 / 换设备），请求与渲染量是同文件其他
     // 用例的两倍，全量套件并行时 5s 默认超时不够。只放宽这一条，不动全局 testTimeout。
@@ -292,11 +298,11 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
       )),
     );
 
-    const { textarea } = await openPanel();
+    await openPanel();
     await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS['shift-enter']));
 
-    fireEvent.change(textarea, { target: { value: '兜底' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await typeComposer('兜底');
+    pressComposerKey({ key: 'Enter', shiftKey: true });
     await waitFor(() => expect(submittedContents).toEqual(['兜底']));
   });
 
@@ -316,8 +322,8 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
     await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS['shift-enter']));
 
     // 回滚之后裸回车依旧只换行，不会出现「标着回车发送却发不出去」
-    fireEvent.change(textarea, { target: { value: '没保存上' } });
-    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
+    await typeComposer('没保存上');
+    pressComposerKey({ key: 'Enter' });
     await settle();
     expect(submittedContents).toEqual([]);
     expect(textarea).toHaveValue('没保存上');
@@ -340,5 +346,188 @@ describe('需求澄清面板发送方式（FR-005~FR-010 / AC-03~AC-07）', () =
 
     expect(await screen.findByText('终止响应')).toBeInTheDocument();
     expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS['shift-enter']);
+  });
+});
+
+describe('发送方式快速连续切换的落库一致性（工单 55511）', () => {
+  beforeEach(() => {
+    resetUserSettingStore();
+    // 上一组用例的 message.error toast 会挂在 document.body 上跨用例残留，
+    // RTL 清理不掉 antd 的全局 holder，不 destroy 会让后面的文本断言命中多个节点。
+    message.destroy();
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+  });
+
+  afterEach(() => {
+    clearClarificationPrefill('100');
+    vi.restoreAllMocks();
+    message.destroy();
+  });
+
+  function failureBody() {
+    return HttpResponse.json(
+      { success: false, code: '10000', message: 'boom', traceId: null, data: null },
+      { status: 500 },
+    );
+  }
+
+  it('旧保存失败不覆盖新选择：失败时已切走则静默放弃，最终选择与落库一致', async () => {
+    mockBackend();
+    let releaseFirstPut: (() => void) | null = null;
+    const firstPutHeld = new Promise<void>((resolve) => { releaseFirstPut = resolve; });
+    let putCalls = 0;
+    server.use(
+      http.put('/api/users/me/settings/:key', async ({ request }) => {
+        putCalls += 1;
+        if (putCalls === 1) {
+          await firstPutHeld;
+          return failureBody();
+        }
+        const body = await request.json() as { valueJson?: string | null } | null;
+        seedUserSetting(CLARIFICATION_SEND_MODE_KEY, body?.valueJson ?? null);
+        return ok({ key: CLARIFICATION_SEND_MODE_KEY, valueJson: body?.valueJson ?? null });
+      }),
+    );
+
+    const first = await openPanel();
+    await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS['shift-enter']));
+
+    // 第一次切换的 PUT 悬停在飞，第二次切换已经发生
+    await chooseSendMode(SEND_MODE_LABELS.enter);
+    await chooseSendMode(SEND_MODE_LABELS['shift-enter']);
+    await settle();
+    // 保存串行：第二个 PUT 必须排在第一个后面，不能并发抢跑
+    expect(putCalls).toBe(1);
+
+    releaseFirstPut!();
+    await waitFor(() => expect(putCalls).toBe(2));
+
+    // 旧失败不回滚新选择，也不弹「保存失败」
+    expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS['shift-enter']);
+    expect(screen.queryByText('发送方式保存失败，请重试')).not.toBeInTheDocument();
+
+    // 最终落库值 = 最终界面选择：重新挂载（模拟刷新/换设备）从服务端恢复
+    first.view.unmount();
+    await openPanel();
+    await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS['shift-enter']));
+  });
+
+  it('连续切换全部保存失败时回滚到最后落库值，且只提示一次', async () => {
+    mockBackend();
+    seedUserSetting(CLARIFICATION_SEND_MODE_KEY, '"enter"');
+    let releaseFirstPut: (() => void) | null = null;
+    const firstPutHeld = new Promise<void>((resolve) => { releaseFirstPut = resolve; });
+    let putCalls = 0;
+    server.use(
+      http.put('/api/users/me/settings/:key', async () => {
+        putCalls += 1;
+        if (putCalls === 1) {
+          await firstPutHeld;
+        }
+        return failureBody();
+      }),
+    );
+
+    await openPanel();
+    await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS.enter));
+
+    await chooseSendMode(SEND_MODE_LABELS['shift-enter']);
+    await chooseSendMode(SEND_MODE_LABELS.enter);
+    await settle();
+    expect(putCalls).toBe(1);
+
+    releaseFirstPut!();
+    // 第二个 PUT 也失败：界面回到最后落库值（enter），第一条的失败已被新选择取代、静默
+    await waitFor(() => expect(putCalls).toBe(2));
+    await waitFor(() => expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS.enter));
+    expect(await screen.findAllByText('发送方式保存失败，请重试')).toHaveLength(1);
+  });
+
+  it('偏好落定前用户已切换：本地选择不被服务端旧值盖回', async () => {
+    mockBackend();
+    let releaseGet: (() => void) | null = null;
+    const heldGet = new Promise<void>((resolve) => { releaseGet = resolve; });
+    server.use(
+      http.get('/api/users/me/settings/:key', async () => {
+        await heldGet;
+        return ok({ key: CLARIFICATION_SEND_MODE_KEY, valueJson: '"shift-enter"' });
+      }),
+    );
+
+    await openPanel();
+    await chooseSendMode(SEND_MODE_LABELS.enter);
+
+    releaseGet!();
+    await settle();
+    expect(currentSendModeLabel()).toBe(SEND_MODE_LABELS.enter);
+  });
+});
+
+describe('发送区底部操作行布局', () => {
+  beforeEach(() => {
+    resetUserSettingStore();
+    message.destroy();
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+  });
+
+  afterEach(() => {
+    clearClarificationPrefill('100');
+    vi.restoreAllMocks();
+    message.destroy();
+  });
+
+  function assertBottomActionsLayout() {
+    const composer = screen.getByTestId('clarification-composer');
+    const actions = within(composer).getByTestId('clarification-input-actions');
+    expect(composer.style.flexDirection).toBe('column');
+    expect(actions).toHaveStyle({
+      width: '100%',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    });
+
+    const textarea = within(composer).getByPlaceholderText('输入消息...');
+    const select = within(actions).getByTestId('clarification-send-mode-select');
+    const sendButton = within(actions).getByRole('button', { name: '发送消息' });
+    expect(textarea.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(select.compareDocumentPosition(sendButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+
+  it('将发送方式和发送按钮放在输入框下方同一行的左右两侧', async () => {
+    mockBackend();
+    await openPanel();
+
+    assertBottomActionsLayout();
+  });
+
+  it('全屏和非全屏模式保持相同的底部操作行布局', async () => {
+    mockBackend();
+    const { rerenderWith } = await openPanel({ fullscreen: true });
+    assertBottomActionsLayout();
+
+    rerenderWith({ fullscreen: false });
+    assertBottomActionsLayout();
+  });
+
+  it('终止响应替换右侧发送按钮时保留左侧发送方式', async () => {
+    mockBackend();
+    const processing = {
+      ...conversationPayload(1, '正在回复'),
+      processingStatus: 'PROCESSING' as string | null,
+      processingTurnId: 11 as number | null,
+      cancelSupported: true,
+    };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () => ok([processing])),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => ok(processing)),
+    );
+
+    await openPanel();
+    const actions = screen.getByTestId('clarification-input-actions');
+
+    const stopButton = await within(actions).findByRole('button', { name: /终止响应/ });
+    expect(actions.lastElementChild).toBe(stopButton);
+    expect(within(actions).queryByRole('button', { name: '发送消息' })).not.toBeInTheDocument();
+    expect(within(actions).getByTestId('clarification-send-mode-select')).toBeInTheDocument();
   });
 });

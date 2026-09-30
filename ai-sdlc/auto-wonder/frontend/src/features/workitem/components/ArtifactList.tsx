@@ -33,7 +33,7 @@ export function ArtifactList({ artifacts, loading }: ArtifactListProps) {
               key={String(a.id)}
               style={{ display: 'flex', alignItems: 'center', gap: 8 }}
             >
-              <FileOutlined style={{ color: '#8c8c8c', fontSize: 14 }} />
+              <FileOutlined style={{ color: 'var(--aw-muted)', fontSize: 14 }} />
               <Text ellipsis style={{ flex: 1, fontSize: 13 }}>{a.name}</Text>
               <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{a.type}</Text>
             </div>

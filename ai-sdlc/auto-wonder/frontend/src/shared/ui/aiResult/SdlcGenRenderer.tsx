@@ -102,10 +102,10 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
           <div
             key={i}
             style={{
-              border: '1px solid #e5e7eb',
+              border: '1px solid var(--aw-border)',
               borderRadius: 8,
               padding: 12,
-              background: '#fff',
+              background: 'var(--aw-panel)',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>

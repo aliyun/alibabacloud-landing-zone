@@ -322,4 +322,77 @@ describe('RepoDetailPage', () => {
       });
     });
   });
+
+  it('blocks saving the edit when the repo name contains a path separator', async () => {
+    const user = userEvent.setup();
+    let putRequests = 0;
+    server.use(
+      http.get('/api/repos/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: mockRepo,
+      })),
+      http.get('/api/repos/1/conclusion', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: null,
+      })),
+      http.get('/api/repos/relations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/repos', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockRepo],
+      })),
+      http.put('/api/repos/1', () => {
+        putRequests += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: mockRepo });
+      }),
+    );
+
+    renderPage('/repos/1');
+    await screen.findByRole('tab', { name: '基础信息' });
+
+    await user.click(await screen.findByRole('button', { name: /编辑/ }));
+    const nameInput = await screen.findByLabelText('仓库名称');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'api-tool-agent/terraform-provider-alicloud');
+    await user.click(screen.getByRole('button', { name: /保存/ }));
+
+    expect(await screen.findByText(/仓库名称必须为单级目录名/)).toBeInTheDocument();
+    expect(screen.getByText(/namespace\/repo-name/)).toBeInTheDocument();
+    await waitFor(() => expect(putRequests).toBe(0));
+  });
+
+  it('saves the edit when the name stays a legal single segment', async () => {
+    const user = userEvent.setup();
+    let putBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/repos/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: mockRepo,
+      })),
+      http.get('/api/repos/1/conclusion', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: null,
+      })),
+      http.get('/api/repos/relations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/repos', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [mockRepo],
+      })),
+      http.put('/api/repos/1', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: mockRepo });
+      }),
+    );
+
+    renderPage('/repos/1');
+    await screen.findByRole('tab', { name: '基础信息' });
+
+    await user.click(await screen.findByRole('button', { name: /编辑/ }));
+    const nameInput = await screen.findByLabelText('仓库名称');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'terraform-provider-alicloud');
+    await user.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(putBody).toMatchObject({ name: 'terraform-provider-alicloud' });
+    });
+    expect(screen.queryByText(/仓库名称必须为单级目录名/)).not.toBeInTheDocument();
+  });
 });

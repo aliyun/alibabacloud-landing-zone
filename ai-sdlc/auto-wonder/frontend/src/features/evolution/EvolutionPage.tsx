@@ -1,7 +1,8 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useMemo, useState } from 'react';
 import {
-  Button, Card, Form, Input, message, Modal, Popconfirm, Space, Table, Tabs, Tag, Typography,
-} from 'antd';
+  Button, Card, Form, Input, message, Modal, Popconfirm, Space, Tabs, Tag, Typography} from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { ApiOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
@@ -25,6 +26,7 @@ import type {
   EvolutionProposal,
 } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 
 const { Text } = Typography;
 
@@ -228,7 +230,10 @@ export function EvolutionPage() {
     },
     { title: '触发', dataIndex: 'triggerType', width: 140 },
     { title: 'Action', dataIndex: 'policyJson', width: 120, render: (_, record) => <Tag>{policyAction(record)}</Tag> },
-    { title: 'Policy', dataIndex: 'policyJson', width: 180, ellipsis: true, render: (_, record) => policyReason(record) },
+    {
+      title: 'Policy', dataIndex: 'policyJson', width: 180, ellipsis: { showTitle: false },
+      render: (_, record) => { const reason = policyReason(record); return <EllipsisText tooltip={reason}>{reason}</EllipsisText>; },
+    },
     {
       title: 'Trial',
       dataIndex: 'trialJson',
@@ -252,7 +257,10 @@ export function EvolutionPage() {
         );
       },
     },
-    { title: '候选摘要', dataIndex: 'candidatePatchJson', ellipsis: true, render: (_, record) => patchTitle(record) },
+    {
+      title: '候选摘要', dataIndex: 'candidatePatchJson', ellipsis: { showTitle: false },
+      render: (_, record) => { const title = patchTitle(record); return <EllipsisText tooltip={title}>{title}</EllipsisText>; },
+    },
     { title: '创建时间', dataIndex: 'gmtCreate', width: 170, render: formatTime },
     {
       title: '操作',
@@ -317,9 +325,9 @@ export function EvolutionPage() {
     { title: 'ID', dataIndex: 'id', width: 80, render: idText },
     { title: '资产', dataIndex: 'assetType', width: 130, render: (v, r) => `${v} #${idText(r.assetId)}` },
     { title: 'Posterior', dataIndex: 'posteriorType', width: 120 },
-    { title: 'Context', dataIndex: 'contextKey', width: 180, ellipsis: true },
+    { title: 'Context', dataIndex: 'contextKey', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v ?? '-'}</EllipsisText> },
     { title: 'Source', dataIndex: 'sourceType', width: 140 },
-    { title: 'Source Ref', dataIndex: 'sourceRef', width: 180, ellipsis: true },
+    { title: 'Source Ref', dataIndex: 'sourceRef', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v ?? '-'}</EllipsisText> },
     { title: 'Outcome', dataIndex: 'outcome', width: 120, render: (v: string) => <Tag color={verdictColor[v] || 'default'}>{v || '-'}</Tag> },
     { title: 'Mean', dataIndex: 'posteriorMean', width: 90, render: (v: number | null) => v == null ? '-' : v.toFixed(2) },
     { title: 'N', dataIndex: 'effectiveSampleSize', width: 70 },
@@ -338,10 +346,10 @@ export function EvolutionPage() {
         </Space>
       ),
     },
-    { title: '名称', dataIndex: 'name', width: 220, ellipsis: true, render: idText },
+    { title: '名称', dataIndex: 'name', align: 'left', width: 220, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
     { title: '分类', dataIndex: 'category', width: 150, render: idText },
-    { title: '触发提示', dataIndex: 'triggerHint', ellipsis: true, render: idText },
-    { title: 'Lazy Load Ref', dataIndex: 'lazyLoadRef', width: 260, ellipsis: true, render: idText },
+    { title: '触发提示', dataIndex: 'triggerHint', ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
+    { title: 'Lazy Load Ref', dataIndex: 'lazyLoadRef', width: 260, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
     { title: 'Mean', dataIndex: 'posteriorMean', width: 90, render: (v: number | null) => v == null ? '-' : v.toFixed(2) },
     { title: 'N', dataIndex: 'effectiveSampleSize', width: 70, render: idText },
   ];
@@ -375,7 +383,7 @@ export function EvolutionPage() {
   return (
     <>
       <Card
-        title="自进化"
+        className="aw-content-card" title={<PageHeading title="自进化" />}
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={() => {

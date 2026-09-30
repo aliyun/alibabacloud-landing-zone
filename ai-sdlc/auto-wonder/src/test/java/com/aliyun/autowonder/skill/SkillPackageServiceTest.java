@@ -116,11 +116,70 @@ class SkillPackageServiceTest {
 
     @Test
     void inspectRejectsZipWithoutRootSkillMd() throws Exception {
-        MockMultipartFile file = zip("bad.zip", "nested/SKILL.md", skillMd("nested", "desc"));
+        MockMultipartFile file = zip("bad.zip", "nested/docs.md", "no skill manifest");
 
         BizException ex = assertThrows(BizException.class, () -> service.inspect(file));
 
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+    }
+
+    @Test
+    void inspectAcceptsZipWrappedInSingleTopLevelDirectory() throws Exception {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("wrapped-skill/", new byte[0]);
+        entries.put("wrapped-skill/SKILL.md", skillMd("wrapped-skill", "Wrapped skill").getBytes(StandardCharsets.UTF_8));
+        entries.put("wrapped-skill/references/readme.md", "reference".getBytes(StandardCharsets.UTF_8));
+        MockMultipartFile file = zip("wrapped-skill.zip", entries);
+
+        SkillPackageInspectVO vo = service.inspect(file);
+
+        assertEquals("wrapped-skill", vo.getName());
+        assertEquals("Wrapped skill", vo.getDescription());
+    }
+
+    @Test
+    void inspectRejectsZipWithMixedTopLevelEntries() throws Exception {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("README.md", "readme".getBytes(StandardCharsets.UTF_8));
+        entries.put("wrapped-skill/SKILL.md", skillMd("wrapped-skill", "Wrapped skill").getBytes(StandardCharsets.UTF_8));
+        MockMultipartFile file = zip("mixed.zip", entries);
+
+        BizException ex = assertThrows(BizException.class, () -> service.inspect(file));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+    }
+
+    @Test
+    void inspectRejectsZipWithTwoTopLevelDirectories() throws Exception {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("a/SKILL.md", skillMd("a", "desc a").getBytes(StandardCharsets.UTF_8));
+        entries.put("b/docs.md", "doc".getBytes(StandardCharsets.UTF_8));
+        MockMultipartFile file = zip("two-roots.zip", entries);
+
+        BizException ex = assertThrows(BizException.class, () -> service.inspect(file));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+    }
+
+    @Test
+    void inspectRejectsZipWithSkillMdStillNestedAfterStripping() throws Exception {
+        MockMultipartFile file = zip("nested.zip", "a/inner/SKILL.md", skillMd("nested", "desc"));
+
+        BizException ex = assertThrows(BizException.class, () -> service.inspect(file));
+
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
+    }
+
+    @Test
+    void inspectAcceptsTarGzWrappedInSingleTopLevelDirectory() throws Exception {
+        MockMultipartFile file = tarGz("wrapped-skill.tar.gz", Map.of(
+                "wrapped-skill/SKILL.md", skillMd("wrapped-skill", "Wrapped skill"),
+                "wrapped-skill/references/readme.md", "reference"));
+
+        SkillPackageInspectVO vo = service.inspect(file);
+
+        assertEquals("wrapped-skill", vo.getName());
+        assertEquals("wrapped-skill.tar.gz", vo.getFileName());
     }
 
     @Test
@@ -467,7 +526,9 @@ class SkillPackageServiceTest {
         try (ZipOutputStream zos = new ZipOutputStream(baos)) {
             for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
                 zos.putNextEntry(new ZipEntry(entry.getKey()));
-                zos.write(entry.getValue());
+                if (!entry.getKey().endsWith("/")) {
+                    zos.write(entry.getValue());
+                }
                 zos.closeEntry();
             }
         }

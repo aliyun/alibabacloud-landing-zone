@@ -1,5 +1,7 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo } from 'react';
-import { Card, Tabs, Form, Input, InputNumber, Button, Spin, message, Row, Col, Statistic, Table, Switch, Space, Typography } from 'antd';
+import { Card, Tabs, Form, Input, InputNumber, Button, Spin, message, Row, Col, Statistic, Switch, Space } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { SaveOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { FormInstance } from 'antd/es/form';
@@ -18,7 +20,6 @@ import { getPlatformImChannels, PLATFORM_IM_CHANNELS_QUERY_KEY, selectedImProvid
 import { Alert } from 'antd';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
-const { Text } = Typography;
 
 type SettingSchema = {
   key: string;
@@ -336,7 +337,7 @@ function SystemSettingsTab() {
 
 export function SettingsPage() {
   return (
-    <Card title="系统设置" extra={<Text type="secondary">AI、通知与系统默认项</Text>}>
+    <Card className="aw-content-card" title={<PageHeading title="系统设置" description="AI、通知与系统默认项" />}>
       <Tabs
         items={[
           { key: 'AI', label: 'AI 配置', children: <AiSettingsTab /> },

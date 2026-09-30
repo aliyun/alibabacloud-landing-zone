@@ -16,13 +16,13 @@ export function ClarificationResult({ clarification }: ClarificationResultProps)
   return (
     <div
       style={{
-        background: '#fff7ed',
-        border: '1px solid #fed7aa',
+        background: 'rgba(var(--aw-accent-rgb),.10)',
+        border: '1px solid var(--aw-accent)',
         borderRadius: 8,
         padding: 16,
       }}
     >
-      <Text strong style={{ display: 'block', marginBottom: 12, fontSize: 14, color: '#c2410c' }}>
+      <Text strong style={{ display: 'block', marginBottom: 12, fontSize: 14, color: 'var(--aw-accent-text)' }}>
         澄清材料 (AI 生成)
       </Text>
       <MarkdownView content={clarification.contentMd} />

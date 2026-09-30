@@ -78,6 +78,8 @@ public class PlatformBrandingController {
         }
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(brandingService.logoContentType()))
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
                 .cacheControl(CacheControl.maxAge(5, TimeUnit.MINUTES).cachePublic())
                 .body(bytes);
     }

@@ -83,6 +83,7 @@ public class AoneInboundPoller {
                         .toList();
                 if (!issueIds.isEmpty()) {
                     inboundSyncService.syncWorkitems(binding, page.getItems(), actorId(binding));
+                    bindingDao.markSyncSuccess(binding.getId(), binding.getTenantId(), new Date());
                     synced += issueIds.size();
                     log.info("Aone inbound poll success bindingId={} projectId={} syncedIssueCount={}",
                             binding.getId(), binding.getExternalProjectId(), issueIds.size());

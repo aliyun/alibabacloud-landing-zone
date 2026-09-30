@@ -40,4 +40,6 @@ Deployment details are in the
 
 ## Roadmap / 路线图
 
-![AutoWonder Community roadmap](docs/images/autowonder-community-roadmap.png)
+![AutoWonder Community roadmap: September–November 2026 / 2026 年 9—11 月路线图](docs/images/autowonder-community-roadmap.png)
+
+[View editable SVG / 查看可编辑矢量图](docs/images/autowonder-community-roadmap.svg)

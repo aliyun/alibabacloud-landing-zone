@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.dispatch;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.storage.ObjectStorage;
 import com.aliyun.autowonder.storage.OssProperties;
 import com.aliyun.autowonder.storage.StoredObject;
@@ -213,7 +213,7 @@ public class DispatchCheckpointService {
         if (repositories == null || repositories.isEmpty() || repositories.size() > 100) {
             return null;
         }
-        var normalizedRepositories = new com.alibaba.fastjson.JSONArray();
+        var normalizedRepositories = new com.aliyun.autowonder.json.JSONArray();
         for (int i = 0; i < repositories.size(); i++) {
             JSONObject repo = repositories.getJSONObject(i);
             if (repo == null) {

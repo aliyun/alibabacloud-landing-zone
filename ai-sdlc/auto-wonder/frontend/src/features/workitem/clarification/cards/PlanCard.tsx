@@ -10,8 +10,8 @@ interface PlanCardProps {
 
 /** 优先级与完成态是语义色，不走中性令牌。 */
 const PRIORITY_COLOR: Record<AcpPlanPriority, string> = {
-  high: '#cf1322',
-  medium: '#d46b08',
+  high: 'var(--aw-error)',
+  medium: 'var(--aw-warning)',
   low: CLARIFICATION_THEME.textMuted,
 };
 
@@ -19,7 +19,7 @@ const STATUS_AFFORDANCE: Record<AcpPlanStatus, ReactNode> = {
   completed: (
     <CheckCircleOutlined
       data-testid="plan-entry-icon-completed"
-      style={{ color: '#389e0d', marginTop: 2 }}
+      style={{ color: 'var(--aw-success)', marginTop: 2 }}
     />
   ),
   in_progress: (
@@ -50,7 +50,7 @@ export function PlanCard({ entries }: PlanCardProps) {
         backgroundColor: CLARIFICATION_THEME.codeSurface,
       }}
     >
-      <Typography.Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+      <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 6 }}>
         执行计划
       </Typography.Text>
       {entries.map((entry, index) => (
@@ -62,7 +62,7 @@ export function PlanCard({ entries }: PlanCardProps) {
           {STATUS_AFFORDANCE[entry.status]}
           <span
             style={{
-              fontSize: 12,
+              fontSize: 14,
               flex: 1,
               color: entry.status === 'completed'
                 ? CLARIFICATION_THEME.textMuted
@@ -72,7 +72,7 @@ export function PlanCard({ entries }: PlanCardProps) {
           >
             {entry.content}
           </span>
-          <span style={{ fontSize: 11, color: PRIORITY_COLOR[entry.priority] }}>
+          <span style={{ fontSize: 13, color: PRIORITY_COLOR[entry.priority] }}>
             {entry.priority}
           </span>
         </div>

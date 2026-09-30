@@ -3,6 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { WorkitemMeta } from './WorkitemMeta';
 
 const base = {
+  workType: 'REQ',
+  statusName: '开发中',
   priority: 1,
   assigneeName: 'caihe',
   assigneeDisplayName: '蔡何(10000)',
@@ -12,6 +14,15 @@ const base = {
 };
 
 describe('WorkitemMeta', () => {
+  it('groups type, status, priority, creator and assignee in order', () => {
+    render(<WorkitemMeta {...base} />);
+    const type = screen.getByText('需求').parentElement!;
+    const row = type.parentElement!;
+    expect(Array.from(row.children).slice(0, 5).map((item) => item.textContent)).toEqual([
+      '工单类型: 需求', '工单状态: 开发中', '优先级: 高', '创建者: 淘飞', '当前处理人: 蔡何',
+    ]);
+  });
+
   it('labels the assignee as 当前处理人 and strips id suffixes from names', () => {
     render(<WorkitemMeta {...base} />);
     expect(screen.getByText('当前处理人: 蔡何')).toBeInTheDocument();
@@ -47,7 +58,7 @@ describe('WorkitemMeta', () => {
 
   it('renders the Chinese priority label from the shared mapping', () => {
     render(<WorkitemMeta {...base} priority={0} />);
-    expect(screen.getByText('紧急')).toHaveStyle({ color: '#ff4d4f' });
+    expect(screen.getByText('紧急')).toHaveClass('ant-tag-red');
   });
 
   it('shows 未知优先级 for unknown priority values', () => {
@@ -58,6 +69,8 @@ describe('WorkitemMeta', () => {
   it('hides optional meta lines when absent', () => {
     render(
       <WorkitemMeta
+        workType="REQ"
+        statusName={null}
         priority={2}
         assigneeName={null}
         assigneeType="HUMAN"

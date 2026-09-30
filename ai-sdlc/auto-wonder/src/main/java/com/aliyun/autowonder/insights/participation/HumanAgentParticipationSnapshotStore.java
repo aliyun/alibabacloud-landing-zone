@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.insights.participation;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,8 +19,8 @@ import java.util.Optional;
 public class HumanAgentParticipationSnapshotStore {
 
     private static final Logger log = LoggerFactory.getLogger(HumanAgentParticipationSnapshotStore.class);
-    static final String KEY_PREFIX = "autowonder:insights:human-agent:v1:";
-    private static final int SCHEMA_VERSION = 1;
+    static final String KEY_PREFIX = "autowonder:insights:human-agent:v2:";
+    private static final int SCHEMA_VERSION = 2;
 
     private final RedisManager redisManager;
     private final HumanAgentParticipationProperties properties;
@@ -57,6 +57,12 @@ public class HumanAgentParticipationSnapshotStore {
             item.put("totalDurationSeconds", f.totalDurationSeconds());
             item.put("humanDurationSeconds", f.humanDurationSeconds());
             item.put("agentDurationSeconds", f.agentDurationSeconds());
+            item.put("createdAt", f.createdAt().toString());
+            item.put("agentParticipated", f.agentParticipated());
+            item.put("inferredAssignment", f.inferredAssignment());
+            item.put("exclusionReason", f.exclusionReason());
+            item.put("executionSeconds", f.executionSeconds());
+            item.put("executionStatus", f.executionStatus());
             items.add(item);
         }
         snapshot.put("items", items);
@@ -82,13 +88,19 @@ public class HumanAgentParticipationSnapshotStore {
             if (itemsArray != null) {
                 for (int i = 0; i < itemsArray.size(); i++) {
                     JSONObject item = itemsArray.getJSONObject(i);
-                    facts.add(new HumanAgentParticipationFact(
+                    HumanAgentParticipationFact fact = new HumanAgentParticipationFact(
                             item.getLongValue("workitemId"),
                             item.getString("title"),
                             Instant.parse(item.getString("completedAt")),
                             item.getLongValue("totalDurationSeconds"),
                             item.getLongValue("humanDurationSeconds"),
-                            item.getLongValue("agentDurationSeconds")));
+                            item.getLongValue("agentDurationSeconds"));
+                    fact.setCreatedAt(Instant.parse(item.getString("createdAt")));
+                    fact.setAgentParticipated(item.getBooleanValue("agentParticipated"));
+                    fact.setInferredAssignment(item.getBooleanValue("inferredAssignment"));
+                    fact.setExclusionReason(item.getString("exclusionReason"));
+                    fact.setExecution(item.getLong("executionSeconds"), item.getString("executionStatus"));
+                    facts.add(fact);
                 }
             }
             return Optional.of(new ParsedSnapshot(generatedAt, dataThrough, facts));

@@ -27,7 +27,6 @@ export interface AoneBinding {
   lastSuccessAt: string | null;
   lastError: string | null;
   reusedExistingBinding?: boolean;
-  statusTemplateSynced?: boolean;
 }
 
 export interface AoneTestConnectionResult {

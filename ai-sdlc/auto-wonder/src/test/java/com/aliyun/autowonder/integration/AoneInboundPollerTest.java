@@ -122,7 +122,7 @@ class AoneInboundPollerTest {
         binding.setProvider("AONE");
         binding.setExternalProjectId("2161074");
         binding.setExternalProjectName("Agent Toolkits");
-        binding.setBaseUrl("http://aone-api.alibaba-inc.com");
+        binding.setBaseUrl("https://aone.example.test");
         binding.setClientKey("auto-wonder");
         binding.setCredentialRef("ref");
         binding.setRegionId("1");

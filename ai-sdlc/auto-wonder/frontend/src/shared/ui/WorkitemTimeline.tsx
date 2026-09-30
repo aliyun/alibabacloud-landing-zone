@@ -13,13 +13,13 @@ import type { TimelineEvent } from '@/shared/types/workitem';
 const { Text } = Typography;
 
 const iconMap: Record<string, React.ReactNode> = {
-  CREATE: <PlusCircleOutlined style={{ color: '#52c41a' }} />,
-  EDIT: <EditOutlined style={{ color: '#1890ff' }} />,
-  STATUS_CHANGE: <SwapOutlined style={{ color: '#fa8c16' }} />,
-  ASSIGN: <UserSwitchOutlined style={{ color: '#722ed1' }} />,
-  DISPATCH: <RocketOutlined style={{ color: '#13c2c2' }} />,
-  RESULT: <CheckCircleOutlined style={{ color: '#52c41a' }} />,
-  COMMENT: <CommentOutlined style={{ color: '#8c8c8c' }} />,
+  CREATE: <PlusCircleOutlined style={{ color: 'var(--aw-success)' }} />,
+  EDIT: <EditOutlined style={{ color: 'var(--aw-accent-text)' }} />,
+  STATUS_CHANGE: <SwapOutlined style={{ color: 'var(--aw-warning)' }} />,
+  ASSIGN: <UserSwitchOutlined style={{ color: 'var(--aw-info)' }} />,
+  DISPATCH: <RocketOutlined style={{ color: 'var(--aw-info)' }} />,
+  RESULT: <CheckCircleOutlined style={{ color: 'var(--aw-success)' }} />,
+  COMMENT: <CommentOutlined style={{ color: 'var(--aw-muted)' }} />,
 };
 
 function renderEventContent(event: TimelineEvent): React.ReactNode {

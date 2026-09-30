@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.integration.aone;
 
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.integration.provider.ExternalProject;
 import com.aliyun.autowonder.integration.provider.ExternalProjectMember;
 import com.aliyun.autowonder.integration.provider.ExternalProjectProvider;

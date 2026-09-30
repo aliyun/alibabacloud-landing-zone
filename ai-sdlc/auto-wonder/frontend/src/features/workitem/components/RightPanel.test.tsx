@@ -1,3 +1,5 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -14,6 +16,8 @@ vi.mock('../clarification/WorkitemClarificationPanel', () => ({
     initialAgentId,
     initialConversationId,
     onContextChange,
+    headerPrefix,
+    headerSuffix,
   }: {
     onAgentConfirmed?: () => void;
     fullscreen?: boolean;
@@ -23,6 +27,8 @@ vi.mock('../clarification/WorkitemClarificationPanel', () => ({
       agentId?: number | null;
       conversationId?: number | null;
     }) => void;
+    headerPrefix?: ReactNode;
+    headerSuffix?: ReactNode;
   }) => (
     <div
       data-testid="clarification-panel-stub"
@@ -30,6 +36,8 @@ vi.mock('../clarification/WorkitemClarificationPanel', () => ({
       data-initial-agent={initialAgentId == null ? '' : String(initialAgentId)}
       data-initial-conversation={initialConversationId == null ? '' : String(initialConversationId)}
     >
+      {headerPrefix}
+      {headerSuffix}
       <button type="button" onClick={() => onAgentConfirmed?.()}>stub-confirm-agent</button>
       <button type="button" onClick={() => onContextChange?.({ agentId: 42, conversationId: 101 })}>
         stub-report-context
@@ -122,7 +130,7 @@ describe('RightPanel resize handles', () => {
     firePointer('pointerup', heightHandle, { clientX: 100, clientY: 100 });
     expect(onModeChange).toHaveBeenLastCalledWith('clarify');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    await userEvent.click(screen.getByRole('button', { name: '返回' }));
     expect(screen.queryByTestId('resize-handle-vertical')).not.toBeInTheDocument();
     expect(screen.queryByTestId('clarify-resize-box')).not.toBeInTheDocument();
     expect(onModeChange).toHaveBeenLastCalledWith('progress');
@@ -133,20 +141,26 @@ describe('RightPanel resize handles', () => {
     expect(reopened.style.height).toBe('100%');
   });
 
-  it('paints the clarify container on the white surface in both docked and fullscreen layouts', async () => {
+  it('paints the clarify container on the theme surface in both docked and fullscreen layouts', async () => {
     renderPanel();
     const box = await enterClarifyMode();
 
-    // 「灰色底、死气沉沉」是本次改造要消灭的首要观感问题，而停靠态的白底此前没有任何断言：
-    // 把 backgroundColor 从停靠分支删掉，全套测试依旧全绿。这条就是那道守卫。
-    // 刻意写字面值而不是引用 CLARIFICATION_THEME.surface：只拿常量和自己比，
-    // 令牌被改回灰色时这里还是绿的（同 theme.test.ts 的取舍）。
-    expect(box).toHaveStyle({ position: 'relative', backgroundColor: '#ffffff' });
+    // SSR preserves CSS variables before jsdom's CSSOM drops them.
+    for (const initialFullscreen of [false, true]) {
+      const client = new QueryClient();
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}>
+        <RightPanel workitemId="1" participants={[]} steps={[]} artifacts={[]} initialMode="clarify" initialFullscreen={initialFullscreen} />
+      </QueryClientProvider>);
+      const container = html.match(/<div[^>]*data-testid="clarify-resize-box"[^>]*>/)?.[0];
+      expect(container).toContain('background-color:var(--aw-panel)');
+      expect(container).toContain(`position:${initialFullscreen ? 'fixed' : 'relative'}`);
+      client.clear();
+    }
+    expect(box).toHaveStyle({ position: 'relative' });
 
     await userEvent.click(screen.getByRole('button', { name: '全屏' }));
     expect(screen.getByTestId('clarify-resize-box')).toHaveStyle({
       position: 'fixed',
-      backgroundColor: '#ffffff',
     });
   });
 });
@@ -160,27 +174,30 @@ describe('RightPanel clarify fullscreen', () => {
     }
   });
 
-  it('shows a low-key fullscreen toggle in clarify mode and toggles fullscreen layout', async () => {
+  it('uses platform button styles and merges the fullscreen title into the panel header row', async () => {
     renderPanel();
     await enterClarifyMode();
 
+    const backButton = screen.getByRole('button', { name: '返回' });
     const fullscreenButton = screen.getByRole('button', { name: '全屏' });
-    expect(fullscreenButton).toBeInTheDocument();
-    // 自动全屏后这个按钮主要用于退出，降级为极简 text 图标按钮
-    expect(fullscreenButton).toHaveClass('ant-btn-text');
-    expect(fullscreenButton).not.toHaveClass('ant-btn-primary');
+    expect(backButton).not.toHaveClass('ant-btn-text');
+    expect(fullscreenButton).not.toHaveClass('ant-btn-text');
+    expect(fullscreenButton).toHaveTextContent('');
 
     await userEvent.click(fullscreenButton);
     const box = screen.getByTestId('clarify-resize-box');
     expect(box).toHaveStyle({ position: 'fixed', zIndex: 1000 });
     expect(screen.queryByTestId('resize-handle-vertical')).not.toBeInTheDocument();
-    expect(screen.getByTestId('clarification-panel-stub')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: '退出全屏' }));
-    const restored = screen.getByTestId('clarify-resize-box');
-    expect(restored).toHaveStyle('position: relative');
+    // 全屏后外层不再渲染独立头行，标题也不再显示：「返回/退出全屏」并入面板头行
+    expect(screen.queryByText('需求澄清')).not.toBeInTheDocument();
+    const exitFullscreenButton = screen.getByRole('button', { name: '退出全屏' });
+    expect(exitFullscreenButton.parentElement).toBe(screen.getByTestId('clarification-panel-stub'));
+    expect(exitFullscreenButton).toHaveTextContent('');
+    await userEvent.click(exitFullscreenButton);
+    expect(screen.getByTestId('clarify-resize-box')).toHaveStyle('position: relative');
     expect(screen.getByTestId('resize-handle-vertical')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '全屏' })).toBeInTheDocument();
+    expect(screen.queryByText('需求澄清')).not.toBeInTheDocument();
   });
 
   it('exits fullscreen with the Escape key', async () => {
@@ -204,7 +221,7 @@ describe('RightPanel clarify fullscreen', () => {
     await userEvent.click(screen.getByRole('button', { name: '全屏' }));
     expect(screen.getByTestId('clarify-resize-box')).toHaveStyle('position: fixed');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    await userEvent.click(screen.getByRole('button', { name: '返回' }));
     await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
     const reopened = await screen.findByTestId('clarify-resize-box');
     expect(reopened).toHaveStyle('position: relative');
@@ -268,7 +285,7 @@ describe('RightPanel clarify fullscreen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'stub-confirm-agent' }));
     expect(screen.getByTestId('clarify-resize-box')).toHaveStyle('position: relative');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    await userEvent.click(screen.getByRole('button', { name: '返回' }));
     await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
     const reopened = await screen.findByTestId('clarify-resize-box');
     expect(reopened).toHaveStyle('position: relative');
@@ -296,7 +313,7 @@ describe('RightPanel clarify fullscreen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'stub-confirm-agent' }));
     expect(screen.getByTestId('clarify-resize-box')).toHaveStyle('position: fixed');
 
-    await userEvent.click(screen.getByRole('button', { name: /返回进度/ }));
+    await userEvent.click(screen.getByRole('button', { name: '返回' }));
     await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
     const reopened = await screen.findByTestId('clarify-resize-box');
     // 重入时全屏状态已重置
@@ -446,7 +463,7 @@ describe('RightPanel refresh restore (工单 53035)', () => {
     const onFullscreenChange = vi.fn();
     renderPanel({ initialMode: 'clarify', initialFullscreen: true, onModeChange, onFullscreenChange });
 
-    await userEvent.click(await screen.findByRole('button', { name: /返回进度/ }));
+    await userEvent.click(await screen.findByRole('button', { name: '返回' }));
 
     expect(onModeChange).toHaveBeenLastCalledWith('progress');
     expect(onFullscreenChange).not.toHaveBeenCalled();
@@ -490,7 +507,7 @@ describe('RightPanel page-driven mode switch (工单 53315)', () => {
     panel.rerenderWith({ initialMode: 'clarify' });
 
     expect(await screen.findByTestId('clarify-resize-box')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /返回进度/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '返回' })).toBeInTheDocument();
   });
 
   it('leaves clarify and drops fullscreen when the page drives it back to progress', async () => {

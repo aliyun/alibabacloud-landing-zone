@@ -373,6 +373,22 @@ ECS-local-only acceptance and records the upgrade as accepted as soon as all ECS
 `acceptance` is only an idempotent local-state confirmation. Never run the deployment skill's initial `database`,
 `rolling-start`, or `business-init` operations during an upgrade.
 
+For V075, use maintenance mode and the [live report checkpoint](references/upgrade-runbook.md#v075-live-report-checkpoint).
+Before stopping writers or executing A/B, verify interactive ECS console Session
+Manager access to the exact verified migration node and its existing sudo
+report-reading capability. This is the supported private no-SSH route. If access
+is unavailable, stop before mutation and record the missing prerequisite; do not
+change RAM/sudo permissions, account settings or networking as part of the upgrade.
+The first confirmed migration invocation performs A/B/C and stops at
+`awaiting-review`. Privately read the complete report through that console
+session, verify its node/path, plan/source/target/database identity, full migration
+checksum and manifest-bound digest, then continue with
+`--reviewed-v075-report SHA256` (PowerShell: `-ReviewedV075Report SHA256`). Keep
+report contents out of ordinary RunCommand/CI/chat logs and preserve the customer's
+session-audit policy. D, later migrations and activation remain blocked until the
+exact report is approved and revalidated. Unknown/failed SQL phases require
+reviewed recovery; do not classify them as idempotent retries.
+
 If a phase fails, collect sanitized evidence, diagnose the root cause, and
 automatically apply a bounded deterministic repair when the target commit,
 resource set, plan fingerprint, database boundary, and planned cloud operations

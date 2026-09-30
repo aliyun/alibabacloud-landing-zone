@@ -41,6 +41,7 @@ export interface InsightMetrics {
 export interface InsightAuditItem {
   timestamp: string;
   worker: string;
+  operatorType?: 'AGENT' | 'HUMAN';
   eventType: string;
   detail: string;
   riskLevel: 'high' | 'medium' | 'low';
@@ -89,6 +90,7 @@ export type TimeRange = '7d' | '30d' | '90d';
 export type Granularity = 'DAY' | 'WEEK' | 'MONTH';
 
 export interface DurationSummary {
+  humanShare?: number | null;
   totalDurationSeconds: number;
   humanDurationSeconds: number;
   agentDurationSeconds: number;
@@ -104,6 +106,8 @@ export interface P90Workitem {
 }
 
 export interface TrendEntry {
+  sampleSize?: number;
+  humanShare?: number | null;
   label: string;
   averageTotalSeconds: number;
   averageHumanSeconds: number;
@@ -111,6 +115,15 @@ export interface TrendEntry {
 }
 
 export interface HumanAgentParticipation {
+  medianTotalSeconds?: number;
+  agentWorkitemCount?: number;
+  executionSampleSize?: number;
+  averageExecutionSeconds?: number | null;
+  executionMissingCount?: number;
+  executionIncompleteCount?: number;
+  identifiedCompletedCount?: number;
+  inferredAssignmentCount?: number;
+  exclusions?: Record<string, number>;
   available: boolean;
   generatedAt: string | null;
   dataThrough: string | null;

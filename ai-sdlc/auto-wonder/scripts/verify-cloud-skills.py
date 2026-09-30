@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the two Skills' local fixture suites and report actual platform coverage.
+"""Run local Skill and interoperability suites with actual platform coverage.
 
 No deployment is started. CLI deny stubs and isolated credentials protect the
 test boundary; use an OS network sandbox as well when available. This runner
@@ -21,6 +21,7 @@ import unittest
 
 
 SKILLS = ('deploying-autowonder-on-alibaba-cloud', 'upgrading-autowonder-on-alibaba-cloud')
+SUITES = (*SKILLS, 'cloud-skill-interop')
 
 
 def verdict(results, strict=False):
@@ -36,12 +37,12 @@ def case_id(test):
     return getattr(test, 'test_case', test).id()
 
 
-def worker(directory):
+def worker(directory, pattern='test_*.py'):
     started = time.monotonic()
     # Fixtures sometimes print subprocess output: only return test identifiers,
     # never arbitrary command output or assertion values in the summary.
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        suite = unittest.defaultTestLoader.discover(str(directory), pattern='test_*.py')
+        suite = unittest.defaultTestLoader.discover(str(directory), pattern=pattern)
         result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
     return {'tests': result.testsRun,
             'failures': [case_id(test) for test, _ in result.failures],
@@ -55,11 +56,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--strict', action='store_true')
     parser.add_argument('--output', type=Path)
-    parser.add_argument('--worker', choices=SKILLS, help=argparse.SUPPRESS)
+    parser.add_argument('--worker', choices=SUITES, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     if args.worker:
-        print(json.dumps(worker(root / 'skills' / args.worker / 'tests')))
+        if args.worker == 'cloud-skill-interop':
+            result = worker(root / 'scripts' / 'tests', 'test_cloud_skill_interop.py')
+        else:
+            result = worker(root / 'skills' / args.worker / 'tests')
+        print(json.dumps(result))
         return 0
     results = []
     with tempfile.TemporaryDirectory(prefix='aw-skill-tests-') as temp:
@@ -80,9 +85,10 @@ def main(argv=None):
                    HOME=str(home), USERPROFILE=str(home),
                    GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='core.hooksPath',
                    GIT_CONFIG_VALUE_0=os.devnull, PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1')
-        for skill in SKILLS:
+        for skill in SUITES:
             print('验证 ' + skill, file=sys.stderr, flush=True)
             command = [sys.executable, '-B', str(Path(__file__).resolve()), '--worker', skill]
+            started = time.monotonic()
             try:
                 run = subprocess.run(command, env=env, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, timeout=1200, check=False)
@@ -90,7 +96,8 @@ def main(argv=None):
                 if run.returncode:
                     raise ValueError('worker failed')
             except (OSError, ValueError, subprocess.SubprocessError):
-                item = {'tests': 0, 'failures': [], 'errors': ['suite-worker-failed'], 'skipped': []}
+                item = {'tests': 0, 'failures': [], 'errors': ['suite-worker-failed'], 'skipped': [],
+                        'seconds': round(time.monotonic() - started, 3)}
             item['skill'] = skill
             results.append(item)
     report = {'status': verdict(results, args.strict), 'platform': platform.system(),

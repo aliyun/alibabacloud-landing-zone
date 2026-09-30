@@ -38,6 +38,11 @@ public class TaskDispatchFrame extends OutboundFrame {
     private String packageRefreshPath;
     private String artifactUploadPath;
     private String checkpointUploadPath;
+    private String memorySnapshotPath;
+    private String memoryChangesPath;
+    private String memoryMutationPath;
+    private String memoryRecallPath;
+    private Map<Long, Long> memoryStartingRevisions;
     /** 仅对声明 DEBUG_LOG_V1 且 dispatch 冻结开关为 true 的执行器下发；否则整段缺省（老 runtime 无感）。 */
     private DebugLogDirective debugLog;
     private String resumeMode;

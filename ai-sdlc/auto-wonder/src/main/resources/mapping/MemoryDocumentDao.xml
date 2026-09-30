@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.memory.store.MemoryDocumentDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.memory.store.MemoryDocumentDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO memory_document
+        (tenant_id, store_id, path, content_md, content_sha256, byte_size, modified_at,
+         creator_type, creator_ref, source_dispatch_id, source_session_id, creator_id, version)
+        VALUES (#{tenantId}, #{storeId}, #{path}, #{contentMd}, #{contentSha256}, #{byteSize},
+                #{modifiedAt}, #{creatorType}, #{creatorRef}, #{sourceDispatchId},
+                #{sourceSessionId}, #{creatorId}, 1)
+    </insert>
+    <insert id="insertEmptyIndexIfAbsent">
+        INSERT IGNORE INTO memory_document
+        (tenant_id, store_id, path, content_md, content_sha256, byte_size, modified_at,
+         creator_type, creator_ref, creator_id, version)
+        VALUES (#{tenantId}, #{storeId}, 'MEMORY.md', '',
+                'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                0, CURRENT_TIMESTAMP(3), 'SYSTEM', 'bootstrap', #{creatorId}, 1)
+    </insert>
+    <select id="findById" resultType="com.aliyun.autowonder.memory.store.MemoryDocumentDO">
+        SELECT * FROM memory_document
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+        LIMIT 1
+    </select>
+    <select id="findByPath" resultType="com.aliyun.autowonder.memory.store.MemoryDocumentDO">
+        SELECT * FROM memory_document
+        WHERE tenant_id = #{tenantId} AND store_id = #{storeId} AND path = #{path}
+        <if test="!includeDeleted">AND deleted_at IS NULL</if>
+        LIMIT 1
+    </select>
+    <select id="listLive" resultType="com.aliyun.autowonder.memory.store.MemoryDocumentDO">
+        SELECT * FROM memory_document
+        WHERE tenant_id = #{tenantId} AND store_id = #{storeId} AND deleted_at IS NULL
+        ORDER BY path
+    </select>
+    <update id="update">
+        UPDATE memory_document
+        SET path = #{path}, content_md = #{contentMd}, content_sha256 = #{contentSha256},
+            byte_size = #{byteSize}, modified_at = CURRENT_TIMESTAMP(3), deleted_at = NULL,
+            version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND store_id = #{storeId}
+          AND version = #{version}
+    </update>
+    <update id="eraseAndDelete">
+        UPDATE memory_document
+        SET content_md = '', content_sha256 = '', byte_size = 0,
+            deleted_at = CURRENT_TIMESTAMP(3), version = version + 1, modifier_id = #{modifierId}
+        WHERE id = #{id} AND tenant_id = #{tenantId} AND store_id = #{storeId}
+          AND version = #{version} AND deleted_at IS NULL
+    </update>
+</mapper>

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Card, Row, Col, Tag, Button, Modal, message, Space, Typography, Avatar, Spin, Steps } from 'antd';
+import { Card, Row, Col, Tag, Button, Modal, message, Space, Typography, Avatar, Spin, Steps, Alert } from 'antd';
 import { TeamOutlined, UserOutlined, UsergroupAddOutlined, ArrowRightOutlined } from '@ant-design/icons';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { listSquadTemplates, applySquadTemplate, getSquadTemplateDetail } from './api';
 import type { SquadTemplateItem, SquadTemplateDetail, SquadTemplateAgent } from './api';
+import { ApiError } from '@/shared/types/common';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { Text, Paragraph } = Typography;
@@ -21,10 +22,27 @@ const kindColors: Record<string, string> = {
   GATE: 'red',
 };
 
+// apiClient 对网络层失败统一抛 code='10000' 且无 traceId（英文 message），需要转成用户可读文案；
+// 其余 ApiError 透出服务端 message，并附 traceId 便于排查。
+function applyErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.code === '10000' && !error.traceId) {
+      return '网络异常，创建失败，请稍后重试';
+    }
+    if (error.traceId) {
+      return `${error.message}（TraceId: ${error.traceId}）`;
+    }
+    return error.message || '创建失败，请稍后重试';
+  }
+  return '创建失败，请稍后重试';
+}
+
 export function SquadTemplateGallery() {
   const navigate = useNavigate();
   const accessCommand = useAccessCommand();
   const [previewId, setPreviewId] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState<SquadTemplateItem | null>(null);
+  const [applyErrorText, setApplyErrorText] = useState<string | null>(null);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['squad-templates'],
@@ -41,25 +59,35 @@ export function SquadTemplateGallery() {
     mutationFn: applySquadTemplate,
     onSuccess: () => {
       message.success('创建成功');
+      setApplyErrorText(null);
+      setConfirming(null);
       setPreviewId(null);
-      navigate('/squads');
+      navigate('/agents?tab=squads');
+    },
+    onError: (error) => {
+      setApplyErrorText(applyErrorMessage(error));
     },
   });
 
   const handleApply = (template: SquadTemplateItem) => {
     accessCommand('READ_WRITE', '应用小队模版', () => {
-      Modal.confirm({
-        title: `基于「${template.name}」创建小队`,
-        content: '将自动创建小队、数字人、SDLC 并绑定所有仓库。',
-        okText: '确定创建',
-        cancelText: '取消',
-        onOk: () => accessCommand(
-          'READ_WRITE',
-          '应用小队模版',
-          () => applyMut.mutateAsync(template.id),
-        ),
-      });
+      setApplyErrorText(null);
+      setConfirming(template);
     });
+  };
+
+  const handleConfirmOk = () => {
+    accessCommand('READ_WRITE', '应用小队模版', () => {
+      if (confirming) {
+        setApplyErrorText(null);
+        applyMut.mutate(confirming.id);
+      }
+    });
+  };
+
+  const closeConfirm = () => {
+    setConfirming(null);
+    setApplyErrorText(null);
   };
 
   if (isLoading) {
@@ -81,7 +109,7 @@ export function SquadTemplateGallery() {
                   <Avatar
                     size={48}
                     icon={iconMap[t.icon || ''] || <TeamOutlined />}
-                    style={{ backgroundColor: '#f0f5ff', color: '#1677ff' }}
+                    style={{ backgroundColor: 'rgba(var(--aw-accent-rgb), .10)', color: 'var(--aw-accent-text)' }}
                   />
                   <div>
                     <Text strong style={{ fontSize: 16 }}>{t.name}</Text>
@@ -137,6 +165,26 @@ export function SquadTemplateGallery() {
           <TemplatePreview detail={detail} />
         )}
       </Modal>
+
+      <Modal
+        open={confirming !== null}
+        title={confirming ? `基于「${confirming.name}」创建小队` : null}
+        okText="确定创建"
+        cancelText="取消"
+        confirmLoading={applyMut.isPending}
+        onOk={handleConfirmOk}
+        onCancel={closeConfirm}
+      >
+        <p style={{ marginBottom: applyErrorText ? 16 : 0 }}>将自动创建小队、数字员工、SDLC 并绑定所有仓库。</p>
+        {applyErrorText && (
+          <Alert
+            type="error"
+            showIcon
+            message="创建失败"
+            description={applyErrorText}
+          />
+        )}
+      </Modal>
     </>
   );
 }
@@ -145,11 +193,11 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
   return (
     <div style={{ margin: '-20px -24px 0' }}>
       {/* Header */}
-      <div style={{ padding: '20px 24px', borderBottom: '1px solid #f0f0f0', background: '#fafbfc' }}>
+      <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--aw-border)', background: 'var(--aw-raised)' }}>
         <Space align="start" style={{ width: '100%', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: 20, fontWeight: 700 }}>{detail.name}</div>
-            <div style={{ color: '#666', marginTop: 4 }}>{detail.description}</div>
+            <div style={{ color: 'var(--aw-muted)', marginTop: 4 }}>{detail.description}</div>
           </div>
           <Space>
             <Tag color="blue">{detail.squadSize} 人小队</Tag>
@@ -159,8 +207,8 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
       </div>
 
       {/* Workflow flow */}
-      <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0' }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#999', marginBottom: 10 }}>协作流程</div>
+      <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--aw-border)' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 10 }}>协作流程</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {detail.agents.map((agent, idx) => (
             <span key={agent.roleCode} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -168,7 +216,7 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
                 {agent.roleName}
               </Tag>
               {idx < detail.agents.length - 1 && (
-                <ArrowRightOutlined style={{ color: '#bbb', fontSize: 12 }} />
+                <ArrowRightOutlined style={{ color: 'var(--aw-muted)', fontSize: 12 }} />
               )}
             </span>
           ))}
@@ -177,7 +225,7 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
 
       {/* Agent details */}
       <div style={{ padding: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#999', marginBottom: 14 }}>成员详情</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 14 }}>成员详情</div>
         <div style={{ display: 'grid', gap: 16 }}>
           {detail.agents.map((agent, idx) => (
             <AgentCard key={agent.roleCode} agent={agent} index={idx} />
@@ -188,17 +236,15 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
   );
 }
 
-function AgentCard({ agent, index }: { agent: SquadTemplateAgent; index: number }) {
-  const colors = ['#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96'];
-  const color = colors[index % colors.length];
+function AgentCard({ agent }: { agent: SquadTemplateAgent; index: number }) {
 
   return (
-    <div style={{ border: '1px solid #e8e8e8', borderRadius: 8, overflow: 'hidden' }}>
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid #f5f5f5', background: '#fafafa' }}>
+    <div style={{ border: '1px solid var(--aw-border)', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--aw-border)', background: 'var(--aw-raised)' }}>
         <Space>
           <div style={{
-            width: 28, height: 28, borderRadius: '50%', background: color,
-            color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 700,
+            width: 28, height: 28, borderRadius: '50%', background: 'var(--aw-primary)',
+            color: 'var(--aw-primary-ink)', display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 700,
           }}>
             {agent.roleCode.slice(0, 2)}
           </div>
@@ -216,7 +262,7 @@ function AgentCard({ agent, index }: { agent: SquadTemplateAgent; index: number 
         >
           {agent.responsibilities}
         </Paragraph>
-        <div style={{ fontSize: 12, fontWeight: 600, color: '#999', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 8 }}>
           SDLC 步骤 · {agent.sdlc.name}
         </div>
         <Steps

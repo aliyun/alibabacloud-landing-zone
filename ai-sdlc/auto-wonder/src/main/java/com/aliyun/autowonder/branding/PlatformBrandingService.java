@@ -30,8 +30,13 @@ public class PlatformBrandingService {
     private static final Map<String, String> LOGO_EXTENSIONS = Map.of(
             "image/png", ".png",
             "image/jpeg", ".jpg",
-            "image/webp", ".webp");
-    private static final long MAX_LOGO_SIZE = 2L * 1024L * 1024L;
+            "image/webp", ".webp",
+            "image/svg+xml", ".svg",
+            "image/gif", ".gif",
+            "image/x-icon", ".ico",
+            "image/vnd.microsoft.icon", ".ico",
+            "image/avif", ".avif");
+    private static final long MAX_LOGO_SIZE = 512L * 1024L;
     private static final long LOGO_CACHE_TTL_MS = 5 * 60 * 1000L;
 
     private volatile LogoCacheEntry logoCache;
@@ -48,7 +53,7 @@ public class PlatformBrandingService {
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.2.163}") String recommendedRuntimeVersion,
+                                   @Value("${autowonder.runtime.recommended-version:0.3.3}") String recommendedRuntimeVersion,
                                    @Value("${autowonder.version:x.x.x}") String deploymentVersion,
                                    @Value("${autowonder.community-edition:false}") boolean communityEdition) {
         this.brandingDao = brandingDao;
@@ -114,16 +119,20 @@ public class PlatformBrandingService {
             throw new BizException(ErrorCode.PARAM_INVALID, "Logo 文件不能为空");
         }
         if (file.getSize() > MAX_LOGO_SIZE) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 文件不能超过 2MB");
+            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 文件不能超过 512 KB");
         }
         String contentType = normalizeContentType(file.getContentType());
         String ext = LOGO_EXTENSIONS.get(contentType);
         if (ext == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 仅支持 PNG、JPG、WebP");
+            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 仅支持 PNG、JPG/JPEG、WebP、SVG、GIF、ICO、AVIF");
         }
         try {
             String key = "platform/branding/logo-" + System.currentTimeMillis() + ext;
-            StoredObject stored = objectStorage.put(bucket, key, file.getBytes());
+            byte[] bytes = file.getBytes();
+            if ("image/svg+xml".equals(contentType)) {
+                SvgLogoValidator.validate(bytes);
+            }
+            StoredObject stored = objectStorage.put(bucket, key, bytes);
             int updated = brandingDao.updateLogo(stored.getOssRef(), contentType, userId);
             if (updated == 0) {
                 throw new BizException(ErrorCode.NOT_FOUND);
@@ -219,7 +228,7 @@ public class PlatformBrandingService {
 
     private String logoUrl(PlatformBrandingDO current) {
         if (current.getLogoOssRef() == null || current.getLogoOssRef().isBlank()) {
-            return "/logo.png";
+            return "/logo.svg";
         }
         int version = current.getVersion() == null ? 0 : current.getVersion();
         return "/api/platform/branding/logo?v=" + version;
@@ -314,6 +323,6 @@ public class PlatformBrandingService {
             return "";
         }
         int semicolon = value.indexOf(';');
-        return (semicolon >= 0 ? value.substring(0, semicolon) : value).trim().toLowerCase();
+        return (semicolon >= 0 ? value.substring(0, semicolon) : value).trim().toLowerCase(java.util.Locale.ROOT);
     }
 }

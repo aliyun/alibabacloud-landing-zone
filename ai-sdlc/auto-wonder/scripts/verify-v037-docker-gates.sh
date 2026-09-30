@@ -19,6 +19,9 @@ test_classes=(
   ScheduledTaskSpringMybatisIntegrationTest
   V037SchemaCapabilityDetectorMySqlTest
   V037LegacyArtifactServiceFlowMySqlTest
+  MemoryBehaviorLoopMySqlTest
+  MemoryTopicTransactionMySqlTest
+  ExecutorLaunchConfigRecoveryMySqlTest
 )
 report_classes=(
   com.aliyun.autowonder.scheduledtask.DockerReleaseGateIT
@@ -29,6 +32,9 @@ report_classes=(
   com.aliyun.autowonder.scheduledtask.ScheduledTaskSpringMybatisIntegrationTest
   com.aliyun.autowonder.scheduledtask.V037SchemaCapabilityDetectorMySqlTest
   com.aliyun.autowonder.artifact.V037LegacyArtifactServiceFlowMySqlTest
+  com.aliyun.autowonder.memory.store.MemoryBehaviorLoopMySqlTest
+  com.aliyun.autowonder.memory.store.MemoryTopicTransactionMySqlTest
+  com.aliyun.autowonder.executor.ExecutorLaunchConfigRecoveryMySqlTest
 )
 test_selector="$(IFS=,; echo "${test_classes[*]}")"
 

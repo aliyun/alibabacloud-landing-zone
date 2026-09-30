@@ -1,0 +1,20 @@
+.aw-comment-reply { margin: 10px 0 0 12px; padding: 12px 14px; border-left: 3px solid var(--aw-accent-text); border-radius: 8px; background: rgba(var(--aw-accent-rgb),.10); color: var(--aw-text); font-size: 12px; min-width: 0; }
+.aw-comment-reply-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.aw-comment-reply-header strong { color: var(--aw-accent-text); overflow-wrap: anywhere; }
+.aw-comment-robot { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(var(--aw-accent-rgb),.10); color: var(--aw-accent-text); font-size: 17px; flex-shrink: 0; }
+.aw-comment-state { margin-left: auto; background: rgba(var(--aw-accent-rgb),.10); color: var(--aw-accent-text); border-radius: 12px; padding: 2px 8px; white-space: nowrap; }
+.aw-comment-stage { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 10px 0; color: var(--aw-muted); }
+.aw-comment-log { height: 132px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--aw-border); border-radius: 6px; background: var(--aw-panel); padding: 8px 10px; }
+.aw-comment-log--expanded { height: 280px; }
+.aw-comment-log-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }
+.aw-comment-log-row time { color: var(--aw-muted); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.aw-comment-log-dot { color: var(--aw-accent-text); }
+.aw-comment-empty, .aw-comment-note { color: var(--aw-muted); padding: 6px 0; font-size: 11px; }
+.aw-comment-controls { display: flex; gap: 12px; }
+.aw-comment-controls button { border: 0; background: transparent; padding: 4px 0; color: var(--aw-accent-text); font-size: 12px; cursor: pointer; }
+.aw-comment-controls button:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; }
+.aw-comment-answer { margin-top: 8px; overflow-wrap: anywhere; }
+.aw-comment-reply--failed .aw-comment-state { background: color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel)); color: var(--aw-error); }
+.aw-comment-error { margin-top: 8px; color: var(--aw-error); overflow-wrap: anywhere; }
+.aw-comment-error pre { margin: 8px 0 0; padding: 10px; background: var(--aw-panel); border: 1px solid color-mix(in srgb, var(--aw-error) 35%, var(--aw-border)); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: 11px; }
+.aw-comment-error p { margin: 6px 0; }

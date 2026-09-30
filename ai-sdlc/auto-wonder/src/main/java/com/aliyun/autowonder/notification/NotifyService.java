@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.notification;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import org.slf4j.Logger;

@@ -143,9 +143,9 @@ class WsConversationTransportTest {
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         verify(redisManager, times(2)).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL),
                 payload.capture());
-        assertEquals("first", com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(0))
+        assertEquals("first", com.aliyun.autowonder.json.JSON.parseObject(payload.getAllValues().get(0))
                 .getJSONObject("environmentVariables").getString("TOKEN"));
-        assertEquals("updated", com.alibaba.fastjson.JSON.parseObject(payload.getAllValues().get(1))
+        assertEquals("updated", com.aliyun.autowonder.json.JSON.parseObject(payload.getAllValues().get(1))
                 .getJSONObject("environmentVariables").getString("TOKEN"));
         verify(resolver, times(2)).resolve(1L, 50L);
     }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.artifact.ArtifactShareRequestDao">
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO artifact_share_request (tenant_id, workitem_id, dispatch_id, name, sha256)
+        VALUES (#{tenantId}, #{workitemId}, #{dispatchId}, #{name}, #{sha256})
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+    </insert>
+    <select id="find" resultType="com.aliyun.autowonder.artifact.ArtifactShareRequestDO">
+        SELECT * FROM artifact_share_request
+        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId} AND name = #{name}
+    </select>
+    <select id="lock" resultType="com.aliyun.autowonder.artifact.ArtifactShareRequestDO">
+        SELECT * FROM artifact_share_request WHERE id = #{id} FOR UPDATE
+    </select>
+    <select id="findById" resultType="com.aliyun.autowonder.artifact.ArtifactShareRequestDO">
+        SELECT * FROM artifact_share_request
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND id = #{id}
+    </select>
+    <select id="listPending" resultType="long">
+        SELECT id FROM artifact_share_request WHERE status = 'PENDING'
+        <choose>
+            <when test="dispatchId != null">AND dispatch_id = #{dispatchId}</when>
+            <otherwise>AND next_attempt_at &lt;= NOW(3)</otherwise>
+        </choose>
+        ORDER BY next_attempt_at, id LIMIT 100
+    </select>
+    <update id="finish">
+        UPDATE artifact_share_request SET status = #{status}, artifact_id = #{artifactId},
+            comment_id = #{commentId}, error = #{error}
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+    <update id="retryLater">
+        UPDATE artifact_share_request SET next_attempt_at = DATE_ADD(NOW(3), INTERVAL 60 SECOND)
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+</mapper>

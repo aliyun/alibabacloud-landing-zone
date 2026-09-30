@@ -87,20 +87,16 @@ describe('WorkitemDetailPage right panel surface', () => {
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
   });
 
-  it('renders the right panel on the white surface with a hairline left border', async () => {
+  it('keeps the themed right panel independently scrollable', async () => {
     server.use(...surfaceHandlers());
     renderPage();
 
     expect(await screen.findByRole('heading', { name: '跨境支付重构' })).toBeInTheDocument();
 
-    // 「灰色底、死气沉沉」是本次改造的首要诉求，而右栏容器的白底此前无人守卫：
-    // 把 background 改回 #fafafa、borderLeft 改回 #e5e7eb，全套测试仍旧全绿。
-    // 刻意写字面值而不是引用 CLARIFICATION_THEME：只拿常量和自己比，
-    // 令牌本身被改回灰色时这里还是绿的（同 theme.test.ts 的取舍）。
+    // 详情容器使用公共外观令牌，随深浅主题一起切换。
     const panel = screen.getByTestId('workitem-right-panel');
-    expect(panel).toHaveStyle({ background: '#ffffff' });
-    // jsdom 不会规范化 rgba() 里的空格，toHaveStyle 的简写比对会因此失配，直接比字面串。
-    expect(panel.style.borderLeft).toBe('1px solid rgba(0,0,0,0.06)');
+    expect(panel).toHaveStyle({ overflowY: 'auto' });
+    expect(panel).toHaveStyle({ flexShrink: 0 });
   });
 
   it('copies the deployment link of the workitem from the top-right share entry', async () => {

@@ -37,6 +37,13 @@ public class WorkitemScheduledStartScanner {
     private final Clock clock;
     private ThreadPoolTaskScheduler scheduler;
 
+    @Autowired(required = false)
+    private DeliveryRestartStore restartStore;
+
+    void bindRestartStore(DeliveryRestartStore store) {
+        this.restartStore = store;
+    }
+
     @Autowired
     public WorkitemScheduledStartScanner(WorkitemDao workitemDao, RedisManager redis,
             ApplicationEventPublisher eventPublisher, WorkitemScheduledStartConfig config,
@@ -106,14 +113,28 @@ public class WorkitemScheduledStartScanner {
                 || !"AGENT".equals(workitem.getAssigneeType()) || workitem.getAssigneeRef() == null) {
             return;
         }
-        // The CAS clear and the publish must share a transaction: DispatchAssignmentListener is
-        // @TransactionalEventListener(AFTER_COMMIT) and silently drops events published outside
-        // a transaction, which would lose the delivery after the schedule is already cleared.
+        // The CAS clear and the publish must share a transaction: both listeners are
+        // @TransactionalEventListener(AFTER_COMMIT) and silently drop events published
+        // outside a transaction, which would lose the delivery after the schedule is
+        // already cleared.
         transactionTemplate.executeWithoutResult(status -> {
             int rows = workitemDao.fireScheduledStartAt(workitem.getId(), workitem.getTenantId(),
                     workitem.getVersion());
             if (rows != 1) {
                 // Schedule was concurrently edited/cleared or the row moved; skip this pass.
+                return;
+            }
+            Integer pendingRestartRound = restartStore == null ? null
+                    : restartStore.pendingScheduledRound(workitem.getTenantId(), workitem.getId());
+            if (pendingRestartRound != null) {
+                // A deferred delivery restart, not a first assignment: publish the restart
+                // event carrying the round's idempotency key so the restart — not a plain
+                // assignment — runs at the planned time.
+                eventPublisher.publishEvent(new WorkitemDeliveryRestartedEvent(
+                        workitem.getTenantId(), workitem.getId(), workitem.getCurrentStepId(),
+                        workitem.getAssigneeRef(), SYSTEM_USER_ID,
+                        DeliveryRestartStore.restartIdempotencyKey(workitem.getId(), pendingRestartRound),
+                        workitem.getScheduledStartAt()));
                 return;
             }
             eventPublisher.publishEvent(new WorkitemAssignedEvent(

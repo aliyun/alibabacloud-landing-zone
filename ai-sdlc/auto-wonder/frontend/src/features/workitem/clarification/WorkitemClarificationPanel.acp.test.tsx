@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { typeComposer } from './composerTestUtils';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -462,7 +463,7 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
       },
     }, 1);
 
-    fireEvent.change(textarea, { target: { value: '/qu' } });
+    await typeComposer('/qu');
 
     expect(await screen.findByTestId('slash-command-picker')).toBeInTheDocument();
     expect(screen.getByText('生成需求问卷')).toBeInTheDocument();
@@ -487,8 +488,8 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
     await waitFor(() => expect(refreshCalls).toBe(1));
 
     // 快照种子先于任何 acp_commands 实时事件生效：敲 `/` 立刻有候选
-    const textarea = await screen.findByPlaceholderText('输入消息...');
-    fireEvent.change(textarea, { target: { value: '/' } });
+    await screen.findByPlaceholderText('输入消息...');
+    await typeComposer('/');
     expect(await screen.findByTestId('slash-command-quest')).toBeInTheDocument();
     expect(screen.getByText('两阶段问卷')).toBeInTheDocument();
 
@@ -515,7 +516,7 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
     await waitFor(() => expect(detailCalls).toBeGreaterThan(detailsBefore));
     act(() => { window.dispatchEvent(new Event('visibilitychange')); });
     await waitFor(() => expect(supported).toBe(true));
-    fireEvent.change(textarea, { target: { value: '/c' } });
+    await typeComposer('/c');
 
     await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
     expect(refreshCalls).toBe(1);
@@ -529,15 +530,15 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
     const turns = [{ id: 1, direction: 'IN', content: '你好', status: 'COMPLETED' }];
     await renderPanel({ acpInteractionSupported: true, availableCommands: seed, turns });
 
-    const textarea = await screen.findByPlaceholderText('输入消息...');
-    fireEvent.change(textarea, { target: { value: '/' } });
+    await screen.findByPlaceholderText('输入消息...');
+    await typeComposer('/');
     expect(await screen.findByTestId('slash-command-quest')).toBeInTheDocument();
 
     // 探针结果：命令集已空（服务端直推带 turnId:0）
     emit(2, 'acp_commands', { type: 'acp_commands', data: { availableCommands: [] } }, 0);
 
     await waitFor(() => expect(screen.queryByTestId('slash-command-picker')).toBeNull());
-    fireEvent.change(textarea, { target: { value: '/q' } });
+    await typeComposer('/q');
     await new Promise((r) => setTimeout(r, 60));
     expect(screen.queryByTestId('slash-command-quest')).toBeNull();
   });
@@ -548,9 +549,9 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
       acpInteractionSupported: true,
       turns: [{ id: 1, direction: 'IN', content: '你好', status: 'COMPLETED' }],
     });
-    const textarea = await screen.findByPlaceholderText('输入消息...');
+    await screen.findByPlaceholderText('输入消息...');
 
-    fireEvent.change(textarea, { target: { value: '/' } });
+    await typeComposer('/');
 
     await new Promise((r) => setTimeout(r, 60));
     expect(screen.queryByTestId('slash-command-picker')).toBeNull();
@@ -723,7 +724,8 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
   // 工单 53305：卡片结算、会话回到静默后，重新出现的输入框要直接拿到焦点。
   it('focuses the input once the card is settled and the conversation goes idle', async () => {
     await renderPanel({ acpInteractionSupported: true });
-    expect(document.activeElement).not.toBe(await screen.findByPlaceholderText('输入消息...'));
+    await screen.findByPlaceholderText('输入消息...');
+    expect(document.activeElement).not.toBe(document.querySelector('.ProseMirror'));
 
     emit(1, 'acp_elicitation', {
       type: 'acp_elicitation',
@@ -740,7 +742,7 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
       data: { requestId: 'req-focus', action: 'accept', content: { q0: 'nextjs' } },
     });
 
-    const input = await screen.findByPlaceholderText('输入消息...');
-    await waitFor(() => expect(document.activeElement).toBe(input));
+    await screen.findByPlaceholderText('输入消息...');
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
   });
 });

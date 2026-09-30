@@ -1,7 +1,7 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.dingtalk.open.app.api.callback.OpenDingTalkCallbackListener;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class DingTalkStreamBotMessageListener
-        implements OpenDingTalkCallbackListener<JSONObject, Map<String, Object>> {
+        implements OpenDingTalkCallbackListener<Map<String, Object>, Map<String, Object>> {
 
     private static final Logger log = LoggerFactory.getLogger(DingTalkStreamBotMessageListener.class);
 
@@ -25,7 +25,7 @@ public class DingTalkStreamBotMessageListener
     }
 
     @Override
-    public Map<String, Object> execute(JSONObject body) {
+    public Map<String, Object> execute(Map<String, Object> body) {
         InboundBotMessage message = parse(body);
         String previousRequestId = MDC.get("requestId");
         boolean generatedRequestId = previousRequestId == null || previousRequestId.isBlank();
@@ -48,9 +48,10 @@ public class DingTalkStreamBotMessageListener
         }
     }
 
-    InboundBotMessage parse(JSONObject body) {
+    InboundBotMessage parse(Map<String, Object> body) {
+        JSONObject json = body instanceof JSONObject object ? object : new JSONObject(body);
         String text = null;
-        JSONObject textObj = body.getJSONObject("text");
+        JSONObject textObj = json.getJSONObject("text");
         if (textObj != null) {
             text = textObj.getString("content");
             if (text != null) {
@@ -58,25 +59,25 @@ public class DingTalkStreamBotMessageListener
             }
         }
         return new InboundBotMessage(
-                body.getString("conversationId"),
-                body.getString("conversationTitle"),
-                body.getString("conversationType"),
-                body.getString("senderId"),
-                body.getString("senderNick"),
-                body.getString("senderStaffId"),
-                body.getString("senderCorpId"),
-                parseAtUsers(body.getJSONArray("atUsers")),
-                body.getBoolean("isInAtList"),
-                body.getString("chatbotCorpId"),
-                body.getString("chatbotUserId"),
-                body.getString("robotCode"),
+                json.getString("conversationId"),
+                json.getString("conversationTitle"),
+                json.getString("conversationType"),
+                json.getString("senderId"),
+                json.getString("senderNick"),
+                json.getString("senderStaffId"),
+                json.getString("senderCorpId"),
+                parseAtUsers(json.getJSONArray("atUsers")),
+                json.getBoolean("isInAtList"),
+                json.getString("chatbotCorpId"),
+                json.getString("chatbotUserId"),
+                json.getString("robotCode"),
                 text,
-                body.getString("msgId"),
-                body.getString("msgtype"),
-                body.getString("sessionWebhook"),
-                body.getLong("sessionWebhookExpiredTime"),
-                body.getLong("createAt"),
-                body.toJSONString());
+                json.getString("msgId"),
+                json.getString("msgtype"),
+                json.getString("sessionWebhook"),
+                json.getLong("sessionWebhookExpiredTime"),
+                json.getLong("createAt"),
+                json.toJSONString());
     }
 
     private List<InboundBotMessage.AtUser> parseAtUsers(JSONArray array) {

@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.scheduledtask;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentVersionDO;
@@ -298,7 +298,8 @@ public class ScheduledTaskTriggerService {
         JSONObject result = new JSONObject(true); result.put("agentId", agent.getId()); result.put("agentVersionId", version.getId());
         result.put("identity", identity); JSONArray repos = frozenRepos(version.getTenantId(), version.getId());
         result.put("repos", repos); result.put("repoMap", frozenRepoMap(version.getTenantId(), repos));
-        result.put("skills", frozenSkills(version.getTenantId(), version.getId())); result.put("memory", frozenMemory(version.getTenantId(), version.getId()));
+        result.put("skills", frozenSkills(version.getTenantId(), version.getId()));
+        result.put("memory", frozenMemory(version.getTenantId(), version.getId()));
         result.put("roster", frozenRoster(agent.getTenantId(), agent.getId()));
         JSONObject sdlc = frozenSdlc(version);
         if (sdlc != null) result.put("sdlc", sdlc);

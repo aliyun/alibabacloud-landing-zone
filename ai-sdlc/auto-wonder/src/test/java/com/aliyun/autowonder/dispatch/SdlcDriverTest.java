@@ -16,6 +16,7 @@ class SdlcDriverTest {
 
     private WorkitemDao workitemDao;
     private SdlcStepDao stepDao;
+    private WorkitemService workitemService;
     private SdlcDriver driver;
 
     private static final long TENANT = 100L;
@@ -24,7 +25,8 @@ class SdlcDriverTest {
     void setUp() {
         workitemDao = mock(WorkitemDao.class);
         stepDao = mock(SdlcStepDao.class);
-        driver = new SdlcDriver(workitemDao, mock(WorkitemService.class), stepDao,
+        workitemService = mock(WorkitemService.class);
+        driver = new SdlcDriver(workitemDao, workitemService, stepDao,
                 mock(StatusNodeDao.class), mock(AgentRoleResolver.class));
     }
 
@@ -70,6 +72,27 @@ class SdlcDriverTest {
         DriveResult r = driver.onSuccess(TENANT, 200L, 300L);
 
         assertEquals(DriveResult.Kind.STOP, r.getKind());
+    }
+
+    @Test
+    void deliveryStartDelegatesWorkitemAutoAdvance() {
+        driver.onDeliveryStart(TENANT, 200L);
+        verify(workitemService).autoAdvanceOnDeliveryStart(TENANT, 200L);
+    }
+
+    @Test
+    void deliveryStartWithoutWorkitemIsANoOp() {
+        driver.onDeliveryStart(TENANT, null);
+        driver.onDeliveryStart(null, 200L);
+        verifyNoInteractions(workitemService);
+    }
+
+    @Test
+    void deliveryStartNeverBreaksTheDispatchFlow() {
+        doThrow(new RuntimeException("version conflict"))
+                .when(workitemService).autoAdvanceOnDeliveryStart(TENANT, 200L);
+        driver.onDeliveryStart(TENANT, 200L);
+        verify(workitemService).autoAdvanceOnDeliveryStart(TENANT, 200L);
     }
 
     private WorkitemDO workitem() {

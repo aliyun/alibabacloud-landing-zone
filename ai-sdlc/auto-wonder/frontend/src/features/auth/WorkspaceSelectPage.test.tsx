@@ -52,6 +52,23 @@ function LocationProbe() {
   return <span data-testid="location-path">{location.pathname}</span>;
 }
 
+// jsdom has no layout, so EllipsisText cannot detect truncation on its own. These prototype
+// getters make every ellipsis span report overflow (width for 1-line, height for line-clamped),
+// which is what turns the hover tooltip on.
+function mockEllipsisOverflow() {
+  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => 200 });
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 100 });
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 200 });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 100 });
+  return () => {
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    delete proto.scrollWidth;
+    delete proto.clientWidth;
+    delete proto.scrollHeight;
+    delete proto.clientHeight;
+  };
+}
+
 function renderPageWithLocation() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -69,7 +86,35 @@ describe('WorkspaceSelectPage', () => {
     useAuthStore.getState().clear();
   });
 
-  it('renders workspace as orange-white square cards', async () => {
+  it.each(['name', 'description'] as const)('shows the complete long %s on hover', async (field) => {
+    const restoreMeasurements = mockEllipsisOverflow();
+    try {
+      const workspace = { ...MANAGEABLE_WORKSPACE, [field]: '超长工作空间内容'.repeat(30) };
+      mockMine([workspace]);
+      renderPage();
+      const card = await screen.findByTestId('workspace-card-1');
+      await userEvent.hover(within(card).getByText(workspace[field]));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(workspace[field]);
+    } finally {
+      restoreMeasurements();
+    }
+  });
+
+  it('shows the shared signed-in user menu instead of the current-workspace panel', async () => {
+    useAuthStore.getState().setUser({ id: 7, username: 'alice', nickname: '爱丽丝', email: 'alice@example.com' });
+    mockMine([]);
+    renderPageWithLocation();
+    expect(screen.queryByText('爱丽丝')).not.toBeInTheDocument();
+    expect(screen.queryByText('alice@example.com')).not.toBeInTheDocument();
+    expect(screen.queryByText('当前工作空间')).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '用户菜单' }));
+    expect(await screen.findByText('退出登录')).toBeInTheDocument();
+    await user.click(screen.getByText('个人设置'));
+    await waitFor(() => expect(screen.getByTestId('location-path')).toHaveTextContent('/profile/settings'));
+  });
+
+  it('renders workspace cards with shared appearance tokens', async () => {
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: '星云工坊', description: '研发工作空间' }, 'READ_ONLY');
     server.use(
       http.get('/api/workspaces/mine', () => HttpResponse.json({
@@ -85,6 +130,7 @@ describe('WorkspaceSelectPage', () => {
     );
 
     renderPage();
+    expect(screen.getAllByRole('button', { name: '切换外观' })).toHaveLength(1);
 
     expect(await screen.findByText('云效集成平台')).toBeInTheDocument();
     expect(screen.getAllByText('星云工坊').length).toBeGreaterThan(0);
@@ -92,9 +138,9 @@ describe('WorkspaceSelectPage', () => {
       display: 'grid',
     });
     expect(screen.getByTestId('workspace-card-shell-1')).toHaveStyle({
-      background: '#fff',
-      borderColor: '#ff6a00',
-      boxShadow: '0 0 0 2px rgba(255, 106, 0, 0.08), 0 14px 28px rgba(255, 106, 0, 0.12)',
+      background: 'var(--aw-panel)',
+      borderColor: 'var(--aw-accent-text)',
+      boxShadow: '0 0 0 1px var(--aw-accent-text)',
     });
     // F1.2: the shell owns the chrome, the inner control only owns the click. The border reset is
     // asserted as 0px because jsdom drops a `border: none` shorthand entirely; see cardEnterStyle.
@@ -600,7 +646,7 @@ describe('WorkspaceSelectPage', () => {
     expect(useAuthStore.getState().accessToken).toBe('bound-token');
   });
 
-  it('routes to the recycle bin from a real bottom-right entry', async () => {
+  it('routes to the recycle bin from the workspace tab bar', async () => {
     mockMine([MANAGEABLE_WORKSPACE]);
     const user = userEvent.setup();
 
@@ -611,8 +657,8 @@ describe('WorkspaceSelectPage', () => {
     expect(entry).toHaveAttribute('type', 'button');
     expect(entry).toHaveAccessibleName('打开工作空间回收站');
     expect(entry).toHaveTextContent('工作空间回收站');
-    // Right-aligned in its own bar below the list, so it never overlays a card (acceptance #18).
-    expect(entry.parentElement).toHaveStyle({ display: 'flex', justifyContent: 'flex-end' });
+    expect(entry.closest('.ant-tabs-nav')).toContainElement(screen.getByRole('tab', { name: '我的工作空间' }));
+    expect(entry.closest('.ant-tabs-nav')).toContainElement(screen.getByRole('tab', { name: '所有工作空间' }));
     expect(entry).not.toHaveStyle({ position: 'fixed' });
 
     await user.click(entry);

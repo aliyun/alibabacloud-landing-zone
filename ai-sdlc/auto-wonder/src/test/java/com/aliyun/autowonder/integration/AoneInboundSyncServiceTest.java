@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.integration;
 
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.integration.aone.AoneOpenApiConfig;
 import com.aliyun.autowonder.integration.common.ExternalCommentLinkDO;
 import com.aliyun.autowonder.integration.common.ExternalCommentLinkDao;
@@ -16,6 +18,9 @@ import com.aliyun.autowonder.integration.provider.PageResult;
 import com.aliyun.autowonder.notification.NotifyService;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
+import com.aliyun.autowonder.statemachine.StatusNodeDao;
+import com.aliyun.autowonder.statemachine.StatusTemplateDO;
+import com.aliyun.autowonder.statemachine.StatusTemplateDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.workitem.WorkitemDO;
@@ -23,7 +28,10 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemEventDao;
 import com.aliyun.autowonder.workitem.WorkitemEventType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.nio.charset.StandardCharsets;
@@ -32,12 +40,10 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -47,10 +53,72 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.argThat;
 
 class AoneInboundSyncServiceTest {
+
+    @Test
+    void linkedDetailRefreshUpdatesContentAndSourceIdentityWithoutChangingAgentDelivery() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+        ExternalPrincipalService principals = mock(ExternalPrincipalService.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, mock(SecretCrypto.class),
+                workitemDao, mock(WorkitemCommentDao.class), eventDao, linkDao,
+                mock(ExternalCommentLinkDao.class), mock(ExternalProjectBindingDao.class),
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), AoneTestProperties.enabled());
+        ReflectionTestUtils.setField(service, "principalService", principals);
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        detail.setTitle("新的标题");
+        detail.setContentMd("");
+        detail.setPriority(0);
+        detail.setStatusName("已完成");
+        detail.setSourceLifecycle("CLOSED");
+        detail.setUpdatedAt(new Date(2000));
+        ExternalWorkitemLinkDO link = link("old-hash");
+        link.setRemoteUpdatedAt(new Date(1000));
+        WorkitemDO existing = workitem(700L, 1000L, 3);
+        existing.setAssigneeType("AGENT");
+        existing.setAssigneeRef(42L);
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
+        when(workitemDao.findById(500L)).thenReturn(existing);
+        when(workitemDao.updateExternalContent(500L, 100L, "新的标题", "", 0, 3, 9L)).thenReturn(1);
+        when(principals.resolveWorkitem("AONE", detail))
+                .thenReturn(new ExternalPrincipalService.IdentitySnapshot(11L, 22L, "[]"));
+
+        service.syncLinkedWorkitem(binding, detail, 9L);
+
+        verify(workitemDao).updateExternalContent(500L, 100L, "新的标题", "", 0, 3, 9L);
+        verify(workitemDao, never()).updateStatus(any(), any(), any(), any(), any());
+        verify(workitemDao, never()).insert(any());
+        verifyNoInteractions(provider);
+        verify(linkDao).updateSnapshot(argThat(snapshot -> "已完成".equals(snapshot.getSourceStatusName())
+                && "CLOSED".equals(snapshot.getSourceLifecycle()) && snapshot.getBusinessOwnerPrincipalId() == 22L
+                && snapshot.getReporterPrincipalId() == 11L && detail.getUpdatedAt().equals(snapshot.getRemoteUpdatedAt())));
+        assertEquals("AGENT", existing.getAssigneeType());
+        assertEquals(42L, existing.getAssigneeRef());
+    }
+
+    @Test
+    void linkedDetailRefreshDoesNotImportUnlinkedOrDeletedWorkitems() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(mock(ExternalWorkitemProvider.class),
+                mock(SecretCrypto.class), workitemDao, mock(WorkitemCommentDao.class),
+                mock(WorkitemEventDao.class), linkDao, mock(ExternalCommentLinkDao.class),
+                mock(ExternalProjectBindingDao.class), mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null, link("old-hash"));
+        service.syncLinkedWorkitem(binding(), detail(), 9L);
+        service.syncLinkedWorkitem(binding(), detail(), 9L);
+        verify(workitemDao, never()).insert(any());
+        verify(linkDao, never()).insert(any());
+        verify(linkDao, never()).updateSnapshot(any());
+    }
 
     @Test
     void refreshIssueIdsKeepsExternalStatusSeparateFromDeliveryStatus() {
@@ -59,10 +127,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -70,14 +138,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDO oldWorkitem = workitem(10L, 20L, 3);
         oldWorkitem.setTitle("需求");
         oldWorkitem.setContentMd("body");
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L))).thenReturn(aoneNode);
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(oldWorkitem);
 
@@ -93,18 +157,18 @@ class AoneInboundSyncServiceTest {
     }
 
     @Test
-    void refreshIssueIdsSyncsAoneStatusChangeToExternalWorkitemStatusNode() {
+    void refreshIssueIdsDoesNotOverwriteAwStatusWhenAoneStatusChanges() {
+        // 规格 3.5：后续对账/同步不覆盖、不重置 AW 业务状态；Aone 状态只更新 link 快照做只读展示。
         ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
         SecretCrypto secretCrypto = mock(SecretCrypto.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService,
-                AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -115,27 +179,22 @@ class AoneInboundSyncServiceTest {
         link.setSourceStatusName("待处理");
         WorkitemDO externalWorkitem = workitem(10L, 20L, 3);
         externalWorkitem.setAssigneeType("EXTERNAL");
-        StatusNodeDO fixedNode = new StatusNodeDO();
-        fixedNode.setTemplateId(10L);
-        fixedNode.setId(1001L);
-        fixedNode.setName("Fixed");
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), eq(List.of()), eq(9L))).thenReturn(fixedNode);
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(externalWorkitem);
-        when(workitemDao.updateStatus(500L, 100L, 1001L, 3, 9L)).thenReturn(1);
 
         AoneSyncResult result = service.refreshIssueIds(binding, List.of("84189105"), 9L);
 
-        assertEquals(1, result.getUpdated());
-        verify(workitemDao).updateStatus(500L, 100L, 1001L, 3, 9L);
+        assertEquals(0, result.getUpdated());
+        verify(workitemDao, never()).updateStatus(any(), any(), any(), any(), any());
         verify(workitemDao, never()).updateExternalContent(any(), any(), any(), any(), any(), any(), any());
-        verify(eventDao).insert(argThat(event -> WorkitemEventType.STATUS_CHANGE.code().equals(event.getEventType())
-                && "待处理".equals(event.getFromVal()) && "Fixed".equals(event.getToVal())));
+        verify(eventDao, never()).insert(argThat(event ->
+                WorkitemEventType.STATUS_CHANGE.code().equals(event.getEventType())));
         verify(linkDao).updateSnapshot(argThat(snapshot -> "Fixed".equals(snapshot.getSourceStatusName())));
+        assertEquals(20L, externalWorkitem.getStatusNodeId());
     }
 
     @Test
@@ -145,12 +204,11 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService,
-                AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -173,22 +231,20 @@ class AoneInboundSyncServiceTest {
 
         assertEquals(0, result.getUpdated());
         verify(workitemDao, never()).updateStatus(any(), any(), any(), any(), any());
-        verify(statusBootstrapService, never()).ensureStatus(any(), any(), anyList(), anyLong());
     }
 
     @Test
-    void refreshIssueIdsUsesBumpedVersionWhenStatusAndContentChangeTogether() {
+    void refreshIssueIdsUpdatesContentWithCurrentVersionWhenAoneStatusAlsoChanges() {
         ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
         SecretCrypto secretCrypto = mock(SecretCrypto.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService,
-                AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -202,25 +258,21 @@ class AoneInboundSyncServiceTest {
         WorkitemDO externalWorkitem = workitem(10L, 20L, 3);
         externalWorkitem.setAssigneeType("EXTERNAL");
         externalWorkitem.setPriority(2);
-        StatusNodeDO fixedNode = new StatusNodeDO();
-        fixedNode.setTemplateId(10L);
-        fixedNode.setId(1001L);
-        fixedNode.setName("Fixed");
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), eq(List.of()), eq(9L))).thenReturn(fixedNode);
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(externalWorkitem);
-        when(workitemDao.updateStatus(500L, 100L, 1001L, 3, 9L)).thenReturn(1);
-        when(workitemDao.updateExternalContent(500L, 100L, "需求V2", "body", 2, 4, 9L)).thenReturn(1);
+        when(workitemDao.updateExternalContent(500L, 100L, "需求V2", "body", 2, 3, 9L)).thenReturn(1);
 
         AoneSyncResult result = service.refreshIssueIds(binding, List.of("84189105"), 9L);
 
         assertEquals(1, result.getUpdated());
-        verify(workitemDao).updateStatus(500L, 100L, 1001L, 3, 9L);
-        verify(workitemDao).updateExternalContent(500L, 100L, "需求V2", "body", 2, 4, 9L);
+        verify(workitemDao, never()).updateStatus(any(), any(), any(), any(), any());
+        verify(workitemDao).updateExternalContent(500L, 100L, "需求V2", "body", 2, 3, 9L);
+        verify(eventDao, never()).insert(argThat(event ->
+                WorkitemEventType.STATUS_CHANGE.code().equals(event.getEventType())));
     }
 
     @Test
@@ -230,10 +282,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -253,6 +305,48 @@ class AoneInboundSyncServiceTest {
         verify(workitemDao, never()).updateTemplateAndStatus(any(), any(), any(), any(), any(), any());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void manualSyncRefreshesUnchangedSnapshotWithoutAdvancingDiscovery(boolean refresh) {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                mock(WorkitemCommentDao.class), eventDao, linkDao,
+                mock(ExternalCommentLinkDao.class), bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        binding.setLastSuccessAt(new Date(1000L));
+        ExternalWorkitemDetail detail = detail();
+        ExternalWorkitemLinkDO link = link(hash(detail.getRawJson()));
+        link.setLastSyncDirection("INBOUND");
+        link.setLastSyncAt(new Date(1000L));
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
+        when(workitemDao.findById(500L)).thenReturn(workitem(700L, 1000L, 3));
+        when(provider.getWorkitem(any(), eq("84189105"))).thenReturn(detail);
+        when(provider.searchByIds(any(), eq("2161074"), eq(List.of("84189105"))))
+                .thenReturn(PageResult.of(List.of(detail), 1, 200, 1));
+
+        Date startedAt = new Date();
+        AoneSyncResult result = refresh
+                ? service.refreshIssueIds(binding, List.of("84189105"), 9L)
+                : service.syncIssueIds(binding, List.of("84189105"), 9L);
+
+        assertEquals(0, result.getImported());
+        assertEquals(0, result.getUpdated());
+        verify(workitemDao, never()).updateExternalContent(any(), any(), any(), any(), any(), any(), any());
+        verify(linkDao).updateSnapshot(argThat(snapshot -> !snapshot.getLastSyncAt().before(startedAt)));
+        verifyNoInteractions(eventDao);
+        verify(bindingDao, never()).markSyncSuccess(any(), any(), any());
+        assertEquals(new Date(1000L), binding.getLastSuccessAt());
+    }
+
     @Test
     void syncWorkitemsImportsSearchResultDirectlyWithoutPerItemDetailLookup() {
         // Bulk project poll must NOT fire a per-item getById to enrich the body: getById hits Aone's
@@ -264,21 +358,20 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail searchDetail = detail();
         searchDetail.setContentMd(null);
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(searchDetail), anyList(), eq(9L))).thenReturn(aoneNode);
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         doAnswer(invocation -> {
             invocation.<WorkitemDO>getArgument(0).setId(9003L);
             return null;
@@ -302,21 +395,20 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
         detail.setTitle("标".repeat(300));
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L))).thenReturn(aoneNode);
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         doAnswer(invocation -> {
             invocation.<WorkitemDO>getArgument(0).setId(9007L);
             return null;
@@ -334,22 +426,21 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
         Date createdAt = new Date(1_706_745_600_000L);
         detail.setCreatedAt(createdAt);
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L))).thenReturn(aoneNode);
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         doAnswer(invocation -> {
             invocation.<WorkitemDO>getArgument(0).setId(9006L);
             return null;
@@ -372,25 +463,24 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail searchDetail = detail("84238677");
         searchDetail.setContentMd(null);
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.searchByIds(any(AoneOpenApiConfig.class), eq("2161074"), eq(List.of("84238677"))))
                 .thenReturn(PageResult.of(List.of(searchDetail), 1, 200, 1));
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84238677")))
                 .thenThrow(new RuntimeException("auto-wonder invoke IssueTopService-getById over limit"));
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84238677")))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84238677")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(searchDetail), anyList(), eq(9L))).thenReturn(aoneNode);
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         when(linkDao.findByExternalScope(100L, 1L, "84238677")).thenReturn(null);
         doAnswer(invocation -> {
             invocation.<WorkitemDO>getArgument(0).setId(9004L);
@@ -412,23 +502,22 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail searchDetail = detail();
         searchDetail.setContentMd(null);
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105")))
                 .thenThrow(new RuntimeException("auto-wonder invoke IssueTopService-getById over limit"));
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(searchDetail), anyList(), eq(9L))).thenReturn(aoneNode);
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
         doAnswer(invocation -> {
             invocation.<WorkitemDO>getArgument(0).setId(9005L);
@@ -448,10 +537,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail searchDetail = detail();
@@ -472,26 +561,25 @@ class AoneInboundSyncServiceTest {
     }
 
     @Test
-    void syncWorkitemsContinuesWhenOperationalStatusLookupTimesOut() {
+    void syncWorkitemsImportsWithoutAnyAoneStatusRuleLookup() {
+        // 规格 3.5：首次导入与 Aone 状态无关，导入链路不再查询 Aone 状态规则，统一落在默认模板初始节点。
         ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
         SecretCrypto secretCrypto = mock(SecretCrypto.class);
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenThrow(new RuntimeException("Aone request failed: Read timed out"));
-        when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), eq(List.of()), eq(9L))).thenReturn(aoneNode);
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
         doAnswer(invocation -> {
             invocation.<WorkitemDO>getArgument(0).setId(9001L);
@@ -502,9 +590,131 @@ class AoneInboundSyncServiceTest {
 
         assertEquals(1, result.getImported());
         assertEquals(List.of(9001L), result.getWorkitemIds());
-        verify(statusBootstrapService).ensureStatus(binding, detail, List.of(), 9L);
         verify(linkDao).insert(any(ExternalWorkitemLinkDO.class));
-        verify(bindingDao).markSyncSuccess(eq(1L), eq(100L), any());
+        verify(bindingDao, never()).markSyncSuccess(any(), any(), any());
+    }
+
+    @Test
+    void syncWorkitemsLandsFirstImportOnDefaultTemplateInitNodeRegardlessOfAoneStatus() {
+        // 规格 3.5：首次导入统一进入默认模板初始节点（新建），与 Aone 当前状态无关；
+        // Aone 状态只写入 link 快照作只读展示，不参与节点选择。
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        detail.setStatusId("100009");
+        detail.setStatusName("已解决");
+        detail.setRawJson("{\"id\":84189105,\"status\":\"已解决\"}");
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<WorkitemDO>getArgument(0).setId(9008L);
+            return null;
+        }).when(workitemDao).insert(any(WorkitemDO.class));
+
+        AoneSyncResult result = service.syncWorkitems(binding, List.of(detail), 9L);
+
+        assertEquals(1, result.getImported());
+        verify(workitemDao).insert(argThat((WorkitemDO workitem) ->
+                workitem.getTemplateId() == 30L && workitem.getStatusNodeId() == 31L));
+        verify(linkDao).insert(argThat((ExternalWorkitemLinkDO newLink) ->
+                "已解决".equals(newLink.getSourceStatusName())
+                        && "100009".equals(newLink.getSourceStatusId())));
+        verify(workitemDao, never()).updateStatus(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void syncWorkitemsFallsBackToTaskDefaultTemplateWhenAoneWorkTypeIsMissing() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        detail.setWorkType(" ");
+        StatusTemplateDO taskTemplate = defaultTemplate();
+        taskTemplate.setWorkType("TASK");
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(templateDao.listByWorkType(100L, "TASK")).thenReturn(List.of(taskTemplate));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
+        doAnswer(invocation -> {
+            invocation.<WorkitemDO>getArgument(0).setId(9009L);
+            return null;
+        }).when(workitemDao).insert(any(WorkitemDO.class));
+
+        service.syncWorkitems(binding, List.of(detail), 9L);
+
+        verify(workitemDao).insert(argThat((WorkitemDO workitem) -> workitem.getStatusNodeId() == 31L));
+    }
+
+    @Test
+    void syncWorkitemsFailsClosedWhenDefaultTemplateIsMissing() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
+                mock(ExternalCommentLinkDao.class), mock(ExternalProjectBindingDao.class), templateDao, nodeDao, AoneTestProperties.enabled());
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of());
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.syncWorkitems(binding(), List.of(detail()), 9L));
+
+        assertEquals("13002", error.getCode());
+        verify(workitemDao, never()).insert(any(WorkitemDO.class));
+        verify(linkDao, never()).insert(any(ExternalWorkitemLinkDO.class));
+    }
+
+    @Test
+    void syncWorkitemsFailsClosedWhenDefaultTemplateHasNoInitNode() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
+                mock(ExternalCommentLinkDao.class), mock(ExternalProjectBindingDao.class), templateDao, nodeDao, AoneTestProperties.enabled());
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(null);
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
+
+        BizException error = assertThrows(BizException.class,
+                () -> service.syncWorkitems(binding(), List.of(detail()), 9L));
+
+        assertEquals("13002", error.getCode());
+        verify(workitemDao, never()).insert(any(WorkitemDO.class));
+        verify(linkDao, never()).insert(any(ExternalWorkitemLinkDO.class));
     }
 
     @Test
@@ -514,22 +724,18 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
-        StatusNodeDO aoneNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105"))))
                 .thenThrow(new RuntimeException("invoke exception,null"));
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L))).thenReturn(aoneNode);
         ExternalWorkitemLinkDO link = link(hash(detail.getRawJson()));
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(workitem(700L, 1000L, 3));
@@ -544,7 +750,7 @@ class AoneInboundSyncServiceTest {
         assertEquals(0, result.getCommentsImported());
         assertEquals(List.of(500L), result.getWorkitemIds());
         verify(linkDao, never()).insert(any(ExternalWorkitemLinkDO.class));
-        verify(bindingDao).markSyncSuccess(eq(1L), eq(100L), any());
+        verify(bindingDao, never()).markSyncSuccess(any(), any(), any());
     }
 
     @Test
@@ -555,10 +761,10 @@ class AoneInboundSyncServiceTest {
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -567,14 +773,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDO existing = workitem(700L, 1000L, 3);
         existing.setTitle("需求");
         existing.setContentMd("body");
-        StatusNodeDO sameNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L))).thenReturn(sameNode);
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(existing);
 
@@ -597,10 +799,10 @@ class AoneInboundSyncServiceTest {
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail staleRemote = detail();
@@ -609,14 +811,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDO locallyEdited = workitem(700L, 1000L, 3);
         locallyEdited.setTitle("本地新标题");
         locallyEdited.setContentMd("本地新正文");
-        StatusNodeDO sameNode = node(700L, 1000L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(staleRemote);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(staleRemote), anyList(), eq(9L))).thenReturn(sameNode);
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(locallyEdited);
 
@@ -637,10 +835,10 @@ class AoneInboundSyncServiceTest {
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -650,14 +848,10 @@ class AoneInboundSyncServiceTest {
         WorkitemDO existing = workitem(700L, 1000L, 3);
         existing.setTitle("需求");
         existing.setContentMd("body");
-        StatusNodeDO changedNode = node(700L, 1001L);
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
         when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of("84189105")))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L))).thenReturn(changedNode);
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(link);
         when(workitemDao.findById(500L)).thenReturn(existing);
 
@@ -679,10 +873,10 @@ class AoneInboundSyncServiceTest {
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -728,7 +922,8 @@ class AoneInboundSyncServiceTest {
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, mock(ExternalStatusBootstrapService.class), AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -758,7 +953,8 @@ class AoneInboundSyncServiceTest {
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, mock(ExternalStatusBootstrapService.class), AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, mock(StatusTemplateDao.class),
+                mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -792,9 +988,9 @@ class AoneInboundSyncServiceTest {
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
         ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
-                commentDao, mock(WorkitemEventDao.class), linkDao, commentLinkDao, bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                commentDao, mock(WorkitemEventDao.class), linkDao, commentLinkDao, bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         List<ExternalWorkitemDetail> details = new ArrayList<>();
@@ -815,10 +1011,6 @@ class AoneInboundSyncServiceTest {
         ExternalComment comment = comment("124709999", firstIssueId, "from aone");
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(firstBatchIds))).thenReturn(Map.of());
-        when(provider.listOperationalStatuses(any(AoneOpenApiConfig.class), eq("WORKER_1782377321313"),
-                eq(List.of(secondBatchId)))).thenReturn(Map.of());
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(firstBatchIds)))
                 .thenThrow(new RuntimeException("invoke exception,null"));
         for (String issueId : firstBatchIds) {
@@ -826,8 +1018,6 @@ class AoneInboundSyncServiceTest {
                     .thenReturn(issueId.equals(firstIssueId) ? List.of(comment) : List.of());
         }
         when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of(secondBatchId)))).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), any(ExternalWorkitemDetail.class), anyList(), eq(9L)))
-                .thenReturn(node(700L, 1000L));
         doAnswer(invocation -> {
             invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
             return null;
@@ -858,12 +1048,11 @@ class AoneInboundSyncServiceTest {
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
         ExternalPrincipalService principalService = mock(ExternalPrincipalService.class);
         NotifyService notifyService = mock(NotifyService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 commentDao, eventDao, linkDao, commentLinkDao, bindingDao,
-                statusBootstrapService, principalService, notifyService, AoneTestProperties.enabled());
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), principalService, notifyService, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -930,7 +1119,7 @@ class AoneInboundSyncServiceTest {
         ExternalPrincipalService principalService = mock(ExternalPrincipalService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 commentDao, eventDao, linkDao, commentLinkDao, bindingDao,
-                mock(ExternalStatusBootstrapService.class), principalService, AoneTestProperties.enabled());
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), principalService, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -975,6 +1164,66 @@ class AoneInboundSyncServiceTest {
     }
 
     @Test
+    void reconciliationMarksDeletedExternalCommentWithoutDeletingTheLocalRecord() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        ExternalPrincipalService principalService = mock(ExternalPrincipalService.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                commentDao, eventDao, linkDao, commentLinkDao, bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), principalService, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        ExternalWorkitemLinkDO workitemLink = link(hash(detail.getRawJson()));
+        WorkitemDO existingWorkitem = workitem(700L, 1000L, 3);
+        existingWorkitem.setTitle("需求");
+        existingWorkitem.setContentMd("body");
+        ExternalComment comment = comment("124709999", "84189105", "原评论");
+        comment.setAuthor(ExternalPrincipalRef.user("320687", "外部用户"));
+        comment.setSourceStatus("DELETED");
+        comment.setUpdatedAt(new Date(3000L));
+        ExternalCommentLinkDO existingCommentLink = new ExternalCommentLinkDO();
+        existingCommentLink.setId(77L);
+        existingCommentLink.setWorkitemCommentId(88001L);
+        existingCommentLink.setSourceStatus("ACTIVE");
+        existingCommentLink.setSourceUpdatedAt(new Date(2000L));
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
+        when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105"))))
+                .thenReturn(List.of(comment));
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(workitemLink);
+        when(workitemDao.findById(500L)).thenReturn(existingWorkitem);
+        when(commentLinkDao.findByExternalScope(100L, 1L, "84189105", "124709999"))
+                .thenReturn(existingCommentLink);
+        when(principalService.resolveWorkitem("AONE", detail))
+                .thenReturn(new ExternalPrincipalService.IdentitySnapshot(null, null, null));
+        when(principalService.upsert("AONE", comment.getAuthor()))
+                .thenReturn(12001L);
+
+        when(linkDao.listByBindingAfterId(1L, 0L, 200)).thenReturn(List.of(workitemLink));
+        when(provider.searchByIds(any(AoneOpenApiConfig.class), eq("2161074"), eq(List.of("84189105"))))
+                .thenReturn(PageResult.of(List.of(detail), 1, 200, 1));
+        assertEquals(1, service.reconcileLinkedWorkitems(binding, 9L, 200));
+        verify(provider).listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")));
+
+        verify(commentDao).updateExternalContent(
+                100L, 88001L, 12001L, "（该外部评论已在来源平台删除）");
+        verify(commentLinkDao).updateSourceMetadata(argThat(updated ->
+                updated.getId().equals(77L) && "DELETED".equals(updated.getSourceStatus())));
+        verify(eventDao).insert(argThat(event ->
+                "EXTERNAL_COMMENT_DELETE".equals(event.getEventType())
+                        && "124709999".equals(event.getFromVal())));
+        verify(commentDao, never()).insert(any());
+    }
+
+    @Test
     void refreshIssueIdsBackfillsCommentAuthorWhenSourceTimestampIsUnchanged() {
         ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
         SecretCrypto secretCrypto = mock(SecretCrypto.class);
@@ -987,7 +1236,7 @@ class AoneInboundSyncServiceTest {
         ExternalPrincipalService principalService = mock(ExternalPrincipalService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 commentDao, eventDao, linkDao, commentLinkDao, bindingDao,
-                mock(ExternalStatusBootstrapService.class), principalService, AoneTestProperties.enabled());
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), principalService, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -1028,6 +1277,142 @@ class AoneInboundSyncServiceTest {
     }
 
     @Test
+    void refreshIssueIdsCreatesGuidanceForNewInboundMention() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        GuidanceService guidanceService = mock(GuidanceService.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                commentDao, mock(WorkitemEventDao.class), linkDao, commentLinkDao, bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), null, null, guidanceService, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        ExternalWorkitemLinkDO workitemLink = link(hash(detail.getRawJson()));
+        ExternalComment comment = comment("124709999", "84189105", "@Terraform-PD数字人 处理下");
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
+        when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105"))))
+                .thenReturn(List.of(comment));
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(workitemLink);
+        when(workitemDao.findById(500L)).thenReturn(workitem(700L, 1000L, 3));
+        doAnswer(invocation -> {
+            invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
+            return null;
+        }).when(commentDao).insert(any(WorkitemCommentDO.class));
+
+        AoneSyncResult result = service.refreshIssueIds(binding, List.of("84189105"), 9L);
+
+        assertEquals(1, result.getCommentsImported());
+        verify(guidanceService).createForComment(
+                100L, 500L, 88001L, "@Terraform-PD数字人 处理下", null, 9L);
+    }
+
+    @Test
+    void reconciliationSuppressesGuidanceForDeletedAndWritebackActorComments() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        GuidanceService guidanceService = mock(GuidanceService.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                commentDao, mock(WorkitemEventDao.class), linkDao, commentLinkDao, bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), null, null, guidanceService, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        ExternalWorkitemLinkDO workitemLink = link(hash(detail.getRawJson()));
+        ExternalComment comment = comment("124709999", "84189105", "@Terraform-PD数字人 处理下");
+
+        comment.setSourceStatus("DELETED");
+        ExternalComment selfComment = comment("self", "84189105", "@Terraform-PD数字人 回复");
+        selfComment.setAuthorStaffId(binding.getWritebackStaffId());
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
+        when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105"))))
+                .thenReturn(List.of(comment, selfComment));
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(workitemLink);
+        when(workitemDao.findById(500L)).thenReturn(workitem(700L, 1000L, 3));
+        doAnswer(invocation -> {
+            invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
+            return null;
+        }).when(commentDao).insert(any(WorkitemCommentDO.class));
+
+        when(linkDao.listByBindingAfterId(1L, 0L, 200)).thenReturn(List.of(workitemLink));
+        when(provider.searchByIds(any(AoneOpenApiConfig.class), eq("2161074"), eq(List.of("84189105"))))
+                .thenReturn(PageResult.of(List.of(detail), 1, 200, 1));
+        assertEquals(1, service.reconcileLinkedWorkitems(binding, 9L, 200));
+
+        verify(commentDao, times(2)).insert(any());
+        verifyNoInteractions(guidanceService);
+    }
+
+    @Test
+    void reconciliationImportsNewCommentOnceWithGuidanceAndPreservesCursorAndStatus() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        GuidanceService guidanceService = mock(GuidanceService.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                commentDao, mock(WorkitemEventDao.class), linkDao, commentLinkDao, bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), null, null, guidanceService, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        ExternalWorkitemLinkDO workitemLink = link(hash(detail.getRawJson()));
+        ExternalComment comment = comment("124709999", "84189105", "@Terraform-PD数字人 处理下");
+
+        comment.setSourceStatus("ACTIVE");
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
+        when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105"))))
+                .thenReturn(List.of(comment));
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(workitemLink);
+        when(workitemDao.findById(500L)).thenReturn(workitem(700L, 1000L, 3));
+        doAnswer(invocation -> {
+            invocation.<WorkitemCommentDO>getArgument(0).setId(88001L);
+            return null;
+        }).when(commentDao).insert(any(WorkitemCommentDO.class));
+
+        when(linkDao.listByBindingAfterId(1L, 0L, 200)).thenReturn(List.of(workitemLink));
+        when(provider.searchByIds(any(AoneOpenApiConfig.class), eq("2161074"), eq(List.of("84189105"))))
+                .thenReturn(PageResult.of(List.of(detail), 1, 200, 1));
+        java.util.concurrent.atomic.AtomicReference<ExternalCommentLinkDO> persisted = new java.util.concurrent.atomic.AtomicReference<>();
+        when(commentLinkDao.findByExternalScope(100L, 1L, "84189105", "124709999"))
+                .thenAnswer(invocation -> persisted.get());
+        doAnswer(invocation -> { persisted.set(invocation.getArgument(0)); return null; })
+                .when(commentLinkDao).insert(any(ExternalCommentLinkDO.class));
+
+        assertEquals(1, service.reconcileLinkedWorkitems(binding, 9L, 200));
+        assertEquals("88", binding.getReconcileCursor());
+        assertEquals(0, service.reconcileLinkedWorkitems(binding, 9L, 200));
+        assertEquals("0", binding.getReconcileCursor());
+        assertEquals(1, service.reconcileLinkedWorkitems(binding, 9L, 200));
+
+        verify(provider, times(2)).listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")));
+        verify(commentDao).insert(any(WorkitemCommentDO.class));
+        verify(commentLinkDao).insert(argThat(link -> "INBOUND".equals(link.getDirection())));
+        verify(commentDao, never()).updateExternalContent(anyLong(), anyLong(), any(), anyString());
+        verify(workitemDao, never()).updateStatus(any(), any(), any(), any(), any());
+        verify(workitemDao, never()).updateTemplateAndStatus(any(), any(), any(), any(), any(), any());
+        verify(guidanceService).createForComment(
+                100L, 500L, 88001L, "@Terraform-PD数字人 处理下", null, 9L);
+    }
+
+    @Test
     void refreshIssueIdsIgnoresEchoOfOutboundComment() {
         ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
         SecretCrypto secretCrypto = mock(SecretCrypto.class);
@@ -1037,9 +1422,10 @@ class AoneInboundSyncServiceTest {
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        GuidanceService guidanceService = mock(GuidanceService.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 commentDao, eventDao, linkDao, commentLinkDao, bindingDao,
-                mock(ExternalStatusBootstrapService.class), AoneTestProperties.enabled());
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), null, null, guidanceService, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
@@ -1070,6 +1456,57 @@ class AoneInboundSyncServiceTest {
         verify(commentDao, never()).insert(any());
         verify(commentLinkDao, never()).updateSourceMetadata(any());
         verify(eventDao, never()).insert(any());
+        verifyNoInteractions(guidanceService);
+    }
+
+    @Test
+    void reconciliationIgnoresEchoOfOutboundComment() {
+        ExternalWorkitemProvider provider = mock(ExternalWorkitemProvider.class);
+        SecretCrypto secretCrypto = mock(SecretCrypto.class);
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        WorkitemCommentDao commentDao = mock(WorkitemCommentDao.class);
+        WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
+        ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
+        ExternalCommentLinkDao commentLinkDao = mock(ExternalCommentLinkDao.class);
+        ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
+        GuidanceService guidanceService = mock(GuidanceService.class);
+        AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
+                commentDao, eventDao, linkDao, commentLinkDao, bindingDao,
+                mock(StatusTemplateDao.class), mock(StatusNodeDao.class), null, null, guidanceService, AoneTestProperties.enabled());
+
+        ExternalProjectBindingDO binding = binding();
+        ExternalWorkitemDetail detail = detail();
+        ExternalWorkitemLinkDO workitemLink = link(hash(detail.getRawJson()));
+        ExternalComment comment = comment("126089476", "84189105", "本地写回的评论");
+        comment.setUpdatedAt(new Date(1_786_000_456_000L));
+        comment.setSourceStatus("ACTIVE");
+        ExternalCommentLinkDO outboundLink = new ExternalCommentLinkDO();
+        outboundLink.setId(77L);
+        outboundLink.setWorkitemCommentId(88001L);
+        outboundLink.setDirection("OUTBOUND");
+        outboundLink.setSourceStatus("ACTIVE");
+        outboundLink.setSourceUpdatedAt(new Date(1_786_000_000_000L));
+
+        when(secretCrypto.decrypt("ref")).thenReturn("secret");
+        when(provider.getWorkitem(any(AoneOpenApiConfig.class), eq("84189105"))).thenReturn(detail);
+        when(provider.listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105"))))
+                .thenReturn(List.of(comment));
+        when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(workitemLink);
+        when(workitemDao.findById(500L)).thenReturn(workitem(700L, 1000L, 3));
+        when(commentLinkDao.findByExternalScope(100L, 1L, "84189105", "126089476"))
+                .thenReturn(outboundLink);
+
+        when(linkDao.listByBindingAfterId(1L, 0L, 200)).thenReturn(List.of(workitemLink));
+        when(provider.searchByIds(any(AoneOpenApiConfig.class), eq("2161074"), eq(List.of("84189105"))))
+                .thenReturn(PageResult.of(List.of(detail), 1, 200, 1));
+        assertEquals(1, service.reconcileLinkedWorkitems(binding, 9L, 200));
+        verify(provider).listComments(any(AoneOpenApiConfig.class), eq(List.of("84189105")));
+
+        verify(commentDao, never()).updateExternalContent(anyLong(), anyLong(), anyLong(), anyString());
+        verify(commentDao, never()).insert(any());
+        verify(commentLinkDao, never()).updateSourceMetadata(any());
+        verify(eventDao, never()).insert(any());
+        verifyNoInteractions(guidanceService);
     }
 
     @Test
@@ -1080,19 +1517,19 @@ class AoneInboundSyncServiceTest {
         WorkitemEventDao eventDao = mock(WorkitemEventDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), eventDao, linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
         ExternalWorkitemLinkDO winnerLink = link(hash(detail.getRawJson()));
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
-        when(provider.listStatusRules(any(AoneOpenApiConfig.class), anyString(), anyInt())).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L)))
-                .thenReturn(node(700L, 1000L));
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         when(linkDao.findByExternalScope(100L, 1L, "84189105"))
                 .thenReturn(null)
                 .thenReturn(winnerLink);
@@ -1121,18 +1558,18 @@ class AoneInboundSyncServiceTest {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         ExternalWorkitemLinkDao linkDao = mock(ExternalWorkitemLinkDao.class);
         ExternalProjectBindingDao bindingDao = mock(ExternalProjectBindingDao.class);
-        ExternalStatusBootstrapService statusBootstrapService = mock(ExternalStatusBootstrapService.class);
+        StatusTemplateDao templateDao = mock(StatusTemplateDao.class);
+        StatusNodeDao nodeDao = mock(StatusNodeDao.class);
         AoneInboundSyncService service = new AoneInboundSyncService(provider, secretCrypto, workitemDao,
                 mock(WorkitemCommentDao.class), mock(WorkitemEventDao.class), linkDao,
-                mock(ExternalCommentLinkDao.class), bindingDao, statusBootstrapService, AoneTestProperties.enabled());
+                mock(ExternalCommentLinkDao.class), bindingDao, templateDao, nodeDao, AoneTestProperties.enabled());
 
         ExternalProjectBindingDO binding = binding();
         ExternalWorkitemDetail detail = detail();
 
         when(secretCrypto.decrypt("ref")).thenReturn("secret");
-        when(provider.listStatusRules(any(AoneOpenApiConfig.class), anyString(), anyInt())).thenReturn(List.of());
-        when(statusBootstrapService.ensureStatus(eq(binding), eq(detail), anyList(), eq(9L)))
-                .thenReturn(node(700L, 1000L));
+        when(templateDao.listByWorkType(100L, "REQ")).thenReturn(List.of(defaultTemplate()));
+        when(nodeDao.findInitNode(30L)).thenReturn(initNode());
         when(linkDao.findByExternalScope(100L, 1L, "84189105")).thenReturn(null);
         doAnswer(invocation -> {
             WorkitemDO created = invocation.getArgument(0);
@@ -1154,7 +1591,7 @@ class AoneInboundSyncServiceTest {
         binding.setProvider("AONE");
         binding.setExternalProjectId("2161074");
         binding.setExternalProjectName("Agent Toolkits");
-        binding.setBaseUrl("http://aone-api.alibaba-inc.com");
+        binding.setBaseUrl("https://aone.example.test");
         binding.setClientKey("auto-wonder");
         binding.setCredentialRef("ref");
         binding.setWritebackStaffId("WORKER_1782377321313");
@@ -1223,11 +1660,22 @@ class AoneInboundSyncServiceTest {
         return workitem;
     }
 
-    private StatusNodeDO node(long templateId, long id) {
+    private StatusTemplateDO defaultTemplate() {
+        StatusTemplateDO template = new StatusTemplateDO();
+        template.setId(30L);
+        template.setTenantId(100L);
+        template.setWorkType("REQ");
+        template.setName("需求默认模板");
+        template.setIsDefault(1);
+        return template;
+    }
+
+    private StatusNodeDO initNode() {
         StatusNodeDO node = new StatusNodeDO();
-        node.setTemplateId(templateId);
-        node.setId(id);
-        node.setName("待处理");
+        node.setId(31L);
+        node.setTemplateId(30L);
+        node.setName("新建");
+        node.setCategory("INIT");
         return node;
     }
 

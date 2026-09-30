@@ -79,6 +79,7 @@ class WorkitemServiceTest {
     PresenceManager presenceManager;
     ExternalWorkitemLinkDao externalWorkitemLinkDao;
     ApplicationEventPublisher eventPublisher;
+    WorkitemServiceRestartHandler restartHandler;
     WorkitemService service;
 
     @BeforeEach
@@ -102,6 +103,7 @@ class WorkitemServiceTest {
         externalWorkitemLinkDao = mock(ExternalWorkitemLinkDao.class);
         sdlcDao = mock(com.aliyun.autowonder.sdlc.SdlcDao.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
+        restartHandler = mock(WorkitemServiceRestartHandler.class);
         service = new WorkitemService(workitemDao, commentDao, eventDao,
                 templateDao, nodeDao, transitionDao,
                 sdlcDao, sdlcStepDao,
@@ -114,6 +116,11 @@ class WorkitemServiceTest {
                 presenceManager,
                 externalWorkitemLinkDao,
                 eventPublisher);
+        service.bindRestartHandler(restartHandler);
+        // SDLC-bound fixtures restart from the SDLC entry (300031 = the fixture's first step).
+        SdlcStepDO entry = new SdlcStepDO();
+        entry.setId(300031L);
+        when(sdlcResolver.firstStep(100L, 30003L)).thenReturn(entry);
     }
 
     private StatusTemplateDO template(long id) {
@@ -530,21 +537,83 @@ class WorkitemServiceTest {
     }
 
     @Test
-    void list_marks_human_assigned_successful_delivery_as_pending_decision() {
+    void list_marks_human_assigned_started_delivery_as_pending_decision() {
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         w.setTenantId(100L);
         w.setAssigneeType("HUMAN");
-        DispatchDO latest = new DispatchDO();
-        latest.setWorkitemId(1L);
-        latest.setStatus(DispatchStatus.SUCCEEDED);
+        w.setAssigneeRef(7L);
+        w.setStatusNodeId(20L);
+        StatusNodeDO developing = new StatusNodeDO();
+        developing.setId(20L);
+        developing.setName("开发中");
+        developing.setCategory("IN_PROGRESS");
+        DispatchDO succeeded = new DispatchDO();
+        succeeded.setWorkitemId(1L);
+        succeeded.setStatus(DispatchStatus.SUCCEEDED);
         when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
-        when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
+        when(nodeDao.listByIds(any())).thenReturn(List.of(developing));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(succeeded));
+        when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(succeeded));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
 
         assertEquals(1, page.getList().size());
         assertTrue(page.getList().get(0).getPendingDecision());
+        assertEquals("PENDING_DECISION", page.getList().get(0).getStatusCategory());
+    }
+
+    @Test
+    void list_marks_human_assigned_item_pending_decision_even_after_failed_dispatch() {
+        // 历史上成功启动过派发即可（交付流程已启动），不要求最新一次派发成功。
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        w.setTenantId(100L);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        w.setStatusNodeId(20L);
+        StatusNodeDO init = new StatusNodeDO();
+        init.setId(20L);
+        init.setName("新建");
+        init.setCategory("INIT");
+        DispatchDO failed = new DispatchDO();
+        failed.setWorkitemId(1L);
+        failed.setStatus(DispatchStatus.FAILED);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(nodeDao.listByIds(any())).thenReturn(List.of(init));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(failed));
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
+
+        assertTrue(page.getList().get(0).getPendingDecision());
+        assertEquals("PENDING_DECISION", page.getList().get(0).getStatusCategory());
+    }
+
+    @Test
+    void list_classifies_human_handoff_as_pending_decision_without_hiding_execution_status() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        w.setTenantId(100L);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        w.setStatusNodeId(20L);
+        StatusNodeDO init = new StatusNodeDO();
+        init.setId(20L);
+        init.setName("新建");
+        init.setCategory("INIT");
+        DispatchDO running = new DispatchDO();
+        running.setWorkitemId(1L);
+        running.setStatus(DispatchStatus.RUNNING);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(nodeDao.listByIds(any())).thenReturn(List.of(init));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
+        when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
+
+        assertTrue(page.getList().get(0).getPendingDecision());
+        assertEquals("PENDING_DECISION", page.getList().get(0).getStatusCategory());
+        assertEquals("RUNNING", page.getList().get(0).getExecutionStatus());
     }
 
     @Test
@@ -554,6 +623,7 @@ class WorkitemServiceTest {
         w.setTenantId(100L);
         w.setStatusNodeId(10L);
         w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
         StatusNodeDO released = new StatusNodeDO();
         released.setId(10L);
         released.setName("已发布");
@@ -563,6 +633,7 @@ class WorkitemServiceTest {
         latest.setStatus(DispatchStatus.SUCCEEDED);
         when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(released));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
@@ -570,15 +641,19 @@ class WorkitemServiceTest {
         assertEquals(1, page.getList().size());
         assertEquals("已发布", page.getList().get(0).getStatusName());
         assertFalse(page.getList().get(0).getPendingDecision());
+        assertEquals("DONE", page.getList().get(0).getStatusCategory());
     }
 
     @Test
-    void list_treats_fixed_name_as_done_without_relying_on_status_category() {
+    void list_ignores_status_name_keywords_when_classifying() {
+        // 规格 5.1：状态名称只承担展示职责。名称「Fixed」不再命中任何结束关键词，
+        // 分类只看节点类别：IN_PROGRESS + 真人 + 已启动派发 → 待决策。
         WorkitemDO w = new WorkitemDO();
         w.setId(1L);
         w.setTenantId(100L);
         w.setStatusNodeId(10L);
         w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
         StatusNodeDO fixed = new StatusNodeDO();
         fixed.setId(10L);
         fixed.setName("Fixed");
@@ -588,39 +663,100 @@ class WorkitemServiceTest {
         latest.setStatus(DispatchStatus.SUCCEEDED);
         when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
         when(nodeDao.listByIds(any())).thenReturn(List.of(fixed));
-        when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(latest));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
 
         assertEquals("Fixed", page.getList().get(0).getStatusName());
-        assertFalse(page.getList().get(0).getPendingDecision());
+        assertTrue(page.getList().get(0).getPendingDecision());
+        assertEquals("PENDING_DECISION", page.getList().get(0).getStatusCategory());
     }
 
     @Test
-    void list_does_not_mark_pending_decision_without_successful_human_handoff_signal() {
-        WorkitemDO human = new WorkitemDO();
-        human.setId(1L);
-        human.setTenantId(100L);
-        human.setAssigneeType("HUMAN");
+    void list_does_not_mark_pending_decision_without_started_dispatch_or_human_assignee() {
+        WorkitemDO queuedHuman = new WorkitemDO();
+        queuedHuman.setId(1L);
+        queuedHuman.setTenantId(100L);
+        queuedHuman.setAssigneeType("HUMAN");
+        queuedHuman.setAssigneeRef(7L);
+        queuedHuman.setStatusNodeId(20L);
         WorkitemDO agent = new WorkitemDO();
         agent.setId(2L);
         agent.setTenantId(100L);
         agent.setAssigneeType("AGENT");
-        DispatchDO failed = new DispatchDO();
-        failed.setWorkitemId(1L);
-        failed.setStatus(DispatchStatus.FAILED);
+        agent.setAssigneeRef(40013L);
+        agent.setStatusNodeId(20L);
+        StatusNodeDO init = new StatusNodeDO();
+        init.setId(20L);
+        init.setName("新建");
+        init.setCategory("INIT");
+        DispatchDO queued = new DispatchDO();
+        queued.setWorkitemId(1L);
+        queued.setStatus(DispatchStatus.PENDING);
         DispatchDO succeededForAgent = new DispatchDO();
         succeededForAgent.setWorkitemId(2L);
         succeededForAgent.setStatus(DispatchStatus.SUCCEEDED);
         when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20))
-                .thenReturn(List.of(human, agent));
+                .thenReturn(List.of(queuedHuman, agent));
+        when(nodeDao.listByIds(any())).thenReturn(List.of(init));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L, 2L)))
+                .thenReturn(List.of(queued, succeededForAgent));
         when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L, 2L)))
-                .thenReturn(List.of(failed, succeededForAgent));
+                .thenReturn(List.of(queued, succeededForAgent));
 
         PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
 
+        // 派发仅在排队中：未成功启动过 → 待处理。
         assertFalse(page.getList().get(0).getPendingDecision());
+        assertEquals("NEW", page.getList().get(0).getStatusCategory());
+        // 数字人负责：即使派发成功也不是待决策。
         assertFalse(page.getList().get(1).getPendingDecision());
+        assertEquals("NEW", page.getList().get(1).getStatusCategory());
+    }
+
+    @Test
+    void list_classifies_canceled_workitem_as_canceled() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        w.setTenantId(100L);
+        w.setStatusNodeId(30L);
+        StatusNodeDO canceled = new StatusNodeDO();
+        canceled.setId(30L);
+        canceled.setName("已取消");
+        canceled.setCategory("CANCELED");
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(nodeDao.listByIds(any())).thenReturn(List.of(canceled));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of());
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
+
+        assertEquals("CANCELED", page.getList().get(0).getStatusCategory());
+        assertFalse(page.getList().get(0).getPendingDecision());
+    }
+
+    @Test
+    void list_classifies_agent_item_with_running_dispatch_as_in_progress() {
+        WorkitemDO w = new WorkitemDO();
+        w.setId(1L);
+        w.setTenantId(100L);
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40013L);
+        w.setStatusNodeId(20L);
+        StatusNodeDO init = new StatusNodeDO();
+        init.setId(20L);
+        init.setName("新建");
+        init.setCategory("INIT");
+        DispatchDO running = new DispatchDO();
+        running.setWorkitemId(1L);
+        running.setStatus(DispatchStatus.RUNNING);
+        when(workitemDao.list(100L, null, null, null, null, null, false, null, 7L, null, null, null, null, 0, 20)).thenReturn(List.of(w));
+        when(nodeDao.listByIds(any())).thenReturn(List.of(init));
+        when(dispatchDao.listByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
+        when(dispatchDao.listLatestByWorkitemIds(100L, List.of(1L))).thenReturn(List.of(running));
+
+        PageResult<WorkitemVO> page = service.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20);
+
+        assertEquals("IN_PROGRESS", page.getList().get(0).getStatusCategory());
     }
 
     @Test
@@ -648,6 +784,15 @@ class WorkitemServiceTest {
 
         verify(workitemDao).count(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, null, null);
         verify(workitemDao).list(100L, null, null, "IN_PROGRESS", null, null, false, null, 7L, null, null, null, null, 0, 20);
+    }
+
+    @Test
+    void list_passes_canceled_status_category_to_dao_for_explicit_filter() {
+        // 已取消默认隐藏，仅在显式筛选时传递给 DAO。
+        service.list(null, null, "canceled", null, null, false, null, 100L, 7L, null, null, null, 1, 20);
+
+        verify(workitemDao).count(100L, null, null, "CANCELED", null, null, false, null, 7L, null, null, null, null);
+        verify(workitemDao).list(100L, null, null, "CANCELED", null, null, false, null, 7L, null, null, null, null, 0, 20);
     }
 
     @Test
@@ -2559,10 +2704,14 @@ class WorkitemServiceTest {
         assertEquals(future, vo.getScheduledStartAt());
         verify(workitemDao).updateScheduledStartAt(500L, 100L, future, 5, 7L);
         verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+        // The restart round itself is deferred: the handler owns the decision, so the
+        // reassignment must hand it the planned time instead of publishing an event here.
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(300031L), isNull(),
+                eq(future), eq(7L), isA(AssignmentActor.class));
     }
 
     @Test
-    void assignAgentWithPastScheduledStartDeliversImmediatelyWithoutSchedule() {
+    void assignAgentWithPastScheduledStartRestartsImmediatelyWithoutSchedule() {
         WorkitemDO w = assignableWorkitem();
         w.setAssigneeType("HUMAN");
         w.setAssigneeRef(7L);
@@ -2577,12 +2726,14 @@ class WorkitemServiceTest {
         WorkitemVO vo = service.assign(500L, "AGENT", 40013L, null, null, past, 100L, 7L);
 
         verify(workitemDao, never()).updateScheduledStartAt(anyLong(), anyLong(), any(), anyInt(), anyLong());
-        verify(eventPublisher).publishEvent(isA(WorkitemAssignedEvent.class));
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(300031L), isNull(),
+                eq(past), eq(7L), isA(AssignmentActor.class));
         assertNull(vo.getScheduledStartAt());
     }
 
     @Test
-    void assignAgentWithoutScheduledStartStillPublishesAssignedEvent() {
+    void reassignAgentWithStartedDeliveryRestartsInsteadOfPublishingAssignedEvent() {
         WorkitemDO w = assignableWorkitem();
         w.setAssigneeType("HUMAN");
         w.setAssigneeRef(7L);
@@ -2595,12 +2746,130 @@ class WorkitemServiceTest {
 
         service.assign(500L, "AGENT", 40013L, null, null, null, 100L, 7L);
 
+        // A started delivery restarts; the plain assignment event would enqueue a second,
+        // uncontrolled dispatch alongside the restart round.
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(300031L), isNull(),
+                isNull(), eq(7L), isA(AssignmentActor.class));
+        verify(workitemDao, never()).updateScheduledStartAt(anyLong(), anyLong(), any(), anyInt(), anyLong());
+    }
+
+    @Test
+    void sameAgentReassignmentWithStartedDeliveryRestartsDelivery() {
+        WorkitemDO w = assignableWorkitem();
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40013L);
+        when(workitemDao.findById(500L)).thenReturn(w);
+
+        service.assign(500L, "AGENT", 40013L, null, null, null, 100L, 7L);
+
+        // Same-agent reassignment is no longer a silent no-op: it is an explicit restart.
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(300031L), isNull(),
+                isNull(), eq(7L), isA(AssignmentActor.class));
+    }
+
+    @Test
+    void sameAgentReassignmentWithoutStartedDeliveryRemainsNoOp() {
+        WorkitemDO w = assignableWorkitem();
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40013L);
+        w.setSdlcId(null);
+        w.setCurrentStepId(null);
+        when(workitemDao.findById(500L)).thenReturn(w);
+
+        service.assign(500L, "AGENT", 40013L, null, null, null, 100L, 7L);
+
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
+        verify(eventPublisher, never()).publishEvent(any());
+        verify(restartHandler, never()).restartAgentDelivery(anyLong(), anyLong(), any(), any(),
+                any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void firstTimeAgentAssignmentStillPublishesAssignedEvent() {
+        WorkitemDO w = assignableWorkitem();
+        w.setSdlcId(null);
+        w.setCurrentStepId(null);
+        w.setAssigneeType("HUMAN");
+        w.setAssigneeRef(7L);
+        WorkitemDO bound = assignableWorkitem();
+        bound.setVersion(4);
+        bound.setSdlcId(30003L);
+        bound.setCurrentStepId(300031L);
+        bound.setAssigneeType("AGENT");
+        bound.setAssigneeRef(40013L);
+        when(workitemDao.findById(500L)).thenReturn(w, bound);
+        when(workitemDao.updateAssignee(500L, 100L, "AGENT", 40013L, 3, 7L)).thenReturn(1);
+        SdlcDO sdlc = new SdlcDO();
+        sdlc.setId(30003L);
+        sdlc.setTenantId(100L);
+        when(sdlcDao.findById(30003L)).thenReturn(sdlc);
+        when(workitemDao.updateSdlcAndStep(500L, 100L, 30003L, 300031L, 4, 7L)).thenReturn(1);
+
+        service.assign(500L, "AGENT", 40013L, 30003L, null, null, 100L, 7L);
+
         ArgumentCaptor<WorkitemAssignedEvent> published = ArgumentCaptor.forClass(WorkitemAssignedEvent.class);
         verify(eventPublisher).publishEvent(published.capture());
         assertEquals(500L, published.getValue().getWorkitemId());
         assertEquals(Long.valueOf(40013L), published.getValue().getAgentId());
-        assertEquals(4, published.getValue().getAssignmentVersion());
-        verify(workitemDao, never()).updateScheduledStartAt(anyLong(), anyLong(), any(), anyInt(), anyLong());
+        verify(restartHandler, never()).restartAgentDelivery(anyLong(), anyLong(), any(), any(),
+                any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void reassignRestartsFromSdlcEntryAndResetsMidFlightStep() {
+        WorkitemDO w = assignableWorkitem();
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40014L);
+        w.setCurrentStepId(300035L);
+        WorkitemDO restarted = assignableWorkitem();
+        restarted.setVersion(4);
+        restarted.setAssigneeType("AGENT");
+        restarted.setAssigneeRef(40014L);
+        restarted.setCurrentStepId(300031L);
+        when(workitemDao.findById(500L)).thenReturn(w, restarted);
+        when(workitemDao.updateAssignee(500L, 100L, "AGENT", 40014L, 3, 7L)).thenReturn(1);
+        when(workitemDao.updateSdlcAndStep(500L, 100L, 30003L, 300031L, 3, 7L)).thenReturn(1);
+
+        service.assign(500L, "AGENT", 40014L, null, null, null, 100L, 7L);
+
+        // The new round starts from the SDLC entry, not the old checkpoint step.
+        verify(workitemDao).updateSdlcAndStep(500L, 100L, 30003L, 300031L, 3, 7L);
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40014L), eq(300031L), isNull(),
+                isNull(), eq(7L), isA(AssignmentActor.class));
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
+    }
+
+    @Test
+    void reassignStepResetConflictAbortsRestart() {
+        WorkitemDO w = assignableWorkitem();
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40014L);
+        w.setCurrentStepId(300035L);
+        when(workitemDao.findById(500L)).thenReturn(w);
+        when(workitemDao.updateAssignee(500L, 100L, "AGENT", 40014L, 3, 7L)).thenReturn(1);
+        when(workitemDao.updateSdlcAndStep(500L, 100L, 30003L, 300031L, 3, 7L)).thenReturn(0);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.assign(500L, "AGENT", 40014L, null, null, null, 100L, 7L));
+        assertEquals(ErrorCode.WORKITEM_VERSION_CONFLICT.getCode(), ex.getCode());
+        verify(restartHandler, never()).restartAgentDelivery(anyLong(), anyLong(), any(), any(),
+                any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void reassignForwardsRestartTokenForIdempotentSubmission() {
+        WorkitemDO w = assignableWorkitem();
+        w.setAssigneeType("AGENT");
+        w.setAssigneeRef(40013L);
+        when(workitemDao.findById(500L)).thenReturn(w);
+
+        service.assign(500L, "AGENT", 40013L, null, null, null, "token-abc", 100L, 7L);
+
+        verify(restartHandler).restartAgentDelivery(eq(500L), eq(100L), eq(40013L), eq(300031L),
+                eq("token-abc"), isNull(), eq(7L), isA(AssignmentActor.class));
     }
 
     @Test
@@ -2624,6 +2893,27 @@ class WorkitemServiceTest {
         assertEquals(Long.valueOf(40013L), published.getValue().getAgentId());
         assertEquals(4, published.getValue().getAssignmentVersion());
         assertEquals(7L, published.getValue().getUserId());
+    }
+
+    @Test
+    void updateScheduledStartExecuteNowFiresPendingRestartRoundInsteadOfAssignedEvent() {
+        WorkitemDO scheduled = assignableWorkitem();
+        scheduled.setAssigneeType("AGENT");
+        scheduled.setAssigneeRef(40013L);
+        scheduled.setScheduledStartAt(new Date(System.currentTimeMillis() + 3600_000L));
+        WorkitemDO cleared = assignableWorkitem();
+        cleared.setVersion(4);
+        cleared.setAssigneeType("AGENT");
+        cleared.setAssigneeRef(40013L);
+        when(workitemDao.findById(500L)).thenReturn(scheduled, cleared);
+        when(workitemDao.fireScheduledStartAt(500L, 100L, 3)).thenReturn(1);
+        when(restartHandler.firePendingRestartNow(100L, 500L, 40013L, 300031L, 7L)).thenReturn(true);
+
+        service.updateScheduledStart(500L, null, true, 100L, 7L);
+
+        // A deferred restart round fires as a restart, never as a plain assignment.
+        verify(restartHandler).firePendingRestartNow(100L, 500L, 40013L, 300031L, 7L);
+        verify(eventPublisher, never()).publishEvent(isA(WorkitemAssignedEvent.class));
     }
 
     @Test

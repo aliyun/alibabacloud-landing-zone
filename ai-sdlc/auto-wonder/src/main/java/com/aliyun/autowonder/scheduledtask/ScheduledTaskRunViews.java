@@ -2,9 +2,9 @@ package com.aliyun.autowonder.scheduledtask;
 
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskRunDetailVO;
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledTaskRunVO;
-import com.alibaba.fastjson2.JSON;
-import com.alibaba.fastjson2.JSONArray;
-import com.alibaba.fastjson2.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;

@@ -1,5 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
@@ -9,9 +10,9 @@ import { useAuthStore } from '@/shared/auth/store';
 
 function renderLogin() {
   return render(
-    <MemoryRouter>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>
       <LoginPage />
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   );
 }
 
@@ -22,22 +23,28 @@ describe('LoginPage', () => {
 
   it('renders login form', () => {
     renderLogin();
+    expect(screen.getAllByRole('button', { name: '切换外观' })).toHaveLength(1);
     expect(screen.getByLabelText(/用户名/)).toBeInTheDocument();
     expect(screen.getByLabelText(/密码/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /登\s*录/ })).toBeInTheDocument();
   });
 
-  it('renders the product command center landing narrative', () => {
+  it('shows the platform introduction and delivery diagram', () => {
     renderLogin();
-    expect(screen.getByText('AutoWonder · AI Native SDLC Platform')).toBeInTheDocument();
-    expect(screen.getByText('登录后，把工单交给数字员工小队')).toBeInTheDocument();
-    expect(screen.getByText('工单系统、仓库、SDLC、执行器和工作空间记忆在入口第一屏形成完整认知。')).toBeInTheDocument();
-    expect(screen.getByText('6')).toBeInTheDocument();
-    expect(screen.getByText('上手步骤')).toBeInTheDocument();
-    expect(screen.getByText('3')).toBeInTheDocument();
-    expect(screen.getByText('Agent 角色')).toBeInTheDocument();
-    expect(screen.getByText('∞')).toBeInTheDocument();
-    expect(screen.getByText('记忆沉淀')).toBeInTheDocument();
+    expect(screen.getByText('AI Native SDLC Platform')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /软件产品\s*自动交付平台/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument();
+    expect(screen.queryByText('继续推进你的自主交付工作台')).not.toBeInTheDocument();
+    expect(screen.queryByText('上手步骤')).not.toBeInTheDocument();
+    const diagram = screen.getByRole('figure', { name: /软件自动交付流程示意/ });
+    expect(within(diagram).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      '需求澄清', '启动', '开发', '验证', '评审', '部署', '测试', '交付',
+    ]);
+    const accentFlags = within(diagram).getAllByRole('listitem')
+      .map((item) => item.querySelector('.auth-delivery-label')!.className
+        .includes('auth-delivery-label--accent'));
+    expect(accentFlags).toEqual([false, false, true, true, true, true, true, true]);
+    expect(screen.queryByRole('button', { name: '暂停流程动画' })).not.toBeInTheDocument();
   });
 
   it('calls login API and stores authenticated user on success', async () => {

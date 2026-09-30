@@ -132,6 +132,32 @@ class DispatchMcpTokenServiceTest {
     }
 
     @Test
+    void memoryCapabilityRemainsValidAfterCompletedDispatch() {
+        DispatchDO dispatch = dispatch(DispatchStatus.SUCCEEDED);
+        dispatch.setAgentId(42L);
+        when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
+
+        DispatchMcpTokenService.DispatchPrincipal principal =
+                service.authenticateMemoryDispatch(service.issue(dispatch));
+
+        assertEquals(DISPATCH_ID, principal.dispatchId());
+        assertEquals(42L, principal.agentId());
+        assertEquals(TENANT_ID, principal.workspaceId());
+    }
+
+    @Test
+    void memoryCapabilityRejectsTerminalStatesThatCannotRunMaintenance() {
+        for (String status : List.of(DispatchStatus.FAILED, DispatchStatus.TIMEOUT, DispatchStatus.CANCELED,
+                DispatchStatus.PAUSED, DispatchStatus.PAUSE_FAILED, DispatchStatus.WAITING_FOR_PAUSE)) {
+            DispatchDO dispatch = dispatch(status);
+            when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);
+
+            assertThrows(BizException.class,
+                    () -> service.authenticateMemoryDispatch(service.issue(dispatch)), status);
+        }
+    }
+
+    @Test
     void authenticateReflectsActualAdminAccessLevel() {
         DispatchDO dispatch = dispatch(DispatchStatus.RUNNING);
         when(dispatchDao.findById(DISPATCH_ID)).thenReturn(dispatch);

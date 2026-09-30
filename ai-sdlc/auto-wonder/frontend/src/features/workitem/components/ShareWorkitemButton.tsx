@@ -11,7 +11,7 @@ import { buildWorkitemShareText } from '../shareLink';
 export const SHARE_FEEDBACK_MS = 1500;
 
 /** 工单要求的浅灰：比正文弱一档，不与右侧操作区抢注意力 */
-const SHARE_COLOR = '#8c8c8c';
+const SHARE_COLOR = 'var(--aw-muted)';
 
 interface ShareWorkitemButtonProps {
   workitemId: number;

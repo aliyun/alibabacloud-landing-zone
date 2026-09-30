@@ -45,3 +45,14 @@ exclusive durable backends; the S3 backend also uses these `oss.*` bucket names.
 
 The existing Aone integration remains optional and disabled by default. New
 Aone deployment and comment-poller configuration is excluded from Community.
+
+## v0.10.0 memory document store
+
+`memory.document-store.enabled` binds `AUTOWONDER_MEMORY_DOCUMENT_STORE_ENABLED`
+and defaults to `true`. Existing installations must apply V071–V075 as described
+in the v0.10.0 release before application activation; V075 requires a staged
+dry-run and operator review. Fresh installations use the full schema. Legacy
+memory tables remain intact, but active memory writes use document stores and ACLs.
+The upgrade planner already inventories this YAML placeholder; it does not need
+a redundant entry in the example environment file. No new service or credential
+is required. Recommended runtime remains derived from application.yml (0.3.3).

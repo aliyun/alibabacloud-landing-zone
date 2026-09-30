@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from 'react-dom/server';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ConversationEventView } from './ConversationEventView';
@@ -61,8 +62,8 @@ describe('ConversationEventView', () => {
     expect(view.container.querySelector('.aw-clarify-md')).not.toBeNull();
   });
 
-  it('uses the light code surface token for thinking and log blocks', () => {
-    const view = render(
+  it('uses the theme code surface token for thinking and log blocks', () => {
+    const view = renderToStaticMarkup(
       <ConversationEventView
         nodes={nodesOf([
           event('thinking', '正在读取工单'),
@@ -72,13 +73,9 @@ describe('ConversationEventView', () => {
       />,
     );
 
-    const surfaces = Array.from(view.container.querySelectorAll('div, pre'))
-      .filter((el) => (el as HTMLElement).style.backgroundColor !== '');
+    const surfaces = [...view.matchAll(/background-color:([^;"]+)/g)].map(match => match[1]);
     expect(surfaces.length).toBeGreaterThan(0);
-    for (const el of surfaces) {
-      // 旧灰底 #fafafa / #f6f8fa 已全部换成 codeSurface
-      expect((el as HTMLElement).style.backgroundColor).toBe('rgb(247, 247, 248)');
-    }
+    expect(surfaces.every(color => color === 'var(--aw-raised)')).toBe(true);
   });
 
   /**
@@ -88,7 +85,7 @@ describe('ConversationEventView', () => {
    * diff 的增删底色刻意不在断言范围内：那是语义色（红=删、绿=增），不是主题色。
    */
   it('holds the code surface token across the ACP node renderers', () => {
-    const view = render(
+    const view = renderToStaticMarkup(
       <ConversationEventView
         nodes={nodesOf([
           raw(1, 'acp_plan', {
@@ -105,12 +102,9 @@ describe('ConversationEventView', () => {
       />,
     );
 
-    const surfaces = Array.from(view.container.querySelectorAll('div, pre, span'))
-      .filter((el) => (el as HTMLElement).style.backgroundColor !== '');
+    const surfaces = [...view.matchAll(/background-color:([^;"]+)/g)].map(match => match[1]);
     expect(surfaces.length).toBeGreaterThan(0);
-    for (const el of surfaces) {
-      expect((el as HTMLElement).style.backgroundColor).toBe('rgb(247, 247, 248)');
-    }
+    expect(surfaces.every(color => color === 'var(--aw-raised)')).toBe(true);
   });
 });
 

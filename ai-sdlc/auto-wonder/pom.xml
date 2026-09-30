@@ -156,17 +156,6 @@
             <artifactId>snakeyaml</artifactId>
             <version>1.28</version>
         </dependency>
-        <!-- JSON -->
-        <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>fastjson</artifactId>
-            <version>1.2.72_noneautotype</version>
-        </dependency>
-        <dependency>
-            <groupId>com.alibaba.fastjson2</groupId>
-            <artifactId>fastjson2</artifactId>
-            <version>2.0.31</version>
-        </dependency>
         <!-- Web (Tomcat) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

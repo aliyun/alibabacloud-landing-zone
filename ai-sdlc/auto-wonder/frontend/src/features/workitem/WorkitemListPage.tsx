@@ -1,8 +1,11 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useMemo, useState } from 'react';
-import { Table, Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input } from 'antd';
+import { Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns, useToggleWatch } from './hooks';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { WorkitemKanban } from './components/WorkitemKanban';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
 import { HumanInterventionBadge } from './components/HumanInterventionBadge';
@@ -10,9 +13,11 @@ import { ScheduledExecutionBadge } from './components/ScheduledExecutionBadge';
 import { workTypeMap, STATUS_COLUMNS, getPriorityMeta } from './constants';
 import { displayNameWithoutId } from './nameDisplay';
 import { readWorkitemViewPreference, writeWorkitemViewPreference, type WorkitemViewMode } from './viewPreference';
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import type { Workitem } from '@/shared/types/workitem';
 import type { WorkitemStatusCategory } from './api';
 import type { ColumnsType } from 'antd/es/table';
+import { useAuthStore } from '@/shared/auth/store';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 import { useKanbanTransition } from './useKanbanTransition';
@@ -72,15 +77,6 @@ function scopeToQuery(scope: Scope): { pendingDecisionOnly?: boolean; mineScope?
   }
 }
 
-/** 单行省略单元格；tooltip 为去编号后的完整名称，占位文案不重复提示。 */
-function EllipsisCell({ text, tooltip = text }: { text: string; tooltip?: string | null }) {
-  const span = (
-    <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-      {text}
-    </span>
-  );
-  return tooltip ? <Tooltip title={tooltip}>{span}</Tooltip> : span;
-}
 
 function creatorCellText(record: Workitem): string {
   if (record.sourceType === 'EXTERNAL') {
@@ -93,7 +89,7 @@ function creatorCellText(record: Workitem): string {
 
 /** 表头单行显示，禁止逐字换行。 */
 function withNowrapHeader(columns: ColumnsType<Workitem>): ColumnsType<Workitem> {
-  return columns.map(column => ({ ...column, onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }) }));
+  return columns.map(column => ({ ...column, align: 'dataIndex' in column && column.dataIndex === 'title' ? 'left' : 'center', onHeaderCell: () => ({ style: { whiteSpace: 'nowrap', textAlign: 'center' } }) }));
 }
 
 function WatchWorkitemButton({
@@ -113,7 +109,7 @@ function WatchWorkitemButton({
         type="text"
         data-testid="workitem-watch-toggle"
         aria-label={watched ? '取消关注工单' : '关注工单'}
-        icon={watched ? <StarFilled style={{ color: '#ff6a00' }} /> : <StarOutlined />}
+        icon={watched ? <StarFilled className="aw-watch-active" /> : <StarOutlined />}
         loading={loading}
         onClick={(event) => {
           event.stopPropagation();
@@ -172,10 +168,11 @@ function DeleteWorkitemButton({
 
 export function WorkitemListPage() {
   const navigate = useNavigate();
+  const user = useAuthStore(state => state.user);
   const accessCommand = useAccessCommand();
   const kanbanTransition = useKanbanTransition();
   const [page, setPage] = useState(1);
-  const [size, setSize] = useState(100);
+  const [size, setSize] = usePageSizePreference('autowonder.workitems.pageSize', [10, 20, 50, 100, 200], 10);
   const [workType, setWorkType] = useState<string | undefined>();
   const [statusCategory, setStatusCategory] = useState<StatusCategory | undefined>();
   const [viewMode, setViewMode] = useState<ViewMode>(readWorkitemViewPreference);
@@ -199,6 +196,11 @@ export function WorkitemListPage() {
   const kanbanColumns = useWorkitemKanbanColumns(
     baseQuery, visibleColumnKeys, columnSizes, KANBAN_COLUMN_PAGE_SIZE, isKanban,
   );
+  const showDecisionSummary = isKanban && scope === 'ALL' && !!user && visibleColumnKeys.includes('PENDING_DECISION');
+  const [myPendingColumn] = useWorkitemKanbanColumns(
+    { workType, keyword, tag, pendingDecisionOnly: true },
+    showDecisionSummary ? ['PENDING_DECISION'] : [], {}, 1, showDecisionSummary,
+  );
   const kanbanItems = useMemo(() => {
     const byId = new Map<number | string, Workitem>();
     kanbanColumns.forEach(col => col.items.forEach(item => byId.set(item.id, item)));
@@ -212,34 +214,21 @@ export function WorkitemListPage() {
   const watchMutation = useToggleWatch();
 
   const columns: ColumnsType<Workitem> = withNowrapHeader([
-    { title: 'ID', dataIndex: 'id', width: 80 },
+    { title: 'ID', dataIndex: 'id', className: 'aw-column-numeric', width: 80 },
     {
-      title: '标题', dataIndex: 'title',
+      title: '标题', dataIndex: 'title', className: 'aw-column-title',
       render: (text: string, record: Workitem) => (
-        <Tooltip title={text} placement="topLeft">
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, minWidth: 0 }}>
-            <a
-              onClick={() => navigate(`/workitems/${record.id}`)}
-              style={{
-                flex: '1 1 auto',
-                minWidth: 0,
-                overflow: 'hidden',
-                display: '-webkit-box',
-                WebkitBoxOrient: 'vertical',
-                WebkitLineClamp: 2,
-                wordBreak: 'break-all',
-              }}
-            >
-              {text}
-            </a>
-            <ScheduledExecutionBadge
-              scheduledStartAt={record.scheduledStartAt}
-              scheduledStartTriggeredAt={record.scheduledStartTriggeredAt}
-              origin={record.origin}
-              gmtCreate={record.gmtCreate}
-            />
-          </div>
-        </Tooltip>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, minWidth: 0 }}>
+          <EllipsisText lines={2} tooltip={text} placement="topLeft" style={{ flex: '1 1 auto', wordBreak: 'break-all' }}>
+            <a onClick={() => navigate(`/workitems/${record.id}`)}>{text}</a>
+          </EllipsisText>
+          <ScheduledExecutionBadge
+            scheduledStartAt={record.scheduledStartAt}
+            scheduledStartTriggeredAt={record.scheduledStartTriggeredAt}
+            origin={record.origin}
+            gmtCreate={record.gmtCreate}
+          />
+        </div>
       ),
     },
     {
@@ -249,7 +238,7 @@ export function WorkitemListPage() {
     {
       title: '状态', dataIndex: 'statusName', width: 150,
       render: (s: string | null, record: Workitem) => (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
           {s ? <Tag color="processing" style={{ margin: 0 }}>{s}</Tag> : <Tag style={{ margin: 0 }}>-</Tag>}
           <HumanInterventionBadge item={record} />
           <WorkitemHealthBadge item={record} />
@@ -268,14 +257,12 @@ export function WorkitemListPage() {
       render: (_: string | null, record: Workitem) => {
         const text = displayNameWithoutId(record.assigneeDisplayName, record.assigneeName);
         return (
-          <Tooltip title={text ?? undefined}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
-              {record.assigneeType === 'AGENT' ? <Tag color="purple" style={{ margin: 0 }}>AI</Tag> : null}
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {text ?? '未指派'}
-              </span>
-            </span>
-          </Tooltip>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
+            {record.assigneeType === 'AGENT' ? <Tag color="purple" style={{ margin: 0 }}>AI</Tag> : null}
+            <EllipsisText tooltip={text ?? undefined}>
+              {text ?? '未指派'}
+            </EllipsisText>
+          </span>
         );
       },
     },
@@ -283,12 +270,11 @@ export function WorkitemListPage() {
       title: '创建者', dataIndex: 'creatorDisplayName', width: 120,
       render: (_: string | null, record: Workitem) => {
         const text = creatorCellText(record);
-        const name = text === '-' || text === '来源创建者未返回' ? null : text;
-        return <EllipsisCell text={text} tooltip={name} />;
+        return <EllipsisText tooltip={text === '-' || text === '来源创建者未返回' ? undefined : text}>{text}</EllipsisText>;
       },
     },
     {
-      title: '创建时间', dataIndex: 'gmtCreate', width: 108,
+      title: '创建时间', dataIndex: 'gmtCreate', className: 'aw-column-numeric', width: 108,
       render: (t: string) => {
         if (!t) return '-';
         const d = new Date(t);
@@ -340,7 +326,8 @@ export function WorkitemListPage() {
 
   return (
     <Card
-      title={<span>工单 <span style={{ fontWeight: 'normal', fontSize: 14, color: 'rgba(0,0,0,0.45)' }}>总工单数 {total} 个</span></span>}
+      className="aw-content-card aw-workitems"
+      title={<PageHeading title="工单" description={<>总工单数 <span className="aw-heading-number">{total}</span> 个</>} />}
       extra={
         <Space>
           <Segmented
@@ -410,6 +397,10 @@ export function WorkitemListPage() {
           transitionBusy={kanbanTransition.busy}
           items={kanbanItems}
           loading={kanbanLoading}
+          pendingDecisionSummary={showDecisionSummary && user && myPendingColumn && !myPendingColumn.isLoading ? {
+            name: displayNameWithoutId(user.nickname, user.username) ?? user.username,
+            count: myPendingColumn.total,
+          } : undefined}
           columnKeys={visibleColumnKeys}
           columnTotals={columnTotals}
           columnHasMore={columnHasMore}

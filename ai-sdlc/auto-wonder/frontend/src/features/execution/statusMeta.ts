@@ -22,4 +22,4 @@ export function statusMeta(status: string): StatusMeta {
 export const HAPPY_PATH: string[] = ['PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'SUCCEEDED'];
 export const FAILURE_STATES: string[] = ['FAILED', 'TIMEOUT', 'CANCELED'];
 
-export const ACCENT = '#ff6a00';
+export const ACCENT = 'var(--aw-accent-text)';

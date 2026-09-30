@@ -273,7 +273,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
         )}
         <div ref={bottomRef} />
       </div>
-      <div style={{ padding: 12, borderTop: '1px solid #f0f0f0' }}>
+      <div style={{ padding: 12, borderTop: '1px solid var(--aw-border)' }}>
         <Space.Compact style={{ width: '100%' }}>
           <TextArea
             value={input}
@@ -301,7 +301,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
   );
 
   const result = (
-    <div style={{ flex: 1, minWidth: 0, padding: 16, overflow: 'auto', borderLeft: narrow ? undefined : '1px solid #f0f0f0', borderTop: narrow ? '1px solid #f0f0f0' : undefined }}>
+    <div style={{ flex: 1, minWidth: 0, padding: 16, overflow: 'auto', borderLeft: narrow ? undefined : '1px solid var(--aw-border)', borderTop: narrow ? '1px solid var(--aw-border)' : undefined }}>
       <ResultPane session={session} onConfirmed={handleConfirmed} />
     </div>
   );
@@ -309,7 +309,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
   return (
     <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 400 }}>
       {session && (
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--aw-border)' }}>
           <Space>
             <Text type="secondary">会话 #{session.id}</Text>
             <Tag color={statusColor[session.status]}>{session.status}</Tag>

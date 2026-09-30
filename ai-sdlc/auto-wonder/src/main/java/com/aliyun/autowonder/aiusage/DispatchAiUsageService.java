@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.aiusage;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.aiusage.dto.DispatchAiUsageBackfillResult;
 import com.aliyun.autowonder.aiusage.dto.TaskUsageReportRequest;
 import com.aliyun.autowonder.artifact.ArtifactDO;

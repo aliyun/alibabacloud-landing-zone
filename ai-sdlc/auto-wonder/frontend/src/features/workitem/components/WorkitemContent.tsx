@@ -55,8 +55,8 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
     <div
       data-testid="workitem-content-section"
       style={{
-        background: '#fff',
-        border: '1px solid #e5e7eb',
+        background: 'var(--aw-panel)',
+        border: '1px solid var(--aw-border)',
         borderRadius: 8,
         padding: 16,
         marginBottom: 16,

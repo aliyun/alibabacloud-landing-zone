@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Space } from 'antd';
+import { Button, Space, Tooltip } from 'antd';
 import { MessageOutlined, ArrowLeftOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { WorkitemClarificationPanel } from '../clarification/WorkitemClarificationPanel';
 import { CLARIFICATION_THEME } from '../clarification/theme';
@@ -169,41 +169,46 @@ export function RightPanel({
             onChange={(height) => setClarifyHeight(height)}
           />
         )}
-        <div
-          style={{
-            padding: clarifyFullscreen ? '12px 20px' : '10px 14px',
-            borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`,
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <Button
-            type="text"
-            size="small"
-            icon={<ArrowLeftOutlined />}
-            onClick={() => switchMode('progress')}
-          >
-            返回进度
-          </Button>
-          <Button
-            type="text"
-            size="small"
-            icon={clarifyFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-            aria-label={clarifyFullscreen ? '退出全屏' : '全屏'}
-            title={clarifyFullscreen ? '退出全屏（Esc）' : '全屏'}
-            style={{ marginLeft: 'auto' }}
-            onClick={() => (clarifyFullscreen ? exitFullscreen() : enterFullscreen())}
-          >
-            {clarifyFullscreen ? '退出全屏' : '全屏'}
-          </Button>
-        </div>
+        {/* 头部融合：全屏与停靠都不再渲染外层独立头行。「返回」与
+            「全屏/退出全屏」作为插槽并入澄清面板自己的头部——
+            全屏融成一行；停靠排成「导航/身份 + 会话操作」两行。 */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <WorkitemClarificationPanel
             workitemId={workitemId}
             agents={progress?.agents ?? []}
             fullscreen={clarifyFullscreen}
+            headerPrefix={(
+              <Button
+                size={clarifyFullscreen ? 'middle' : 'small'}
+                icon={<ArrowLeftOutlined />}
+                aria-label="返回"
+                style={{ flexShrink: 0 }}
+                onClick={() => switchMode('progress')}
+              >
+                返回
+              </Button>
+            )}
+            headerSuffix={clarifyFullscreen ? (
+              <Tooltip title="退出全屏（Esc）">
+                <Button
+                  size="middle"
+                  icon={<FullscreenExitOutlined />}
+                  aria-label="退出全屏"
+                  style={{ flexShrink: 0 }}
+                  onClick={exitFullscreen}
+                />
+              </Tooltip>
+            ) : (
+              <Tooltip title="全屏">
+                <Button
+                  size="small"
+                  icon={<FullscreenOutlined />}
+                  aria-label="全屏"
+                  style={{ flexShrink: 0 }}
+                  onClick={enterFullscreen}
+                />
+              </Tooltip>
+            )}
             initialAgentId={clarifyContext?.agentId ?? null}
             initialConversationId={clarifyContext?.conversationId ?? null}
             onContextChange={onClarifyContextChange}
@@ -228,7 +233,6 @@ export function RightPanel({
             type="primary"
             icon={<MessageOutlined />}
             block
-            style={{ backgroundColor: '#ff6a00', borderColor: '#ff6a00' }}
             onClick={() => accessCommand('READ_WRITE', '发起 AI 需求澄清', () => switchMode('clarify'))}
           >
             AI 需求澄清

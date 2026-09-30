@@ -113,14 +113,15 @@ export function useAddComment() {
 export function useAssignWorkitem() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, assigneeType = 'AGENT', assigneeRef, sdlcId, squadId, scheduledStartAt }: {
+    mutationFn: ({ id, assigneeType = 'AGENT', assigneeRef, sdlcId, squadId, scheduledStartAt, restartToken }: {
       id: number | string;
       assigneeType?: 'AGENT' | 'HUMAN';
       assigneeRef: number;
       sdlcId?: number;
       squadId?: number;
       scheduledStartAt?: string;
-    }) => api.assignWorkitem(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt),
+      restartToken?: string;
+    }) => api.assignWorkitem(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, restartToken),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'delivery-progress'] });
@@ -195,8 +196,12 @@ export function useTransitionWorkitem() {
   return useMutation({
     mutationFn: ({ id, toNodeId }: { id: number | string; toNodeId: number }) =>
       api.transitionWorkitem(id, toNodeId),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
       message.success('状态已流转');
+      // 越界流转放行但提示（规格 3.3）：警告由服务端在响应中下发。
+      if (data?.transitionWarning) {
+        message.warning(data.transitionWarning);
+      }
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'unified-timeline'] });

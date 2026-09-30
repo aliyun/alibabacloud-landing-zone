@@ -1,12 +1,15 @@
 package com.aliyun.autowonder.dispatch;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.agent.*;
 import com.aliyun.autowonder.artifact.ArtifactDO;
 import com.aliyun.autowonder.artifact.ArtifactDao;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.repo.RepoDO;
 import com.aliyun.autowonder.repo.RepoDao;
+import com.aliyun.autowonder.repo.RepoNameValidator;
 import com.aliyun.autowonder.repo.RepoRelationDO;
 import com.aliyun.autowonder.repo.RepoRelationDao;
 import com.aliyun.autowonder.skill.SkillDO;
@@ -427,6 +430,7 @@ public class PackageContextAssembler {
             MemoryDO m = memoryDao.findById(ref.getMemoryId());
             if (m == null || !Long.valueOf(tenantId).equals(m.getTenantId())
                     || !"ADOPTED".equals(m.getStatus())
+                    || memoryDao.isMigrated(tenantId, ref.getMemoryId())
                     || m.getContentMd() == null || m.getContentMd().isBlank()) {
                 continue;
             }
@@ -590,6 +594,12 @@ public class PackageContextAssembler {
     }
 
     private Map<String, Object> buildRepoEntry(RepoDO repo, boolean writable, List<String> allowedBranchPatterns) {
+        String nameProblem = RepoNameValidator.validate(repo.getName());
+        if (nameProblem != null) {
+            throw new BizException(ErrorCode.REPO_NAME_INVALID,
+                    "仓库「" + repo.getName() + "」(#" + repo.getId() + ")名称不是合法的单级目录名，无法派发任务："
+                            + nameProblem + " 请先在仓库中心将名称改为单级目录名（Git 地址保持不变）后再重试。");
+        }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("repoId", repo.getId());
         m.put("name", repo.getName());

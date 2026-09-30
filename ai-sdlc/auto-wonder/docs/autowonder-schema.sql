@@ -358,11 +358,13 @@ CREATE TABLE IF NOT EXISTS `workitem` (
   `scheduled_start_at` DATETIME(3)  DEFAULT NULL COMMENT '计划执行时间，NULL表示立即执行',
   `scheduled_start_triggered_at` DATETIME(3) DEFAULT NULL COMMENT '定时执行实际触发时间，NULL表示尚未触发',
   `tags`            JSON            DEFAULT NULL COMMENT '工单标签数组',
+  `external_share_token` VARCHAR(64) DEFAULT NULL COMMENT '对外只读分享令牌（全局唯一，首次暴露产物时生成；软删工单后失效）',
   PRIMARY KEY (`id`),
   KEY `idx_status` (`tenant_id`, `status_node_id`),
   KEY `idx_assignee` (`tenant_id`, `assignee_type`, `assignee_ref`),
   KEY `idx_workitem_origin` (`tenant_id`, `origin_type`, `origin_id`),
-  KEY `idx_workitem_scheduled` (`tenant_id`, `scheduled_start_at`, `assignee_type`, `sdlc_id`)
+  KEY `idx_workitem_scheduled` (`tenant_id`, `scheduled_start_at`, `assignee_type`, `sdlc_id`),
+  UNIQUE KEY `uk_workitem_external_share_token` (`external_share_token`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单';
 
 -- 工单评论
@@ -596,12 +598,15 @@ CREATE TABLE IF NOT EXISTS `artifact` (
   `oss_ref`     VARCHAR(512)    NOT NULL,
   `size`        BIGINT UNSIGNED DEFAULT NULL,
   `meta_json`   JSON            DEFAULT NULL,
+  `external_exposed` TINYINT    NOT NULL DEFAULT 0 COMMENT '是否对外暴露（由 SDLC/Agent 经 MCP expose 工具决定，仅结论类产物）',
+  `external_share_ref` VARCHAR(512) DEFAULT NULL COMMENT '对外分享快照 ref（首次暴露时固化的内容版本；同 key 重传只更新 live oss_ref，不影响此快照）',
   `gmt_create`  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_workitem` (`tenant_id`, `workitem_id`),
   KEY `idx_dispatch` (`tenant_id`, `dispatch_id`),
   UNIQUE KEY `uk_artifact_dispatch_name` (`tenant_id`, `dispatch_id`, `name`),
-  KEY `idx_artifact_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
+  KEY `idx_artifact_source` (`tenant_id`, `source_type`, `workitem_id`, `id`),
+  KEY `idx_artifact_exposed` (`tenant_id`, `workitem_id`, `external_exposed`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='产物';
 
 -- =============================================================================
@@ -1259,7 +1264,9 @@ CREATE TABLE IF NOT EXISTS `external_comment_link` (
   KEY `idx_local_comment` (`tenant_id`, `workitem_comment_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部评论映射';
 
--- 外部状态映射
+-- 外部状态映射（已废弃：V057 起导入统一进默认模板初始节点，不再按来源状态选择/创建节点，
+-- 本表不再被任何代码读写。存量库按 docs/migration/V075__unify_status_kanban.sql 迁移；
+-- 表结构与数据在观察期内保留供回退，观察期结束后可删除。）
 CREATE TABLE IF NOT EXISTS `external_status_mapping` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id` BIGINT UNSIGNED NOT NULL,
@@ -1624,6 +1631,29 @@ CREATE TABLE IF NOT EXISTS dispatch_recovery (
  KEY idx_recovery_stop (stop_pending, last_sent_at),
  KEY idx_recovery_retry (next_retry_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 工单交付重启操作（V072__workitem_delivery_restart）：统一重新指派为显式重启；
+-- restart_round 唯一保证同一请求重复提交只建一轮、再次主动重指分配下一轮。
+CREATE TABLE IF NOT EXISTS workitem_delivery_restart (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  tenant_id BIGINT UNSIGNED NOT NULL,
+  workitem_id BIGINT UNSIGNED NOT NULL,
+  restart_round INT UNSIGNED NOT NULL,
+  restart_token VARCHAR(64) NULL,
+  requested_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  operator_type VARCHAR(16) NOT NULL DEFAULT 'SYSTEM',
+  scheduled_start_at DATETIME(3) NULL,
+  sdlc_step_id BIGINT UNSIGNED NULL COMMENT '重启轮次要启动的 SDLC 入口步骤',
+  agent_id BIGINT UNSIGNED NULL COMMENT '重启轮次要派发的数字人',
+  status VARCHAR(32) NOT NULL DEFAULT 'STARTING' COMMENT 'STARTING/STOPPING_OLD/STARTED/FAILED/SUPERSEDED',
+  stop_reason VARCHAR(512) NULL,
+  dispatch_id BIGINT UNSIGNED NULL COMMENT '新正式交付派发 id',
+  gmt_create DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  gmt_modified DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_workitem_restart_round (tenant_id, workitem_id, restart_round),
+  UNIQUE KEY uk_workitem_restart_token (tenant_id, workitem_id, restart_token),
+  KEY idx_workitem_restart_recent (tenant_id, workitem_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工单交付重启操作（统一重新指派语义）';
 -- Chief Of Staff 平台管家对话（V062__platform_chief_conversation）：
 -- conversation_share 只读分享、conversation_turn_artifact Turn 级不可变文件引用、
 -- conversation_action_plan / conversation_action_step 参数冻结的一次性动作确认。
@@ -1763,3 +1793,168 @@ CREATE TABLE IF NOT EXISTS `asset_category_ref` (
   UNIQUE KEY `uk_tenant_asset` (`tenant_id`, `asset_type`, `asset_id`),
   KEY `idx_tenant_category` (`tenant_id`, `category_id`, `is_deleted`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='资产与分类的主分类关联（一资产一分类，物理删除即取消打标）';
+
+-- Claude-compatible server-backed memory (V045/V046/V047).
+CREATE TABLE IF NOT EXISTS `memory_store` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `scope` VARCHAR(16) NOT NULL COMMENT 'AGENT / SQUAD / ORG',
+  `owner_ref` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'ORG uses normalized owner 0',
+  `name` VARCHAR(128) NOT NULL,
+  `current_revision` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+  `maintenance_lease_owner` VARCHAR(128) NULL,
+  `maintenance_lease_until` DATETIME(3) NULL,
+  `maintenance_lease_dispatch_id` BIGINT NULL,
+  `creator_id` BIGINT UNSIGNED NULL,
+  `modifier_id` BIGINT UNSIGNED NULL,
+  `version` INT UNSIGNED NOT NULL DEFAULT 0,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_store_owner` (`tenant_id`, `scope`, `owner_ref`),
+  KEY `idx_memory_store_status` (`tenant_id`, `status`, `id`),
+  KEY `idx_memory_store_maintenance_lease` (`tenant_id`, `maintenance_lease_until`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Authoritative memory stores';
+
+CREATE TABLE IF NOT EXISTS `memory_document` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `store_id` BIGINT UNSIGNED NOT NULL,
+  `path` VARCHAR(512) NOT NULL,
+  `content_md` MEDIUMTEXT NOT NULL,
+  `content_sha256` CHAR(64) NOT NULL,
+  `byte_size` BIGINT UNSIGNED NOT NULL,
+  `modified_at` DATETIME(3) NOT NULL,
+  `deleted_at` DATETIME(3) NULL,
+  `creator_type` VARCHAR(16) NOT NULL,
+  `creator_ref` VARCHAR(128) NULL,
+  `source_dispatch_id` BIGINT UNSIGNED NULL,
+  `source_session_id` VARCHAR(128) NULL,
+  `creator_id` BIGINT UNSIGNED NULL,
+  `modifier_id` BIGINT UNSIGNED NULL,
+  `version` INT UNSIGNED NOT NULL DEFAULT 1,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_document_path` (`store_id`, `path`),
+  KEY `idx_memory_document_store_live` (`tenant_id`, `store_id`, `deleted_at`, `path`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Current memory document bodies';
+
+CREATE TABLE IF NOT EXISTS `memory_change` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `store_id` BIGINT UNSIGNED NOT NULL,
+  `document_id` BIGINT UNSIGNED NOT NULL,
+  `store_revision` BIGINT UNSIGNED NOT NULL,
+  `operation` VARCHAR(16) NOT NULL,
+  `path` VARCHAR(512) NOT NULL,
+  `document_version` INT UNSIGNED NOT NULL,
+  `content_sha256` CHAR(64) NULL,
+  `actor_type` VARCHAR(16) NOT NULL,
+  `actor_ref` VARCHAR(128) NULL,
+  `dispatch_id` BIGINT UNSIGNED NULL,
+  `provider_session_id` VARCHAR(128) NULL,
+  `idempotency_key` VARCHAR(128) NOT NULL,
+  `request_fingerprint` CHAR(64) NULL COMMENT 'SHA-256 of the complete mutation request',
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_change_idempotency` (`tenant_id`, `store_id`, `idempotency_key`),
+  UNIQUE KEY `uk_memory_change_revision` (`store_id`, `store_revision`),
+  KEY `idx_memory_change_feed` (`tenant_id`, `store_id`, `store_revision`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Body-free append-only memory change log';
+
+CREATE TABLE IF NOT EXISTS `memory_store_acl` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `store_id` BIGINT UNSIGNED NOT NULL,
+  `subject_type` VARCHAR(16) NOT NULL COMMENT 'USER / AGENT / SQUAD / ROLE',
+  `subject_ref` VARCHAR(128) NOT NULL,
+  `permission` VARCHAR(16) NOT NULL COMMENT 'READ / WRITE / ADMIN',
+  `creator_id` BIGINT UNSIGNED NULL,
+  `modifier_id` BIGINT UNSIGNED NULL,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_store_acl` (`tenant_id`, `store_id`, `subject_type`, `subject_ref`),
+  KEY `idx_memory_store_acl_subject` (`tenant_id`, `subject_type`, `subject_ref`, `permission`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Memory store access control';
+
+CREATE TABLE IF NOT EXISTS `memory_import_source` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `agent_id` BIGINT UNSIGNED NOT NULL,
+  `target_store_id` BIGINT UNSIGNED NOT NULL,
+  `provider_family` VARCHAR(32) NOT NULL,
+  `logical_path` VARCHAR(64) NOT NULL,
+  `installation_fingerprint` CHAR(64) NOT NULL,
+  `last_observed_sanitized_sha256` CHAR(64) NULL,
+  `last_imported_sanitized_sha256` CHAR(64) NULL,
+  `last_observed_executor_id` BIGINT UNSIGNED NULL,
+  `last_seen_at` DATETIME(3) NULL,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+  `version` INT UNSIGNED NOT NULL DEFAULT 0,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_import_source` (`tenant_id`, `agent_id`, `provider_family`, `logical_path`, `installation_fingerprint`),
+  KEY `idx_memory_import_source_agent` (`tenant_id`, `agent_id`, `status`, `last_seen_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Observed legacy Qoder memory sources';
+
+CREATE TABLE IF NOT EXISTS `memory_import_snapshot` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `source_id` BIGINT UNSIGNED NOT NULL,
+  `sanitized_content_sha256` CHAR(64) NOT NULL,
+  `sanitized_content` MEDIUMTEXT NOT NULL,
+  `byte_size` BIGINT UNSIGNED NOT NULL,
+  `source_modified_at` DATETIME(3) NULL,
+  `scan_summary_json` JSON NULL,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'QUEUED',
+  `curation_lease_id` VARCHAR(64) NULL,
+  `curation_lease_until` DATETIME(3) NULL,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_import_snapshot_hash` (`tenant_id`, `source_id`, `sanitized_content_sha256`),
+  KEY `idx_memory_import_snapshot_recent` (`tenant_id`, `source_id`, `id`),
+  KEY `idx_memory_import_snapshot_lease` (`tenant_id`, `curation_lease_until`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Bounded sanitized legacy memory snapshots';
+
+CREATE TABLE IF NOT EXISTS `memory_import_receipt` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `agent_id` BIGINT UNSIGNED NOT NULL,
+  `source_id` BIGINT UNSIGNED NOT NULL,
+  `snapshot_id` BIGINT UNSIGNED NOT NULL,
+  `sanitized_content_sha256` CHAR(64) NOT NULL,
+  `curation_dispatch_id` BIGINT UNSIGNED NULL,
+  `outcome` VARCHAR(16) NOT NULL,
+  `target_versions_json` JSON NULL,
+  `redaction_count` INT UNSIGNED NOT NULL DEFAULT 0,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_memory_import_receipt_hash` (`tenant_id`, `agent_id`, `sanitized_content_sha256`),
+  KEY `idx_memory_import_receipt_source` (`tenant_id`, `source_id`, `id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Content-free legacy import outcomes';
+
+-- V071__external_artifact_share.sql is required first. No Runtime upgrade is needed.
+-- One immutable content declaration per dispatch/path. Replays retain the first digest.
+CREATE TABLE IF NOT EXISTS `artifact_share_request` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `tenant_id` BIGINT UNSIGNED NOT NULL,
+    `workitem_id` BIGINT UNSIGNED NOT NULL,
+    `dispatch_id` BIGINT UNSIGNED NOT NULL,
+    `name` VARCHAR(256) COLLATE utf8mb4_bin NOT NULL,
+    `sha256` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    `artifact_id` BIGINT UNSIGNED DEFAULT NULL,
+    `comment_id` BIGINT UNSIGNED DEFAULT NULL,
+    `error` VARCHAR(128) DEFAULT NULL,
+    `next_attempt_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_share_request` (`tenant_id`, `dispatch_id`, `name`),
+    KEY `idx_share_request_due` (`status`, `next_attempt_at`),
+    KEY `idx_share_request_dispatch` (`dispatch_id`, `status`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4;

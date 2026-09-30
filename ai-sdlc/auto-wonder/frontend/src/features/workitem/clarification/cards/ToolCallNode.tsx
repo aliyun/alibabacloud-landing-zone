@@ -25,7 +25,7 @@ const KIND_ICON: Record<AcpToolKind, ReactElement> = {
 };
 
 const PRE_STYLE = {
-  fontSize: 11, whiteSpace: 'pre-wrap' as const, maxHeight: 150, overflow: 'auto',
+  fontSize: 13, whiteSpace: 'pre-wrap' as const, maxHeight: 150, overflow: 'auto',
   padding: '6px 10px', color: CLARIFICATION_THEME.textSecondary,
   backgroundColor: CLARIFICATION_THEME.codeSurface,
   border: `1px solid ${CLARIFICATION_THEME.codeBorder}`,
@@ -33,7 +33,7 @@ const PRE_STYLE = {
 };
 
 const SUMMARY_STYLE = {
-  cursor: 'pointer' as const, fontSize: 11, color: CLARIFICATION_THEME.textMuted,
+  cursor: 'pointer' as const, fontSize: 13, color: CLARIFICATION_THEME.textMuted,
 };
 
 export function ToolCallNode({ tool }: ToolCallNodeProps) {
@@ -50,7 +50,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
           style={{
             flex: 1,
             minWidth: 0,
-            fontSize: 12,
+            fontSize: 14,
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -58,7 +58,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
         >
           {tool.title || tool.tool}
         </Typography.Text>
-        <Tag color={statusColor(tool.status)} style={{ marginInlineEnd: 0, fontSize: 11 }}>
+        <Tag color={statusColor(tool.status)} style={{ marginInlineEnd: 0, fontSize: 13 }}>
           {tool.status}
         </Tag>
       </div>
@@ -66,7 +66,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
       {tool.locations && tool.locations.length > 0 ? (
         <div
           data-testid="tool-locations"
-          style={{ fontSize: 11, color: CLARIFICATION_THEME.textMuted, marginTop: 2 }}
+          style={{ fontSize: 13, color: CLARIFICATION_THEME.textMuted, marginTop: 2 }}
         >
           {tool.locations
             .map((loc) => (loc.line != null ? `${loc.path}:${loc.line}` : loc.path))
@@ -87,7 +87,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
               }}
             >
               <div style={{
-                fontSize: 11, padding: '2px 8px',
+                fontSize: 13, padding: '2px 8px',
                 backgroundColor: CLARIFICATION_THEME.codeSurface,
                 borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`,
                 fontFamily: 'monospace',
@@ -99,7 +99,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
                 <pre
                   data-testid={`tool-diff-old-${index}`}
                   style={{
-                    ...PRE_STYLE, backgroundColor: '#fff1f0', color: '#a8071a',
+                    ...PRE_STYLE, backgroundColor: 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))', color: 'var(--aw-error)',
                     border: 'none', borderRadius: 0, margin: 0,
                   }}
                 >
@@ -110,7 +110,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
                 <pre
                   data-testid={`tool-diff-new-${index}`}
                   style={{
-                    ...PRE_STYLE, backgroundColor: '#f6ffed', color: '#237804',
+                    ...PRE_STYLE, backgroundColor: 'color-mix(in srgb, var(--aw-success) 10%, var(--aw-panel))', color: 'var(--aw-success)',
                     border: 'none', borderRadius: 0, margin: 0,
                   }}
                 >
@@ -126,7 +126,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
         <pre
           data-testid="tool-terminal-output"
           style={{
-            fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto',
+            fontSize: 13, whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto',
             padding: '6px 10px', color: CLARIFICATION_THEME.textSecondary,
             backgroundColor: CLARIFICATION_THEME.codeSurface,
             border: `1px solid ${CLARIFICATION_THEME.codeBorder}`,

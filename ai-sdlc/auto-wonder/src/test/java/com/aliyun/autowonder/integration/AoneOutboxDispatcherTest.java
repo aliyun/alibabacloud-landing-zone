@@ -383,7 +383,7 @@ class AoneOutboxDispatcherTest {
         binding.setId(1L);
         binding.setTenantId(10002L);
         binding.setProvider(provider);
-        binding.setBaseUrl("http://aone-api.alibaba-inc.com");
+        binding.setBaseUrl("https://aone.example.test");
         binding.setClientKey("auto-wonder");
         binding.setCredentialRef("secret-ref");
         binding.setRegionId("1");

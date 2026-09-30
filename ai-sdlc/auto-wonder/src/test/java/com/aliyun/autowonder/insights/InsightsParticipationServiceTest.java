@@ -172,4 +172,33 @@ class InsightsParticipationServiceTest {
         assertNull(vo.getP90());
         assertTrue(vo.getTrend().isEmpty());
     }
+    @Test
+    void reportsCoverageMedianAndRatiosFromSumsAndKeepsEmptyDaysDistinct() {
+        Instant day = Instant.parse("2026-07-10T00:00:00Z");
+        var first = new HumanAgentParticipationFact(1, "A", day, 1, 1, 0);
+        first.setExecution(0L, "COMPLETE");
+        first.setAgentParticipated(true);
+        var second = new HumanAgentParticipationFact(2, "B", day.plusSeconds(86400 * 2), 2, 0, 2);
+        var missing = new HumanAgentParticipationFact(3, "C", day, 0, 0, 0);
+        missing.setExclusionReason("MISSING_CREATE");
+        var outside = new HumanAgentParticipationFact(4, "D", day.minusSeconds(86400), 0, 0, 0);
+        outside.setExclusionReason("MISSING_CREATE");
+        when(refreshService.read(1L)).thenReturn(Optional.of(new ParsedSnapshot(day.toString(), "2026-07-31",
+                List.of(first, second, missing, outside))));
+        var vo = service.getParticipation(1L, LocalDate.of(2026, 7, 10), LocalDate.of(2026, 7, 12), "DAY");
+        assertEquals(2, vo.getSampleSize());
+        assertEquals(3, vo.getIdentifiedCompletedCount());
+        assertEquals(1, vo.getExclusions().get("MISSING_CREATE"));
+        assertEquals(1.5, vo.getMedianTotalSeconds());
+        assertEquals(1.0 / 3, vo.getAverage().getHumanShare(), 0.000001);
+        assertEquals(2, vo.getAgentWorkitemCount());
+        assertEquals(1, vo.getExecutionSampleSize());
+        assertEquals(0.0, vo.getAverageExecutionSeconds());
+        assertEquals(1, vo.getExecutionMissingCount());
+        assertEquals(3, vo.getTrend().size());
+        assertEquals(0, vo.getTrend().get(1).getSampleSize());
+        assertNull(vo.getTrend().get(1).getHumanShare());
+        assertEquals(1, vo.getTrend().get(2).getSampleSize());
+    }
+
 }

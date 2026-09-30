@@ -1,7 +1,7 @@
+import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Radio, Space, Switch, Tabs, Tag, Typography, Upload, message } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { SaveOutlined, UploadOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UploadRequestOption } from 'rc-upload/lib/interface';
 import {
@@ -18,12 +18,13 @@ import {
   updateBranding,
   uploadBrandingLogo,
   type PlatformImChannel,
+  type PlatformBranding,
   type UpdateDingTalkImChannelParams,
   type UpdatePlatformBrandingParams,
 } from './brandingApi';
 import { PlatformAdminPanel } from './PlatformAdminPanel';
 import { PageError } from '@/shared/ui/PageError';
-import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
+import { PageHeader } from '@/shared/ui/PageHeader';
 import { ApiError } from '@/shared/types/common';
 
 const { Title, Text } = Typography;
@@ -33,6 +34,21 @@ type ImRobotFormValues = UpdateDingTalkImChannelParams;
 const BRANDING_TAB_KEY = 'branding';
 const NOTIFICATION_TAB_KEY = 'notification';
 const PLATFORM_ADMIN_TAB_KEY = 'platform-admin';
+const PLATFORM_CONFIG_TAB_STORAGE_KEY = 'autowonder.platform-config.tab';
+const PLATFORM_CONFIG_TAB_KEYS = new Set([
+  BRANDING_TAB_KEY,
+  NOTIFICATION_TAB_KEY,
+  PLATFORM_ADMIN_TAB_KEY,
+]);
+
+function readPlatformConfigTab(): string {
+  try {
+    const savedTab = localStorage.getItem(PLATFORM_CONFIG_TAB_STORAGE_KEY);
+    return savedTab && PLATFORM_CONFIG_TAB_KEYS.has(savedTab) ? savedTab : BRANDING_TAB_KEY;
+  } catch {
+    return BRANDING_TAB_KEY;
+  }
+}
 
 const EMPTY_IM_CHANNEL: PlatformImChannel = {
   provider: 'DINGTALK',
@@ -47,7 +63,6 @@ export function BrandingConfigPage() {
   const [form] = Form.useForm<UpdatePlatformBrandingParams>();
   const [imForm] = Form.useForm<ImRobotFormValues>();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const { data, error, isLoading } = useQuery({
     queryKey: BRANDING_ADMIN_QUERY_KEY,
     queryFn: getAdminBranding,
@@ -64,6 +79,7 @@ export function BrandingConfigPage() {
   });
 
   const [provider, setProvider] = useState('DINGTALK');
+  const [activeTab, setActiveTab] = useState(readPlatformConfigTab);
   const providerLabel = provider === 'FEISHU' ? '飞书' : '钉钉';
   useEffect(() => { if (imChannels) setProvider(selectedImProvider(imChannels)); }, [imChannels]);
   const current = data || DEFAULT_BRANDING;
@@ -100,12 +116,14 @@ export function BrandingConfigPage() {
 
   const saveMutation = useMutation({
     mutationFn: updateBranding,
-    onSuccess: async () => {
-      message.success('平台配置已保存');
+    onSuccess: async (branding) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: BRANDING_ADMIN_QUERY_KEY }),
-        queryClient.invalidateQueries({ queryKey: BRANDING_QUERY_KEY }),
+        queryClient.cancelQueries({ queryKey: BRANDING_ADMIN_QUERY_KEY }),
+        queryClient.cancelQueries({ queryKey: BRANDING_QUERY_KEY }),
       ]);
+      queryClient.setQueryData(BRANDING_ADMIN_QUERY_KEY, branding);
+      queryClient.setQueryData(BRANDING_QUERY_KEY, { ...branding, canManage: false });
+      message.success('平台配置已保存');
     },
     onError: (error: Error) => message.error(error.message || '平台配置保存失败'),
   });
@@ -127,12 +145,18 @@ export function BrandingConfigPage() {
 
   const logoMutation = useMutation({
     mutationFn: uploadBrandingLogo,
-    onSuccess: async () => {
-      message.success('Logo 已上传');
+    onSuccess: async ({ logoUrl }) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: BRANDING_ADMIN_QUERY_KEY }),
-        queryClient.invalidateQueries({ queryKey: BRANDING_QUERY_KEY }),
+        queryClient.cancelQueries({ queryKey: BRANDING_ADMIN_QUERY_KEY }),
+        queryClient.cancelQueries({ queryKey: BRANDING_QUERY_KEY }),
       ]);
+      queryClient.setQueryData<PlatformBranding>(BRANDING_ADMIN_QUERY_KEY, (previous) => ({
+        ...(previous || current), logoUrl,
+      }));
+      queryClient.setQueryData<PlatformBranding>(BRANDING_QUERY_KEY, (previous) => ({
+        ...(previous || current), logoUrl, canManage: false,
+      }));
+      message.success('Logo 已上传');
     },
     onError: (error: Error) => message.error(error.message || 'Logo 上传失败'),
   });
@@ -179,7 +203,7 @@ export function BrandingConfigPage() {
     const apiError = error instanceof ApiError ? error : null;
     return (
       <>
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}><HelpCenterLink /></div>
+        <PageHeader brandTo="/workspaces" />
         <PageError
           status="500"
           title="系统错误"
@@ -206,29 +230,61 @@ export function BrandingConfigPage() {
         onFinish={(values) => saveMutation.mutate(values)}
         initialValues={DEFAULT_BRANDING}
       >
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, alignItems: 'start' }}>
-          <div style={{ display: 'grid', gap: 16 }}>
-            <Card title="基础信息" styles={{ body: { padding: 18 } }}>
-              <Form.Item
-                label="平台名称"
-                name="platformName"
-                rules={[{ required: true, message: '请输入平台名称' }]}
-              >
-                <Input maxLength={128} placeholder="AutoWonder" />
-              </Form.Item>
-              <Form.Item
-                label="部署域名"
-                name="domain"
-                extra="填写私有化部署后用户访问平台的域名，例如 https://wonder.example.com；保存后 MCP 服务地址、执行器启动命令等对外地址立即使用该域名"
-              >
-                <Input placeholder="https://wonder.example.com" />
-              </Form.Item>
-            </Card>
+        <div className="aw-branding-grid">
+          <Card title="基础信息">
+            <Form.Item
+              label="平台名称"
+              name="platformName"
+              rules={[{ required: true, message: '请输入平台名称' }]}
+            >
+              <Input maxLength={128} placeholder="AutoWonder" />
+            </Form.Item>
+            <Form.Item
+              label="部署域名"
+              name="domain"
+              extra="填写私有化部署后用户访问平台的域名，例如 https://wonder.example.com；保存后 MCP 服务地址、执行器启动命令等对外地址立即使用该域名"
+            >
+              <Input placeholder="https://wonder.example.com" />
+            </Form.Item>
+          </Card>
 
-            <Card title="主题配色" styles={{ body: { padding: 18 } }}>
-              <Form.Item name="themeKey" style={{ marginBottom: 14 }}>
+          <Card title="Logo">
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div style={{ border: '1px solid var(--aw-border)', borderRadius: 8, padding: 18, minHeight: 112, display: 'grid', placeItems: 'center', background: 'var(--aw-raised)' }}>
+                <img src={current.logoUrl || '/logo.svg'} alt={current.platformName} style={{ maxWidth: 176, maxHeight: 72, objectFit: 'contain' }} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.svg'; } }} />
+              </div>
+              <div className="aw-branding-logo-actions">
+                <Upload
+                  showUploadList={false}
+                  accept=".png,.jpg,.jpeg,.webp,.svg,.gif,.ico,.avif,image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/x-icon,image/vnd.microsoft.icon,image/avif"
+                  beforeUpload={(file) => {
+                    if (file.size > 512 * 1024) {
+                      message.error('Logo 文件不能超过 512 KB');
+                      return Upload.LIST_IGNORE;
+                    }
+                    return true;
+                  }}
+                  customRequest={handleUpload}
+                >
+                  <Button
+                    block
+                    icon={<UploadOutlined />}
+                    loading={logoMutation.isPending}
+                  >
+                    上传 Logo
+                  </Button>
+                </Upload>
+                <Text type="secondary" className="aw-branding-logo-hint">支持 PNG、JPG/JPEG、WebP、SVG、GIF、ICO、AVIF，大小不超过 512 KB。</Text>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="主题配色" style={{ gridColumn: '1 / -1' }}>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>强调色用于主要按钮、链接、选中状态和焦点提示，不改变页面背景及成功、警告、错误等状态颜色。</Typography.Paragraph>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 24, alignItems: 'start' }}>
+              <Form.Item label="预设配色" name="themeKey" style={{ marginBottom: 0 }}>
                 <Radio.Group
-                  style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))', gap: 10 }}
+                  style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8 }}
                   onChange={(event) => {
                     const preset = THEME_PRESETS.find((item) => item.key === event.target.value);
                     if (preset) {
@@ -241,16 +297,20 @@ export function BrandingConfigPage() {
                       key={theme.key}
                       value={theme.key}
                       style={{
-                        height: 44,
+                        height: 36,
+                        paddingInline: 8,
+                        fontSize: 12,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 8,
+                        justifyContent: 'flex-start',
                         borderRadius: 6,
-                        borderColor: selectedTheme === theme.key ? primaryColor : '#d9d9d9',
+                        borderColor: selectedTheme === theme.key ? primaryColor : 'var(--aw-border)',
                       }}
                     >
-                      <span style={{ width: 14, height: 14, borderRadius: 4, background: theme.primaryColor, display: 'inline-block' }} />
-                      {theme.name}
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span aria-hidden="true" style={{ width: 12, height: 12, flexShrink: 0, borderRadius: 3, background: theme.primaryColor }} />
+                        <span>{theme.name}</span>
+                      </span>
                     </Radio.Button>
                   ))}
                 </Radio.Group>
@@ -258,32 +318,12 @@ export function BrandingConfigPage() {
               <Form.Item
                 label="主色"
                 name="primaryColor"
+                style={{ marginBottom: 0 }}
+                extra="点击上方色块可选择更多颜色，自定义平台主色。修改后请点击「保存配置」生效。"
                 rules={[{ pattern: /^#[0-9a-fA-F]{6}$/, message: '请输入 #RRGGBB 格式颜色' }]}
               >
-                <Input type="color" style={{ width: 96, padding: 4 }} aria-label="选择主色" />
+                <Input type="color" style={{ width: 96, height: 36, padding: 4, cursor: 'pointer' }} aria-label="选择主色" />
               </Form.Item>
-            </Card>
-          </div>
-
-          <Card title="Logo" styles={{ body: { padding: 18 } }}>
-            <div style={{ display: 'grid', gap: 16 }}>
-              <div style={{ border: '1px solid #edf0f4', borderRadius: 8, padding: 18, minHeight: 132, display: 'grid', placeItems: 'center', background: '#fafbfc' }}>
-                <img src={current.logoUrl || '/logo.png'} alt={current.platformName} style={{ maxWidth: 176, maxHeight: 72, objectFit: 'contain' }} onError={(e) => { const t = e.currentTarget; if (!t.dataset.fb) { t.dataset.fb = '1'; t.src = '/logo.png'; } }} />
-              </div>
-              <Upload
-                showUploadList={false}
-                accept="image/png,image/jpeg,image/webp"
-                customRequest={handleUpload}
-              >
-                <Button
-                  block
-                  icon={<UploadOutlined />}
-                  loading={logoMutation.isPending}
-                >
-                  上传 Logo
-                </Button>
-              </Upload>
-              <Text type="secondary" style={{ fontSize: 12 }}>支持 PNG、JPG、WebP，大小不超过 2MB。</Text>
             </div>
           </Card>
         </div>
@@ -379,25 +419,24 @@ export function BrandingConfigPage() {
   );
 
   return (
-    <div style={{ maxWidth: 1040, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 18, flexWrap: 'wrap' }}>
-        <div>
-          <Button
-            type="link"
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/')}
-            style={{ marginBottom: 8, padding: 0 }}
-          >
-            返回首页
-          </Button>
-          <Title level={3} style={{ margin: 0, letterSpacing: 0 }}>平台配置</Title>
-          <Text type="secondary">私有化部署的平台名称、Logo、主题色、访问域名、协作通知和平台管理员</Text>
-        </div>
-        <HelpCenterLink />
+    <>
+    <PageHeader brandTo="/workspaces" />
+    <div className="aw-branding" style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', padding: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
+        <Title level={3} style={{ margin: 0, letterSpacing: 0 }}>平台配置</Title>
+        <PageBackButton to="/workspaces" label="返回工作空间列表" compact={false} />
       </div>
 
       <Tabs
-        defaultActiveKey={BRANDING_TAB_KEY}
+        activeKey={activeTab}
+        onChange={(key) => {
+          setActiveTab(key);
+          try {
+            localStorage.setItem(PLATFORM_CONFIG_TAB_STORAGE_KEY, key);
+          } catch {
+            // Browser policy may deny persistence; current-page switching still works.
+          }
+        }}
         items={[
           { key: BRANDING_TAB_KEY, label: '品牌与主题', children: brandingPane },
           {
@@ -413,5 +452,6 @@ export function BrandingConfigPage() {
         ]}
       />
     </div>
+    </>
   );
 }

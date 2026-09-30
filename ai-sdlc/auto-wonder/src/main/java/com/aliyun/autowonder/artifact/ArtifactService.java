@@ -155,6 +155,23 @@ public class ArtifactService {
         switch (ext) {
             case "md":
             case "markdown":
+            case "tsv":
+            case "yaml":
+            case "yml":
+            case "xml":
+            case "java":
+            case "py":
+            case "js":
+            case "jsx":
+            case "ts":
+            case "tsx":
+            case "css":
+            case "sh":
+            case "sql":
+            case "tf":
+            case "toml":
+            case "go":
+            case "rs":
             case "txt":
             case "log":
             case "json":
@@ -162,6 +179,7 @@ public class ArtifactService {
             case "csv":
             case "html":
             case "htm":
+            case "pdf":
             case "png":
             case "jpg":
             case "jpeg":

@@ -36,6 +36,23 @@ class ArtifactDaoSourceContractTest {
         assertTrue(new ArtifactDO().getSourceType().equals("WORKITEM"));
     }
 
+    @Test
+    void externalShareStatementsAreTenantWorkitemAndExposureScoped() throws Exception {
+        String xml = normalizedXml();
+
+        String mark = statement(xml, "update", "markExternalExposed");
+        assertTrue(mark.contains("tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND id = #{id}"));
+        assertTrue(mark.contains("external_share_ref = #{externalShareRef}"));
+        // 快照只在首次暴露写入，重复暴露不得覆盖既有快照
+        assertTrue(mark.contains("external_share_ref IS NULL"));
+        for (String id : new String[]{"listExternalExposed", "findExternalExposed"}) {
+            String query = statement(xml, "select", id);
+            assertTrue(query.contains("tenant_id = #{tenantId}"));
+            assertTrue(query.contains("workitem_id = #{workitemId}"));
+            assertTrue(query.contains("external_exposed = 1"), id + " must filter exposed artifacts only");
+        }
+    }
+
     private String normalizedXml() throws Exception {
         return Files.readString(Path.of("src/main/resources/mapping/ArtifactDao.xml"))
                 .replaceAll("\\s+", " ");

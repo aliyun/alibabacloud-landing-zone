@@ -113,6 +113,7 @@ describe('WorkspaceRecycleBinPage', () => {
     );
 
     renderPage();
+    expect(screen.getAllByRole('button', { name: '切换外观' })).toHaveLength(1);
 
     expect(screen.getByTestId('recycle-bin-loading')).toBeInTheDocument();
     expect(screen.queryByTestId('recycle-bin-empty')).not.toBeInTheDocument();

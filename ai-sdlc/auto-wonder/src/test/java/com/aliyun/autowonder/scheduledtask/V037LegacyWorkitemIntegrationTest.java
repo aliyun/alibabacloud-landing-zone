@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.scheduledtask;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.artifact.ArtifactDO;
 import com.aliyun.autowonder.artifact.ArtifactDao;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;

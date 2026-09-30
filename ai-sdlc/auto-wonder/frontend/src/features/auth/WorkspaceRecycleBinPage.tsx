@@ -1,12 +1,13 @@
+import { PageBackButton } from '@/shared/ui/PageBackButton';
+import { Table } from '@/shared/theme/ThemedTable';
 import { useState, type CSSProperties } from 'react';
-import { Alert, Button, Empty, Input, Modal, Pagination, Spin, Table, Tag, Tooltip, Typography, message } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { Alert, Button, Empty, Input, Modal, Pagination, Spin, Tag, Tooltip, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useNavigate } from 'react-router-dom';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
 import type { RecycleBinItem } from '@/shared/types/common';
 import { useDebouncedValue } from '@/shared/hooks/useDebouncedValue';
-import { HelpCenterLink } from '@/shared/ui/HelpCenterLink';
+import { PageHeader } from '@/shared/ui/PageHeader';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useRestoreWorkspace, useRecycleBin } from './workspaceLifecycleApi';
 import './workspaceLifecycle.css';
 
@@ -20,7 +21,6 @@ export function WorkspaceRecycleBinPage() {
   const [page, setPage] = useState(1);
   const [restoreTargetId, setRestoreTargetId] = useState<number | null>(null);
   const debouncedKeyword = useDebouncedValue(keyword, KEYWORD_DEBOUNCE_MS);
-  const navigate = useNavigate();
 
   const { data, isLoading, isFetching } = useRecycleBin(debouncedKeyword, page, PAGE_SIZE);
   const items = data?.list ?? [];
@@ -43,19 +43,24 @@ export function WorkspaceRecycleBinPage() {
       title: '名称',
       dataIndex: 'name',
       width: 200,
-      render: (name: string) => <Text strong>{name}</Text>,
+      ellipsis: { showTitle: false },
+      render: (name: string) => <EllipsisText tooltip={name}><Text strong>{name}</Text></EllipsisText>,
     },
     {
       title: '描述',
       dataIndex: 'description',
-      ellipsis: true,
-      render: (description: string | null) => description || <Text type="secondary">暂无描述</Text>,
+      align: 'left',
+      ellipsis: { showTitle: false },
+      render: (description: string | null) => (description
+        ? <EllipsisText>{description}</EllipsisText>
+        : <Text type="secondary">暂无描述</Text>),
     },
     {
       title: '原 Owner',
       dataIndex: 'ownerName',
       width: 140,
-      render: (ownerName: string | null) => ownerName || '-',
+      ellipsis: { showTitle: false },
+      render: (ownerName: string | null) => <EllipsisText>{ownerName || '-'}</EllipsisText>,
     },
     {
       title: '删除时间',
@@ -68,7 +73,8 @@ export function WorkspaceRecycleBinPage() {
       title: '删除人',
       dataIndex: 'deletedByName',
       width: 140,
-      render: (deletedByName: string | null) => deletedByName || '-',
+      ellipsis: { showTitle: false },
+      render: (deletedByName: string | null) => <EllipsisText>{deletedByName || '-'}</EllipsisText>,
     },
     {
       title: '可恢复状态',
@@ -101,19 +107,17 @@ export function WorkspaceRecycleBinPage() {
 
   return (
     <div style={pageShellStyle}>
+      <PageHeader brandTo="/workspaces" />
       <div style={contentStyle}>
         <div style={headerStyle}>
           <div>
-            <Title level={3} style={{ margin: 0, color: '#111827' }}>工作空间回收站</Title>
-            <Text style={{ display: 'block', marginTop: 6, color: '#697386' }}>
+            <Title level={3} style={{ margin: 0, color: 'var(--aw-text)' }}>工作空间回收站</Title>
+            <Text style={{ display: 'block', marginTop: 6, color: 'var(--aw-muted)' }}>
               仅展示你有权管理（原 Owner、原管理员或平台管理员）的已删除工作空间
             </Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <HelpCenterLink />
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workspaces')}>
-              返回工作空间列表
-            </Button>
+            <PageBackButton to="/workspaces" label="返回工作空间列表" compact={false} />
           </div>
         </div>
 
@@ -126,7 +130,7 @@ export function WorkspaceRecycleBinPage() {
             onChange={(event) => handleKeywordChange(event.target.value)}
             style={{ maxWidth: 320 }}
           />
-          <Text style={{ color: '#697386' }}>共 {total} 个已删除工作空间</Text>
+          <Text style={{ color: 'var(--aw-muted)' }}>共 {total} 个已删除工作空间</Text>
         </div>
 
         {isLoading && !data ? (
@@ -145,6 +149,7 @@ export function WorkspaceRecycleBinPage() {
             size="middle"
             loading={isFetching}
             columns={columns}
+            scroll={{ x: 1120 }}
             dataSource={items}
             pagination={false}
           />
@@ -218,7 +223,7 @@ function RestoreWorkspaceModal({ target, onClose }: RestoreWorkspaceModalProps) 
       // survives between openings, so state alone would carry the last name across.
       afterOpenChange={(open) => { if (!open) setNewName(''); }}
     >
-      <Text style={{ display: 'block', marginBottom: 12, color: '#374151' }}>
+      <Text style={{ display: 'block', marginBottom: 12, color: 'var(--aw-text)' }}>
         恢复后成员关系、访问级别与工作空间内的业务数据保持不变；被暂停的定时任务不会自动恢复，需要手动重新启用。
       </Text>
       {needsRename && (
@@ -243,15 +248,14 @@ function RestoreWorkspaceModal({ target, onClose }: RestoreWorkspaceModalProps) 
 
 const pageShellStyle: CSSProperties = {
   minHeight: '100vh',
-  padding: '32px 24px',
-  background: '#f9fafb',
+  background: 'var(--aw-bg)',
 };
 
 const contentStyle: CSSProperties = {
-  width: 'min(1120px, 100%)',
-  margin: '0 auto',
-  background: '#fff',
-  border: '1px solid #e5e7eb',
+  margin: 24,
+  minWidth: 0,
+  background: 'var(--aw-panel)',
+  border: '1px solid var(--aw-border)',
   borderRadius: 8,
   padding: 24,
 };
@@ -275,8 +279,8 @@ const toolbarStyle: CSSProperties = {
 };
 
 const emptyStateStyle: CSSProperties = {
-  border: '1px dashed #fed7aa',
-  background: '#fff',
+  border: '1px dashed var(--aw-border)',
+  background: 'var(--aw-panel)',
   borderRadius: 8,
   padding: 32,
 };

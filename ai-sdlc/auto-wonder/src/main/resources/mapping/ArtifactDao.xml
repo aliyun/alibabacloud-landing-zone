@@ -13,6 +13,7 @@
         <result column="oss_ref" property="ossRef"/>
         <result column="size" property="size"/>
         <result column="meta_json" property="metaJson"/>
+        <result column="external_share_ref" property="externalShareRef"/>
         <result column="gmt_create" property="gmtCreate"/>
     </resultMap>
 
@@ -22,6 +23,16 @@
     <sql id="cols" databaseId="autowonder-legacy">
         id, tenant_id, 'WORKITEM' AS source_type, workitem_id, dispatch_id, name, type, oss_ref, size, meta_json,
         gmt_create
+    </sql>
+    <!-- 分享查询显式列出 external_share_ref：新列不进共享 cols，避免未执行 V056 的冻结库
+         （pre-V037 兼容模式）连核心产物查询都失败；分享功能本身要求已迁移。 -->
+    <sql id="shareCols" databaseId="autowonder-source-aware">
+        id, tenant_id, source_type, workitem_id, dispatch_id, name, type, oss_ref, size, meta_json,
+        external_share_ref, gmt_create
+    </sql>
+    <sql id="shareCols" databaseId="autowonder-legacy">
+        id, tenant_id, 'WORKITEM' AS source_type, workitem_id, dispatch_id, name, type, oss_ref, size, meta_json,
+        external_share_ref, gmt_create
     </sql>
 
     <insert id="insert" parameterType="com.aliyun.autowonder.artifact.ArtifactDO"
@@ -133,4 +144,22 @@
         ORDER BY id ASC
         LIMIT #{limit} OFFSET #{offset}
     </select>
+
+    <update id="markExternalExposed">
+        UPDATE artifact SET external_exposed = 1, external_share_ref = #{externalShareRef}
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND id = #{id}
+          AND external_share_ref IS NULL
+    </update>
+    <select id="listExternalExposed" resultMap="artifactMap">
+        SELECT <include refid="shareCols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND external_exposed = 1
+        ORDER BY id DESC
+    </select>
+    <select id="findExternalExposed" resultMap="artifactMap">
+        SELECT <include refid="shareCols"/> FROM artifact
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId} AND id = #{id}
+          AND external_exposed = 1
+        LIMIT 1
+    </select>
+
 </mapper>

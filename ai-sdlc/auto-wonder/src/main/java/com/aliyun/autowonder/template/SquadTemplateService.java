@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.template;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.*;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -149,6 +149,7 @@ public class SquadTemplateService {
         AgentDO agent = new AgentDO();
         agent.setTenantId(tenantId);
         agent.setName(name);
+        agent.setKind("STANDARD");
         agent.setStatus("ONLINE");
         agent.setLatestVersionNo(1);
         agent.setCreatorId(userId);

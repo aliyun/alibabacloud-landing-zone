@@ -1,15 +1,22 @@
-import { Alert, Card, Tag, Button, Space, Table, Popconfirm, message, Spin, Result, Tabs, Typography } from 'antd';
+import { PageHeading } from '@/shared/ui/PageHeading';
+import { PageBackButton } from '@/shared/ui/PageBackButton';
+import { Alert, Card, Tag, Button, Space, Popconfirm, message, Spin, Result, Tabs, Typography } from 'antd';
+import { Table } from '@/shared/theme/ThemedTable';
 import { useState } from 'react';
-import { ArrowLeftOutlined, RollbackOutlined, EditOutlined, PoweroffOutlined, PlayCircleOutlined, DeleteOutlined } from '@ant-design/icons';
+import { RollbackOutlined, EditOutlined, PoweroffOutlined, PlayCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useAgent, useAgentVersions, useRollback, useOfflineAgent, useOnlineAgent, useDeleteAgent, useAgentWorkitems, useAgentMemories } from './hooks';
-import { getVersion, type AgentVersion, type AgentVersionSummary } from './api';
+import { useAgent, useAgentVersions, useAgentVersion, useRollback, useOfflineAgent, useOnlineAgent, useDeleteAgent, useAgentWorkitems, useAgentMemories } from './hooks';
+import { getVersion, type AgentVersion, type AgentVersionSummary, type RepoPermItem, type SkillItem, type AgentEnvironmentVariableRef } from './api';
+import { getSdlcTemplate } from '@/features/sdlc/api';
 import type { ColumnsType } from 'antd/es/table';
 import { AgentStatCards } from './components/AgentStatCards';
 import { AgentWorkitemList } from './components/AgentWorkitemList';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
+import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+
+import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 
 const { Text } = Typography;
 
@@ -51,8 +58,10 @@ function versionEvolutionMode(version: AgentVersion) {
   }
 }
 
-function sdlcLabel(sdlcId?: number | null) {
-  return sdlcId == null ? '未绑定' : `#${sdlcId}`;
+/** 优先显示模板名称（当前生效值可复用已查到的 name）；未知/未加载时退回 #id。 */
+function sdlcLabel(sdlcId?: number | null, name?: string) {
+  if (sdlcId == null) return '未绑定';
+  return name || `#${sdlcId}`;
 }
 
 interface DraftDiffRow {
@@ -64,8 +73,14 @@ interface DraftDiffRow {
 
 const draftDiffColumns: ColumnsType<DraftDiffRow> = [
   { title: '字段', dataIndex: 'field', width: 120 },
-  { title: '当前生效', dataIndex: 'current', ellipsis: true },
-  { title: '草稿', dataIndex: 'draft', ellipsis: true },
+  {
+    title: '当前生效', dataIndex: 'current', ellipsis: { showTitle: false },
+    render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText>,
+  },
+  {
+    title: '草稿', dataIndex: 'draft', ellipsis: { showTitle: false },
+    render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText>,
+  },
 ];
 
 function AgentIdentitySection({ title, content }: { title: string; content?: string | null }) {
@@ -80,6 +95,44 @@ function AgentIdentitySection({ title, content }: { title: string; content?: str
   );
 }
 
+function EmptyHint({ text }: { text: string }) {
+  return <Text type="secondary">{text}</Text>;
+}
+
+const repoPermColumns: ColumnsType<RepoPermItem> = [
+  { title: '仓库', dataIndex: 'repoName', render: (v: string, r) => v || `#${r.repoId}` },
+  { title: '权限', dataIndex: 'permLevel', width: 100, render: (v: string) => <Tag>{v}</Tag> },
+  {
+    title: '提交分支', dataIndex: 'allowedBranchPatterns',
+    render: (patterns?: string[]) => !patterns || patterns.length === 0
+      ? <Text type="secondary">不限制</Text>
+      : <Space size={[0, 4]} wrap>{patterns.map(pattern => <Tag key={pattern}>{pattern}</Tag>)}</Space>,
+  },
+];
+
+const skillColumns: ColumnsType<SkillItem> = [
+  { title: '能力', dataIndex: 'skillName', render: (v: string, r) => v || `#${r.skillId}` },
+];
+
+const environmentVariableColumns: ColumnsType<AgentEnvironmentVariableRef> = [
+  { title: '变量名', dataIndex: 'name', width: '36%' },
+  {
+    title: '说明', dataIndex: 'description',
+    render: (description: string | null) => description || <Text type="secondary">暂无说明</Text>,
+  },
+];
+
+/** 仅绑定了 SDLC 时才发起单查，解析不出名称时退回 #id。 */
+function useSdlcName(sdlcId?: number | null) {
+  const { data } = useQuery({
+    queryKey: ['sdlc', sdlcId],
+    queryFn: () => getSdlcTemplate(sdlcId as number),
+    enabled: sdlcId != null,
+    staleTime: 5 * 60 * 1000,
+  });
+  return data?.name;
+}
+
 export function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -87,8 +140,16 @@ export function AgentDetailPage() {
   const agentId = Number(id);
   const { data: agent, isLoading, isError, error } = useAgent(agentId);
   const { data: versions = [] } = useAgentVersions(agentId);
-  const { data: workitems = [], isLoading: wiLoading } = useAgentWorkitems(agentId);
+  const { data: workitems = [] } = useAgentWorkitems(agentId);
   const { data: memories = [] } = useAgentMemories(agentId);
+  const sdlcName = useSdlcName(agent?.sdlcId);
+  const [versionPageNo, setVersionPageNo] = useState(1);
+  const [versionPageSize, setVersionPageSize] = usePageSizePreference(
+    'autowonder.agentDetail.versions.pageSize', [10, 20, 50], 10);
+  // 当前生效版本的完整绑定（仓库/能力/环境变量）：编辑页同一数据源，详情页只读展示。
+  const { data: onlineVersion, isLoading: versionDetailLoading } = useAgentVersion(
+    agentId, agent?.latestVersionNo ?? 0,
+  );
   const rollback = useRollback();
   const offline = useOfflineAgent();
   const online = useOnlineAgent();
@@ -165,7 +226,10 @@ export function AgentDetailPage() {
 
   const versionColumns: ColumnsType<AgentVersionSummary> = [
     { title: '版本号', dataIndex: 'versionNo', width: 80, render: (v: number) => `v${v}` },
-    { title: '角色名称', dataIndex: 'roleName', ellipsis: true },
+    {
+      title: '角色名称', dataIndex: 'roleName', ellipsis: { showTitle: false },
+      render: (v: string) => <EllipsisText tooltip={v}>{v ?? '—'}</EllipsisText>,
+    },
     { title: '状态', dataIndex: 'status', width: 100, render: (s: string) => <Tag color={versionStatusMap[s]?.color}>{versionStatusMap[s]?.label || s}</Tag> },
     { title: '创建时间', dataIndex: 'gmtCreate', width: 160, render: (t: string) => new Date(t).toLocaleString('zh-CN') },
     {
@@ -200,7 +264,7 @@ export function AgentDetailPage() {
     ? [
       { key: 'roleName', field: '角色名称', current: agent.roleName || '-', draft: draftVersion.roleName || '-' },
       { key: 'roleCode', field: '角色码', current: agent.roleCode || '-', draft: draftVersion.roleCode || '-' },
-      { key: 'sdlcId', field: 'SDLC 模版', current: sdlcLabel(agent.sdlcId), draft: sdlcLabel(draftVersion.sdlcId) },
+      { key: 'sdlcId', field: 'SDLC 模版', current: sdlcLabel(agent.sdlcId, sdlcName), draft: sdlcLabel(draftVersion.sdlcId) },
       {
         key: 'evolutionMode', field: '自进化模式',
         current: evolutionModeLabel(agent.evolutionMode),
@@ -213,11 +277,65 @@ export function AgentDetailPage() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
-        <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/agents')} style={{ padding: 0 }}>
-          返回列表
-        </Button>
-      </Space>
+      <Card
+        className="aw-content-card"
+        title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/agents" label="返回列表" /><span>{agent.name}</span><Tag color={statusInfo.color}>{statusInfo.label}</Tag>{isPlatform && <Tag color="gold">平台</Tag>}</span>}
+          description={<>最新版本 {agent.latestVersionNo ? `v${agent.latestVersionNo}` : '-'} · 创建于 {new Date(agent.gmtCreate).toLocaleString('zh-CN')}</>} />}
+        extra={
+          <Space>
+            {agent.status === 'ONLINE' && !isPlatform && (
+              <Popconfirm
+                title="确定下线该数字员工？"
+                open={offlineConfirmOpen}
+                onOpenChange={(open) => handleConfirmOpen(open, '下线数字员工', setOfflineConfirmOpen)}
+                onConfirm={() => {
+                  setOfflineConfirmOpen(false);
+                  handleOffline();
+                }}
+              >
+                <Button icon={<PoweroffOutlined />}>下线</Button>
+              </Popconfirm>
+            )}
+            {agent.status === 'OFFLINE' && (
+              <Popconfirm
+                title="确定重新上线该数字员工？"
+                okText="确定上线"
+                cancelText="取消"
+                open={onlineConfirmOpen}
+                onOpenChange={(open) => handleConfirmOpen(open, '上线数字员工', setOnlineConfirmOpen)}
+                onConfirm={() => {
+                  setOnlineConfirmOpen(false);
+                  handleOnline();
+                }}
+              >
+                <Button icon={<PlayCircleOutlined />}>上线</Button>
+              </Popconfirm>
+            )}
+            {agent.status !== 'ONLINE' && !isPlatform && (
+              <Popconfirm
+                title="确定删除该数字员工？删除后不可恢复。"
+                okText="确定删除"
+                cancelText="取消"
+                open={deleteConfirmOpen}
+                onOpenChange={(open) => handleConfirmOpen(open, '删除数字员工', setDeleteConfirmOpen)}
+                onConfirm={() => {
+                  setDeleteConfirmOpen(false);
+                  handleDelete();
+                }}
+              >
+                <Button danger icon={<DeleteOutlined />}>删除</Button>
+              </Popconfirm>
+            )}
+            <Button type="primary" icon={<EditOutlined />}
+              onClick={() => accessCommand('READ_WRITE', '编辑数字员工', () => navigate(`/agents/${agentId}/edit`))}>
+              编辑配置
+            </Button>
+          </Space>
+        }
+      >
+      </Card>
+
+
 
       {actionFeedback && (
         <Alert
@@ -277,81 +395,24 @@ export function AgentDetailPage() {
         </Card>
       )}
 
-      <Card
-        style={{ marginBottom: 16, borderTop: '3px solid #f97316' }}
-        extra={
-          <Space>
-            {agent.status === 'ONLINE' && !isPlatform && (
-              <Popconfirm
-                title="确定下线该数字员工？"
-                open={offlineConfirmOpen}
-                onOpenChange={(open) => handleConfirmOpen(open, '下线数字员工', setOfflineConfirmOpen)}
-                onConfirm={() => {
-                  setOfflineConfirmOpen(false);
-                  handleOffline();
-                }}
-              >
-                <Button icon={<PoweroffOutlined />}>下线</Button>
-              </Popconfirm>
-            )}
-            {agent.status === 'OFFLINE' && (
-              <Popconfirm
-                title="确定重新上线该数字员工？"
-                okText="确定上线"
-                cancelText="取消"
-                open={onlineConfirmOpen}
-                onOpenChange={(open) => handleConfirmOpen(open, '上线数字员工', setOnlineConfirmOpen)}
-                onConfirm={() => {
-                  setOnlineConfirmOpen(false);
-                  handleOnline();
-                }}
-              >
-                <Button icon={<PlayCircleOutlined />}>上线</Button>
-              </Popconfirm>
-            )}
-            {agent.status !== 'ONLINE' && !isPlatform && (
-              <Popconfirm
-                title="确定删除该数字员工？删除后不可恢复。"
-                okText="确定删除"
-                cancelText="取消"
-                open={deleteConfirmOpen}
-                onOpenChange={(open) => handleConfirmOpen(open, '删除数字员工', setDeleteConfirmOpen)}
-                onConfirm={() => {
-                  setDeleteConfirmOpen(false);
-                  handleDelete();
-                }}
-              >
-                <Button danger icon={<DeleteOutlined />}>删除</Button>
-              </Popconfirm>
-            )}
-            <Button type="primary" icon={<EditOutlined />}
-              onClick={() => accessCommand('READ_WRITE', '编辑数字员工', () => navigate(`/agents/${agentId}/edit`))}>
-              编辑配置
-            </Button>
-          </Space>
-        }
-      >
-        <Space direction="vertical" size={4}>
-          <Space size={8}>
-            <Text strong style={{ fontSize: 18 }}>{agent.name}</Text>
-            <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
-            {isPlatform && <Tag color="gold">平台</Tag>}
-          </Space>
-          <Text type="secondary">
-            最新版本 {agent.latestVersionNo ? `v${agent.latestVersionNo}` : '-'}
-            {'  ·  '}创建于 {new Date(agent.gmtCreate).toLocaleString('zh-CN')}
-          </Text>
-        </Space>
-      </Card>
-
       <Card title="身份配置" style={{ marginBottom: 16 }}>
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Space size={8} wrap>
             {agent.roleName && <Tag color="blue">{agent.roleName}</Tag>}
             {agent.roleCode && <Tag>{agent.roleCode}</Tag>}
-            <Tag color="geekblue">SDLC 模版：{sdlcLabel(agent.sdlcId)}</Tag>
+            <Tag color="geekblue">SDLC 模版：{sdlcLabel(agent.sdlcId, sdlcName)}</Tag>
             <Tag color="purple">自进化模式：{evolutionModeLabel(agent.evolutionMode)}</Tag>
+            {agent.executorTotalCount != null && (
+              <Tag color={agent.executorOnlineCount ? 'success' : 'default'}>
+                执行器：{agent.executorOnlineCount ?? 0}/{agent.executorTotalCount} 在线
+              </Tag>
+            )}
           </Space>
+          {!!agent.squadNames?.length && (
+            <Space size={8} wrap>
+              {agent.squadNames.map((name, i) => <Tag key={name + i} color="cyan">{name}</Tag>)}
+            </Space>
+          )}
           <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
             <AgentIdentitySection title="SOUL.md" content={agent.businessBackground} />
             <AgentIdentitySection title="AGENT.md" content={agent.responsibilities} />
@@ -367,12 +428,60 @@ export function AgentDetailPage() {
             {
               key: 'workitems',
               label: '任务列表',
-              children: <AgentWorkitemList workitems={workitems} loading={wiLoading} />,
+              children: <AgentWorkitemList agentId={agentId} />,
+            },
+            {
+              key: 'repos',
+              label: `仓库权限${onlineVersion?.repoPerms?.length ? ` (${onlineVersion.repoPerms.length})` : ''}`,
+              children: isPlatform ? (
+                <Alert
+                  type="info" showIcon
+                  message="无需配置平台智能体的仓库配置"
+                  description="其默认拥有平台所有的仓库的读取权限，进行平台智能的管理。"
+                />
+              ) : (
+                <Table rowKey="repoId" size="small" columns={repoPermColumns}
+                  dataSource={onlineVersion?.repoPerms ?? []} pagination={false}
+                  loading={versionDetailLoading}
+                  locale={{ emptyText: <EmptyHint text="暂未绑定仓库" /> }} />
+              ),
+            },
+            {
+              key: 'skills',
+              label: `能力配置${onlineVersion?.skills?.length ? ` (${onlineVersion.skills.length})` : ''}`,
+              children: (
+                <Table rowKey="skillId" size="small" columns={skillColumns}
+                  dataSource={onlineVersion?.skills ?? []} pagination={false}
+                  loading={versionDetailLoading}
+                  locale={{ emptyText: <EmptyHint text="暂未绑定能力" /> }} />
+              ),
+            },
+            {
+              key: 'envvars',
+              label: `环境变量${agent.environmentVariables?.length ? ` (${agent.environmentVariables.length})` : ''}`,
+              children: (
+                <Table rowKey="id" size="small" columns={environmentVariableColumns}
+                  dataSource={agent.environmentVariables ?? []} pagination={false}
+                  locale={{ emptyText: <EmptyHint text="暂无已挂载的环境变量" /> }} />
+              ),
             },
             {
               key: 'versions',
               label: '版本记录',
-              children: <Table rowKey="id" columns={versionColumns} dataSource={versions} pagination={false} />,
+              children: (
+                <Table rowKey="id" columns={versionColumns} dataSource={versions}
+                  pagination={{
+                    current: versionPageNo,
+                    pageSize: versionPageSize,
+                    total: versions.length,
+                    onChange: (nextPage, nextSize) => {
+                      setVersionPageNo(nextPage);
+                      if (nextSize !== versionPageSize) setVersionPageSize(nextSize);
+                    },
+                    showSizeChanger: true,
+                    showTotal: (t) => `共 ${t} 条`,
+                  }} />
+              ),
             },
           ]}
         />

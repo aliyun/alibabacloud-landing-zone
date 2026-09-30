@@ -122,6 +122,9 @@ export interface ExecutorLaunchConfig {
 }
 
 export interface UpdateExecutorLaunchConfigRequest {
+  // 仅历史缺类型（clientKind 为 NULL/空白）执行器的恢复写入需要携带：与启动配置一并落库；
+  // 类型已存在的执行器后端只接受同名值（不同值拒绝），不会改写正常执行器的类型。
+  clientKind?: string;
   model?: string | null;
   reasoningEffort?: string | null;
   contextWindow?: string | null;

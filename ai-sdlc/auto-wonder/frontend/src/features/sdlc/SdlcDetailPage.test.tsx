@@ -55,9 +55,7 @@ describe('SdlcDetailPage', () => {
       overflowX: 'visible',
     });
     expect(screen.getByTestId('sdlc-step-overview-card')).toHaveStyle({
-      background: '#fff',
-      borderColor: '#ff6a00',
-      boxShadow: '0 0 0 2px rgba(255, 106, 0, 0.08), 0 8px 20px rgba(255, 106, 0, 0.08)',
+      boxShadow: 'none',
     });
     expect(screen.getAllByLabelText('下一步骤').length).toBe(2);
     expect(screen.getByText('添加步骤')).toBeInTheDocument();

@@ -1,6 +1,5 @@
 package com.aliyun.autowonder.common.result;
 
-import com.alibaba.fastjson.annotation.JSONField;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
@@ -14,7 +13,6 @@ public class Result<T> {
     private T data;
     private String traceId;
     @JsonProperty("request_id")
-    @JSONField(name = "request_id")
     private String requestId;
 
     public static <T> Result<T> ok(T data) {
@@ -84,6 +82,5 @@ public class Result<T> {
     public T getData() { return data; }
     public String getTraceId() { return traceId; }
     @JsonProperty("request_id")
-    @JSONField(name = "request_id")
     public String getRequestId() { return requestId; }
 }

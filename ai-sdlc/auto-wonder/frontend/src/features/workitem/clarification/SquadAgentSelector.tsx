@@ -69,11 +69,11 @@ export function SquadAgentSelector({ value, onChange, locked }: SquadAgentSelect
       </div>
       <div>
         <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
-          数字人
+          数字员工
         </Typography.Text>
         <Select
           style={{ width: '100%' }}
-          placeholder={squadId ? '选择数字人' : '请先选择小队'}
+          placeholder={squadId ? '选择数字员工' : '请先选择小队'}
           disabled={!squadId || locked}
           loading={membersLoading}
           options={agentOptions}

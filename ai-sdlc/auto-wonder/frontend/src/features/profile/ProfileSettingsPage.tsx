@@ -1,9 +1,11 @@
+import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Alert, Button, Card, Form, Input, Space, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import { SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { McpTokenSettingsPanel } from '@/features/open-platform/McpTokenSettingsPanel';
+import { BasicProfilePanel } from './BasicProfilePanel';
 import { ChangePasswordPanel } from './ChangePasswordPanel';
 import { DeactivationPanel } from './DeactivationPanel';
 import {
@@ -16,9 +18,9 @@ import {
   type UserImIdentity,
 } from './profileApi';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-const DEFAULT_TAB = 'im';
+const DEFAULT_TAB = 'basic';
 
 type ImIdentityFormValues = {
   externalUserId: string;
@@ -49,7 +51,7 @@ function getImTestStatusText(hasIdentityRow: boolean, hasSavedIdentity: boolean,
 export function ProfileSettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const activeTab = requestedTab === 'mcp' || requestedTab === 'password' || requestedTab === 'deactivate'
+  const activeTab = requestedTab === 'im' || requestedTab === 'mcp' || requestedTab === 'password' || requestedTab === 'deactivate'
     ? requestedTab
     : DEFAULT_TAB;
   const [form] = Form.useForm<ImIdentityFormValues>();
@@ -193,11 +195,8 @@ export function ProfileSettingsPage() {
   );
 
   return (
-    <div data-testid="profile-settings-shell" style={{ maxWidth: activeTab === 'mcp' ? 1440 : 1100, margin: '0 auto' }}>
-      <div style={{ marginBottom: 18 }}>
-        <Title level={3} style={{ margin: 0, letterSpacing: 0 }}>个人设置</Title>
-        <Text type="secondary">管理只属于当前账号的全局个人配置。</Text>
-      </div>
+    <div data-testid="profile-settings-shell">
+      <PageHeading title="个人设置" description="管理只属于当前账号的全局个人配置。" />
 
       <Tabs
         activeKey={activeTab}
@@ -211,6 +210,7 @@ export function ProfileSettingsPage() {
           setSearchParams(next, { replace: true });
         }}
         items={[
+          { key: 'basic', label: '基本信息', children: <BasicProfilePanel /> },
           { key: 'im', label: 'IM 工号', children: imSettings },
           { key: 'mcp', label: 'MCP 令牌', children: <McpTokenSettingsPanel /> },
           { key: 'password', label: '修改密码', children: <ChangePasswordPanel /> },

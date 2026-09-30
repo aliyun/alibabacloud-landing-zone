@@ -1,14 +1,14 @@
+import { RobotHeadIcon } from '@/shared/ui/RobotHeadIcon';
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Input, Typography, Empty, message, Select, Tag } from 'antd';
+import { Button, Typography, Empty, message, Select, Tag } from 'antd';
 import {
-  SendOutlined, PlusOutlined, RobotOutlined,
+  SendOutlined, PlusOutlined, UserSwitchOutlined,
   StopOutlined, VerticalAlignBottomOutlined,
 } from '@ant-design/icons';
-import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
@@ -18,6 +18,8 @@ import type { SquadAgentSelection } from './SquadAgentSelector';
 import { ConversationEventView } from './ConversationEventView';
 import { ReplyingIndicator } from './ReplyingIndicator';
 import { SlashCommandPicker, slashCommandQuery } from './SlashCommandPicker';
+import { MarkdownComposer } from './MarkdownComposer';
+import type { MarkdownComposerHandle } from './MarkdownComposer';
 import { TurnDetailToggle } from './TurnDetailToggle';
 import { ElicitationWizard } from './cards/ElicitationWizard';
 import type { ElicitationReply } from './cards/ElicitationCard';
@@ -46,7 +48,6 @@ import {
   DEFAULT_SEND_MODE,
   SEND_MODE_OPTIONS,
   parseSendMode,
-  shouldSendOnKey,
 } from './sendMode';
 import type { SendMode } from './sendMode';
 import { getMySetting, putMySetting } from '@/features/profile/userSettingApi';
@@ -64,7 +65,6 @@ export const CLARIFICATION_INPUT_MAX_RATIO = 0.6;
 export const CLARIFICATION_PANEL_FALLBACK_HEIGHT = 280;
 /** 自动模式默认行数：默认给 6 行高度，保证足够的输入空间（工单评论反馈） */
 export const CLARIFICATION_INPUT_DEFAULT_ROWS = 6;
-
 export function computeInputHeightMax(panelHeight: number): number {
   const safeHeight = Number.isFinite(panelHeight) && panelHeight > 0
     ? panelHeight
@@ -92,7 +92,7 @@ export function isNearScrollBottom(
 }
 
 const clarificationBootstrapPrompt = (workitemId: string) =>
-  `请通过 AutoWonder MCP 读取工单 #${workitemId}，与我进行需求澄清。`;
+  `请通过平台 MCP 读取工单 #${workitemId}，与我进行需求澄清。`;
 
 /** 加载中/加载失败提示的居中样式：与 Empty 同视觉重量，不抢占消息流。 */
 const CLARIFICATION_LOAD_HINT_STYLE: CSSProperties = {
@@ -154,6 +154,11 @@ interface WorkitemClarificationPanelProps {
    *  只带「已经落定」的字段：恢复还没落定的字段一旦上报 null，
    *  外层就会把 URL 里的恢复源自己抹掉（CR53035-001）。 */
   onContextChange?: (context: Partial<ClarifyContext>) => void;
+  /** 全屏合并头行插槽：外层（RightPanel）把「返回/标题」塞在本面板头行开头，
+   *  与「切换数字人/会话/新对话」融为同一行，替代原先上下两条头行。 */
+  headerPrefix?: ReactNode;
+  /** 全屏合并头行插槽：「退出全屏」等尾部动作挂在头行末尾。 */
+  headerSuffix?: ReactNode;
 }
 
 export function WorkitemClarificationPanel({
@@ -164,6 +169,8 @@ export function WorkitemClarificationPanel({
   initialAgentId,
   initialConversationId,
   onContextChange,
+  headerPrefix,
+  headerSuffix,
 }: WorkitemClarificationPanelProps) {
   const hasDeliveryAgents = agents.length > 0;
 
@@ -182,8 +189,8 @@ export function WorkitemClarificationPanel({
   // 创建回调的身份护栏：回调落地时核对发起时的数字人是否仍是当前数字人，
   // 过时的创建结果不能覆盖用户此间的切换（修复要求 2）。
   const effectiveAgentIdRef = useRef<number | null>(null);
-  // 仅系统自动创建的首个会话需要引导提示。历史会话即使空白，也不能被误写入提示词。
-  const bootstrapConversationIdRef = useRef<number | null>(null);
+  // 每次进入会话只初始化一次，避免用户清空输入后被重新填入。
+  const initializedInputRef = useRef<number | null>(null);
   const [inputValue, setInputValue] = useState('');
   // null = 自动模式（默认 6 行高度）；数字 = 手动固定高度（像素）
   const [inputHeight, setInputHeight] = useState<number | null>(null);
@@ -195,19 +202,33 @@ export function WorkitemClarificationPanel({
     queryFn: () => getMySetting(CLARIFICATION_SEND_MODE_KEY),
     staleTime: 5 * 60_000,
   });
+  // sendMode 的镜像：保存任务异步落定时要读「此刻界面上的值」，
+  // 闭包里的 state 只是发起保存那一刻的快照，判断不了失败是否已经过时。
+  const sendModeRef = useRef<SendMode>(DEFAULT_SEND_MODE);
+  // 最近一次确认落库成功的值：连续切换全部失败时回滚到它，而不是回滚到
+  // 同样没保存上的上一次乐观选择（工单 55511：连续切换不被旧失败覆盖）。
+  const savedSendModeRef = useRef<SendMode>(DEFAULT_SEND_MODE);
+  // 用户是否已动过发送方式：水合时区分「补服务端值」与「不覆盖排队落库中的本地选择」。
+  const sendModeTouchedRef = useRef(false);
+  // 保存任务队列：串行执行 PUT，同一时刻只有一个请求在飞，最后一个任务保存最后的选择。
+  const sendModeSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // 只在偏好首次落定（成功或失败）时水合一次。此后本地 state 是唯一事实来源，
   // 否则窗口重新聚焦触发的后台重新拉取会把用户刚改的选择盖回服务端旧值。
   const sendModeHydratedRef = useRef(false);
   useEffect(() => {
     if (sendModeHydratedRef.current || sendModeSetting.isLoading) return;
     sendModeHydratedRef.current = true;
-    setSendMode(parseSendMode(sendModeSetting.data?.valueJson));
+    // 用户在水合前就切过发送方式：本地选择已在保存队列里，服务端旧值不能覆盖它。
+    if (sendModeTouchedRef.current) return;
+    const hydrated = parseSendMode(sendModeSetting.data?.valueJson);
+    setSendMode(hydrated);
+    sendModeRef.current = hydrated;
+    savedSendModeRef.current = hydrated;
   }, [sendModeSetting.isLoading, sendModeSetting.data]);
-  const composingRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const inputWrapRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<TextAreaRef>(null);
+  const composerRef = useRef<MarkdownComposerHandle | null>(null);
   // R4: 用户向上滚动离开底部时暂停自动跟随；回到底部后恢复
   const [followBottom, setFollowBottom] = useState(true);
   const followBottomRef = useRef(true);
@@ -276,6 +297,7 @@ export function WorkitemClarificationPanel({
   );
 
   const convData = conversation.data;
+
   const isCreatingConversation = createMutation.isPending;
   const isConversationLoading = conversationId !== null && conversation.isLoading;
   // 历史详情三态：加载中 / 成功（含确实没有消息）/ 失败。失败再细分为
@@ -426,7 +448,7 @@ export function WorkitemClarificationPanel({
     const wasReplying = prevReplyInProgressRef.current;
     prevReplyInProgressRef.current = replyInProgress;
     if (wasReplying && !replyInProgress) {
-      inputRef.current?.focus();
+      composerRef.current?.focus();
     }
   }, [replyInProgress]);
 
@@ -457,7 +479,7 @@ export function WorkitemClarificationPanel({
     focusedEpochRef.current = focusEpoch;
     // 推到绘制之后再聚焦：输入行刚出现时布局还没稳定，此刻聚焦会带着页面滚一次。
     const frame = requestAnimationFrame(() => {
-      inputRef.current?.focus({ preventScroll: true });
+      composerRef.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [focusEpoch, inputRowFocusable]);
@@ -493,6 +515,7 @@ export function WorkitemClarificationPanel({
   );
 
   const handleSelectConversation = useCallback((nextConversationId: number) => {
+    if (nextConversationId === conversationIdRef.current) return;
     resetStreamedEvents();
     setConversationId(nextConversationId);
     setInputValue('');
@@ -544,7 +567,6 @@ export function WorkitemClarificationPanel({
         // 过时的创建回调不能覆盖当前选择：创建期间用户切了数字人或手动选了会话。
         if (effectiveAgentIdRef.current !== mutatedAgentId) return;
         if (conversationIdRef.current !== null) return;
-        bootstrapConversationIdRef.current = conv.id;
         setConversationId(conv.id);
       },
       onError: () => {
@@ -616,18 +638,19 @@ export function WorkitemClarificationPanel({
   inputValueRef.current = inputValue;
 
   useEffect(() => {
-    if (conversationId !== bootstrapConversationIdRef.current
-        || isConversationLoading
-        || !conversation.isSuccess
-        || convData == null) return;
-    bootstrapConversationIdRef.current = null;
-    if (turns.length === 0 && !inputValueRef.current.trim() && !isProcessing) {
-      setInputValue(
-        clarificationBootstrapPrompt(workitemId)
-      );
+    initializedInputRef.current = null;
+  }, [workitemId, conversationId]);
+
+  useEffect(() => {
+    if (!conversationId || initializedInputRef.current === conversationId
+        || isConversationLoading || agentRestorePending
+        || !conversation.isSuccess || convData?.id !== conversationId) return;
+    initializedInputRef.current = conversationId;
+    if (turns.length === 0 && !inputValueRef.current.trim() && !isReplying) {
+      setInputValue(clarificationBootstrapPrompt(workitemId));
     }
-  }, [conversationId, turns.length, isConversationLoading, isProcessing, workitemId,
-    conversation.isSuccess, convData]);
+  }, [conversationId, turns.length, isConversationLoading, isReplying, workitemId,
+    conversation.isSuccess, convData, agentRestorePending]);
 
   const handleSend = useCallback(() => {
     const content = inputValue.trim();
@@ -662,23 +685,37 @@ export function WorkitemClarificationPanel({
     });
   }, [conversationId, convData?.processingTurnId, cancelMutation]);
 
-  // 切换发送方式：先乐观生效（按键行为与入口文案必须立刻一致），再落用户级偏好。
-  // 落库失败要连缓存一起回滚，否则界面标着「回车发送」而实际按回车只换行。
+  // 切换发送方式：先乐观生效（按键行为与入口文案必须立刻一致），再串行落用户级偏好。
+  // 保存任务排进队列逐个执行：同一时刻只有一个 PUT 在飞，快速连切时最后一个任务
+  // 保存最终选择，并发乱序完成的 PUT 不会让界面与落库值倒挂（工单 55511 验收 2/5）。
   const handleSendModeChange = useCallback((next: SendMode) => {
-    const previous = sendMode;
-    const previousCache = queryClient.getQueryData<UserSetting>(CLARIFICATION_SEND_MODE_QUERY_KEY);
     const valueJson = JSON.stringify(next);
+    sendModeRef.current = next;
+    sendModeTouchedRef.current = true;
     setSendMode(next);
     queryClient.setQueryData<UserSetting>(
       CLARIFICATION_SEND_MODE_QUERY_KEY,
       { key: CLARIFICATION_SEND_MODE_KEY, valueJson },
     );
-    putMySetting(CLARIFICATION_SEND_MODE_KEY, valueJson).catch(() => {
-      setSendMode(previous);
-      queryClient.setQueryData(CLARIFICATION_SEND_MODE_QUERY_KEY, previousCache);
-      message.error('发送方式保存失败，请重试');
+    sendModeSaveQueueRef.current = sendModeSaveQueueRef.current.then(async () => {
+      try {
+        await putMySetting(CLARIFICATION_SEND_MODE_KEY, valueJson);
+        savedSendModeRef.current = next;
+      } catch {
+        // 失败时用户已切走：这是过时的失败，不回滚也不提示，新任务会落库新选择
+        if (sendModeRef.current !== next) return;
+        // 回滚到最后成功落库的值并同步缓存，否则界面标着「回车发送」而实际按回车只换行
+        const rollback = savedSendModeRef.current;
+        sendModeRef.current = rollback;
+        setSendMode(rollback);
+        queryClient.setQueryData<UserSetting>(
+          CLARIFICATION_SEND_MODE_QUERY_KEY,
+          { key: CLARIFICATION_SEND_MODE_KEY, valueJson: JSON.stringify(rollback) },
+        );
+        message.error('发送方式保存失败，请重试');
+      }
     });
-  }, [sendMode, queryClient]);
+  }, [queryClient]);
 
   // R4: 仅在跟随底部时自动滚动；向上滚动离开底部后暂停跟随。
   // 用瞬时滚动（非 smooth）：流式内容持续增长时，平滑动画的中间态
@@ -731,36 +768,54 @@ export function WorkitemClarificationPanel({
 
   if (needsAgentSelection) {
     return (
-      <div style={{ padding: fullscreen ? '20px 24px' : 12 }}>
-        <div data-testid="clarification-selection-column" style={fullscreenColumnStyle}>
-          {hasDeliveryAgents ? (
-            <>
-              <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
-                选择数字人
-              </Typography.Text>
-              <AgentSelector
-                agents={agentOptions}
-                selectedAgentId={selectedAgentId}
-                onSelect={handleSelectAgent}
-              />
-            </>
-          ) : (
-            <>
-              <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
-                选择小队和数字人
-              </Typography.Text>
-              <SquadAgentSelector
-                value={selection}
-                onChange={handleSelectionChange}
-              />
-              <Typography.Paragraph
-                type="secondary"
-                style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
-              >
-                无需先启动交付——澄清完成后，可在「启动交付」时复用这里的选定小队与数字人。
-              </Typography.Paragraph>
-            </>
-          )}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* 选人页头部：外层已不渲染独立头行，「返回/全屏」插槽在这里接住，
+            与对话页一致；否则进入选人页后没有任何返回入口。 */}
+        <div
+          data-testid="clarification-panel-header"
+          style={{
+            padding: fullscreen ? '12px 24px' : '10px 14px',
+            borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`,
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              flexWrap: fullscreen ? 'nowrap' : 'wrap',
+              ...(fullscreen ? {} : { marginBottom: 8 }),
+            }}
+          >
+            {headerPrefix}
+            <span style={{ flex: '1 1 0%' }} />
+            {headerSuffix}
+          </div>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: fullscreen ? '20px 24px' : 12 }}>
+          <div data-testid="clarification-selection-column" style={fullscreenColumnStyle}>
+            {hasDeliveryAgents ? (
+              <>
+                <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+                  选择数字员工
+                </Typography.Text>
+                <AgentSelector
+                  agents={agentOptions}
+                  selectedAgentId={selectedAgentId}
+                  onSelect={handleSelectAgent}
+                />
+              </>
+            ) : (
+              <>
+                <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+                  选择小队和数字员工
+                </Typography.Text>
+                <SquadAgentSelector
+                  value={selection}
+                  onChange={handleSelectionChange}
+                />
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -770,7 +825,7 @@ export function WorkitemClarificationPanel({
     ?? (hasDeliveryAgents
       ? agents.find((a) => a.agentId === selectedAgentId)?.agentName
       : undefined)
-    ?? '数字人';
+    ?? '数字员工';
 
   // 上限在每次渲染时按面板容器实测高度动态计算：面板被 50386 拖大拖小后，
   // 父级尺寸变化会触发重渲染，下一次拖拽自动跟随新上限。
@@ -780,63 +835,142 @@ export function WorkitemClarificationPanel({
     ? null
     : Math.min(inputHeight, inputHeightMax);
 
-  return (
-    <div ref={panelRef} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{
-        padding: fullscreen ? '12px 20px' : '10px 14px',
-        borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`,
-        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-      }}>
-        <Button
-          size="small"
-          disabled={isCreatingConversation}
-          onClick={() => {
-            if (hasDeliveryAgents) {
-              setSelectedAgentId(null);
-            } else {
-              setSelection(null);
-            }
-          }}
-        >
-          切换数字人
-        </Button>
-        <Typography.Text strong style={{ flex: 1 }}>
-          {displayName}
+  // 数字人名称列：basis 0 + minWidth 0 让它只占「剩余空间」而不是内容宽度，
+  // 名称再长也只是 ellipsis，不会把同行控件挤变形（停靠与全屏共用）。
+  // 停靠态名称在「返回/全屏」之间视觉居中：flex 占满中段 + 文本居中。
+  const agentNameNode = (centered: boolean) => (
+    <Typography.Text
+      strong
+      ellipsis={{ tooltip: displayName }}
+      title={displayName}
+      style={{ flex: '1 1 0%', minWidth: 0, whiteSpace: 'nowrap', textAlign: centered ? 'center' : 'start' }}
+    >
+      {displayName}
+    </Typography.Text>
+  );
+
+  const conversationSelectOptions = (conversations.data ?? []).map((item) => ({
+    value: item.id,
+    label: (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span>会话 #{item.id}</span>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          最近 {new Date(item.lastTurnAt ?? item.gmtCreate).toLocaleString('zh-CN')}
         </Typography.Text>
-        <Select
-          data-testid="clarification-conversation-select"
-          aria-label="选择澄清会话"
-          size="small"
-          value={conversationId ?? undefined}
-          placeholder="选择会话"
-          loading={conversations.isLoading}
-          disabled={isCreatingConversation}
-          onChange={handleSelectConversation}
-          options={(conversations.data ?? []).map((item) => ({
-            value: item.id,
-            label: (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span>会话 #{item.id}</span>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  最近 {new Date(item.lastTurnAt ?? item.gmtCreate).toLocaleString('zh-CN')}
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                  创建 {new Date(item.gmtCreate).toLocaleString('zh-CN')}
-                </Typography.Text>
-              </span>
-            ),
-          }))}
-          style={{ width: fullscreen ? 300 : 240 }}
-        />
-        <Button
-          size="small"
-          icon={<PlusOutlined />}
-          onClick={handleCreateConversation}
-          loading={isCreatingConversation}
-          disabled={isCreatingConversation}
-        >
-          新对话
-        </Button>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          创建 {new Date(item.gmtCreate).toLocaleString('zh-CN')}
+        </Typography.Text>
+      </span>
+    ),
+  }));
+
+  return (
+    <div ref={panelRef} className={fullscreen ? 'aw-clarification-panel is-fullscreen' : 'aw-clarification-panel'} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div
+        data-testid="clarification-panel-header"
+        style={{
+          padding: fullscreen ? '12px 24px' : '10px 14px',
+          borderBottom: `1px solid ${CLARIFICATION_THEME.hairline}`,
+          flexShrink: 0,
+        }}
+      >
+        {fullscreen ? (
+          // 全屏：外层的「返回/退出全屏」与本面板控件融合为一行，永不换行。
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'nowrap', gap: 8 }}>
+            {headerPrefix}
+            <Button
+              size="middle"
+              icon={<UserSwitchOutlined />}
+              aria-label="切换数字员工"
+              disabled={isCreatingConversation}
+              style={{ flexShrink: 0 }}
+              onClick={() => {
+                if (hasDeliveryAgents) {
+                  setSelectedAgentId(null);
+                } else {
+                  setSelection(null);
+                }
+              }}
+            >
+              切换数字员工
+            </Button>
+            {agentNameNode(false)}
+            <Select
+              data-testid="clarification-conversation-select"
+              aria-label="选择澄清会话"
+              size="middle"
+              value={conversationId ?? undefined}
+              placeholder="选择会话"
+              loading={conversations.isLoading}
+              disabled={isCreatingConversation}
+              onChange={handleSelectConversation}
+              options={conversationSelectOptions}
+              style={{ width: 320, maxWidth: '100%', flexShrink: 0 }}
+            />
+            <Button
+              size="middle"
+              icon={<PlusOutlined />}
+              style={{ flexShrink: 0 }}
+              onClick={handleCreateConversation}
+              loading={isCreatingConversation}
+              disabled={isCreatingConversation}
+            >
+              新对话
+            </Button>
+            {headerSuffix}
+          </div>
+        ) : (
+          // 停靠（窄面板）：固定两行——导航/身份一行、会话操作一行，
+          // 各自适应列（名称与会话选择 flex 收缩 + ellipsis），
+          // 任何名称长度都不会把控件挤变形或互相重叠。
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              {headerPrefix}
+              {agentNameNode(true)}
+              {headerSuffix}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Button
+                size="small"
+                icon={<UserSwitchOutlined />}
+                aria-label="切换数字员工"
+                disabled={isCreatingConversation}
+                style={{ flexShrink: 0 }}
+                onClick={() => {
+                  if (hasDeliveryAgents) {
+                    setSelectedAgentId(null);
+                  } else {
+                    setSelection(null);
+                  }
+                }}
+              >
+                切换数字员工
+              </Button>
+              <Select
+                data-testid="clarification-conversation-select"
+                aria-label="选择澄清会话"
+                size="small"
+                value={conversationId ?? undefined}
+                placeholder="选择会话"
+                loading={conversations.isLoading}
+                disabled={isCreatingConversation}
+                onChange={handleSelectConversation}
+                options={conversationSelectOptions}
+                style={{ flex: '1 1 240px', minWidth: 120, maxWidth: '100%' }}
+              />
+              <Button
+                size="small"
+                icon={<PlusOutlined />}
+                style={{ flexShrink: 0 }}
+                onClick={handleCreateConversation}
+                loading={isCreatingConversation}
+                disabled={isCreatingConversation}
+              >
+                新对话
+              </Button>
+            </div>
+          </>
+        )}
       </div>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
@@ -965,11 +1099,11 @@ export function WorkitemClarificationPanel({
         ) : (
         <div style={{
           padding: fullscreen ? '12px 24px' : '8px 12px',
-          borderTop: `1px solid ${CLARIFICATION_THEME.hairline}`,
           position: 'relative', flexShrink: 0,
         }}>
           <ResizeHandle
             direction="vertical"
+            showIndicator={false}
             value={manualInputHeight ?? CLARIFICATION_INPUT_MIN_HEIGHT}
             measureValue={() =>
               inputWrapRef.current?.getBoundingClientRect().height
@@ -984,80 +1118,79 @@ export function WorkitemClarificationPanel({
             onDoubleClick={() => setInputHeight(null)}
             aria-label="调整输入框高度"
           />
-          <div style={{ ...fullscreenColumnStyle, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            {/* position: relative 是斜杠补全面板的定位锚点，不能去掉；
-                minWidth: 0 让 flex 子项可收缩，否则窄视口下输入行会被撑破横向溢出 */}
-            <div ref={inputWrapRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+          <div
+            data-testid="clarification-composer"
+            style={{ ...fullscreenColumnStyle, display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <div ref={inputWrapRef} style={{ minWidth: 0, position: 'relative' }}>
               <SlashCommandPicker
                 commands={slashCommands}
                 query={slashQuery}
                 onSelect={(command) => {
                   // ACP 没有专门的 invoke 方法，选中命令就是把 `/name ` 当普通文本发出去
                   setInputValue(`/${command.name} `);
-                  inputRef.current?.focus();
+                  composerRef.current?.focus();
                 }}
               />
-              <Input.TextArea
-                ref={inputRef}
+              <MarkdownComposer
+                handleRef={composerRef}
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  // 输入法组合期的回车是「选中候选词」，任何模式下都不能当成发送
-                  if (e.nativeEvent.isComposing || composingRef.current) return;
-                  if (!shouldSendOnKey(sendMode, e)) return;
-                  e.preventDefault();
-                  handleSend();
-                }}
-                onCompositionStart={() => { composingRef.current = true; }}
-                onCompositionEnd={() => { composingRef.current = false; }}
-                placeholder={agentRestorePending ? '正在恢复会话，请稍候…' : '输入消息...'}
-                autoSize={clarificationInputAutoSize(manualInputHeight)}
+                onChange={setInputValue}
+                onSendKey={handleSend}
+                sendMode={sendMode}
                 disabled={submitMutation.isPending || isCreatingConversation || isReplying
                   || isConversationLoading || conversationHistoryFailed || agentRestorePending}
-                style={manualInputHeight == null
-                  ? {
-                      width: '100%',
-                      borderRadius: CLARIFICATION_THEME.radiusControl,
-                      borderColor: CLARIFICATION_THEME.controlBorder,
-                    }
-                  : {
-                      width: '100%', height: manualInputHeight, overflowY: 'auto',
-                      borderRadius: CLARIFICATION_THEME.radiusControl,
-                      borderColor: CLARIFICATION_THEME.controlBorder,
-                    }}
+                placeholder={agentRestorePending ? '正在恢复会话，请稍候…' : '输入消息...'}
+                height={manualInputHeight}
+                minHeight={Math.round(CLARIFICATION_INPUT_DEFAULT_ROWS * 16 * 1.7) + 26}
+                maxHeight={inputHeightMax}
               />
             </div>
-            {/* 发送方式切换入口放在「发送 / 终止响应」三元之外：回复进行中只剩终止按钮，
-                偏好本身与当前会话无关，此时也应可切（AC-03） */}
-            <Select<SendMode>
-              size="small"
-              value={sendMode}
-              onChange={handleSendModeChange}
-              options={SEND_MODE_OPTIONS}
-              aria-label="发送方式"
-              data-testid="clarification-send-mode-select"
-              style={{ width: 136, flexShrink: 0 }}
-            />
-            {showReplyingIndicator && cancelSupported && convData?.processingTurnId != null ? (
-              <Button
-                danger
-                icon={<StopOutlined />}
-                onClick={handleCancelReply}
-                loading={cancelMutation.isPending}
-              >
-                终止响应
-              </Button>
-            ) : (
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                aria-label="发送消息"
-                onClick={handleSend}
-                loading={submitMutation.isPending}
-                disabled={isCreatingConversation || isReplying || isConversationLoading
-                  || conversationHistoryFailed || agentRestorePending || !inputValue.trim()}
+            <div
+              data-testid="clarification-input-actions"
+              style={{
+                width: '100%',
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}
+            >
+              <Select<SendMode>
+                size="small"
+                value={sendMode}
+                onChange={handleSendModeChange}
+                options={SEND_MODE_OPTIONS}
+                aria-label="发送方式"
+                data-testid="clarification-send-mode-select"
+                style={{ width: 180, maxWidth: 'calc(100% - 112px)' }}
               />
-            )}
+              {showReplyingIndicator && cancelSupported && convData?.processingTurnId != null ? (
+                <Button
+                  danger
+                  icon={<StopOutlined />}
+                  style={{ minWidth: 104 }}
+                  onClick={handleCancelReply}
+                  loading={cancelMutation.isPending}
+                >
+                  终止响应
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  icon={<SendOutlined />}
+                  aria-label="发送消息"
+                  style={{ minWidth: 104 }}
+                  onClick={handleSend}
+                  loading={submitMutation.isPending}
+                  disabled={isCreatingConversation || isReplying || isConversationLoading
+                    || conversationHistoryFailed || agentRestorePending || !inputValue.trim()}
+                >
+                  发送
+                </Button>
+              )}
+            </div>
           </div>
         </div>
         )
@@ -1101,7 +1234,7 @@ function TurnBubble({ turn, agentName, detailToggle }: {
   const statusTag = turn.status === 'CANCELED' ? (
     <Tag
       style={{
-        display: 'inline-block', marginTop: 6, fontSize: 11,
+        display: 'inline-block', marginTop: 6, fontSize: 13,
         color: CLARIFICATION_THEME.textSecondary,
         borderColor: CLARIFICATION_THEME.hairline,
         backgroundColor: 'transparent',
@@ -1112,7 +1245,7 @@ function TurnBubble({ turn, agentName, detailToggle }: {
   ) : null;
 
   const errorText = turn.error ? (
-    <Typography.Text type="danger" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
+    <Typography.Text type="danger" style={{ display: 'block', fontSize: 13, marginTop: 4 }}>
       {turn.error}
     </Typography.Text>
   ) : null;
@@ -1140,10 +1273,10 @@ function TurnBubble({ turn, agentName, detailToggle }: {
       >
         {renderCopyAction('复制我的消息')}
         <div style={{ maxWidth: '80%' }}>
-          {/* 仅用户纯文本保留 pre-wrap（保留手输入换行）；agent 侧经 markdown
-              渲染，继承 pre-wrap 会把块级元素间的换行渲染成字面空行。 */}
-          <div style={{ ...userBubbleStyle(), whiteSpace: 'pre-wrap' }}>
-            {turn.content}
+          {/* 输入框已是 Markdown 编辑器，用户消息同样走 MarkdownView 渲染
+              （whiteSpace 由 MarkdownView 内部设为 normal，不继承气泡的 pre-wrap）。 */}
+          <div data-testid="clarification-user-bubble" style={userBubbleStyle()}>
+            <MarkdownView className="aw-clarify-md" content={turn.content} />
             {statusTag}
             {errorText}
           </div>
@@ -1156,14 +1289,14 @@ function TurnBubble({ turn, agentName, detailToggle }: {
     <div className="aw-clarify-msg" style={{ marginBottom: 16 }}>
       <div
         style={{
-          fontSize: 11,
+          fontSize: 13,
           color: CLARIFICATION_THEME.textMuted,
           marginBottom: 6,
           display: 'flex',
           alignItems: 'center',
         }}
       >
-        <RobotOutlined style={{ fontSize: 12, marginRight: 4 }} />
+        <span style={{ fontSize: 14, marginRight: 4 }}><RobotHeadIcon /></span>
         <span style={{ flex: 1, minWidth: 0 }}>{agentName || 'AI'}</span>
         {renderCopyAction('复制回复')}
       </div>

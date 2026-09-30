@@ -8,6 +8,12 @@ import java.util.List;
 public interface MemoryDao {
     void insert(MemoryDO memory);
     MemoryDO findById(@Param("id") Long id);
+    MemoryDO findByIdForUpdate(@Param("id") Long id, @Param("tenantId") Long tenantId);
+    MemoryDO lockAdoptedForMigration(@Param("id") Long id);
+    List<MemoryDO> listAdoptedForMigration(@Param("afterId") long afterId, @Param("limit") int limit);
+    long countMigrationEligible(@Param("tenantId") long tenantId);
+    long countMigrationPending(@Param("tenantId") long tenantId);
+    boolean isMigrated(@Param("tenantId") long tenantId, @Param("memoryId") long memoryId);
     MemoryDO findBySourceDedupeKey(@Param("tenantId") Long tenantId, @Param("source") String source,
                                    @Param("sourceDedupeKey") String sourceDedupeKey);
     List<MemoryDO> list(@Param("tenantId") Long tenantId, @Param("scope") String scope,

@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.ai.engine;
 
-import com.alibaba.fastjson.JSON;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.websocket.BrowserRealtimePublisher;
 import org.slf4j.Logger;

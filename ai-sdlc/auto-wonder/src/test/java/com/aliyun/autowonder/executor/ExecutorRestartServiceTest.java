@@ -1,6 +1,6 @@
 package com.aliyun.autowonder.executor;
 
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.redis.RedisManager;
 import com.aliyun.autowonder.websocket.*;

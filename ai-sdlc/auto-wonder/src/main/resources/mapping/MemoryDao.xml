@@ -19,6 +19,34 @@
     <select id="findById" resultType="com.aliyun.autowonder.memory.MemoryDO">
         SELECT * FROM memory WHERE id = #{id} AND is_deleted = 0 LIMIT 1
     </select>
+    <select id="findByIdForUpdate" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT * FROM memory WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0 FOR UPDATE
+    </select>
+    <sql id="notMigrated">
+        NOT EXISTS (SELECT 1 FROM memory_change c WHERE c.tenant_id = m.tenant_id
+            AND c.actor_type = 'LEGACY_MIGRATION'
+            AND c.idempotency_key = CONCAT('legacy-adopted:', m.id, ':topic'))
+    </sql>
+    <select id="isMigrated" resultType="boolean">
+        SELECT EXISTS(SELECT 1 FROM memory_change WHERE tenant_id = #{tenantId}
+          AND actor_type = 'LEGACY_MIGRATION'
+          AND idempotency_key = CONCAT('legacy-adopted:', #{memoryId}, ':topic'))
+    </select>
+    <select id="lockAdoptedForMigration" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT * FROM memory WHERE id = #{id} AND status = 'ADOPTED' AND is_deleted = 0 FOR UPDATE
+    </select>
+    <select id="listAdoptedForMigration" resultType="com.aliyun.autowonder.memory.MemoryDO">
+        SELECT m.* FROM memory m WHERE m.status = 'ADOPTED' AND m.is_deleted = 0
+          AND m.id &gt; #{afterId} AND <include refid="notMigrated"/>
+        ORDER BY m.id LIMIT #{limit}
+    </select>
+    <select id="countMigrationEligible" resultType="long">
+        SELECT COUNT(*) FROM memory WHERE tenant_id = #{tenantId} AND status = 'ADOPTED' AND is_deleted = 0
+    </select>
+    <select id="countMigrationPending" resultType="long">
+        SELECT COUNT(*) FROM memory m WHERE m.tenant_id = #{tenantId}
+          AND m.status = 'ADOPTED' AND m.is_deleted = 0 AND <include refid="notMigrated"/>
+    </select>
     <select id="findBySourceDedupeKey" resultType="com.aliyun.autowonder.memory.MemoryDO">
         SELECT * FROM memory
         WHERE tenant_id = #{tenantId} AND source = #{source}

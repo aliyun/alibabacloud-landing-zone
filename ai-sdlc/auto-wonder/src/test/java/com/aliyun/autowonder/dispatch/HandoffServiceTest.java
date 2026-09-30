@@ -643,7 +643,7 @@ class HandoffServiceTest {
         verify(eventDao).insert(captor.capture());
         String detailJson = captor.getValue().getDetailJson();
         assertNotNull(detailJson);
-        com.alibaba.fastjson.JSONObject detail = com.alibaba.fastjson.JSON.parseObject(detailJson);
+        com.aliyun.autowonder.json.JSONObject detail = com.aliyun.autowonder.json.JSON.parseObject(detailJson);
         assertEquals("HUMAN", detail.getString("fromType"));
         assertEquals("AGENT", detail.getString("toType"));
     }
@@ -671,7 +671,7 @@ class HandoffServiceTest {
         verify(eventDao).insert(captor.capture());
         String detailJson = captor.getValue().getDetailJson();
         assertNotNull(detailJson);
-        com.alibaba.fastjson.JSONObject detail = com.alibaba.fastjson.JSON.parseObject(detailJson);
+        com.aliyun.autowonder.json.JSONObject detail = com.aliyun.autowonder.json.JSON.parseObject(detailJson);
         assertEquals("AGENT", detail.getString("fromType"));
         assertEquals("HUMAN", detail.getString("toType"));
     }

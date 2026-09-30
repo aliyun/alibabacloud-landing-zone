@@ -1,6 +1,5 @@
 package com.aliyun.autowonder.aiusage.dto;
 
-import com.alibaba.fastjson.annotation.JSONField;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 import lombok.Setter;
@@ -17,22 +16,16 @@ public class TaskUsageReportRequest {
     public static class TaskUsageEntry {
         private String provider;
         private String model;
-        @JSONField(name = "step_id")
         @JsonProperty("step_id")
         private String stepId;
-        @JSONField(name = "input_tokens")
         @JsonProperty("input_tokens")
         private Long inputTokens;
-        @JSONField(name = "output_tokens")
         @JsonProperty("output_tokens")
         private Long outputTokens;
-        @JSONField(name = "cache_read_tokens")
         @JsonProperty("cache_read_tokens")
         private Long cacheReadTokens;
-        @JSONField(name = "cache_write_tokens")
         @JsonProperty("cache_write_tokens")
         private Long cacheWriteTokens;
-        @JSONField(name = "reasoning_tokens")
         @JsonProperty("reasoning_tokens")
         private Long reasoningTokens;
         private Double credits;

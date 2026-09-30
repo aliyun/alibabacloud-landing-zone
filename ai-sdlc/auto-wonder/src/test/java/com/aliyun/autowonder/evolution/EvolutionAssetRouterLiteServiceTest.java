@@ -22,23 +22,12 @@ class EvolutionAssetRouterLiteServiceTest {
     }
 
     @Test
-    void routesMemoryEvolutionIntoTraceableProposalOnly() {
+    void rejectsRetiredMemoryEvolutionLane() {
         when(proposalService.propose(any(), eq(1L), eq(2L))).thenAnswer(inv -> proposal(100L));
 
-        EvolutionRunResult result = router.run(memoryCommand(), 1L, 2L);
-
-        assertEquals(100L, result.getProposalId());
-        assertEquals("PROPOSED", result.getStatus());
-        verify(proposalService).propose(argThat(cmd ->
-                "MEMORY".equals(cmd.getAssetType())
-                        && cmd.getAssetId() == null
-                        && "PROPOSAL_BUILDER_LITE".equals(cmd.getTriggerType())
-                        && cmd.getRootEvidenceJson().contains("dispatch:44")
-                        && cmd.getCandidatePatchJson().contains("\"title\":\"Remember checkout failure\"")
-                        && cmd.getCandidatePatchJson().contains("\"proposalBuilder\":\"MEMORY_LITE\"")
-                        && cmd.getCandidatePatchJson().contains("\"scope\":\"AGENT\"")
-                        && cmd.getCandidatePatchJson().contains("\"ownerRef\":30")
-                        && cmd.getCandidatePatchJson().contains("\"type\":\"FACT\"")), eq(1L), eq(2L));
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> router.run(memoryCommand(), 1L, 2L));
+        verifyNoInteractions(proposalService);
     }
 
     @Test

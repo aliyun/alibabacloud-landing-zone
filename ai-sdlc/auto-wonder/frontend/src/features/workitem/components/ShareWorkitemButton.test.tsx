@@ -54,7 +54,7 @@ describe('ShareWorkitemButton', () => {
 
     const button = screen.getByTestId('workitem-share-button');
     expect(button).toHaveTextContent('分享');
-    expect(button).toHaveStyle('color: #8c8c8c');
+    expect(button).toHaveClass('ant-btn-text');
     expect(container.querySelector('.anticon-share-alt')).not.toBeNull();
     expect(container.querySelector('.anticon-check')).toBeNull();
   });

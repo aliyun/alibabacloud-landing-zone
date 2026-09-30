@@ -1,8 +1,8 @@
 package com.aliyun.autowonder.artifact;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
-import com.alibaba.fastjson.JSONObject;
+import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.json.JSONArray;
+import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.debuglog.DebugLogService;
@@ -348,4 +348,5 @@ public class DaemonArtifactController {
         }
         return metadata.getJSONObject(index);
     }
+
 }
