@@ -410,6 +410,33 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    void clarificationAckPersistsReplyAndPublishesCompletionWithoutExternalSink() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(77L);
+        conv.setTenantId(1L);
+        conv.setChannel("WORKITEM_CLARIFICATION");
+        conv.setExecutorId(9L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        when(turnDao.findByConversationTurn(1L, 77L, 55L))
+                .thenReturn(processingInboundTurn(77L));
+        when(turnDao.updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null))
+                .thenReturn(1);
+        when(turnDao.insert(any())).thenReturn(1);
+        ConversationBrowserEventPublisher browser = mock(ConversationBrowserEventPublisher.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "browserEventPublisher", browser);
+
+        svc.acknowledgeTurn(1L, 9L, 77L, 55L, "SUCCESS", null, "reply-md", "sess-123");
+        commitTransactionSynchronizations();
+
+        verify(turnDao).updateInboundStatusIfProcessing(1L, 77L, 55L, "SUCCESS", null);
+        verify(turnDao).insert(argThat(turn -> "OUT".equals(turn.getDirection())
+                && "SUCCESS".equals(turn.getStatus()) && "reply-md".equals(turn.getContent())));
+        verify(convDao).updateCliSessionRef(1L, 77L, "sess-123");
+        verify(browser).publishStatusEvent(1L, 77L, 55L, "completed");
+        verifyNoInteractions(sinkRegistry);
+    }
+
+    @Test
     void acknowledgeTurnResolvesInTurnStoresSessionRefAndDeliversToSink() {
         AgentConversationDO conv = new AgentConversationDO();
         conv.setId(77L);

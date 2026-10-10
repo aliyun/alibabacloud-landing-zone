@@ -149,3 +149,35 @@ bootstrap/build failure.
 
 Never use broad process matching or global Docker cleanup. Concurrent worktrees
 may be undergoing independent verification.
+
+## Optional SLS protocol regression
+
+Start with `./e2e-tests/verify.sh --start --with-sls --project-root "$(pwd -P)" --keep-on-failure`.
+The saved mode is reused by `--check`, `--status`, `--stop` and `--clean-up`;
+`--with-sls` is accepted only with `--start`. The default remains SLS disabled.
+
+This uses the real application image and SLS SDK with dummy credentials and an
+isolated Python 3.12 HTTP receiver on the Compose network (no extra host port).
+It validates the local SLS request protocol, not cloud authentication or cloud
+log ingestion. Three distinct stores must receive nonempty compressed protocol
+requests: system, business and metrics. `--check` waits up to 75 seconds for the
+30-second metrics cycle and asynchronous sends, and fails for missing receivers,
+missing streams or rejected requests before scanning application logs.
+
+Only request counts and byte counts are retained in `sls-receipts.json`; request
+bodies and authentication headers are never recorded. Cleanup archives this
+sanitized evidence under `checks/` and removes the receiver with the other owned
+Compose resources. The receiver requires the `python:3.12-alpine` image; startup
+uses the existing image acquisition and public mirror fallback helpers.
+
+## JSON wire regression
+
+Every `--check` also runs `json_regression.mjs` using the Maven-installed Node 22.
+It creates an isolated user/workspace and a scripted executor protocol fixture,
+then checks four real conversation WebSocket frames (empty/populated environment
+variables, initial/resumed turns), no generated `$ref`, strict JSON parsing,
+and exact Unicode/newline/quote/JSON-shaped string roundtrips through the API.
+The fixture acknowledges turns but does not invoke a model. `--with-runtime`
+separately exercises the real Qoder executor and artifact download. Only check
+names, IDs and a synthetic value digest are archived in `json-regression.json`;
+raw frames and tokens are never logged.

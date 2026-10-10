@@ -138,6 +138,14 @@
             <artifactId>aliyun-log-producer</artifactId>
             <version>${aliyun-log-producer-version}</version>
         </dependency>
+        <!-- SLS SDK still links the v1 API; business JSON stays on Jackson.
+             Runtime scope prevents new application imports of this compatibility API. -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>fastjson</artifactId>
+            <version>2.0.65</version>
+            <scope>runtime</scope>
+        </dependency>
         <!-- DateTime -->
         <dependency>
             <groupId>joda-time</groupId>

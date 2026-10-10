@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/bootstrap.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  e2e-tests/verify.sh --start --project-root PATH [--mode image] [--keep-on-failure] [--no-install] [--startup-timeout SECONDS]
+  e2e-tests/verify.sh --start --project-root PATH [--mode image] [--with-sls] [--keep-on-failure] [--no-install] [--startup-timeout SECONDS]
   e2e-tests/verify.sh --status --project-root PATH
   e2e-tests/verify.sh --logs [--follow] --project-root PATH
   e2e-tests/verify.sh --check [--with-runtime] --project-root PATH
@@ -31,6 +31,7 @@ follow_logs=0
 startup_timeout=180
 bootstrap_install=1
 with_runtime=0
+with_sls=0
 
 set_operation() {
   [[ -z "$operation" ]] || {
@@ -46,6 +47,7 @@ while [[ "$#" -gt 0 ]]; do
     --status) set_operation status; shift ;;
     --logs) set_operation logs; shift ;;
     --check) set_operation check; shift ;;
+    --with-sls) with_sls=1; shift ;;
     --with-runtime) with_runtime=1; shift ;;
     --stop) set_operation stop; shift ;;
     --clean-up) set_operation clean-up; shift ;;
@@ -68,6 +70,7 @@ done
 
 [[ -n "$operation" ]] || { printf 'FATAL: choose a lifecycle operation\n' >&2; usage >&2; exit 2; }
 [[ "$with_runtime" == 0 || "$operation" == check ]] || { printf 'FATAL: --with-runtime requires --check\n' >&2; exit 2; }
+[[ "$with_sls" == 0 || "$operation" == start ]] || { printf 'FATAL: --with-sls requires --start\n' >&2; exit 2; }
 [[ -n "$project_root" ]] || { printf 'FATAL: --project-root is required\n' >&2; exit 2; }
 [[ "$mode" == "image" ]] || { printf 'FATAL: only --mode image is supported\n' >&2; exit 2; }
 [[ "$startup_timeout" =~ ^[1-9][0-9]*$ ]] || { printf 'FATAL: startup timeout must be a positive integer\n' >&2; exit 2; }
@@ -116,6 +119,7 @@ PY
 write_lifecycle_env() {
   local state_env="$AW_RUN_DIR/lifecycle.env"
   {
+    printf 'AW_E2E_WITH_SLS=%q\n' "$AW_E2E_WITH_SLS"
     printf 'AW_E2E_PROJECT=%q\n' "$AW_E2E_PROJECT"
     printf 'AW_E2E_NETWORK=%q\n' "$AW_E2E_NETWORK"
     printf 'AW_E2E_STATE_DIR=%q\n' "$AW_E2E_STATE_DIR"
@@ -154,7 +158,9 @@ load_current() {
   source "$AW_RUN_DIR/lifecycle.env"
   export AW_E2E_PROJECT AW_E2E_NETWORK AW_E2E_STATE_DIR AW_E2E_APP_IMAGE
   export AW_E2E_RUNTIME_ENV AW_E2E_LOG_DIR AW_E2E_STARTUP_TIMEOUT
-  export AW_E2E_DOCKER
+  AW_E2E_WITH_SLS="${AW_E2E_WITH_SLS:-0}"
+  export AW_E2E_DOCKER AW_E2E_WITH_SLS
+  if [[ "$AW_E2E_WITH_SLS" == 1 ]]; then export COMPOSE_PROFILES=sls; fi
   export RESOLVED_MYSQL_PORT RESOLVED_REDIS_PORT RESOLVED_MINIO_PORT
   export RESOLVED_MINIO_CONSOLE_PORT RESOLVED_APP_PORT
   export AW_E2E_MYSQL_PORT AW_E2E_REDIS_PORT AW_E2E_MINIO_PORT
@@ -286,6 +292,7 @@ data = {
     "runId": os.environ["AW_RUN_ID"],
     "projectRoot": os.environ["AW_PROJECT_ROOT"],
     "mode": "image",
+    "sls": {"enabled": os.environ.get("AW_E2E_WITH_SLS") == "1", "scope": "local-sls-protocol"},
     "git": {
         "branch": os.environ["AW_MANIFEST_BRANCH"],
         "commit": os.environ["AW_MANIFEST_COMMIT"],
@@ -330,6 +337,9 @@ run_start() {
   aw_publish_paths
   write_result RUNNING "" ""
 
+  AW_E2E_WITH_SLS="$with_sls"
+  export AW_E2E_WITH_SLS
+  if [[ "$AW_E2E_WITH_SLS" == 1 ]]; then export COMPOSE_PROFILES=sls; fi
   AW_E2E_PROJECT="$AW_RUN_ID"
   AW_E2E_NETWORK="$AW_RUN_ID-net"
   AW_E2E_STATE_DIR="$AW_RUN_DIR"
@@ -464,11 +474,24 @@ run_check() {
     print_failure CHECK_AUTHENTICATED AUTHENTICATED_CHECK_FAILED "Authenticated community smoke chain failed"
     return 1
   fi
+  if ! "$AW_PROJECT_ROOT/target/node/node" "$AW_PROJECT_ROOT/e2e-tests/json_regression.mjs" \
+    --base-url "http://127.0.0.1:$RESOLVED_APP_PORT" --state-dir "$AW_RUN_DIR"; then
+    print_failure CHECK_JSON JSON_REGRESSION_FAILED "Live JSON/WebSocket injection regression failed"
+    return 1
+  fi
   if [[ "$with_runtime" == 1 ]] && ! python3 "$AW_PROJECT_ROOT/e2e-tests/runtime_dispatch.py" \
     --run --state-dir "$AW_RUN_DIR" --base-url "http://127.0.0.1:$RESOLVED_APP_PORT" \
     --storage-origin "http://127.0.0.1:$RESOLVED_MINIO_PORT"; then
     print_failure CHECK_RUNTIME RUNTIME_CHECK_FAILED "Real executor dispatch check failed"
     return 1
+  fi
+  if [[ "$AW_E2E_WITH_SLS" == 1 ]]; then
+    aw_step_event CHECK_SLS START "Waiting up to 75s for system, business and metrics protocol receipts"
+    if ! aw_e2e_compose exec -T sls python /fixture.py --check --timeout 75 >"$AW_RUN_DIR/sls-receipts.json"; then
+      print_failure CHECK_SLS SLS_PROTOCOL_CHECK_FAILED "Local SLS receiver missing, rejected requests, or missing stream receipts"
+      return 1
+    fi
+    aw_step_event CHECK_SLS PASS "All three streams reached the local protocol receiver"
   fi
   if ! AW_E2E_APP_LOG="$AW_LOG_DIR/spring-boot-console.log" \
     AW_E2E_FILE_LOG="$AW_LOG_DIR/auto-wonder.log" \
@@ -487,6 +510,7 @@ run_stop() {
   load_current
   aw_e2e_init_runtime
   aw_e2e_compose stop app mysql redis minio
+  if [[ "$AW_E2E_WITH_SLS" == 1 ]]; then aw_e2e_compose stop sls; fi
   printf 'VERDICT=STOPPED\nRUN_STATE_DIR=%s\n' "$AW_RUN_DIR"
 }
 
@@ -502,7 +526,7 @@ run_cleanup() {
   [[ -f "$AW_RESULT_JSON" ]] && cp "$AW_RESULT_JSON" "$archive/result.json"
   [[ -f "$AW_RUN_DIR/failure-report.txt" ]] && cp "$AW_RUN_DIR/failure-report.txt" "$archive/failure-report.txt"
   mkdir -p "$archive/checks/responses"
-  for report in schema-verification.txt probes.txt authchain.txt log-scan-attributed.txt runtime-dispatch.json; do
+  for report in schema-verification.txt probes.txt authchain.txt log-scan-attributed.txt runtime-dispatch.json sls-receipts.json json-regression.json; do
     [[ -f "$AW_RUN_DIR/$report" ]] && cp "$AW_RUN_DIR/$report" "$archive/checks/$report"
   done
   for redacted in "$AW_RUN_DIR/authchain"/redacted-*.json; do

@@ -37,6 +37,10 @@ networks:
 services:
   mysql:
     pull_policy: ${AW_E2E_PULL_POLICY:-missing}
+    # The init-only MySQL server has a socket but no TCP listener. Wait for the
+    # final server, after schema import and the temporary-server restart.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --protocol=TCP -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
 
   redis:
     pull_policy: ${AW_E2E_PULL_POLICY:-missing}
@@ -60,6 +64,23 @@ services:
       timeout: 5s
       retries: 30
     networks: [community]
+
+  # Opt-in protocol receiver; no published host port or external SLS credentials.
+  sls:
+    image: python:3.12-alpine
+    pull_policy: never
+    profiles: [sls]
+    command: ["python", "/fixture.py"]
+    volumes:
+      - ${REPO_ROOT:?project root set by verify.sh}/e2e-tests/sls_fixture.py:/fixture.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/receipts', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+    networks:
+      community:
+        aliases: [e2e.sls-fixture.local]
 
   app:
     image: ${AW_E2E_APP_IMAGE:?built by verify.sh}
