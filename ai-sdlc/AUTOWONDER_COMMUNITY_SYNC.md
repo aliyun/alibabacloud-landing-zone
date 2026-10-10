@@ -1,210 +1,110 @@
 # AutoWonder Community GitHub Sync Guide
 
-## Purpose and ownership
+## Ownership and acceptance
 
-This runbook publishes an already-reviewed internal `community` commit into
-`ai-sdlc/auto-wonder/` in this GitHub monorepo. It does not merge internal
-`master`, reinterpret community adaptations, or edit the mirrored files.
+Publish an already accepted, merged Community Git tree into
+`ai-sdlc/auto-wonder/`. Community owns product changes and quality acceptance;
+GitHub publication owns exact mirroring, remote identity and upstream PR CR.
 
-The internal `community` tree is the sole source of truth. Keep this runbook
-outside `ai-sdlc/auto-wonder/` so the published subtree can remain an exact Git
-tree mirror.
+If the accepted Community root, merged Community root and GitHub application
+subtree are identical, reuse the accepted build/test/Skill/E2E/review evidence.
+Do not build a GitHub baseline, repeat tests, start services, rerun full source
+scans or repeat product reviews. Required server-side CI is unaffected; do not
+launch duplicate local runs. Preserve all skips and coverage limitations.
 
-## Safety rules
+## 1. Pin inputs
 
-1. Fetch the internal `community` branch, record its full commit ID, and use
-   that immutable ID for the entire run. Stop if the source ref moves before
-   export.
-2. Start from the latest fetched GitHub `upstream/master` in a dedicated
-   worktree and branch. Never sync directly on `master`.
-3. Export with `git archive`. Never copy a working directory: untracked files,
-   ignored build output, local credentials, and work notes must not be
-   published.
-4. Replace only `ai-sdlc/auto-wonder/`, with deletion semantics. This preserves
-   upstream deletions, renames, symlinks, and executable bits.
-5. Do not add GitHub-only edits inside the mirrored subtree. Put GitHub
-   publication documentation, like this file, outside it.
-6. Treat any `docs/superpowers/` entry, secret material, Alibaba-internal
-   dependency, or unexplained internal hostname in the exported community tree
-   as a blocking defect. Fix it on the internal community branch first, then
-   restart this procedure from a new immutable source commit.
-7. Push only to the maintainer fork and open a pull request. Never push or merge
-   directly to GitHub upstream `master`.
+Use execution-provided paths, never developer-specific paths or credentials.
+Fetch `origin/community` internally and `upstream/master` plus `origin/master`
+in GitHub. Pin full Community and upstream base commit IDs. Record fork/master
+relation only; it is not a base and need not be fast-forwarded.
 
-If a boundary check finds a community-source defect, stop the GitHub sync. Fix
-the defect on an isolated internal branch, merge its reviewed change into
-`community`, fetch `origin/community` again, and restart from a newly pinned
-commit. Do not patch the GitHub mirror independently, and do not publish a
-commit that is merely based on `community` but has not been merged into it.
+Read `ACCEPTED_COMMIT` from the accepted quality manifest. Confirm required
+checks and reviews passed, findings were resolved, cleanup completed and the
+internal MR merged. Do not rewrite historical reports for a new commit ID.
+Use a dedicated GitHub worktree from the pinned upstream base and a branch
+containing the Community short SHA. Do not mutate the user's checkout.
 
-## 1. Pin both repositories
+## 2. Export, mirror and commit
 
-Use two clean local checkouts: one for the internal AutoWonder repository and
-one for this GitHub repository.
+Require Git, Python 3.8+, tar and rsync, with complete local clones (not
+partial/promisor clones, which the verifier rejects before object reads). Do not install build tools or Docker
+for a mirror operation. Export only the immutable Community commit:
 
 ```bash
-set -euo pipefail
-
-: "${INTERNAL_REPO:?set INTERNAL_REPO to the internal AutoWonder checkout}"
-: "${GITHUB_REPO:?set GITHUB_REPO to the GitHub monorepo checkout}"
-
-INTERNAL_REPO=$(cd "$INTERNAL_REPO" && pwd -P)
-GITHUB_REPO=$(cd "$GITHUB_REPO" && pwd -P)
-
-git -C "$INTERNAL_REPO" fetch origin community
-git -C "$GITHUB_REPO" fetch origin master --prune
-git -C "$GITHUB_REPO" fetch upstream master --prune
-
-SOURCE_COMMIT=$(git -C "$INTERNAL_REPO" rev-parse origin/community)
-GITHUB_BASE=$(git -C "$GITHUB_REPO" rev-parse upstream/master)
-printf 'SOURCE_COMMIT=%s\nGITHUB_BASE=%s\n' "$SOURCE_COMMIT" "$GITHUB_BASE"
-```
-
-Confirm the fork base and upstream base agree, or explicitly review the
-difference before continuing:
-
-```bash
-git -C "$GITHUB_REPO" rev-parse origin/master upstream/master
-```
-
-Before creating the worktree, require `git`, `tar`, and `rsync`. On macOS,
-install missing commands with Homebrew. On CentOS, install them with the host's
-package manager (`dnf install git tar rsync` or `yum install git tar rsync`).
-Stop if a prerequisite cannot be installed; never substitute a working-directory
-copy for `git archive` plus `rsync --delete`.
-
-## 2. Create an isolated GitHub worktree
-
-Choose a unique date and the pinned source's short commit ID:
-
-```bash
-SOURCE_SHORT=$(git -C "$INTERNAL_REPO" rev-parse --short=9 "$SOURCE_COMMIT")
-RUN_DATE=$(date +%Y%m%d)
-BRANCH="sync/autowonder-community-${SOURCE_SHORT}-${RUN_DATE}"
-WORKTREE_BASE=${WORKTREE_BASE:-"$(dirname "$GITHUB_REPO")/worktrees"}
-WORKTREE="$WORKTREE_BASE/autowonder-community-${SOURCE_SHORT}-${RUN_DATE}"
-
-mkdir -p "$WORKTREE_BASE"
-git -C "$GITHUB_REPO" worktree add "$WORKTREE" -b "$BRANCH" "$GITHUB_BASE"
-```
-
-`INTERNAL_REPO`, `GITHUB_REPO`, and optionally `WORKTREE_BASE` are execution
-inputs, not repository constants. The operator or Agent supplies them for the
-current machine. Never commit a developer home directory or machine-specific
-absolute path into this runbook or a helper script.
-
-Run the current GitHub baseline verification from
-`$WORKTREE/ai-sdlc/auto-wonder` before replacing any file. Use the commands in
-that version's `docs/community/verification.md`. A failing baseline must be
-recorded and investigated before attributing failures to the new sync.
-
-## 3. Export and mirror the pinned community tree
-
-The target guard prevents an incorrectly resolved variable from widening the
-deletion scope:
-
-```bash
-TARGET="$WORKTREE/ai-sdlc/auto-wonder"
+TARGET="$GITHUB_WORKTREE/ai-sdlc/auto-wonder"
 STAGE=$(mktemp -d)
 
-test "$(git -C "$INTERNAL_REPO" rev-parse origin/community)" = "$SOURCE_COMMIT"
+test -n "$GITHUB_WORKTREE"
+test "$(git -C "$GITHUB_WORKTREE" rev-parse --show-toplevel)" = "$GITHUB_WORKTREE"
 test -d "$TARGET"
-test "$(git -C "$WORKTREE" rev-parse --show-toplevel)" = "$WORKTREE"
-
-git -C "$INTERNAL_REPO" archive --format=tar "$SOURCE_COMMIT" |
+set -o pipefail
+git -C "$INTERNAL_REPO" archive --format=tar "$COMMUNITY_COMMIT" |
   tar -xf - -C "$STAGE"
 rsync -a --delete "$STAGE/" "$TARGET/"
+git -C "$GITHUB_WORKTREE" add -A -- ai-sdlc/auto-wonder
+git -C "$GITHUB_WORKTREE" diff --check --cached
 ```
 
-The temporary stage may be deleted after all verification is complete. Never
-use a broad cleanup command or an unresolved path.
+Stop on any nonzero exit. Record source/base in the commit message and commit
+before verifying. Never use a working-directory copy or independently patch
+mirrored product files. Keep runbook changes in a separate documentation PR.
+If there is no mirror diff, reuse the existing output commit and PR state.
 
-## 4. Prove exact tree identity
+## 3. Execute the three-tree gate
 
-Stage the mirror and compare the source and destination Git trees. `ls-tree`
-compares every relative path, Blob ID, and Git file mode, so an empty diff
-proves content and executable-bit identity without reading ignored files.
+`VERIFIER_REPO` must contain the reviewed repository verifier. Record its commit
+ID. For older releases predating the tool, use a separately pinned reviewed
+tooling checkout; do not change the accepted release just to add the script.
+The authoritative script is `scripts/verify-community-mirror.py` in AutoWonder.
 
 ```bash
-git -C "$WORKTREE" add -A ai-sdlc/auto-wonder
-INDEX_TREE=$(git -C "$WORKTREE" write-tree)
-
-git -C "$INTERNAL_REPO" ls-tree -r "$SOURCE_COMMIT" >"$STAGE/source.tree"
-git -C "$WORKTREE" ls-tree -r "$INDEX_TREE:ai-sdlc/auto-wonder" \
-  >"$STAGE/github.tree"
-diff -u "$STAGE/source.tree" "$STAGE/github.tree"
+GITHUB_OUTPUT_COMMIT=$(git -C "$GITHUB_WORKTREE" rev-parse HEAD)
+python3 "$VERIFIER_REPO/scripts/verify-community-mirror.py" \
+  --internal-repo "$INTERNAL_REPO" \
+  --github-repo "$GITHUB_WORKTREE" \
+  --accepted-commit "$ACCEPTED_COMMIT" \
+  --community-commit "$COMMUNITY_COMMIT" \
+  --github-commit "$GITHUB_OUTPUT_COMMIT" \
+  --github-base "$GITHUB_BASE" \
+  --output "$EVIDENCE_DIR/mirror-verification.json"
 ```
 
-Also require these boundary checks:
+Exit 0 / MATCH is required. Exit 1 means mismatch; exit 2 means an input or
+execution error. Never treat missing output or an old JSON file as PASS.
+The script recursively compares committed paths, object IDs and modes, plus
+root tree IDs, and rejects changes outside the application subtree. Added
+nested directories need no configuration. Git-untracked/ignored files and
+empty directories are not committed content. Gitlink/LFS references are
+compared as committed pointers, not validated external payloads.
 
-```bash
-test -z "$(git -C "$INTERNAL_REPO" ls-tree -r --name-only "$SOURCE_COMMIT" |
-  grep -E '(^|/)docs/superpowers/')"
-git -C "$WORKTREE" diff --check --cached
-git -C "$WORKTREE" status --short
-```
+One independent reviewer checks the script's inputs, exit code, JSON report
+and original acceptance provenance. Do not manually compare files or re-review
+unchanged application code. Record `verificationMode=REUSED`, original evidence
+references, skips/limits and the mirror report. This is not a new test run.
 
-Run the repository's established secret scanner and community dependency checks.
-Do not paste matching secret values into logs or pull-request text.
+If the mirror differs, repair the mirror and rerun the script. If the accepted
+and merged Community trees differ, return the changed source to Community
+quality convergence. If acceptance is missing or failed, recover evidence or
+complete the missing Community checks. A concrete changed external build or
+deployment input may require a targeted check: record the input, affected
+behavior and coverage gap first. Different checkout paths or commit IDs alone
+are not a reason to repeat acceptance.
 
-## 5. Verify the published result
+## 4. Push, PR and finish
 
-Follow `ai-sdlc/auto-wonder/AGENTS.md` and
-`ai-sdlc/auto-wonder/e2e-tests/AGENT_GUIDE.md`. At minimum:
+Push precisely the verified commit to the authorized fork. Use `git ls-remote`
+to prove remote branch SHA equals the report's GitHub commit. Do not stage more
+changes after verification. Do not push/merge upstream master directly.
 
-1. Run the complete Maven build with the repository-pinned frontend toolchain.
-2. Run deployment and upgrade Skill test suites named by
-   `docs/community/verification.md`.
-3. Run internal-reference and dependency-boundary scans.
-4. Start the exact GitHub worktree with `e2e-tests/verify.sh --start
-   --project-root "$WORKTREE/ai-sdlc/auto-wonder" --mode image
-   --keep-on-failure`.
-5. Run `verify.sh --check`; `VERDICT=STARTED` alone is not a release verdict.
-6. Always run `verify.sh --clean-up` after inspection, even after a failure.
+Create or reuse one upstream PR. If only a compare creation entry is available,
+state that it is not an existing PR. Include accepted/Community/base/output
+commits, verifier commit, tree result, changed-file summary, version/release,
+reused acceptance evidence, known limitations and rollback.
 
-Do not source or print `runtime.env`. It is mode `0600`; read an individual
-value only when a test needs it.
-
-### macOS GNU checksum compatibility
-
-Some deployment and upgrade tests execute Linux remote-operation fixtures on
-the macOS control host and therefore require a command named `sha256sum`.
-Homebrew installs that command as `gsha256sum`. If the pinned community source
-does not yet bootstrap `coreutils`, install it and expose only the checksum
-command for the verification process:
-
-```bash
-brew install coreutils
-CHECKSUM_BIN=$(mktemp -d)
-ln -s "$(brew --prefix coreutils)/bin/gsha256sum" "$CHECKSUM_BIN/sha256sum"
-PATH="$CHECKSUM_BIN:$PATH" python3 -m pytest tests -q
-```
-
-Do not prepend the complete Homebrew `coreutils/libexec/gnubin` directory on
-macOS. That also replaces BSD `stat` with GNU `stat`, causing mode-`0600`
-checks to report false failures. Record this compatibility override in the pull
-request; it is verifier environment state, not a source-tree modification.
-
-## 6. Commit, push, and open the pull request
-
-Record both immutable commits in the commit message:
-
-```bash
-git -C "$WORKTREE" add -A ai-sdlc/auto-wonder \
-  ai-sdlc/AUTOWONDER_COMMUNITY_SYNC.md
-git -C "$WORKTREE" commit -m "sync(autowonder): publish community ${SOURCE_SHORT}"
-git -C "$WORKTREE" push -u origin "$BRANCH"
-```
-
-After committing, repeat the `ls-tree` comparison against
-`HEAD:ai-sdlc/auto-wonder`, confirm the remote branch resolves to local `HEAD`,
-and include the following evidence in the pull request:
-
-- full internal community source commit;
-- GitHub upstream base commit;
-- source/destination tree identity result;
-- changed-file summary;
-- Maven, frontend, Skill, boundary, E2E start/check, and cleanup results;
-- confirmation that `VERSION` and its matching release file are unchanged or
-  updated together;
-- any known warning or deferred follow-up.
+After human merge, confirm PR state and the resulting application tree equals
+the report's Community tree; squash/rebase commit IDs may differ. Do not rerun
+acceptance or create another equivalent PR. Clean up only this run's owned
+staging/worktree resources when safe; no E2E cleanup when no E2E was started.
+Keep non-secret evidence. Never change mirrored release files merely to backfill
+PR links. No tag is created without prior explicit concrete-tag authorization.
