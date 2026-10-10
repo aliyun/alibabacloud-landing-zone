@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import tempfile
 import time
 import signal
@@ -63,6 +63,70 @@ class RuntimeSafetyTests(unittest.TestCase):
             self.assertEqual(result["id"], 101)
             self.assertEqual(api.deleted, ["/api/executors/100"])
             self.assertEqual(lock.read_text(), "existing-runtime")
+
+    def test_executor_selection_handles_more_than_32_host_lock_names(self):
+        class FakeApi:
+            next_id = 1
+            active = set()
+            def call(self, method, path, body=None):
+                if method == "POST":
+                    current = self.next_id
+                    self.next_id += 1
+                    self.active.add(current)
+                    return {"id": current}
+                self.active.remove(int(path.rsplit("/", 1)[1]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for number in range(1, 41):
+                (root / f"executor-{number}.lock").touch()
+            # A dangling symlink is also occupied; never follow/replace it.
+            (root / "executor-41.lock").symlink_to(root / "absent")
+            before = set(root.iterdir())
+            api = FakeApi()
+            self.assertEqual(runtime.reserve_executor(api, 1, root)["id"], 42)
+            self.assertEqual(api.active, {42})
+            self.assertEqual(set(root.iterdir()), before)
+            self.assertTrue((root / "executor-41.lock").is_symlink())
+
+    def test_executor_selection_rejects_repeated_id_without_server_residue(self):
+        class FakeApi:
+            creates = 0
+            active = set()
+            def call(self, method, path, body=None):
+                if method == "POST":
+                    self.creates += 1
+                    self.active.add(1)
+                    return {"id": 1}
+                self.active.discard(int(path.rsplit("/", 1)[1]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for number in range(1, 4):
+                (root / f"executor-{number}.lock").touch()
+            api = FakeApi()
+            with self.assertRaisesRegex(runtime.CheckFailure, "ISOLATED_EXECUTOR_ID_UNAVAILABLE"):
+                runtime.reserve_executor(api, 1, root)
+            self.assertEqual(api.creates, 2)
+            self.assertEqual(api.active, set())
+
+    def test_executor_selection_concurrent_lock_fails_within_snapshot_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            class FakeApi:
+                creates = 0
+                active = set()
+                def call(self, method, path, body=None):
+                    if method == "POST":
+                        self.creates += 1
+                        self.active.add(1)
+                        (root / "executor-1.lock").touch()
+                        return {"id": 1}
+                    self.active.discard(int(path.rsplit("/", 1)[1]))
+            api = FakeApi()
+            with self.assertRaisesRegex(runtime.CheckFailure, "ISOLATED_EXECUTOR_ID_UNAVAILABLE"):
+                runtime.reserve_executor(api, 1, root)
+            self.assertEqual(api.creates, 1)
+            self.assertEqual(api.active, set())
+            self.assertTrue((root / "executor-1.lock").exists())
 
     def test_artifact_requires_exact_content(self):
         fn = self.function("require_artifact")
@@ -191,8 +255,16 @@ except KeyboardInterrupt:
                 with runtime.OwnedRuntime([sys.executable, "-c", code, str(marker)], {}, Path(directory)) as process:
                     self.assertEqual(process.wait(timeout=5), 0)
                     provider_pid = int(marker.read_text())
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(provider_pid, 0)
+                # On macOS an exiting orphan can remain visible briefly after
+                # its process group disappears. Require eventual ESRCH, not a
+                # weaker zombie or signal-delivery assertion.
+                def provider_gone():
+                    try:
+                        os.kill(provider_pid, 0)
+                        return False
+                    except ProcessLookupError:
+                        return True
+                runtime.wait_for(provider_gone, 5, "TEST_PROVIDER_REAP_TIMEOUT")
             finally:
                 if provider_pid:
                     try:
@@ -200,12 +272,55 @@ except KeyboardInterrupt:
                     except ProcessLookupError:
                         pass
 
+    def test_cleanup_ignores_permission_error_only_after_owned_group_disappears(self):
+        owner = runtime.OwnedRuntime([], {}, Path("unused"))
+        owner.process = Mock(pid=123)
+        owner.directory = Mock()
+        with patch.object(runtime.subprocess, "check_output", return_value="123 1 123\n"), \
+                patch.object(runtime.os, "getsid", return_value=123), \
+                patch.object(runtime.os, "getpgid", side_effect=[123, ProcessLookupError(),
+                                                                 ProcessLookupError(), ProcessLookupError()]), \
+                patch.object(runtime.os, "killpg", side_effect=PermissionError()) as kill:
+            owner.__exit__()
+        kill.assert_called_once_with(123, signal.SIGTERM)
+        owner.directory.cleanup.assert_called_once()
+        self.assertTrue(owner.cleaned)
+
+    def test_cleanup_does_not_swallow_permission_error_for_live_owned_group(self):
+        owner = runtime.OwnedRuntime([], {}, Path("unused"))
+        owner.process = Mock(pid=123)
+        owner.directory = Mock()
+        with patch.object(runtime.subprocess, "check_output", return_value="123 1 123\n"), \
+                patch.object(runtime.os, "getsid", return_value=123), \
+                patch.object(runtime.os, "getpgid", return_value=123), \
+                patch.object(runtime.os, "killpg", side_effect=PermissionError()):
+            with self.assertRaises(PermissionError):
+                owner.__exit__()
+        owner.directory.cleanup.assert_called_once()
+        self.assertFalse(owner.cleaned)
+
     def test_wait_is_bounded_and_does_not_silently_pass(self):
         fn = self.function("wait_for")
         start = time.monotonic()
         with self.assertRaisesRegex(runtime.CheckFailure, "DISPATCH_TIMEOUT"):
             fn(lambda: None, .01, "DISPATCH_TIMEOUT")
         self.assertLess(time.monotonic() - start, 1)
+
+    def test_cleanup_log_checkpoints_count_each_log_and_survive_sanitization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / "logs").mkdir()
+            (state / "logs/spring-boot-console.log").write_text("first\nsecond\n")
+            (state / "logs/auto-wonder.log").write_text("first\n")
+            start = runtime.log_line_counts(state)
+            self.assertEqual(start, {"stdout": 2, "file": 1})
+            (state / "logs/auto-wonder.log").write_text("first\nlast\n")
+            end = runtime.log_line_counts(state)
+            report = state / "runtime-dispatch.json"
+            runtime.write_evidence(report, {"cleanupLogStart": start, "cleanupLogEnd": end})
+            self.assertEqual(json.loads(report.read_text()),
+                             {"cleanupLogStart": start, "cleanupLogEnd": {"stdout": 2, "file": 2}})
+            self.assertEqual(runtime.log_line_counts(state / "missing"), {})
 
     def test_evidence_drops_unapproved_secrets(self):
         fn = self.function("write_evidence")
@@ -263,7 +378,8 @@ with tempfile.TemporaryDirectory() as directory:
                 raise OSError("UNIT_TEST_PRIVATE_CLEANUP_ERROR")
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(runtime, "Api", FakeApi), patch.object(runtime, "OwnedRuntime", BrokenCleanup), \
-                    patch.object(runtime, "wait_for", side_effect=runtime.CheckFailure("EXECUTOR_ONLINE_TIMEOUT")):
+                    patch.object(runtime, "wait_for", side_effect=runtime.CheckFailure("EXECUTOR_ONLINE_TIMEOUT")), \
+                    patch.object(Path, "home", return_value=Path(directory)):
                 with self.assertRaises(OSError):
                     runtime.run_scenario(Path("unused"), Path(directory),
                                          "http://127.0.0.1:7001", "http://127.0.0.1:9000")
@@ -339,6 +455,12 @@ class PreflightTests(unittest.TestCase):
             for name in ("authchain.sh", "logscan.sh"):
                 (e2e / name).write_text("#!/bin/sh\nexit 0\n")
                 (e2e / name).chmod(0o700)
+            # JSON is an earlier independent gate; stub its bundled Node boundary
+            # so this test still reaches and asserts the runtime failure phase.
+            node = fixture / "target/node/node"
+            node.parent.mkdir(parents=True)
+            node.write_text("#!/bin/sh\nexit 0\n")
+            node.chmod(0o700)
             (e2e / "runtime_dispatch.py").write_text(
                 "import sys\nsys.exit(0 if '--preflight' in sys.argv else 17)\n")
             state_base = Path(directory) / "state"

@@ -33,6 +33,25 @@ candidate was proved, not assumed: `25371cb1` is an ancestor of the community ti
 
 ## History
 
+### 2026-10-10: Community SLS startup bugfix — v0.10.1
+
+- Community base: `5af9b768a9d9ada5898561321bd599f178bf202b` (v0.10.0).
+- No additional master sync; incorporated master remains
+  `cc41f31632dd7ab5f5a8bd7d7916962445dcd02e`. The recorded verified baseline
+  above is not advanced by this targeted patch.
+- Runtime-only Fastjson 2 compatibility supplies the SLS SDK's v1 API; business
+  JSON remains Jackson. Live regression additionally fixes external-sink delivery
+  for browser-backed clarification replies, preserving persistence and completion
+  events. No configuration, schema or migration changes; no deployment/upgrade
+  Skill update required.
+- Community-owned E2E adds opt-in local SLS protocol receipts and JSON WebSocket
+  injection. These are deliberate bugfix tests, not imported master E2E assets.
+- See `releases/release_v0.10.1_20261010.md`. Exact final-SHA unit, frontend,
+  Skill, image/E2E, cleanup and independent-review results belong to the release
+  quality evidence and MR. Pending checks are not asserted as PASS here.
+- Internal MR and GitHub PR are not yet created. Public output must mirror the
+  merged Community tree and pass its own verification before upstream review.
+
 ### 2026-09-29: candidate sync to `cc41f3163` — v0.10.0
 
 - Fixed master: `cc41f31632dd7ab5f5a8bd7d7916962445dcd02e`.

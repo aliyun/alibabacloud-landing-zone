@@ -79,9 +79,10 @@ sort -u -o "$rid_map" "$rid_map"
 # --- 2. scan and attribute ----------------------------------------------------
 AW_E2E_APP_LOG="$APP_LOG" AW_E2E_FILE_LOG="$FILE_LOG" \
 AW_E2E_RID_MAP="$rid_map" AW_E2E_REPORT="$REPORT" \
+AW_E2E_RUNTIME_EVIDENCE="$AW_E2E_STATE_DIR/runtime-dispatch.json" \
 AW_E2E_APP_LOG_START_LINE="${AW_E2E_APP_LOG_START_LINE:-0}" \
 AW_E2E_FILE_LOG_START_LINE="${AW_E2E_FILE_LOG_START_LINE:-0}" python3 <<'PY'
-import os, re, sys
+import json, os, re, sys
 
 app_log = os.environ["AW_E2E_APP_LOG"]
 file_log = os.environ["AW_E2E_FILE_LOG"]
@@ -136,6 +137,46 @@ def level_of(line):
         return "WARN", "", "", line
     return None, "", "", ""
 
+# Runtime diagnostics have no saved HTTP response request_id. Permit only the
+# measured successful scenario, exact protocol messages, and owned cleanup span.
+try:
+    with open(os.environ["AW_E2E_RUNTIME_EVIDENCE"]) as fh:
+        runtime = json.load(fh)
+except (OSError, ValueError):
+    runtime = {}
+required_checks = {"executor_online", "routing_matches", "server_acked", "server_running",
+                   "dispatch_succeeded", "downloaded_artifact_matches"}
+runtime_ok = (isinstance(runtime, dict) and runtime.get("verdict") == "PASS"
+              and runtime.get("cleanup") is True
+              and isinstance(runtime.get("checks"), list)
+              and all(isinstance(check, str) for check in runtime["checks"])
+              and required_checks.issubset(runtime["checks"])
+              and all(type(runtime.get(key)) is int and runtime[key] > 0
+                      for key in ("executorId", "workitemId", "dispatchId", "artifactId", "workspaceId")))
+
+def runtime_attribution(line, source, line_number):
+    match = LINE.fullmatch(line)
+    if not runtime_ok or not match or match["level"] != "WARN":
+        return None
+    message = match["msg"].strip()
+    executor, workitem, dispatch = (runtime[key] for key in ("executorId", "workitemId", "dispatchId"))
+    if (match["logger"] == "DispatchAiUsageService"
+            and match["endpoint"] == f"POST /api/daemon/dispatches/{dispatch}/artifacts"
+            and re.fullmatch(
+                rf"usage artifact ingest skipped artifactId=[1-9][0-9]* "
+                rf"ossRef=[^\s/]+/t/{runtime['workspaceId']}/workitem/{workitem}/dispatch/{dispatch}/"
+                rf"objects/sha256/[0-9a-f]{{64}}/observability/usage\.json "
+                rf"workitemId={workitem} dispatchId={dispatch} reason=no_entries", message)):
+        return "runtime_optional_usage_no_entries"
+    if (match["logger"] == "ExecutorWsEndpoint" and not match["endpoint"]
+            and message == f"WS error executorId={executor} java.io.EOFException"):
+        starts, ends = runtime.get("cleanupLogStart"), runtime.get("cleanupLogEnd")
+        if isinstance(starts, dict) and isinstance(ends, dict):
+            start, end = starts.get(source), ends.get(source)
+            if type(start) is int and type(end) is int and 0 <= start < line_number <= end:
+                return "runtime_owned_teardown_eof"
+    return None
+
 attr_rows = []
 unattr_rows = []
 counts = {"ERROR": 0, "WARN": 0}
@@ -153,7 +194,7 @@ for src, lines, start in (("stdout", app_lines, app_start), ("file", file_lines,
         if level not in ("ERROR", "WARN"):
             continue
         counts[level] += 1
-        call = calls.get(rid)
+        call = calls.get(rid) or runtime_attribution(line, src, ln)
         if call:
             attr_counts[level] += 1
             attr_rows.append(f"ATTRIB|{level}|{src}:{ln}|rid={rid}|call={call}|endpoint={endpoint}|{msg}")

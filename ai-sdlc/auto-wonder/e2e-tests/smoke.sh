@@ -139,7 +139,14 @@ umask 077
   printf 'S3_ACCESS_KEY_ID=%s\n' "$AW_E2E_MINIO_ROOT_USER"
   printf 'S3_ACCESS_KEY_SECRET=%s\n' "$(aw_e2e_secret AW_E2E_MINIO_ROOT_PASSWORD)"
   printf 'OSS_BUCKET=%s\n' "$AW_E2E_BUCKET"
-  printf 'AUTOWONDER_SLS_ENABLED=false\n'
+  if [[ "${AW_E2E_WITH_SLS:-0}" == 1 ]]; then
+    printf 'AUTOWONDER_SLS_ENABLED=true\n'
+    printf 'SLS_ENDPOINT=http://sls-fixture.local\nSLS_PROJECT=e2e\n'
+    printf 'SLS_SYS_LOGSTORE=e2e-system\nSLS_BIZ_LOGSTORE=e2e-business\nSLS_METRIC_LOGSTORE=e2e-metrics\n'
+    printf 'SLS_ACCESS_KEY_ID=e2e-dummy\nSLS_ACCESS_KEY_SECRET=e2e-dummy-secret\n'
+  else
+    printf 'AUTOWONDER_SLS_ENABLED=false\n'
+  fi
 } >"$run_env"
 chmod 600 "$run_env"
 umask 022
@@ -158,6 +165,11 @@ log "exported container JDBC URL length=${#SPRING_DATASOURCE_URL}"
 AW_E2E_APP_IMAGE="${AW_E2E_APP_IMAGE:?set AW_E2E_APP_IMAGE to the image built by verify.sh}"
 AW_E2E_RUNTIME_ENV="$run_env"
 export AW_E2E_APP_IMAGE AW_E2E_RUNTIME_ENV AW_E2E_LOG_DIR RESOLVED_APP_PORT
+if [[ "${AW_E2E_WITH_SLS:-0}" == 1 ]]; then
+  aw_e2e_ensure_image python:3.12-alpine - "$(aw_e2e_official_mirror python:3.12-alpine)"
+  aw_e2e_compose up -d --wait sls >>"$AW_E2E_STATE_DIR/compose-up.log" 2>&1 \
+    || die "SLS protocol fixture failed to start"
+fi
 log "starting compose-owned server image=$AW_E2E_APP_IMAGE log=$app_log"
 if ! aw_e2e_compose up -d app >>"$AW_E2E_STATE_DIR/compose-up.log" 2>&1; then
   tail -60 "$AW_E2E_STATE_DIR/compose-up.log"

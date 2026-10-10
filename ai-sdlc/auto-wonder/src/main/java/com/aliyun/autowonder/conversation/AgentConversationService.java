@@ -1004,6 +1004,10 @@ public class AgentConversationService {
     }
 
     private void sendPendingChannelReply(PendingChannelReply reply) {
+        // Clarification replies are read from persisted turns and browser events.
+        if ("WORKITEM_CLARIFICATION".equals(reply.conv().getChannel())) {
+            return;
+        }
         withRequestId(reply.requestId(), () ->
                 sinkRegistry.resolve(reply.conv().getChannel()).deliverReply(reply.conv(),
                         reply.replyMarkdown(), reply.sourceExternalMsgId()));

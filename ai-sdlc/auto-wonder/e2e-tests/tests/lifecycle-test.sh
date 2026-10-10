@@ -283,6 +283,7 @@ test_cli() {
   assert_contains "$sandbox/start-output.txt" 'LIFECYCLE|END|FAIL|verdict=FAIL|phase=BUILD|failureKind=BUILD_FAILED'
   state_root="$sandbox/state/$(aw_project_hash "$(cd "$fixture" && pwd -P)")"
   run_id="$(sed -n '1p' "$state_root/current")"
+  assert_contains "$state_root/$run_id/lifecycle.env" 'AW_E2E_WITH_SLS=0'
   assert_contains "$state_root/$run_id/result.json" '"verdict": "FAIL"'
   assert_contains "$state_root/$run_id/failure-report.txt" 'FAILED_PHASE=BUILD'
   run_expect_success env AW_E2E_TEST_STATE_BASE="$sandbox/state" \
@@ -293,7 +294,7 @@ test_cli() {
 
   if output="$(env AW_E2E_TEST_STATE_BASE="$sandbox/state-unsupported" \
     AW_BOOTSTRAP_OS_OVERRIDE=Plan9 "$verify" --start --project-root "$fixture" \
-      --keep-on-failure --no-install 2>&1)"; then
+      --keep-on-failure --no-install --with-sls 2>&1)"; then
     fail "unsupported host unexpectedly started"
   fi
   printf '%s\n' "$output" >"$sandbox/unsupported-output.txt"
@@ -301,6 +302,9 @@ test_cli() {
   assert_contains "$sandbox/unsupported-output.txt" 'FAILURE_KIND=UNSUPPORTED_HOST'
   assert_contains "$sandbox/unsupported-output.txt" 'STEP|HOST_DETECTION|FAIL|failureKind=UNSUPPORTED_HOST'
   assert_contains "$sandbox/unsupported-output.txt" 'LIFECYCLE|END|FAIL'
+  state_root="$sandbox/state-unsupported/$(aw_project_hash "$(cd "$fixture" && pwd -P)")"
+  run_id="$(sed -n '1p' "$state_root/current")"
+  assert_contains "$state_root/$run_id/lifecycle.env" 'AW_E2E_WITH_SLS=1'
   run_expect_success env AW_E2E_TEST_STATE_BASE="$sandbox/state-unsupported" \
     PATH="$fake_bin:$PATH" "$verify" --clean-up --project-root "$fixture"
   rm -rf "$sandbox"

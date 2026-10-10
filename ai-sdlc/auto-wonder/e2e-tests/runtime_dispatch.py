@@ -48,12 +48,23 @@ def step_request(instruction):
 def reserve_executor(api, agent_id, lock_root):
     # Fresh databases reuse numeric IDs. Never overwrite a host runtime lock
     # belonging to another server/run, even if that lock is currently inactive.
-    for _ in range(32):
+    occupied = {path.name for path in lock_root.glob("executor-*.lock")
+                if re.fullmatch(r"executor-[0-9]+\.lock", path.name)}
+    seen = set()
+    # With distinct new IDs, N occupied names can block at most N candidates.
+    # Concurrent new locks still fail closed within this snapshot-derived bound.
+    for _ in range(len(occupied) + 1):
         executor = api.call("POST", f"/api/agents/{agent_id}/executors",
                            {"name": "runtime-e2e", "clientKind": "QODER_CLI"})
-        if not (lock_root / f"executor-{int(executor['id'])}.lock").exists():
+        executor_id = int(executor["id"])
+        lock = lock_root / f"executor-{executor_id}.lock"
+        repeated = executor_id in seen
+        if not repeated and not lock.exists() and not lock.is_symlink():
             return executor
-        api.call("DELETE", f"/api/executors/{int(executor['id'])}")
+        api.call("DELETE", f"/api/executors/{executor_id}")
+        if repeated:
+            raise CheckFailure("ISOLATED_EXECUTOR_ID_UNAVAILABLE")
+        seen.add(executor_id)
     raise CheckFailure("ISOLATED_EXECUTOR_ID_UNAVAILABLE")
 
 
@@ -101,7 +112,17 @@ def wait_for(probe, timeout, failure):
 
 EVIDENCE_KEYS = frozenset(("verdict", "runtimeVersion", "workspaceId", "agentId",
     "agentVersionId", "executorId", "workitemId", "dispatchId", "stepId", "artifactId",
-    "artifactSha256", "checks", "cleanup", "failureKind"))
+    "artifactSha256", "checks", "cleanup", "failureKind", "cleanupLogStart", "cleanupLogEnd"))
+
+
+def log_line_counts(state):
+    counts = {}
+    for source, name in (("stdout", "spring-boot-console.log"), ("file", "auto-wonder.log")):
+        path = state / "logs" / name
+        if path.is_file():
+            with path.open(errors="replace") as stream:
+                counts[source] = sum(1 for _ in stream)
+    return counts
 
 
 def write_evidence(path, evidence):
@@ -183,6 +204,12 @@ class OwnedRuntime:
                     os.killpg(pgid, sig)
                 except ProcessLookupError:
                     pass
+                except PermissionError:
+                    # macOS can return EPERM while a signaled orphan exits.
+                    # Ignore only an owned group that has now disappeared;
+                    # a permission failure for a still-live group must fail.
+                    if pgid in live_groups():
+                        raise
         try:
             send(signal.SIGTERM)
             try:
@@ -336,6 +363,8 @@ def run_scenario(binary, state, base, storage_origin):
             url = api.call("GET", f"/api/artifacts/{artifact_id}/download")
             evidence["artifactSha256"] = require_artifact(api.download(url, storage_origin), expected)
             evidence["checks"].append("downloaded_artifact_matches")
+            # Only EOF diagnostics written during this owned teardown may be attributed.
+            evidence["cleanupLogStart"] = log_line_counts(state)
         evidence["verdict"] = "PASS"
     except CheckFailure as exc:
         evidence["failureKind"] = str(exc)
@@ -347,6 +376,8 @@ def run_scenario(binary, state, base, storage_origin):
         try:
             if executor_id:
                 api.call("DELETE", f"/api/executors/{executor_id}")
+            if "cleanupLogStart" in evidence:
+                evidence["cleanupLogEnd"] = log_line_counts(state)
             evidence["cleanup"] = owned is None or owned.cleaned
             if not evidence["cleanup"]:
                 evidence["verdict"] = "FAIL"
