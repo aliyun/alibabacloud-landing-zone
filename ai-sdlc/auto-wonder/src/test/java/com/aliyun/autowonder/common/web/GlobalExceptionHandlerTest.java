@@ -7,6 +7,8 @@ import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.workitem.WorkitemInOtherWorkspaceException;
+import com.aliyun.autowonder.workitem.dto.WorkitemOwningWorkspaceVO;
 import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import javax.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.AfterEach;
@@ -109,12 +111,34 @@ class GlobalExceptionHandlerTest {
         assertNotNull(response.getBody());
         assertFalse(response.getBody().isSuccess());
         assertEquals(ErrorCode.WORKSPACE_ACCESS_INSUFFICIENT.getCode(), response.getBody().getCode());
-        assertEquals("工作空间访问级别不足，无法管理工作空间", response.getBody().getMessage());
+        assertEquals("当前角色权限不足，无法管理工作空间", response.getBody().getMessage());
         assertEquals("trace-access", response.getBody().getTraceId());
         assertEquals("request-access", response.getBody().getRequestId());
         assertEquals(WorkspaceAccessLevel.READ_ONLY, response.getBody().getData().getCurrent());
         assertEquals(WorkspaceAccessLevel.ADMIN, response.getBody().getData().getRequired());
         assertEquals("管理工作空间", response.getBody().getData().getAction());
+    }
+
+    @Test
+    void handlesWorkitemInOtherWorkspaceWithSwitchPayload() {
+        AutoWonderContext.get().setTraceId("trace-owning");
+        AutoWonderContext.get().setRequestId("request-owning");
+        WorkitemInOtherWorkspaceException error =
+                new WorkitemInOtherWorkspaceException(55698L, 200L, "项目B");
+
+        ResponseEntity<Result<WorkitemOwningWorkspaceVO>> response =
+                handler.handleWorkitemInOtherWorkspace(error);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertFalse(response.getBody().isSuccess());
+        assertEquals(ErrorCode.WORKITEM_IN_OTHER_WORKSPACE.getCode(), response.getBody().getCode());
+        assertEquals("该工单属于工作空间「项目B」，是否切换到该项目并打开？",
+                response.getBody().getMessage());
+        assertEquals(200L, response.getBody().getData().getWorkspaceId());
+        assertEquals("项目B", response.getBody().getData().getWorkspaceName());
+        assertEquals("trace-owning", response.getBody().getTraceId());
+        assertEquals("request-owning", response.getBody().getRequestId());
     }
 
     @Test

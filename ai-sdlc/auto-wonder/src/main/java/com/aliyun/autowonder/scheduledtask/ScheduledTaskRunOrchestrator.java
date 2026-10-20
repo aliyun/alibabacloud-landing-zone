@@ -137,10 +137,15 @@ public class ScheduledTaskRunOrchestrator {
     }
 
     private void fail(ScheduledTaskRunDO run, long actorId, String error) {
+        fail(run, actorId, error, null);
+    }
+
+    private void fail(ScheduledTaskRunDO run, long actorId, String error, String notificationSystemReason) {
         if (run != null && run.getId() != null && run.getWorkspaceId() != null) {
             ScheduledTaskRunDO current = runDao.findById(run.getWorkspaceId(), run.getId());
             if (current != null && current.getVersion() != null && current.getStatus() != null) {
-                runService.finish(current, "FAILED", null, error, actorId);
+                if (notificationSystemReason == null) runService.finish(current, "FAILED", null, error, actorId);
+                else runService.finish(current, "FAILED", null, error, actorId, notificationSystemReason);
             }
         }
     }
@@ -153,9 +158,9 @@ public class ScheduledTaskRunOrchestrator {
         return member != null && member.getStatus() != null && member.getStatus() == 0;
     }
     private void ownerInactive(ScheduledTaskRunDO run, long actorId) {
-        fail(run, actorId, "OWNER_INACTIVE");
+        fail(run, actorId, "OWNER_INACTIVE", "OWNER_INACTIVE");
         run.setStatus("FAILED");
-        if (notificationService != null) notificationService.status(run, "OWNER_INACTIVE");
+        if (notificationService != null) notificationService.statusSystemReason(run, "OWNER_INACTIVE");
         if (taskDao != null) {
             ScheduledTaskDO task = taskDao.findById(run.getWorkspaceId(), run.getScheduledTaskId());
             if (task != null && task.getVersion() != null) taskDao.updateStatus(task.getWorkspaceId(), task.getId(),
@@ -165,15 +170,15 @@ public class ScheduledTaskRunOrchestrator {
             record.setTenantId(run.getWorkspaceId()); record.setModule("SCHEDULED_TASK");
             record.setAction("OWNER_INACTIVE"); record.setTargetType("scheduled_task_run"); record.setTargetId(run.getId());
             auditLogService.record(record); }
-        if (notifyService != null && run.getOwnerId() != null) { NotifyEvent e=new NotifyEvent(); e.setTenantId(run.getWorkspaceId()); e.setType("SCHEDULED_TASK_OWNER_INACTIVE"); e.setTitle("定时任务已暂停"); e.setContent("任务所有者不可用"); e.setRefType("SCHEDULED_TASK_RUN"); e.setRefId(run.getId()); e.setRecipientIds(List.of(run.getOwnerId())); notifyService.notify(e); }
+        if (notifyService != null && run.getOwnerId() != null) { NotifyEvent e=new NotifyEvent(); e.setTenantId(run.getWorkspaceId()); e.setType("SCHEDULED_TASK_OWNER_INACTIVE"); e.setTitle("定时任务已暂停"); e.setContent("任务所有者不可用"); e.setTitleKey("notification.scheduled_run.paused.title"); e.setContentKey("notification.scheduled_run.owner_inactive"); e.setRefType("SCHEDULED_TASK_RUN"); e.setRefId(run.getId()); e.setRecipientIds(List.of(run.getOwnerId())); notifyService.notify(e); }
     }
 
     private JSONObject parseAndValidate(ScheduledTaskRunDO run) {
         final JSONObject snapshot;
         try { snapshot = JSON.parseObject(run.getExecutionSnapshotJson()); }
-        catch (RuntimeException badJson) { throw invalid("execution snapshot is invalid"); }
+        catch (RuntimeException badJson) { throw invalid("scheduled_task.snapshot.snapshot_invalid", "execution snapshot is invalid"); }
         if (snapshot == null || !SNAPSHOT_SCHEMA.equals(snapshot.getString("schemaVersion"))) {
-            throw invalid("execution snapshot schema is invalid");
+            throw invalid("scheduled_task.snapshot.snapshot_schema_invalid", "execution snapshot schema is invalid");
         }
         JSONObject task = snapshot.getJSONObject("task");
         JSONObject assignment = snapshot.getJSONObject("assignment");
@@ -185,7 +190,7 @@ public class ScheduledTaskRunOrchestrator {
                 || policies == null || blank(policies.getString("sessionMode"))
                 || !(snapshot.get("requirementDocuments") instanceof JSONArray)
                 || !(snapshot.get("agentContexts") instanceof JSONArray)) {
-            throw invalid("execution snapshot is incomplete");
+            throw invalid("scheduled_task.snapshot.snapshot_incomplete", "execution snapshot is incomplete");
         }
         frozenVersion(snapshot, run.getInitialAgentId());
         validateFrozenDocuments(run, snapshot.getJSONArray("requirementDocuments"));
@@ -198,7 +203,7 @@ public class ScheduledTaskRunOrchestrator {
             JSONObject frozen = documents.getJSONObject(i);
             if (frozen == null || frozen.getLongValue("artifactId") <= 0
                     || blank(frozen.getString("name")) || blank(frozen.getString("ossRef"))
-                    || blank(frozen.getString("sha256"))) throw invalid("frozen requirement document is invalid");
+                    || blank(frozen.getString("sha256"))) throw invalid("scheduled_task.snapshot.document_invalid", "frozen requirement document is invalid");
             ArtifactDO artifact = artifactDao.findBySourceAndId(run.getWorkspaceId(),
                     ExecutionSourceType.SCHEDULED_TASK.name(), run.getScheduledTaskId(), frozen.getLong("artifactId"));
             if (artifact == null || !Objects.equals(artifact.getTenantId(), run.getWorkspaceId())
@@ -207,42 +212,46 @@ public class ScheduledTaskRunOrchestrator {
                     || !RequirementDocumentService.TYPE.equals(artifact.getType())
                     || !frozen.getString("name").equals(artifact.getName())
                     || !frozen.getString("ossRef").equals(artifact.getOssRef())) {
-                throw invalid("frozen requirement document no longer matches its artifact");
+                throw invalid("scheduled_task.snapshot.document_mismatch", "frozen requirement document no longer matches its artifact");
             }
             byte[] content = storage.get(artifact.getOssRef());
             if (content == null || !frozen.getString("sha256").equals(sha256(content))) {
-                throw invalid("frozen requirement document content changed");
+                throw invalid("scheduled_task.snapshot.document_changed", "frozen requirement document content changed");
             }
         }
     }
 
     private String sha256(byte[] content) {
         try { return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content)); }
-        catch (Exception e) { throw invalid("cannot verify frozen requirement document"); }
+        catch (Exception e) { throw invalid("scheduled_task.snapshot.document_verify_failed", "cannot verify frozen requirement document"); }
     }
 
     private long frozenVersion(JSONObject snapshot, Long agentId) {
-        if (agentId == null || agentId <= 0) throw invalid("initial agent is invalid");
+        if (agentId == null || agentId <= 0) throw invalid("scheduled_task.snapshot.initial_agent_invalid", "initial agent is invalid");
         JSONArray contexts = snapshot.getJSONArray("agentContexts");
         JSONObject matched = null;
         for (int i = 0; contexts != null && i < contexts.size(); i++) {
             JSONObject context = contexts.getJSONObject(i);
             if (context != null && context.getLongValue("agentId") == agentId) {
-                if (matched != null) throw invalid("agent context is duplicated");
+                if (matched != null) throw invalid("scheduled_task.snapshot.agent_context_duplicate", "agent context is duplicated");
                 matched = context;
             }
         }
         if (matched == null || matched.getLongValue("agentVersionId") <= 0) {
-            throw invalid("frozen agent context is missing");
+            throw invalid("scheduled_task.snapshot.agent_context_missing", "frozen agent context is missing");
         }
         return matched.getLongValue("agentVersionId");
     }
 
     private static long positive(Long value) {
-        if (value == null || value <= 0) throw invalid("run identity is invalid");
+        if (value == null || value <= 0) throw invalid("scheduled_task.snapshot.run_identity_invalid", "run identity is invalid");
         return value;
     }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
+    private static BizException invalid(String key, String detail) {
+        return BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE, key, new Object[0], detail);
+    }
+
     private static BizException invalid(String detail) {
         return new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE, detail);
     }

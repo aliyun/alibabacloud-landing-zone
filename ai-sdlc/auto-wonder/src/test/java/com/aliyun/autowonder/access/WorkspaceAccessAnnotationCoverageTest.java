@@ -47,10 +47,16 @@ class WorkspaceAccessAnnotationCoverageTest {
             // 对外只读分享：AuthFilter 按不可猜 awshare_ 令牌形态放行，无工作区上下文，
             // 端点自身只返回已显式暴露的产物
             "com.aliyun.autowonder.artifact.ShareController",
+            // SSO 登录握手入口：/api/auth/sso/** 整体位于 AuthFilter 匿名白名单，
+            // 与 AuthController 一样发生在工作区上下文建立之前，无访问阶梯可挂。
+            "com.aliyun.autowonder.auth.federation.FederationAuthController",
             "com.aliyun.autowonder.controller.HealthCheckController",
             "com.aliyun.autowonder.controller.HelloWorldController",
             "com.aliyun.autowonder.debuglog.DebugLogUploadController",
             "com.aliyun.autowonder.dispatch.DaemonCheckpointController",
+            // Runtime requests use DaemonUploadAuthenticator; external signals use a request-scoped JWT.
+            // Neither channel carries a logged-in user's workspace access context.
+            "com.aliyun.autowonder.dispatch.DaemonDispatchRequestController",
             "com.aliyun.autowonder.dispatch.DaemonRecoveryClaimController",
             "com.aliyun.autowonder.executor.DaemonExecutorEnvironmentController",
             "com.aliyun.autowonder.integration.dingtalk.HttpCallbackTransport",
@@ -81,6 +87,23 @@ class WorkspaceAccessAnnotationCoverageTest {
             "com.aliyun.autowonder.access.PlatformAdminController#add("
                     + "com.aliyun.autowonder.access.dto.AddPlatformAdminRequest)",
             "com.aliyun.autowonder.access.PlatformAdminController#remove(java.lang.Long)",
+            // SSO 配置面与 PlatformAdminController 同源：SystemAdminService.requireSystemAdmin
+            // 做全局平台管理员校验，不属于工作区访问阶梯。
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#listIdps()",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#createIdp("
+                    + "com.aliyun.autowonder.auth.federation.dto.CreateIdpRequest)",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#updateIdp("
+                    + "java.lang.Long, com.aliyun.autowonder.auth.federation.dto.UpdateIdpRequest)",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#deleteIdp(java.lang.Long)",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#listConnections()",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#createConnection("
+                    + "com.aliyun.autowonder.auth.federation.dto.CreateConnectionRequest)",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#updateConnection("
+                    + "java.lang.Long, com.aliyun.autowonder.auth.federation.dto.UpdateConnectionRequest)",
+            "com.aliyun.autowonder.auth.federation.FederationAdminController#deleteConnection(java.lang.Long)",
+            // SSO 只读概览：与 PlatformImChannelConfigController#list 同为平台级全局配置读取，
+            // 面向所有已登录用户且不进入工作区访问阶梯；管理端点仍由 requireSystemAdmin 把关。
+            "com.aliyun.autowonder.auth.federation.FederationOverviewController#overview()",
             // The platform-wide executor auto-upgrade switch is a global deployment setting read from
             // application.yml, so the workspace ladder cannot express it; reading is open to any
             // signed-in user and there is no write endpoint.
@@ -142,8 +165,40 @@ class WorkspaceAccessAnnotationCoverageTest {
                     + "com.aliyun.autowonder.user.dto.UpdateProfileRequest)",
             "com.aliyun.autowonder.user.UserAccountController#initiateDeactivation("
                     + "com.aliyun.autowonder.user.dto.DeactivationRequest)",
-            "com.aliyun.autowonder.user.UserAccountController#revokeDeactivation()",
-            "com.aliyun.autowonder.user.UserAccountController#getDeactivationStatus()"
+            // 个人联邦身份（/api/users/me/federated-identities）：与 IM 身份绑定一样是
+            // 登录用户私有数据，userId 只取自登录上下文，不经工作区。
+            "com.aliyun.autowonder.auth.federation.FederatedIdentityController#list()",
+            "com.aliyun.autowonder.auth.federation.FederatedIdentityController#claim("
+                    + "com.aliyun.autowonder.auth.federation.dto.SsoTicketRequest)",
+            "com.aliyun.autowonder.auth.federation.FederatedIdentityController#bindStart("
+                    + "com.aliyun.autowonder.auth.federation.dto.SsoBindStartRequest)",
+            "com.aliyun.autowonder.auth.federation.FederatedIdentityController#unbind(java.lang.Long)",
+            // Platform-admin user management (like PlatformAdminController) authorizes through
+            // SystemAdminService.requireSystemAdmin; it is global, not workspace-scoped, so every
+            // endpoint stays outside the access ladder. Keep the exemptions method-specific so new
+            // endpoints still require an explicit access classification.
+            "com.aliyun.autowonder.user.UserAdminController#list("
+                    + "java.lang.String, java.lang.String, java.lang.String, int, int)",
+            "com.aliyun.autowonder.user.UserAdminController#detail(java.lang.Long)",
+            "com.aliyun.autowonder.user.UserAdminController#updateProfile("
+                    + "java.lang.Long, com.aliyun.autowonder.user.dto.UpdateProfileRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#resetPassword("
+                    + "java.lang.Long, com.aliyun.autowonder.user.dto.AdminResetPasswordRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#delete("
+                    + "java.lang.Long, com.aliyun.autowonder.user.dto.DeactivationRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#restore(java.lang.Long)",
+            "com.aliyun.autowonder.user.UserAdminController#listWorkspaces(java.lang.Long)",
+            "com.aliyun.autowonder.user.UserAdminController#addWorkspace("
+                    + "java.lang.Long, com.aliyun.autowonder.user.dto.UserWorkspaceAddRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#updateWorkspaceLevel("
+                    + "java.lang.Long, java.lang.Long, com.aliyun.autowonder.user.dto.UserWorkspaceLevelRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#removeWorkspace("
+                    + "java.lang.Long, java.lang.Long)",
+            "com.aliyun.autowonder.user.UserAdminController#listImIdentities(java.lang.Long)",
+            "com.aliyun.autowonder.user.UserAdminController#updateImIdentity("
+                    + "java.lang.Long, java.lang.String, com.aliyun.autowonder.im.dto.UpdateUserImIdentityRequest)",
+            "com.aliyun.autowonder.user.UserAdminController#sendTestIm("
+                    + "java.lang.Long, java.lang.String)"
     );
 
     @Test
@@ -182,13 +237,79 @@ class WorkspaceAccessAnnotationCoverageTest {
     }
 
     @Test
+    void everyAnnotatedControllerMapsToAWorkspaceDomain() {
+        List<String> unmapped = new ArrayList<>();
+
+        for (Class<?> controller : restControllers()) {
+            RequireWorkspaceAccess classAccess =
+                    AnnotatedElementUtils.findMergedAnnotation(controller, RequireWorkspaceAccess.class);
+            boolean annotated = classAccess != null;
+            for (Method method : requestMappedMethods(controller)) {
+                if (AnnotatedElementUtils.findMergedAnnotation(method, RequireWorkspaceAccess.class) != null) {
+                    annotated = true;
+                    break;
+                }
+            }
+            if (annotated && WorkspaceDomain.of(controller) == null) {
+                unmapped.add(controller.getName());
+            }
+        }
+
+        assertTrue(unmapped.isEmpty(),
+                () -> "Controllers without a WorkspaceDomain package mapping:\n"
+                        + String.join("\n", unmapped));
+    }
+
+    @Test
+    void everySourceActionHasExplicitPairedFiniteResourcesWithoutChangingExemptions() throws Exception {
+        java.util.Properties zh = new java.util.Properties();
+        java.util.Properties en = new java.util.Properties();
+        try (var reader = java.nio.file.Files.newBufferedReader(java.nio.file.Path.of("src/main/resources/i18n/messages_zh_CN.properties"))) { zh.load(reader); }
+        try (var reader = java.nio.file.Files.newBufferedReader(java.nio.file.Path.of("src/main/resources/i18n/messages_en_US.properties"))) { en.load(reader); }
+        var sourceControllers = new java.util.LinkedHashSet<>(restControllers());
+        // Spring skips this optional legacy API when disabled; its source actions still need resources.
+        sourceControllers.add(com.aliyun.autowonder.memory.MemoryController.class);
+        for (Class<?> controller : sourceControllers) {
+            var annotations = new java.util.ArrayList<RequireWorkspaceAccess>();
+            var type = controller.getDeclaredAnnotation(RequireWorkspaceAccess.class);
+            if (type != null) annotations.add(type);
+            for (Method method : declaredMethods(controller)) {
+                var annotation = method.getDeclaredAnnotation(RequireWorkspaceAccess.class);
+                if (annotation != null) annotations.add(annotation);
+            }
+            for (var annotation : annotations) {
+                String key = annotation.actionKey();
+                assertTrue(key.startsWith("access.action."), controller.getName());
+                assertEquals(annotation.action(), zh.getProperty(key), key);
+                assertNotNull(en.getProperty(key), key);
+                assertTrue(!en.getProperty(key).isBlank(), key);
+                assertTrue(!en.getProperty(key).matches(".*[\\u4e00-\\u9fff].*"), key);
+            }
+        }
+        assertEquals(DEFAULT_ACTION, zh.getProperty("access.action.workspace_resources"));
+        assertEquals("access Workspace resources", en.getProperty("access.action.workspace_resources"));
+    }
+
+    @Test
     void specialAccessLevelMatrixIsExplicitlyClassified() {
-        assertAccess(ExecutorController.class, "create", WorkspaceAccessLevel.ADMIN);
+        // 执行器运维操作由 READ_WRITE 级 + 角色 EXECUTOR 只读域治理；
+        // 令牌与启动命令携带凭证语义，仍收在管理员边界内。
+        assertAccess(ExecutorController.class, "create", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "restart", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "update", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "updateAll", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "delete", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "updateLaunchConfig", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "updateModelUpgradePolicy", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(ExecutorController.class, "getLaunchConfig", WorkspaceAccessLevel.READ_ONLY);
         assertAccess(ExecutorController.class, "list", WorkspaceAccessLevel.READ_ONLY);
         assertAccess(ExecutorController.class, "listAll", WorkspaceAccessLevel.READ_ONLY);
         assertAccess(ExecutorController.class, "getModelCatalog", WorkspaceAccessLevel.READ_ONLY);
+        assertAccess(ExecutorController.class, "getModelUpgradePolicy", WorkspaceAccessLevel.READ_ONLY);
         assertAccess(ExecutorController.class, "getToken", WorkspaceAccessLevel.ADMIN);
-        assertAccess(ExecutorController.class, "delete", WorkspaceAccessLevel.ADMIN);
+        assertAccess(ExecutorController.class, "buildLaunchCommand", WorkspaceAccessLevel.ADMIN);
+        assertAccess(ExecutorController.class, "saveLaunchCommand", WorkspaceAccessLevel.ADMIN);
+        assertAccess(ExecutorController.class, "applyLaunchCommand", WorkspaceAccessLevel.READ_WRITE);
 
         assertAccess(SystemSettingController.class, "listByGroup", WorkspaceAccessLevel.ADMIN);
         assertAccess(SystemSettingController.class, "updateGroup", WorkspaceAccessLevel.ADMIN);
@@ -223,6 +344,8 @@ class WorkspaceAccessAnnotationCoverageTest {
         assertAccess(WorkitemController.class, "assign", WorkspaceAccessLevel.READ_WRITE);
         assertAccess(WorkitemController.class, "updateContent", WorkspaceAccessLevel.READ_WRITE);
         assertAccess(WorkitemController.class, "delete", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(WorkitemController.class, "listRecycled", WorkspaceAccessLevel.READ_WRITE);
+        assertAccess(WorkitemController.class, "restore", WorkspaceAccessLevel.READ_WRITE);
         assertAccess(WorkitemController.class, "addComment", WorkspaceAccessLevel.READ_WRITE);
 
         assertAccess(WorkspaceController.class, "listMembers", WorkspaceAccessLevel.READ_ONLY);
@@ -230,7 +353,7 @@ class WorkspaceAccessAnnotationCoverageTest {
         assertAccess(WorkspaceController.class, "searchMemberCandidates", WorkspaceAccessLevel.ADMIN);
         assertAccess(WorkspaceController.class, "addMember", WorkspaceAccessLevel.ADMIN);
         assertAccess(WorkspaceController.class, "removeMember", WorkspaceAccessLevel.ADMIN);
-        assertAccess(WorkspaceController.class, "updateMemberAccess", WorkspaceAccessLevel.ADMIN);
+        assertAccess(WorkspaceController.class, "updateMemberRole", WorkspaceAccessLevel.ADMIN);
         assertAccess(WorkspaceController.class, "updateMemberIdentityTags", WorkspaceAccessLevel.ADMIN);
         assertAccess(WorkspaceController.class, "transferOwner", WorkspaceAccessLevel.ADMIN);
 
@@ -334,6 +457,9 @@ class WorkspaceAccessAnnotationCoverageTest {
         return scanner.findCandidateComponents(BASE_PACKAGE).stream()
                 .map(BeanDefinition::getBeanClassName)
                 .map(this::loadClass)
+                // Inspect production controllers, not nested REST fixtures from test-classes.
+                .filter(type -> type.getProtectionDomain().getCodeSource().getLocation().equals(
+                        RequireWorkspaceAccess.class.getProtectionDomain().getCodeSource().getLocation()))
                 .sorted(Comparator.comparing(Class::getName))
                 .toList();
     }

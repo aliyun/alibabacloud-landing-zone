@@ -52,6 +52,16 @@ class AuthFilterTest {
         return workspaceDao;
     }
 
+    // The filter also reads the live user row on every authenticated request: a logically deleted
+    // account resolves to null and is rejected with 401 before any workspace check runs. Every
+    // token-carrying test below therefore needs the row to exist, or its expected 200/403/500
+    // collapses into 401.
+    private UserDao activeUserDao() {
+        UserDao userDao = mock(UserDao.class);
+        when(userDao.findById(42L)).thenReturn(user(42L, 0));
+        return userDao;
+    }
+
     @Test
     void whitelisted_path_passes_without_token() throws Exception {
         JwtService jwtService = newJwtService();
@@ -455,7 +465,7 @@ class AuthFilterTest {
                 member(0, 0, WorkspaceAccessLevel.READ_WRITE.name());
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L))
                 .thenReturn(activeMember);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
 
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-a"));
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/workspaces/current");
@@ -507,7 +517,7 @@ class AuthFilterTest {
         AutoWonderContext.get().setBizLog(log);
         String token = jwt.signAccess(new TokenPayload(42L, 100L, "jti-log"));
 
-        new AuthFilter(jwt, sessions, members, usableWorkspaceDao(), mock(UserDao.class)).doFilter(authenticatedRequest(token),
+        new AuthFilter(jwt, sessions, members, usableWorkspaceDao(), activeUserDao()).doFilter(authenticatedRequest(token),
                 new MockHttpServletResponse(), new MockFilterChain());
 
         assertEquals(42L, log.getUserId());
@@ -519,7 +529,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
 
         String token = jwtService.signAccess(new TokenPayload(42L, null, "jti-no-workspace"));
         MockHttpServletRequest req = authenticatedRequest(token);
@@ -550,7 +560,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 999L, "jti-recovery"));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         req.addHeader("Authorization", "Bearer " + token);
@@ -596,7 +606,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 999L, "jti-members"));
         MockHttpServletRequest req = new MockHttpServletRequest(
                 "GET", "/api/workspaces/current/members");
@@ -616,7 +626,7 @@ class AuthFilterTest {
         JwtService jwtService = newJwtService();
         SessionService sessionService = mock(SessionService.class);
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-missing-member"));
         MockHttpServletRequest req = authenticatedRequest(token);
         MockHttpServletResponse resp = new MockHttpServletResponse();
@@ -784,6 +794,54 @@ class AuthFilterTest {
     }
 
     @Test
+    void aLogicallyDeletedUserLosesAccessImmediatelyEvenWithAnUnexpiredToken() throws Exception {
+        JwtService jwtService = newJwtService();
+        UserDao userDao = mock(UserDao.class);
+        // The row is kept for the recycle bin but findById filters is_deleted = 0, so a deleted
+        // account resolves to null here — the token cannot outlive the account.
+        when(userDao.findById(42L)).thenReturn(null);
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), userDao);
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-deleted-user"));
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        AutoWonderContext.get().setRequestId("rid-deleted-user");
+
+        filter.doFilter(authenticatedRequest(token), resp, chain);
+
+        assertEquals(401, resp.getStatus());
+        assertTrue(resp.getContentAsString().contains("\"code\":\"10401\""));
+        assertTrue(resp.getContentAsString().contains("\"request_id\":\"rid-deleted-user\""));
+        assertNull(chain.getRequest());
+        assertNull(AutoWonderContext.get().getUserId());
+        assertNull(AutoWonderContext.get().getCurrentWorkspaceId());
+    }
+
+    @Test
+    void aLegacyDeactivatedAccountIsRejectedWithItsDedicatedCode() throws Exception {
+        JwtService jwtService = newJwtService();
+        UserDao userDao = mock(UserDao.class);
+        // Historical anonymisation: status = 1 with the DEACTIVATED password sentinel is the
+        // only surviving marker; the account is read-only and must never sign in again.
+        UserDO legacy = user(42L, 0);
+        legacy.setStatus(1);
+        legacy.setPasswordHash("DEACTIVATED");
+        when(userDao.findById(42L)).thenReturn(legacy);
+        AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
+                mock(WorkspaceMemberDao.class), usableWorkspaceDao(), userDao);
+        String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-legacy"));
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(authenticatedRequest(token), resp, chain);
+
+        assertEquals(401, resp.getStatus());
+        assertTrue(resp.getContentAsString().contains("\"code\":\"29007\""));
+        assertNull(chain.getRequest());
+        assertNull(AutoWonderContext.get().getUserId());
+    }
+
+    @Test
     void deleted_or_disabled_workspace_rejects_a_previously_valid_token() throws Exception {
         JwtService jwtService = newJwtService();
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
@@ -793,7 +851,7 @@ class AuthFilterTest {
         // workspace stopped being usable after the token was issued.
         when(workspaceDao.countUsable(100L)).thenReturn(0L);
         AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
-                workspaceMemberDao, workspaceDao, mock(UserDao.class));
+                workspaceMemberDao, workspaceDao, activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-deleted-org"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -818,7 +876,7 @@ class AuthFilterTest {
         WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         when(workspaceDao.countUsable(anyLong())).thenReturn(0L);
         AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
-                workspaceMemberDao, workspaceDao, mock(UserDao.class));
+                workspaceMemberDao, workspaceDao, activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-lifecycle"));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         req.addHeader("Authorization", "Bearer " + token);
@@ -843,7 +901,7 @@ class AuthFilterTest {
         WorkspaceDao workspaceDao = mock(WorkspaceDao.class);
         when(workspaceDao.countUsable(100L)).thenReturn(0L);
         AuthFilter filter = new AuthFilter(jwtService, mock(SessionService.class),
-                mock(WorkspaceMemberDao.class), workspaceDao, mock(UserDao.class));
+                mock(WorkspaceMemberDao.class), workspaceDao, activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-neighbour"));
         MockHttpServletRequest req = new MockHttpServletRequest(method, path);
         req.addHeader("Authorization", "Bearer " + token);
@@ -862,7 +920,7 @@ class AuthFilterTest {
         SessionService sessionService = mock(SessionService.class);
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-rejected"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -881,7 +939,7 @@ class AuthFilterTest {
         SessionService sessionService = mock(SessionService.class);
         WorkspaceMemberDao workspaceMemberDao = mock(WorkspaceMemberDao.class);
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
-        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), mock(UserDao.class));
+        AuthFilter filter = new AuthFilter(jwtService, sessionService, workspaceMemberDao, usableWorkspaceDao(), activeUserDao());
         String token = jwtService.signAccess(new TokenPayload(42L, 100L, "jti-invalid-level"));
         MockHttpServletResponse resp = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();

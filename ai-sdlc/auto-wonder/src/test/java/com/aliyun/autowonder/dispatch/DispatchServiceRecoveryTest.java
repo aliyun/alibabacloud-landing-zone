@@ -18,6 +18,7 @@ import static org.mockito.Mockito.*;
 class DispatchServiceRecoveryTest {
 
     private DispatchDao dispatchDao;
+    private DispatchRuntimeEventDao runtimeEvents;
     private RedisManager redisManager;
     private DispatchService service;
 
@@ -25,7 +26,8 @@ class DispatchServiceRecoveryTest {
     void setUp() {
         dispatchDao = mock(DispatchDao.class);
         redisManager = mock(RedisManager.class);
-        DispatchService real = new DispatchService(dispatchDao, mock(DispatchRuntimeEventDao.class),
+        runtimeEvents = mock(DispatchRuntimeEventDao.class);
+        DispatchService real = new DispatchService(dispatchDao, runtimeEvents,
                 mock(WorkitemDao.class), mock(AgentDao.class), mock(AgentVersionDao.class),
                 mock(ExecutorSelector.class), mock(PackageContextAssembler.class),
                 mock(TaskPackager.class), mock(DispatchTransport.class), mock(SdlcDriver.class),
@@ -33,6 +35,27 @@ class DispatchServiceRecoveryTest {
         service = spy(real);
         when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
         doReturn(false).when(service).runPending(anyLong());
+    }
+
+    @Test
+    void runtimeRecoveryEventPreservesSourceAndReplacementIdentity() {
+        DispatchDO source = dispatch(55L, DispatchStatus.RUNNING, 2);
+        DispatchDO replacement = dispatch(56L, DispatchStatus.PENDING, 3);
+        DispatchRuntimeEventDO prior = new DispatchRuntimeEventDO();
+        prior.setSeq(41L);
+        when(runtimeEvents.listByDispatch(100L, 55L)).thenReturn(List.of(prior));
+        var publisher = mock(DispatchLiveActivityPublisher.class);
+        service.setLiveActivityPublisher(publisher);
+        service.recordRuntimeRecoveryEvent(source, replacement);
+        var event = org.mockito.ArgumentCaptor.forClass(DispatchRuntimeEventDO.class);
+        verify(runtimeEvents).insert(event.capture());
+        assertEquals(55L, event.getValue().getDispatchId());
+        assertEquals("dispatch.runtime_recovery", event.getValue().getEventType());
+        assertEquals(56L, com.aliyun.autowonder.json.JSON.parseObject(
+                event.getValue().getDetailJson()).getLong("recoveredDispatchId"));
+        assertNotNull(event.getValue().getMessage());
+        assertEquals(42L, event.getValue().getSeq());
+        verify(publisher).publish(source, event.getValue());
     }
 
     @Test
@@ -317,4 +340,28 @@ class DispatchServiceRecoveryTest {
         dispatch.setGmtModified(new Date());
         return dispatch;
     }
+
+    @Test
+    void recoveryLockAndPinErrorsRenderEnglishWithoutChangingDiagnosticCode() {
+        when(redisManager.tryAcquireLock(anyString(),anyString(),anyLong())).thenReturn(false);
+        var ex = assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> service.continueDispatch(100L,200L,55L,9L));
+        assertEquals("恢复请求正在处理中", ex.getMessage());
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("A recovery request is already being processed.", com.aliyun.autowonder.common.result.Result.fail(ex).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+    @Test
+    void lostPinKeepsRawIdAndCodeWhileBoundaryIsBilingual() {
+        com.aliyun.autowonder.common.error.BizException ex = org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class, "pinLost", 55L);
+        assertEquals("scheduled dispatch version pin was lost: dispatchId=55", ex.getMessage());
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("The scheduled dispatch version pin was lost (dispatchId=55).", com.aliyun.autowonder.common.result.Result.fail(ex).getMessage());
+            assertEquals("30005", ex.getCode());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
 }

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { List, Button, Space, Tag, Typography } from 'antd';
 import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
 
@@ -19,6 +20,7 @@ interface ReviewConsoleProps {
 }
 
 export function ReviewConsole({ items, loading, onApprove, onReject, renderDetail }: ReviewConsoleProps) {
+  const { t } = useTranslation('shared');
   return (
     <List
       loading={loading}
@@ -28,14 +30,10 @@ export function ReviewConsole({ items, loading, onApprove, onReject, renderDetai
           actions={
             item.status === 'PENDING'
               ? [
-                  <Button key="approve" type="primary" size="small" icon={<CheckOutlined />} onClick={() => onApprove(item.id)}>
-                    通过
-                  </Button>,
-                  <Button key="reject" size="small" danger icon={<CloseOutlined />} onClick={() => onReject(item.id)}>
-                    驳回
-                  </Button>,
+                  <Button key="approve" type="primary" size="small" icon={<CheckOutlined />} onClick={() => onApprove(item.id)}>{t('review.approve')}</Button>,
+                  <Button key="reject" size="small" danger icon={<CloseOutlined />} onClick={() => onReject(item.id)}>{t('review.reject')}</Button>,
                 ]
-              : [<Tag key="status" color={item.status === 'APPROVED' ? 'success' : 'error'}>{item.status === 'APPROVED' ? '已通过' : '已驳回'}</Tag>]
+              : [<Tag key="status" color={item.status === 'APPROVED' ? 'success' : 'error'}>{item.status === 'APPROVED' ? t('review.approved') : t('review.rejected')}</Tag>]
           }
         >
           <List.Item.Meta

@@ -32,6 +32,10 @@ public class TaskPackager {
     private static final String CHECKPOINT_SOURCE_REVISION_SCHEMA = "autowonder.checkpointSourceRevision.v1";
     private static final String CHECKPOINT_FALLBACK = "checkpointFallback";
 
+    /** Shared with DispatchService so packaging-input failures keep one classification contract. */
+    public static final String MESSAGE_KEY_NO_CHECKOUT = "dispatch.repo_revision.no_checkout";
+    public static final String MESSAGE_KEY_QA_UNPUSHED = "dispatch.repo_revision.qa_unpushed";
+
     private final ObjectStorage storage;
     private final String taskPkgBucket;
     private final Supplier<String> autowonderMcpUrlSupplier;
@@ -301,6 +305,8 @@ public class TaskPackager {
                 manifest.put("commentIndex", commentIndex);
             }
             putEntry(zos, "manifest.json", JSON.toJSONString(manifest), fileDigests);
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
             throw new BizException(ErrorCode.PACKAGE_BUILD_FAILED, e);
         }
@@ -382,7 +388,7 @@ public class TaskPackager {
                     throw new IllegalArgumentException("hook package is unavailable: " + name);
                 }
                 String version = String.valueOf(capability.getOrDefault("version", 0));
-                String digest = extractHook(zos, archive, "capabilities/hooks/" + name, fileDigests);
+                String digest = extractHook(zos, archive, "capabilities/hooks/" + name, fileDigests, name);
                 Map<String, Object> descriptor = new LinkedHashMap<>();
                 descriptor.put("name", name);
                 descriptor.put("version", version);
@@ -419,7 +425,7 @@ public class TaskPackager {
                     }
                     throw new IllegalArgumentException("capability package is unavailable: " + name);
                 }
-                extractCapability(zos, archive, base, fileDigests, "SKILL".equals(type));
+                extractCapability(zos, archive, base, fileDigests, "SKILL".equals(type), name);
                 descriptor.put("sha256", sha256Hex(archive));
             }
             if ("PLUGIN".equals(type)) {
@@ -543,7 +549,7 @@ public class TaskPackager {
     }
 
     private void extractCapability(ZipOutputStream output, byte[] archive, String base,
-                                   Map<String, String> fileDigests, boolean requireSkillMd) throws Exception {
+                                   Map<String, String> fileDigests, boolean requireSkillMd, String capabilityName) throws Exception {
         int entries = 0;
 		int files = 0;
         long expanded = 0;
@@ -580,12 +586,13 @@ public class TaskPackager {
         }
 		if (files == 0 || (requireSkillMd && !hasSkillMd)) {
             throw new IllegalArgumentException(requireSkillMd
-                    ? "skill package must contain root SKILL.md" : "plugin package is empty");
+                    ? "skill package must contain root SKILL.md: " + capabilityName
+                    : "plugin package is empty: " + capabilityName);
         }
     }
 
     private String extractHook(ZipOutputStream output, byte[] archive, String base,
-                               Map<String, String> fileDigests) throws Exception {
+                               Map<String, String> fileDigests, String capabilityName) throws Exception {
         int entries = 0;
         int files = 0;
         long expanded = 0;
@@ -623,7 +630,7 @@ public class TaskPackager {
             }
         }
         if (files == 0 || !hasDescriptor) {
-            throw new IllegalArgumentException("hook package must contain root hook.yaml");
+            throw new IllegalArgumentException("hook package must contain root hook.yaml: " + capabilityName);
         }
         java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
         for (Map.Entry<String, String> entry : hookDigests.entrySet()) {
@@ -704,6 +711,10 @@ public class TaskPackager {
         String markdown = "---\nname: " + yamlString(name) + "\ndescription: "
                 + yamlString(description.isEmpty() ? name : description.replace("\n", " "))
                 + "\n---\n\n# " + name + "\n\n" + instructions + "\n";
+        if (rawConfig instanceof Map && ((Map<?, ?>) rawConfig).get("tools") instanceof java.util.Collection<?> tools) {
+            markdown += "\n## Platform MCP tools\n\nUse the supplied authenticated autowonder MCP connection. Do not inspect local tokens or probe unauthenticated HTTP endpoints.\n";
+            for (Object tool : tools) if (tool instanceof String toolName) markdown += "- `" + toolName + "`\n";
+        }
         return markdown.getBytes(StandardCharsets.UTF_8);
     }
 
@@ -803,7 +814,39 @@ public class TaskPackager {
             if (revision == null || !validCommit(revision.get("headCommit"))) {
                 continue;
             }
-            repo.put("ref", revision.get("headCommit"));
+            // Only inherited revisions may be abandoned; keep the configured ref
+            // separately so a local-only predecessor commit cannot poison retries.
+            List<String> fallbackRefs = new ArrayList<>();
+            if (validCommit(revision.get("baseCommit"))) {
+                fallbackRefs.add(revision.get("baseCommit"));
+            }
+            String configuredRef = stringValue(repo.get("ref"));
+            fallbackRefs.add(configuredRef == null ? "" : configuredRef);
+            repo.put("sourceRevisionFallbackRefs", fallbackRefs);
+            String localHead = revision.get("headCommit");
+            String checkoutCommit = Boolean.parseBoolean(revision.get(CHECKPOINT_FALLBACK))
+                    ? localHead : revision.get("remoteHeadCommit");
+            if (!validCommit(checkoutCommit)) {
+                checkoutCommit = revision.get("baseCommit");
+            }
+            if (!validCommit(checkoutCommit)) {
+                throw BizException.keyed(ErrorCode.PACKAGE_BUILD_FAILED,
+                        MESSAGE_KEY_NO_CHECKOUT, new Object[]{repo.get("name")},
+                        "source revision for repo " + repo.get("name")
+                                + " has no remotely materializable checkout commit");
+            }
+            if (isQaRoleCode(ctx.getRoleCode())
+                    && !localHead.equalsIgnoreCase(checkoutCommit)) {
+                throw BizException.keyed(ErrorCode.PACKAGE_BUILD_FAILED,
+                        MESSAGE_KEY_QA_UNPUSHED, new Object[]{repo.get("name")},
+                        "source revision for repo " + repo.get("name")
+                                + " has local HEAD " + localHead + " but no matching pushed branch head; "
+                                + "push the source delivery branch before QA handoff");
+            }
+            repo.put("ref", checkoutCommit);
+            if (!localHead.equalsIgnoreCase(checkoutCommit)) {
+                repo.put("deliveryUnpushedHeadCommit", localHead);
+            }
             if (!Boolean.parseBoolean(revision.get(CHECKPOINT_FALLBACK))
                     && validCommit(revision.get("baseCommit"))) {
                 repo.put("deliveryBaseCommit", revision.get("baseCommit"));
@@ -813,6 +856,22 @@ public class TaskPackager {
             }
         }
         return repos;
+    }
+
+    /**
+     * Production squads namespace role codes (for example {@code AW_QA}) while legacy squads may use
+     * the bare code, so match the role segment instead of the whole code.
+     */
+    private static boolean isQaRoleCode(String roleCode) {
+        if (roleCode == null) {
+            return false;
+        }
+        String normalized = roleCode.trim();
+        int separator = normalized.lastIndexOf('_');
+        if (separator >= 0) {
+            normalized = normalized.substring(separator + 1);
+        }
+        return "QA".equalsIgnoreCase(normalized);
     }
 
     private static boolean aggregateRepoPolicy(PackageContext ctx, String field) {
@@ -871,6 +930,14 @@ public class TaskPackager {
                     if (!validCommit(values.get("headCommit"))
                             && validCommit(revision.getString("headCommit"))) {
                         values.put("headCommit", revision.getString("headCommit"));
+                        // Older runtimes never reported remote verification. Preserve their
+                        // HEAD checkout contract; an explicitly empty/invalid field from a
+                        // verification-aware producer must still take the existing fail-closed path.
+                        if (!revision.containsKey("remoteHeadCommit")) {
+                            values.put("remoteHeadCommit", revision.getString("headCommit"));
+                        } else if (validCommit(revision.getString("remoteHeadCommit"))) {
+                            values.put("remoteHeadCommit", revision.getString("remoteHeadCommit"));
+                        }
                         values.put(CHECKPOINT_FALLBACK, Boolean.toString(checkpointFallback));
                     }
                     if (!Boolean.parseBoolean(values.get(CHECKPOINT_FALLBACK))

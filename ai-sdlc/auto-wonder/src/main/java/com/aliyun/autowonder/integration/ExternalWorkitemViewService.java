@@ -78,49 +78,40 @@ public class ExternalWorkitemViewService {
         return view;
     }
 
-    public String principalName(Long principalId) {
-        ExternalPrincipalDO principal = findPrincipal(principalId);
-        if (principal == null) {
-            return null;
-        }
-        if (principal.getDisplayName() != null && !principal.getDisplayName().isBlank()) {
-            return principal.getDisplayName();
-        }
-        if ("AONE".equals(principal.getProvider())) {
-            return "Aone 用户（staffId: " + principal.getSubjectId() + "）";
-        }
-        if (principal.getProvider() != null && !principal.getProvider().isBlank()) {
-            return principal.getProvider() + " 用户（ID: " + principal.getSubjectId() + "）";
-        }
+    public ExternalPrincipalVO principalIdentity(Long principalId) {
+        return toPrincipal(findPrincipal(principalId));
+    }
+
+    public String principalName(Long principalId) { return formatPrincipalName(principalIdentity(principalId)); }
+    public String principalDisplayName(Long principalId) { return formatPrincipalDisplayName(principalIdentity(principalId)); }
+    public String principalCompactDisplayName(Long principalId) { return formatPrincipalCompactName(principalIdentity(principalId)); }
+
+    public static ExternalPrincipalVO nameFallback(ExternalPrincipalVO principal) {
+        return principal != null && (principal.getDisplayName() == null || principal.getDisplayName().isBlank())
+                && principal.getProvider() != null && !principal.getProvider().isBlank() ? principal : null;
+    }
+
+    public static String formatPrincipalName(ExternalPrincipalVO principal) {
+        if (principal == null) return null;
+        if (principal.getDisplayName() != null && !principal.getDisplayName().isBlank()) return principal.getDisplayName();
+        if ("AONE".equals(principal.getProvider())) return "Aone 用户（staffId: " + principal.getSubjectId() + "）";
+        if (principal.getProvider() != null && !principal.getProvider().isBlank()) return principal.getProvider() + " 用户（ID: " + principal.getSubjectId() + "）";
         return principal.getSubjectId();
     }
 
-    public String principalDisplayName(Long principalId) {
-        ExternalPrincipalDO principal = findPrincipal(principalId);
-        if (principal == null) {
-            return null;
-        }
-        if (principal.getDisplayName() == null || principal.getDisplayName().isBlank()) {
-            return principalName(principalId);
-        }
+    public static String formatPrincipalDisplayName(ExternalPrincipalVO principal) {
+        if (principal == null) return null;
+        if (principal.getDisplayName() == null || principal.getDisplayName().isBlank()) return formatPrincipalName(principal);
         String provider = "AONE".equals(principal.getProvider()) ? "Aone" : principal.getProvider();
-        if (provider == null || provider.isBlank()) {
-            return principal.getDisplayName() + "（" + principal.getSubjectId() + "）";
-        }
+        if (provider == null || provider.isBlank()) return principal.getDisplayName() + "（" + principal.getSubjectId() + "）";
         return principal.getDisplayName() + "（" + provider + " · " + principal.getSubjectId() + "）";
     }
 
-    /** Concise source identity for business fields, consistent with the external collaboration card. */
-    public String principalCompactDisplayName(Long principalId) {
-        ExternalPrincipalDO principal = findPrincipal(principalId);
-        if (principal == null) {
-            return null;
-        }
+    public static String formatPrincipalCompactName(ExternalPrincipalVO principal) {
+        if (principal == null) return null;
         if (principal.getDisplayName() != null && !principal.getDisplayName().isBlank()
-                && principal.getSubjectId() != null && !principal.getSubjectId().isBlank()) {
-            return principal.getDisplayName() + "（" + principal.getSubjectId() + "）";
-        }
-        return principalName(principalId);
+                && principal.getSubjectId() != null && !principal.getSubjectId().isBlank()) return principal.getDisplayName() + "（" + principal.getSubjectId() + "）";
+        return formatPrincipalName(principal);
     }
 
     /**

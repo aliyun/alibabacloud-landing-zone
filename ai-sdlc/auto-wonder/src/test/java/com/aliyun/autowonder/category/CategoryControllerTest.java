@@ -168,4 +168,27 @@ class CategoryControllerTest {
         assertEquals(ErrorCode.UNAUTHORIZED.getCode(), ex.getCode());
         verifyNoInteractions(categoryService);
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"0", "-1", "1.5", "true", "\"1\"", "9223372036854775808"})
+    void manualParentRuleIsBilingualWhileCreateParserStillUsesGenericBadRequest(String value) throws Exception {
+        var body=mapper.readTree("{\"parentId\":"+value+"}");
+        var error=assertThrows(BizException.class,()->controller.update(1L,body));
+        assertEquals("parentId 必须是正整数或 null",error.getMessage()); assertEquals(ErrorCode.PARAM_INVALID.getCode(),error.getCode());
+        assertEquals(BizException.class,error.getClass()); assertNull(error.getCause()); verifyNoInteractions(categoryService);
+        try {
+            for(var locale:List.of(java.util.Locale.CHINA,java.util.Locale.US)) {
+                org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+                var result=new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+                assertEquals(400,result.getStatusCodeValue());
+                assertEquals(locale.equals(java.util.Locale.US)?"parentId must be a positive integer or null":"parentId 必须是正整数或 null",result.getBody().getMessage());
+                var parserError=assertThrows(com.fasterxml.jackson.core.JsonProcessingException.class,()->mapper.readValue(body.toString(),CreateCategoryRequest.class));
+                var generic=new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleMessageNotReadable(
+                    new org.springframework.http.converter.HttpMessageNotReadableException("raw parser",parserError));
+                assertEquals(400,generic.getStatusCodeValue());
+                assertEquals(com.aliyun.autowonder.common.i18n.SystemMessages.render(ErrorCode.PARAM_INVALID.getMessageKey(),null,ErrorCode.PARAM_INVALID.getMessage()),generic.getBody().getMessage());
+            }
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

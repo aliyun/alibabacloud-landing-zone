@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.insights.RequirementDeliveryDao">
+    <!--
+      已交付需求 = 当前状态节点 category='DONE' 的 REQ（项目完成定义，不看状态名称、不看 dispatch 状态）；
+      完成时间取最近一次进入 DONE 类节点的 STATUS_CHANGE 事件时间，一个 workitem 只出一行，天然去重；
+      开始时间取最早一次正式交付派发（dispatch.gmt_create），无派发记录时为空，由服务层记为缺失样本。
+    -->
+    <select id="listDeliveredRequirements" resultType="com.aliyun.autowonder.insights.RequirementDeliveryService$DeliveredRequirement">
+        SELECT delivered.id AS workitemId,
+               delivered.title AS title,
+               delivered.delivered_at AS deliveredAt,
+               delivered.delivery_started_at AS deliveryStartedAt
+        FROM (
+            SELECT w.id AS id,
+                   w.title AS title,
+                   (SELECT MAX(e.gmt_create)
+                    FROM workitem_event e
+                    JOIN status_node done_node
+                      ON done_node.tenant_id = e.tenant_id
+                     AND done_node.template_id = w.template_id
+                     AND done_node.code = e.to_val
+                     AND done_node.category = 'DONE'
+                    WHERE e.tenant_id = w.tenant_id
+                      AND e.workitem_id = w.id
+                      AND e.event_type = 'STATUS_CHANGE') AS delivered_at,
+                   (SELECT MIN(d.gmt_create)
+                    FROM dispatch d
+                    WHERE d.tenant_id = w.tenant_id
+                      AND d.workitem_id = w.id
+                      AND d.is_deleted = 0
+                      <include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/>
+                   ) AS delivery_started_at
+            FROM workitem w
+            JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+            WHERE w.tenant_id = #{tenantId}
+              AND w.is_deleted = 0
+              AND w.work_type = 'REQ'
+              AND sn.category = 'DONE'
+        ) delivered
+        WHERE delivered.delivered_at &gt;= #{start} AND delivered.delivered_at &lt; #{end}
+        ORDER BY delivered.delivered_at, delivered.id
+    </select>
+</mapper>

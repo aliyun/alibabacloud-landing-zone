@@ -138,4 +138,41 @@ class ArtifactShareRequestServiceTest {
         verify(requests, never()).finish(any());
         assertEquals("PENDING", request.getStatus());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"zh-CN,digest",
+            "en-US,digest",
+            "zh-CN,mismatch",
+            "en-US,mismatch",
+            "zh-CN,duplicate",
+            "en-US,duplicate",
+            "zh-CN,path",
+            "en-US,path",
+            "zh-CN,canonical",
+            "en-US,canonical"})
+    void requestValidationKeepsRawReceiptAndLocalizesOnlyFreshFailure(String language,String problem) {
+        ArtifactDO artifact=new ArtifactDO(); artifact.setWorkitemId(99L);artifact.setDispatchId(6L);artifact.setName("report.md");
+        when(artifacts.findWorkitemByTenantAndId(100L,301L)).thenReturn(artifact);
+        String diagnostic=switch(problem) {
+            case "digest" -> "分享本轮产物必须提供文件内容的 64 位 SHA-256";
+            case "mismatch" -> "artifactId 与 name 不一致";
+            case "duplicate" -> "本派发同名产物已申请分享另一内容版本，请勿覆盖原申请";
+            case "path" -> "无效的产物路径";
+            default -> "产物路径必须是规范的 output 相对路径";
+        };
+        String english=switch(problem) {
+            case "digest" -> "Sharing an artifact from this dispatch requires its 64-character SHA-256 digest";
+            case "mismatch" -> "artifactId and name do not match";
+            case "duplicate" -> "An artifact with this name has already been requested with different content in this dispatch. Do not overwrite the original request";
+            case "path" -> "Invalid artifact path";
+            default -> "The artifact path must be a canonical path relative to output";
+        };
+        var error=assertThrows(BizException.class,()->service.request(100L,99L,6L,problem.equals("mismatch") ? 301L : null, problem.equals("mismatch") ? "other.md" : problem.equals("path") ? "../raw-secret" : problem.equals("canonical") ? "a//b" : "report.md",problem.equals("digest") ? null : problem.equals("duplicate") ? "b".repeat(64) : digest));
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(),error.getCode());assertEquals(diagnostic,error.getMessage());assertNull(error.getCause());
+        assertEquals("PENDING",request.getStatus());assertEquals(digest,request.getSha256());assertNull(request.getError());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try { assertEquals(language.equals("en-US") ? english : diagnostic,com.aliyun.autowonder.common.result.Result.fail(error).getMessage()); }
+        finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

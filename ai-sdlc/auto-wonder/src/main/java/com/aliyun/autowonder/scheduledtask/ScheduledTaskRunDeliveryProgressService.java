@@ -6,8 +6,11 @@ import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.dispatch.*;
+import com.aliyun.autowonder.executor.ExecutorDO;
+import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDao;
+import com.aliyun.autowonder.workitem.DispatchStepTimings;
 import com.aliyun.autowonder.workitem.dto.*;
 import org.springframework.stereotype.Service;
 
@@ -20,36 +23,42 @@ public class ScheduledTaskRunDeliveryProgressService {
     private final DispatchRuntimeEventDao eventDao;
     private final SdlcStepDao stepDao;
     private final AgentDao agentDao;
+    private final ExecutorDao executorDao;
     private final com.aliyun.autowonder.aiusage.DispatchAiUsageDao usageDao;
 
     public ScheduledTaskRunDeliveryProgressService(DispatchDao dispatchDao, DispatchRuntimeEventDao eventDao,
-                                                   SdlcStepDao stepDao, AgentDao agentDao,
+                                                   SdlcStepDao stepDao, AgentDao agentDao, ExecutorDao executorDao,
                                                    com.aliyun.autowonder.aiusage.DispatchAiUsageDao usageDao) {
         this.dispatchDao = dispatchDao;
         this.eventDao = eventDao;
         this.stepDao = stepDao;
         this.agentDao = agentDao;
+        this.executorDao = executorDao;
         this.usageDao = usageDao;
     }
 
     public DeliveryProgressVO getDeliveryProgress(long tenantId, ScheduledTaskRunDO run) {
         // 1. Get SDLC step definitions
-        List<StepDef> stepDefs = resolveStepDefs(run);
+        List<SdlcStepDO> stepDefs = resolveStepDefs(run);
 
         // 2. Get all dispatches for this run
         List<DispatchDO> dispatches = dispatchDao.listBySource(tenantId,
                 ExecutionSourceType.SCHEDULED_TASK_RUN.name(), run.getId());
         if (dispatches == null) dispatches = Collections.emptyList();
 
-        // 3. Get all runtime events across dispatches
+        // 3. Get runtime events, kept per dispatch so each execution can be projected alone
+        Map<Long, List<DispatchRuntimeEventDO>> eventsByDispatch = new LinkedHashMap<>();
         List<DispatchRuntimeEventDO> allEvents = new ArrayList<>();
         for (DispatchDO dispatch : dispatches) {
             List<DispatchRuntimeEventDO> events = eventDao.listByDispatch(tenantId, dispatch.getId());
-            if (events != null) allEvents.addAll(events);
+            if (events == null) events = Collections.emptyList();
+            eventsByDispatch.put(dispatch.getId(), events);
+            allEvents.addAll(events);
         }
 
         // 4. Build step VOs
-        List<DeliveryStepVO> steps = buildSteps(stepDefs, dispatches, allEvents, run);
+        Map<Long, String> executorNames = new HashMap<>();
+        List<DeliveryStepVO> steps = buildSteps(stepDefs, dispatches, allEvents, run, executorNames);
 
         // 5. Build process graph
         ProcessGraphVO processGraph = buildProcessGraph(dispatches, stepDefs);
@@ -86,8 +95,21 @@ public class ScheduledTaskRunDeliveryProgressService {
         Long agentTotalDurationMs = hasAnyDuration ? totalDurationMs : null;
         agentProgress.setDurationMs(agentTotalDurationMs);
 
-        // 8. Assemble result
+        // 8. Assemble result. Every execution carries its own SDLC stage snapshot so the
+        // duration and detail views render one selected dispatch without borrowing another
+        // dispatch's stages, waits or run wall-clock.
+        Date timingNow = new Date();
+        List<DispatchAttemptVO> executions = new ArrayList<>();
+        for (DispatchDO dispatch : dispatches) {
+            DispatchAttemptVO attempt = buildExecution(dispatch, executorNames);
+            if (!isInteractionDispatch(dispatch) && !stepDefs.isEmpty()) {
+                attempt.setStepTimings(DispatchStepTimings.build(dispatch,
+                        eventsByDispatch.getOrDefault(dispatch.getId(), List.of()), stepDefs, timingNow));
+            }
+            executions.add(attempt);
+        }
         DeliveryProgressVO vo = new DeliveryProgressVO();
+        vo.setExecutions(executions);
         vo.setSteps(steps);
         vo.setAgents(List.of(agentProgress));
         vo.setProcessGraph(processGraph);
@@ -95,11 +117,51 @@ public class ScheduledTaskRunDeliveryProgressService {
         return vo;
     }
 
+    private DispatchAttemptVO buildExecution(DispatchDO dispatch, Map<Long, String> executorNames) {
+        DispatchAttemptVO attempt = new DispatchAttemptVO();
+        attempt.setDispatchId(dispatch.getId());
+        attempt.setAgentId(dispatch.getAgentId());
+        attempt.setResumeMode(dispatch.getResumeMode());
+        attempt.setStatus(dispatch.getStatus());
+        attempt.setError(dispatch.getError());
+        attempt.setStartedAt(dispatch.getGmtCreate());
+        attempt.setEndedAt(DispatchStatus.isTerminal(dispatch.getStatus()) ? dispatch.getGmtModified() : null);
+        attempt.setDurationMs(dispatchDuration(dispatch));
+        attempt.setCanContinue(!DispatchStatus.isTerminal(dispatch.getStatus()));
+        attempt.setCanPause(DispatchStatus.isPauseable(dispatch.getStatus()));
+
+        if (dispatch.getAgentId() != null) {
+            AgentDO agent = agentDao.findById(dispatch.getAgentId());
+            if (agent != null) attempt.setAgentName(agent.getName());
+        }
+        attempt.setExecutorId(dispatch.getExecutorId());
+        attempt.setExecutorName(executorName(dispatch.getExecutorId(), executorNames));
+        return attempt;
+    }
+
+    private String executorName(Long executorId, Map<Long, String> cache) {
+        if (executorId == null) {
+            return null;
+        }
+        if (!cache.containsKey(executorId)) {
+            ExecutorDO executor = executorDao.findById(executorId);
+            cache.put(executorId, executor == null ? null : executor.getName());
+        }
+        return cache.get(executorId);
+    }
+
     private Long dispatchDuration(DispatchDO dispatch) {
         if (dispatch == null || dispatch.getGmtCreate() == null || dispatch.getGmtModified() == null) {
             return null;
         }
         return Math.max(0L, dispatch.getGmtModified().getTime() - dispatch.getGmtCreate().getTime());
+    }
+
+    // 交互型 dispatch 不承载 SDLC 阶段，不产出阶段快照（口径同 WorkitemService.isInteractionDispatch）。
+    private boolean isInteractionDispatch(DispatchDO dispatch) {
+        return dispatch != null && ("SIDE_INTERACTION".equals(dispatch.getResumeMode())
+                || "CANONICAL_INTERACTION".equals(dispatch.getResumeMode())
+                || "COMMENT_INTERACTION".equals(dispatch.getResumeMode()));
     }
 
     // 前端仅识别小写展示态（见 WorkitemService.resolveAgentProgressStatus 同口径），
@@ -124,43 +186,32 @@ public class ScheduledTaskRunDeliveryProgressService {
         return "pending";
     }
 
-    private List<DeliveryStepVO> buildSteps(List<StepDef> stepDefs, List<DispatchDO> dispatches,
-                                            List<DispatchRuntimeEventDO> allEvents, ScheduledTaskRunDO run) {
+    private List<DeliveryStepVO> buildSteps(List<SdlcStepDO> stepDefs, List<DispatchDO> dispatches,
+                                            List<DispatchRuntimeEventDO> allEvents, ScheduledTaskRunDO run,
+                                            Map<Long, String> executorNames) {
         List<DeliveryStepVO> steps = new ArrayList<>();
-        for (StepDef def : stepDefs) {
+        for (SdlcStepDO def : stepDefs) {
             DeliveryStepVO stepVO = new DeliveryStepVO();
-            stepVO.setStepId(def.id);
-            stepVO.setStepKey(def.code);
-            stepVO.setName(def.name);
+            stepVO.setStepId(def.getId());
+            stepVO.setStepKey(def.getCode());
+            stepVO.setName(def.getName());
 
             // Determine status from events
-            String status = determineStepStatus(def.id, allEvents, run);
+            String status = determineStepStatus(def.getId(), allEvents, run);
             stepVO.setStatus(status);
 
             // Build attempts from dispatches matching this step
             List<DispatchAttemptVO> attempts = new ArrayList<>();
             for (DispatchDO dispatch : dispatches) {
-                if (def.id != null && def.id.equals(dispatch.getSdlcStepId())) {
-                    DispatchAttemptVO attempt = new DispatchAttemptVO();
-                    attempt.setDispatchId(dispatch.getId());
-                    attempt.setStatus(dispatch.getStatus());
-                    attempt.setError(dispatch.getError());
-                    attempt.setStartedAt(dispatch.getGmtCreate());
-                    attempt.setDurationMs(dispatchDuration(dispatch));
-                    attempt.setCanContinue(!DispatchStatus.isTerminal(dispatch.getStatus()));
-                    attempt.setCanPause(DispatchStatus.isPauseable(dispatch.getStatus()));
-
-                    if (dispatch.getAgentId() != null) {
-                        AgentDO agent = agentDao.findById(dispatch.getAgentId());
-                        if (agent != null) attempt.setExecutorName(agent.getName());
-                    }
+                if (def.getId() != null && def.getId().equals(dispatch.getSdlcStepId())) {
+                    DispatchAttemptVO attempt = buildExecution(dispatch, executorNames);
                     attempts.add(attempt);
                 }
             }
             stepVO.setAttempts(attempts);
 
             // Calculate step duration from events
-            stepVO.setDurationMs(calculateStepDuration(def.id, allEvents));
+            stepVO.setDurationMs(calculateStepDuration(def.getId(), allEvents));
 
             steps.add(stepVO);
         }
@@ -239,14 +290,14 @@ public class ScheduledTaskRunDeliveryProgressService {
         return null;
     }
 
-    private ProcessGraphVO buildProcessGraph(List<DispatchDO> dispatches, List<StepDef> stepDefs) {
+    private ProcessGraphVO buildProcessGraph(List<DispatchDO> dispatches, List<SdlcStepDO> stepDefs) {
         ProcessGraphVO graph = new ProcessGraphVO();
         List<ProcessGraphNodeVO> nodes = new ArrayList<>();
         List<ProcessGraphEdgeVO> edges = new ArrayList<>();
 
         Map<Long, String> stepNameMap = stepDefs.stream()
-                .filter(s -> s.id != null)
-                .collect(Collectors.toMap(s -> s.id, s -> s.name, (a, b) -> a));
+                .filter(s -> s.getId() != null)
+                .collect(Collectors.toMap(SdlcStepDO::getId, SdlcStepDO::getName, (a, b) -> a));
 
         for (DispatchDO dispatch : dispatches) {
             ProcessGraphNodeVO node = new ProcessGraphNodeVO();
@@ -283,14 +334,13 @@ public class ScheduledTaskRunDeliveryProgressService {
         return graph;
     }
 
-    private List<StepDef> resolveStepDefs(ScheduledTaskRunDO run) {
+    private List<SdlcStepDO> resolveStepDefs(ScheduledTaskRunDO run) {
         // Try from SDLC directly
         if (run.getSdlcId() != null) {
             List<SdlcStepDO> sdlcSteps = stepDao.listBySdlc(run.getSdlcId());
             if (sdlcSteps != null && !sdlcSteps.isEmpty()) {
                 return sdlcSteps.stream()
                         .sorted(Comparator.comparingInt(s -> s.getStepOrder() != null ? s.getStepOrder() : 0))
-                        .map(s -> new StepDef(s.getId(), s.getCode(), s.getName()))
                         .collect(Collectors.toList());
             }
         }
@@ -308,15 +358,17 @@ public class ScheduledTaskRunDeliveryProgressService {
                             if (sdlc != null) {
                                 JSONArray stepsArr = sdlc.getJSONArray("steps");
                                 if (stepsArr != null) {
-                                    List<StepDef> defs = new ArrayList<>();
+                                    List<SdlcStepDO> defs = new ArrayList<>();
                                     for (int i = 0; i < stepsArr.size(); i++) {
                                         JSONObject stepObj = stepsArr.getJSONObject(i);
                                         if (stepObj != null) {
-                                            defs.add(new StepDef(
-                                                    stepObj.getLong("id"),
-                                                    stepObj.getString("code"),
-                                                    stepObj.getString("name")
-                                            ));
+                                            SdlcStepDO def = new SdlcStepDO();
+                                            def.setId(stepObj.getLong("id"));
+                                            def.setCode(stepObj.getString("code"));
+                                            def.setName(stepObj.getString("name"));
+                                            // 快照里的步骤没有 stepOrder，事件只能按 id/code/name 归位；补序号保证顺序稳定。
+                                            def.setStepOrder(i + 1);
+                                            defs.add(def);
                                         }
                                     }
                                     return defs;
@@ -359,19 +411,6 @@ public class ScheduledTaskRunDeliveryProgressService {
             vo.setCredits(credits.compareTo(java.math.BigDecimal.ZERO) == 0 ? null : credits);
             agent.setUsage(vo);
         } catch (RuntimeException ignored) {
-        }
-    }
-
-    /** Internal representation of a step definition. */
-    static class StepDef {
-        final Long id;
-        final String code;
-        final String name;
-
-        StepDef(Long id, String code, String name) {
-            this.id = id;
-            this.code = code;
-            this.name = name;
         }
     }
 }

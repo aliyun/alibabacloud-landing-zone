@@ -36,7 +36,7 @@ class WorkitemClarificationConversationControllerCommandsTest {
         turnEventService = mock(ConversationTurnEventService.class);
         commandsService = mock(ConversationCommandsService.class);
         controller = new WorkitemClarificationConversationController(service, turnEventService,
-                commandsService);
+                commandsService, mock(ClarificationAttachmentService.class));
         AutoWonderContext.get().setCurrentWorkspaceId(1L);
     }
 

@@ -1,3 +1,8 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { act } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createAppRoutes } from '@/app/router';
+import { i18n } from '@/shared/i18n';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -53,7 +58,6 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, container: HTM
   await screen.findByText(documentName);
 }
 
-const UNSUPPORTED_DOCUMENT_MESSAGE = '仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp、.docx、.doc、.java、.py、.zip 文件';
 
 function documentInput(container: HTMLElement): HTMLInputElement {
   return container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -254,23 +258,17 @@ describe('ScheduledTaskCreatePage document upload', () => {
     server.use(http.get('/api/scheduled-tasks/preview', () => HttpResponse.json({ success: true, code: '0', message: '', data: ['2026-08-12T18:00:00Z'] })));
   });
 
-  it('limits the picker to the shared whitelist and advertises paste', () => {
+  it('allows all file types and advertises paste', () => {
     const { container } = renderPage();
-
-    for (const extension of ['.md', '.docx', '.doc', '.java', '.py', '.zip', '.png', '.pdf']) {
-      expect(documentInput(container).accept).toContain(extension);
-    }
+    expect(documentInput(container).accept).toBe('');
     expect(screen.getByText(/Ctrl\/Cmd\+V 粘贴截图/)).toBeInTheDocument();
   });
 
-  it('rejects an unsupported pick with the copy shared with the workitem card', async () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts Excel through change', async () => {
     const { container } = renderPage();
-
-    fireEvent.change(documentInput(container), { target: { files: [new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' })] } });
-
-    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith(UNSUPPORTED_DOCUMENT_MESSAGE));
-    expect(screen.queryByText('notes.xlsx')).not.toBeInTheDocument();
+    const file = new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' });
+    fireEvent.change(documentInput(container), { target: { files: [file] } });
+    expect(await screen.findByText('notes.xlsx')).toBeInTheDocument();
   });
 
   it('rejects a file above the 5 MB single-file limit', async () => {
@@ -356,14 +354,11 @@ describe('ScheduledTaskCreatePage document upload', () => {
     expect(await screen.findByText('plan.md')).toBeInTheDocument();
   });
 
-  it('gives an unsupported dropped file the copy shared with click and paste', async () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts Excel through drop', async () => {
     renderPage();
-
-    fireEvent.drop(screen.getByText(/点击或拖拽上传需求文档/), { dataTransfer: fileTransfer([new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' })]) });
-
-    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith(UNSUPPORTED_DOCUMENT_MESSAGE));
-    expect(screen.queryByText('notes.xlsx')).not.toBeInTheDocument();
+    const file = new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' });
+    fireEvent.drop(screen.getByText(/点击或拖拽上传需求文档/), { dataTransfer: fileTransfer([file]) });
+    expect(await screen.findByText('notes.xlsx')).toBeInTheDocument();
   });
 
   it('applies the shared attachment limit to a dropped batch', async () => {
@@ -435,15 +430,10 @@ describe('ScheduledTaskCreatePage document upload', () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects a pasted clipboard file outside the whitelist', async () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts an arbitrary named clipboard file without renaming it', async () => {
     renderPage();
-    const dropzone = screen.getByTestId('scheduled-task-document-dropzone');
-
-    expect(fireEvent.paste(dropzone, { clipboardData: fileTransfer([new File(['gif'], 'anim.gif', { type: 'image/gif' })]) })).toBe(false);
-
-    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith(UNSUPPORTED_DOCUMENT_MESSAGE));
-    expect(screen.queryByText(/^粘贴-/)).not.toBeInTheDocument();
+    fireEvent.paste(screen.getByTestId('scheduled-task-document-dropzone'), { clipboardData: fileTransfer([new File(['bytes'], 'report.custom')]) });
+    expect(await screen.findByText('report.custom')).toBeInTheDocument();
   });
 
   it('leaves plain-text pastes untouched', () => {
@@ -477,4 +467,136 @@ describe('backendErrorMessage', () => {
     expect(backendErrorMessage(null)).toBe('');
     expect(backendErrorMessage({ message: 'boom' })).toBe('');
   });
+});
+
+function renderRoutedCreate() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const route = createAppRoutes().flatMap(route => route.children ?? []).find(route => route.path === '/scheduled-tasks/new')!;
+  const router = createMemoryRouter([route, { path: '/scheduled-tasks/:id', element: <div>任务详情</div> }], { initialEntries: ['/scheduled-tasks/new'] });
+  return { router, ...render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>) };
+}
+
+it('updates cached create route errors while preserving drafts, files and selected Agent', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  server.use(...SQUAD_HANDLERS, http.get('/api/scheduled-tasks/preview', () => HttpResponse.json({ success: true, code: '0', data: ['2026-08-12T18:00:00Z'] })));
+  const user = userEvent.setup();
+  const { container } = renderRoutedCreate();
+  await screen.findByLabelText('任务名称');
+  await user.type(screen.getByLabelText('任务名称'), '<b>自定义任务</b>');
+  await user.click(screen.getByLabelText('小队'));
+  await user.click(await screen.findByText('研发小队'));
+  await user.click(screen.getByLabelText('首个数字员工'));
+  await user.click(await screen.findByText('回归工程师'));
+  fireEvent.change(documentInput(container), { target: { files: [new File(['x'], '原文.md', { type: 'text/markdown' })] } });
+  await screen.findByText('原文.md');
+  await user.click(screen.getByRole('button', { name: '创建并启用' }));
+  await screen.findByText('请描述希望数字员工周期完成的工作');
+  const originalInput = screen.getByLabelText('任务名称');
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(await screen.findByText('Describe the work the Agent should complete periodically')).toBeInTheDocument();
+  expect(screen.getByLabelText('Task name')).toBe(originalInput);
+  expect(originalInput).toHaveValue('<b>自定义任务</b>');
+  expect(screen.getByLabelText('Task instruction')).toHaveValue('');
+  expect(screen.getByText(new Date('2026-08-12T18:00:00Z').toLocaleString('en-US'))).toBeInTheDocument();
+  expect(screen.getByText('原文.md')).toBeInTheDocument();
+  expect(screen.getAllByText('回归工程师').length).toBeGreaterThan(0);
+  expect(screen.queryByText('Select a squad')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Requirement document upload area (click, drag or paste)')).toBeInTheDocument();
+  await user.click(screen.getByText('Run policy and continuous session settings'));
+  expect(screen.getByText('Isolated session (recommended)')).toBeInTheDocument();
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+it('does not validate pristine fields when switching the cached create route', async () => {
+  server.use(...SQUAD_HANDLERS, http.get('/api/scheduled-tasks/preview', () => HttpResponse.json({ success: true, code: '0', data: [] })));
+  renderRoutedCreate();
+  await screen.findByLabelText('任务名称');
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByLabelText('Task name')).toHaveValue('');
+  expect(document.querySelector('.ant-form-item-explain-error')).toBeNull();
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+it('uses the completion language for deferred document failure and preserves backend detail and upload order', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  let release!: () => void;
+  let uploaded = false;
+  let created: unknown;
+  const deferred = new Promise<void>(resolve => { release = resolve; });
+  const errors = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+  const append = vi.spyOn(FormData.prototype, 'append');
+  server.use(...SQUAD_HANDLERS,
+    http.get('/api/scheduled-tasks/preview', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+    http.post('/api/scheduled-tasks', async ({ request }) => { created = await request.json(); return HttpResponse.json({ success: true, code: '0', data: { id: 9, version: 3 } }); }),
+    http.post('/api/scheduled-tasks/9/documents', async () => { uploaded = true; await deferred; return HttpResponse.json({ success: false, code: 'STORAGE_ERROR', message: '原始后端原因' }); }),
+  );
+  const user = userEvent.setup();
+  const { container } = renderPage();
+  await fillForm(user, container, '原文.md');
+  await user.click(screen.getByRole('button', { name: '创建并启用' }));
+  await waitFor(() => expect(uploaded).toBe(true));
+  await act(() => i18n.changeLanguage('en-US'));
+  act(() => release());
+  await waitFor(() => expect(errors).toHaveBeenCalledWith('Task saved as paused; requirement document upload failed: 原始后端原因. Retry the upload in task details before enabling it.'));
+  expect(created).toMatchObject({ initialStatus: 'PAUSED', timezone: 'Asia/Shanghai', cronExpression: '0 0 2 * * *', squadId: 1, initialAgentId: 11 });
+  expect(append.mock.calls.find(([key]) => key === 'files')?.[1]).toMatchObject({ name: '原文.md' });
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });
+
+it('keeps one-time date and time values across a route locale switch and submits the same ISO instant', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  let body: unknown;
+  server.use(...SQUAD_HANDLERS,
+    http.get('/api/scheduled-tasks/preview', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+    http.post('/api/scheduled-tasks', async ({ request }) => { body = await request.json(); return HttpResponse.json({ success: true, code: '0', data: { id: 9, version: 0 } }); }),
+  );
+  const user = userEvent.setup();
+  const { container } = renderRoutedCreate();
+  await screen.findByLabelText('任务名称');
+  await fillForm(user, container);
+  await user.click(screen.getByText('单次执行'));
+  const dateInput = screen.getByLabelText('执行日期');
+  const timeInput = screen.getByLabelText('执行时间');
+  fireEvent.change(dateInput, { target: { value: '2099-10-03' } });
+  fireEvent.keyDown(dateInput, { key: 'Enter', code: 'Enter' });
+  fireEvent.change(timeInput, { target: { value: '08:30' } });
+  fireEvent.keyDown(timeInput, { key: 'Enter', code: 'Enter' });
+  await user.click(screen.getByLabelText('任务名称'));
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByLabelText('Execution date')).toBe(dateInput);
+  expect(screen.getByLabelText('Execution time')).toBe(timeInput);
+  expect(dateInput).toHaveValue('2099-10-03');
+  expect(timeInput).toHaveValue('08:30');
+  await user.click(screen.getByRole('button', { name: 'Create and enable' }));
+  await waitFor(() => expect(body).toMatchObject({ scheduleType: 'ONCE', runAt: new Date(2099, 9, 3, 8, 30, 0, 0).toISOString(), timezone: 'Asia/Shanghai', initialStatus: 'ACTIVE', squadId: 1, initialAgentId: 11 }));
+  expect(body).not.toHaveProperty('cronExpression');
+});
+
+it.each([
+  [false, '原始启用错误', 'Requirement documents uploaded, but enabling failed: 原始启用错误. The task is still paused; retry enabling it in task details.'],
+  [true, '', 'Scheduled task created and enabled'],
+])('uses the completion language after a deferred enable (%s)', async (success, reason, expected) => {
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  let release!: () => void;
+  let enabling = false;
+  let version: string | null = null;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const notification = vi.spyOn(message, success ? 'success' : 'error').mockImplementation(() => undefined as never);
+  server.use(...SQUAD_HANDLERS, createHandler(), uploadHandler(ok),
+    http.get('/api/scheduled-tasks/preview', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+    http.post('/api/scheduled-tasks/9/enable', async ({ request }) => { version = new URL(request.url).searchParams.get('version'); enabling = true; await pending; return HttpResponse.json({ success, code: success ? '0' : 'CONFLICT', message: reason, data: null }); }),
+  );
+  const user = userEvent.setup();
+  const { container } = renderRoutedCreate();
+  await screen.findByLabelText('任务名称');
+  await fillForm(user, container, '原始.md');
+  await user.click(screen.getByRole('button', { name: '创建并启用' }));
+  await waitFor(() => expect(enabling).toBe(true));
+  await act(() => i18n.changeLanguage('en-US'));
+  act(() => release());
+  await waitFor(() => expect(notification).toHaveBeenCalledWith(expected));
+  expect(version).toBe('3');
+  expect(await screen.findByText('任务详情')).toBeInTheDocument();
 });

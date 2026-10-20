@@ -1,9 +1,10 @@
+import { useTranslation } from 'react-i18next';
+import { formatDateTime } from '@/shared/i18n/format';
 import { useState } from 'react';
 import { useInsightPreference } from '../useInsightPreference';
 import { Alert, Button, Empty, Segmented, Spin } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { LineChartOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useRealtimeCost, useRealtimeDashboard, type RefreshInterval } from './hooks';
-import { BRAND } from './theme';
 import RealtimeCostPanel from './RealtimeCostPanel';
 import KpiRow from './KpiRow';
 import KpiDetailModal from './KpiDetailModal';
@@ -14,59 +15,24 @@ import InventoryPanel from './InventoryPanel';
 import HealthPanel from './HealthPanel';
 import ActivityFeed from './ActivityFeed';
 
-const INTERVAL_OPTIONS: { label: string; value: RefreshInterval }[] = [
-  { label: '10s', value: 10000 },
-  { label: '15s', value: 15000 },
-  { label: '30s', value: 30000 },
-  { label: '关闭', value: false },
-];
-
 function formatUpdatedAt(iso: string | undefined): string {
   if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString('zh-CN', { hour12: false });
+  if (Number.isNaN(new Date(iso).getTime())) return iso;
+  return formatDateTime(iso, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 export default function RealtimeDashboard() {
+  const { t } = useTranslation('insights');
   const [refreshInterval, setRefreshInterval] = useInsightPreference<RefreshInterval>('realtime.interval', 15000, v => v === false || v === 10000 || v === 15000 || v === 30000);
   const [activeKpi, setActiveKpi] = useState<KpiKey | null>(null);
   const { data, isLoading, isError, error, isFetching, refetch } = useRealtimeDashboard(refreshInterval);
   const cost = useRealtimeCost();
+  const intervalLabel = refreshInterval
+    ? t('realtime.intervalSeconds', { seconds: refreshInterval / 1000 })
+    : t('realtime.intervalPlaceholder');
 
   return (
     <div className="insight-realtime">
-      <div className="insight-toolbar">
-        <div style={{ fontSize: 12, color: BRAND.textMuted }}>
-          刷新时间 {formatUpdatedAt(data?.generatedAt)}
-          {isFetching && <span style={{ marginLeft: 8, color: BRAND.orange }}>更新中…</span>}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Segmented aria-label="自动刷新频率"
-            value={refreshInterval}
-            onChange={(v) => setRefreshInterval(v as RefreshInterval)}
-            options={INTERVAL_OPTIONS}
-          />
-          <Button
-            icon={<ReloadOutlined />}
-            loading={isFetching}
-            onClick={() => { refetch(); void cost.refetch(); }}
-          >
-            刷新
-          </Button>
-        </div>
-      </div>
-
-      {isError && (
-        <Alert
-          type="error"
-          showIcon
-          message="看板数据加载失败"
-          description={(error as Error)?.message ?? '请稍后重试'}
-          style={{ marginBottom: 16 }}
-        />
-      )}
-
       <RealtimeCostPanel
         workerId={cost.workerId}
         onWorkerChange={cost.setWorkerId}
@@ -79,22 +45,78 @@ export default function RealtimeDashboard() {
         error={cost.error}
       />
 
-      {isLoading && !data ? (
-        <div style={{ textAlign: 'center', padding: '80px 0' }}>
-          <Spin />
-        </div>
-      ) : data ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <KpiRow kpi={data.kpi} onKpiClick={(key) => setActiveKpi(key)} />
-          <div className="insight-realtime-grid">
-            <InventoryPanel inventory={data.inventory} />
-            <HealthPanel health={data.health} />
+      <div className="insight-scope-divider" role="separator"><span>{t('realtime.scopeDivider')}</span></div>
+
+      <section className="insight-panel insight-panel--rt" aria-label={t('realtime.panelTitle')}>
+        <div className="insight-panel-head">
+          <div className="insight-panel-id">
+            <span className="insight-panel-glyph insight-panel-glyph--rt" aria-hidden="true">
+              <LineChartOutlined />
+            </span>
+            <h2>{t('realtime.panelTitle')}</h2>
+            <span
+              className={`insight-live-badge${refreshInterval ? '' : ' is-off'}`}
+              role="status"
+              aria-label={t('realtime.liveBadge')}
+            >
+              <i aria-hidden="true" />
+              <span>{t('realtime.liveBadge')}</span>
+              <b>{intervalLabel}</b>
+            </span>
+            <span className="insight-stamp">{t('realtime.updatedAt', { time: formatUpdatedAt(data?.generatedAt) })}</span>
+            {isFetching && <span className="insight-stamp is-updating">{t('realtime.updating')}</span>}
           </div>
-          <SquadLines squads={data.squads} />
-          <WorkstationWall workstations={data.workstations} />
-          <ActivityFeed running={data.runningFeed} recent={data.recentFeed} />
+          <div className="insight-panel-tools">
+            <Segmented<RefreshInterval> aria-label={t('realtime.refreshInterval')}
+              value={refreshInterval}
+              onChange={(v) => setRefreshInterval(v as RefreshInterval)}
+              options={[{ label: '10s', value: 10000 }, { label: '15s', value: 15000 }, { label: '30s', value: 30000 }, { label: t('realtime.off'), value: false }]}
+            />
+            <Button
+              icon={<ReloadOutlined aria-hidden="true" />}
+              loading={isFetching}
+              onClick={() => refetch()}
+            >
+              {t('realtime.refresh')}
+            </Button>
+          </div>
         </div>
-      ) : !isError ? <Empty description="暂无实时数据，请稍后刷新" /> : null}
+        <p className="insight-panel-note">
+          <span>{t('realtime.notePrefix')}</span>
+          <b>{t('realtime.noteScope')}</b>
+          <span className="insight-dot-sep" aria-hidden="true" />
+          <span>{t('realtime.noteDetail')}</span>
+        </p>
+
+        {isError && (
+          <Alert
+            type="error"
+            showIcon
+            message={t('realtime.loadFailure')}
+            description={(error as Error)?.message ?? t('realtime.retryLater')}
+            style={{ marginTop: 12 }}
+          />
+        )}
+
+        <div className="insight-panel-body">
+          {isLoading && !data ? (
+            <div className="insight-panel-state">
+              <Spin tip={t('realtime.loading')}><div style={{ minHeight: 40 }} /></Spin>
+            </div>
+          ) : data ? (
+            <>
+              <KpiRow kpi={data.kpi} onKpiClick={(key) => setActiveKpi(key)} />
+              <div className="insight-realtime-grid">
+                <InventoryPanel inventory={data.inventory} />
+                <HealthPanel health={data.health} />
+              </div>
+              <SquadLines squads={data.squads} />
+              <WorkstationWall workstations={data.workstations} />
+              <ActivityFeed running={data.runningFeed} recent={data.recentFeed} />
+            </>
+          ) : !isError ? <Empty description={t('realtime.empty')} /> : null}
+        </div>
+      </section>
 
       <KpiDetailModal kpiKey={activeKpi} onClose={() => setActiveKpi(null)} />
     </div>

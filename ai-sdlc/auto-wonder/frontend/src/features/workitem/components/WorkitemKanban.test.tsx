@@ -202,7 +202,7 @@ describe('WorkitemKanban 人工处理与异常标记', () => {
     ];
     renderKanban({ items });
 
-    expect(screen.queryByText(/需人工（蔡何）/)).not.toBeInTheDocument();
+    expect(screen.queryByText('需要人工')).not.toBeInTheDocument();
     expect(screen.getByText('当前处理人: 蔡何')).toBeInTheDocument();
   });
 
@@ -235,7 +235,7 @@ describe('WorkitemKanban 人工处理与异常标记', () => {
     ];
     renderKanban({ items });
 
-    expect(screen.queryByText(/需人工（蔡何）/)).not.toBeInTheDocument();
+    expect(screen.queryByText('需要人工')).not.toBeInTheDocument();
     expect(screen.getByText('当前处理人: 蔡何')).toBeInTheDocument();
     const statusRow = screen.getByTitle('状态: 开发中').parentElement!;
     expect(statusRow).toContainElement(screen.getByText('异常'));
@@ -381,4 +381,32 @@ it.each(['dark', 'light'] as const)('uses the %s theme surface for kanban column
   const config = createAppearanceTheme(mode, '#f97316');
   render(<ConfigProvider theme={config}><MemoryRouter><WorkitemKanban items={[]} /></MemoryRouter></ConfigProvider>);
   expect(screen.getByTestId('kanban-column-NEW')).toHaveStyle({background: config.token!.colorFillAlter});
+});
+
+describe('WorkitemKanban 看板横向自适应', () => {
+  it('lets multi-column boards share the full row width without a per-column cap', () => {
+    renderKanban({ items: [] });
+
+    const columns = ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE']
+      .map(key => screen.getByTestId(`kanban-column-${key}`));
+    columns.forEach(column => {
+      expect(column.style.maxWidth).toBe('');
+      expect(column.style.minWidth).toBe('260px');
+    });
+
+    const row = screen.getByTestId('kanban-column-NEW').parentElement!;
+    expect(row.style.display).toBe('flex');
+    expect(row.style.overflowX).toBe('auto');
+    expect(row.style.flexWrap).not.toBe('wrap');
+  });
+
+  it('keeps the single filtered column at the 360px cap without centering it', () => {
+    renderKanban({ items: [], columnKeys: ['NEW'] });
+
+    expect(screen.queryAllByTestId(/^kanban-column-/)).toHaveLength(1);
+    const column = screen.getByTestId('kanban-column-NEW');
+    expect(column.style.maxWidth).toBe('360px');
+    expect(column.style.minWidth).toBe('260px');
+    expect(column.parentElement!.style.justifyContent).not.toBe('center');
+  });
 });

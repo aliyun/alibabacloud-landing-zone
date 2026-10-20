@@ -1,7 +1,10 @@
+import { i18n } from '@/shared/i18n';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import KpiDetailModal from './KpiDetailModal';
 import { server } from '@/test/mocks/server';
 
@@ -86,4 +89,41 @@ describe('KpiDetailModal', () => {
       expect(screen.getByText('暂无工单')).toBeInTheDocument();
     });
   });
+});
+
+beforeEach(async () => { await i18n.changeLanguage('zh-CN'); });
+afterEach(async () => { cleanup(); await i18n.changeLanguage('zh-CN'); });
+it('switches an independent open modal error, retry and running empty state in place', async () => {
+  let requests = 0;
+  server.use(http.get('/api/dashboard/running', () => ++requests === 1 ? HttpResponse.json({ success: false, code: '50000', message: '后端错误', data: null, traceId: null }, { status: 500 }) : ok([])));
+  const router = createMemoryRouter([{ path: '/', element: <KpiDetailModal kpiKey="runningDispatches" onClose={() => {}} /> }]);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={router} /></QueryClientProvider>);
+  await screen.findByText('工单加载失败');
+  const dialog = screen.getByRole('dialog');
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByRole('dialog')).toBe(dialog);
+  expect(screen.getByText('Failed to load work items')).toBeInTheDocument();
+  expect(screen.getByText('Running')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByText('No running work items')).toBeInTheDocument();
+  expect(requests).toBe(2);
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(screen.getByText('暂无运行中的工单')).toBeInTheDocument();
+});
+
+it('switches loading and completed empty UI while preserving the completed-today query', async () => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let requests = 0;
+  server.use(http.get('/api/dashboard/completed/today', async () => { requests++; await pending; return ok([]); }));
+  renderModal('todayCompletedTasks');
+  expect(screen.getByText('加载工单…')).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByText('Completed today')).toBeInTheDocument();
+  expect(screen.getByText('Loading work items…')).toBeInTheDocument();
+  release();
+  expect(await screen.findByText('No work items')).toBeInTheDocument();
+  expect(requests).toBe(1);
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(screen.getByText('暂无工单')).toBeInTheDocument();
 });

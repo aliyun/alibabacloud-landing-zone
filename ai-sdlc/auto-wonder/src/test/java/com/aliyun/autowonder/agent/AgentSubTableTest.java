@@ -154,7 +154,9 @@ class AgentSubTableTest {
         request.setRepoId(300L);
         request.setPermLevel("WRITE");
 
-        assertThrows(BizException.class, () -> service.addRepoPerm(10L, request, 100L, 7L));
+        BizException error = assertThrows(BizException.class, () -> service.addRepoPerm(10L, request, 100L, 7L));
+        assertBilingual(error, "Repository permissions have changed. Refresh and try again");
+        assertEquals(409, new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue());
     }
 
     @Test
@@ -368,4 +370,28 @@ class AgentSubTableTest {
         a.setKind("PLATFORM");
         return a;
     }
+    private static void assertBilingual(com.aliyun.autowonder.common.error.BizException error, String english) {
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        String diagnostic = error.getMessage();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+            assertEquals(diagnostic, handler.handleBiz(error).getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals(english, handler.handleBiz(error).getBody().getMessage());
+            assertEquals(diagnostic, error.getMessage());
+            assertEquals(diagnostic, error.getLocalizedMessage());
+            assertNull(error.getCause());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @Test void addRepoPermCarriesBranchValidationBeforeWritingAnyBinding() {
+        when(agentDao.findById(10L)).thenReturn(agentWithDraft(10L, 20L));
+        RepoPermRequest request = new RepoPermRequest(); request.setRepoId(300L);
+        request.setAllowedBranchPatterns(List.of("bad..branch"));
+        var error = assertThrows(BizException.class, () -> service.addRepoPerm(10L, request, 100L, 7L));
+        assertBilingual(error, "Commit branch pattern is not a valid Git branch: bad..branch");
+        verify(repoPermDao, never()).insert(any()); verify(repoPermDao, never()).update(any());
+        verify(versionDao, never()).insert(any());
+    }
+
 }

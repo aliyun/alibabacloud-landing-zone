@@ -51,16 +51,37 @@ public interface UserDao {
                       @Param("email") String email,
                       @Param("phone") String phone);
 
-    int updateDeactivation(@Param("id") Long id,
-                           @Param("deactivatedAt") java.util.Date deactivatedAt,
-                           @Param("coolingOffExpiresAt") java.util.Date coolingOffExpiresAt);
+    UserDO findActiveByEmail(@Param("email") String email);
 
-    int revokeDeactivation(@Param("id") Long id,
-                           @Param("revokedAt") java.util.Date revokedAt);
+    // ---- 平台用户管理（平台管理员域；含已删除用户） ----
 
-    int anonymizeUser(@Param("id") Long id);
+    /** 全部用户总数（含已删除），列表页固定展示，不随筛选变化。 */
+    long countAllUsers();
 
-    java.util.List<UserDO> listExpiredDeactivations(@Param("limit") int limit);
+    /** 管理列表分页查询：全量含已删除；keyword 模糊匹配用户名/昵称/邮箱/手机号及删除前原名快照。 */
+    List<UserDO> searchUsersForAdmin(@Param("keyword") String keyword,
+                                     @Param("status") String status,
+                                     @Param("type") String type,
+                                     @Param("offset") int offset,
+                                     @Param("limit") int size);
 
-    boolean hasPendingDeactivation(@Param("id") Long id);
+    long countUsersForAdmin(@Param("keyword") String keyword,
+                            @Param("status") String status,
+                            @Param("type") String type);
+
+    /** 展示专用：可查到已删除用户，供历史数据名称解析使用；鉴权/校验路径继续用 findById。 */
+    UserDO findByIdIncludingDeleted(@Param("id") Long id);
+
+    List<UserDO> listByIdsIncludingDeleted(@Param("ids") Collection<Long> ids);
+
+    /**
+     * 逻辑删除：原用户名/邮箱存入 deleted_* 快照并释放唯一键占用（username 改写、email 置 NULL），
+     * 全部字段在同一条原子 UPDATE 内完成；昵称/头像/手机号/密码/status 保留不动。
+     */
+    int logicalDeleteUser(@Param("id") Long id,
+                          @Param("deletedAt") java.util.Date deletedAt,
+                          @Param("deletedBy") Long deletedBy);
+
+    /** 恢复：由快照还原用户名/邮箱并清空删除标记；is_deleted = 1 守卫保证仅已删除用户可被恢复。 */
+    int restoreUser(@Param("id") Long id);
 }

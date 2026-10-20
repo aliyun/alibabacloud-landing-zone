@@ -1,6 +1,9 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { useState } from 'react';
 import { Button, Card, Form, Input, message, Typography } from 'antd';
-import { LockOutlined, SaveOutlined } from '@ant-design/icons';
+import { EyeOutlined, EyeInvisibleOutlined, LockOutlined, SaveOutlined } from '@ant-design/icons';
 import { useMutation } from '@tanstack/react-query';
 import { changePassword } from './profileApi';
 
@@ -17,7 +20,9 @@ function getApiMessage(error: unknown, fallback: string) {
 }
 
 export function ChangePasswordPanel() {
+  const { t } = useTranslation('profile');
   const [form] = Form.useForm<PasswordFormValues>();
+  useLocalizedValidation(form);
   const [successVisible, setSuccessVisible] = useState(false);
 
   const mutation = useMutation({
@@ -31,15 +36,15 @@ export function ChangePasswordPanel() {
     onSuccess: () => {
       form.resetFields();
       setSuccessVisible(true);
-      message.success('密码修改成功');
+      message.success(i18n.t('profile:password.success'));
     },
     onError: (error) => {
-      message.error(getApiMessage(error, '密码修改失败'));
+      message.error(getApiMessage(error, i18n.t('profile:password.failed')));
     },
   });
 
   return (
-    <Card title="账号安全" styles={{ body: { padding: 18 } }}>
+    <Card title={t('password.title')} styles={{ body: { padding: 18 } }}>
       <Form
         form={form}
         layout="vertical"
@@ -47,70 +52,72 @@ export function ChangePasswordPanel() {
         onFinish={() => mutation.mutate()}
       >
         <Form.Item
-          label="当前密码"
+          label={t('password.current')}
           name="oldPassword"
-          rules={[{ required: true, message: '请输入当前密码' }]}
+          rules={[{ required: true, message: t('password.currentRequired') }]}
         >
           <Input.Password
-            prefix={<LockOutlined />}
-            placeholder="请输入当前密码"
+            iconRender={visible => <Button type="text" htmlType="button" aria-label={t(visible ? 'password.hide' : 'password.show')} disabled={mutation.isPending}
+              icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />} style={{ padding: 0, width: 16, height: 16 }} />}
+            prefix={<LockOutlined aria-hidden="true" />}
+            placeholder={t('password.currentRequired')}
             autoComplete="current-password"
           />
         </Form.Item>
 
         <Form.Item
-          label="新密码"
+          label={t('password.new')}
           name="newPassword"
           rules={[
-            { required: true, message: '请输入新密码' },
-            { min: 6, message: '密码长度至少 6 位' },
+            { required: true, message: t('password.newRequired') },
+            { min: 6, message: t('password.min') },
           ]}
         >
           <Input.Password
-            prefix={<LockOutlined />}
-            placeholder="请输入新密码"
+            iconRender={visible => <Button type="text" htmlType="button" aria-label={t(visible ? 'password.hide' : 'password.show')} disabled={mutation.isPending}
+              icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />} style={{ padding: 0, width: 16, height: 16 }} />}
+            prefix={<LockOutlined aria-hidden="true" />}
+            placeholder={t('password.newRequired')}
             autoComplete="new-password"
           />
         </Form.Item>
 
         <Form.Item
-          label="确认新密码"
+          label={t('password.confirm')}
           name="confirmPassword"
           dependencies={['newPassword']}
           rules={[
-            { required: true, message: '请再次输入新密码' },
+            { required: true, message: t('password.confirmRequired') },
             ({ getFieldValue }) => ({
               validator(_, value) {
                 if (!value || getFieldValue('newPassword') === value) {
                   return Promise.resolve();
                 }
-                return Promise.reject(new Error('两次输入的密码不一致'));
+                return Promise.reject(new Error(t('password.mismatch')));
               },
             }),
           ]}
         >
           <Input.Password
-            prefix={<LockOutlined />}
-            placeholder="请再次输入新密码"
+            iconRender={visible => <Button type="text" htmlType="button" aria-label={t(visible ? 'password.hide' : 'password.show')} disabled={mutation.isPending}
+              icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />} style={{ padding: 0, width: 16, height: 16 }} />}
+            prefix={<LockOutlined aria-hidden="true" />}
+            placeholder={t('password.confirmRequired')}
             autoComplete="new-password"
           />
         </Form.Item>
 
         {successVisible ? (
-          <Text type="success" style={{ display: 'block', marginBottom: 12 }}>
-            密码已成功修改，请使用新密码登录。
-          </Text>
+          <Text type="success" style={{ display: 'block', marginBottom: 12 }}>{t('password.successHint')}</Text>
         ) : null}
 
         <Form.Item>
-          <Button
+          <Button aria-label={t('password.submit')}
             type="primary"
             htmlType="submit"
-            icon={<SaveOutlined />}
+            icon={<SaveOutlined aria-hidden="true" />}
             loading={mutation.isPending}
-          >
-            修改密码
-          </Button>
+          >{t('password.submit')}</Button>
         </Form.Item>
       </Form>
     </Card>

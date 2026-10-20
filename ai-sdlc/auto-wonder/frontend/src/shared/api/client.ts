@@ -1,3 +1,4 @@
+import { i18n, normalizeLocale } from '@/shared/i18n';
 import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
 import type { ApiResult } from '@/shared/types/common';
@@ -70,11 +71,13 @@ function isAccessDenied(code: string): boolean {
     || code === ErrorCodes.WORKSPACE_ACCESS_INSUFFICIENT;
 }
 
-// A 401 from the login endpoint is a business error (wrong credentials), not a
-// session expiry; routing it through handleUnauthorized would redirect/reload
-// the login page and swallow the backend's specific error message.
+// A 401 from the login endpoints is a business error (wrong credentials, expired
+// one-time SSO ticket), not a session expiry; routing it through handleUnauthorized
+// would redirect/reload the login page and swallow the backend's specific error message.
+const AUTH_ENTRY_URLS = new Set(['/api/auth/login', '/api/auth/sso/session', '/api/auth/sso/bind']);
+
 function isAuthEntryRequest(config?: InternalAxiosRequestConfig): boolean {
-  return config?.url === '/api/auth/login';
+  return config?.url != null && AUTH_ENTRY_URLS.has(config.url);
 }
 
 async function synchronizeWorkspaceAfterFailure(code: string): Promise<void> {
@@ -99,7 +102,7 @@ async function performRefresh(): Promise<string | null> {
   try {
     const resp = await fetch('/api/auth/refresh', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept-Language': normalizeLocale(i18n.language) },
       // The workspace lives as a claim inside the access token, so it must be re-declared here.
       // Otherwise the refreshed token is detached from the workspace, the next workspace-scoped
       // call returns WORKSPACE_NOT_MEMBER, and RouteGuard bounces the user to /workspaces.
@@ -164,7 +167,7 @@ async function handleUnauthorized(
   if (!rt || originalConfig.url === '/api/auth/refresh') {
     useAuthStore.getState().clear();
     redirectToLogin();
-    return Promise.reject(new ApiError(ErrorCodes.UNAUTHORIZED, '未登录或登录已失效', null));
+    return Promise.reject(new ApiError(ErrorCodes.UNAUTHORIZED, i18n.t('account.expired'), null));
   }
 
   const newToken = await refreshAccessToken();
@@ -176,7 +179,7 @@ async function handleUnauthorized(
 
   useAuthStore.getState().clear();
   redirectToLogin();
-  return Promise.reject(new ApiError(ErrorCodes.UNAUTHORIZED, '未登录或登录已失效', null));
+  return Promise.reject(new ApiError(ErrorCodes.UNAUTHORIZED, i18n.t('account.expired'), null));
 }
 
 export const apiClient = axios.create({
@@ -196,6 +199,7 @@ export const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  config.headers['Accept-Language'] = normalizeLocale(i18n.language);
   const token = useAuthStore.getState().accessToken;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -210,7 +214,7 @@ apiClient.interceptors.response.use(
       if (body.code === ErrorCodes.UNAUTHORIZED && !isAuthEntryRequest(response.config)) {
         return handleUnauthorized(response.config);
       }
-      const apiError = new ApiError(body.code, body.message, body.traceId);
+      const apiError = new ApiError(body.code, body.message, body.traceId, body.data);
       await synchronizeWorkspaceAfterFailure(body.code);
       throw apiError;
     }
@@ -224,10 +228,10 @@ apiClient.interceptors.response.use(
       if (body.code === ErrorCodes.UNAUTHORIZED && !isAuthEntryRequest(error.config)) {
         return handleUnauthorized(error.config);
       }
-      const apiErr = new ApiError(body.code, body.message, body.traceId);
+      const apiErr = new ApiError(body.code, body.message, body.traceId, body.data);
       await synchronizeWorkspaceAfterFailure(body.code);
       throw apiErr;
     }
-    throw new ApiError('10000', error.message || 'Network error', null);
+    throw new ApiError('10000', error.message || i18n.t('account.networkError'), null);
   },
 );

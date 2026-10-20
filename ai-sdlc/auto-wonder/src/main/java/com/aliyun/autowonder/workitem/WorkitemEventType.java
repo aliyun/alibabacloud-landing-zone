@@ -13,6 +13,7 @@ public enum WorkitemEventType {
     ASSIGN("交付负责人已变更"),
     EDIT("工单内容已更新"),
     DELETE("工单已删除"),
+    RESTORE("工单已从回收站恢复"),
     COMMENT("新增评论"),
 
     AONE_IMPORT("已从 Aone 工单导入"),

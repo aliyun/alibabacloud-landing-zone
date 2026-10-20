@@ -1,6 +1,7 @@
 import { PlatformBrand } from './PlatformBrand';
 import type { ReactNode } from 'react';
 import { AppearanceSwitch } from '@/shared/theme/AppearanceProvider';
+import { LanguageSwitch } from '@/shared/i18n/LanguageSwitch';
 import { HelpCenterLink } from './HelpCenterLink';
 import { UserMenu } from './UserMenu';
 
@@ -8,6 +9,6 @@ import { UserMenu } from './UserMenu';
 export function PageHeader({ children, actions, brandTo = '/workitems' }: { children?: ReactNode; actions?: ReactNode; brandTo?: string }) {
   return <header className="aw-page-header">
     <div className="aw-page-header-context">{children ?? <PlatformBrand to={brandTo} />}</div>
-    <div className="aw-page-header-actions">{actions ?? <><HelpCenterLink /><AppearanceSwitch /><UserMenu /></>}</div>
+    <div className="aw-page-header-actions">{actions ?? <><HelpCenterLink /><LanguageSwitch /><AppearanceSwitch /><UserMenu /></>}</div>
   </header>;
 }

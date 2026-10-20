@@ -125,4 +125,31 @@ class SkillControllerPackageContentTest {
 
         reset(skillPackageService);
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void downloadRendersMetadataAndKeepsSameLookingRawDiagnostic(String language) throws Exception {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try {
+            BizException[] errors = {new BizException(ErrorCode.PARAM_INVALID),
+                BizException.keyed(ErrorCode.PARAM_INVALID, "executor.launch.version_required", new Object[]{"<raw>"}, "raw diagnostic"),
+                new BizException(ErrorCode.PARAM_INVALID, "参数不合法"),
+                BizException.keyed("unknown", "missing.key", null, "<raw>参数错误", null)};
+            String[] expected = {language.equals("en-US") ? "Invalid parameter" : "参数不合法",
+                language.equals("en-US") ? "version is required. Read it from <raw>." : "version 必填，取自 <raw>",
+                "参数不合法", "<raw>参数错误"};
+            for (int i=0; i<errors.length; i++) {
+                doThrow(errors[i]).when(skillPackageService).loadPackage(skill);
+                var response=controller.downloadPackage(7L);
+                assertEquals(400, response.getStatusCode().value());
+                assertEquals("application/json", response.getHeaders().getContentType().toString());
+                assertEquals("nosniff", response.getHeaders().getFirst("X-Content-Type-Options"));
+                var json=new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.getBody());
+                assertEquals(errors[i].getCode(), json.path("code").asText());
+                assertEquals(expected[i], json.path("message").asText());
+                assertFalse(json.path("success").asBoolean());
+            }
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

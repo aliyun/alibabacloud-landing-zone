@@ -9,6 +9,7 @@ import com.aliyun.autowonder.redis.RedisManager;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.List;
 @Service
 public class AiUsageService {
 
+    private static final ZoneId PERIOD_ZONE = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter PERIOD_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
     private static final long PERIOD_EXPIRE_SEC = 40L * 24 * 3600;
 
@@ -151,6 +153,6 @@ public class AiUsageService {
     }
 
     private String currentPeriod() {
-        return LocalDate.now().format(PERIOD_FMT);
+        return LocalDate.now(PERIOD_ZONE).format(PERIOD_FMT);
     }
 }

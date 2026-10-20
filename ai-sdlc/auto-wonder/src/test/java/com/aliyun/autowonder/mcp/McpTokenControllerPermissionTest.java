@@ -60,7 +60,7 @@ class McpTokenControllerPermissionTest {
         verify(tokenService).issue(null, 7L);
         verify(tokenService).list(7L);
         verify(tokenService).revoke(9L, 7L);
-        verify(toolService).listTools();
+        verify(toolService).listPersonalTools();
         verify(platformSkillCatalog).list();
     }
 

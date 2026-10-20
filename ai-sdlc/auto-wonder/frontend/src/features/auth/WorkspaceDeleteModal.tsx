@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { Modal, Typography, message } from 'antd';
 import type { CSSProperties } from 'react';
 import { ApiError } from '@/shared/types/common';
@@ -14,26 +16,27 @@ interface WorkspaceDeleteModalProps {
 }
 
 export function WorkspaceDeleteModal({ workspace, onDeleted, onClose }: WorkspaceDeleteModalProps) {
+  const { t } = useTranslation('auth');
   const { mutateAsync, isPending } = useDeleteWorkspace();
 
   const handleDelete = async () => {
     if (!workspace) return;
     try {
       await mutateAsync(workspace.id);
-      message.success('工作空间已移入回收站');
+      message.success(i18n.t('auth:workspace.deleted'));
       onDeleted(workspace);
       onClose();
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '删除失败，请稍后重试');
+      message.error(e instanceof ApiError ? e.message : i18n.t('auth:workspace.deleteFailed'));
     }
   };
 
   return (
     <Modal
-      title={workspace ? `删除「${workspace.name}」` : ''}
+      title={workspace ? t('workspace.deleteTitle', { name: workspace.name }) : ''}
       open={workspace !== null}
-      okText="确认删除"
-      cancelText="取消"
+      okText={t('workspace.confirmDelete')}
+      cancelText={t('action.cancel')}
       okButtonProps={{ danger: true }}
       confirmLoading={isPending}
       onCancel={onClose}
@@ -41,13 +44,11 @@ export function WorkspaceDeleteModal({ workspace, onDeleted, onClose }: Workspac
       destroyOnHidden
     >
       <ul data-testid="workspace-delete-consequences" style={listStyle}>
-        <li>删除后该工作空间将移入回收站。</li>
-        <li>成员暂时无法进入或访问该工作空间。</li>
-        <li>数据不会物理删除，可通过回收站恢复。</li>
+        <li>{t('workspace.deleteMove')}</li>
+        <li>{t('workspace.deleteAccess')}</li>
+        <li>{t('workspace.deleteData')}</li>
       </ul>
-      <Text type="secondary" style={{ fontSize: 12 }}>
-        进行中的定时任务与交付会被暂停，恢复后需要手动重新启用。
-      </Text>
+      <Text type="secondary" style={{ fontSize: 12 }}>{t('workspace.deletePause')}</Text>
     </Modal>
   );
 }

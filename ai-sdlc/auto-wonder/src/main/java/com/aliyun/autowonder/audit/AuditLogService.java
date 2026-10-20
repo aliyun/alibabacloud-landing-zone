@@ -6,6 +6,7 @@ import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.audit.dto.AuditLogQuery;
 import com.aliyun.autowonder.audit.dto.AuditLogVO;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.slf4j.Logger;
@@ -175,14 +176,7 @@ public class AuditLogService {
                 return agent == null ? null : agent.getName();
             }
             if ("HUMAN".equals(actorType)) {
-                UserDO user = userDao.findById(actorId);
-                if (user == null) {
-                    return null;
-                }
-                if (user.getNickname() != null && !user.getNickname().isBlank()) {
-                    return user.getNickname();
-                }
-                return user.getUsername();
+                return UserAccountStates.displayName(userDao.findByIdIncludingDeleted(actorId));
             }
         } catch (Exception e) {
             log.warn("audit actor name resolve skipped actorType={} actorId={}", actorType, actorId, e);

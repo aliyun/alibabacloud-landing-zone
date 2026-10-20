@@ -258,6 +258,9 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 | GET | `/api/squads/{id}/members` | READ_ONLY | 列出小队成员 (Agent) |
 | POST | `/api/squads/{id}/members` | READ_WRITE | 添加成员 |
 | DELETE | `/api/squads/{id}/members/{agentId}` | READ_WRITE | 移除成员 |
+| GET | `/api/squads/{id}/copy-check` | READ_ONLY | 复制可行性检查 (依赖与成员版本) |
+| GET | `/api/squads/{id}/copy-targets` | READ_ONLY | 列出可复制到的目标工作空间 (`keyword`/`page`/`size`) |
+| POST | `/api/squads/{id}/copy` | READ_WRITE | 跨工作空间复制小队及关联配置 |
 
 ### POST /api/squads
 ```json
@@ -274,6 +277,28 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 ```json
 { "agentIds": [1, 2, 3] }
 ```
+> 批量校验后才写入：任一 id 不是本工作空间内未删除的数字员工时整批拒绝 (15004)，不会部分加入。
+
+### GET /api/squads/{id}/copy-check
+```json
+// Response: CopyCheckResultVO
+// { "eligible": false,
+//   "missingOnlineVersions": [ { "agentId": 9, "agentName": "草稿数字人" } ],
+//   "missingDependencies": [ "agent#40474", "skill#3" ] }
+```
+> `eligible` 仅在成员都有在线版本且无悬空依赖时为 true；`missingDependencies` 列出失效引用 (agent#/skill#/plugin#/environment_variable#/sdlc#)。
+
+### POST /api/squads/{id}/copy
+```json
+{ "requestId": "string(<=64)", "targetWorkspaceIds": [2, 3] }
+// Response: CopySquadResultVO
+// { "requestId": "string", "results": [ { "workspaceId": 2, "workspaceName": "string",
+//   "success": true, "squadId": 15, "errorCode": null, "message": null } ] }
+```
+> 幂等：同一 `requestId` 重放返回既有结果；请求指纹（源空间+小队+目标集合）不一致时整请求拒绝 (35005)。
+> 逐目标独立事务：单个目标失败 (35004/35006) 不影响其余目标；失败目标的资源清理状态记录在操作记录中。
+> 复制内容：小队、成员、数字人在线版本、流程及步骤、能力 (技能/MCP 包)、被引用的环境变量与执行器；
+> 密钥只做引用改写（解密→重新加密），明文不进入响应、日志与操作记录。最多 20 个目标空间；空目标列表 35002，超限 35008。
 
 ---
 
@@ -498,6 +523,8 @@ dispatch / conversation Token 仍锁定在自身工作空间：省略 `workspace
 ### MCP 记忆工具
 
 数字员工在执行 SDLC 步骤时通过内置 `autowonder` MCP server 直接读写同一套记忆库，无需经由 learning delta 文件：`autowonder.create_memory` / `search_memories` / `get_memory` / `update_memory` / `deprecate_memory` / `delete_memory`。MCP 写入的记忆 `source=MCP`、`status=PENDING`，溯源信息（`dispatchId` / `workitemId` / `agentId`）由服务端从 dispatch 令牌推导后写入 `sourceRef`，与 `LEARNING_DELTA` 来源并行共存、共用同一审核队列。工具入参出参与调用示例见 [MCP Memory Management](mcp-memory-management.md)。
+
+用户个人 MCP 的记忆操作使用当前记忆页面的主题/索引服务：普通成员可读，具有工作空间写权限且为管理员或获目标库 WRITE 授权的用户可编辑。操作审计为 USER，编辑/删除要求 expectedVersion 和 idempotencyKey，不使用旧版 PENDING 审核流程。个人令牌的参数与示例见 [个人 MCP 记忆管理](personal-mcp-memory.md)。
 
 ---
 

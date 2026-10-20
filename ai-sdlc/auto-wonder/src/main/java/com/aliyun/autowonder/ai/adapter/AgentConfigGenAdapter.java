@@ -5,6 +5,8 @@ import com.aliyun.autowonder.json.JSONArray;
 import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -58,35 +60,41 @@ public class AgentConfigGenAdapter implements SceneAdapter {
 
     @Override
     public String validateResult(String resultJson) {
+        BizException error = validateForConfirmation(resultJson);
+        return error == null ? null : error.getMessage();
+    }
+
+    @Override
+    public BizException validateForConfirmation(String resultJson) {
         try {
             JSONObject obj = JSON.parseObject(extractJsonObject(resultJson));
             if (obj == null) {
-                return "null result";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.null_result", new Object[]{}, "null result");
             }
             for (String key : new String[]{"name", "roleName", "roleCode", "businessBackground", "responsibilities"}) {
                 Object value = obj.get(key);
                 if (value != null && !(value instanceof String)) {
-                    return key + " must be a string";
+                    return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.string_required", new Object[]{key}, key + " must be a string");
                 }
             }
             if (obj.get("missingFields") != null && obj.getJSONArray("missingFields") == null) {
-                return "missingFields must be an array";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.array_required", new Object[]{"missingFields"}, "missingFields must be an array");
             }
             if (obj.get("clarifyingQuestions") != null && obj.getJSONArray("clarifyingQuestions") == null) {
-                return "clarifyingQuestions must be an array";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.array_required", new Object[]{"clarifyingQuestions"}, "clarifyingQuestions must be an array");
             }
             JSONObject recommendations = obj.getJSONObject("recommendations");
             if (recommendations != null) {
                 for (String key : new String[]{"executors", "skills", "memories", "workflows"}) {
                     Object value = recommendations.get(key);
                     if (value != null && !(value instanceof JSONArray)) {
-                        return "recommendations." + key + " must be an array";
+                        return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.array_required", new Object[]{"recommendations." + key}, "recommendations." + key + " must be an array");
                     }
                 }
             }
             return null;
         } catch (Exception e) {
-            return "invalid JSON: " + e.getMessage();
+            return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.invalid_json", new Object[]{e.getMessage()}, "invalid JSON: " + e.getMessage());
         }
     }
 

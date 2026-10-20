@@ -6,9 +6,19 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import java.util.List;
 import java.util.Map;
+import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 
 class JacksonJsonTest {
+
+    @Test
+    void preservesUntypedDecimalPrecisionAtRootAndInObjects() {
+        String decimal = "24.000000000000000001";
+        assertEquals(new BigDecimal(decimal), JSON.parse(decimal));
+        JSONObject parsed = JSON.parseObject("{\"values\":[" + decimal + "]}");
+        assertEquals(new BigDecimal(decimal), parsed.getJSONArray("values").get(0));
+        assertEquals("{\"values\":[" + decimal + "]}", JSON.toJSONString(parsed));
+    }
 
     @Test
     void serializesMapKeysAsValidJsonWithoutReferenceAliases() {

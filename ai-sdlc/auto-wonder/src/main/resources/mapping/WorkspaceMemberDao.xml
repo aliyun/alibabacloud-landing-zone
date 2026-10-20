@@ -2,68 +2,95 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.aliyun.autowonder.workspace.WorkspaceMemberDao">
+    <sql id="memberWithRole">
+        SELECT m.id, m.tenant_id, m.user_id, m.status, m.joined_at, m.identity_tags,
+            m.forbidden_domains, m.role_id, r.code AS role_code, r.name AS role_name,
+            r.access_level, r.read_only_domains, m.gmt_create, m.gmt_modified,
+            m.creator_id, m.modifier_id, m.is_deleted
+        FROM org_member m LEFT JOIN workspace_role r
+            ON r.id = m.role_id AND r.tenant_id = m.tenant_id AND r.is_deleted = 0
+    </sql>
     <insert id="insert" parameterType="com.aliyun.autowonder.workspace.WorkspaceMemberDO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, identity_tags, creator_id, is_deleted)
-        VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{identityTags}, #{creatorId}, 0)
+        INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, role_id, identity_tags, creator_id, is_deleted)
+        VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{roleId}, #{identityTags}, #{creatorId}, 0)
     </insert>
     <insert id="insertOrActivate" parameterType="com.aliyun.autowonder.workspace.WorkspaceMemberDO"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, identity_tags, creator_id, modifier_id, is_deleted)
-        VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{identityTags}, #{creatorId}, #{modifierId}, 0)
+        INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, role_id, identity_tags, creator_id, modifier_id, is_deleted)
+        VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{roleId}, #{identityTags}, #{creatorId}, #{modifierId}, 0)
         ON DUPLICATE KEY UPDATE
             joined_at = IF(is_deleted = 1 OR status != 0, NOW(3), joined_at),
             status = 0,
             access_level = #{accessLevel},
+            role_id = #{roleId},
             identity_tags = #{identityTags},
             modifier_id = #{modifierId},
             is_deleted = 0,
             gmt_modified = NOW(3)
     </insert>
     <select id="findByWorkspaceAndUser" resultType="com.aliyun.autowonder.workspace.WorkspaceMemberDO">
-        SELECT * FROM org_member
-        WHERE tenant_id = #{tenantId} AND user_id = #{userId} AND is_deleted = 0
+        <include refid="memberWithRole"/>
+        WHERE m.tenant_id = #{tenantId} AND m.user_id = #{userId} AND m.is_deleted = 0
         LIMIT 1
     </select>
     <select id="findByWorkspaceAndUserForUpdate" resultType="com.aliyun.autowonder.workspace.WorkspaceMemberDO">
-        SELECT * FROM org_member
-        WHERE tenant_id = #{tenantId} AND user_id = #{userId} AND is_deleted = 0
+        <include refid="memberWithRole"/>
+        WHERE m.tenant_id = #{tenantId} AND m.user_id = #{userId} AND m.is_deleted = 0
         LIMIT 1
         FOR UPDATE
     </select>
     <select id="listByTenant" resultType="com.aliyun.autowonder.workspace.WorkspaceMemberDO">
-        SELECT * FROM org_member WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND status = 0
-        ORDER BY joined_at ASC
+        <include refid="memberWithRole"/>
+        WHERE m.tenant_id = #{tenantId} AND m.is_deleted = 0 AND m.status = 0
+        ORDER BY m.joined_at ASC
     </select>
-    <update id="updateAccessLevel">
-        UPDATE org_member SET access_level = #{accessLevel},
-            modifier_id = #{modifierId}, gmt_modified = NOW(3)
-        WHERE tenant_id = #{tenantId} AND user_id = #{userId}
-          AND status = 0 AND is_deleted = 0
-    </update>
     <update id="updateIdentityTags">
         UPDATE org_member SET identity_tags = #{identityTags},
             modifier_id = #{modifierId}, gmt_modified = NOW(3)
         WHERE tenant_id = #{tenantId} AND user_id = #{userId}
           AND status = 0 AND is_deleted = 0
     </update>
+    <update id="updateRole">
+        UPDATE org_member SET role_id = #{roleId},
+            modifier_id = #{modifierId}, gmt_modified = NOW(3)
+        WHERE tenant_id = #{tenantId} AND user_id = #{userId} AND status = 0 AND is_deleted = 0
+    </update>
     <update id="softDelete">
         UPDATE org_member SET is_deleted = 1, modifier_id = #{modifierId}, gmt_modified = NOW(3)
         WHERE tenant_id = #{tenantId} AND user_id = #{userId}
           AND status = 0 AND is_deleted = 0
     </update>
+    <update id="softDeleteAllByUser">
+        UPDATE org_member SET is_deleted = 1, modifier_id = #{modifierId}, gmt_modified = NOW(3)
+        WHERE user_id = #{userId} AND is_deleted = 0
+    </update>
+
+    <!-- 平台级事件（审计/通知）的空间归属：最早加入的活跃空间；空间被删除/禁用时不作为归属。 -->
+    <select id="findEarliestActiveWorkspaceId" resultType="java.lang.Long">
+        SELECT m.tenant_id
+        FROM org_member m
+        INNER JOIN `org` o ON o.id = m.tenant_id
+        WHERE m.user_id = #{userId}
+          AND m.is_deleted = 0 AND m.status = 0
+          AND o.is_deleted = 0 AND o.status = 0
+        ORDER BY m.joined_at ASC, m.id ASC
+        LIMIT 1
+    </select>
 
     <select id="isSoleAdminOfAnyWorkspace" resultType="boolean">
         SELECT COUNT(*) > 0 FROM org_member om1
+        JOIN workspace_role r1 ON r1.id = om1.role_id AND r1.tenant_id = om1.tenant_id AND r1.is_deleted = 0
         WHERE om1.user_id = #{userId}
-          AND om1.access_level = 'ADMIN'
+          AND r1.access_level = 'ADMIN'
           AND om1.is_deleted = 0
           AND om1.status = 0
           AND NOT EXISTS (
               SELECT 1 FROM org_member om2
+              JOIN workspace_role r2 ON r2.id = om2.role_id AND r2.tenant_id = om2.tenant_id AND r2.is_deleted = 0
               WHERE om2.tenant_id = om1.tenant_id
                 AND om2.user_id != #{userId}
-                AND om2.access_level = 'ADMIN'
+                AND r2.access_level = 'ADMIN'
                 AND om2.is_deleted = 0
                 AND om2.status = 0
           )

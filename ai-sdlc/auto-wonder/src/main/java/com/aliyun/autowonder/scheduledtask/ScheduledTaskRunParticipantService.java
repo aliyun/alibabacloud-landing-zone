@@ -8,6 +8,7 @@ import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.scheduledtask.dto.ScheduledRunMentionCandidateVO;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.websocket.PresenceManager;
@@ -58,10 +59,11 @@ public class ScheduledTaskRunParticipantService {
             owner.setRoleName("Owner");
             owner.setAgent(false);
             owner.setOnline(true);
-            UserDO user = userDao.findById(run.getOwnerId());
+            UserDO user = userDao.findByIdIncludingDeleted(run.getOwnerId());
             if (user != null) {
-                owner.setName(user.getNickname() != null ? user.getNickname() : user.getUsername());
-                owner.setDisplayId(user.getUsername());
+                owner.setName(UserAccountStates.displayName(user));
+                owner.setDisplayId(UserAccountStates.isDeleted(user)
+                        ? user.getDeletedUsername() : user.getUsername());
             }
             participants.add(owner);
         }
@@ -131,7 +133,10 @@ public class ScheduledTaskRunParticipantService {
             if (agent) {
                 boolean frozen = frozenAgentIds.contains(participant.getUserId());
                 candidate.setMentionable(frozen);
-                if (!frozen) candidate.setMentionDisabledReason(NON_FROZEN_PARTICIPANT_REASON);
+                if (!frozen) {
+                    candidate.setMentionDisabledReason(NON_FROZEN_PARTICIPANT_REASON);
+                    candidate.setMentionDisabledReasonCode("NOT_FROZEN");
+                }
             } else {
                 candidate.setMentionable(true);
             }

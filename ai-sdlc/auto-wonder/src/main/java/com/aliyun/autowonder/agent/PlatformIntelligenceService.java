@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.agent;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.conversation.*;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import org.springframework.stereotype.Service;
@@ -81,12 +82,14 @@ public class PlatformIntelligenceService {
         requireWorkspace(workspaceId);
         requireRequest(requestId);
         if (prompt == null || prompt.isBlank()) {
-            throw new IllegalArgumentException("prompt must not be blank");
+            throw new KeyedIllegalArgumentException("agent.platform_intelligence.prompt_blank", null,
+                    "prompt must not be blank");
         }
         AgentConversationTurnDO existing = turnDao.findByExternalMsgId(workspaceId, externalId(requestId));
         if (existing != null) {
             if (!prompt.equals(existing.getContent())) {
-                throw new IllegalArgumentException("requestId already used with a different prompt");
+                throw new KeyedIllegalArgumentException("agent.platform_intelligence.request_prompt_conflict", null,
+                        "requestId already used with a different prompt");
             }
             return getResult(workspaceId, requestId);
         }
@@ -111,7 +114,8 @@ public class PlatformIntelligenceService {
         AgentConversationDO conversation = conversationDao.findById(workspaceId, inbound.getConversationId());
         if (conversation == null || !PlatformIntelligenceChannelSink.CHANNEL.equals(conversation.getChannel())
                 || !requestId.toString().equals(conversation.getChannelConversationId())) {
-            throw new IllegalArgumentException("request does not belong to platform intelligence");
+            throw new KeyedIllegalArgumentException("agent.platform_intelligence.request_owner", null,
+                    "request does not belong to platform intelligence");
         }
         List<AgentConversationTurnDO> turns = turnDao.listTurnsByConversation(workspaceId, conversation.getId());
         AgentConversationTurnDO outbound = turns.stream().filter(t -> "OUT".equals(t.getDirection()))
@@ -134,10 +138,13 @@ public class PlatformIntelligenceService {
     private static String externalId(UUID requestId) { return "platform-internal:" + requestId; }
     private static void requireWorkspace(Long workspaceId) {
         if (workspaceId == null || workspaceId <= 0) {
-            throw new IllegalArgumentException("workspaceId must be positive");
+            throw new KeyedIllegalArgumentException("agent.platform_intelligence.workspace_positive", null,
+                    "workspaceId must be positive");
         }
     }
     private static void requireRequest(UUID requestId) {
-        if (requestId == null) { throw new IllegalArgumentException("requestId is required"); }
+        if (requestId == null) {
+            throw new KeyedIllegalArgumentException("agent.platform_intelligence.request_required", null, "requestId is required");
+        }
     }
 }

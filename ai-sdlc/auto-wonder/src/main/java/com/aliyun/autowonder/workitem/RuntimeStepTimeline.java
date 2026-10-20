@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.workitem;
 
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.dispatch.DispatchRuntimeEventDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.util.MojibakeDetector;
@@ -74,26 +75,30 @@ class RuntimeStepTimeline {
         }
         int order = step.getStepOrder();
         List<DispatchRuntimeEventDO> events = eventsByOrder.get(order);
-        DispatchRuntimeEventDO last = lastEvent(events);
-        if (last != null && "step.reused".equals(last.getEventType())) {
-            return "done";
+        // Only state transitions prove completion. A later cursor, a completion
+        // request awaiting its gate, or unrelated telemetry cannot complete work.
+        DispatchRuntimeEventDO stateEvent = null;
+        if (events != null) {
+            for (int i = events.size() - 1; i >= 0; i--) {
+                DispatchRuntimeEventDO candidate = events.get(i);
+                String type = candidate.getEventType();
+                if (type != null && (type.startsWith("step.")
+                        || "completion_requested".equals(type)
+                        || "dispatch.completed".equals(type)
+                        || isFailureEvent(candidate))) {
+                    stateEvent = candidate;
+                    break;
+                }
+            }
         }
-        if (last != null && "step.stale".equals(last.getEventType())) {
-            return "pending";
+        if (stateEvent != null) {
+            String type = stateEvent.getEventType();
+            if ("step.completed".equals(type) || "step.reused".equals(type)
+                    || "dispatch.completed".equals(type)) return "done";
+            if ("step.stale".equals(type)) return "pending";
+            if (isFailureEvent(stateEvent)) return "failed";
         }
-        if (last != null && isFailureEvent(last)) {
-            return "failed";
-        }
-        if (order < latestOrder) {
-            return "done";
-        }
-        if (order > latestOrder) {
-            return "pending";
-        }
-        if (isCompletionEvent(latestEventType)) {
-            return "done";
-        }
-        return "active";
+        return order == latestOrder ? "active" : "pending";
     }
 
     boolean isCurrent(SdlcStepDO step) {
@@ -112,6 +117,8 @@ class RuntimeStepTimeline {
         for (int i = 0; i < events.size(); i++) {
             DispatchRuntimeEventDO event = events.get(i);
             SubStepVO vo = new SubStepVO();
+            String fallbackCode = fallbackCodeOf(event);
+            vo.setFallbackCode(fallbackCode);
             vo.setName(labelOf(event));
             if (isFailureEvent(event)) {
                 vo.setStatus("failed");
@@ -274,12 +281,28 @@ class RuntimeStepTimeline {
         }
         String eventLabel = runtimeEventLabel(event.getEventType());
         if (eventLabel != null) {
-            return eventLabel;
+            return SystemMessages.render("workitem.substep." + fallbackCodeOf(event).toLowerCase(java.util.Locale.ROOT), new Object[0], eventLabel);
         }
         if (event.getEventType() != null) {
             return event.getEventType();
         }
-        return "运行进度";
+        return SystemMessages.render("workitem.substep.runtime_progress", new Object[0], "运行进度");
+    }
+
+    private static String fallbackCodeOf(DispatchRuntimeEventDO event) {
+        if (event.getMessage() != null && !event.getMessage().isBlank()
+                && !MojibakeDetector.looksLikeMojibake(event.getMessage())) return null;
+        String type = event.getEventType();
+        if (type == null) return "RUNTIME_PROGRESS";
+        if (type.startsWith("step.started")) return "START_EXECUTION";
+        if (isCompletionEvent(type)) return "REQUEST_COMPLETION";
+        return switch (type) {
+            case "step.gate_started" -> "START_GATE";
+            case "step.gate_finished" -> "FINISH_GATE";
+            case "step.fix_required" -> "FIX_REQUIRED";
+            case "step.failed", "dispatch.failed" -> "EXECUTION_FAILED";
+            default -> null;
+        };
     }
 
     private static String runtimeEventLabel(String eventType) {

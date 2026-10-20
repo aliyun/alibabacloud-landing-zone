@@ -3,6 +3,7 @@ package com.aliyun.autowonder.user;
 import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
+import com.aliyun.autowonder.auth.session.SessionIssuanceService;
 import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.user.dto.UpdateProfileRequest;
@@ -33,7 +34,8 @@ class UserServiceProfileTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         JwtService jwtService = new JwtService(props);
         service = new UserService(userDao, jwtService, sessionService, props,
-                mock(WorkspaceMemberDao.class), mock(SystemAdminService.class));
+                mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
+                new SessionIssuanceService(jwtService, sessionService, props));
     }
 
     private UserDO existingUser() {
@@ -220,4 +222,71 @@ class UserServiceProfileTest {
 
         verify(userDao).updateProfile(eq(USER_ID), eq("爱丽丝"), isNull(), isNull());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+        "registerEmpty|10001|用户名不能为空|Username is required.",
+        "registerDuplicate|10409|用户名已存在|Username already exists.",
+        "oldEmpty|10001|旧密码不能为空|Old password is required.",
+        "newEmpty|10001|新密码不能为空|New password is required.",
+        "passwordUserMissing|10404|用户不存在|User does not exist.",
+        "oldWrong|10401|旧密码不正确|Incorrect old password.",
+        "getUserMissing|10404|用户不存在|User does not exist.",
+        "requestMissing|10001|请求不能为空|Request is required.",
+        "nicknameEmpty|10001|昵称不能为空|Nickname is required.",
+        "nicknameLong|10001|昵称最多 64 个字符|Nickname must not exceed 64 characters.",
+        "emailLong|10001|邮箱最多 128 个字符|Email must not exceed 128 characters.",
+        "emailInvalid|10001|邮箱格式不正确|Invalid email format.",
+        "phoneLong|10001|联系方式最多 32 个字符|Contact information must not exceed 32 characters.",
+        "phoneInvalid|10001|联系方式仅支持数字、空格、连字符，可带国际区号前缀 +|Contact information supports only digits, spaces and hyphens, with an optional + international dialing prefix.",
+        "updateUserMissing|10404|用户不存在|User does not exist.",
+        "emailDuplicate|10409|邮箱已被使用|Email is already in use."
+    })
+    void ownedUserGuardRendersEnglishWithoutChangingDiagnosticOrWrites(
+            String branch, String code, String diagnostic, String english) {
+        var register = new com.aliyun.autowonder.user.dto.RegisterRequest();
+        register.setUsername(branch.equals("registerEmpty") ? " " : "alice");
+        var password = new com.aliyun.autowonder.user.dto.ChangePasswordRequest();
+        password.setOldPassword(branch.equals("oldEmpty") ? " " : "old");
+        password.setNewPassword(branch.equals("newEmpty") ? " " : "new");
+        if (branch.equals("registerDuplicate")) when(userDao.findByUsername("alice")).thenReturn(existingUser());
+        if (branch.equals("oldWrong") || branch.equals("emailDuplicate")) {
+            when(userDao.findById(USER_ID)).thenReturn(existingUser());
+        }
+        if (branch.equals("emailDuplicate")) {
+            doThrow(new org.springframework.dao.DuplicateKeyException("raw database detail"))
+                    .when(userDao).updateProfile(eq(USER_ID), any(), any(), any());
+        }
+        BizException error = assertThrows(BizException.class, () -> {
+            switch (branch) {
+                case "registerEmpty", "registerDuplicate" -> service.register(register);
+                case "oldEmpty", "newEmpty", "passwordUserMissing", "oldWrong" -> service.changePassword(USER_ID, password);
+                case "getUserMissing" -> service.getProfile(USER_ID);
+                case "requestMissing" -> service.updateProfile(USER_ID, null);
+                case "nicknameEmpty" -> service.updateProfile(USER_ID, request(" ", null, null));
+                case "nicknameLong" -> service.updateProfile(USER_ID, request("长".repeat(65), null, null));
+                case "emailLong" -> service.updateProfile(USER_ID, request("爱丽丝", "x".repeat(129), null));
+                case "emailInvalid" -> service.updateProfile(USER_ID, request("爱丽丝", "<b>bad</b>", null));
+                case "phoneLong" -> service.updateProfile(USER_ID, request("爱丽丝", null, "1".repeat(33)));
+                case "phoneInvalid" -> service.updateProfile(USER_ID, request("爱丽丝", null, "<b>123</b>"));
+                case "updateUserMissing", "emailDuplicate" -> service.updateProfile(USER_ID, request("爱丽丝", "taken@example.com", null));
+                default -> throw new AssertionError(branch);
+            }
+        });
+        assertEquals(BizException.class, error.getClass());
+        assertEquals(code, error.getCode());
+        assertEquals(diagnostic, error.getMessage());
+        assertEquals(diagnostic, error.getLocalizedMessage());
+        assertNull(error.getCause());
+        verify(userDao, never()).insert(any());
+        verify(userDao, never()).updatePasswordHash(anyLong(), any());
+        if (!branch.equals("emailDuplicate")) verify(userDao, never()).updateProfile(anyLong(), any(), any(), any());
+        int status = code.equals("10001") ? 400 : code.equals("10401") ? 401 : code.equals("10409") ? 409 : 200;
+        assertEquals(status, new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue());
+        assertEquals(diagnostic, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.CHINA));
+        assertEquals(english, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.US));
+    }
+
 }

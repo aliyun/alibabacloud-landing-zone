@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { InsightsPage } from './InsightsPage';
+
+// antd Tooltip 延迟出现，负向断言必须等过该延迟，否则回归会被漏过。
+async function waitPastTooltipDelay() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+}
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -149,6 +154,28 @@ describe('InsightsPage', () => {
       expect(request).toContain('time_range=7d');
     });
   });
+
+  it('opens the requirement delivery tab and skips the worker filter failure banner there', async () => {
+    server.use(
+      http.get('/api/dashboard/realtime', () => HttpResponse.json(ok(realtimeDashboardPayload))),
+      http.get('/api/insights/metrics', () => HttpResponse.json(ok(metricsPayload()))),
+      http.get('/api/insights/audit', () => HttpResponse.json(ok({ items: [], total: 0 }))),
+      http.get('/api/insights/workers', () => HttpResponse.json(
+        { success: false, code: '50000', message: 'workers 失败', data: null, traceId: null }, { status: 500 },
+      )),
+      http.get('/api/insights/requirement-delivery', () => HttpResponse.json(ok(requirementDeliveryPayload))),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('数据洞察')).toBeInTheDocument();
+    await user.click(screen.getByText('需求交付'));
+
+    expect(await screen.findByText('已交付需求')).toBeInTheDocument();
+    expect(screen.getByText('需求甲')).toBeInTheDocument();
+    expect(screen.queryByText('数字员工列表加载失败，当前无法按人员筛选。')).not.toBeInTheDocument();
+  });
 });
 
 const realtimeDashboardPayload = {
@@ -168,6 +195,18 @@ const realtimeDashboardPayload = {
 const costPayload = {
   totalTokens: 100000, avgTokensPerTask: 5000, dailyAvg: 14000, trend: [10, 12, 11, 13, 14, 12, 15],
   totalCredits: 82.61, avgCreditsPerTask: 12.5, dailyAvgCredits: 2.75, creditsTrend: [1.2, 2.5, 3.1, 4, 5.5, 6.2, 7.1],
+};
+
+const requirementDeliveryPayload = {
+  startDate: '2026-07-06', endDate: '2026-07-12', timezone: 'Asia/Shanghai', dataThrough: '2026-07-12', targetHours: null,
+  summary: {
+    deliveredCount: 2, previous: { startDate: '2026-06-29', endDate: '2026-07-05', deliveredCount: 1 }, changePercent: 100,
+    averageDurationSeconds: 72000, medianDurationSeconds: 54000, validSampleCount: 2, missingSampleCount: 0, metTargetCount: null, goalRatio: null,
+  },
+  weeks: [],
+  samples: [
+    { workitemId: 31, title: '需求甲', deliveredAt: '2026-07-11T02:00:00Z', deliveryStartedAt: '2026-07-09T02:00:00Z', durationSeconds: 172800, metTarget: null, missingReason: null },
+  ],
 };
 
 function ok(data: unknown) {
@@ -224,7 +263,7 @@ describe('InsightsPage realtime credits cost', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const region = await screen.findByRole('region', { name: 'Credits 成本' });
+    const region = await screen.findByRole('region', { name: '成本分析' });
     expect(await within(region).findByText('总 Credits')).toBeInTheDocument();
     expect(within(region).getByText('82.61')).toBeInTheDocument();
     expect(within(region).getByText('12.5')).toBeInTheDocument();
@@ -242,10 +281,14 @@ describe('InsightsPage realtime credits cost', () => {
     expect(latestMetricsRequest).not.toContain('worker_id');
 
     await user.hover(within(region).getByText('总 Credits'));
-    expect(await screen.findByText('总 Token:')).toBeInTheDocument();
-    expect(screen.getByText('100K')).toBeInTheDocument();
-    expect(screen.getByText('5.0K')).toBeInTheDocument();
-    expect(screen.getByText('14K')).toBeInTheDocument();
+    await waitPastTooltipDelay();
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(screen.queryByText('总 Token:')).not.toBeInTheDocument();
+    expect(screen.queryByText('100K')).not.toBeInTheDocument();
+    expect(screen.queryByText('5.0K')).not.toBeInTheDocument();
+    expect(screen.queryByText('14K')).not.toBeInTheDocument();
+    expect(within(region).getByText('总 Credits')).toBeInTheDocument();
   });
 
   it('renders zero credits without NaN when there is no usage data', async () => {
@@ -262,7 +305,7 @@ describe('InsightsPage realtime credits cost', () => {
 
     renderPage();
 
-    const region = await screen.findByRole('region', { name: 'Credits 成本' });
+    const region = await screen.findByRole('region', { name: '成本分析' });
     await waitFor(() => expect(within(region).getAllByText('0')).toHaveLength(3));
     expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
   });
@@ -280,7 +323,7 @@ describe('InsightsPage realtime credits cost', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const region = await screen.findByRole('region', { name: 'Credits 成本' });
+    const region = await screen.findByRole('region', { name: '成本分析' });
     await user.click(within(region).getByRole('combobox', { name: '成本数字员工' }));
     const workerOptions = await screen.findAllByText('验收数字员工');
     await user.click(workerOptions[workerOptions.length - 1]);
@@ -323,7 +366,7 @@ describe('InsightsPage realtime credits cost', () => {
     expect(screen.getByText('工单存量')).toBeInTheDocument();
   });
 
-  it('refetches the cost query from the dashboard refresh button', async () => {
+  it('keeps the cost query independent from the dashboard refresh button', async () => {
     const metricsRequests: string[] = [];
     let realtimeRequests = 0;
     server.use(
@@ -341,11 +384,13 @@ describe('InsightsPage realtime credits cost', () => {
 
     await screen.findByText('正在运行');
     const metricsRequestsBefore = metricsRequests.length;
+    const realtimeRequestsBefore = realtimeRequests;
 
+    // 实时面板的手动刷新只刷新实时快照，成本筛选在自身面板内独立取数。
     // antd 会用「ant-btn」在中文两字间插空格，且图标自带 aria-label，故用正则匹配
     await user.click(screen.getByRole('button', { name: /刷\s*新/ }));
 
-    await waitFor(() => expect(metricsRequests).toHaveLength(metricsRequestsBefore + 1));
-    expect(realtimeRequests).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(realtimeRequests).toBeGreaterThan(realtimeRequestsBefore));
+    expect(metricsRequests).toHaveLength(metricsRequestsBefore);
   });
 });

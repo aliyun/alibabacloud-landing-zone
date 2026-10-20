@@ -1,9 +1,15 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ApiOutlined,
   AppstoreOutlined,
   CopyOutlined,
+  CloseOutlined,
+  RightOutlined,
   DeleteOutlined,
   KeyOutlined,
   PlusOutlined,
@@ -31,8 +37,9 @@ const { Paragraph, Text } = Typography;
 
 const TOKEN_PLACEHOLDER = '<MCP_TOKEN>';
 
-export const MCP_PERMISSION_HINT =
-  'MCP token 权限跟随你在目标工作空间中的权限；调用工作空间域工具时需要传入 workspaceId。';
+export function getMcpPermissionHint() {
+  return i18n.t('mcp:permissionHint');
+}
 
 type CapabilityMeta = {
   key: string;
@@ -60,50 +67,50 @@ type SchemaProperty = {
 const CAPABILITIES: CapabilityMeta[] = [
   {
     key: 'workitem',
-    title: '工单管理',
-    description: 'CRUDL、分配、评论、暂停继续和状态流转。',
+    get title() { return i18n.t('mcp:capabilities.workitem.title'); },
+    get description() { return i18n.t('mcp:capabilities.workitem.description'); },
     color: 'blue',
     match: (name) => name.includes('workitem') || name.includes('comment') || name.includes('pause') || name.includes('resume') || name.includes('transition'),
   },
   {
     key: 'sdlc',
-    title: 'SDLC 管理',
-    description: '流程、步骤、排序、启停和状态模板。',
+    get title() { return i18n.t('mcp:capabilities.sdlc.title'); },
+    get description() { return i18n.t('mcp:capabilities.sdlc.description'); },
     color: 'purple',
     match: (name) => name.includes('sdlc') || name.includes('status_template'),
   },
   {
     key: 'agent',
-    title: '数字员工管理',
-    description: '数字员工创建、查询和详情读取。',
+    get title() { return i18n.t('mcp:capabilities.agent.title'); },
+    get description() { return i18n.t('mcp:capabilities.agent.description'); },
     color: 'cyan',
     match: (name) => name.includes('agent'),
   },
   {
     key: 'executor',
-    title: '执行器管理',
-    description: '执行器的增删查、Token 查看、可选值查询与启动命令生成。',
+    get title() { return i18n.t('mcp:capabilities.executor.title'); },
+    get description() { return i18n.t('mcp:capabilities.executor.description'); },
     color: 'geekblue',
     match: (name) => name.includes('executor'),
   },
   {
     key: 'skill',
-    title: '技能与插件',
-    description: 'skills、MCP server 和 plugin 记录管理。',
+    get title() { return i18n.t('mcp:capabilities.skill.title'); },
+    get description() { return i18n.t('mcp:capabilities.skill.description'); },
     color: 'orange',
     match: (name) => name.includes('skill') || name.includes('platform_skill'),
   },
   {
     key: 'memory',
-    title: '记忆管理',
-    description: '记忆的写入、检索、修正与废弃，替代 learning delta 文件上报。',
+    get title() { return i18n.t('mcp:capabilities.memory.title'); },
+    get description() { return i18n.t('mcp:capabilities.memory.description'); },
     color: 'magenta',
     match: (name) => name.includes('memor'),
   },
   {
     key: 'project',
-    title: '工作空间发现',
-    description: '列出可访问工作空间及权限等级，用于获取 workspaceId。',
+    get title() { return i18n.t('mcp:capabilities.project.title'); },
+    get description() { return i18n.t('mcp:capabilities.project.description'); },
     color: 'green',
     match: (name) => name.includes('project'),
   },
@@ -112,8 +119,8 @@ const CAPABILITIES: CapabilityMeta[] = [
 function capabilityFor(toolName: string) {
   return CAPABILITIES.find((capability) => capability.match(toolName)) ?? {
     key: 'other',
-    title: '其他能力',
-    description: '暂未归类的辅助工具。',
+    get title() { return i18n.t('mcp:capabilities.other.title'); },
+    get description() { return i18n.t('mcp:capabilities.other.description'); },
     color: 'default',
     match: () => false,
   };
@@ -186,7 +193,7 @@ function clientSnippets(mcpEndpoint: string, token: string) {
     {
       key: 'codex',
       label: 'Codex',
-      command: `# ~/.codex/config.toml 或项目 .codex/config.toml
+      command: `${i18n.t('mcp:codexComment')}
 [mcp_servers.autowonder]
 url = "${endpoint}"`,
     },
@@ -209,6 +216,7 @@ url = "${endpoint}"`,
 }
 
 export function McpTokenSettingsPanel() {
+  const { t } = useTranslation('mcp');
   const queryClient = useQueryClient();
   const [tokenModalOpen, setTokenModalOpen] = useState(false);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
@@ -222,6 +230,7 @@ export function McpTokenSettingsPanel() {
   });
   const mcpEndpoint = brandingQuery.data?.mcpBaseUrl?.trim() || null;
   const isCommunityEdition = brandingQuery.data?.communityEdition === true;
+  useLocalizedValidation(form, tokenModalOpen && !(issuedToken && mcpEndpoint));
 
   const createTokenMutation = useMutation({
     mutationFn: createMcpToken,
@@ -236,12 +245,12 @@ export function McpTokenSettingsPanel() {
     mutationFn: revokeMcpToken,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['mcp-tokens'] });
-      message.success('令牌已撤销');
+      message.success(i18n.t('mcp:revokedNotice'));
     },
   });
 
   const tools = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
-  const toolGroups = useMemo(() => groupedTools(tools), [tools]);
+  const toolGroups = useMemo(() => groupedTools(tools), [tools, t]);
   const activeTokens = useMemo(
     () => (tokensQuery.data ?? []).filter((token) => !token.revokedAt).length,
     [tokensQuery.data],
@@ -250,19 +259,19 @@ export function McpTokenSettingsPanel() {
   const copyText = async (text: string) => {
     const copied = await copyTextToClipboard(text);
     if (copied) {
-      message.success('已复制');
+      message.success(i18n.t('mcp:copied'));
     } else {
-      message.warning('自动复制失败，请手动复制');
+      message.warning(i18n.t('mcp:copyFailed'));
     }
   };
 
   const submitToken = async () => {
     if (!mcpEndpoint) {
-      message.error('MCP 服务地址不可用，请刷新后重试');
+      message.error(i18n.t('mcp:endpointUnavailable'));
       return;
     }
-    const values = await form.validateFields();
-    createTokenMutation.mutate({ name: values.name });
+    const values = await form.validateFields().catch(() => null);
+    if (values) createTokenMutation.mutate({ name: values.name });
   };
 
   const closeTokenModal = () => {
@@ -272,36 +281,36 @@ export function McpTokenSettingsPanel() {
   };
 
   const tokenColumns: ColumnsType<McpToken> = [
-    { title: '名称', dataIndex: 'name' },
-    { title: '前缀', dataIndex: 'tokenPrefix', render: (value: string) => <Text code>{value}</Text> },
-    { title: '创建时间', dataIndex: 'gmtCreate', render: (value?: string | null) => value || '-' },
-    { title: '最后使用', dataIndex: 'lastUsedAt', render: (value?: string | null) => value || '-' },
+    { title: t('name'), dataIndex: 'name' },
+    { title: t('prefix'), dataIndex: 'tokenPrefix', render: (value: string) => <Text code>{value}</Text> },
+    { title: t('created'), dataIndex: 'gmtCreate', render: (value?: string | null) => value ? formatDateTime(value) : '-' },
+    { title: t('lastUsed'), dataIndex: 'lastUsedAt', render: (value?: string | null) => value ? formatDateTime(value) : '-' },
     {
-      title: '状态',
-      render: (_, record) => record.revokedAt ? <Tag>已撤销</Tag> : <Tag color="green">有效</Tag>,
+      title: t('status'),
+      render: (_, record) => record.revokedAt ? <Tag>{t('revoked')}</Tag> : <Tag color="green">{t('active')}</Tag>,
     },
     {
-      title: '操作',
+      title: t('actions'),
       fixed: 'right',
       width: 90,
       render: (_, record) => (
         <Button
           danger
           type="text"
-          icon={<DeleteOutlined />}
+          icon={<DeleteOutlined aria-hidden="true" />}
           disabled={Boolean(record.revokedAt)}
           onClick={() => revokeTokenMutation.mutate(record.id)}
-          aria-label={`撤销 ${record.name}`}
+          aria-label={t('revokeNamed', { name: record.name })}
         />
       ),
     },
   ];
 
   const schemaColumns: ColumnsType<SchemaRow> = [
-    { title: '字段', dataIndex: 'name', align: 'left', width: 260, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
-    { title: '类型', dataIndex: 'type', width: 120, render: (value: string) => <Tag>{value}</Tag> },
-    { title: '必填', dataIndex: 'required', width: 90, render: (value: boolean) => value ? <Tag color="red">是</Tag> : <Tag>否</Tag> },
-    { title: '说明', dataIndex: 'description', align: 'left', width: 480, render: (value: string) => value || '-' },
+    { title: t('field'), dataIndex: 'name', align: 'left', width: 260, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
+    { title: t('type'), dataIndex: 'type', width: 120, render: (value: string) => <Tag>{value}</Tag> },
+    { title: t('required'), dataIndex: 'required', width: 90, render: (value: boolean) => value ? <Tag color="red">{t('yes')}</Tag> : <Tag>{t('no')}</Tag> },
+    { title: t('description'), dataIndex: 'description', align: 'left', width: 480, render: (value: string) => value || '-' },
   ];
 
   const renderToolDetail = (tool: McpTool) => {
@@ -312,26 +321,26 @@ export function McpTokenSettingsPanel() {
         <Paragraph style={{ marginBottom: 12 }}>{tool.description}</Paragraph>
         <Row gutter={[12, 12]}>
           <Col xs={24} lg={24} xl={12}>
-            <Text strong>入参</Text>
+            <Text strong>{t('input')}</Text>
             <Table
               rowKey="name"
               size="small"
               columns={schemaColumns}
               dataSource={inputRows}
-              locale={{ emptyText: '无入参' }}
+              locale={{ emptyText: t('noInput') }}
               pagination={false}
               scroll={{ x: 950 }}
               data-testid="mcp-input-schema-table"
             />
           </Col>
           <Col xs={24} lg={24} xl={12}>
-            <Text strong>出参</Text>
+            <Text strong>{t('output')}</Text>
             <Table
               rowKey="name"
               size="small"
               columns={schemaColumns}
               dataSource={outputRows}
-              locale={{ emptyText: '返回工具执行结果' }}
+              locale={{ emptyText: t('result') }}
               pagination={false}
               scroll={{ x: 950 }}
               data-testid="mcp-output-schema-table"
@@ -343,13 +352,13 @@ export function McpTokenSettingsPanel() {
   };
 
   const toolColumns: ColumnsType<McpTool> = [
-    { title: '工具', dataIndex: 'name', align: 'left', width: 360, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
-    { title: '说明', dataIndex: 'description', align: 'left', width: 720 },
+    { title: t('tools'), dataIndex: 'name', align: 'left', width: 360, render: (value: string) => <Text code style={{ whiteSpace: 'nowrap' }}>{value}</Text> },
+    { title: t('description'), dataIndex: 'description', align: 'left', width: 720 },
   ];
 
   const endpointUnavailableText = brandingQuery.isLoading
-    ? '正在加载 MCP 服务地址'
-    : 'MCP 服务地址加载失败';
+    ? t('endpointLoading')
+    : t('endpointFailed');
   const displayMcpUrl = mcpEndpoint
     ? mcpUrl(mcpEndpoint, issuedToken ?? TOKEN_PLACEHOLDER)
     : endpointUnavailableText;
@@ -362,34 +371,30 @@ export function McpTokenSettingsPanel() {
 
   const snippetCollapseItem = (client: { key: string; label: string; command: string }) => ({
     key: client.key,
-    label: `${client.label} 接入配置`,
+    label: t('clientConfig', { client: client.label }),
     children: <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12 }}>{client.command}</pre>,
-    extra: <Button size="small" icon={<CopyOutlined />} onClick={(event) => {
+    extra: <Button aria-label={t('copy')} size="small" icon={<CopyOutlined aria-hidden="true" />} onClick={(event) => {
       event.stopPropagation();
       copyText(client.command);
-    }}>复制</Button>,
+    }}>{t('copy')}</Button>,
   });
 
   return (
     <div>
-      <Alert type="info" showIcon style={{ marginBottom: 12 }} message={MCP_PERMISSION_HINT} />
+      <Alert type="info" showIcon style={{ marginBottom: 12 }} message={getMcpPermissionHint()} />
       <Space wrap style={{ marginBottom: 12 }}>
-        <Button icon={<ReloadOutlined />} onClick={() => {
+        <Button aria-label={t('refresh')} icon={<ReloadOutlined aria-hidden="true" />} onClick={() => {
           tokensQuery.refetch();
           toolsQuery.refetch();
           brandingQuery.refetch();
-        }}>
-          刷新
-        </Button>
-        <Button
+        }}>{t('refresh')}</Button>
+        <Button aria-label={t('newToken')}
           type="primary"
-          icon={<PlusOutlined />}
+          icon={<PlusOutlined aria-hidden="true" />}
           loading={brandingQuery.isLoading}
           disabled={!mcpEndpoint}
           onClick={() => setTokenModalOpen(true)}
-        >
-          新建令牌
-        </Button>
+        >{t('newToken')}</Button>
       </Space>
 
       <Tabs
@@ -397,29 +402,27 @@ export function McpTokenSettingsPanel() {
         items={[
           {
             key: 'overview',
-            label: '概览',
+            label: t('overview'),
             children: (
               <>
                 <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-                  <Col xs={24} md={8}><Card size="small"><Statistic title="有效令牌" value={activeTokens} prefix={<KeyOutlined />} /></Card></Col>
-                  <Col xs={24} md={8}><Card size="small"><Statistic title="开放工具" value={tools.length} prefix={<ApiOutlined />} /></Card></Col>
-                  <Col xs={24} md={8}><Card size="small"><Statistic title="能力聚合" value={toolGroups.length} prefix={<AppstoreOutlined />} /></Card></Col>
+                  <Col xs={24} md={8}><Card size="small"><Statistic title={t('activeTokens')} value={activeTokens} prefix={<KeyOutlined aria-hidden="true" />} /></Card></Col>
+                  <Col xs={24} md={8}><Card size="small"><Statistic title={t('openTools')} value={tools.length} prefix={<ApiOutlined aria-hidden="true" />} /></Card></Col>
+                  <Col xs={24} md={8}><Card size="small"><Statistic title={t('capabilityGroups')} value={toolGroups.length} prefix={<AppstoreOutlined aria-hidden="true" />} /></Card></Col>
                 </Row>
-                <Card size="small" title="MCP 服务地址" style={{ marginBottom: 12 }}>
+                <Card size="small" title={t('endpoint')} style={{ marginBottom: 12 }}>
                   <Space.Compact style={{ width: '100%' }}>
-                    <Input readOnly value={displayMcpUrl} />
+                    <Input aria-label={t('endpoint')} readOnly value={displayMcpUrl} />
                     <Button
-                      icon={<CopyOutlined />}
+                      icon={<CopyOutlined aria-hidden="true" />}
                       disabled={!mcpEndpoint}
                       onClick={() => copyText(displayMcpUrl)}
-                      aria-label="复制 MCP 服务地址"
+                      aria-label={t('copyEndpoint')}
                     />
                   </Space.Compact>
-                  <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-                    完整 URL 只会在新建令牌后展示一次；已有令牌只能看到前缀，不能反查密钥。
-                  </Paragraph>
+                  <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>{t('oneTimeUrl')}</Paragraph>
                 </Card>
-                <Card size="small" title="访问令牌">
+                <Card size="small" title={t('tokens')}>
                   <Table
                     rowKey="id"
                     size="small"
@@ -435,20 +438,21 @@ export function McpTokenSettingsPanel() {
           },
           {
             key: 'tools',
-            label: '工具',
+            label: t('tools'),
             children: (
               <Row gutter={[12, 12]}>
                 {toolGroups.map((group) => (
                   <Col span={24} key={group.meta.key}>
                     <Card
                       size="small"
-                      title={<Space><Tag color={group.meta.color}>{group.meta.title}</Tag><span>{group.tools.length} 个工具</span></Space>}
+                      title={<Space><Tag color={group.meta.color}>{group.meta.title}</Tag><span>{t('toolCount', { count: group.tools.length })}</span></Space>}
                     >
                       <Paragraph type="secondary" style={{ marginTop: 0 }}>{group.meta.description}</Paragraph>
                       <Table
                         rowKey="name"
                         size="small"
                         columns={toolColumns}
+                        locale={{ expand: t('expandRow'), collapse: t('collapseRow') }}
                         dataSource={group.tools}
                         loading={toolsQuery.isLoading}
                         pagination={false}
@@ -467,7 +471,7 @@ export function McpTokenSettingsPanel() {
           },
           {
             key: 'install',
-            label: '安装',
+            label: t('install'),
             children: (
               <>
                 <Alert
@@ -475,7 +479,7 @@ export function McpTokenSettingsPanel() {
                   showIcon
                   style={{ marginBottom: 12 }}
                   message={mcpEndpoint
-                    ? '先创建 MCP 令牌，再复制含 token 的 MCP URL 到客户端配置。已有令牌只显示前缀，不能反查完整密钥。'
+                    ? t('installHint')
                     : endpointUnavailableText}
                 />
                 <Row gutter={[12, 12]}>
@@ -483,8 +487,8 @@ export function McpTokenSettingsPanel() {
                     <Col xs={24} lg={12} key={client.key}>
                       <Card
                         size="small"
-                        title={<Space><RocketOutlined />{client.label}</Space>}
-                        extra={<Button size="small" icon={<CopyOutlined />} onClick={() => copyText(client.command)}>复制</Button>}
+                        title={<Space><RocketOutlined aria-hidden="true" />{client.label}</Space>}
+                        extra={<Button aria-label={t('copy')} size="small" icon={<CopyOutlined aria-hidden="true" />} onClick={() => copyText(client.command)}>{t('copy')}</Button>}
                       >
                         <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12 }}>{client.command}</pre>
                       </Card>
@@ -498,36 +502,40 @@ export function McpTokenSettingsPanel() {
       />
 
       <Modal
-        title="新建 MCP 令牌"
+        closable={{ closeIcon: <CloseOutlined aria-hidden="true" />, 'aria-label': t('close') }}
+        cancelText={t('cancel')}
+        okButtonProps={{ 'aria-label': issuedToken ? t('done') : t('create') }}
+        title={t('newTitle')}
         open={tokenModalOpen}
         onOk={issuedToken ? closeTokenModal : submitToken}
-        okText={issuedToken ? '完成' : '创建'}
+        okText={issuedToken ? t('done') : t('create')}
         confirmLoading={createTokenMutation.isPending}
         onCancel={closeTokenModal}
         width={760}
       >
         {issuedToken && mcpEndpoint ? (
           <Space direction="vertical" style={{ width: '100%' }} size={12}>
-            <Alert type="warning" showIcon message="令牌只展示一次，请立即复制并写入客户端配置。" />
+            <Alert type="warning" showIcon message={t('oneTimeToken')} />
             <Space.Compact style={{ width: '100%' }}>
-              <Input readOnly value={issuedToken} />
-              <Button icon={<CopyOutlined />} onClick={() => copyText(issuedToken)} aria-label="复制新令牌" />
+              <Input aria-label={t('tokenLabel')} readOnly value={issuedToken} />
+              <Button icon={<CopyOutlined aria-hidden="true" />} onClick={() => copyText(issuedToken)} aria-label={t('copyToken')} />
             </Space.Compact>
             <Space.Compact style={{ width: '100%' }}>
-              <Input readOnly value={mcpUrl(mcpEndpoint, issuedToken)} />
-              <Button icon={<CopyOutlined />} onClick={() =>
-                copyText(mcpUrl(mcpEndpoint, issuedToken))} aria-label="复制 MCP URL" />
+              <Input aria-label={t('urlLabel')} readOnly value={mcpUrl(mcpEndpoint, issuedToken)} />
+              <Button icon={<CopyOutlined aria-hidden="true" />} onClick={() =>
+                copyText(mcpUrl(mcpEndpoint, issuedToken))} aria-label={t('copyUrl')} />
             </Space.Compact>
             <Collapse
+              expandIcon={({ isActive }) => <RightOutlined aria-hidden="true" rotate={isActive ? 90 : 0} />}
               size="small"
               defaultActiveKey={['qoder']}
               items={[
                 ...(qoderSnippet ? [snippetCollapseItem(qoderSnippet)] : []),
                 ...(isCommunityEdition ? [] : [{
                   key: 'more-clients',
-                  label: '更多客户端接入',
+                  label: t('moreClients'),
                   children: (
-                    <Collapse size="small" items={otherClientSnippets.map(snippetCollapseItem)} />
+                    <Collapse expandIcon={({ isActive }) => <RightOutlined aria-hidden="true" rotate={isActive ? 90 : 0} />} size="small" items={otherClientSnippets.map(snippetCollapseItem)} />
                   ),
                 }]),
               ]}
@@ -535,7 +543,7 @@ export function McpTokenSettingsPanel() {
           </Space>
         ) : (
           <Form form={form} layout="vertical" initialValues={{ name: 'MCP Token' }}>
-            <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Form.Item name="name" label={t('name')} rules={[{ required: true, message: t('nameRequired') }]}>
               <Input maxLength={80} />
             </Form.Item>
           </Form>

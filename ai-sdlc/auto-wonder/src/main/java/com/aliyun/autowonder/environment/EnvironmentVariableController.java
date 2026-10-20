@@ -15,7 +15,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/environment-variables")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看环境变量")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看环境变量", actionKey = "access.action.view_environment_variables")
 public class EnvironmentVariableController {
     private final EnvironmentVariableService service;
 
@@ -36,20 +36,20 @@ public class EnvironmentVariableController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "创建环境变量")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "创建环境变量", actionKey = "access.action.create_an_environment_variable")
     public Result<EnvironmentVariableVO> create(@RequestBody CreateEnvironmentVariableRequest request) {
         return Result.ok(service.create(currentWorkspaceId(), currentUserId(), request));
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新环境变量")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新环境变量", actionKey = "access.action.update_an_environment_variable")
     public Result<EnvironmentVariableVO> update(@PathVariable("id") Long id,
                                                 @Valid @RequestBody UpdateEnvironmentVariableRequest request) {
         return Result.ok(service.update(currentWorkspaceId(), currentUserId(), id, request));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "删除环境变量")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "删除环境变量", actionKey = "access.action.delete_an_environment_variable")
     public Result<Void> delete(@PathVariable("id") Long id) {
         service.delete(currentWorkspaceId(), currentUserId(), id);
         return Result.ok(null);

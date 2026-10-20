@@ -78,7 +78,11 @@ public class ConversationTurnEventService {
                 updateCliSessionRefIfPresent(tenantId, conversationId, assembled);
             }
             dispatchElicitationEvent(tenantId, conversationId, turnId, eventType, assembled);
-            publishToBrowser(tenantId, conversationId, turnId, eventSeq, eventType, assembled);
+            String publicPayload=PlatformConversationChannel.CHANNEL.equals(conv.getChannel())
+                    ? PlatformEventProjection.payload(eventType,assembled):assembled;
+            String publicType=PlatformConversationChannel.CHANNEL.equals(conv.getChannel())
+                    && ("thinking".equals(eventType)||"thinking_delta".equals(eventType))?"status":eventType;
+            publishToBrowser(tenantId, conversationId, turnId, eventSeq, publicType, publicPayload);
         }
     }
 

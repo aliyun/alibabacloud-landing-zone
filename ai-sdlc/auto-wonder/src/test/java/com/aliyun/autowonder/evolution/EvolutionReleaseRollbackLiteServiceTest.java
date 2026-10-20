@@ -13,6 +13,7 @@ class EvolutionReleaseRollbackLiteServiceTest {
     private EvolutionProposalDao proposalDao;
     private RepoService repoService;
     private SkillService skillService;
+    private com.aliyun.autowonder.workspace.WorkspaceMemberDao workspaceMemberDao;
     private EvolutionReleaseRollbackLiteService rollbackService;
 
     @BeforeEach
@@ -20,7 +21,29 @@ class EvolutionReleaseRollbackLiteServiceTest {
         proposalDao = mock(EvolutionProposalDao.class);
         repoService = mock(RepoService.class);
         skillService = mock(SkillService.class);
-        rollbackService = new EvolutionReleaseRollbackLiteService(proposalDao, repoService, skillService);
+        workspaceMemberDao = org.mockito.Mockito.mock(com.aliyun.autowonder.workspace.WorkspaceMemberDao.class);
+        rollbackService = new EvolutionReleaseRollbackLiteService(proposalDao, repoService, skillService,
+                new com.aliyun.autowonder.access.WorkspaceDomainGuard(workspaceMemberDao));
+    }
+
+    @Test
+    void rollbackIsBlockedBeforeAnyWriteWhenOperatorForbidsTheAssetDomain() {
+        when(proposalDao.findById(101L)).thenReturn(proposal("SKILL", 0, "CREATE",
+                null,
+                "{\"id\":501,\"name\":\"x\",\"type\":\"CODEX_SKILL\",\"installSpec\":\"skill://x\",\"description\":\"new\"}"));
+        com.aliyun.autowonder.workspace.WorkspaceMemberDO member =
+                new com.aliyun.autowonder.workspace.WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"SKILL\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(1L, 2L)).thenReturn(member);
+
+        assertThrows(com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException.class,
+                () -> rollbackService.rollback(101L, 1L, 2L));
+
+        verify(skillService, never()).delete(anyLong(), anyLong(), anyLong());
+        verify(skillService, never()).update(anyLong(), any(), anyLong(), anyLong());
     }
 
     @Test

@@ -1,3 +1,6 @@
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { Table } from '@/shared/theme/ThemedTable';
 import { useState, type CSSProperties } from 'react';
@@ -17,6 +20,7 @@ const PAGE_SIZE = 20;
 const KEYWORD_DEBOUNCE_MS = 300;
 
 export function WorkspaceRecycleBinPage() {
+  const { t } = useTranslation('auth');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [restoreTargetId, setRestoreTargetId] = useState<number | null>(null);
@@ -40,56 +44,56 @@ export function WorkspaceRecycleBinPage() {
 
   const columns: ColumnsType<RecycleBinItem> = [
     {
-      title: '名称',
+      title: t('recycle.name'),
       dataIndex: 'name',
       width: 200,
       ellipsis: { showTitle: false },
       render: (name: string) => <EllipsisText tooltip={name}><Text strong>{name}</Text></EllipsisText>,
     },
     {
-      title: '描述',
+      title: t('recycle.description'),
       dataIndex: 'description',
       align: 'left',
       ellipsis: { showTitle: false },
       render: (description: string | null) => (description
         ? <EllipsisText>{description}</EllipsisText>
-        : <Text type="secondary">暂无描述</Text>),
+        : <Text type="secondary">{t('workspace.noDescription')}</Text>),
     },
     {
-      title: '原 Owner',
+      title: t('recycle.owner'),
       dataIndex: 'ownerName',
       width: 140,
       ellipsis: { showTitle: false },
       render: (ownerName: string | null) => <EllipsisText>{ownerName || '-'}</EllipsisText>,
     },
     {
-      title: '删除时间',
+      title: t('recycle.deletedAt'),
       dataIndex: 'deletedAt',
       width: 180,
       // F4.4: the server already orders by deleted_at DESC; this only renders it.
-      render: (deletedAt: string | null) => (deletedAt ? new Date(deletedAt).toLocaleString('zh-CN') : '-'),
+      render: (deletedAt: string | null) => (deletedAt ? formatDateTime(deletedAt, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false }) : '-'),
     },
     {
-      title: '删除人',
+      title: t('recycle.deletedBy'),
       dataIndex: 'deletedByName',
       width: 140,
       ellipsis: { showTitle: false },
       render: (deletedByName: string | null) => <EllipsisText>{deletedByName || '-'}</EllipsisText>,
     },
     {
-      title: '可恢复状态',
+      title: t('recycle.status'),
       dataIndex: 'restorable',
       width: 140,
       render: (restorable: boolean | null) => (restorable === false ? (
-        <Tooltip title="已存在同名的在用工作空间，恢复时需要改名">
-          <Tag color="orange">需改名恢复</Tag>
+        <Tooltip title={t('recycle.nameConflictHint')}>
+          <Tag color="orange">{t('recycle.renameRequired')}</Tag>
         </Tooltip>
       ) : (
-        <Tag color="green">可恢复</Tag>
+        <Tag color="green">{t('recycle.restorable')}</Tag>
       )),
     },
     {
-      title: '操作',
+      title: t('recycle.actions'),
       key: 'action',
       width: 100,
       render: (_: unknown, record: RecycleBinItem) => (
@@ -98,9 +102,7 @@ export function WorkspaceRecycleBinPage() {
           size="small"
           data-testid={`restore-workspace-${record.id}`}
           onClick={() => setRestoreTargetId(record.id)}
-        >
-          恢复
-        </Button>
+        >{t('recycle.restore')}</Button>
       ),
     },
   ];
@@ -111,26 +113,24 @@ export function WorkspaceRecycleBinPage() {
       <div style={contentStyle}>
         <div style={headerStyle}>
           <div>
-            <Title level={3} style={{ margin: 0, color: 'var(--aw-text)' }}>工作空间回收站</Title>
-            <Text style={{ display: 'block', marginTop: 6, color: 'var(--aw-muted)' }}>
-              仅展示你有权管理（原 Owner、原管理员或平台管理员）的已删除工作空间
-            </Text>
+            <Title level={3} style={{ margin: 0, color: 'var(--aw-text)' }}>{t('workspace.recycleBin')}</Title>
+            <Text style={{ display: 'block', marginTop: 6, color: 'var(--aw-muted)' }}>{t('recycle.scope')}</Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <PageBackButton to="/workspaces" label="返回工作空间列表" compact={false} />
+            <PageBackButton to="/workspaces" label={t('recycle.back')} compact={false} />
           </div>
         </div>
 
         <div style={toolbarStyle}>
           <Input
-            aria-label="搜索已删除的工作空间"
-            placeholder="按名称搜索"
+            aria-label={t('recycle.search')}
+            placeholder={t('recycle.searchPlaceholder')}
             allowClear
             value={keyword}
             onChange={(event) => handleKeywordChange(event.target.value)}
             style={{ maxWidth: 320 }}
           />
-          <Text style={{ color: 'var(--aw-muted)' }}>共 {total} 个已删除工作空间</Text>
+          <Text style={{ color: 'var(--aw-muted)' }}>{t('recycle.count', { count: total })}</Text>
         </div>
 
         {isLoading && !data ? (
@@ -139,8 +139,8 @@ export function WorkspaceRecycleBinPage() {
           <div data-testid="recycle-bin-empty" style={emptyStateStyle}>
             <Empty
               description={debouncedKeyword.trim()
-                ? `没有匹配「${debouncedKeyword.trim()}」的已删除工作空间`
-                : '回收站是空的'}
+                ? t('recycle.noMatches', { keyword: debouncedKeyword.trim() })
+                : t('recycle.empty')}
             />
           </div>
         ) : (
@@ -182,6 +182,7 @@ interface RestoreWorkspaceModalProps {
 }
 
 function RestoreWorkspaceModal({ target, onClose }: RestoreWorkspaceModalProps) {
+  const { t } = useTranslation('auth');
   const [newName, setNewName] = useState('');
   const { mutateAsync, isPending } = useRestoreWorkspace();
   // F5.5: a name taken by an in-use workspace blocks a plain restore, so the rename field is
@@ -192,29 +193,29 @@ function RestoreWorkspaceModal({ target, onClose }: RestoreWorkspaceModalProps) 
     if (!target) return;
     const trimmed = newName.trim();
     if (needsRename && !trimmed) {
-      message.error('已存在同名的在用工作空间，请输入新名称后再恢复');
+      message.error(i18n.t('auth:recycle.newNameRequired'));
       return;
     }
     try {
       await mutateAsync({ id: target.id, newName: trimmed || null });
-      message.success(`工作空间「${trimmed || target.name}」已恢复，请重新进入`);
+      message.success(i18n.t('auth:recycle.restored', { name: trimmed || target.name }));
       setNewName('');
       onClose();
     } catch (e) {
       if (e instanceof ApiError && e.code === ErrorCodes.ORG_RESTORE_NAME_CONFLICT) {
-        message.error('已存在同名的在用工作空间，请改名后再恢复');
+        message.error(i18n.t('auth:recycle.nameConflict'));
         return;
       }
-      message.error(e instanceof ApiError ? e.message : '恢复失败，请稍后重试');
+      message.error(e instanceof ApiError ? e.message : i18n.t('auth:recycle.failed'));
     }
   };
 
   return (
     <Modal
-      title={target ? `恢复「${target.name}」` : ''}
+      title={target ? t('recycle.restoreTitle', { name: target.name }) : ''}
       open={target !== null}
-      okText="确认恢复"
-      cancelText="取消"
+      okText={t('recycle.confirm')}
+      cancelText={t('action.cancel')}
       confirmLoading={isPending}
       onCancel={() => { setNewName(''); onClose(); }}
       onOk={handleRestore}
@@ -223,21 +224,19 @@ function RestoreWorkspaceModal({ target, onClose }: RestoreWorkspaceModalProps) 
       // survives between openings, so state alone would carry the last name across.
       afterOpenChange={(open) => { if (!open) setNewName(''); }}
     >
-      <Text style={{ display: 'block', marginBottom: 12, color: 'var(--aw-text)' }}>
-        恢复后成员关系、访问级别与工作空间内的业务数据保持不变；被暂停的定时任务不会自动恢复，需要手动重新启用。
-      </Text>
+      <Text style={{ display: 'block', marginBottom: 12, color: 'var(--aw-text)' }}>{t('recycle.consequences')}</Text>
       {needsRename && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="已存在同名的在用工作空间"
-          description="请输入一个新名称，将以新名称恢复该工作空间。"
+          message={t('recycle.conflict')}
+          description={t('recycle.renameHint')}
         />
       )}
       <Input
-        aria-label="恢复后的工作空间名称"
-        placeholder={needsRename ? '必填：输入恢复后的新名称' : '选填：输入恢复后的新名称，留空则沿用原名称'}
+        aria-label={t('recycle.restoredName')}
+        placeholder={needsRename ? t('recycle.requiredPlaceholder') : t('recycle.optionalPlaceholder')}
         maxLength={128}
         value={newName}
         onChange={(event) => setNewName(event.target.value)}

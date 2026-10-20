@@ -80,16 +80,19 @@ class WorkspaceServiceLifecycleTest {
         JwtProperties props = new JwtProperties(env);
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         JwtService jwtService = new JwtService(props);
+        var roleService = mock(WorkspaceRoleService.class);
+        var adminRole = new WorkspaceRoleDO(); adminRole.setId(13L); adminRole.setAccessLevel("ADMIN");
+        when(roleService.builtIn(anyLong(), eq(WorkspaceAccessLevel.ADMIN))).thenReturn(adminRole);
         service = new WorkspaceService(workspaceDao, workspaceMemberDao,
                 mock(StatusTemplateSeeder.class), mock(PlatformAgentSeeder.class), jwtService, userDao,
-                auditLogService, systemAdminService, deletionLinkage, eventPublisher);
+                auditLogService, systemAdminService, deletionLinkage, eventPublisher, roleService);
 
         // Empty defaults, because both bulk helpers below feed an IN (...) list and a bare mock
         // would hand them null instead of an empty collection.
         when(workspaceDao.pageRecycleBin(anyLong(), anyBoolean(), any(), anyInt(), anyInt()))
                 .thenReturn(List.of());
         when(workspaceDao.listActiveNames(anyCollection())).thenReturn(List.of());
-        when(userDao.listByIds(anyCollection())).thenReturn(List.of());
+        when(userDao.listByIdsIncludingDeleted(anyCollection())).thenReturn(List.of());
     }
 
     @AfterEach
@@ -226,6 +229,31 @@ class WorkspaceServiceLifecycleTest {
                 updateRequest("新名称", null, null, 3), ADMIN_ID));
         assertCode("11006", () -> service.updateWorkspace(WORKSPACE_ID,
                 updateRequest("新名称", null, null, 3), MEMBER_ID));
+    }
+
+    @Test
+    void administratorIgnoresReadOnlyDomainsWhenManagingWorkspace() {
+        when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
+        WorkspaceMemberDO admin = member(ADMIN_ID, WorkspaceAccessLevel.ADMIN);
+        admin.setReadOnlyDomains("[\"WORKSPACE\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(WORKSPACE_ID, ADMIN_ID)).thenReturn(admin);
+        when(workspaceDao.updateDetail(eq(WORKSPACE_ID), anyString(), anyString(), any(), any(), anyInt(), anyLong())).thenReturn(1);
+        when(workspaceDao.softDelete(WORKSPACE_ID, ADMIN_ID)).thenReturn(1);
+
+        assertEquals("新名称", service.updateWorkspace(WORKSPACE_ID, updateRequest("新名称", null, null, 3), ADMIN_ID).getName());
+        service.deleteWorkspace(WORKSPACE_ID, ADMIN_ID);
+        verify(workspaceDao).softDelete(WORKSPACE_ID, ADMIN_ID);
+    }
+
+    @Test
+    void administratorMayRestoreDespiteLegacyReadOnlyDomains() {
+        when(workspaceDao.findByIdAnyState(WORKSPACE_ID)).thenReturn(deletedWorkspace());
+        WorkspaceMemberDO admin = member(ADMIN_ID, WorkspaceAccessLevel.ADMIN);
+        admin.setReadOnlyDomains("[\"WORKSPACE\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(WORKSPACE_ID, ADMIN_ID)).thenReturn(admin);
+        when(workspaceDao.restore(WORKSPACE_ID, NAME, NAME, ADMIN_ID)).thenReturn(1);
+        service.restoreWorkspace(WORKSPACE_ID, null, ADMIN_ID);
+        verify(workspaceDao).restore(WORKSPACE_ID, NAME, NAME, ADMIN_ID);
     }
 
     @Test
@@ -487,7 +515,7 @@ class WorkspaceServiceLifecycleTest {
         when(workspaceDao.pageRecycleBin(OWNER_ID, false, null, 0, 20))
                 .thenReturn(List.of(deletedWorkspace()));
         when(workspaceDao.countRecycleBin(OWNER_ID, false, null)).thenReturn(1L);
-        when(userDao.listByIds(anyCollection())).thenReturn(List.of(
+        when(userDao.listByIdsIncludingDeleted(anyCollection())).thenReturn(List.of(
                 user(OWNER_ID, "owner-login", "空间主人"),
                 user(ADMIN_ID, "admin-login", "管理员")));
 
@@ -580,11 +608,11 @@ class WorkspaceServiceLifecycleTest {
     void recycleBinSkipsBothBulkLookupsWhenThePageIsEmpty() {
         PageResult<RecycleBinItemVO> page = service.pageRecycleBin(null, 1, 20, OWNER_ID);
 
-        // listActiveNames and listByIds both build an IN (...) list, and an empty one is a SQL
+        // listActiveNames and listByIdsIncludingDeleted both build an IN (...) list, and an empty one is a SQL
         // syntax error rather than an empty result set.
         assertTrue(page.getList().isEmpty());
         verify(workspaceDao, never()).listActiveNames(anyCollection());
-        verify(userDao, never()).listByIds(anyCollection());
+        verify(userDao, never()).listByIdsIncludingDeleted(anyCollection());
     }
 
     @Test
@@ -594,14 +622,14 @@ class WorkspaceServiceLifecycleTest {
         second.setDeletedBy(PLATFORM_ADMIN_ID);
         when(workspaceDao.pageRecycleBin(OWNER_ID, false, null, 0, 20))
                 .thenReturn(List.of(deletedWorkspace(), second));
-        when(userDao.listByIds(anyCollection())).thenReturn(List.of(
+        when(userDao.listByIdsIncludingDeleted(anyCollection())).thenReturn(List.of(
                 user(OWNER_ID, "owner-login", "  "),
                 user(ADMIN_ID, "admin-login", null)));
 
         List<RecycleBinItemVO> items = service.pageRecycleBin(null, 1, 20, OWNER_ID).getList();
 
         // Three distinct users across four id slots; the set is what keeps this to one round trip.
-        verify(userDao, times(1)).listByIds(argThat(ids ->
+        verify(userDao, times(1)).listByIdsIncludingDeleted(argThat(ids ->
                 Set.copyOf(ids).equals(Set.of(OWNER_ID, ADMIN_ID, PLATFORM_ADMIN_ID))));
         // A blank nickname falls back to the login name; an unresolved user stays null rather
         // than rendering as the string "null" in the table.
@@ -1012,4 +1040,40 @@ class WorkspaceServiceLifecycleTest {
     private interface ThrowingRunnable {
         void run() throws Exception;
     }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+        "requestMissing|10001|请求体不能为空|Request body is required.",
+        "versionMissing|10001|version 不能为空|version is required.",
+        "deleteRace|10409|工作空间已被删除|Workspace has already been deleted.",
+        "nameLong|10001|工作空间名称不能超过 128 个字符|Workspace name must not exceed 128 characters.",
+        "descriptionLong|10001|工作空间描述不能超过 512 个字符|Workspace description must not exceed 512 characters."
+    })
+    void customLifecycleRefusalRendersEnglishBeforeAuditOrEvents(
+            String branch, String code, String diagnostic, String english) {
+        when(workspaceDao.findByIdForUpdate(WORKSPACE_ID)).thenReturn(activeWorkspace());
+        BizException error = assertThrows(BizException.class, () -> {
+            switch (branch) {
+                case "requestMissing" -> service.updateWorkspace(WORKSPACE_ID, null, OWNER_ID);
+                case "versionMissing" -> service.updateWorkspace(WORKSPACE_ID, updateRequest(NAME, null, null, null), OWNER_ID);
+                case "deleteRace" -> service.deleteWorkspace(WORKSPACE_ID, OWNER_ID);
+                case "nameLong" -> service.updateWorkspace(WORKSPACE_ID, updateRequest(" 长".repeat(129), null, null, 3), OWNER_ID);
+                case "descriptionLong" -> service.updateWorkspace(WORKSPACE_ID, updateRequest(NAME, "x".repeat(513), null, 3), OWNER_ID);
+                default -> throw new AssertionError(branch);
+            }
+        });
+        assertEquals(BizException.class, error.getClass());
+        assertEquals(code, error.getCode());
+        assertEquals(diagnostic, error.getMessage());
+        assertNull(error.getCause());
+        verify(workspaceDao, never()).updateDetail(anyLong(), anyString(), anyString(), any(), any(), anyInt(), anyLong());
+        verifyNoInteractions(auditLogService, eventPublisher, deletionLinkage);
+        assertEquals(code.equals("10001") ? 400 : 409,
+                new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue());
+        assertEquals(diagnostic, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.CHINA));
+        assertEquals(english, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.US));
+    }
+
 }

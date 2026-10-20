@@ -144,7 +144,7 @@ class SkillServiceTest {
         modifier.setNickname("蔡何");
         modifier.setUsername("caihe");
         when(skillDao.findById(1L)).thenReturn(s);
-        when(userDao.findById(20L)).thenReturn(modifier);
+        when(userDao.findByIdIncludingDeleted(20L)).thenReturn(modifier);
 
         SkillVO vo = service.get(1L);
 
@@ -493,4 +493,88 @@ class SkillServiceTest {
         // count 同样按 tenantId+type 收敛，避免跨租户串数
         verify(skillDao).count(7L, "SKILL", null, false);
     }
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> ownedConfigCases() {
+        return java.util.stream.Stream.of(
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "[]", "MCP 配置必须是 JSON 对象", "MCP configuration must be a JSON object"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"transport\":\"other\"}", "MCP 连接方式仅支持 HTTP、SSE 或 stdio", "MCP transport must be HTTP, SSE or stdio"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"transport\":\"stdio\"}", "MCP 本地命令不能为空", "The local MCP command cannot be empty"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"transport\":\"stdio\",\"command\":\"x\",\"headers\":{}}", "stdio MCP 不支持请求头或超时配置", "stdio MCP does not support headers or timeout configuration"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{}", "MCP 地址必须是 HTTP/HTTPS URL", "The MCP address must be an HTTP/HTTPS URL"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"url\":\"https://raw\",\"timeoutSeconds\":601}", "MCP 超时时间必须在 1 到 600 秒之间", "MCP timeout must be between 1 and 600 seconds"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"url\":\"https://raw\",\"headers\":[]}", "MCP Headers 必须是键值对象", "MCP Headers must be a key-value object"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"url\":\"https://raw\",\"headers\":{\"<raw>\":\"x\"}}", "MCP Headers 名称不合法: <raw>", "MCP Headers has an invalid name: <raw>"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"url\":\"https://raw\",\"headers\":{\"x\":\"a\",\"X\":\"b\"}}", "MCP Headers 名称不能重复: X", "MCP Headers has a duplicate name: X"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"url\":\"https://raw\",\"headers\":{\"X\":\"a\\nb\"}}", "MCP Headers 值不合法: X", "MCP Headers has an invalid value: X"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"transport\":\"stdio\",\"command\":\"x\",\"env\":[]}", "MCP Env 必须是键值对象", "MCP Env must be a key-value object"),
+            org.junit.jupiter.params.provider.Arguments.of("MCP", "{\"url\":\"https://raw\",\"headers\":{\"X\":{\"secret\":true}}}", "私密配置首次保存时必须填写值", "A value is required when first saving private configuration"),
+            org.junit.jupiter.params.provider.Arguments.of("HOOK", "{}", "插件和 Runtime Hook 必须通过安装包入口配置", "Plugins and Runtime Hooks must be configured through package installation"),
+            org.junit.jupiter.params.provider.Arguments.of("PLUGIN", "{}", "插件和 Runtime Hook 必须通过安装包入口配置", "Plugins and Runtime Hooks must be configured through package installation")
+        );
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("ownedConfigCases")
+    void ownedConfigurationErrorsRenderAtBoundaryWithRawDiagnostics(String type, String spec, String raw, String en) {
+        var request = new CreateSkillRequest(); request.setName("<raw name>"); request.setType(type); request.setInstallSpec(spec);
+        BizException error = assertThrows(BizException.class, () -> service.create(request, 100L, 1L));
+        assertEquals(BizException.class, error.getClass()); assertEquals(ErrorCode.PARAM_INVALID.getCode(), error.getCode());
+        assertEquals(raw, error.getMessage()); assertNull(error.getCause()); assertEquals(spec, request.getInstallSpec());
+        verify(skillDao, never()).insert(any());
+        assertEquals(raw, com.aliyun.autowonder.common.i18n.SystemMessages.render(error.getMessageKey(), error.getMessageArgs(), raw, java.util.Locale.CHINA));
+        assertEquals(en, com.aliyun.autowonder.common.i18n.SystemMessages.render(error.getMessageKey(), error.getMessageArgs(), raw, java.util.Locale.US));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing", "blank", "raw-name"})
+    void modifierOriginSurvivesSharedListCacheWithoutGuessingNames(String source) {
+        SkillDO one = new SkillDO(); one.setId(1L); one.setTenantId(100L); one.setModifierId(7L);
+        SkillDO two = new SkillDO(); two.setId(2L); two.setTenantId(100L); two.setModifierId(7L);
+        when(skillDao.list(100L, null, null, false, 0, 20)).thenReturn(List.of(one, two));
+        if (!source.equals("missing")) {
+            UserDO user = new UserDO(); user.setId(7L);
+            if (source.equals("raw-name")) user.setNickname("用户 #7");
+            when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
+        }
+        var result = service.list(100L, null, 1, 20);
+        verify(userDao, times(1)).findByIdIncludingDeleted(7L);
+        for (var skill : result) {
+            var json = JSON.parseObject(JSON.toJSONString(skill));
+            assertEquals("用户 #7", skill.getModifierName()); assertEquals(7L, skill.getModifierId());
+            assertEquals(source.equals("raw-name") ? null : "USER_ID_FALLBACK", json.getString("modifierNameKind"));
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"filter-conflict","filter-id","headers-limit","env-limit"})
+    void filterAndMapLimitsKeepOriginalOrderAndDiagnostics(String branch) {
+        BizException error;
+        if(branch.startsWith("filter")) error=assertThrows(BizException.class,()->service.listPage(100L,null,branch.equals("filter-id") ? 0L : 1L,false,branch.equals("filter-conflict"),1,20));
+        else {
+            var values=new java.util.LinkedHashMap<String,String>();for(int i=0;i<33;i++)values.put("RAW_"+i,"<raw>");
+            var config=new java.util.LinkedHashMap<String,Object>();
+            if(branch.equals("env-limit")){config.put("transport","stdio");config.put("command","raw-command");config.put("env",values);}
+            else{config.put("url","https://raw");config.put("headers",values);}
+            var req=new CreateSkillRequest();req.setType("MCP");req.setName("raw");req.setInstallSpec(JSON.toJSONString(config));
+            error=assertThrows(BizException.class,()->service.create(req,100L,1L));
+        }
+        String raw=switch(branch){case "filter-conflict"->"分类筛选与未分类筛选互斥，不能同时使用";case "filter-id"->"分类 ID 不合法";case "headers-limit"->"MCP Headers 最多支持 32 项";default->"MCP Env 最多支持 32 项";};
+        String en=switch(branch){case "filter-conflict"->"Category and uncategorized filters cannot be used together";case "filter-id"->"The category ID is invalid";case "headers-limit"->"MCP Headers supports at most 32 entries";default->"MCP Env supports at most 32 entries";};
+        assertEquals(raw,error.getMessage());assertEquals(BizException.class,error.getClass());assertNull(error.getCause());
+        assertEquals(en,com.aliyun.autowonder.common.i18n.SystemMessages.render(error.getMessageKey(),error.getMessageArgs(),raw,java.util.Locale.US));
+        verify(skillDao,never()).insert(any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"missing-keycenter","blank-reference"})
+    void swallowedKeyCenterDiagnosticsStillReturnOriginalSpecWithoutCreatingHumanError(String branch) {
+        var keyCenter=branch.equals("missing-keycenter") ? null : mock(SecretCrypto.class);
+        if(keyCenter!=null) when(keyCenter.encrypt("<secret>")).thenReturn(" ");
+        service=new SkillService(skillDao,agentSkillDao,userDao,keyCenter,null);
+        String raw="{\"url\":\"https://raw\",\"headers\":{\"X\":{\"secret\":true,\"value\":\"<secret>\"}}}";
+        var req=new CreateSkillRequest();req.setName("raw");req.setType("MCP");req.setInstallSpec(raw);
+        var captured=org.mockito.ArgumentCaptor.forClass(SkillDO.class);
+        service.create(req,100L,1L);verify(skillDao).insert(captured.capture());
+        assertEquals(JSON.toJSONString(raw),captured.getValue().getInstallSpec());assertEquals(raw,req.getInstallSpec());
+    }
+
 }

@@ -219,8 +219,11 @@ class ExecutorUpdateSchemaContractTest {
         String scan = statement(xml, "listForVersionScan");
         assertTrue(scan.contains("is_deleted = 0"), "a deleted executor is never upgraded");
         assertTrue(scan.contains("ORDER BY id ASC"), "the scan must be stable across nodes");
-        assertFalse(scan.contains("token_ref") || scan.contains("launch_config"),
+        String projection = scan.substring(0, scan.indexOf("FROM executor"));
+        assertFalse(projection.contains("token_ref") || projection.contains("launch_config"),
                 "the scan must not drag secrets or wide columns into memory");
+        assertTrue(scan.contains("JSON_EXTRACT(launch_config, '$.runtimeVersion')"),
+                "explicit command version pins must be excluded before scheduling automatic upgrades");
     }
 
     private static String createTable(String sql, String table) {

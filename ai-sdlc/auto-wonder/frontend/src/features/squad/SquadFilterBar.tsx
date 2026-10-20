@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useMemo } from 'react';
 import { Segmented, Select, Space } from 'antd';
 import { useQuery } from '@tanstack/react-query';
@@ -36,8 +37,9 @@ export interface SquadFilterBarProps {
 
 export function SquadFilterBar({
   options, value, onChange, grouped, onGroupedChange, loading,
-  listLabel = '列表', groupLabel = '分组',
+  listLabel, groupLabel,
 }: SquadFilterBarProps) {
+  const { t } = useTranslation('squad');
   return (
     <Space wrap>
       <Select
@@ -45,23 +47,23 @@ export function SquadFilterBar({
         allowClear
         showSearch
         optionFilterProp="label"
-        placeholder="按小队筛选"
+        placeholder={t('filter')}
         style={{ minWidth: 220 }}
         loading={loading}
         value={value}
         onChange={onChange}
         options={options}
         maxTagCount="responsive"
-        aria-label="按小队筛选"
+        aria-label={t('filter')}
       />
       <Segmented
         value={grouped ? 'group' : 'list'}
         onChange={(next) => onGroupedChange(next === 'group')}
         options={[
-          { value: 'group', label: groupLabel },
-          { value: 'list', label: listLabel },
+          { value: 'group', label: groupLabel ?? t('grouped') },
+          { value: 'list', label: listLabel ?? t('list') },
         ]}
-        aria-label="切换分组视图"
+        aria-label={t('switchView')}
       />
     </Space>
   );

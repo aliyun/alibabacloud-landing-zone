@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { useEffect, useState } from 'react';
 import { CLARIFICATION_THEME } from './theme';
 
@@ -5,16 +7,22 @@ export type ReplyingIndicatorStyle = 'dots' | 'spinner' | 'cursor';
 
 export const REPLYING_INDICATOR_STYLES: ReplyingIndicatorStyle[] = ['dots', 'spinner', 'cursor'];
 
-export const CLARIFICATION_REPLYING_TEXTS: string[] = [
-  'thinking…',
-  '思考中…',
-  '正在分析需求…',
-  '正在整理思路…',
-  '正在组织语言…',
-  '正在查阅工单资料…',
-  '正在核对验收标准…',
-  '正在生成澄清问题…',
-];
+const REPLYING_TEXT_KEYS = [
+  "clarification.replying.thinking",
+  "clarification.replying.considering",
+  "clarification.replying.analyzing",
+  "clarification.replying.organizingThoughts",
+  "clarification.replying.composing",
+  "clarification.replying.reviewingWorkitem",
+  "clarification.replying.checkingAcceptance",
+  "clarification.replying.generatingQuestions",
+] as const;
+
+// Keep the exported array API while resolving labels when consumers read them.
+export const CLARIFICATION_REPLYING_TEXTS: string[] = REPLYING_TEXT_KEYS.map(() => '');
+REPLYING_TEXT_KEYS.forEach((key, index) => {
+  Object.defineProperty(CLARIFICATION_REPLYING_TEXTS, index, { get: () => i18n.t(key, { ns: 'workitem' }) });
+});
 
 export const REPLYING_INDICATOR_ROTATE_INTERVAL_MS = 5000;
 
@@ -52,20 +60,22 @@ interface ReplyingIndicatorProps {
 
 /** 模型未结束回复期间的动态状态行：三种样式 + 文案池，每 5 秒随机轮换且不连续重复。 */
 export function ReplyingIndicator({ agentName }: ReplyingIndicatorProps) {
+  const { t } = useTranslation('workitem');
   const [style, setStyle] = useState<ReplyingIndicatorStyle>('dots');
-  const [text, setText] = useState<string>(() =>
-    CLARIFICATION_REPLYING_TEXTS[defaultPick(CLARIFICATION_REPLYING_TEXTS.length)]);
+  const [textKey, setTextKey] = useState<typeof REPLYING_TEXT_KEYS[number]>(() =>
+    REPLYING_TEXT_KEYS[defaultPick(REPLYING_TEXT_KEYS.length)]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       setStyle((prev) => pickNextReplyingIndicator(prev, REPLYING_INDICATOR_STYLES));
-      setText((prev) => pickNextReplyingIndicator(prev, CLARIFICATION_REPLYING_TEXTS));
+      setTextKey((prev) => pickNextReplyingIndicator(prev, REPLYING_TEXT_KEYS));
     }, REPLYING_INDICATOR_ROTATE_INTERVAL_MS);
     return () => clearInterval(timer);
   }, []);
 
   return (
     <div
+      className="aw-replying-indicator"
       data-testid="clarification-replying-indicator"
       style={{
         display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: 14,
@@ -101,7 +111,7 @@ export function ReplyingIndicator({ agentName }: ReplyingIndicatorProps) {
         />
       ) : null}
       <span>
-        {agentName ? `${agentName} ` : ''}{text}{style === 'cursor' ? <span
+        {agentName ? `${agentName} ` : ''}{t(textKey)}{style === 'cursor' ? <span
           aria-hidden
           style={{ animation: 'aw-clarify-cursor-blink 1s step-end infinite' }}
         >▍</span> : null}

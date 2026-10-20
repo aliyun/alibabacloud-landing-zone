@@ -46,8 +46,7 @@ class WorkitemCliDownloadTokenServiceTest {
         assertEquals("AUTOWONDER_DOWNLOAD_TOKEN", vo.getTokenEnvName());
         assertEquals(com.aliyun.autowonder.artifact.RequirementDocumentService.SUPPORTED_EXTENSIONS,
                 vo.getSupportedExtensions());
-        assertTrue(vo.getSupportedExtensions().containsAll(java.util.List.of(
-                ".docx", ".doc", ".java", ".py", ".zip")));
+        assertEquals(java.util.List.of("*"), vo.getSupportedExtensions());
         assertFalse(vo.getToken().contains(SECRET));
     }
 
@@ -67,7 +66,7 @@ class WorkitemCliDownloadTokenServiceTest {
             assertTrue(command.contains("--output-dir <dir>"), command);
             assertTrue(command.contains("--json"), command);
             assertFalse(command.contains("autowonder@latest"));
-            assertFalse(command.contains("auto-wonder.alibaba.net"));
+            assertFalse(command.contains("community.example"));
             assertFalse(command.contains("workitem upload"));
         }
         assertTrue(vo.getCommand().startsWith("export AUTOWONDER_DOWNLOAD_TOKEN='awdownload_"));

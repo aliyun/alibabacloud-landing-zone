@@ -39,7 +39,7 @@ describe('FeishuBindingPanel', () => {
     await user.type(screen.getByLabelText('Verification Token'), 'verify');
     await user.click(screen.getByLabelText('关联数字员工'));
     await user.click(await screen.findByText('Alpha'));
-    await user.click(screen.getByRole('button', { name: '保 存' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
     expect(await screen.findByText('回调地址（复制到飞书事件订阅）')).toBeInTheDocument();
     expect(payload).toMatchObject({ appId: 'cli_test', appSecret: 'new-secret', verificationToken: 'verify', agentId: 7, status: 'ENABLED' });
     expect(screen.getByLabelText('App Secret')).toHaveValue('');
@@ -56,7 +56,7 @@ describe('FeishuBindingPanel', () => {
     renderPanel(); await user.click(await screen.findByRole('button', { name: /编\s*辑/ }));
     expect(screen.getByLabelText('App ID')).toBeDisabled();
     expect(screen.getByLabelText('App Secret')).toHaveValue('');
-    await user.click(screen.getByRole('button', { name: '保 存' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() => expect(payload).toMatchObject({ version: 0, appId: 'cli_test', agentId: 7 }));
     expect(payload?.appSecret).toBeUndefined(); expect(payload?.verificationToken).toBeUndefined();
   });
@@ -75,7 +75,7 @@ describe('FeishuBindingPanel', () => {
     );
     renderPanel(); await userEvent.click(await screen.findByRole('button', { name: /删\s*除/ }));
     expect(removed).not.toHaveBeenCalled();
-    await userEvent.click(await screen.findByRole('button', { name: /OK|确 定/ }));
+    await userEvent.click((await screen.findAllByRole('button', { name: /删\s*除/ }))[1]);
     await waitFor(() => expect(removed).toHaveBeenCalledOnce());
   });
 });

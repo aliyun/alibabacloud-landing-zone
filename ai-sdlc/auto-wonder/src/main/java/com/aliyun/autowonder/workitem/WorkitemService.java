@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.workitem;
 
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.agent.AgentDO;
@@ -43,6 +44,7 @@ import com.aliyun.autowonder.statemachine.StatusNodeDao;
 import com.aliyun.autowonder.statemachine.StatusTemplateDO;
 import com.aliyun.autowonder.statemachine.StatusTemplateDao;
 import com.aliyun.autowonder.statemachine.StatusTransitionDao;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.util.MojibakeDetector;
@@ -79,6 +81,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
@@ -313,7 +317,7 @@ public class WorkitemService {
                                       String assigneeType, Long assigneeRef, boolean pendingDecisionOnly,
                                       String mineScope,
                                       long tenantId, long currentUserId, String keyword, String tag,
-                                      String scheduledStart,
+                                      String scheduledStart, String createdFrom, String createdTo,
                                       int page, int size) {
         int p = page < 1 ? 1 : page;
         int s = size < 1 ? 20 : Math.min(size, 200);
@@ -324,6 +328,8 @@ public class WorkitemService {
         String effectiveTag = (trimmedTag != null && !trimmedTag.isEmpty()) ? trimmedTag : null;
         String effectiveStatusCategory = normalizeStatusCategory(statusCategory);
         String effectiveScheduledStart = normalizeScheduledStart(scheduledStart);
+        Date effectiveCreatedFrom = normalizeCreatedBound(createdFrom);
+        Date effectiveCreatedTo = normalizeCreatedBound(createdTo);
         Long keywordId = null;
         if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
             try {
@@ -334,11 +340,11 @@ public class WorkitemService {
         long total = workitemDao.count(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
-                effectiveScheduledStart);
+                effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo);
         List<WorkitemDO> rows = workitemDao.list(tenantId, workType, statusNodeId, effectiveStatusCategory,
                 assigneeType, assigneeRef,
                 pendingDecisionOnly, mineScope, currentUserId, effectiveKeyword, keywordId, effectiveTag,
-                effectiveScheduledStart, offset, s);
+                effectiveScheduledStart, effectiveCreatedFrom, effectiveCreatedTo, offset, s);
         Map<Long, DispatchDO> latestByWorkitem = loadLatestDispatches(tenantId, rows);
 
         Set<Long> humanIds = new HashSet<>();
@@ -371,7 +377,7 @@ public class WorkitemService {
         }
 
         Map<Long, UserDO> userMap = humanIds.isEmpty() ? Map.of()
-                : safeList(userDao.listByIds(humanIds)).stream()
+                : safeList(userDao.listByIdsIncludingDeleted(humanIds)).stream()
                     .filter(Objects::nonNull)
                     .collect(Collectors.toMap(UserDO::getId, u -> u, (a, b) -> a));
         Map<Long, AgentDO> agentMap = agentIds.isEmpty() || tenantIdObj == null ? Map.of()
@@ -393,6 +399,9 @@ public class WorkitemService {
                     .filter(link -> link.getWorkitemId() != null)
                     .collect(Collectors.groupingBy(ExternalWorkitemLinkDO::getWorkitemId));
         Map<Long, List<DispatchDO>> allDispatchesByWorkitem = loadAllDispatches(tenantId, workitemIds);
+        Map<Long, Date> myLastCommentByWorkitem = loadMyLastCommentTimes(mineScope, tenantId, currentUserId, workitemIds);
+        Set<Long> pendingHumanRequests = workitemIds.isEmpty() ? Set.of()
+                : new HashSet<>(safeList(workitemDao.listPendingHumanRequestWorkitemIds(tenantId, workitemIds)));
         Map<Long, ExternalPrincipalVO> sourceCreators = externalWorkitemViewService == null
                 ? Map.of()
                 : externalWorkitemViewService.reportersByWorkitem(
@@ -404,10 +413,11 @@ public class WorkitemService {
             WorkitemVO vo = toVO(w, userMap, agentMap, nodeMap, sdlcMap);
             DispatchDO latest = latestByWorkitem.get(w.getId());
             vo.setExecutionStatus(latest == null ? null : latest.getStatus());
-            applyClassification(vo, w, allDispatchesByWorkitem.get(w.getId()), nodeMap);
+            applyClassification(vo, w, allDispatchesByWorkitem.get(w.getId()), nodeMap, pendingHumanRequests.contains(w.getId()));
             applyHealth(vo, w, latest, now, nodeMap);
             applyScheduledPhase(vo, w, latest, now, nodeMap);
             applyDeleteEligibility(vo, w, extLinksMap, allDispatchesByWorkitem);
+            vo.setMyLastCommentAt(myLastCommentByWorkitem.get(w.getId()));
             if (SOURCE_TYPE_EXTERNAL.equals(vo.getSourceType())) {
                 applyExternalSource(vo, extLinksMap.getOrDefault(w.getId(), List.of()));
                 vo.setSourceCreator(sourceCreators.get(w.getId()));
@@ -438,6 +448,22 @@ public class WorkitemService {
         return WorkitemScheduledPhase.isFilter(v) ? v : null;
     }
 
+    /**
+     * 创建时间高级筛选边界归一化（工单 #55696）。页面按自身时区把所选日期换算成 ISO-8601 瞬间：
+     * createdFrom 为含下界，createdTo 为「结束日次日 00:00」的排他上界。
+     * 空白或不可解析的值视为不过滤，保证不传该参数时列表行为与现状完全一致。
+     */
+    private Date normalizeCreatedBound(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Date.from(OffsetDateTime.parse(raw.trim()).toInstant());
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
     private Map<Long, DispatchDO> loadLatestDispatches(long tenantId, List<WorkitemDO> rows) {
         List<Long> ids = rows.stream()
                 .map(WorkitemDO::getId)
@@ -465,6 +491,21 @@ public class WorkitemService {
                 .collect(Collectors.groupingBy(DispatchDO::getWorkitemId));
     }
 
+    /** 「我评论过的」口径下本页工单的本人最近评论时间；其他口径不查询，保持零额外开销。 */
+    private Map<Long, Date> loadMyLastCommentTimes(String mineScope, long tenantId, long currentUserId,
+                                                   List<Long> workitemIds) {
+        if (!"COMMENTED".equals(mineScope) || workitemIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Date> byWorkitem = new HashMap<>();
+        for (WorkitemCommentDO c : safeList(commentDao.listMyLastCommentTimes(tenantId, workitemIds, currentUserId))) {
+            if (c != null && c.getWorkitemId() != null && c.getGmtCreate() != null) {
+                byWorkitem.put(c.getWorkitemId(), c.getGmtCreate());
+            }
+        }
+        return byWorkitem;
+    }
+
     private void applyHealth(WorkitemVO vo, WorkitemDO w, DispatchDO latest, long now) {
         // No dispatch => nothing could have stalled/failed; treat as healthy without an extra status lookup.
         if (latest == null || w.getStatusNodeId() == null) {
@@ -476,7 +517,11 @@ public class WorkitemService {
         WorkitemHealthEvaluator.Result r =
                 WorkitemHealthEvaluator.evaluate(category, latest, now, stuckThresholdMs);
         vo.setHealth(r.health());
-        vo.setHealthReason(r.reason());
+        vo.setHealthStalledMinutes(r.stalledMinutes());
+        String key = !WorkitemHealthEvaluator.STUCK.equals(r.health()) ? null : r.stalledMinutes() != null ? "workitem.health.stalled"
+                : Set.of(DispatchStatus.FAILED, DispatchStatus.TIMEOUT, DispatchStatus.CANCELED).contains(latest.getStatus())
+                    ? "workitem.health." + latest.getStatus().toLowerCase(java.util.Locale.ROOT) : null;
+        vo.setHealthReason(key == null ? r.reason() : SystemMessages.render(key, new Object[]{r.stalledMinutes()}, r.reason()));
     }
 
     private void applyHealth(WorkitemVO vo, WorkitemDO w, DispatchDO latest, long now,
@@ -490,7 +535,11 @@ public class WorkitemService {
         WorkitemHealthEvaluator.Result r =
                 WorkitemHealthEvaluator.evaluate(category, latest, now, stuckThresholdMs);
         vo.setHealth(r.health());
-        vo.setHealthReason(r.reason());
+        vo.setHealthStalledMinutes(r.stalledMinutes());
+        String key = !WorkitemHealthEvaluator.STUCK.equals(r.health()) ? null : r.stalledMinutes() != null ? "workitem.health.stalled"
+                : Set.of(DispatchStatus.FAILED, DispatchStatus.TIMEOUT, DispatchStatus.CANCELED).contains(latest.getStatus())
+                    ? "workitem.health." + latest.getStatus().toLowerCase(java.util.Locale.ROOT) : null;
+        vo.setHealthReason(key == null ? r.reason() : SystemMessages.render(key, new Object[]{r.stalledMinutes()}, r.reason()));
     }
 
     /**
@@ -531,12 +580,12 @@ public class WorkitemService {
      * （及「需人工」标签）完全同条件。状态名称不参与判断。
      */
     private void applyClassification(WorkitemVO vo, WorkitemDO w, List<DispatchDO> dispatches,
-                                     Map<Long, StatusNodeDO> nodeMap) {
+                                     Map<Long, StatusNodeDO> nodeMap, boolean pendingHumanRequest) {
         StatusNodeDO node = w.getStatusNodeId() == null ? null
                 : (nodeMap != null ? nodeMap.get(w.getStatusNodeId()) : nodeDao.findById(w.getStatusNodeId()));
         String category = node == null ? null : node.getCategory();
         String classification = WorkitemClassificationEvaluator.classify(
-                category, w.getAssigneeType(), w.getAssigneeRef(), dispatches);
+                category, w.getAssigneeType(), w.getAssigneeRef(), dispatches, pendingHumanRequest);
         vo.setStatusCategory(classification);
         vo.setPendingDecision(WorkitemClassificationEvaluator.CATEGORY_PENDING_DECISION.equals(classification));
     }
@@ -613,7 +662,8 @@ public class WorkitemService {
                 actorRef == null ? SYSTEM_USER_ID : actorRef));
         WorkitemVO vo = toVO(workitemDao.findById(id));
         if (!inTemplate) {
-            vo.setTransitionWarning(OUT_OF_TEMPLATE_TRANSITION_WARNING);
+            vo.setTransitionWarningCode("OUT_OF_TEMPLATE");
+            vo.setTransitionWarning(SystemMessages.render("workitem.transition.outside_template", new Object[0], OUT_OF_TEMPLATE_TRANSITION_WARNING));
         }
         return vo;
     }
@@ -685,7 +735,7 @@ public class WorkitemService {
     public WorkitemVO assign(long id, String assigneeType, Long assigneeRef, Long sdlcId, Long squadId,
                              Date scheduledStartAt, String restartToken, long tenantId, long userId) {
         return assignAs(id, assigneeType, assigneeRef, sdlcId, squadId, scheduledStartAt, restartToken,
-                tenantId, userId, AssignmentActor.human(userId, resolveHumanName(userId)));
+                tenantId, userId, resolveHumanActor(userId));
     }
 
     @Transactional
@@ -712,7 +762,7 @@ public class WorkitemService {
         // The DB column is VARCHAR(64); reject overlong tokens here instead of surfacing
         // a database error from the restart-round insert.
         if (restartToken != null && restartToken.length() > 64) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "restartToken 长度不能超过 64 个字符");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workitem.restart_token_limit", new Object[]{64}, "restartToken 长度不能超过 64 个字符");
         }
         boolean sameAssignee = Objects.equals(w.getAssigneeType(), assigneeType)
                 && Objects.equals(w.getAssigneeRef(), assigneeRef);
@@ -726,7 +776,7 @@ public class WorkitemService {
             return toVO(w);
         }
         AssignmentActor effectiveActor = actor == null
-                ? AssignmentActor.system("系统")
+                ? AssignmentActor.systemFallback()
                 : actor;
         WorkitemDO reloaded = w;
         WorkitemEventDO assignEvent = null;
@@ -850,7 +900,8 @@ public class WorkitemService {
                     effectiveActor.type(),
                     effectiveActor.ref(),
                     effectiveActor.displayName(),
-                    currentRequestId()));
+                    currentRequestId(),
+                    effectiveActor.actorNameKind()));
         }
         return toVO(reloaded);
     }
@@ -1088,6 +1139,97 @@ public class WorkitemService {
             throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
         }
         writeEvent(tenantId, id, WorkitemEventType.DELETE.code(), null, null, "HUMAN", userId);
+        // 提交后再清理派生数据（澄清附件等），清理失败不回滚删除。
+        eventPublisher.publishEvent(new WorkitemDeletedEvent(tenantId, id));
+    }
+
+    /** 回收站列表：只查 is_deleted=1 的工单，按删除时间倒序，复用常规列表的过滤维度。 */
+    public PageResult<WorkitemVO> listRecycled(String workType, String assigneeType, Long assigneeRef,
+                                               String keyword, long tenantId, int page, int size) {
+        int p = page < 1 ? 1 : page;
+        int s = size < 1 ? 20 : Math.min(size, 200);
+        int offset = (p - 1) * s;
+        String trimmed = keyword == null ? null : keyword.trim();
+        String effectiveKeyword = (trimmed != null && !trimmed.isEmpty()) ? trimmed : null;
+        Long keywordId = null;
+        if (effectiveKeyword != null && effectiveKeyword.matches("\\d+")) {
+            try {
+                keywordId = Long.parseLong(effectiveKeyword);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        long total = workitemDao.countRecycled(tenantId, workType, assigneeType, assigneeRef,
+                effectiveKeyword, keywordId);
+        List<WorkitemDO> rows = workitemDao.listRecycled(tenantId, workType, assigneeType, assigneeRef,
+                effectiveKeyword, keywordId, offset, s);
+
+        Set<Long> humanIds = new HashSet<>();
+        Set<Long> agentIds = new HashSet<>();
+        Set<Long> nodeIds = new HashSet<>();
+        Set<Long> sdlcIds = new HashSet<>();
+        Long tenantIdObj = null;
+        for (WorkitemDO w : rows) {
+            if (tenantIdObj == null && w.getTenantId() != null) {
+                tenantIdObj = w.getTenantId();
+            }
+            if ("HUMAN".equals(w.getAssigneeType()) && w.getAssigneeRef() != null) {
+                humanIds.add(w.getAssigneeRef());
+            } else if ("AGENT".equals(w.getAssigneeType()) && w.getAssigneeRef() != null) {
+                agentIds.add(w.getAssigneeRef());
+            }
+            if (w.getCreatorId() != null) {
+                humanIds.add(w.getCreatorId());
+            }
+            if (w.getStatusNodeId() != null) {
+                nodeIds.add(w.getStatusNodeId());
+            }
+            if (w.getSdlcId() != null) {
+                sdlcIds.add(w.getSdlcId());
+            }
+        }
+
+        Map<Long, UserDO> userMap = humanIds.isEmpty() ? Map.of()
+                : safeList(userDao.listByIds(humanIds)).stream()
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toMap(UserDO::getId, u -> u, (a, b) -> a));
+        Map<Long, AgentDO> agentMap = agentIds.isEmpty() || tenantIdObj == null ? Map.of()
+                : safeList(agentDao.listByIds(tenantIdObj, agentIds)).stream()
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toMap(AgentDO::getId, a -> a, (a, b) -> a));
+        Map<Long, StatusNodeDO> nodeMap = nodeIds.isEmpty() ? Map.of()
+                : safeList(nodeDao.listByIds(nodeIds)).stream()
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toMap(StatusNodeDO::getId, n -> n, (a, b) -> a));
+        Map<Long, SdlcDO> sdlcMap = sdlcIds.isEmpty() ? Map.of()
+                : safeList(sdlcDao.listByIds(sdlcIds)).stream()
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toMap(SdlcDO::getId, s2 -> s2, (a, b) -> a));
+
+        List<WorkitemVO> result = new ArrayList<>();
+        for (WorkitemDO w : rows) {
+            WorkitemVO vo = toVO(w, userMap, agentMap, nodeMap, sdlcMap);
+            vo.setDeletedAt(w.getDeletedAt());
+            result.add(vo);
+        }
+        return new PageResult<>(result, total, p, s);
+    }
+
+    /** 从回收站恢复工单：乐观锁防并发恢复；恢复后保留删除前的状态/指派等全部业务数据。 */
+    @Transactional
+    public WorkitemVO restore(long id, long tenantId, long userId) {
+        WorkitemDO w = workitemDao.findByIdIncludingDeleted(id);
+        if (w == null || !Long.valueOf(tenantId).equals(w.getTenantId())) {
+            throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        }
+        if (w.getIsDeleted() == null || w.getIsDeleted() == 0) {
+            throw new BizException(ErrorCode.WORKITEM_NOT_RECYCLED);
+        }
+        int rows = workitemDao.restore(id, tenantId, w.getVersion(), userId);
+        if (rows == 0) {
+            throw new BizException(ErrorCode.WORKITEM_VERSION_CONFLICT);
+        }
+        writeEvent(tenantId, id, WorkitemEventType.RESTORE.code(), null, null, "HUMAN", userId);
+        return toVO(workitemDao.findById(id));
     }
 
     @Transactional
@@ -1233,13 +1375,7 @@ public class WorkitemService {
     }
 
     private String resolveUserName(UserDO user) {
-        if (user == null) {
-            return null;
-        }
-        if (user.getNickname() != null && !user.getNickname().isBlank()) {
-            return user.getNickname();
-        }
-        return user.getUsername();
+        return UserAccountStates.displayName(user);
     }
 
     private ParticipantVO toHumanParticipant(UserDO user) {
@@ -1327,16 +1463,25 @@ public class WorkitemService {
             vo.setToVal(e.getToVal());
             vo.setActorType(e.getActorType());
             vo.setActorRef(e.getActorRef());
-            vo.setActorName(resolveActorName(e.getActorType(), e.getActorRef()));
-            vo.setActorDisplayName(resolveActorDisplayName(e.getActorType(), e.getActorRef()));
-            vo.setFromValDisplay(resolveEventValueDisplay(e, e.getFromVal(), "fromType"));
-            vo.setToValDisplay(resolveEventValueDisplay(e, e.getToVal(), "toType"));
+            ExternalPrincipalVO actor = externalActorPrincipal(e.getActorType(), e.getActorRef());
+            vo.setActorName("EXTERNAL".equals(e.getActorType()) && externalWorkitemViewService != null ? ExternalWorkitemViewService.formatPrincipalName(actor) : resolveActorName(e.getActorType(), e.getActorRef()));
+            vo.setActorDisplayName("EXTERNAL".equals(e.getActorType()) && externalWorkitemViewService != null ? ExternalWorkitemViewService.formatPrincipalDisplayName(actor) : resolveActorDisplayName(e.getActorType(), e.getActorRef()));
+            vo.setActorNameFallback(ExternalWorkitemViewService.nameFallback(actor));
+            ExternalPrincipalVO from = externalEventValuePrincipal(e, e.getFromVal());
+            ExternalPrincipalVO to = externalEventValuePrincipal(e, e.getToVal());
+            vo.setFromValDisplay(resolveEventValueDisplay(e, e.getFromVal(), "fromType", from));
+            vo.setToValDisplay(resolveEventValueDisplay(e, e.getToVal(), "toType", to));
+            vo.setFromValNameFallback(ExternalWorkitemViewService.nameFallback(from));
+            vo.setToValNameFallback(ExternalWorkitemViewService.nameFallback(to));
             vo.setDetailJson(e.getDetailJson());
             vo.setGmtCreate(e.getGmtCreate());
             result.add(vo);
         }
         return result;
     }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.aliyun.autowonder.dispatch.DispatchRecoveryService deliveryRecoveryService;
 
     public DeliveryProgressVO getDeliveryProgress(long workitemId, long tenantId) {
         WorkitemDO w = workitemDao.findById(workitemId);
@@ -1347,41 +1492,59 @@ public class WorkitemService {
         if (dispatches == null) {
             dispatches = List.of();
         }
-        List<DispatchRuntimeEventDO> runtimeEvents = safeList(runtimeEventDao.listByWorkitem(tenantId, workitemId));
+        List<DispatchRuntimeEventDO> runtimeEvents = safeList(runtimeEventDao.listForProgress(tenantId, workitemId));
+        ProgressReadContext context = new ProgressReadContext(runtimeEvents);
+        if (deliveryRecoveryService != null) {
+            context.waitingReasons.putAll(deliveryRecoveryService.waitingReasons(tenantId, dispatches.stream()
+                    .filter(d -> DispatchStatus.PENDING.equals(d.getStatus())).map(DispatchDO::getId).toList()));
+        }
         List<Long> agentIds = resolveProgressAgentIds(w, tenantId, dispatches);
 
         List<AgentDeliveryProgressVO> agentProgress = new ArrayList<>();
         for (Long agentId : agentIds) {
-            AgentDeliveryProgressVO agentVO = buildAgentProgress(w, tenantId, agentId, dispatches, runtimeEvents);
+            AgentDeliveryProgressVO agentVO = buildAgentProgress(w, tenantId, agentId, dispatches, context);
             if (agentVO != null) {
                 agentProgress.add(agentVO);
             }
         }
 
         com.aliyun.autowonder.aiusage.dto.WorkitemUsageSummaryVO totalUsage =
-                enrichAgentUsage(tenantId, dispatches, agentProgress);
+                enrichAgentUsage(tenantId, dispatches, agentProgress, context);
 
-        WorkflowPlanVO workflowPlan = latestWorkflowPlan(runtimeEvents);
+        WorkflowPlanVO workflowPlan = latestWorkflowPlan(runtimeEvents, context);
         if (!applyWorkflowPlan(workflowPlan, agentProgress)) {
             workflowPlan = null;
         }
 
         List<DeliveryStepVO> compatSteps = selectCompatSteps(w, agentProgress);
         if (compatSteps.isEmpty() && w.getSdlcId() != null) {
-            compatSteps = buildLegacySteps(w, dispatches);
+            compatSteps = buildLegacySteps(w, dispatches, context);
         }
         DeliveryProgressVO result = new DeliveryProgressVO();
+        List<DispatchAttemptVO> executions = buildAttempts(dispatches, null, context.latestEvents, context);
+        Date timingNow = new Date();
+        for (int i = 0; i < dispatches.size(); i++) {
+            DispatchDO dispatch = dispatches.get(i);
+            // Resolve the flow from this execution's entry step, not the employee's current binding.
+            SdlcStepDO entryStep = dispatch.getSdlcStepId() == null ? null : context.step(dispatch.getSdlcStepId());
+            if (!isInteractionDispatch(dispatch) && entryStep != null && entryStep.getSdlcId() != null) {
+                executions.get(i).setStepTimings(DispatchStepTimings.build(dispatch,
+                        context.eventsByDispatch.getOrDefault(dispatch.getId(), List.of()),
+                        context.steps(entryStep.getSdlcId()), timingNow));
+            }
+        }
+        result.setExecutions(executions);
         result.setAgents(agentProgress);
         result.setSteps(compatSteps);
         result.setWorkflowPlan(workflowPlan);
-        result.setProcessGraph(buildProcessGraph(w, tenantId, dispatches));
+        result.setProcessGraph(buildProcessGraph(w, tenantId, dispatches, context));
         result.setTotalDurationMs(sumAgentDurations(agentProgress));
         result.setTotalUsage(totalUsage);
         return result;
     }
 
     private ProcessGraphVO buildProcessGraph(WorkitemDO workitem, long tenantId,
-                                             List<DispatchDO> dispatches) {
+                                             List<DispatchDO> dispatches, ProgressReadContext context) {
         List<DispatchDO> formal = safeList(dispatches).stream()
                 .filter(Objects::nonNull)
                 .filter(row -> !isInteractionDispatch(row))
@@ -1402,7 +1565,7 @@ public class WorkitemService {
         List<ProcessGraphEdgeVO> edges = new ArrayList<>();
         Map<Long, ProcessGraphNodeVO> nodesByDispatch = new LinkedHashMap<>();
         for (DispatchDO row : formal) {
-            ProcessGraphNodeVO node = graphNode(row);
+            ProcessGraphNodeVO node = graphNode(row, context);
             nodes.add(node);
             nodesByDispatch.put(row.getId(), node);
         }
@@ -1438,14 +1601,14 @@ public class WorkitemService {
         return graph;
     }
 
-    private ProcessGraphNodeVO graphNode(DispatchDO row) {
+    private ProcessGraphNodeVO graphNode(DispatchDO row, ProgressReadContext context) {
         ProcessGraphNodeVO node = new ProcessGraphNodeVO();
         node.setKey("dispatch:" + row.getId());
         node.setDispatchId(row.getId());
         node.setAgentId(row.getAgentId());
-        node.setAgentName(resolveAgentName(row.getAgentId()));
+        node.setAgentName(context.agentName(row.getAgentId()));
         node.setStepId(row.getSdlcStepId());
-        SdlcStepDO step = row.getSdlcStepId() == null ? null : stepDao.findById(row.getSdlcStepId());
+        SdlcStepDO step = row.getSdlcStepId() == null ? null : context.step(row.getSdlcStepId());
         node.setStepName(step == null ? null : step.getName());
         node.setStatus(row.getStatus());
         node.setStartedAt(row.getGmtCreate());
@@ -1483,14 +1646,16 @@ public class WorkitemService {
         if (!DispatchStatus.SUCCEEDED.equals(latest.getStatus())) {
             return;
         }
-        UserDO user = userDao.findById(workitem.getAssigneeRef());
+        UserDO user = userDao.findByIdIncludingDeleted(workitem.getAssigneeRef());
         ProcessGraphNodeVO human = new ProcessGraphNodeVO();
         human.setKey("human:" + workitem.getAssigneeRef());
-        String humanName = user == null ? null : user.getNickname();
+        String humanName = user == null ? null : UserAccountStates.displayName(user);
         if (humanName == null || humanName.isBlank()) {
-            humanName = user == null ? null : user.getUsername();
+            human.setAgentNameFallback("HUMAN");
+            human.setAgentName(SystemMessages.render("workitem.graph.human", new Object[0], "真人"));
+        } else {
+            human.setAgentName(humanName);
         }
-        human.setAgentName(humanName == null || humanName.isBlank() ? "真人" : humanName);
         human.setStatus("HUMAN");
         nodes.add(human);
 
@@ -1514,8 +1679,8 @@ public class WorkitemService {
         }
     }
 
-    private List<DeliveryStepVO> buildLegacySteps(WorkitemDO w, List<DispatchDO> dispatches) {
-        List<SdlcStepDO> sdlcSteps = new ArrayList<>(safeList(stepDao.listBySdlc(w.getSdlcId())));
+    private List<DeliveryStepVO> buildLegacySteps(WorkitemDO w, List<DispatchDO> dispatches, ProgressReadContext context) {
+        List<SdlcStepDO> sdlcSteps = context.steps(w.getSdlcId());
         sdlcSteps.sort(Comparator.comparingInt(s -> s.getStepOrder() == null ? 0 : s.getStepOrder()));
         Map<Long, List<DispatchDO>> dispatchesByStep = new LinkedHashMap<>();
         for (DispatchDO d : dispatches) {
@@ -1533,10 +1698,15 @@ public class WorkitemService {
             DispatchDO latestDispatch = latestDispatch(stepDispatches);
             vo.setAttempts(buildAttempts(stepDispatches,
                     latestWorkitemDispatch != null ? latestWorkitemDispatch.getId() : null,
-                    List.of()));
+                    Map.of(), context));
             if (latestDispatch != null) {
                 vo.setError(latestDispatch.getError());
-                vo.setExecutorName(resolveAgentName(latestDispatch.getAgentId()));
+                vo.setExecutionStatus(latestDispatch.getStatus());
+                vo.setCurrentDispatchId(latestDispatch.getId());
+                vo.setWaitingReason(DispatchStatus.PENDING.equals(latestDispatch.getStatus()) ? context.waitingReasons.get(latestDispatch.getId()) : null);
+                vo.setAgentName(context.agentName(latestDispatch.getAgentId()));
+                vo.setExecutorId(latestDispatch.getExecutorId());
+                vo.setExecutorName(context.executorName(latestDispatch.getExecutorId()));
                 vo.setSubSteps(dispatchSubSteps(latestDispatch));
             }
             if (latestDispatch != null && DispatchStatus.CANCELED.equals(latestDispatch.getStatus())) {
@@ -1576,16 +1746,61 @@ public class WorkitemService {
 
     private AgentDeliveryProgressVO buildAgentProgress(WorkitemDO w, long tenantId, Long agentId,
                                                        List<DispatchDO> allDispatches,
-                                                       List<DispatchRuntimeEventDO> allRuntimeEvents) {
-        Long sdlcId = sdlcResolver.resolveSdlcId(tenantId, agentId);
-        if (sdlcId == null) {
-            sdlcId = w.getSdlcId();
+                                                       ProgressReadContext context) {
+        // Historical executions belong to the flow of their entry step, even after
+        // the employee publishes a version bound to a different SDLC.
+        Map<Long, List<DispatchDO>> dispatchesByFlow = new LinkedHashMap<>();
+        List<DispatchDO> interactions = new ArrayList<>();
+        Long fallbackSdlcId = null;
+        for (DispatchDO dispatch : allDispatches) {
+            if (!Objects.equals(agentId, dispatch.getAgentId())) continue;
+            if (isInteractionDispatch(dispatch)) {
+                interactions.add(dispatch);
+                continue;
+            }
+            SdlcStepDO entry = dispatch.getSdlcStepId() == null ? null : context.step(dispatch.getSdlcStepId());
+            Long flowId = entry == null ? null : entry.getSdlcId();
+            if (flowId == null) {
+                if (fallbackSdlcId == null) fallbackSdlcId = sdlcResolver.resolveSdlcId(tenantId, agentId);
+                flowId = fallbackSdlcId == null ? w.getSdlcId() : fallbackSdlcId;
+            }
+            if (flowId != null) dispatchesByFlow.computeIfAbsent(flowId, ignored -> new ArrayList<>()).add(dispatch);
         }
-        if (sdlcId == null) {
-            return null;
+        if (dispatchesByFlow.isEmpty()) {
+            Long flowId = sdlcResolver.resolveSdlcId(tenantId, agentId);
+            if (flowId == null) flowId = w.getSdlcId();
+            if (flowId == null) return null;
+            dispatchesByFlow.put(flowId, new ArrayList<>());
         }
+        List<Map.Entry<Long, List<DispatchDO>>> flows = new ArrayList<>(dispatchesByFlow.entrySet());
+        flows.sort(Comparator.comparingLong(flow -> {
+            DispatchDO latest = latestDispatch(flow.getValue());
+            return latest == null ? Long.MIN_VALUE : latest.getId();
+        }));
+        List<DeliveryStepVO> historicalSteps = new ArrayList<>();
+        AgentDeliveryProgressVO result = null;
+        for (int i = 0; i < flows.size(); i++) {
+            Map.Entry<Long, List<DispatchDO>> flow = flows.get(i);
+            List<DispatchDO> flowDispatches = new ArrayList<>(flow.getValue());
+            if (i == flows.size() - 1) flowDispatches.addAll(interactions);
+            flowDispatches.sort(Comparator.comparing(DispatchDO::getId));
+            result = buildAgentFlowProgress(w, agentId, flowDispatches, context, flow.getKey(),
+                    i == flows.size() - 1 ? latestDispatch(flow.getValue()) : null);
+            // Keep the latest flow first so name/key-based workflow plans do not
+            // attach to an older flow that reused the same step identifiers.
+            historicalSteps.addAll(0, result.getSteps());
+        }
+        result.setSteps(historicalSteps);
+        result.setDurationMs(totalDuration(allDispatches.stream()
+                .filter(dispatch -> Objects.equals(agentId, dispatch.getAgentId()) && !isInteractionDispatch(dispatch))
+                .toList()));
+        return result;
+    }
 
-        List<SdlcStepDO> sdlcSteps = new ArrayList<>(safeList(stepDao.listBySdlc(sdlcId)));
+    private AgentDeliveryProgressVO buildAgentFlowProgress(WorkitemDO w, Long agentId,
+                                                           List<DispatchDO> allDispatches,
+                                                           ProgressReadContext context, Long sdlcId, DispatchDO controlDispatch) {
+        List<SdlcStepDO> sdlcSteps = context.steps(sdlcId);
         sdlcSteps.sort(Comparator.comparingInt(s -> s.getStepOrder() == null ? 0 : s.getStepOrder()));
         List<DispatchDO> allAgentDispatches = allDispatches.stream()
                 .filter(d -> Objects.equals(agentId, d.getAgentId()))
@@ -1600,10 +1815,10 @@ public class WorkitemService {
             dispatchesByStep.computeIfAbsent(d.getSdlcStepId(), ignored -> new ArrayList<>()).add(d);
         }
         List<DispatchRuntimeEventDO> allAgentRuntimeEvents = runtimeEventsForAgent(
-                agentId, allAgentDispatches, allRuntimeEvents);
+                agentId, allAgentDispatches, context.eventsByAgent.getOrDefault(agentId, List.of()));
         List<DispatchRuntimeEventDO> displayRuntimeEvents = latestAgentDispatch == null
                 ? List.of()
-                : runtimeEventsForDispatch(agentId, latestAgentDispatch, allRuntimeEvents);
+                : runtimeEventsForDispatch(agentId, latestAgentDispatch, context.eventsByDispatch.getOrDefault(latestAgentDispatch.getId(), List.of()));
         Date progressNow = new Date();
         RuntimeStepTimeline runtimeState = RuntimeStepTimeline.from(displayRuntimeEvents, sdlcSteps, progressNow);
 
@@ -1617,12 +1832,25 @@ public class WorkitemService {
             List<DispatchDO> stepDispatches = dispatchesByStep.get(step.getId());
             DispatchDO latestDispatch = latestDispatch(stepDispatches);
             vo.setAttempts(buildAttempts(stepDispatches,
-                    latestAgentDispatch != null ? latestAgentDispatch.getId() : null,
-                    allRuntimeEvents));
+                    controlDispatch != null ? controlDispatch.getId() : null,
+                    context.latestEvents, context));
             if (latestDispatch != null) {
-                vo.setError(latestDispatch.getError());
-                vo.setExecutorName(resolveAgentName(latestDispatch.getAgentId()));
+                if (latestAgentDispatch != null && Objects.equals(latestDispatch.getId(), latestAgentDispatch.getId()))
+                    vo.setError(latestDispatch.getError());
+                vo.setCurrentDispatchId(latestDispatch.getId());
+                vo.setExecutionStatus(latestDispatch.getStatus());
+                vo.setWaitingReason(DispatchStatus.PENDING.equals(latestDispatch.getStatus())
+                        ? context.waitingReasons.get(latestDispatch.getId()) : null);
+                vo.setAgentName(context.agentName(latestDispatch.getAgentId()));
+                vo.setExecutorId(latestDispatch.getExecutorId());
+                vo.setExecutorName(context.executorName(latestDispatch.getExecutorId()));
                 vo.setSubSteps(dispatchSubSteps(latestDispatch));
+            }
+            if (latestAgentDispatch != null && !isTerminal(latestAgentDispatch.getStatus())
+                    && (latestDispatch == null || !Objects.equals(latestDispatch.getId(), latestAgentDispatch.getId()))) {
+                vo.setCurrentDispatchId(null);
+                vo.setExecutionStatus(null);
+                vo.setWaitingReason(null);
             }
             vo.setDurationMs(runtimeState.durationOf(step));
             String runtimeStatus = runtimeState.statusOf(step);
@@ -1664,21 +1892,39 @@ public class WorkitemService {
                     && !looksLikeMojibake(lastEvent.getError())) {
                 vo.setError(lastEvent.getError());
             }
-            if (runtimeStatus != null && latestDispatch == null && !agentDispatches.isEmpty()) {
-                vo.setExecutorName(resolveAgentName(agentId));
+            // runtimeState 来自 latestAgentDispatch 的运行事件：由它驱动的步骤展示该 dispatch 的
+            // 执行器，即使步骤本身没有入口 dispatch 或仅有更早的历史入口 dispatch。
+            if (runtimeStatus != null && latestAgentDispatch != null
+                    && (latestDispatch == null || !Objects.equals(latestDispatch.getId(), latestAgentDispatch.getId()))) {
+                vo.setAgentName(context.agentName(agentId));
+                vo.setExecutorId(latestAgentDispatch.getExecutorId());
+                vo.setExecutorName(context.executorName(latestAgentDispatch.getExecutorId()));
             }
 
+            if (runtimeStatus == null && latestAgentDispatch != null && !isTerminal(latestAgentDispatch.getStatus())
+                    && latestDispatch != null && !Objects.equals(latestDispatch.getId(), latestAgentDispatch.getId())
+                    && "failed".equals(vo.getStatus())) {
+                vo.setStatus("pending");
+                vo.setSubSteps(List.of());
+            }
             stepVOs.add(vo);
         }
 
         AgentDeliveryProgressVO agentVO = new AgentDeliveryProgressVO();
         agentVO.setAgentId(agentId);
-        agentVO.setAgentName(resolveAgentName(agentId));
+        agentVO.setAgentName(context.agentName(agentId));
         agentVO.setSteps(stepVOs);
         DispatchDO latestAnyDispatch = latestDispatch(allAgentDispatches);
         boolean interactionActive = latestAnyDispatch != null && isInteractionDispatch(latestAnyDispatch)
                 && !isTerminal(latestAnyDispatch.getStatus());
         agentVO.setStatus(interactionActive ? "active" : resolveAgentProgressStatus(w, agentId, stepVOs));
+        DispatchDO currentDispatch = interactionActive ? latestAnyDispatch : latestAgentDispatch;
+        if (currentDispatch != null) {
+            agentVO.setCurrentDispatchId(currentDispatch.getId());
+            agentVO.setExecutionStatus(currentDispatch.getStatus());
+            agentVO.setWaitingReason(DispatchStatus.PENDING.equals(currentDispatch.getStatus())
+                    ? context.waitingReasons.get(currentDispatch.getId()) : null);
+        }
         agentVO.setDurationMs(totalDuration(agentDispatches));
         List<DispatchDO> activeAgentDispatches = allAgentDispatches.stream()
                 .filter(dispatch -> !isTerminal(dispatch.getStatus()))
@@ -1715,7 +1961,7 @@ public class WorkitemService {
                 .orElse(null);
     }
 
-    private WorkflowPlanVO latestWorkflowPlan(List<DispatchRuntimeEventDO> events) {
+    private WorkflowPlanVO latestWorkflowPlan(List<DispatchRuntimeEventDO> events, ProgressReadContext context) {
         DispatchRuntimeEventDO latest = events.stream()
                 .filter(Objects::nonNull)
                 .filter(event -> "workflow.plan_applied".equals(event.getEventType()))
@@ -1764,7 +2010,7 @@ public class WorkitemService {
             WorkflowPlanVO result = new WorkflowPlanVO();
             result.setRevision(revision);
             result.setAgentId(latest.getAgentId());
-            result.setAgentName(resolveAgentName(latest.getAgentId()));
+            result.setAgentName(context.agentName(latest.getAgentId()));
             result.setTargetStepId(targetStepId);
             result.setReason(detail.getString("reason"));
             com.aliyun.autowonder.json.JSONArray rawGuidanceIds = detail.getJSONArray("sourceGuidanceIds");
@@ -1883,7 +2129,7 @@ public class WorkitemService {
     }
 
     private com.aliyun.autowonder.aiusage.dto.WorkitemUsageSummaryVO enrichAgentUsage(
-            long tenantId, List<DispatchDO> dispatches, List<AgentDeliveryProgressVO> agentProgress) {
+            long tenantId, List<DispatchDO> dispatches, List<AgentDeliveryProgressVO> agentProgress, ProgressReadContext context) {
         if (dispatchAiUsageDao == null || dispatches.isEmpty()) {
             return null;
         }
@@ -1929,7 +2175,7 @@ public class WorkitemService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
         return com.aliyun.autowonder.aiusage.WorkitemUsageAggregator.summarize(
-                usageRows, knownDispatches, this::resolveAgentName);
+                usageRows, knownDispatches, context::agentName);
     }
 
     private com.aliyun.autowonder.aiusage.dto.StepUsageSummaryVO aggregateUsage(
@@ -2020,6 +2266,61 @@ public class WorkitemService {
         return any ? total : null;
     }
 
+    /** Request-scoped caches: never share mutable progress or presence across requests. */
+    private final class ProgressReadContext {
+        private final Map<Long, DispatchRuntimeEventDO> latestEvents;
+        private final Map<Long, List<DispatchRuntimeEventDO>> eventsByAgent = new HashMap<>();
+        private final Map<Long, List<DispatchRuntimeEventDO>> eventsByDispatch = new HashMap<>();
+        private final Map<Long, String> waitingReasons = new HashMap<>();
+        private final Map<Long, String> names = new HashMap<>();
+        private final Map<Long, String> executorNames = new HashMap<>();
+        private final Map<Long, Boolean> executorOnline = new HashMap<>();
+        private final Map<Long, List<SdlcStepDO>> stepsBySdlc = new HashMap<>();
+        private final Map<Long, SdlcStepDO> stepsById = new HashMap<>();
+
+        private ProgressReadContext(List<DispatchRuntimeEventDO> events) {
+            this.latestEvents = latestRuntimeEventByDispatch(events);
+            for (DispatchRuntimeEventDO event : events) {
+                if (event == null) continue;
+                eventsByAgent.computeIfAbsent(event.getAgentId(), ignored -> new ArrayList<>()).add(event);
+                eventsByDispatch.computeIfAbsent(event.getDispatchId(), ignored -> new ArrayList<>()).add(event);
+            }
+        }
+
+        private boolean executorOffline(Long id) {
+            return id == null || !executorOnline.computeIfAbsent(id, presenceManager::isExecutorOnline);
+        }
+
+        private String agentName(Long id) {
+            if (id == null) return null;
+            // containsKey also caches missing agents/names.
+            if (!names.containsKey(id)) names.put(id, resolveAgentName(id));
+            return names.get(id);
+        }
+
+        private String executorName(Long id) {
+            if (id == null) return null;
+            if (!executorNames.containsKey(id)) {
+                ExecutorDO executor = executorDao.findById(id);
+                executorNames.put(id, executor == null ? null : executor.getName());
+            }
+            return executorNames.get(id);
+        }
+
+        private List<SdlcStepDO> steps(Long id) {
+            return stepsBySdlc.computeIfAbsent(id, key -> {
+                List<SdlcStepDO> rows = new ArrayList<>(safeList(stepDao.listBySdlc(key)));
+                rows.sort(Comparator.comparingInt(row -> row.getStepOrder() == null ? 0 : row.getStepOrder()));
+                return rows;
+            });
+        }
+
+        private SdlcStepDO step(Long id) {
+            if (!stepsById.containsKey(id)) stepsById.put(id, stepDao.findById(id));
+            return stepsById.get(id);
+        }
+    }
+
     private String resolveAgentName(Long agentId) {
         if (agentId == null) {
             return null;
@@ -2043,12 +2344,11 @@ public class WorkitemService {
     }
 
     private List<DispatchAttemptVO> buildAttempts(List<DispatchDO> stepDispatches,
-            Long resumableDispatchId, List<DispatchRuntimeEventDO> allRuntimeEvents) {
+            Long resumableDispatchId, Map<Long, DispatchRuntimeEventDO> latestEventByDispatch, ProgressReadContext context) {
         List<DispatchAttemptVO> attempts = new ArrayList<>();
         if (stepDispatches == null) {
             return attempts;
         }
-        Map<Long, DispatchRuntimeEventDO> latestEventByDispatch = latestRuntimeEventByDispatch(allRuntimeEvents);
         for (int i = 0; i < stepDispatches.size(); i++) {
             DispatchDO d = stepDispatches.get(i);
             DispatchRuntimeEventDO latestEvent = latestEventByDispatch.get(d.getId());
@@ -2057,9 +2357,13 @@ public class WorkitemService {
                     && isRuntimeFailureEvent(latestEvent);
             DispatchAttemptVO vo = new DispatchAttemptVO();
             vo.setDispatchId(d.getId());
-            vo.setExecutorName(resolveAgentName(d.getAgentId()));
+            vo.setAgentId(d.getAgentId());
+            vo.setAgentName(context.agentName(d.getAgentId()));
+            vo.setExecutorId(d.getExecutorId());
+            vo.setExecutorName(context.executorName(d.getExecutorId()));
             vo.setStatus(runtimeFailed && !DispatchStatus.CANCELED.equals(d.getStatus()) ? DispatchStatus.FAILED : d.getStatus());
             vo.setResumeMode(d.getResumeMode());
+            vo.setWaitingReason(DispatchStatus.PENDING.equals(d.getStatus()) ? context.waitingReasons.get(d.getId()) : null);
             boolean executorFailover = DispatchStatus.PENDING.equals(d.getStatus())
                     && latestEvent != null
                     && "dispatch.executor_failover".equals(latestEvent.getEventType());
@@ -2067,9 +2371,15 @@ public class WorkitemService {
                     ? runtimeFailureMessage(latestEvent)
                     : d.getError());
             vo.setStartedAt(d.getGmtCreate());
+            vo.setEndedAt(DispatchStatus.isTerminal(d.getStatus()) ? d.getGmtModified() : null);
             vo.setDurationMs(durationOf(d));
-            boolean executorOffline = d.getExecutorId() == null
-                    || !presenceManager.isExecutorOnline(d.getExecutorId());
+            // Historical attempts never expose controls. Avoid remote presence reads for them,
+            // and reuse the current executor snapshot across step/overview projections.
+            boolean controlCandidate = Objects.equals(d.getId(), resumableDispatchId);
+            boolean executorOffline = controlCandidate
+                    && !DispatchStatus.isTerminal(d.getStatus())
+                    && !DispatchStatus.PAUSED.equals(d.getStatus())
+                    && context.executorOffline(d.getExecutorId());
             vo.setCanContinue(Objects.equals(d.getId(), resumableDispatchId)
                     && DispatchService.canContinue(d, System.currentTimeMillis())
                     && (DispatchStatus.PAUSED.equals(d.getStatus())
@@ -2139,81 +2449,81 @@ public class WorkitemService {
         String dispatchStatus = dispatch.getStatus();
         if (DispatchStatus.PENDING.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("等待调度执行", "active"),
-                    subStep("客户端接单", "pending"),
-                    subStep("执行中", "pending")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("WAIT_DISPATCH", "等待调度执行", "active"),
+                    subStep("CLIENT_ACCEPT", "客户端接单", "pending"),
+                    subStep("EXECUTING", "执行中", "pending")
             );
         }
         if (DispatchStatus.PACKAGING.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("准备执行上下文", "active"),
-                    subStep("客户端接单", "pending"),
-                    subStep("执行中", "pending")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("PREPARE_CONTEXT", "准备执行上下文", "active"),
+                    subStep("CLIENT_ACCEPT", "客户端接单", "pending"),
+                    subStep("EXECUTING", "执行中", "pending")
             );
         }
         if (DispatchStatus.DISPATCHED.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("准备执行上下文", "done"),
-                    subStep("等待客户端接单", "active"),
-                    subStep("执行中", "pending")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("PREPARE_CONTEXT", "准备执行上下文", "done"),
+                    subStep("WAIT_CLIENT", "等待客户端接单", "active"),
+                    subStep("EXECUTING", "执行中", "pending")
             );
         }
         if (DispatchStatus.ACKED.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("准备执行上下文", "done"),
-                    subStep("客户端已接单", "active"),
-                    subStep("执行中", "pending")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("PREPARE_CONTEXT", "准备执行上下文", "done"),
+                    subStep("CLIENT_ACCEPTED", "客户端已接单", "active"),
+                    subStep("EXECUTING", "执行中", "pending")
             );
         }
         if (DispatchStatus.RUNNING.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("准备执行上下文", "done"),
-                    subStep("客户端已接单", "done"),
-                    subStep("正在执行", "active")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("PREPARE_CONTEXT", "准备执行上下文", "done"),
+                    subStep("CLIENT_ACCEPTED", "客户端已接单", "done"),
+                    subStep("EXECUTION_ACTIVE", "正在执行", "active")
             );
         }
         if (DispatchStatus.PAUSING.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("客户端已接单", "done"),
-                    subStep("等待当前动作安全结束", "active"),
-                    subStep("保存恢复检查点", "pending")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("CLIENT_ACCEPTED", "客户端已接单", "done"),
+                    subStep("WAIT_SAFE_END", "等待当前动作安全结束", "active"),
+                    subStep("SAVE_CHECKPOINT", "保存恢复检查点", "pending")
             );
         }
         if (DispatchStatus.PAUSED.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("客户端已接单", "done"),
-                    subStep("当前动作已安全结束", "done"),
-                    subStep("已暂停，恢复检查点已保存", "done")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("CLIENT_ACCEPTED", "客户端已接单", "done"),
+                    subStep("SAFE_END", "当前动作已安全结束", "done"),
+                    subStep("PAUSED_CHECKPOINT", "已暂停，恢复检查点已保存", "done")
             );
         }
         if (DispatchStatus.SUCCEEDED.equals(dispatchStatus)) {
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("准备执行上下文", "done"),
-                    subStep("客户端已接单", "done"),
-                    subStep("执行完成", "done")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("PREPARE_CONTEXT", "准备执行上下文", "done"),
+                    subStep("CLIENT_ACCEPTED", "客户端已接单", "done"),
+                    subStep("EXECUTION_FINISHED", "执行完成", "done")
             );
         }
-        if (DispatchStatus.CANCELED.equals(dispatchStatus)) return List.of(subStep("本次执行已取消", "cancelled"));
+        if (DispatchStatus.CANCELED.equals(dispatchStatus)) return List.of(subStep("EXECUTION_CANCELED", "本次执行已取消", "cancelled"));
         if (isFailed(dispatchStatus)) {
             if (dispatch.getExecutorId() == null) {
                 return List.of(
-                        subStep("启动交付", "done"),
-                        subStep("未派发到客户端", "failed")
+                        subStep("START_DELIVERY", "启动交付", "done"),
+                        subStep("NOT_DISPATCHED", "未派发到客户端", "failed")
                 );
             }
             return List.of(
-                    subStep("启动交付", "done"),
-                    subStep("准备执行上下文", "done"),
-                    subStep("已分配执行器", "done"),
-                    subStep("执行失败", "failed")
+                    subStep("START_DELIVERY", "启动交付", "done"),
+                    subStep("PREPARE_CONTEXT", "准备执行上下文", "done"),
+                    subStep("EXECUTOR_ASSIGNED", "已分配执行器", "done"),
+                    subStep("EXECUTION_FAILED", "执行失败", "failed")
             );
         }
         return null;
@@ -2230,9 +2540,10 @@ public class WorkitemService {
                 || DispatchStatus.PAUSE_FAILED.equals(status);
     }
 
-    private SubStepVO subStep(String name, String status) {
+    private SubStepVO subStep(String fallbackCode, String name, String status) {
         SubStepVO vo = new SubStepVO();
-        vo.setName(name);
+        vo.setFallbackCode(fallbackCode);
+        vo.setName(SystemMessages.render("workitem.substep." + fallbackCode.toLowerCase(java.util.Locale.ROOT), new Object[0], name));
         vo.setStatus(status);
         return vo;
     }
@@ -2270,7 +2581,7 @@ public class WorkitemService {
 
         List<ParticipantVO> participants = new ArrayList<>();
         for (Long humanId : participantHumanIds(tenantId, w)) {
-            UserDO user = userDao.findById(humanId);
+            UserDO user = userDao.findByIdIncludingDeleted(humanId);
             if (user != null) {
                 participants.add(toHumanParticipant(user));
             }
@@ -2326,6 +2637,12 @@ public class WorkitemService {
         candidates.putIfAbsent(targetType + ":" + participant.getUserId(), participant);
     }
 
+    public List<Long> getHumanParticipantIds(long workitemId, long tenantId) {
+        WorkitemDO workitem = workitemDao.findById(workitemId);
+        if (workitem == null || !Objects.equals(workitem.getTenantId(), tenantId)) throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+        return participantHumanIds(tenantId, workitem);
+    }
+
     private List<Long> participantHumanIds(long tenantId, WorkitemDO workitem) {
         LinkedHashMap<Long, Long> ids = new LinkedHashMap<>();
         if (workitem.getCreatorId() != null) {
@@ -2345,6 +2662,9 @@ public class WorkitemService {
                     ids.putIfAbsent(mention.getTargetRef(), mention.getTargetRef());
                 }
             }
+        }
+        for (Long actorId : safeList(workitemDao.listHumanRequestActors(tenantId, workitem.getId()))) {
+            ids.putIfAbsent(actorId, actorId);
         }
         return new ArrayList<>(ids.keySet());
     }
@@ -2433,7 +2753,9 @@ public class WorkitemService {
             item.setAgent("AGENT".equals(c.getAuthorType()));
             item.setContent(c.getContentMd());
             item.setGmtCreate(c.getGmtCreate());
-            item.setAuthorName(resolveActorDisplayName(c.getAuthorType(), c.getAuthorRef()));
+            ExternalPrincipalVO author = externalActorPrincipal(c.getAuthorType(), c.getAuthorRef());
+            item.setAuthorName("EXTERNAL".equals(c.getAuthorType()) && externalWorkitemViewService != null ? ExternalWorkitemViewService.formatPrincipalDisplayName(author) : resolveActorDisplayName(c.getAuthorType(), c.getAuthorRef()));
+            item.setAuthorNameFallback(ExternalWorkitemViewService.nameFallback(author));
             items.add(item);
         }
 
@@ -2445,10 +2767,26 @@ public class WorkitemService {
             item.setAuthorType(e.getActorType());
             item.setAgent("AGENT".equals(e.getActorType()));
             item.setGmtCreate(e.getGmtCreate());
-            item.setAuthorName(resolveActorDisplayName(e.getActorType(), e.getActorRef()));
-            String fromVal = resolveEventValueDisplay(e, e.getFromVal(), "fromType");
-            String toVal = resolveEventValueDisplay(e, e.getToVal(), "toType");
-            item.setContent(appendOperator(formatTimelineEventContent(e, fromVal, toVal), e));
+            ExternalPrincipalVO actor = externalActorPrincipal(e.getActorType(), e.getActorRef());
+            item.setAuthorName("EXTERNAL".equals(e.getActorType()) && externalWorkitemViewService != null ? ExternalWorkitemViewService.formatPrincipalDisplayName(actor) : resolveActorDisplayName(e.getActorType(), e.getActorRef()));
+            item.setAuthorNameFallback(ExternalWorkitemViewService.nameFallback(actor));
+            ExternalPrincipalVO from = externalEventValuePrincipal(e, e.getFromVal());
+            ExternalPrincipalVO to = externalEventValuePrincipal(e, e.getToVal());
+            String fromVal = resolveEventValueDisplay(e, e.getFromVal(), "fromType", from);
+            String toVal = resolveEventValueDisplay(e, e.getToVal(), "toType", to);
+            item.setFromValNameFallback(ExternalWorkitemViewService.nameFallback(from));
+            item.setToValNameFallback(ExternalWorkitemViewService.nameFallback(to));
+            item.setEventType(e.getEventType());
+            item.setFromValDisplay(fromVal);
+            item.setToValDisplay(toVal);
+            String operator = "EXTERNAL".equals(e.getActorType()) && externalWorkitemViewService != null
+                    && ("STATUS_CHANGE".equals(e.getEventType()) || "ASSIGN".equals(e.getEventType()))
+                    && e.getActorRef() != null && e.getActorRef() != 0L
+                    ? ExternalWorkitemViewService.formatPrincipalDisplayName(actor) : operatorDisplayName(e);
+            if (operator != null && operator.isBlank()) operator = null;
+            item.setOperatorDisplayName(operator);
+            if (operator != null) item.setOperatorNameFallback(ExternalWorkitemViewService.nameFallback(actor));
+            item.setContent(formatTimelineEventContent(e, fromVal, toVal, operator));
             if (isAoneSyncEvent(e) && externalCollaboration != null) {
                 item.setSourceProvider(externalCollaboration.getProvider());
                 item.setSourceExternalWorkitemId(externalCollaboration.getExternalWorkitemId());
@@ -2465,34 +2803,41 @@ public class WorkitemService {
         return items;
     }
 
-    private String formatTimelineEventContent(WorkitemEventDO event, String fromVal, String toVal) {
+    private String formatTimelineEventContent(WorkitemEventDO event, String fromVal, String toVal, String operator) {
         WorkitemEventType eventType = WorkitemEventType.fromCode(event.getEventType()).orElse(null);
-        String label = eventType == null ? event.getEventType() : eventType.actionLabel();
+        if (eventType == null) {
+            if (event.getFromVal() != null && event.getToVal() != null) return event.getEventType() + ": " + fromVal + " → " + toVal;
+            return event.getToVal() == null ? event.getEventType() : event.getEventType() + ": " + toVal;
+        }
+        String key = "workitem.event." + eventType.code().toLowerCase(java.util.Locale.ROOT);
+        String diagnostic = eventType.actionLabel();
+        List<Object> args = new ArrayList<>();
         if (eventType == WorkitemEventType.AONE_IMPORT || eventType == WorkitemEventType.AONE_UPDATE) {
-            return label;
+            return SystemMessages.render(key, new Object[0], diagnostic);
         }
         if (eventType == WorkitemEventType.EXTERNAL_COMMENT_EDIT
                 || eventType == WorkitemEventType.EXTERNAL_COMMENT_AUTHOR_CHANGE
                 || eventType == WorkitemEventType.EXTERNAL_COMMENT_DELETE) {
-            return event.getFromVal() == null || event.getFromVal().isBlank()
-                    ? label
-                    : label + "（评论 #" + event.getFromVal() + "）";
+            if (event.getFromVal() != null && !event.getFromVal().isBlank()) {
+                key += ".comment";
+                args.add(event.getFromVal());
+                diagnostic += "（评论 #" + event.getFromVal() + "）";
+            }
+        } else if (event.getFromVal() != null && event.getToVal() != null) {
+            key += ".both";
+            args.add(fromVal); args.add(toVal);
+            diagnostic += ": " + fromVal + " → " + toVal;
+        } else if (event.getToVal() != null) {
+            key += ".to";
+            args.add(toVal);
+            diagnostic += ": " + toVal;
         }
-        if (event.getFromVal() != null && event.getToVal() != null) {
-            return label + ": " + fromVal + " → " + toVal;
+        if (operator != null) {
+            key += ".operator";
+            args.add(operator);
+            diagnostic += " （操作人：" + operator + "）";
         }
-        if (event.getToVal() != null) {
-            return label + ": " + toVal;
-        }
-        return label;
-    }
-
-    private String appendOperator(String content, WorkitemEventDO event) {
-        String operator = operatorDisplayName(event);
-        if (operator == null) {
-            return content;
-        }
-        return content + " （操作人：" + operator + "）";
+        return SystemMessages.render(key, args.toArray(), diagnostic);
     }
 
     private String operatorDisplayName(WorkitemEventDO event) {
@@ -2517,6 +2862,24 @@ public class WorkitemService {
                 || WorkitemEventType.AONE_UPDATE.code().equals(event.getEventType()));
     }
 
+    private ExternalPrincipalVO externalActorPrincipal(String type, Long ref) {
+        return "EXTERNAL".equals(type) && externalWorkitemViewService != null
+                ? externalWorkitemViewService.principalIdentity(ref) : null;
+    }
+
+    private ExternalPrincipalVO externalEventValuePrincipal(WorkitemEventDO event, String value) {
+        if (!"EXTERNAL_BUSINESS_OWNER_CHANGE".equals(event.getEventType()) || value == null || value.isBlank()
+                || externalWorkitemViewService == null) return null;
+        try { return externalWorkitemViewService.principalIdentity(Long.parseLong(value)); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private String resolveEventValueDisplay(WorkitemEventDO event, String value, String typeKey, ExternalPrincipalVO principal) {
+        if (!"EXTERNAL_BUSINESS_OWNER_CHANGE".equals(event.getEventType())) return resolveEventValueDisplay(event, value, typeKey);
+        String display = ExternalWorkitemViewService.formatPrincipalCompactName(principal);
+        return display == null ? value : display;
+    }
+
     private String resolveActorName(String actorType, Long actorRef) {
         if (actorRef == null) {
             return null;
@@ -2526,14 +2889,7 @@ public class WorkitemService {
             return agent == null ? null : agent.getName();
         }
         if ("HUMAN".equals(actorType)) {
-            UserDO user = userDao.findById(actorRef);
-            if (user == null) {
-                return null;
-            }
-            if (user.getNickname() != null && !user.getNickname().isBlank()) {
-                return user.getNickname();
-            }
-            return user.getUsername();
+            return UserAccountStates.displayName(userDao.findByIdIncludingDeleted(actorRef));
         }
         if ("EXTERNAL".equals(actorType) && externalWorkitemViewService != null) {
             return externalWorkitemViewService.principalName(actorRef);
@@ -2541,9 +2897,11 @@ public class WorkitemService {
         return null;
     }
 
-    private String resolveHumanName(long userId) {
+    private AssignmentActor resolveHumanActor(long userId) {
         String name = resolveActorName("HUMAN", userId);
-        return (name == null || name.isBlank()) ? "用户" : name;
+        return name == null || name.isBlank()
+                ? new AssignmentActor("HUMAN", userId, "用户", AssignmentActor.HUMAN_NAME_FALLBACK)
+                : AssignmentActor.human(userId, name);
     }
 
     private String currentRequestId() {
@@ -2718,15 +3076,19 @@ public class WorkitemService {
         }
 
         if (w.getAssigneeRef() != null) {
-            vo.setAssigneeName(resolveActorName(w.getAssigneeType(), w.getAssigneeRef()));
-            vo.setAssigneeDisplayName(resolveActorDisplayName(w.getAssigneeType(), w.getAssigneeRef()));
+            ExternalPrincipalVO assignee = externalActorPrincipal(w.getAssigneeType(), w.getAssigneeRef());
+            vo.setAssigneeName("EXTERNAL".equals(w.getAssigneeType()) && externalWorkitemViewService != null ? ExternalWorkitemViewService.formatPrincipalName(assignee) : resolveActorName(w.getAssigneeType(), w.getAssigneeRef()));
+            vo.setAssigneeDisplayName("EXTERNAL".equals(w.getAssigneeType()) && externalWorkitemViewService != null ? ExternalWorkitemViewService.formatPrincipalDisplayName(assignee) : resolveActorDisplayName(w.getAssigneeType(), w.getAssigneeRef()));
+            vo.setAssigneeNameFallback(ExternalWorkitemViewService.nameFallback(assignee));
         }
 
         List<DispatchDO> dispatches = w.getTenantId() == null || w.getId() == null
                 ? List.of()
                 : safeList(dispatchDao.listByWorkitem(w.getTenantId(), w.getId()));
         applyDeleteEligibility(vo, w, dispatches);
-        applyClassification(vo, w, dispatches, null);
+        boolean pendingHumanRequest = w.getTenantId() != null && w.getId() != null
+                && !safeList(workitemDao.listPendingHumanRequestWorkitemIds(w.getTenantId(), List.of(w.getId()))).isEmpty();
+        applyClassification(vo, w, dispatches, null, pendingHumanRequest);
         return vo;
     }
 
@@ -2740,14 +3102,14 @@ public class WorkitemService {
         if (!safeList(externalWorkitemLinkDao.listByWorkitem(w.getTenantId(), w.getId())).isEmpty()) {
             vo.setSourceType(SOURCE_TYPE_EXTERNAL);
             vo.setDeletable(false);
-            vo.setDeletableReason(ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessage());
+            vo.setDeletableReason(SystemMessages.render(ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessageKey(), new Object[0], ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessage()));
             return;
         }
         boolean running = dispatches.stream()
                 .anyMatch(d -> d != null && ACTIVE_DISPATCH_STATUSES.contains(d.getStatus()));
         if (running) {
             vo.setDeletable(false);
-            vo.setDeletableReason(ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessage());
+            vo.setDeletableReason(SystemMessages.render(ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessageKey(), new Object[0], ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessage()));
         }
     }
 
@@ -2810,14 +3172,14 @@ public class WorkitemService {
         if (!links.isEmpty()) {
             vo.setSourceType(SOURCE_TYPE_EXTERNAL);
             vo.setDeletable(false);
-            vo.setDeletableReason(ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessage());
+            vo.setDeletableReason(SystemMessages.render(ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessageKey(), new Object[0], ErrorCode.WORKITEM_EXTERNAL_NO_DELETE.getMessage()));
             return;
         }
         boolean running = allDispatches.getOrDefault(w.getId(), List.of()).stream()
                 .anyMatch(d -> d != null && ACTIVE_DISPATCH_STATUSES.contains(d.getStatus()));
         if (running) {
             vo.setDeletable(false);
-            vo.setDeletableReason(ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessage());
+            vo.setDeletableReason(SystemMessages.render(ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessageKey(), new Object[0], ErrorCode.WORKITEM_RUNNING_NO_DELETE.getMessage()));
         }
     }
 
@@ -2847,14 +3209,7 @@ public class WorkitemService {
             return agent == null ? null : agent.getName();
         }
         if ("HUMAN".equals(actorType)) {
-            UserDO user = users.get(actorRef);
-            if (user == null) {
-                return null;
-            }
-            if (user.getNickname() != null && !user.getNickname().isBlank()) {
-                return user.getNickname();
-            }
-            return user.getUsername();
+            return UserAccountStates.displayName(users.get(actorRef));
         }
         return null;
     }

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Fragment, useState } from 'react';
 import { Button, Spin, Typography } from 'antd';
 import { useTurnEvents } from './hooks';
@@ -26,6 +27,7 @@ export function processNodesOf(timeline: readonly TimelineNode[]): TimelineNode[
 export function TurnDetailToggle({
   workitemId, conversationId, turnId, eventTurnId,
 }: TurnDetailToggleProps) {
+  const { t } = useTranslation('workitem');
   const [open, setOpen] = useState(false);
   const { timeline, isLoading, isError } = useTurnEvents(
     workitemId, conversationId, eventTurnId, open,
@@ -40,7 +42,7 @@ export function TurnDetailToggle({
         style={{ padding: 0, height: 'auto', fontSize: 13 }}
         onClick={() => setOpen((prev) => !prev)}
       >
-        {open ? '收起执行详情' : '查看执行详情'}
+        {open ? t('clarification.hideDetails') : t('clarification.showDetails')}
       </Button>
       {open ? <TurnDetailBody turnId={turnId} loading={isLoading} error={isError} timeline={timeline} /> : null}
     </div>
@@ -55,11 +57,12 @@ function TurnDetailBody({
   error: boolean;
   timeline: ReturnType<typeof useTurnEvents>['timeline'];
 }) {
+  const { t } = useTranslation('workitem');
   if (loading) return <Spin size="small" style={{ marginTop: 4 }} />;
   if (error) {
     return (
       <Typography.Text type="danger" style={{ fontSize: 13, display: 'block' }}>
-        执行详情加载失败
+        {t('clarification.detailsFailed')}
       </Typography.Text>
     );
   }
@@ -67,7 +70,7 @@ function TurnDetailBody({
   if (processNodes.length === 0) {
     return (
       <Typography.Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
-        无执行详情
+        {t('clarification.noDetails')}
       </Typography.Text>
     );
   }

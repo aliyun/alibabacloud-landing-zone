@@ -1,12 +1,27 @@
+import { useTranslation } from 'react-i18next';
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Select, Space, Typography } from 'antd';
-import { listSquads, getSquadMembers } from '@/features/squad/api';
+import { listAllSquads, listSquads, getSquadMembers } from '@/features/squad/api';
 import type { SquadMember } from '@/features/squad/api';
 
 export interface SquadAgentSelection {
   squadId: number;
   agentId: number;
+}
+
+/**
+ * 数字人当前所属小队（URL 刷新恢复用，工单 56281）：恢复身份必须与候选范围
+ * 同口径——解析不出来的数字人本来也选不出来，此时调用方不该恢复它。
+ * 小队列表走全量分页，避免超过单页上限后把真实归属漏判成「不在任何小队」。
+ */
+export async function findSquadIdForAgent(agentId: number): Promise<number | null> {
+  const squads = await listAllSquads();
+  const membersBySquad = await Promise.all(squads.map((squad) => getSquadMembers(squad.id)));
+  const index = membersBySquad.findIndex(
+    (members) => members.some((member) => member.agentId === agentId),
+  );
+  return index < 0 ? null : squads[index].id;
 }
 
 interface SquadAgentSelectorProps {
@@ -24,6 +39,7 @@ interface SquadAgentSelectorProps {
  * ExecutorSelector when the conversation is created.
  */
 export function SquadAgentSelector({ value, onChange, locked }: SquadAgentSelectorProps) {
+  const { t } = useTranslation('workitem');
   const { data: squads, isLoading: squadsLoading } = useQuery({
     queryKey: ['squads', 'clarification'],
     queryFn: () => listSquads({ pageNum: 1, pageSize: 100 }),
@@ -53,11 +69,11 @@ export function SquadAgentSelector({ value, onChange, locked }: SquadAgentSelect
     <Space direction="vertical" style={{ width: '100%' }} size={8}>
       <div>
         <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
-          小队
+          {t('clarification.squad')}
         </Typography.Text>
         <Select
           style={{ width: '100%' }}
-          placeholder="选择小队"
+          placeholder={t('clarification.selectSquad')}
           loading={squadsLoading}
           options={squadOptions}
           value={squadId}
@@ -69,11 +85,11 @@ export function SquadAgentSelector({ value, onChange, locked }: SquadAgentSelect
       </div>
       <div>
         <Typography.Text strong style={{ display: 'block', marginBottom: 4 }}>
-          数字员工
+          {t('clarification.agent')}
         </Typography.Text>
         <Select
           style={{ width: '100%' }}
-          placeholder={squadId ? '选择数字员工' : '请先选择小队'}
+          placeholder={squadId ? t('clarification.selectAgent') : t('clarification.selectSquadFirst')}
           disabled={!squadId || locked}
           loading={membersLoading}
           options={agentOptions}

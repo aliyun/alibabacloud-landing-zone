@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useEffect, useMemo, useState } from 'react';
@@ -18,7 +21,7 @@ import {
 import { listRepos } from '@/features/repo/api';
 import { listSkills } from '@/features/skill/api';
 import { listSdlcTemplates } from '@/features/sdlc/api';
-import { AGENT_ROLE_CODE_OPTIONS, AGENT_ROLE_NAME_OPTIONS, getRoleCodeByName, getRoleNameByCode } from './constants';
+import { getAgentRoleCodeOptions, getAgentRoleNameOptions, getEvolutionModeOptions, getRoleCodeByName, getRoleNameByCode } from './constants';
 import type { ColumnsType } from 'antd/es/table';
 import type { EvolutionMode, UpdateAgentRequest, UpdateConfigRequest } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -68,21 +71,6 @@ function evolutionModeFromIdentity(identityJson?: string | null): EvolutionMode 
   }
   return 'ASSISTED';
 }
-
-const evolutionModeOptions = [
-  {
-    value: 'MANUAL',
-    label: '纯手动',
-  },
-  {
-    value: 'ASSISTED',
-    label: '辅助审核（推荐）',
-  },
-  {
-    value: 'AUTO_PROPOSAL',
-    label: '自动生成候选',
-  },
-];
 
 interface AgentFormValues {
   name?: string;
@@ -135,6 +123,7 @@ function versionConfig(values: AgentFormValues): UpdateConfigRequest {
 }
 
 export function AgentEditPage() {
+  const { t } = useTranslation('agent');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const agentId = Number(id);
@@ -147,6 +136,7 @@ export function AgentEditPage() {
   const canManageEnvironmentVariables = useAuthStore((state) => state.hasAccess('READ_WRITE'));
 
   const { data: agent, isLoading, isError } = useAgent(agentId);
+  useLocalizedValidation(form, Boolean(agentId) && !Number.isNaN(agentId) && !isLoading && !isError && Boolean(agent));
   const latestVersionNo = agent?.latestVersionNo ?? 0;
   const {
     data: versionDetail,
@@ -172,7 +162,7 @@ export function AgentEditPage() {
   // Local state for relation tables (bound to agent's current relations)
   const [repoPerms, setRepoPerms] = useState<RepoPermRow[]>([]);
   const [skills, setSkills] = useState<SkillRow[]>([]);
-  const [saveFeedback, setSaveFeedback] = useState<{ message: string; description: string } | null>(null);
+  const [saveFeedback, setSaveFeedback] = useState<boolean | null>(null);
 
   // Selector state
   const [repoModalOpen, setRepoModalOpen] = useState(false);
@@ -186,8 +176,8 @@ export function AgentEditPage() {
   const [selectedSkillIds, setSelectedSkillIds] = useState<number[]>([]);
   const [environmentModalOpen, setEnvironmentModalOpen] = useState(false);
   const [selectedEnvironmentVariableId, setSelectedEnvironmentVariableId] = useState<number>();
-  const [environmentBindingError, setEnvironmentBindingError] = useState<string>();
-  const [environmentMountError, setEnvironmentMountError] = useState<string>();
+  const [environmentBindingError, setEnvironmentBindingError] = useState<{ error: unknown }>();
+  const [environmentMountError, setEnvironmentMountError] = useState<{ error: unknown }>();
   const [pendingEnvironmentOperation, setPendingEnvironmentOperation] = useState<EnvironmentBindingOperation>();
   const environmentOperationTokens = useRef(new Map<string, number>());
   const nextEnvironmentOperationToken = useRef(0);
@@ -321,7 +311,8 @@ export function AgentEditPage() {
       const skill = skillsList.find((item) => item.id === skillRef.skillId);
       return {
         skillId: skillRef.skillId,
-        skillName: skill?.name || `#${skillRef.skillId}`,
+        // 本地技能列表只取第一页，优先用服务端解析出的名称，避免已绑定能力退化成 #id
+        skillName: skillRef.skillName || skill?.name || `#${skillRef.skillId}`,
         type: skill?.type || 'SKILL',
         version: skill?.version,
       };
@@ -330,11 +321,11 @@ export function AgentEditPage() {
   }, [versionDetail, reposList, skillsList]);
 
   if (!agentId || isNaN(agentId)) return (
-    <Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <Result status="404" title={t('errors.invalidId')} extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
   if (isError || !agent) return (
-    <Result status="error" title="加载失败" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <Result status="error" title={t('errors.load')} extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
 
   // Only patch when a value actually changed: an unconditional PATCH would bump the agent's
@@ -364,44 +355,35 @@ export function AgentEditPage() {
 
   const handleSave = () => {
     if (hasPendingEnvironmentServerOperation()) {
-      message.warning('环境变量挂载变更处理中，请稍后保存');
+      message.warning(i18n.t('edit.mountPendingSave', { ns: 'agent' }));
       return;
     }
-    accessCommand('READ_WRITE', '保存数字员工配置', async () => {
+    accessCommand('READ_WRITE', t('actions.saveConfig'), async () => {
       try {
         const values: AgentFormValues = await form.validateFields();
         const agentPatched = await persistForm(values);
-        message.success(agentPatched ? '名称与配置已保存' : '配置已保存为草稿');
-        setSaveFeedback(agentPatched
-          ? {
-            message: '已保存',
-            description: '名称与头像已立即生效；角色配置已写入草稿，可继续编辑或提交审核。',
-          }
-          : {
-            message: '草稿已保存',
-            description: '当前修改已写入草稿，可继续编辑或提交审核。',
-          });
+        message.success(i18n.t(agentPatched ? 'edit.nameConfigSaved' : 'edit.configSaved', { ns: 'agent' }));
+        setSaveFeedback(agentPatched);
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : '保存失败';
-        if (msg !== '保存失败') message.error(msg);
+        if (e instanceof Error && e.message) message.error(e.message);
       }
     });
   };
 
   const handleSubmit = () => {
     if (hasPendingEnvironmentServerOperation()) {
-      message.warning('环境变量挂载变更处理中，请稍后提交审核');
+      message.warning(i18n.t('edit.mountPendingSubmit', { ns: 'agent' }));
       return;
     }
-    accessCommand('READ_WRITE', '提交数字员工审核', async () => {
+    accessCommand('READ_WRITE', t('actions.submitReview'), async () => {
       try {
         const values: AgentFormValues = await form.validateFields();
         await persistForm(values);
         await submitForReview.mutateAsync(agentId);
-        message.success('已提交审核');
+        message.success(i18n.t('edit.submitted', { ns: 'agent' }));
         navigate(`/agents/${agentId}`);
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : '提交失败';
+        const msg = errorMessage(e, i18n.t('errors.submit', { ns: 'agent' }));
         message.error(msg);
       }
     });
@@ -437,7 +419,7 @@ export function AgentEditPage() {
 
   const handleAddRepo = () => {
     if (selectedRepoIds.length === 0) return;
-    accessCommand('READ_WRITE', '添加数字员工仓库', async () => {
+    accessCommand('READ_WRITE', t('actions.addRepo'), async () => {
       try {
         await Promise.all(selectedRepoIds.map(repoId =>
           addRepoPerm.mutateAsync({ agentId, repoId, permLevel: selectedPermLevel, allowedBranchPatterns: selectedBranchPatterns })));
@@ -450,13 +432,13 @@ export function AgentEditPage() {
         setSelectedRepoIds([]);
         setSelectedBranchPatterns([]);
       } catch (e) {
-        message.error(errorMessage(e, '添加仓库失败'));
+        message.error(errorMessage(e, i18n.t('errors.addRepo', { ns: 'agent' })));
       }
     });
   };
 
   const openEditRepoPerm = (repo: RepoPermRow) => {
-    accessCommand('READ_WRITE', '编辑数字员工仓库权限', () => {
+    accessCommand('READ_WRITE', t('actions.editRepo'), () => {
       setEditingRepoPerm(repo);
       setEditingPermLevel(repo.permLevel);
       setEditingBranchPatterns(repo.allowedBranchPatterns);
@@ -465,7 +447,7 @@ export function AgentEditPage() {
 
   const handleEditRepoPerm = () => {
     if (!editingRepoPerm) return;
-    accessCommand('READ_WRITE', '编辑数字员工仓库权限', async () => {
+    accessCommand('READ_WRITE', t('actions.editRepo'), async () => {
       try {
         await addRepoPerm.mutateAsync({
           agentId,
@@ -478,23 +460,23 @@ export function AgentEditPage() {
           : repo));
         setEditingRepoPerm(null);
       } catch (e) {
-        message.error(errorMessage(e, '编辑仓库权限失败'));
+        message.error(errorMessage(e, i18n.t('errors.editRepo', { ns: 'agent' })));
       }
     });
   };
 
   const handleRemoveRepo = (repoId: number) => {
-    accessCommand('READ_WRITE', '移除数字员工仓库', () => {
+    accessCommand('READ_WRITE', t('actions.removeRepo'), () => {
       removeRepoPerm.mutate({ agentId, repoId }, {
         onSuccess: () => setRepoPerms(prev => prev.filter(r => r.repoId !== repoId)),
-        onError: (e) => message.error(errorMessage(e, '移除仓库失败')),
+        onError: (e) => message.error(errorMessage(e, i18n.t('errors.removeRepo', { ns: 'agent' }))),
       });
     });
   };
 
   const handleAddSkill = () => {
     if (selectedSkillIds.length === 0) return;
-    accessCommand('READ_WRITE', '添加数字员工能力', async () => {
+    accessCommand('READ_WRITE', t('actions.addCapability'), async () => {
       try {
         await Promise.all(selectedSkillIds.map(skillId => addSkillMut.mutateAsync({ agentId, skillId })));
         const added = selectedSkillIds.map(skillId => {
@@ -510,16 +492,16 @@ export function AgentEditPage() {
         setSkillModalOpen(false);
         setSelectedSkillIds([]);
       } catch (e) {
-        message.error(errorMessage(e, '添加技能失败'));
+        message.error(errorMessage(e, i18n.t('errors.addCapability', { ns: 'agent' })));
       }
     });
   };
 
   const handleRemoveSkill = (skillId: number) => {
-    accessCommand('READ_WRITE', '移除数字员工能力', () => {
+    accessCommand('READ_WRITE', t('actions.removeCapability'), () => {
       removeSkillMut.mutate({ agentId, skillId }, {
         onSuccess: () => setSkills(prev => prev.filter(s => s.skillId !== skillId)),
-        onError: (e) => message.error(errorMessage(e, '移除技能失败')),
+        onError: (e) => message.error(errorMessage(e, i18n.t('errors.removeCapability', { ns: 'agent' }))),
       });
     });
   };
@@ -529,7 +511,7 @@ export function AgentEditPage() {
     const environmentVariableId = selectedEnvironmentVariableId;
     const operationKey = `mount:${environmentVariableId}`;
     if (environmentOperationTokens.current.has(operationKey)) return;
-    accessCommand('READ_WRITE', '挂载数字员工环境变量', async () => {
+    accessCommand('READ_WRITE', t('actions.mountVariable'), async () => {
       const auth = useAuthStore.getState();
       const operationWorkspaceId = auth.currentWorkspace?.id;
       const operationAccessLevel = auth.accessLevel;
@@ -581,7 +563,7 @@ export function AgentEditPage() {
       } catch (e) {
         operationFailed = true;
         if (isEnvironmentOperationCurrent(operation)) {
-          setEnvironmentMountError(errorMessage(e, '挂载环境变量失败'));
+          setEnvironmentMountError({ error: e });
         }
       } finally {
         if (isEnvironmentOperationCurrent(operation)) {
@@ -606,7 +588,7 @@ export function AgentEditPage() {
     if (!environmentVersionReady || environmentOperationPending) return;
     const operationKey = `unmount:${variable.id}`;
     if (environmentOperationTokens.current.has(operationKey)) return;
-    accessCommand('READ_WRITE', '解绑数字员工环境变量', async () => {
+    accessCommand('READ_WRITE', t('actions.unmountVariable'), async () => {
       const auth = useAuthStore.getState();
       const operationWorkspaceId = auth.currentWorkspace?.id;
       const operationAccessLevel = auth.accessLevel;
@@ -655,7 +637,7 @@ export function AgentEditPage() {
       } catch (e) {
         operationFailed = true;
         if (isEnvironmentOperationCurrent(operation)) {
-          setEnvironmentBindingError(errorMessage(e, '解绑环境变量失败'));
+          setEnvironmentBindingError({ error: e });
         }
       } finally {
         if (isEnvironmentOperationCurrent(operation)) {
@@ -675,24 +657,34 @@ export function AgentEditPage() {
       }
     });
   };
+  const permissionLabels = new Map<string, string>([
+    ['READ', t('permissions.READ')], ['WRITE', t('permissions.WRITE')], ['ADMIN', t('permissions.ADMIN')],
+  ]);
+  const capabilityTypeLabels = new Map<string, string>([
+    ['SKILL', t('capabilityTypes.SKILL')], ['MCP', t('capabilityTypes.MCP')],
+    ['PLUGIN', t('capabilityTypes.PLUGIN')], ['HOOK', t('capabilityTypes.HOOK')],
+  ]);
+  const sdlcStatusLabels = new Map<string, string>([
+    ['DRAFT', t('sdlcStatus.DRAFT')], ['ENABLED', t('sdlcStatus.ENABLED')], ['DISABLED', t('sdlcStatus.DISABLED')],
+  ]);
   const repoColumns: ColumnsType<RepoPermRow> = [
-    { title: '仓库', dataIndex: 'repoName' },
-    { title: '权限', dataIndex: 'permLevel', width: 100, render: (v: string) => <Tag>{v}</Tag> },
+    { title: t('fields.repository'), dataIndex: 'repoName' },
+    { title: t('fields.permission'), dataIndex: 'permLevel', width: 100, render: (v: string) => <Tag>{permissionLabels.get(v) || v}</Tag> },
     ...(isPlatform ? [] : ([
       {
-        title: '提交分支', dataIndex: 'allowedBranchPatterns',
+        title: t('fields.commitBranches'), dataIndex: 'allowedBranchPatterns',
         render: (patterns: string[]) => patterns.length === 0
-          ? <span style={{ color: 'var(--aw-muted)' }}>不限制</span>
+          ? <span style={{ color: 'var(--aw-muted)' }}>{t('repository.unrestricted')}</span>
           : <Space size={[0, 4]} wrap>{patterns.map(pattern => <Tag key={pattern}>{pattern}</Tag>)}</Space>,
       },
       {
-        title: '操作', width: 120,
+        title: t('fields.actions'), width: 120,
         render: (_: unknown, r: RepoPermRow) => (
           <Space size={0}>
-            <Button type="link" size="small" aria-label={`编辑 ${r.repoName} 分支规则`}
-              icon={<EditOutlined />} onClick={() => openEditRepoPerm(r)} />
-            <Popconfirm title="确认移除?" onConfirm={() => handleRemoveRepo(r.repoId)}>
-              <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+            <Button type="link" size="small" aria-label={t('repository.editBranchesLabel', { name: r.repoName })}
+              icon={<EditOutlined aria-hidden="true" />} onClick={() => openEditRepoPerm(r)} />
+            <Popconfirm title={t('actions.confirmRemove')} onConfirm={() => handleRemoveRepo(r.repoId)}>
+              <Button type="link" size="small" danger aria-label={t('repository.removeLabel', { name: r.repoName })} icon={<DeleteOutlined aria-hidden="true" />} />
             </Popconfirm>
           </Space>
         ),
@@ -701,42 +693,42 @@ export function AgentEditPage() {
   ];
 
   const skillColumns: ColumnsType<SkillRow> = [
-    { title: '能力', dataIndex: 'skillName' },
-    { title: '类型', dataIndex: 'type', width: 110, render: (value: string) => <Tag>{value}</Tag> },
-    { title: '版本', dataIndex: 'version', width: 80, render: (value?: number) => value ?? '-' },
+    { title: t('fields.capability'), dataIndex: 'skillName' },
+    { title: t('fields.type'), dataIndex: 'type', width: 110, render: (value: string) => <Tag>{capabilityTypeLabels.get(value) || value}</Tag> },
+    { title: t('fields.version'), dataIndex: 'version', width: 80, render: (value?: number) => value ?? '-' },
     {
-      title: '操作', width: 80,
+      title: t('fields.actions'), width: 80,
       render: (_: unknown, r: SkillRow) => (
-        <Popconfirm title="确认移除?" onConfirm={() => handleRemoveSkill(r.skillId)}>
-          <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+        <Popconfirm title={t('actions.confirmRemove')} onConfirm={() => handleRemoveSkill(r.skillId)}>
+          <Button type="link" size="small" danger aria-label={t('capability.removeLabel', { name: r.skillName })} icon={<DeleteOutlined aria-hidden="true" />} />
         </Popconfirm>
       ),
     },
   ];
 
   const environmentVariableColumns: ColumnsType<AgentEnvironmentVariableRef> = [
-    { title: '变量名', dataIndex: 'name', align: 'left', width: '36%' },
+    { title: t('fields.variableName'), dataIndex: 'name', align: 'left', width: '36%' },
     {
-      title: '说明',
+      title: t('fields.description'),
       dataIndex: 'description', align: 'left',
-      render: (description: string | null) => description || <span style={{ color: 'var(--aw-muted)' }}>暂无说明</span>,
+      render: (description: string | null) => description || <span style={{ color: 'var(--aw-muted)' }}>{t('environment.noDescription')}</span>,
     },
     ...(canManageEnvironmentVariables ? ([{
-      title: '操作',
+      title: t('fields.actions'),
       width: 80,
       render: (_: unknown, variable: AgentEnvironmentVariableRef) => (
         <Popconfirm
-          title={`确认解绑 ${variable.name}?`}
-          okText="确认解绑"
-          cancelText="取消"
+          title={t('environment.confirmUnbind', { name: variable.name })}
+          okText={t('actions.confirmUnbind')}
+          cancelText={t('actions.cancel')}
           onConfirm={() => handleRemoveEnvironmentVariable(variable)}
         >
           <Button
             type="link"
             size="small"
             danger
-            aria-label={`解绑 ${variable.name}`}
-            icon={<DeleteOutlined />}
+            aria-label={t('environment.unbindLabel', { name: variable.name })}
+            icon={<DeleteOutlined aria-hidden="true" />}
             disabled={environmentOperationPending}
           />
         </Popconfirm>
@@ -746,65 +738,65 @@ export function AgentEditPage() {
   return (
     <div>
 
-      {saveFeedback && (
+      {saveFeedback !== null && (
         <Alert
           showIcon
           type="success"
-          message={saveFeedback.message}
-          description={saveFeedback.description}
+          message={t(saveFeedback ? 'edit.saved' : 'edit.draftSaved')}
+          description={t(saveFeedback ? 'edit.savedHint' : 'edit.draftSavedHint')}
           style={{ marginBottom: 16 }}
         />
       )}
 
-      <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to={`/agents/${agentId}`} label="返回详情" /><span>编辑配置 — {agent.name}</span></span>} />}
+      <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to={`/agents/${agentId}`} label={t('actions.backDetail')} /><span>{t('edit.title', { name: agent.name })}</span></span>} />}
         extra={
           <Space>
-            <Button icon={<SaveOutlined />} onClick={handleSave}
+            <Button icon={<SaveOutlined aria-hidden="true" />} onClick={handleSave}
               loading={editConfig.isPending || updateAgent.isPending}
               disabled={environmentServerOperationPending}>
-              保存草稿
+              {t('actions.saveDraft')}
             </Button>
-            <Button type="primary" icon={<SendOutlined />} onClick={handleSubmit}
+            <Button type="primary" icon={<SendOutlined aria-hidden="true" />} onClick={handleSubmit}
               loading={submitForReview.isPending}
               disabled={environmentServerOperationPending}>
-              提交审核
+              {t('actions.submitButton')}
             </Button>
           </Space>
         }
       >
         <Form form={form} layout="vertical">
           <Form.Item
-            label="员工名称"
+            label={t('fields.agentName')}
             name="name"
-            rules={[{ required: true, message: '请输入员工名称' }]}
+            rules={[{ required: true, message: t('validation.agentName') }]}
             extra={isPlatform
-              ? '平台智能体的名称由平台锁定，不可修改。'
-              : '数字员工的展示名称，保存后立即生效，不需要提交审核。与下方的“角色名称”是两个不同的字段。'}
+              ? t('edit.platformName')
+              : t('edit.nameHint')}
           >
-            <Input placeholder="如: 前端开发小明" maxLength={64} disabled={isPlatform} />
+            <Input placeholder={t('placeholders.agentName')} maxLength={64} disabled={isPlatform} />
           </Form.Item>
           <Form.Item
-            label="头像 URL"
+            label={t('fields.avatar')}
             name="avatarUrl"
             extra={isPlatform
-              ? '平台智能体的头像由平台锁定，不可修改。'
-              : '留空表示清除头像。与员工名称一样保存后立即生效。'}
+              ? t('edit.platformAvatar')
+              : t('edit.avatarHint')}
           >
             <Input placeholder="https://..." allowClear disabled={isPlatform} />
           </Form.Item>
-          <Form.Item label="角色名称" name="roleName" rules={[{ required: true, message: '请输入角色名称' }]}>
+          <Form.Item label={t('fields.roleName')} name="roleName" rules={[{ required: true, message: t('validation.roleName') }]}>
             <AutoComplete
-              options={AGENT_ROLE_NAME_OPTIONS}
+              options={getAgentRoleNameOptions()}
               allowClear
-              placeholder="如: 前端开发工程师"
+              placeholder={t('placeholders.roleName')}
               onSelect={handleRoleNameSelect}
             />
           </Form.Item>
-          <Form.Item label="角色码" name="roleCode" rules={[{ required: true, message: '请输入角色码' }]}>
+          <Form.Item label={t('fields.roleCode')} name="roleCode" rules={[{ required: true, message: t('validation.roleCode') }]}>
             <AutoComplete
-              options={AGENT_ROLE_CODE_OPTIONS}
+              options={getAgentRoleCodeOptions()}
               allowClear
-              placeholder="如: FRONTEND_DEV"
+              placeholder={t('placeholders.roleCode')}
               onSelect={handleRoleCodeSelect}
               onBlur={handleRoleCodeBlur}
               onKeyDown={handleRoleCodeKeyDown}
@@ -814,32 +806,32 @@ export function AgentEditPage() {
             <TextArea
               ref={businessBackgroundRef}
               rows={4}
-              placeholder="描述该员工所在的业务背景..."
+              placeholder={t('placeholders.background')}
             />
           </Form.Item>
           <Form.Item label="AGENT.md" name="responsibilities">
-            <TextArea rows={4} placeholder="描述该员工的核心职责..." />
+            <TextArea rows={4} placeholder={t('placeholders.responsibilities')} />
           </Form.Item>
           {!isPlatform && (
-            <Form.Item label="SDLC 模版" name="sdlcId">
-              <Select allowClear placeholder="选择关联的 SDLC 模版"
-                options={sdlcsList.map(s => ({ value: s.id, label: `${s.name} (${s.status})` })) || []}
+            <Form.Item label={t('fields.sdlc')} name="sdlcId">
+              <Select allowClear placeholder={t('placeholders.sdlc')}
+                options={sdlcsList.map(s => ({ value: s.id, label: t('namedLabel', { name: s.name, label: sdlcStatusLabels.get(s.status) || s.status }) })) || []}
               />
             </Form.Item>
           )}
           <Form.Item
-            label="自进化模式"
+            label={t('fields.evolution')}
             name="evolutionMode"
-            tooltip="控制 worker 上传 learning_delta 后，服务端是否自动进入待审核 Memory / Evolution Proposal。不会自动发布 active 资产。"
+            tooltip={t('evolution.tooltip')}
           >
             <Select
-              aria-label="自进化模式"
-              options={evolutionModeOptions}
+              aria-label={t('fields.evolution')}
+              options={getEvolutionModeOptions()}
               optionRender={(option) => {
                 const descriptions: Record<string, string> = {
-                  MANUAL: '只保存 artifact，不自动沉淀记忆或候选',
-                  ASSISTED: '自动生成待审核记忆和候选，不自动上线',
-                  AUTO_PROPOSAL: '自动生成候选，并允许候选自带 replay 时自动验证',
+                  MANUAL: t('evolutionDescription.MANUAL'),
+                  ASSISTED: t('evolutionDescription.ASSISTED'),
+                  AUTO_PROPOSAL: t('evolutionDescription.AUTO_PROPOSAL'),
                 };
                 return (
                   <Space direction="vertical" size={0}>
@@ -856,11 +848,11 @@ export function AgentEditPage() {
       <Divider />
 
       {/* Repo Permissions */}
-      <Card title="仓库权限" style={{ marginTop: 16 }}
+      <Card title={t('repository.title')} style={{ marginTop: 16 }}
         extra={isPlatform ? null : (
-          <Button size="small" icon={<PlusOutlined />}
-            onClick={() => accessCommand('READ_WRITE', '添加数字员工仓库', () => setRepoModalOpen(true))}>
-            添加仓库
+          <Button size="small" icon={<PlusOutlined aria-hidden="true" />}
+            onClick={() => accessCommand('READ_WRITE', t('actions.addRepo'), () => setRepoModalOpen(true))}>
+            {t('repository.add')}
           </Button>
         )}
       >
@@ -868,8 +860,8 @@ export function AgentEditPage() {
           <Alert
             type="info"
             showIcon
-            message="无需配置平台智能体的仓库配置"
-            description="其默认拥有平台所有的仓库的读取权限，进行平台智能的管理。"
+            message={t('repository.platformTitle')}
+            description={t('repository.platformHint')}
             style={{ marginBottom: 12 }}
           />
         )}
@@ -877,28 +869,28 @@ export function AgentEditPage() {
       </Card>
 
       {/* Capabilities */}
-      <Card title="能力配置" style={{ marginTop: 16 }}
-        extra={<Button size="small" icon={<PlusOutlined />}
-          onClick={() => accessCommand('READ_WRITE', '添加数字员工能力', () => setSkillModalOpen(true))}>
-          添加能力
+      <Card title={t('capability.title')} style={{ marginTop: 16 }}
+        extra={<Button size="small" icon={<PlusOutlined aria-hidden="true" />}
+          onClick={() => accessCommand('READ_WRITE', t('actions.addCapability'), () => setSkillModalOpen(true))}>
+          {t('capability.add')}
         </Button>}
       >
         <Alert
           type="info"
           showIcon
-          message="平台 MCP 已内置"
-          description="每次任务会自动使用任务级凭证装载，无需手动绑定，也不会暴露个人长期 Token。"
+          message={t('capability.builtIn')}
+          description={t('capability.builtInHint')}
           style={{ marginBottom: 12 }}
         />
         <Table rowKey="skillId" columns={skillColumns} dataSource={skills} pagination={false} size="small" />
       </Card>
 
       {/* Environment variables are metadata-only here; values remain confined to the library reveal flow. */}
-      <Card title="环境变量" style={{ marginTop: 16 }}
+      <Card title={t('environment.title')} style={{ marginTop: 16 }}
         extra={canManageEnvironmentVariables ? (
           <Button
             size="small"
-            icon={<PlusOutlined />}
+            icon={<PlusOutlined aria-hidden="true" />}
             onClick={() => {
               environmentOperationTokens.current.clear();
               setEnvironmentBindingError(undefined);
@@ -907,22 +899,22 @@ export function AgentEditPage() {
             }}
             disabled={environmentOperationPending || !environmentVersionReady}
           >
-            挂载环境变量
+            {t('environment.mount')}
           </Button>
         ) : null}
       >
         <Alert
           type="info"
           showIcon
-          message="挂载或解绑会进入数字员工草稿，并遵循审核和发布流程。"
-          description="变量库中的值更新无需数字员工审核，将在下一次任务派发或对话轮次生效。"
+          message={t('environment.draftHint')}
+          description={t('environment.valueHint')}
           style={{ marginBottom: 12 }}
         />
         {environmentBindingError && (
           <Alert
             type="error"
             showIcon
-            message={environmentBindingError}
+            message={errorMessage(environmentBindingError.error, t('errors.unmount'))}
             closable
             onClose={() => setEnvironmentBindingError(undefined)}
             style={{ marginBottom: 12 }}
@@ -931,17 +923,17 @@ export function AgentEditPage() {
         {isVersionDetailLoading ? (
           <Space>
             <Spin size="small" />
-            <span>正在加载环境变量挂载...</span>
+            <span>{t('environment.loading')}</span>
           </Space>
         ) : isVersionDetailError ? (
           <Alert
             type="error"
             showIcon
-            message="环境变量挂载加载失败"
-            description={errorMessage(versionDetailError, '版本详情加载失败')}
+            message={t('errors.bindingsLoad')}
+            description={errorMessage(versionDetailError, t('errors.versionLoad'))}
             action={(
               <Button size="small" loading={isVersionDetailFetching} onClick={() => refetchVersionDetail()}>
-                重试
+                {t('actions.retry')}
               </Button>
             )}
           />
@@ -952,67 +944,67 @@ export function AgentEditPage() {
             dataSource={mountedEnvironmentVariables}
             pagination={false}
             size="small"
-            locale={{ emptyText: '暂无已挂载的环境变量' }}
+            locale={{ emptyText: t('environment.empty') }}
           />
         )}
       </Card>
 
       {/* Add Repo Modal */}
-      <Modal title="添加仓库权限" open={repoModalOpen} onOk={handleAddRepo} onCancel={() => setRepoModalOpen(false)}
+      <Modal title={t('repository.addPermission')} open={repoModalOpen} onOk={handleAddRepo} onCancel={() => setRepoModalOpen(false)}
         okButtonProps={{ disabled: selectedRepoIds.length === 0 }}>
         <Space direction="vertical" style={{ width: '100%' }}>
-          <Select mode="multiple" placeholder="选择仓库（可多选）" style={{ width: '100%' }} value={selectedRepoIds}
+          <Select mode="multiple" placeholder={t('placeholders.repositories')} style={{ width: '100%' }} value={selectedRepoIds}
             onChange={setSelectedRepoIds} showSearch optionFilterProp="label"
             options={reposList.filter(r => !repoPerms.some(p => p.repoId === r.id))
               .map(r => ({ value: r.id, label: r.name })) || []}
           />
           <Select value={selectedPermLevel} onChange={setSelectedPermLevel} style={{ width: '100%' }}
             options={[
-              { value: 'READ', label: '只读' },
-              { value: 'WRITE', label: '读写' },
-              { value: 'ADMIN', label: '管理' },
+              { value: 'READ', label: t('permissions.READ') },
+              { value: 'WRITE', label: t('permissions.WRITE') },
+              { value: 'ADMIN', label: t('permissions.ADMIN') },
             ]}
           />
-          <Select mode="tags" aria-label="允许提交的分支" value={selectedBranchPatterns}
+          <Select mode="tags" aria-label={t('fields.allowedBranches')} value={selectedBranchPatterns}
             onChange={setSelectedBranchPatterns} tokenSeparators={[',']} style={{ width: '100%' }}
-            placeholder="允许提交的分支（留空表示不限制，如 develop、feature/*）" maxCount={32}
+            placeholder={t('placeholders.branches')} maxCount={32}
           />
         </Space>
       </Modal>
 
-      <Modal title="编辑仓库权限" open={editingRepoPerm !== null} onOk={handleEditRepoPerm}
+      <Modal title={t('repository.editPermission')} open={editingRepoPerm !== null} onOk={handleEditRepoPerm}
         onCancel={() => setEditingRepoPerm(null)}>
         <Space direction="vertical" style={{ width: '100%' }}>
           <Input value={editingRepoPerm?.repoName} disabled />
           <Select value={editingPermLevel} onChange={setEditingPermLevel} style={{ width: '100%' }}
             options={[
-              { value: 'READ', label: '只读' },
-              { value: 'WRITE', label: '读写' },
-              { value: 'ADMIN', label: '管理' },
+              { value: 'READ', label: t('permissions.READ') },
+              { value: 'WRITE', label: t('permissions.WRITE') },
+              { value: 'ADMIN', label: t('permissions.ADMIN') },
             ]}
           />
-          <Select mode="tags" aria-label="允许提交的分支" value={editingBranchPatterns}
+          <Select mode="tags" aria-label={t('fields.allowedBranches')} value={editingBranchPatterns}
             onChange={setEditingBranchPatterns} tokenSeparators={[',']} style={{ width: '100%' }}
-            placeholder="留空表示不限制，如 develop、release/autowonder-v*" maxCount={32}
+            placeholder={t('placeholders.editBranches')} maxCount={32}
           />
         </Space>
       </Modal>
 
       {/* Add Capability Modal */}
-      <Modal title="添加能力" open={skillModalOpen} onOk={handleAddSkill} onCancel={() => setSkillModalOpen(false)}
+      <Modal title={t('capability.add')} open={skillModalOpen} onOk={handleAddSkill} onCancel={() => setSkillModalOpen(false)}
         okButtonProps={{ disabled: selectedSkillIds.length === 0 }}>
-        <Select mode="multiple" placeholder="选择 Skill、MCP 或 Plugin（可多选）" style={{ width: '100%' }} value={selectedSkillIds}
+        <Select mode="multiple" placeholder={t('placeholders.capabilities')} style={{ width: '100%' }} value={selectedSkillIds}
           onChange={setSelectedSkillIds} showSearch optionFilterProp="label"
           options={skillsList.filter(s => !skills.some(sk => sk.skillId === s.id))
-            .map(s => ({ value: s.id, label: `${s.name} (${s.type})` })) || []}
+            .map(s => ({ value: s.id, label: t('namedLabel', { name: s.name, label: capabilityTypeLabels.get(s.type) || s.type }) })) || []}
         />
       </Modal>
 
       <Modal
-        title="挂载环境变量"
+        title={t('environment.mount')}
         open={environmentModalOpen && canManageEnvironmentVariables}
-        okText="挂载"
-        cancelText="取消"
+        okText={t('actions.mount')}
+        cancelText={t('actions.cancel')}
         onOk={handleAddEnvironmentVariable}
         onCancel={() => {
           setEnvironmentModalOpen(false);
@@ -1030,28 +1022,28 @@ export function AgentEditPage() {
           <Alert
             type="error"
             showIcon
-            message={environmentMountError}
+            message={errorMessage(environmentMountError.error, t('errors.mount'))}
             style={{ marginBottom: 12 }}
           />
         )}
         {!environmentVersionReady ? (
-          <Alert type="warning" showIcon message="请先等待数字员工版本详情加载完成" />
+          <Alert type="warning" showIcon message={t('environment.waitVersion')} />
         ) : environmentVariableLibrary.isError ? (
-          <Alert type="error" showIcon message="环境变量库加载失败" />
+          <Alert type="error" showIcon message={t('errors.libraryLoad')} />
         ) : availableEnvironmentVariables.length === 0 && !environmentVariableLibrary.isLoading ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={(environmentVariableLibrary.data?.length ?? 0) === 0
-              ? '变量库暂无可用变量'
-              : '所有变量均已挂载'}
+              ? t('environment.libraryEmpty')
+              : t('environment.allMounted')}
           />
         ) : (
           <Select
-            aria-label="选择环境变量"
+            aria-label={t('fields.selectVariable')}
             showSearch
             allowClear
             loading={environmentVariableLibrary.isLoading}
-            placeholder="按变量名或说明搜索"
+            placeholder={t('placeholders.variables')}
             optionFilterProp="label"
             style={{ width: '100%' }}
             value={selectedEnvironmentVariableId}

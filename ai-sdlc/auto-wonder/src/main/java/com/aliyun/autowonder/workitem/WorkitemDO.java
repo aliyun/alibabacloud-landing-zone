@@ -25,6 +25,7 @@ public class WorkitemDO {
     private Long creatorId;
     private Long modifierId;
     private Integer isDeleted;
+    private Date deletedAt;
     private Integer version;
     private String originType;
     private Long originId;

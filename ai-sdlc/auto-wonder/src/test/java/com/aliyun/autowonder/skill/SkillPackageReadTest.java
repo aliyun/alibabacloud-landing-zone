@@ -187,6 +187,32 @@ class SkillPackageReadTest {
     }
 
     @Test
+    void listAndReadTarGzWithPaxMetadataHeaderAndPathOverride() throws Exception {
+        // Python tarfile 默认 PAX 格式：././@PaxHeader 携带 mtime 元数据；
+        // 长名/非 ASCII 名经 path 记录覆盖，ustar 字段只留截断名
+        byte[] meta = paxRecords(Map.of("mtime", "1760000000.123456789"));
+        byte[] path = paxRecords(Map.of("path", "references/长文件名说明.md"));
+        byte[] bytes = tarGzEntries(List.of(
+                new TarEntry("././@PaxHeader", 'x', String.format("%011o", meta.length), meta),
+                TarEntry.file("SKILL.md", "---\nname: pax-skill\n---\n# 说明\n"),
+                new TarEntry("././@PaxHeader", 'x', String.format("%011o", path.length), path),
+                TarEntry.file("truncated.md", "参考文档")));
+        SkillVO skill = ossZipSkill("pax-skill.tar.gz", bytes);
+
+        SkillPackageFilesVO vo = service.listPackageFiles(skill);
+        Map<String, SkillPackageFileVO> byPath = index(vo.getFiles());
+        assertEquals("tar.gz", vo.getFormat());
+        assertNotNull(byPath.get("SKILL.md"));
+        // path 记录生效：以真实路径列出，截断名与 PAX 头本身都不出现
+        assertNotNull(byPath.get("references/长文件名说明.md"));
+        assertNull(byPath.get("truncated.md"));
+        assertNull(byPath.get("@PaxHeader"));
+
+        SkillPackageFileContentVO content = service.readPackageFile(skill, "references/长文件名说明.md");
+        assertEquals("参考文档", content.getContent());
+    }
+
+    @Test
     void readPackageFileReplacesInvalidUtf8BytesInsteadOfFailing() throws Exception {
         byte[] body = new byte[]{'#', ' ', 't', (byte) 0xc3, 0x28, '\n'};
         byte[] bytes = zip(Map.of("SKILL.md", body));
@@ -389,6 +415,7 @@ class SkillPackageReadTest {
         BizException ex = assertThrows(BizException.class, () -> service.listPackageFiles(skill));
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("解压后大小超过上限"), ex.getMessage());
+        assertEquals("The unpacked skill package exceeds the 100MB limit", com.aliyun.autowonder.common.i18n.SystemMessages.render(ex.getMessageKey(),ex.getMessageArgs(),ex.getMessage(),java.util.Locale.US));
     }
 
     // ------------------------------------------------------------------
@@ -464,6 +491,7 @@ class SkillPackageReadTest {
         BizException ex = assertThrows(BizException.class, () -> service.listPackageFiles(skill));
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("解压后大小超过上限"), ex.getMessage());
+        assertEquals("The unpacked skill package exceeds the 100MB limit", com.aliyun.autowonder.common.i18n.SystemMessages.render(ex.getMessageKey(),ex.getMessageArgs(),ex.getMessage(),java.util.Locale.US));
     }
 
     @Test
@@ -638,7 +666,7 @@ class SkillPackageReadTest {
         assertFalse(index(zipVo.getFiles()).containsKey(""), "空路径条目不得进入清单");
         assertEquals(1, zipVo.getFiles().size());
 
-        byte[] tarBytes = tarGzEntries(List.of(TarEntry.file("./", "# s"), TarEntry.file("SKILL.md", "# s")));
+        byte[] tarBytes = tarGzEntries(List.of(TarEntry.directory("./"), TarEntry.file("SKILL.md", "# s")));
         SkillPackageFilesVO tarVo = service.listPackageFiles(ossZipSkill("custom-skill.tar.gz", tarBytes));
         assertFalse(index(tarVo.getFiles()).containsKey(""), "空路径条目不得进入清单");
         assertEquals(1, tarVo.getFiles().size());
@@ -787,6 +815,7 @@ class SkillPackageReadTest {
         BizException ex = assertThrows(BizException.class, () -> service.readPackageFile(skill, "target.txt"));
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("解压后大小超过上限"), ex.getMessage());
+        assertEquals("The unpacked skill package exceeds the 100MB limit", com.aliyun.autowonder.common.i18n.SystemMessages.render(ex.getMessageKey(),ex.getMessageArgs(),ex.getMessage(),java.util.Locale.US));
     }
 
     @Test
@@ -803,6 +832,7 @@ class SkillPackageReadTest {
         BizException ex = assertThrows(BizException.class, () -> service.readPackageFile(skill, "target.txt"));
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("解压后大小超过上限"), ex.getMessage());
+        assertEquals("The unpacked skill package exceeds the 100MB limit", com.aliyun.autowonder.common.i18n.SystemMessages.render(ex.getMessageKey(),ex.getMessageArgs(),ex.getMessage(),java.util.Locale.US));
     }
 
     /** 分块写入零填充条目：构造上百 MB 的 fixture 时不必单独申请等长大数组。 */
@@ -829,6 +859,7 @@ class SkillPackageReadTest {
         BizException ex = assertThrows(BizException.class, () -> service.readPackageFile(skill, "target.txt"));
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), ex.getCode());
         assertTrue(ex.getMessage().contains("解压后大小超过上限"), ex.getMessage());
+        assertEquals("The unpacked skill package exceeds the 100MB limit", com.aliyun.autowonder.common.i18n.SystemMessages.render(ex.getMessageKey(),ex.getMessageArgs(),ex.getMessage(),java.util.Locale.US));
     }
 
     private static List<String> paths(List<SkillPackageFileVO> files) {
@@ -949,6 +980,26 @@ class SkillPackageReadTest {
         System.arraycopy(bytes, 0, header, offset, Math.min(bytes.length, length));
     }
 
+    /** PAX 记录格式 "%d key=value\n"，%d 为含自身的整条 UTF-8 字节长度。 */
+    private static byte[] paxRecords(Map<String, String> records) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : records.entrySet()) {
+            int valueBytes = (e.getKey() + "=" + e.getValue()).getBytes(StandardCharsets.UTF_8).length;
+            String record = null;
+            int digits = 1;
+            while (record == null) {
+                int total = digits + 1 + valueBytes + 1;
+                if (String.valueOf(total).length() == digits) {
+                    record = total + " " + e.getKey() + "=" + e.getValue() + "\n";
+                } else {
+                    digits = String.valueOf(total).length();
+                }
+            }
+            sb.append(record);
+        }
+        return sb.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
     /** 把 zip 通用标志位置为"已加密"，ZipInputStream 会确定性地抛 ZipException。 */
     private static byte[] encryptedZip(byte[] zipBytes) {
         byte[] tampered = zipBytes.clone();
@@ -1000,4 +1051,19 @@ class SkillPackageReadTest {
             return String.format("%011o", size);
         }
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"missing,'包内不存在该文件: <raw>.txt','The package does not contain this file: <raw>.txt'", "binary,'该文件不支持在线预览','This file does not support online preview'", "package,'该技能无上传包','This skill has no uploaded package'", "entries,'技能包条目数超过上限 500','The skill package exceeds the limit of 500 entries'"})
+    void packageOwnedFailureKeepsRawArchiveContract(String branch, String raw, String en) throws Exception {
+        Map<String,byte[]> entries = new LinkedHashMap<>(); entries.put("SKILL.md",text("# raw")); entries.put("binary.png",binary());
+        if(branch.equals("entries")) for(int i=0;i<500;i++) entries.put("raw-"+i+".txt",text("raw"));
+        SkillVO skill = branch.equals("package") ? new SkillVO() : ossZipSkill("raw.zip",zip(entries));
+        BizException error = assertThrows(BizException.class, () -> {
+            switch(branch) { case "missing" -> service.readPackageFile(skill,"<raw>.txt");
+                case "binary" -> service.readPackageFile(skill,"binary.png"); default -> service.listPackageFiles(skill); }
+        });
+        assertEquals(raw,error.getMessage());assertEquals(BizException.class,error.getClass());assertNull(error.getCause());
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(),error.getCode());
+        assertEquals(en,com.aliyun.autowonder.common.i18n.SystemMessages.render(error.getMessageKey(),error.getMessageArgs(),raw,java.util.Locale.US));
+    }
+
 }

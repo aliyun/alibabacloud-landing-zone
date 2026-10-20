@@ -128,4 +128,32 @@ class ScheduledTaskControllerTest {
         assertNotNull(access);
         assertEquals(expected, access.value());
     }
+
+    @Test
+    void runNowMissingRequestIdPreservesValidationCodeBeforeOwnerLookup() {
+        ScheduledTaskService tasks = mock(ScheduledTaskService.class);
+        BizException failure = assertThrows(BizException.class, () -> new ScheduledTaskController(tasks,
+                mock(ScheduledTaskRunDao.class), mock(ScheduledTaskTriggerService.class)).runNow(900L, null));
+        assertBilingual(failure, "requestId 必须提供", "requestId is required");
+        verifyNoInteractions(tasks);
+    }
+
+    private void assertBilingual(BizException failure, String diagnostic, String english) {
+        assertEquals(diagnostic, failure.getMessage());
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var chinese = handler.handleBiz(failure);
+            assertEquals(200, chinese.getStatusCodeValue());
+            assertEquals(diagnostic, chinese.getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var translated = handler.handleBiz(failure);
+            assertEquals(200, translated.getStatusCodeValue());
+            assertEquals(failure.getCode(), translated.getBody().getCode());
+            assertEquals(english, translated.getBody().getMessage());
+            assertEquals(diagnostic, failure.getLocalizedMessage());
+            assertEquals(diagnostic, com.aliyun.autowonder.common.result.Result.fail(failure.getCode(), diagnostic).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

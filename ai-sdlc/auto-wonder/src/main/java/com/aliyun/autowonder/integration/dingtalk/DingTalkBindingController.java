@@ -3,6 +3,7 @@ package com.aliyun.autowonder.integration.dingtalk;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.im.PlatformImChannelConfigService;
 import com.aliyun.autowonder.common.result.Result;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingUpsertRequest;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingView;
@@ -16,7 +17,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/integrations/dingtalk/bindings")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理钉钉绑定")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理钉钉绑定", actionKey = "access.action.manage_dingtalk_bindings")
 public class DingTalkBindingController {
 
     private static final Logger log = LoggerFactory.getLogger(DingTalkBindingController.class);
@@ -48,7 +49,7 @@ public class DingTalkBindingController {
         Long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         DingtalkRobotBindingDO row = service.get(tenantId, id);
         if (row == null) {
-            throw new IllegalArgumentException("binding not found: " + id);
+            throw new KeyedIllegalArgumentException("integration.dingtalk_binding_missing", new Object[]{String.valueOf(id)}, "binding not found: " + id);
         }
         return Result.ok(toView(row));
     }

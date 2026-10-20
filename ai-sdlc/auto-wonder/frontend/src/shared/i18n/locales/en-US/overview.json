@@ -1,0 +1,69 @@
+{
+  "title": "Delivery overview",
+  "description": "Recent work item creation and delivery throughput, plus the work items that currently need your attention.",
+  "toolbar": {
+    "rangeAria": "Recent stats range",
+    "lastWeek": "Last week",
+    "lastMonth": "Last month",
+    "rangeSummary": "Range {{start}} to {{end}}",
+    "timezone": "Timezone {{timezone}}",
+    "dataThrough": "Data through {{date}}",
+    "refresh": "Refresh",
+    "refreshAria": "Refresh delivery overview",
+    "loadFailure": "Failed to load recent stats",
+    "retry": "Retry"
+  },
+  "created": {
+    "title": "New work items",
+    "caption": "Daily new work items over the last {{days}} days.",
+    "trendAria": "Daily trend of new work items over the last {{days}} days"
+  },
+  "delivered": {
+    "title": "Completed work items",
+    "dailyAverage": "Daily average {{value}} per day",
+    "change": "vs previous period {{value}}",
+    "noBase": "No comparable base",
+    "previous_one": "Previous {{start}} to {{end}}: {{count}} completed",
+    "previous_other": "Previous {{start}} to {{end}}: {{count}} completed",
+    "caption": "Daily average = completed work items divided by days in range (inclusive).",
+    "method": "Method: work items entering a DONE-category status within the selected range are counted once per work item; canceled items are excluded. The change compares the previous period of equal length.",
+    "methodAria": "Completion metric method"
+  },
+  "pending": {
+    "title": "My pending work items",
+    "caption": "All pending",
+    "hint": "Not limited by the stats range above; every unfinished work item assigned to you is listed.",
+    "workitem": "Work item",
+    "name": "Title",
+    "status": "Status",
+    "priority": "Priority",
+    "reason": "Reason",
+    "updatedAt": "Last updated",
+    "reasonAWAITING_DECISION": "Awaiting your decision",
+    "reasonAWAITING_HANDLING": "Awaiting your action",
+    "reasonIN_PROGRESS": "In progress",
+    "reasonUnknown": "Pending",
+    "total_one": "{{count}} item",
+    "total_other": "{{count}} items",
+    "loading": "Loading…",
+    "empty": "No pending work items",
+    "loadFailure": "Failed to load pending work items",
+    "retry": "Retry"
+  },
+  "createdList": {
+    "title": "New work items ({{range}})",
+    "caption": "Selected range",
+    "hint": "Same scope as the New work items card above: every work item created in the selected range, including canceled ones; the list length equals the card value.",
+    "workitem": "Work item",
+    "name": "Title",
+    "status": "Status",
+    "priority": "Priority",
+    "createdAt": "Created at",
+    "total_one": "{{count}} item",
+    "total_other": "{{count}} items",
+    "loading": "Loading…",
+    "empty": "No new work items in the selected range",
+    "loadFailure": "Failed to load new work items",
+    "retry": "Retry"
+  }
+}

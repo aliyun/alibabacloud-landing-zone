@@ -1,3 +1,5 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
 import { Modal, Form, Select, Input } from 'antd';
 import type { StatusNode, StatusTransition } from '../types';
 
@@ -11,7 +13,9 @@ interface Props {
 }
 
 export function TransitionFormModal({ open, editing, nodes, onSubmit, onCancel, loading }: Props) {
+  const { t } = useTranslation('statemachine');
   const [form] = Form.useForm();
+  useLocalizedValidation(form, open);
 
   const nodeOptions = nodes.map((n) => ({ value: n.id, label: `${n.name} (${n.code})` }));
 
@@ -25,24 +29,25 @@ export function TransitionFormModal({ open, editing, nodes, onSubmit, onCancel, 
 
   return (
     <Modal
-      title={editing ? '编辑推荐流转' : '添加推荐流转'}
+      closable={{ 'aria-label': t('common.close') }}
+      title={editing ? t('transitions.editTitle') : t('transitions.add')}
       open={open}
-      onOk={() => form.validateFields().then(onSubmit)}
+      onOk={() => form.validateFields().then(onSubmit, () => {})}
       onCancel={onCancel}
       confirmLoading={loading}
       afterOpenChange={(visible) => { if (visible) handleOpen(); }}
       destroyOnHidden
     >
       <Form form={form} layout="vertical">
-        <Form.Item name="fromNodeId" label="从状态" rules={[{ required: true, message: '请选择起始状态' }]}>
-          <Select options={nodeOptions} placeholder="选择起始状态" />
+        <Form.Item name="fromNodeId" label={t('transitions.from')} rules={[{ required: true, message: t('transitions.fromRequired') }]}>
+          <Select options={nodeOptions} placeholder={t('transitions.fromPlaceholder')} />
         </Form.Item>
-        <Form.Item name="toNodeId" label="到状态" rules={[{ required: true, message: '请选择目标状态' }]}>
-          <Select options={nodeOptions} placeholder="选择目标状态" />
+        <Form.Item name="toNodeId" label={t('transitions.to')} rules={[{ required: true, message: t('transitions.toRequired') }]}>
+          <Select options={nodeOptions} placeholder={t('transitions.toPlaceholder')} />
         </Form.Item>
-        <Form.Item name="name" label="操作名称" rules={[{ required: true, message: '请输入操作名称' }]}
-          tooltip="将显示为工单页面的快捷按钮文字">
-          <Input placeholder="如: 开始开发" />
+        <Form.Item name="name" label={t('transitions.name')} rules={[{ required: true, message: t('transitions.nameRequired') }]}
+          tooltip={t('transitions.nameHelp')}>
+          <Input placeholder={t('transitions.namePlaceholder')} />
         </Form.Item>
       </Form>
     </Modal>

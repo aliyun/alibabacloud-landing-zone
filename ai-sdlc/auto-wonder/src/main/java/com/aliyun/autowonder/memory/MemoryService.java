@@ -344,7 +344,7 @@ public class MemoryService {
 
     private void requireUnmigrated(long tenantId, long memoryId) {
         if (memoryDao.isMigrated(tenantId, memoryId)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "该记忆已迁移，请在记忆页面维护正文和索引");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "memory.legacy.migrated", null, "该记忆已迁移，请在记忆页面维护正文和索引");
         }
     }
 
@@ -355,7 +355,7 @@ public class MemoryService {
             throw new BizException(ErrorCode.MEMORY_NOT_FOUND);
         }
         if (!"ADOPT".equals(req.getDecision()) && !"REJECT".equals(req.getDecision())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "decision 必须为 ADOPT 或 REJECT");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "memory.legacy.decision", null, "decision 必须为 ADOPT 或 REJECT");
         }
         if (!"PENDING".equals(m.getStatus())) {
             throw new BizException(ErrorCode.MEMORY_NOT_PENDING);

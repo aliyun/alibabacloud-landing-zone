@@ -12,9 +12,8 @@ import com.aliyun.autowonder.dashboard.dto.SquadLineVO;
 import com.aliyun.autowonder.dashboard.dto.WorkstationVO;
 import org.springframework.stereotype.Service;
 
-import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +38,7 @@ public class DashboardService {
         vo.setHealth(buildHealth(tenantId));
         vo.setRunningFeed(dao.listRunningFeed(tenantId, FEED_LIMIT));
         vo.setRecentFeed(dao.listRecentFeed(tenantId, FEED_LIMIT));
-        vo.setGeneratedAt(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+        vo.setGeneratedAt(Instant.now().toString());
         return vo;
     }
 

@@ -51,7 +51,7 @@ final class SvgLogoValidator {
             }
             checkNode(document, 0);
         } catch (Exception e) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "branding.svg_static_required", null,
                     "SVG 必须为有效的静态图形，不支持脚本、外部资源、样式表或动画，请导出为使用行内样式的 SVG");
         }
     }

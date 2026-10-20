@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isValidRepoName, REPO_NAME_INVALID_MESSAGE } from './repoNameValidation';
+import { isValidRepoName, repoNameInvalidMessage } from './repoNameValidation';
 
 describe('repoNameValidation', () => {
   it('accepts single-segment names including legal punctuation', () => {
@@ -39,9 +39,9 @@ describe('repoNameValidation', () => {
   });
 
   it('exposes an actionable Chinese message with a namespace/repo-name identifier hint', () => {
-    expect(REPO_NAME_INVALID_MESSAGE).toContain('单级目录名');
-    expect(REPO_NAME_INVALID_MESSAGE).toContain('namespace/repo-name');
-    expect(REPO_NAME_INVALID_MESSAGE).toContain('仓库地址');
-    expect(REPO_NAME_INVALID_MESSAGE).not.toContain('terraform-provider-alicloud');
+    expect(repoNameInvalidMessage()).toContain('单级目录名');
+    expect(repoNameInvalidMessage()).toContain('namespace/repo-name');
+    expect(repoNameInvalidMessage()).toContain('仓库地址');
+    expect(repoNameInvalidMessage()).not.toContain('terraform-provider-alicloud');
   });
 });

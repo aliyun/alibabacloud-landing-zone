@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -13,7 +13,7 @@ function renderPanel() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter><DingTalkBindingPanel /></MemoryRouter>
+      <RouterProvider router={createMemoryRouter([{ path: '/', element: <DingTalkBindingPanel /> }], { initialEntries: ['/'] })} />
     </QueryClientProvider>,
   );
 }
@@ -191,4 +191,29 @@ describe('DingTalkBindingPanel', () => {
     expect(screen.queryByRole('dialog', { name: '新建绑定' })).not.toBeInTheDocument();
     expect(await screen.findByText('当前为只读权限，新建钉钉绑定需要管理员权限')).toBeInTheDocument();
   });
+});
+
+it('refreshes memoized binding labels and open drawer role options while preserving names and agent ids', async () => {
+  const { i18n } = await import('@/shared/i18n');
+  const { act } = await import('@testing-library/react');
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
+  const agents = [{ ...agentsBody.data[0], name: '<em>员工</em>', roleName: '测试工程师', roleCode: 'QA' },
+    { ...agentsBody.data[0], id: 8, name: '用户员工', roleName: '<b>用户角色</b>', roleCode: 'constructor' }];
+  server.use(
+    http.get('/api/agents', () => HttpResponse.json(ok(agents))),
+    http.get('/api/integrations/dingtalk/bindings', () => HttpResponse.json(ok([{ id: 1, robotCode: 'robot_A', agentId: 7, status: 'ENABLED', transportMode: 'STREAM' }]))),
+  );
+  const { container } = renderPanel();
+  await screen.findByText('<em>员工</em>（测试工程师）');
+  await userEvent.click(screen.getByRole('button', { name: /新建绑定/ }));
+  await userEvent.click(screen.getByRole('combobox', { name: '关联数字员工' }));
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  try {
+    expect(screen.getAllByText('<em>员工</em> (QA engineer)').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('用户员工 (<b>用户角色</b>)')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Linked Agent' })).toHaveAttribute('id', 'agentId');
+    expect(container.querySelector('em')).toBeNull();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(screen.getAllByText('<em>员工</em>（测试工程师）').length).toBeGreaterThanOrEqual(2);
+  } finally { await act(async () => { await i18n.changeLanguage('zh-CN'); }); }
 });

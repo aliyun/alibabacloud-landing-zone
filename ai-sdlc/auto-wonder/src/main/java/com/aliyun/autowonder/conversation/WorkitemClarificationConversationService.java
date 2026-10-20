@@ -1,7 +1,12 @@
 package com.aliyun.autowonder.conversation;
 
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
+import com.aliyun.autowonder.conversation.dto.ClarificationAttachmentVO;
 import com.aliyun.autowonder.conversation.dto.ClarificationConversationVO;
 import com.aliyun.autowonder.conversation.dto.ClarificationElicitationVO;
 import com.aliyun.autowonder.conversation.dto.ClarificationSlashCommandVO;
@@ -13,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -20,8 +26,8 @@ import java.util.stream.Collectors;
 public class WorkitemClarificationConversationService {
 
     private static final Logger log = LoggerFactory.getLogger(WorkitemClarificationConversationService.class);
-    private static final String CHANNEL = "WORKITEM_CLARIFICATION";
-    private static final String BIZ_REF_TYPE = "WORKITEM";
+    static final String CHANNEL = "WORKITEM_CLARIFICATION";
+    static final String BIZ_REF_TYPE = "WORKITEM";
 
     private final AgentConversationDao convDao;
     private final AgentConversationTurnDao turnDao;
@@ -31,6 +37,7 @@ public class WorkitemClarificationConversationService {
     private final ConversationElicitationService elicitationService;
     private final ConversationCommandsService commandsService;
     private final ConversationExecutorRouter executorRouter;
+    private final ClarificationAttachmentService attachmentService;
 
     public WorkitemClarificationConversationService(AgentConversationDao convDao,
             AgentConversationTurnDao turnDao, AgentConversationService conversationService,
@@ -38,7 +45,8 @@ public class WorkitemClarificationConversationService {
             ConversationRuntimePresence runtimePresence,
             ConversationElicitationService elicitationService,
             ConversationCommandsService commandsService,
-            ConversationExecutorRouter executorRouter) {
+            ConversationExecutorRouter executorRouter,
+            ClarificationAttachmentService attachmentService) {
         this.convDao = convDao;
         this.turnDao = turnDao;
         this.conversationService = conversationService;
@@ -47,16 +55,17 @@ public class WorkitemClarificationConversationService {
         this.elicitationService = elicitationService;
         this.commandsService = commandsService;
         this.executorRouter = executorRouter;
+        this.attachmentService = attachmentService;
     }
 
     public void verifyConversationBelongsToWorkitem(Long tenantId, Long workitemId, Long conversationId) {
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null) {
-            throw new IllegalArgumentException("conversation not found");
+            throw new KeyedIllegalArgumentException("conversation.not_found", null, "conversation not found");
         }
         if (!CHANNEL.equals(conv.getChannel()) || !BIZ_REF_TYPE.equals(conv.getBizRefType())
                 || !workitemId.equals(conv.getBizRefId())) {
-            throw new IllegalArgumentException("conversation does not belong to this workitem");
+            throw new KeyedIllegalArgumentException("conversation.workitem_mismatch", null, "conversation does not belong to this workitem");
         }
     }
 
@@ -71,15 +80,21 @@ public class WorkitemClarificationConversationService {
     public ClarificationConversationVO getConversation(Long tenantId, Long workitemId, Long conversationId) {
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null) {
-            throw new IllegalArgumentException("conversation not found");
+            throw new KeyedIllegalArgumentException("conversation.not_found", null, "conversation not found");
         }
         if (!CHANNEL.equals(conv.getChannel()) || !BIZ_REF_TYPE.equals(conv.getBizRefType())
                 || !workitemId.equals(conv.getBizRefId())) {
-            throw new IllegalArgumentException("conversation does not belong to this workitem");
+            throw new KeyedIllegalArgumentException("conversation.workitem_mismatch", null, "conversation does not belong to this workitem");
         }
         // 历史正文是详情接口的核心价值，读取失败必须显式抛错：
         // 降级成空 turns 会把「读取失败」伪装成「没有历史」（工单 55411 缺陷一形态）。
         List<AgentConversationTurnDO> turns = turnDao.listTurnsByConversation(tenantId, conversationId);
+        List<Long> turnIds = turns.stream()
+                .map(AgentConversationTurnDO::getId)
+                .filter(id -> id != null)
+                .collect(Collectors.toList());
+        Map<Long, List<ClarificationAttachmentVO>> attachmentsByTurn =
+                attachmentService.listByTurnIds(tenantId, conversationId, turnIds);
         List<ClarificationTurnVO> turnVOs = turns.stream()
                 .map(t -> ClarificationTurnVO.builder()
                         .id(t.getId())
@@ -87,6 +102,8 @@ public class WorkitemClarificationConversationService {
                         .content(t.getContent())
                         .status(t.getStatus())
                         .error(t.getError())
+                        .display(ConversationTurnDisplay.project(conv.getChannel(), t.getSourceContext()))
+                        .attachments(attachmentsByTurn.getOrDefault(t.getId(), List.of()))
                         .gmtCreate(t.getGmtCreate())
                         .build())
                 .collect(Collectors.toList());
@@ -159,7 +176,7 @@ public class WorkitemClarificationConversationService {
     public ClarificationConversationVO createConversation(Long tenantId, Long workitemId, Long agentId) {
         AgentDO agent = agentDao.findById(agentId);
         if (agent == null) {
-            throw new IllegalArgumentException("agent not found");
+            throw new KeyedIllegalArgumentException("conversation.agent_not_found", null, "agent not found");
         }
         Long executorId = executorRouter.select(tenantId, agentId,
                 requireOnlineVersion(agent), null);
@@ -181,38 +198,66 @@ public class WorkitemClarificationConversationService {
     }
 
     @Transactional
-    public void submitTurn(Long tenantId, Long workitemId, Long conversationId,
-            String content, String clientMessageId) {
+    public void submitTurn(Long tenantId, Long workitemId, Long conversationId, Long userId,
+            String content, String clientMessageId, List<Long> attachmentIds) {
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null) {
-            throw new IllegalArgumentException("conversation not found");
+            throw new KeyedIllegalArgumentException("conversation.not_found", null, "conversation not found");
         }
         if (!CHANNEL.equals(conv.getChannel()) || !BIZ_REF_TYPE.equals(conv.getBizRefType())
                 || !workitemId.equals(conv.getBizRefId())) {
-            throw new IllegalArgumentException("conversation does not belong to this workitem");
+            throw new KeyedIllegalArgumentException("conversation.workitem_mismatch", null, "conversation does not belong to this workitem");
+        }
+        boolean hasAttachments = attachmentIds != null && !attachmentIds.isEmpty();
+        if ((content == null || content.trim().isEmpty()) && !hasAttachments) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        // 带附件时必须能定位到唯一一条消息，否则重试会重复绑定/重复投递。
+        if (hasAttachments && (clientMessageId == null || clientMessageId.isBlank())) {
+            throw new BizException(ErrorCode.PARAM_INVALID);
+        }
+        String externalMsgId = "web-clarification:" + clientMessageId;
+        AgentConversationTurnDO existing = turnDao.findByExternalMsgId(tenantId, externalMsgId);
+        if (existing != null) {
+            if (!conversationId.equals(existing.getConversationId())) {
+                throw new BizException(ErrorCode.CONFLICT);
+            }
+            List<Long> unbound = attachmentService.verifyReplay(
+                    tenantId, conversationId, userId, attachmentIds, existing.getId());
+            // 重试时把上一笔可能未绑定成功的附件补绑到已落库的这条消息上（幂等）。
+            attachmentService.bindToTurn(tenantId, conversationId, userId, unbound, existing.getId());
+            return;
         }
         AgentDO agent = agentDao.findById(conv.getAgentId());
         Long executorId = executorRouter.select(tenantId, conv.getAgentId(),
                 requireOnlineVersion(agent), conv.getExecutorId());
         if (executorId == null) {
-            throw new IllegalStateException("RUNTIME_OFFLINE");
+            throw new BizException(ErrorCode.CLARIFICATION_EXECUTOR_OFFLINE);
         }
         if (!executorId.equals(conv.getExecutorId())) {
             convDao.updateExecutor(tenantId, conversationId, executorId);
         }
-        String externalMsgId = "web-clarification:" + clientMessageId;
+        List<Long> bindableIds = attachmentService.requireBindableIds(
+                tenantId, conversationId, userId, attachmentIds);
+        String normalizedContent = content == null || content.isBlank() ? "" : content;
         conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
-                conv.getChannelConversationId(), content, externalMsgId);
+                conv.getChannelConversationId(), normalizedContent, externalMsgId);
+        AgentConversationTurnDO turn = turnDao.findByExternalMsgId(tenantId, externalMsgId);
+        if (turn == null) {
+            throw new IllegalStateException("clarification turn was not persisted");
+        }
+        // 与消息同事务绑定：绑定失败（附件被并发删除/发送）整笔回滚，避免消息已投递却丢附件。
+        attachmentService.bindToTurn(tenantId, conversationId, userId, bindableIds, turn.getId());
     }
 
     public void cancelTurn(Long tenantId, Long workitemId, Long conversationId, Long turnId) {
         AgentConversationDO conv = convDao.findById(tenantId, conversationId);
         if (conv == null) {
-            throw new IllegalArgumentException("conversation not found");
+            throw new KeyedIllegalArgumentException("conversation.not_found", null, "conversation not found");
         }
         if (!CHANNEL.equals(conv.getChannel()) || !BIZ_REF_TYPE.equals(conv.getBizRefType())
                 || !workitemId.equals(conv.getBizRefId())) {
-            throw new IllegalArgumentException("conversation does not belong to this workitem");
+            throw new KeyedIllegalArgumentException("conversation.workitem_mismatch", null, "conversation does not belong to this workitem");
         }
         conversationService.requestTurnCancel(tenantId, conversationId, turnId);
     }

@@ -1,3 +1,6 @@
+import { formatDuration } from '@/features/workitem/duration';
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useRef } from 'react';
 import { Button, Card, Descriptions, Popconfirm, Result, Space, Spin, Typography } from 'antd';
@@ -25,6 +28,9 @@ import type { TimelineItem } from '@/shared/types/workitem';
 const { Text } = Typography;
 
 export function ScheduledTaskRunDetailPage() {
+  const { t } = useTranslation('scheduledTask');
+  const sessions: Record<string, string> = { ISOLATED: t('session.isolated'), CONTINUOUS: t('session.continuous') };
+  const triggers: Record<string, string> = { SCHEDULED: t('trigger.scheduled'), MANUAL: t('trigger.manual'), MISFIRE: t('trigger.misfire') };
   const { runId } = useParams<{ runId: string }>();
   const id = Number(runId);
   const navigate = useNavigate();
@@ -47,11 +53,12 @@ export function ScheduledTaskRunDetailPage() {
     onReconnect: () => reconcileScheduledRunEvent(queryClient, id, { channel: '', type: 'unknown', payload: null, timestamp: Date.now() }),
   });
 
-  if (!Number.isFinite(id)) return <Result status="404" title="无效的运行 ID" />;
+  if (!Number.isFinite(id)) return <Result status="404" title={t('run.invalidId')} />;
   if (run.isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
-  if (run.isError || !run.data) return <Result status="error" title="运行加载失败" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />;
+  if (run.isError || !run.data) return <Result status="error" title={t('run.loadFailed')} extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />;
 
   const data = run.data;
+  const sessionMode = data.sessionMode ?? '-';
   const active = ['QUEUED', 'STARTING', 'WAITING_EXECUTOR', 'WAITING_HUMAN', 'RUNNING', 'PAUSED'].includes(data.status);
   const resultContent = data.resultSummary || data.error || data.skipReason || '';
 
@@ -77,45 +84,45 @@ export function ScheduledTaskRunDetailPage() {
           <div ref={leftScrollRef} data-testid="scheduled-run-left-scroll" style={{ flex: 1, minWidth: 0, minHeight: 0, padding: 24, paddingRight: 38, paddingBottom: 12, overflowY: 'auto' }}>
           <div style={{ marginBottom: 16 }}>
             <div className="aw-detail-title">
-              <PageBackButton to={`/scheduled-tasks/${data.scheduledTaskId}`} label="返回定时任务" />
-              <Typography.Title level={3} style={{ margin: 0 }}>Run #{data.id}</Typography.Title>
+              <PageBackButton to={`/scheduled-tasks/${data.scheduledTaskId}`} label={t('actions.backToTasks')} />
+              <Typography.Title level={3} style={{ margin: 0 }}>{t('labels.runId', { id: data.id })}</Typography.Title>
               <RunStatusTag status={data.status} />
             </div>
             <Text type="secondary">
-              触发：{data.triggerType} · 调度：{formatTime(data.scheduledAt)}
-              {data.startedAt && data.finishedAt ? ` · 耗时：${formatDuration(new Date(data.finishedAt).getTime() - new Date(data.startedAt).getTime())}` : ''}
+              {t('run.triggerSchedule', { trigger: Object.prototype.hasOwnProperty.call(triggers, data.triggerType) ? triggers[data.triggerType] : data.triggerType, time: formatTime(data.scheduledAt) })}
+              {data.startedAt && data.finishedAt ? t('run.duration', { duration: formatDuration(new Date(data.finishedAt).getTime() - new Date(data.startedAt).getTime()) }) : ''}
             </Text>
           </div>
 
-          <Card size="small" title="运行摘要" style={{ marginBottom: 16 }} extra={
+          <Card size="small" title={t('run.summary')} style={{ marginBottom: 16 }} extra={
             <Space>
-              {active && data.status !== 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', '暂停', () => transition.mutate({ action: 'pause' }))}>暂停</Button> : null}
-              {data.status === 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', '恢复', () => transition.mutate({ action: 'resume' }))}>恢复</Button> : null}
-              {active ? <Button size="small" danger onClick={() => accessCommand('READ_WRITE', '取消', () => transition.mutate({ action: 'cancel' }))}>取消</Button> : null}
+              {active && data.status !== 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', t('actions.pause'), () => transition.mutate({ action: 'pause' }))}>{t('actions.pause')}</Button> : null}
+              {data.status === 'PAUSED' ? <Button size="small" onClick={() => accessCommand('READ_WRITE', t('actions.resume'), () => transition.mutate({ action: 'resume' }))}>{t('actions.resume')}</Button> : null}
+              {active ? <Button size="small" danger onClick={() => accessCommand('READ_WRITE', t('actions.cancel'), () => transition.mutate({ action: 'cancel' }))}>{t('actions.cancel')}</Button> : null}
               {active ? (
                 <Popconfirm
-                  title="强制取消本次运行？"
-                  description="执行器可能已离线，强制取消将直接终结本轮运行且不可恢复。"
-                  okText="确认强制取消"
+                  title={t('confirm.forceCancel')}
+                  description={t('confirm.forceCancelDescription')}
+                  okText={t('actions.confirmForceCancel')}
                   okButtonProps={{ danger: true }}
-                  cancelText="再想想"
-                  onConfirm={() => accessCommand('READ_WRITE', '强制取消', () => transition.mutate({ action: 'cancel', force: true }))}
+                  cancelText={t('actions.reconsider')}
+                  onConfirm={() => accessCommand('READ_WRITE', t('actions.forceCancel'), () => transition.mutate({ action: 'cancel', force: true }))}
                 >
-                  <Button size="small" danger>强制取消</Button>
+                  <Button size="small" danger>{t('actions.forceCancel')}</Button>
                 </Popconfirm>
               ) : null}
             </Space>
           }>
             <Descriptions size="small" column={3}>
-              <Descriptions.Item label="开始">{formatTime(data.startedAt)}</Descriptions.Item>
-              <Descriptions.Item label="结束">{formatTime(data.finishedAt)}</Descriptions.Item>
-              <Descriptions.Item label="执行器">{data.executorId ? `#${data.executorId}` : '-'}</Descriptions.Item>
-              <Descriptions.Item label="会话模式">{data.sessionMode === 'CONTINUOUS' ? '连续' : '隔离'}</Descriptions.Item>
-              <Descriptions.Item label="恢复自">{data.resumeFromRunId ? `Run #${data.resumeFromRunId}` : '-'}</Descriptions.Item>
+              <Descriptions.Item label={t('run.startedAt')}>{formatTime(data.startedAt)}</Descriptions.Item>
+              <Descriptions.Item label={t('run.finishedAt')}>{formatTime(data.finishedAt)}</Descriptions.Item>
+              <Descriptions.Item label={t('run.executor')}>{data.executorId ? `#${data.executorId}` : '-'}</Descriptions.Item>
+              <Descriptions.Item label={t('form.sessionMode')}>{Object.prototype.hasOwnProperty.call(sessions, sessionMode) ? sessions[sessionMode] : sessionMode}</Descriptions.Item>
+              <Descriptions.Item label={t('run.resumedFrom')}>{data.resumeFromRunId ? t('labels.runId', { id: data.resumeFromRunId }) : '-'}</Descriptions.Item>
             </Descriptions>
           </Card>
 
-          <Card size="small" title="执行结果" style={{ marginBottom: 16 }}>
+          <Card size="small" title={t('run.result')} style={{ marginBottom: 16 }}>
             {resultContent
               ? <MarkdownView content={resultContent} />
               : <Text type="secondary">-</Text>}
@@ -135,7 +142,7 @@ export function ScheduledTaskRunDetailPage() {
           <RunCommentInput
             runId={Number.isFinite(id) ? id : undefined}
             loading={comment.isPending}
-            onSubmit={(payload) => accessCommand('READ_WRITE', '评论本次运行', () => comment.mutate(payload))}
+            onSubmit={(payload) => accessCommand('READ_WRITE', t('comment.label'), () => comment.mutate(payload))}
           />
         </div>
       </div>
@@ -167,15 +174,5 @@ export function ScheduledTaskRunDetailPage() {
 }
 
 function formatTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString('zh-CN') : '-';
-}
-
-function formatDuration(ms: number): string {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}秒`;
-  const minutes = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (minutes < 60) return secs > 0 ? `${minutes}分${secs}秒` : `${minutes}分`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}时${minutes % 60}分`;
+  return value ? formatDateTime(value, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }) : '-';
 }

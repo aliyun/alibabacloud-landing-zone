@@ -1,4 +1,7 @@
+import { useTranslation } from 'react-i18next';
+import { formatNumber } from '@/shared/i18n/format';
 import { Drawer, Descriptions, Tag, Button, Space, Empty, Spin, Alert, Timeline, List, Typography } from 'antd';
+import { CloseCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch } from '../hooks';
 import { statusMeta, HAPPY_PATH, FAILURE_STATES, ACCENT } from '../statusMeta';
@@ -14,6 +17,7 @@ interface Props {
 }
 
 export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
+  const { t } = useTranslation('execution');
   const navigate = useNavigate();
   const { data, isLoading } = useDispatch(open ? dispatchId : null);
 
@@ -32,7 +36,7 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
               : { color: 'var(--aw-muted)' }
           }
         >
-          {s}
+          {statusMeta(s).label}
         </Text>
       ),
     };
@@ -41,7 +45,7 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
     timelineItems.push({
       color: 'var(--aw-error)',
       children: (
-        <Text style={{ color: 'var(--aw-error)', fontWeight: 600 }}>{data.status}</Text>
+        <Text style={{ color: 'var(--aw-error)', fontWeight: 600 }}>{statusMeta(data.status).label}</Text>
       ),
     });
   }
@@ -50,22 +54,23 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
     <Drawer
       title={
         <span style={{ borderLeft: `4px solid ${ACCENT}`, paddingLeft: 10 }}>
-          执行详情{data ? ` · #${data.id}` : ''}
+          {data ? t('detail.titleWithId', { id: data.id }) : t('detail.title')}
         </span>
       }
       width={640}
       open={open}
       onClose={onClose}
+      closable={{ 'aria-label': t('detail.close') }}
       maskClosable
     >
       {isLoading || !data ? (
-        <Spin />
+        <Spin aria-label={t('detail.loading')} />
       ) : (
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <Timeline items={timelineItems} />
 
           {data.error ? (
-            <Alert type="error" message="错误" description={data.error} showIcon />
+            <Alert type="error" message={t('detail.error')} description={data.error} showIcon icon={<CloseCircleOutlined aria-hidden="true" />} />
           ) : null}
 
           <Descriptions
@@ -77,7 +82,7 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
             items={[
               {
                 key: 'wi',
-                label: '工单',
+                label: t('detail.workitem'),
                 children: data.workitemId ? (
                   <a
                     title={`#${data.workitemId} ${data.workitemTitle}`}
@@ -90,10 +95,10 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
                   '—'
                 ),
               },
-              { key: 'step', label: 'SDLC 步骤', children: data.sdlcStepId ?? '—' },
+              { key: 'step', label: t('detail.step'), children: data.sdlcStepId ?? '—' },
               {
                 key: 'agent',
-                label: 'Agent',
+                label: t('detail.agent'),
                 children: data.agentName ? (
                   <>
                     {data.agentName}{' '}
@@ -105,11 +110,11 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
                   '—'
                 ),
               },
-              { key: 'exec', label: '执行器', children: data.executorName ?? '—' },
-              { key: 'attempt', label: '尝试次数', children: data.attempt ?? '—' },
+              { key: 'exec', label: t('detail.executor'), children: data.executorName ?? '—' },
+              { key: 'attempt', label: t('detail.attempt'), children: data.attempt ?? '—' },
               {
                 key: 'status',
-                label: '状态',
+                label: t('detail.status'),
                 children: (
                   <Tag color={statusMeta(data.status).color}>
                     {statusMeta(data.status).label}
@@ -118,14 +123,14 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
               },
               {
                 key: 'result',
-                label: '结果摘要',
+                label: t('detail.summary'),
                 children: data.resultSummary ? <MarkdownView content={data.resultSummary} /> : '—',
               },
             ]}
           />
 
           <div>
-            <Text type="secondary">产物 ({data.artifacts?.length ?? 0})</Text>
+            <Text type="secondary">{t('detail.artifacts', { count: data.artifacts?.length ?? 0, total: formatNumber(data.artifacts?.length ?? 0) })}</Text>
             {data.artifacts && data.artifacts.length > 0 ? (
               <List
                 size="small"
@@ -137,7 +142,7 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
                 )}
               />
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无产物" />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('detail.noArtifacts')} />
             )}
           </div>
 
@@ -147,10 +152,10 @@ export function ExecutionDetailDrawer({ dispatchId, open, onClose }: Props) {
               disabled={!data.workitemId}
               onClick={() => navigate(`/workitems/${data.workitemId}`)}
             >
-              跳转工单
+              {t('detail.openWorkitem')}
             </Button>
             <Button disabled={!data.agentId} onClick={() => navigate(`/agents/${data.agentId}`)}>
-              查看 Agent
+              {t('detail.viewAgent')}
             </Button>
           </Space>
         </Space>

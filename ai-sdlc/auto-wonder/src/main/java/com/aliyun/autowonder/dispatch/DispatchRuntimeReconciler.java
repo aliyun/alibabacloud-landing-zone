@@ -15,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 
-/** Repairs lost stop/pause receipts only from a complete, current Runtime inventory. */
+/** Repairs lost receipts and abandoned execution only from a complete, current Runtime inventory. */
 @Service
 public class DispatchRuntimeReconciler {
     private static final Logger log = LoggerFactory.getLogger(DispatchRuntimeReconciler.class);
@@ -99,6 +99,11 @@ public class DispatchRuntimeReconciler {
         } catch (RuntimeException e) {
             log.warn("runtime pause query failed executorId={}", executorId, e);
         }
+        try {
+            reconcileAbandonedExecutions(executorId, expectedSessionId);
+        } catch (RuntimeException e) {
+            log.warn("runtime abandoned execution query failed executorId={}", executorId, e);
+        }
         if (currentComplete(executorId, expectedSessionId) == null) return;
         try {
             workflowService.reconcileReleasedWaiters(tenantId, executorId);
@@ -139,9 +144,37 @@ public class DispatchRuntimeReconciler {
         }
     }
 
+    private void reconcileAbandonedExecutions(long executorId, String expectedSessionId) {
+        if (currentComplete(executorId, expectedSessionId) == null) return;
+        long afterId = 0;
+        while (currentComplete(executorId, expectedSessionId) != null) {
+            List<DispatchDO> rows = safe(dispatchDao.listByExecutorAndStatusesAfterId(executorId,
+                    List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING), afterId, BATCH));
+            if (rows.isEmpty()) return;
+            for (DispatchDO row : rows) {
+                try {
+                    ExecutorDispatchSnapshot current = currentComplete(executorId, expectedSessionId);
+                    if (current == null) return;
+                    if (!current.ownedDispatchIds().contains(row.getId())) {
+                        DispatchDO replacement = recovery.recoverAbandonedExecution(row, expectedSessionId);
+                        if (replacement != null) {
+                            dispatchService.recordRuntimeRecoveryEvent(row, replacement);
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    log.warn("runtime abandoned execution recovery failed dispatchId={} executorId={}",
+                            row.getId(), executorId, e);
+                }
+            }
+            long nextId = rows.get(rows.size() - 1).getId();
+            if (rows.size() < BATCH || nextId <= afterId) return;
+            afterId = nextId;
+        }
+    }
+
     private ExecutorDispatchSnapshot currentComplete(long executorId, String expectedSessionId) {
         return registry.currentDispatchSnapshot(executorId)
-                .filter(value -> value.inventoryReady() && value.inventoryError() == null)
+                .filter(value -> value.authoritativeInventory() && value.inventoryReady() && value.inventoryError() == null)
                 .filter(value -> java.util.Objects.equals(value.sessionId(), expectedSessionId))
                 .orElse(null);
     }

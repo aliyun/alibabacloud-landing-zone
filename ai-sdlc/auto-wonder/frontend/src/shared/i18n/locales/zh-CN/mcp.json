@@ -1,0 +1,93 @@
+{
+  "permissionHint": "MCP token 权限跟随你在目标工作空间中的权限；调用工作空间域工具时需要传入 workspaceId。",
+  "revokedNotice": "令牌已撤销",
+  "copied": "已复制",
+  "copyFailed": "自动复制失败，请手动复制",
+  "endpointUnavailable": "MCP 服务地址不可用，请刷新后重试",
+  "name": "名称",
+  "prefix": "前缀",
+  "created": "创建时间",
+  "lastUsed": "最后使用",
+  "status": "状态",
+  "revoked": "已撤销",
+  "active": "有效",
+  "actions": "操作",
+  "field": "字段",
+  "type": "类型",
+  "required": "必填",
+  "yes": "是",
+  "no": "否",
+  "description": "说明",
+  "input": "入参",
+  "output": "出参",
+  "noInput": "无入参",
+  "result": "返回工具执行结果",
+  "tools": "工具",
+  "endpointLoading": "正在加载 MCP 服务地址",
+  "endpointFailed": "MCP 服务地址加载失败",
+  "copy": "复制",
+  "refresh": "刷新",
+  "newToken": "新建令牌",
+  "overview": "概览",
+  "activeTokens": "有效令牌",
+  "openTools": "开放工具",
+  "capabilityGroups": "能力聚合",
+  "endpoint": "MCP 服务地址",
+  "copyEndpoint": "复制 MCP 服务地址",
+  "oneTimeUrl": "完整 URL 只会在新建令牌后展示一次；已有令牌只能看到前缀，不能反查密钥。",
+  "tokens": "访问令牌",
+  "install": "安装",
+  "installHint": "先创建 MCP 令牌，再复制含 token 的 MCP URL 到客户端配置。已有令牌只显示前缀，不能反查完整密钥。",
+  "newTitle": "新建 MCP 令牌",
+  "done": "完成",
+  "create": "创建",
+  "oneTimeToken": "令牌只展示一次，请立即复制并写入客户端配置。",
+  "copyToken": "复制新令牌",
+  "copyUrl": "复制 MCP URL",
+  "moreClients": "更多客户端接入",
+  "nameRequired": "请输入名称",
+  "cancel": "取消",
+  "close": "关闭",
+  "tokenLabel": "新令牌",
+  "urlLabel": "MCP URL",
+  "revokeNamed": "撤销 {{name}}",
+  "clientConfig": "{{client}} 接入配置",
+  "toolCount_other": "{{count}} 个工具",
+  "codexComment": "# ~/.codex/config.toml 或项目 .codex/config.toml",
+  "capabilities": {
+    "workitem": {
+      "title": "工单管理",
+      "description": "CRUDL、分配、评论、暂停继续和状态流转。"
+    },
+    "sdlc": {
+      "title": "SDLC 管理",
+      "description": "流程、步骤、排序、启停和状态模板。"
+    },
+    "agent": {
+      "title": "数字员工管理",
+      "description": "数字员工创建、查询和详情读取。"
+    },
+    "executor": {
+      "title": "执行器管理",
+      "description": "执行器的增删查、Token 查看、可选值查询与启动命令生成。"
+    },
+    "skill": {
+      "title": "技能与插件",
+      "description": "skills、MCP server 和 plugin 记录管理。"
+    },
+    "memory": {
+      "title": "记忆管理",
+      "description": "记忆的写入、检索、修正与废弃，替代 learning delta 文件上报。"
+    },
+    "project": {
+      "title": "工作空间发现",
+      "description": "列出可访问工作空间及权限等级，用于获取 workspaceId。"
+    },
+    "other": {
+      "title": "其他能力",
+      "description": "暂未归类的辅助工具。"
+    }
+  },
+  "expandRow": "展开行",
+  "collapseRow": "收起行"
+}

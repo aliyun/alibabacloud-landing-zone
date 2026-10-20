@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { LineChartOutlined } from '@ant-design/icons';
 import { Tag } from 'antd';
 import type { InsightCard, Severity } from '../types';
@@ -15,18 +16,19 @@ interface KeyInsightsProps {
 }
 
 export function KeyInsights({ cards, workerLabel }: KeyInsightsProps) {
+  const { t } = useTranslation('insights');
   return (
     <div style={{ background: 'var(--aw-panel)', border: '1px solid var(--aw-border)', borderRadius: 10, padding: '18px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <LineChartOutlined style={{ color: 'var(--aw-info)' }} />
-        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--aw-text)' }}>关键洞察</span>
+        <LineChartOutlined aria-hidden="true" style={{ color: 'var(--aw-info)' }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--aw-text)' }}>{t('panels.keyInsights')}</span>
         <Tag style={{ marginLeft: 'auto', borderRadius: 4 }}>{workerLabel}</Tag>
       </div>
       <div style={{ display: 'grid', gap: 10 }}>
-        {cards.map((card) => {
+        {cards.map((card, index) => {
           const style = SEVERITY_STYLES[card.severity];
           return (
-            <div key={card.title} style={{ border: `1px solid ${style.border}`, background: style.bg, borderRadius: 8, padding: '12px 14px' }}>
+            <div key={index} style={{ border: `1px solid ${style.border}`, background: style.bg, borderRadius: 8, padding: '12px 14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--aw-text)' }}>{card.title}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 700, color: style.color }}>{card.value}</span>

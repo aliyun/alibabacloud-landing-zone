@@ -1,0 +1,15 @@
+{
+  "language": { "switch": "切换语言", "syncFailed": "语言偏好保存失败，当前选择仍在此浏览器中生效。" },
+  "overlay": { "close": "关闭" },
+  "appearance": { "dark": "深色", "light": "浅色", "system": "跟随系统", "switch": "切换外观", "current": "外观：{{mode}}", "scope": "外观仅在当前浏览器生效。" },
+  "account": { "settings": "个人设置", "logout": "退出登录", "menu": "用户菜单", "login": "登录", "expired": "未登录或登录已失效", "networkError": "网络错误" },
+  "workspace": { "switched": "已切换到 {{name}}", "switchFailed": "切换工作空间失败", "notMember": "你不在该工单所属工作空间中", "linkedSwitchFailed": "切换到工单所属工作空间失败", "manage": "管理工作空间...", "unselected": "未选择" },
+  "navigation": { "expand": "展开菜单", "collapse": "折叠菜单", "help": "帮助中心", "content": "页面内容" },
+  "duration": {
+    "second_other": "{{count}}秒",
+    "minute_other": "{{count}}分钟",
+    "hour_other": "{{count}}小时",
+    "remainderMinute_other": "{{count}}分",
+    "hoursMinutes": "{{hours}}{{minutes}}"
+  }
+}

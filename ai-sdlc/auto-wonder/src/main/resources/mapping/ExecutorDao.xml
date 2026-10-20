@@ -58,8 +58,11 @@
         UPDATE executor SET token_ref = #{tokenRef}
         WHERE id = #{id} AND is_deleted = 0
     </update>
-    <update id="updateLastConnectIp">
-        UPDATE executor SET last_connect_ip = #{lastConnectIp}, modifier_id = #{modifierId}
+    <!-- 每次成功接入都以本次连接的值整体更新（含 NULL）：旧客户端重连不上报主机名时必须清掉，
+         绝不能让上一台机器的 hostname 拼到本次连接的 IP 上（会话可被同名执行器替换，属实际可达场景）。 -->
+    <update id="updateLastConnectInfo">
+        UPDATE executor SET last_connect_ip = #{lastConnectIp},
+            last_connect_hostname = #{lastConnectHostname}, modifier_id = #{modifierId}
         WHERE id = #{id} AND tenant_id = #{tenantId} AND is_deleted = 0
     </update>
     <update id="updateLastStartedAt">
@@ -76,6 +79,8 @@
         SELECT id, tenant_id, agent_id, name, client_kind
         FROM executor
         WHERE is_deleted = 0
+          AND (JSON_EXTRACT(launch_config, '$.runtimeVersion') IS NULL
+               OR JSON_TYPE(JSON_EXTRACT(launch_config, '$.runtimeVersion')) = 'NULL')
         ORDER BY id ASC
     </select>
     <update id="updateLaunchConfig">

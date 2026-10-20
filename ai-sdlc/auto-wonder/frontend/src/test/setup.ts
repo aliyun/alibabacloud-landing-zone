@@ -2,7 +2,19 @@ import '@testing-library/jest-dom';
 import { Blob, File } from 'node:buffer';
 import { createRequire } from 'node:module';
 import { useId } from 'react';
+import { getConfig } from '@testing-library/react';
+import { configure } from '@testing-library/dom';
 import { fetch, FormData, Headers, Request, Response } from 'undici';
+
+// user-event resolves the top-level DOM package; RTL configures its nested copy.
+// Flush individual user-event DOM events through RTL's public React wrappers.
+// Keep top-level DOM's native async pass-through: RTL's waitFor asyncWrapper
+// toggles its act environment and cannot wrap existing outer-act gestures.
+const reactTestingConfig = getConfig();
+configure({
+  eventWrapper: reactTestingConfig.eventWrapper,
+  unstable_advanceTimersWrapper: reactTestingConfig.unstable_advanceTimersWrapper,
+});
 
 // Ant Design loads rc-util through CommonJS, so an ESM vi.mock cannot intercept it.
 // Its test-only fixed ID breaks aria-labelledby when multiple modals are mounted.

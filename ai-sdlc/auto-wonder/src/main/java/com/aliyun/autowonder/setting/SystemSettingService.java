@@ -47,7 +47,7 @@ public class SystemSettingService {
         }
         for (UpdateSettingsRequest.SettingItem item : req.getItems()) {
             if ("NOTIFY".equals(group) && !allowedNotifyKey(item.getKey())) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "项目通知必须使用平台选择的 IM 渠道");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "setting.selected_im_channel_required", new Object[0], "项目通知必须使用平台选择的 IM 渠道");
             }
         }
         for (UpdateSettingsRequest.SettingItem item : req.getItems()) {

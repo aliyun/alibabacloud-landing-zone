@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.artifact;
 
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -56,14 +57,14 @@ public class ScheduledTaskCliUploadController {
             if (task == null || task.getWorkspaceId() == null) {
                 throw new BizException(ErrorCode.SCHEDULED_TASK_NOT_FOUND);
             }
-            tokenService.requireWriteMembership(task.getWorkspaceId(), userId);
+            tokenService.requireWriteMembership(task.getWorkspaceId(), userId, WorkspaceDomain.SCHEDULEDTASK);
             return ResponseEntity.ok(Result.ok(
                     requirementDocumentService.uploadCli(
                             new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK, taskId),
                             files, task.getWorkspaceId(), userId)));
         } catch (BizException ex) {
             return ResponseEntity.status(statusFor(ex.getCode()))
-                    .body(Result.fail(ex.getCode(), ex.getMessage()));
+                    .body(Result.fail(ex));
         } catch (IOException ex) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Result.fail(ErrorCode.PARAM_INVALID));

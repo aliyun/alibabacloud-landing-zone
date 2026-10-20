@@ -1,3 +1,5 @@
+import { runtimeStatusLabel } from '../runtimeLabels';
+import { useTranslation } from 'react-i18next';
 import { Button, Card, List, Space, Tag, Typography, Spin } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
@@ -28,6 +30,7 @@ interface DebugLogListProps {
 
 /** 小队 debug 日志（设计文档 §4.7 查看）：无数据时整卡不渲染，不打扰未开启 debug 的工单。 */
 export function DebugLogList({ workitemId }: DebugLogListProps) {
+  const { t } = useTranslation('workitem');
   const { data, isLoading } = useQuery({
     queryKey: ['workitem-debug-logs', workitemId],
     queryFn: () => listDebugLogs(workitemId),
@@ -37,7 +40,7 @@ export function DebugLogList({ workitemId }: DebugLogListProps) {
     return null;
   }
   return (
-    <Card size="small" title="Debug 日志" styles={{ body: { padding: '8px 12px' } }}>
+    <Card size="small" title={t('debug.title')} styles={{ body: { padding: '8px 12px' } }}>
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: 16 }}>
           <Spin size="small" />
@@ -59,17 +62,17 @@ export function DebugLogList({ workitemId }: DebugLogListProps) {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  下载
+                  {t('artifacts.download')}
                 </Button>,
               ] : []}
             >
               <Space direction="vertical" size={2} style={{ width: '100%' }}>
                 <Space size={6}>
-                  <Text style={{ fontSize: 13 }}>第 {log.runNo} 轮</Text>
+                  <Text style={{ fontSize: 13 }}>{t('delivery.round', { number: log.runNo })}</Text>
                   {/* dispatchStatus 可能是非终态临时值（RUNNING，relay 补插路径），原样展示 */}
-                  <Tag color={STATUS_COLOR[log.dispatchStatus] ?? 'default'}>{log.dispatchStatus}</Tag>
-                  <Tag color={STATUS_COLOR[log.status] ?? 'default'}>{log.status}</Tag>
-                  {log.truncated ? <Tag color="orange">截断</Tag> : null}
+                  <Tag color={STATUS_COLOR[log.dispatchStatus] ?? 'default'}>{runtimeStatusLabel(log.dispatchStatus)}</Tag>
+                  <Tag color={STATUS_COLOR[log.status] ?? 'default'}>{runtimeStatusLabel(log.status)}</Tag>
+                  {log.truncated ? <Tag color="orange">{t('debug.truncated')}</Tag> : null}
                 </Space>
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   dispatch #{log.dispatchId} · {formatSize(log.sizeBytes)}

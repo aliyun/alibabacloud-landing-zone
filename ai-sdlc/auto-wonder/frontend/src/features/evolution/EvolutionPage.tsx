@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import {
   Button, Card, Form, Input, message, Modal, Popconfirm, Space, Tabs, Tag, Typography} from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
-import { ApiOutlined, ReloadOutlined } from '@ant-design/icons';
+import { ApiOutlined, ReloadOutlined, CloseOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -28,6 +28,11 @@ import type {
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime, formatNumber } from '@/shared/i18n/format';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+
 const { Text } = Typography;
 
 const statusColor: Record<string, string> = {
@@ -49,6 +54,27 @@ const verdictColor: Record<string, string> = {
   POSITIVE: 'success',
   NEGATIVE: 'error',
 };
+
+const codeKeys = {
+  status: {
+    PROPOSED: 'proposalStatus.proposed', VALIDATED: 'proposalStatus.validated', TRIAL: 'proposalStatus.trial',
+    REPLAY_PASSED: 'proposalStatus.replayPassed', REPLAY_FAIL: 'proposalStatus.replayFail',
+    REPLAY_INCONCLUSIVE: 'proposalStatus.replayInconclusive', APPROVED: 'proposalStatus.approved',
+    RELEASED: 'proposalStatus.released', REJECTED: 'proposalStatus.rejected',
+  },
+  asset: { MEMORY: 'assetType.memory', REPO_RELATION: 'assetType.repoRelation', SKILL: 'assetType.skill' },
+  verdict: { PASS: 'verdict.pass', FAIL: 'verdict.fail', INCONCLUSIVE: 'verdict.inconclusive', POSITIVE: 'verdict.positive', NEGATIVE: 'verdict.negative' },
+  decision: { CONTINUE_TRIAL: 'decision.continueTrial', ADOPT: 'decision.adopt', REJECT: 'decision.reject' },
+} as const;
+
+type CodeKey = { [Kind in keyof typeof codeKeys]: (typeof codeKeys)[Kind][keyof (typeof codeKeys)[Kind]] }[keyof typeof codeKeys];
+function codeLabel(value: string, keys: Record<string, CodeKey>) {
+  return Object.prototype.hasOwnProperty.call(keys, value) ? i18n.t(`evolution:${keys[value]}`) : value;
+}
+
+function codeColor(colors: Record<string, string>, value: string) {
+  return Object.prototype.hasOwnProperty.call(colors, value) ? colors[value] : 'default';
+}
 
 const defaultDeltaJson = JSON.stringify({
   evidenceEvent: {
@@ -78,7 +104,7 @@ const defaultReplaySuiteJson = JSON.stringify({
 }, null, 2);
 
 function formatTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString('zh-CN') : '-';
+  return value ? formatDateTime(value, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '-';
 }
 
 function parseJsonObject(value?: string | null): Record<string, unknown> {
@@ -111,15 +137,15 @@ function idText(value?: string | number | null) {
 }
 
 function numberText(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '-';
+  return typeof value === 'number' && Number.isFinite(value) ? formatNumber(value, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false }) : '-';
 }
 
 function integerText(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? String(Math.round(value)) : '-';
+  return typeof value === 'number' && Number.isFinite(value) ? formatNumber(Math.round(value), { useGrouping: false }) : '-';
 }
 
 function signedNumberText(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '-';
+  return typeof value === 'number' && Number.isFinite(value) ? formatNumber(value, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false }) : '-';
 }
 
 function trialInfo(record: EvolutionProposal) {
@@ -141,12 +167,15 @@ function trialInfo(record: EvolutionProposal) {
 }
 
 export function EvolutionPage() {
+  const { t } = useTranslation('evolution');
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
   const [deltaOpen, setDeltaOpen] = useState(false);
   const [replayProposal, setReplayProposal] = useState<EvolutionProposal | null>(null);
   const [deltaForm] = Form.useForm();
   const [replayForm] = Form.useForm();
+  useLocalizedValidation(deltaForm, deltaOpen);
+  useLocalizedValidation(replayForm, Boolean(replayProposal));
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['evolution-overview'],
@@ -176,7 +205,7 @@ export function EvolutionPage() {
       if (action === 'reject') await rejectProposal(proposal.id, 'Rejected from evolution console');
     },
     onSuccess: () => {
-      message.success('操作已提交');
+      message.success(i18n.t('evolution:messages.actionSubmitted'));
       invalidate();
     },
     onError: (error: Error) => message.error(error.message),
@@ -186,7 +215,7 @@ export function EvolutionPage() {
     mutationFn: async ({ proposal, replaySuiteJson }: { proposal: EvolutionProposal; replaySuiteJson: string }) =>
       executeReplay(proposal.id, replaySuiteJson),
     onSuccess: () => {
-      message.success('Replay 已记录');
+      message.success(i18n.t('evolution:messages.replayRecorded'));
       setReplayProposal(null);
       invalidate();
     },
@@ -197,8 +226,8 @@ export function EvolutionPage() {
     mutationFn: orchestrateEvolution,
     onSuccess: (result) => {
       message.success(result.proposalId
-        ? `已进入 Trial #${result.proposalId}`
-        : `已提交：${result.action || 'NO_TRIGGER'}`);
+        ? i18n.t('evolution:messages.enteredTrial', { id: result.proposalId })
+        : i18n.t('evolution:messages.submitted', { action: result.action || 'NO_TRIGGER' }));
       setDeltaOpen(false);
       invalidate();
     },
@@ -210,32 +239,32 @@ export function EvolutionPage() {
   const manifestCards = manifest?.cards ?? [];
 
   const proposalColumns = useMemo<ColumnsType<EvolutionProposal>>(() => [
-    { title: 'ID', dataIndex: 'id', width: 80, render: idText },
+    { title: t('columns.id'), dataIndex: 'id', width: 80, render: idText },
     {
-      title: '资产',
+      title: t('columns.asset'),
       dataIndex: 'assetType',
       width: 150,
       render: (assetType: string, record) => (
         <Space size={4}>
-          <Tag>{assetType}</Tag>
+          <Tag color="default">{codeLabel(assetType, codeKeys.asset)}</Tag>
           <Text type="secondary">#{idText(record.assetId)}</Text>
         </Space>
       ),
     },
     {
-      title: '状态',
+      title: t('columns.status'),
       dataIndex: 'status',
       width: 140,
-      render: (status: string) => <Tag color={statusColor[status] || 'default'}>{status}</Tag>,
+      render: (status: string) => <Tag color={codeColor(statusColor, status)}>{codeLabel(status, codeKeys.status)}</Tag>,
     },
-    { title: '触发', dataIndex: 'triggerType', width: 140 },
-    { title: 'Action', dataIndex: 'policyJson', width: 120, render: (_, record) => <Tag>{policyAction(record)}</Tag> },
+    { title: t('columns.trigger'), dataIndex: 'triggerType', width: 140 },
+    { title: t('columns.action'), dataIndex: 'policyJson', width: 120, render: (_, record) => <Tag>{policyAction(record)}</Tag> },
     {
-      title: 'Policy', dataIndex: 'policyJson', width: 180, ellipsis: { showTitle: false },
+      title: t('columns.policy'), dataIndex: 'policyJson', width: 180, ellipsis: { showTitle: false },
       render: (_, record) => { const reason = policyReason(record); return <EllipsisText tooltip={reason}>{reason}</EllipsisText>; },
     },
     {
-      title: 'Trial',
+      title: t('columns.trial'),
       dataIndex: 'trialJson',
       width: 260,
       render: (_, record) => {
@@ -244,13 +273,13 @@ export function EvolutionPage() {
         return (
           <Space direction="vertical" size={0}>
             <Text>{info.taskPatternKey}</Text>
-            <Tag color={statusColor[record.status] || 'default'}>{info.decision}</Tag>
+            <Tag color={codeColor(statusColor, record.status)}>{codeLabel(info.decision, codeKeys.decision)}</Tag>
             <Text type="secondary">
-              {`baseline ${numberText(info.baselineMean)} / candidate ${numberText(info.candidateMean)} · N=${integerText(info.candidateN)}`}
+              {t('trial.posterior', { baseline: numberText(info.baselineMean), candidate: numberText(info.candidateMean), samples: integerText(info.candidateN) })}
             </Text>
             {(typeof info.pWin === 'number' || typeof info.pLose === 'number' || typeof info.expectedLift === 'number') && (
               <Text type="secondary">
-                {`pWin ${numberText(info.pWin)} / pLose ${numberText(info.pLose)} · lift ${signedNumberText(info.expectedLift)}`}
+                {t('trial.probability', { win: numberText(info.pWin), lose: numberText(info.pLose), lift: signedNumberText(info.expectedLift) })}
               </Text>
             )}
           </Space>
@@ -258,12 +287,12 @@ export function EvolutionPage() {
       },
     },
     {
-      title: '候选摘要', dataIndex: 'candidatePatchJson', ellipsis: { showTitle: false },
+      title: t('columns.candidateSummary'), dataIndex: 'candidatePatchJson', ellipsis: { showTitle: false },
       render: (_, record) => { const title = patchTitle(record); return <EllipsisText tooltip={title}>{title}</EllipsisText>; },
     },
-    { title: '创建时间', dataIndex: 'gmtCreate', width: 170, render: formatTime },
+    { title: t('columns.createdAt'), dataIndex: 'gmtCreate', width: 170, render: formatTime },
     {
-      title: '操作',
+      title: t('columns.actions'),
       key: 'actions',
       fixed: 'right',
       width: 300,
@@ -272,110 +301,112 @@ export function EvolutionPage() {
           {record.status === 'PROPOSED' && (
             <Button size="small" onClick={() => accessCommand(
               'READ_WRITE',
-              '验证进化候选',
+              t('commands.validate'),
               () => actionMutation.mutate({ action: 'validate', proposal: record }),
-            )}>Validate</Button>
+            )}>{t('actions.validate')}</Button>
           )}
           {record.status === 'VALIDATED' && (
-            <Button size="small" onClick={() => accessCommand('READ_WRITE', '记录进化 Replay', () => {
+            <Button size="small" onClick={() => accessCommand('READ_WRITE', t('commands.replay'), () => {
               setReplayProposal(record);
               replayForm.setFieldsValue({ replaySuiteJson: defaultReplaySuiteJson });
-            })}>Replay</Button>
+            })}>{t('actions.replay')}</Button>
           )}
           {record.status === 'TRIAL' && (
             <>
-              <Button size="small" onClick={() => accessCommand('READ_WRITE', '记录进化试验通过', () =>
-                actionMutation.mutate({ action: 'trial-pass', proposal: record }))}>Trial Pass</Button>
-              <Button size="small" onClick={() => accessCommand('READ_WRITE', '记录进化试验失败', () =>
-                actionMutation.mutate({ action: 'trial-fail', proposal: record }))}>Trial Fail</Button>
-              <Button size="small" type="primary" onClick={() => accessCommand('READ_WRITE', '决策进化试验', () =>
-                actionMutation.mutate({ action: 'trial-decide', proposal: record }))}>Decide</Button>
+              <Button size="small" onClick={() => accessCommand('READ_WRITE', t('commands.trialPass'), () =>
+                actionMutation.mutate({ action: 'trial-pass', proposal: record }))}>{t('actions.trialPass')}</Button>
+              <Button size="small" onClick={() => accessCommand('READ_WRITE', t('commands.trialFail'), () =>
+                actionMutation.mutate({ action: 'trial-fail', proposal: record }))}>{t('actions.trialFail')}</Button>
+              <Button size="small" type="primary" onClick={() => accessCommand('READ_WRITE', t('commands.decide'), () =>
+                actionMutation.mutate({ action: 'trial-decide', proposal: record }))}>{t('actions.decide')}</Button>
             </>
           )}
           {record.status === 'REPLAY_PASSED' && (
             <>
-              <Button size="small" onClick={() => accessCommand('READ_WRITE', '批准进化候选', () =>
-                actionMutation.mutate({ action: 'approve', proposal: record }))}>Approve</Button>
-              <Button size="small" type="primary" onClick={() => accessCommand('READ_WRITE', '发布数字员工进化', () =>
-                actionMutation.mutate({ action: 'agent-release', proposal: record }))}>Agent 发布</Button>
+              <Button size="small" onClick={() => accessCommand('READ_WRITE', t('commands.approve'), () =>
+                actionMutation.mutate({ action: 'approve', proposal: record }))}>{t('actions.approve')}</Button>
+              <Button size="small" type="primary" onClick={() => accessCommand('READ_WRITE', t('commands.agentRelease'), () =>
+                actionMutation.mutate({ action: 'agent-release', proposal: record }))}>{t('actions.agentRelease')}</Button>
             </>
           )}
           {record.status === 'APPROVED' && (
-            <Button size="small" type="primary" onClick={() => accessCommand('READ_WRITE', '发布进化候选', () =>
-              actionMutation.mutate({ action: 'release', proposal: record }))}>Release</Button>
+            <Button size="small" type="primary" onClick={() => accessCommand('READ_WRITE', t('commands.release'), () =>
+              actionMutation.mutate({ action: 'release', proposal: record }))}>{t('actions.release')}</Button>
           )}
           {record.status === 'RELEASED' && (
-            <Popconfirm title="确认回滚该发布？" onConfirm={() => accessCommand('READ_WRITE', '回滚进化发布', () =>
+            <Popconfirm icon={<QuestionCircleOutlined aria-hidden />} okText={t('actions.confirm')} cancelText={t('actions.cancel')} title={t('confirm.rollback')} onConfirm={() => accessCommand('READ_WRITE', t('commands.rollback'), () =>
               actionMutation.mutate({ action: 'rollback', proposal: record }))}>
-              <Button size="small" danger>Rollback</Button>
+              <Button size="small" danger>{t('actions.rollback')}</Button>
             </Popconfirm>
           )}
           {!['RELEASED', 'REJECTED'].includes(record.status) && (
-            <Popconfirm title="确认拒绝该候选？" onConfirm={() => accessCommand('READ_WRITE', '拒绝进化候选', () =>
+            <Popconfirm icon={<QuestionCircleOutlined aria-hidden />} okText={t('actions.confirm')} cancelText={t('actions.cancel')} title={t('confirm.reject')} onConfirm={() => accessCommand('READ_WRITE', t('commands.reject'), () =>
               actionMutation.mutate({ action: 'reject', proposal: record }))}>
-              <Button size="small" danger>Reject</Button>
+              <Button size="small" danger>{t('actions.reject')}</Button>
             </Popconfirm>
           )}
         </Space>
       ),
     },
-  ], [accessCommand, actionMutation, replayForm]);
+  ], [accessCommand, actionMutation, replayForm, t]);
 
   const evidenceColumns: ColumnsType<EvolutionEvidence> = [
-    { title: 'ID', dataIndex: 'id', width: 80, render: idText },
-    { title: '资产', dataIndex: 'assetType', width: 130, render: (v, r) => `${v} #${idText(r.assetId)}` },
-    { title: 'Posterior', dataIndex: 'posteriorType', width: 120 },
-    { title: 'Context', dataIndex: 'contextKey', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v ?? '-'}</EllipsisText> },
-    { title: 'Source', dataIndex: 'sourceType', width: 140 },
-    { title: 'Source Ref', dataIndex: 'sourceRef', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v ?? '-'}</EllipsisText> },
-    { title: 'Outcome', dataIndex: 'outcome', width: 120, render: (v: string) => <Tag color={verdictColor[v] || 'default'}>{v || '-'}</Tag> },
-    { title: 'Mean', dataIndex: 'posteriorMean', width: 90, render: (v: number | null) => v == null ? '-' : v.toFixed(2) },
-    { title: 'N', dataIndex: 'effectiveSampleSize', width: 70 },
-    { title: '时间', dataIndex: 'gmtCreate', width: 170, render: formatTime },
+    { title: t('columns.id'), dataIndex: 'id', width: 80, render: idText },
+    { title: t('columns.asset'), dataIndex: 'assetType', width: 130, render: (v, r) => `${codeLabel(v, codeKeys.asset)} #${idText(r.assetId)}` },
+    { title: t('columns.posterior'), dataIndex: 'posteriorType', width: 120 },
+    { title: t('columns.context'), dataIndex: 'contextKey', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v ?? '-'}</EllipsisText> },
+    { title: t('columns.source'), dataIndex: 'sourceType', width: 140 },
+    { title: t('columns.sourceRef'), dataIndex: 'sourceRef', width: 180, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v ?? '-'}</EllipsisText> },
+    { title: t('columns.outcome'), dataIndex: 'outcome', width: 120, render: (v: string) => <Tag color={codeColor(verdictColor, v)}>{codeLabel(v || '-', codeKeys.verdict)}</Tag> },
+    { title: t('columns.mean'), dataIndex: 'posteriorMean', width: 90, render: (v: number | null) => v == null ? '-' : formatNumber(v, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false }) },
+    { title: t('columns.sampleSize'), dataIndex: 'effectiveSampleSize', width: 70 },
+    { title: t('columns.time'), dataIndex: 'gmtCreate', width: 170, render: formatTime },
   ];
 
   const manifestColumns: ColumnsType<EvolutionAssetManifestCard> = [
     {
-      title: '资产',
+      title: t('columns.asset'),
       dataIndex: 'assetType',
       width: 150,
       render: (assetType: string, record) => (
         <Space size={4}>
-          <Tag>{assetType}</Tag>
+          <Tag color="default">{codeLabel(assetType, codeKeys.asset)}</Tag>
           <Text type="secondary">#{idText(record.assetId)}</Text>
         </Space>
       ),
     },
-    { title: '名称', dataIndex: 'name', align: 'left', width: 220, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
-    { title: '分类', dataIndex: 'category', width: 150, render: idText },
-    { title: '触发提示', dataIndex: 'triggerHint', ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
-    { title: 'Lazy Load Ref', dataIndex: 'lazyLoadRef', width: 260, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
-    { title: 'Mean', dataIndex: 'posteriorMean', width: 90, render: (v: number | null) => v == null ? '-' : v.toFixed(2) },
-    { title: 'N', dataIndex: 'effectiveSampleSize', width: 70, render: idText },
+    { title: t('columns.name'), dataIndex: 'name', align: 'left', width: 220, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
+    { title: t('columns.category'), dataIndex: 'category', width: 150, render: idText },
+    { title: t('columns.triggerHint'), dataIndex: 'triggerHint', ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
+    { title: t('columns.lazyLoadRef'), dataIndex: 'lazyLoadRef', width: 260, ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{idText(v)}</EllipsisText> },
+    { title: t('columns.mean'), dataIndex: 'posteriorMean', width: 90, render: (v: number | null) => v == null ? '-' : formatNumber(v, { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false }) },
+    { title: t('columns.sampleSize'), dataIndex: 'effectiveSampleSize', width: 70, render: idText },
   ];
 
   const submitDelta = async () => {
-    const values = await deltaForm.validateFields();
+    const values = await deltaForm.validateFields().catch(() => null);
+    if (!values) return;
     let payload: unknown;
     try {
       payload = JSON.parse(values.deltaJson);
     } catch {
-      message.error('Delta JSON 不是合法 JSON');
+      message.error(i18n.t('evolution:messages.invalidDelta'));
       return;
     }
-    accessCommand('READ_WRITE', '提交进化 Delta', () => orchestrateMutation.mutate(payload));
+    accessCommand('READ_WRITE', i18n.t('evolution:commands.submitDelta'), () => orchestrateMutation.mutate(payload));
   };
 
   const submitReplay = async () => {
     if (!replayProposal) return;
-    const values = await replayForm.validateFields();
+    const values = await replayForm.validateFields().catch(() => null);
+    if (!values) return;
     try {
       JSON.parse(values.replaySuiteJson);
     } catch {
-      message.error('Replay JSON 不是合法 JSON');
+      message.error(i18n.t('evolution:messages.invalidReplay'));
       return;
     }
-    accessCommand('READ_WRITE', '记录进化 Replay', () => {
+    accessCommand('READ_WRITE', i18n.t('evolution:commands.replay'), () => {
       replayMutation.mutate({ proposal: replayProposal, replaySuiteJson: values.replaySuiteJson });
     });
   };
@@ -383,18 +414,18 @@ export function EvolutionPage() {
   return (
     <>
       <Card
-        className="aw-content-card" title={<PageHeading title="自进化" />}
+        className="aw-content-card" title={<PageHeading title={t('pageTitle')} />}
         extra={
           <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => {
+            <Button icon={<ReloadOutlined aria-hidden />} onClick={() => {
               refetch();
               refetchManifest();
-            }}>刷新</Button>
-            <Button type="primary" icon={<ApiOutlined />}
-              onClick={() => accessCommand('READ_WRITE', '提交进化 Delta', () => {
+            }}>{t('actions.refresh')}</Button>
+            <Button type="primary" icon={<ApiOutlined aria-hidden />}
+              onClick={() => accessCommand('READ_WRITE', t('commands.submitDelta'), () => {
                 deltaForm.setFieldsValue({ deltaJson: defaultDeltaJson });
                 setDeltaOpen(true);
-              })}>提交 Delta</Button>
+              })}>{t('actions.submitDelta')}</Button>
           </Space>
         }
       >
@@ -402,7 +433,7 @@ export function EvolutionPage() {
           items={[
             {
               key: 'proposals',
-              label: `Proposal Inbox (${proposals.length})`,
+              label: t('tabs.proposals', { count: proposals.length }),
               children: (
                 <Table
                   rowKey="id"
@@ -416,12 +447,12 @@ export function EvolutionPage() {
             },
             {
               key: 'evidence',
-              label: `Audit Evidence (${evidence.length})`,
+              label: t('tabs.evidence', { count: evidence.length }),
               children: <Table rowKey="id" columns={evidenceColumns} dataSource={evidence} loading={isLoading} pagination={false} scroll={{ x: 1180 }} />,
             },
             {
               key: 'manifest',
-              label: `Asset Manifest (${manifestCards.length})`,
+              label: t('tabs.manifest', { count: manifestCards.length }),
               children: (
                 <Table
                   rowKey={(record) => `${record.assetType}:${idText(record.assetId)}`}
@@ -438,35 +469,41 @@ export function EvolutionPage() {
       </Card>
 
       <Modal
-        title="提交 Worker Delta"
+        title={t('forms.deltaTitle')}
         open={deltaOpen}
         onCancel={() => setDeltaOpen(false)}
         onOk={submitDelta}
-        okText="提交"
+        okText={t('actions.submit')}
         confirmLoading={orchestrateMutation.isPending}
         width={820}
+        cancelText={t('actions.cancel')}
+        closable={{ 'aria-label': t('actions.close') }}
+        closeIcon={<CloseOutlined aria-hidden />}
         destroyOnHidden
       >
         <Form form={deltaForm} layout="vertical" preserve={false}>
-          <Form.Item name="deltaJson" label="Delta JSON" rules={[{ required: true, message: '请输入 delta JSON' }]}>
-            <Input.TextArea aria-label="Delta JSON" rows={18} />
+          <Form.Item name="deltaJson" label={t('forms.deltaJson')} rules={[{ required: true, message: t('forms.deltaRequired') }]}>
+            <Input.TextArea aria-label={t('forms.deltaJson')} rows={18} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={`记录 Replay #${idText(replayProposal?.id)}`}
+        title={t('forms.replayTitle', { id: idText(replayProposal?.id) })}
         open={!!replayProposal}
         onCancel={() => setReplayProposal(null)}
         onOk={submitReplay}
-        okText="记录"
+        okText={t('actions.record')}
         confirmLoading={replayMutation.isPending}
         width={720}
+        cancelText={t('actions.cancel')}
+        closable={{ 'aria-label': t('actions.close') }}
+        closeIcon={<CloseOutlined aria-hidden />}
         destroyOnHidden
       >
         <Form form={replayForm} layout="vertical" preserve={false}>
-          <Form.Item name="replaySuiteJson" label="Replay JSON" rules={[{ required: true, message: '请输入 replay JSON' }]}>
-            <Input.TextArea aria-label="Replay JSON" rows={10} />
+          <Form.Item name="replaySuiteJson" label={t('forms.replayJson')} rules={[{ required: true, message: t('forms.replayRequired') }]}>
+            <Input.TextArea aria-label={t('forms.replayJson')} rows={10} />
           </Form.Item>
         </Form>
       </Modal>

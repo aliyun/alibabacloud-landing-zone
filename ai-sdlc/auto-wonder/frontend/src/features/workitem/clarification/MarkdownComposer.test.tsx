@@ -166,4 +166,122 @@ describe('MarkdownComposer', () => {
     };
     expect(editorEl.__composerEditor!.getText()).toBe('');
   });
+
+  function invokePaste(editor: import('@tiptap/core').Editor, clipboardData: unknown) {
+    const view = editor.view;
+    let result: boolean | undefined;
+    view.someProp('handlePaste', (handler) => {
+      result = handler(view, { clipboardData } as unknown as ClipboardEvent, null as never) === true;
+      return true;
+    });
+    return result;
+  }
+
+  function invokeDrop(
+    editor: import('@tiptap/core').Editor,
+    dataTransfer: unknown,
+    moved = false,
+  ) {
+    const view = editor.view;
+    let result: boolean | undefined;
+    view.someProp('handleDrop', (handler) => {
+      result = handler(view, { dataTransfer } as unknown as DragEvent, null as never, moved) === true;
+      return true;
+    });
+    return result;
+  }
+
+  function clipboardWith(files: File[], text = '') {
+    return {
+      files,
+      items: files.map((file) => ({ kind: 'file', getAsFile: () => file })),
+      getData: () => text,
+    };
+  }
+
+  it('hands pasted images to the parent and renames them for de-duplication', async () => {
+    const onFiles = vi.fn();
+    render(<MarkdownComposer value="" onChange={() => {}} onSendKey={() => {}} onFiles={onFiles}
+      sendMode="shift-enter" height={null} />);
+    const root = screen.getByTestId('clarification-composer-input') as HTMLElement & {
+      __composerEditor?: import('@tiptap/core').Editor;
+    };
+    const editor = root.__composerEditor!;
+
+    const handled = invokePaste(editor, clipboardWith([
+      new File(['img'], 'image.png', { type: 'image/png' }),
+    ]));
+
+    expect(handled).toBe(true);
+    expect(onFiles).toHaveBeenCalledTimes(1);
+    const files = onFiles.mock.calls[0][0] as File[];
+    expect(files).toHaveLength(1);
+    expect(files[0].type).toBe('image/png');
+    expect(files[0].name).not.toBe('image.png');
+    expect(files[0].name.endsWith('.png')).toBe(true);
+  });
+
+  it('keeps pasted text when the clipboard carries both text and files', async () => {
+    const onFiles = vi.fn();
+    render(<MarkdownComposer value="" onChange={() => {}} onSendKey={() => {}} onFiles={onFiles}
+      sendMode="shift-enter" height={null} />);
+    const root = screen.getByTestId('clarification-composer-input') as HTMLElement & {
+      __composerEditor?: import('@tiptap/core').Editor;
+    };
+
+    const handled = invokePaste(root.__composerEditor!, clipboardWith([
+      new File(['doc'], 'notes.pdf', { type: 'application/pdf' }),
+    ], '同时粘贴的文本'));
+
+    expect(handled).toBe(false);
+    expect(onFiles).toHaveBeenCalledTimes(1);
+    expect((onFiles.mock.calls[0][0] as File[])[0].name).toBe('notes.pdf');
+  });
+
+  it('ignores paste and drop while disabled', async () => {
+    const onFiles = vi.fn();
+    render(<MarkdownComposer value="" onChange={() => {}} onSendKey={() => {}} onFiles={onFiles}
+      sendMode="shift-enter" height={null} disabled />);
+    const root = screen.getByTestId('clarification-composer-input') as HTMLElement & {
+      __composerEditor?: import('@tiptap/core').Editor;
+    };
+
+    expect(invokePaste(root.__composerEditor!, clipboardWith([
+      new File(['img'], 'image.png', { type: 'image/png' }),
+    ]))).toBe(false);
+    expect(invokeDrop(root.__composerEditor!, {
+      types: ['Files'], files: [new File(['pdf'], 'a.pdf')],
+    })).toBe(false);
+    expect(onFiles).not.toHaveBeenCalled();
+  });
+
+  it('forwards dropped files and directories, but ignores text drags', async () => {
+    const onFiles = vi.fn();
+    render(<MarkdownComposer value="" onChange={() => {}} onSendKey={() => {}} onFiles={onFiles}
+      sendMode="shift-enter" height={null} />);
+    const root = screen.getByTestId('clarification-composer-input') as HTMLElement & {
+      __composerEditor?: import('@tiptap/core').Editor;
+    };
+    const editor = root.__composerEditor!;
+
+    expect(invokeDrop(editor, { types: ['text/plain'], files: [] })).toBe(false);
+    expect(onFiles).not.toHaveBeenCalled();
+
+    const dropped = new File(['pdf'], 'dropped.pdf', { type: 'application/pdf' });
+    expect(invokeDrop(editor, {
+      types: ['Files'],
+      files: [dropped],
+      items: [{ kind: 'file', getAsFile: () => dropped, webkitGetAsEntry: () => ({ isDirectory: false }) }],
+    })).toBe(true);
+    expect(onFiles).toHaveBeenLastCalledWith([dropped], { containsDirectory: false });
+
+    expect(invokeDrop(editor, {
+      types: ['Files'],
+      files: [],
+      items: [{ kind: 'file', getAsFile: () => null, webkitGetAsEntry: () => ({ isDirectory: true }) }],
+    })).toBe(true);
+    expect(onFiles).toHaveBeenLastCalledWith([], { containsDirectory: true });
+
+    expect(invokeDrop(editor, { types: ['Files'], files: [dropped] }, true)).toBe(false);
+  });
 });

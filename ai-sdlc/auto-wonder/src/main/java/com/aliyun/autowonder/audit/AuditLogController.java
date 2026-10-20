@@ -14,7 +14,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/audit-logs")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看审计日志")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看审计日志", actionKey = "access.action.view_audit_logs")
 public class AuditLogController {
 
     private final AuditLogService auditLogService;

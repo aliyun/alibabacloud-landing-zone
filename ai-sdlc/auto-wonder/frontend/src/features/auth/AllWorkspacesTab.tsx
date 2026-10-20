@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Empty, Input, Modal, Pagination, Spin, Typography, message } from 'antd';
 import { ArrowRightOutlined, DeleteOutlined, EditOutlined, LoadingOutlined } from '@ant-design/icons';
@@ -26,6 +28,7 @@ const BORDER_COLOR = 'var(--aw-border)';
 const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
 
 export function AllWorkspacesTab() {
+  const { t } = useTranslation('auth');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   // Only the id is kept, never a snapshot of the item: the live row is re-derived from
@@ -98,9 +101,9 @@ export function AllWorkspacesTab() {
   useEffect(() => {
     if (targetChangedStatus) {
       setModalTargetId(null);
-      message.info('该工作空间的加入状态已更新，请重新确认');
+      message.info(i18n.t('auth:workspace.membershipChanged'));
     }
-  }, [targetChangedStatus]);
+  }, [targetChangedStatus, t]);
 
   const handleKeywordChange = (value: string) => {
     setKeyword(value);
@@ -122,16 +125,16 @@ export function AllWorkspacesTab() {
     const requestId = cancelTarget?.pendingRequestId;
     if (!cancelTarget || requestId == null) {
       setCancelTargetId(null);
-      message.info('该申请的状态已更新，请重新确认');
+      message.info(i18n.t('auth:workspace.requestChanged'));
       return;
     }
     try {
       await cancelMutateAsync({ workspaceId: cancelTarget.id, requestId });
-      message.success('申请已撤销，可随时再次申请');
+      message.success(i18n.t('auth:workspace.requestCancelled'));
       setCancelTargetId(null);
     } catch (e) {
       // Business errors (无权限/状态已变化/记录不存在) surface via ApiError.message.
-      message.error(e instanceof ApiError ? e.message : '撤销失败，请稍后重试');
+      message.error(e instanceof ApiError ? e.message : i18n.t('auth:workspace.cancelFailed'));
     }
   };
 
@@ -172,15 +175,15 @@ export function AllWorkspacesTab() {
     <div>
       <div style={toolbarStyle}>
         <Input
-          aria-label="搜索工作空间"
-          placeholder="搜索工作空间名称或描述"
+          aria-label={t('workspace.search')}
+          placeholder={t('workspace.searchPlaceholder')}
           allowClear
           value={keyword}
           onChange={(event) => handleKeywordChange(event.target.value)}
           style={{ maxWidth: 320 }}
         />
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: 'var(--aw-muted)' }}>共 {total} 个工作空间</Text>
+          <Text style={{ color: 'var(--aw-muted)' }}>{t('workspace.count', { count: total })}</Text>
           {refetching && <LoadingOutlined data-testid="all-workspaces-refetching" style={{ color: ACCENT_COLOR }} />}
         </div>
       </div>
@@ -193,8 +196,8 @@ export function AllWorkspacesTab() {
         <div data-testid="all-workspaces-empty" style={emptyStateStyle}>
           <Empty
             description={debouncedKeyword.trim()
-              ? `没有匹配「${debouncedKeyword.trim()}」的工作空间`
-              : '平台上还没有任何工作空间'}
+              ? t('workspace.noMatches', { keyword: debouncedKeyword.trim() })
+              : t('workspace.empty')}
           />
         </div>
       ) : (
@@ -244,10 +247,10 @@ export function AllWorkspacesTab() {
       />
 
       <Modal
-        title="撤销申请"
+        title={t('workspace.withdraw')}
         open={cancelTarget !== null}
-        okText="确认撤销"
-        cancelText="返回"
+        okText={t('workspace.confirmWithdraw')}
+        cancelText={t('action.back')}
         okButtonProps={{ danger: true }}
         confirmLoading={cancelling}
         onCancel={() => setCancelTargetId(null)}
@@ -255,7 +258,7 @@ export function AllWorkspacesTab() {
         destroyOnHidden
       >
         <Text>
-          确定撤销加入「{cancelTarget?.name}」的申请吗？撤销后申请记录将被删除，你可以随时再次申请。
+          {t('workspace.withdrawDescription', { name: cancelTarget?.name })}
         </Text>
       </Modal>
     </div>
@@ -285,6 +288,7 @@ function WorkspaceDiscoveryCard({
   onEdit,
   onDelete,
 }: WorkspaceDiscoveryCardProps) {
+  const { t } = useTranslation('auth');
   const isMember = workspace.membershipStatus === 'MEMBER';
   // canManage comes from the server (owner, workspace ADMIN, or platform admin), so a
   // platform admin that never joined this workspace still gets enter/edit/delete entry
@@ -318,11 +322,11 @@ function WorkspaceDiscoveryCard({
 
   const description = (
     <>
-      {workspace.membershipStatus === 'PENDING' && <span style={pendingBadgeStyle}>审批中</span>}
-      {workspace.membershipStatus === 'NOT_MEMBER' && <span style={notMemberBadgeStyle}>未加入</span>}
+      {workspace.membershipStatus === 'PENDING' && <span style={pendingBadgeStyle}>{t('workspace.pending')}</span>}
+      {workspace.membershipStatus === 'NOT_MEMBER' && <span style={notMemberBadgeStyle}>{t('workspace.notMember')}</span>}
       <span style={markStyle}>{getWorkspaceInitial(workspace.name)}</span>
       <EllipsisText tooltip={workspace.name} style={nameStyle}>{workspace.name}</EllipsisText>
-      <EllipsisText tooltip={workspace.description || '暂无描述'} lines={2} style={descStyle}>{workspace.description || '暂无描述'}</EllipsisText>
+      <EllipsisText tooltip={workspace.description || t('workspace.noDescription')} lines={2} style={descStyle}>{workspace.description || t('workspace.noDescription')}</EllipsisText>
     </>
   );
   // F7.5: the fade covers the descriptive half only, and only for cards the user cannot
@@ -340,8 +344,8 @@ function WorkspaceDiscoveryCard({
           // otherwise carried only by badge *absence* and opacity — both purely visual.
           // Folding 已加入 into the accessible name is what makes status non-visual.
           aria-label={switching
-            ? `正在进入工作空间 ${workspace.name}${isMember ? '（已加入）' : ''}`
-            : `进入工作空间 ${workspace.name}${isMember ? '（已加入）' : ''}`}
+            ? t(isMember ? 'workspace.enteringMember' : 'workspace.enteringName', { name: workspace.name })
+            : t(isMember ? 'workspace.enterMember' : 'workspace.enterName', { name: workspace.name })}
           aria-busy={switching}
           // Blocked by any in-flight switch, not just this card's: two racing successful
           // switches would pair one workspace's token with another's currentWorkspace.
@@ -351,12 +355,10 @@ function WorkspaceDiscoveryCard({
           {body}
           <span style={actionStyle}>
             {switching ? (
-              <>
-                正在进入 <LoadingOutlined />
+              <>{t('workspace.entering')}<LoadingOutlined />
               </>
             ) : (
-              <>
-                进入工作空间 <ArrowRightOutlined />
+              <>{t('workspace.enter')}<ArrowRightOutlined />
               </>
             )}
           </span>
@@ -369,7 +371,7 @@ function WorkspaceDiscoveryCard({
               type="button"
               className="aw-card-manage-button"
               data-testid={`all-workspace-edit-${workspace.id}`}
-              aria-label={`编辑工作空间 ${workspace.name}`}
+              aria-label={t('workspace.editName', { name: workspace.name })}
               onClick={() => onEdit(workspace)}
             >
               <EditOutlined />
@@ -378,7 +380,7 @@ function WorkspaceDiscoveryCard({
               type="button"
               className="aw-card-manage-button aw-card-manage-button--danger"
               data-testid={`all-workspace-delete-${workspace.id}`}
-              aria-label={`删除工作空间 ${workspace.name}`}
+              aria-label={t('workspace.deleteName', { name: workspace.name })}
               onClick={() => onDelete(workspace)}
             >
               <DeleteOutlined />
@@ -403,19 +405,15 @@ function WorkspaceDiscoveryCard({
           className="aw-apply-access-button"
           data-testid={`apply-access-${workspace.id}`}
           onClick={() => onApply(workspace)}
-        >
-          申请权限
-        </button>
+        >{t('workspace.requestAccess')}</button>
       ) : (
         <div style={pendingActionStyle}>
-          <span style={{ color: 'var(--aw-muted)' }}>申请审批中</span>
+          <span style={{ color: 'var(--aw-muted)' }}>{t('workspace.requestPending')}</span>
           <button
             type="button"
             style={cancelButtonStyle}
             onClick={() => onCancelRequest(workspace)}
-          >
-            撤销申请
-          </button>
+          >{t('workspace.withdraw')}</button>
         </div>
       )}
     </div>
@@ -423,7 +421,7 @@ function WorkspaceDiscoveryCard({
 }
 
 function getWorkspaceInitial(name: string) {
-  return name.trim().slice(0, 2).toUpperCase() || 'WORKSPACE';
+  return name.trim().slice(0, 2).toUpperCase() || i18n.t('auth:workspace.emptyName');
 }
 
 const cardManageAreaStyle: CSSProperties = {

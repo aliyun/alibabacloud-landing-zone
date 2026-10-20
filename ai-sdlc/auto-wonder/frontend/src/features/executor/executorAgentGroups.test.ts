@@ -1,8 +1,9 @@
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect } from 'vitest';
 import {
   buildExecutorAgentGroups,
   UNKNOWN_AGENT_GROUP_KEY,
-  UNKNOWN_AGENT_LABEL,
+  unknownAgentLabel,
 } from './executorAgentGroups';
 import type { ExecutorVO } from './api';
 
@@ -15,6 +16,7 @@ function executor(overrides: Partial<ExecutorVO> = {}): ExecutorVO {
     status: 'OFFLINE',
     clientKind: 'QODER_CLI',
     lastConnectIp: null,
+    lastConnectHostname: null,
     lastHeartbeat: null,
     gmtCreate: '2026-09-01T00:00:00Z',
     ...overrides,
@@ -108,7 +110,7 @@ describe('buildExecutorAgentGroups', () => {
       executor({ id: 3, agentId: 20, agentName: null, name: 'orphan-2' }),
     ], plainLabel);
 
-    expect(groups.map((group) => group.label)).toEqual(['Beta', UNKNOWN_AGENT_LABEL]);
+    expect(groups.map((group) => group.label)).toEqual(['Beta', '未知 Agent']);
     const unknown = groups[1];
     expect(unknown.key).toBe(UNKNOWN_AGENT_GROUP_KEY);
     expect(unknown.agentId).toBeNull();
@@ -123,6 +125,16 @@ describe('buildExecutorAgentGroups', () => {
     ], plainLabel);
 
     expect(groups.map((group) => group.key)).toEqual(['agent-20', UNKNOWN_AGENT_GROUP_KEY]);
-    expect(groups[1].label).toBe(UNKNOWN_AGENT_LABEL);
+    expect(groups[1].label).toBe('未知 Agent');
   });
+});
+
+it('refreshes unknown-agent text and preserves group identity for prototype status codes', async () => {
+  await i18n.changeLanguage('en-US');
+  const [group] = buildExecutorAgentGroups([executor({ agentName: null, status: '__proto__' })], plainLabel);
+  expect(unknownAgentLabel()).toBe('Unknown Agent');
+  expect(group.label).toBe('Unknown Agent');
+  expect(group.key).toBe('unknown-agent');
+  expect(group.statusSummary).toEqual({ online: 0, busy: 0, offline: 0 });
+  await i18n.changeLanguage('zh-CN');
 });

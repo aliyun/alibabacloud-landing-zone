@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 import { Flex, Spin, Typography } from 'antd';
 import type { UseQueryResult } from '@tanstack/react-query';
@@ -26,13 +27,14 @@ export function isScheduledTaskCapabilityQueryReady(query: ScheduledTaskCapabili
 }
 
 export function ScheduledTaskCapabilityGate({ children }: { children: ReactNode }) {
+  const { t } = useTranslation('scheduledTask');
   const capability = useScheduledTaskCapability();
 
   if (capability.isPending || capability.isFetching) {
     return (
       <Flex vertical align="center" justify="center" gap={12} style={{ minHeight: 240 }}>
         <Spin />
-        <Typography.Text type="secondary">正在检查功能可用性…</Typography.Text>
+        <Typography.Text type="secondary">{t('capability.checking')}</Typography.Text>
       </Flex>
     );
   }

@@ -18,6 +18,7 @@ public class ExecutorDO {
     private Date lastStartedAt;
     private String clientKind;
     private String lastConnectIp;
+    private String lastConnectHostname;
     private String launchConfig;   // 启动配置 JSON: {model, reasoningEffort, contextWindow, memoryMode}
     private Integer configVersion; // 启动配置乐观锁版本号
     private Date gmtCreate;

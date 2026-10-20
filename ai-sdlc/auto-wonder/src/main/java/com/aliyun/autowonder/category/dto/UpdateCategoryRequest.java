@@ -41,8 +41,9 @@ public class UpdateCategoryRequest {
     private static Long longOrNull(JsonNode node) {
         if (node == null || node.isNull()) return null;
         if (!node.isIntegralNumber() || !node.canConvertToLong() || node.asLong() <= 0) {
-            throw new com.aliyun.autowonder.common.error.BizException(
-                    com.aliyun.autowonder.common.error.ErrorCode.PARAM_INVALID, "parentId 必须是正整数或 null");
+            throw com.aliyun.autowonder.common.error.BizException.keyed(
+                    com.aliyun.autowonder.common.error.ErrorCode.PARAM_INVALID, "category.parent_id_positive",
+                    new Object[0], "parentId 必须是正整数或 null");
         }
         return node.asLong();
     }

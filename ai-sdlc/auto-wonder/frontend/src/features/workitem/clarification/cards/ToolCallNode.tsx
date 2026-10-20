@@ -1,3 +1,5 @@
+import { formatNumber } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
 import {
   CodeOutlined, FileTextOutlined, EditOutlined, DeleteOutlined,
   SwapOutlined, SearchOutlined, BulbOutlined, CloudDownloadOutlined, ToolOutlined,
@@ -11,6 +13,8 @@ import { CLARIFICATION_THEME } from '../theme';
 interface ToolCallNodeProps {
   tool: TimelineToolCall;
 }
+
+const STATUS_LABEL = { running: 'clarification.toolRunning', completed: 'clarification.toolCompleted', failed: 'clarification.toolFailed' } as const;
 
 const KIND_ICON: Record<AcpToolKind, ReactElement> = {
   execute: <CodeOutlined data-testid="tool-icon-execute" />,
@@ -37,6 +41,7 @@ const SUMMARY_STYLE = {
 };
 
 export function ToolCallNode({ tool }: ToolCallNodeProps) {
+  const { t } = useTranslation('workitem');
   const icon = KIND_ICON[tool.toolKind ?? 'other'] ?? KIND_ICON.other;
   const diffs = tool.diffs ?? [];
 
@@ -59,10 +64,11 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
           {tool.title || tool.tool}
         </Typography.Text>
         <Tag color={statusColor(tool.status)} style={{ marginInlineEnd: 0, fontSize: 13 }}>
-          {tool.status}
+          {Object.prototype.hasOwnProperty.call(STATUS_LABEL, tool.status) ? t(STATUS_LABEL[tool.status as keyof typeof STATUS_LABEL]) : tool.status}
         </Tag>
       </div>
 
+      {tool.durationMs != null && <Typography.Text type="secondary">{t('clarification.toolDuration', { duration: formatNumber(tool.durationMs) })}</Typography.Text>}
       {tool.locations && tool.locations.length > 0 ? (
         <div
           data-testid="tool-locations"
@@ -70,7 +76,7 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
         >
           {tool.locations
             .map((loc) => (loc.line != null ? `${loc.path}:${loc.line}` : loc.path))
-            .join('、')}
+            .join(t('clarification.locationSeparator'))}
         </div>
       ) : null}
 
@@ -140,14 +146,14 @@ export function ToolCallNode({ tool }: ToolCallNodeProps) {
 
       {tool.input ? (
         <details style={{ marginTop: 4 }}>
-          <summary style={SUMMARY_STYLE}>输入</summary>
+          <summary style={SUMMARY_STYLE}>{t('clarification.toolInput')}</summary>
           <pre data-testid="tool-input" style={PRE_STYLE}>{tool.input}</pre>
         </details>
       ) : null}
 
       {tool.output ? (
         <details style={{ marginTop: 4 }}>
-          <summary style={SUMMARY_STYLE}>输出</summary>
+          <summary style={SUMMARY_STYLE}>{t('clarification.toolOutput')}</summary>
           <pre data-testid="tool-output" style={PRE_STYLE}>{tool.output}</pre>
         </details>
       ) : null}

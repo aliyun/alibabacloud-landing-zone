@@ -102,7 +102,7 @@
   font-size: clamp(16px, 2vw, 22px);
 }
 .about-aw-delivery-steps li:last-child .about-aw-delivery-node { color: var(--aw-accent-text); border-color: var(--aw-accent-text); }
-.about-aw-delivery-label { position: absolute; top: calc(100% + 12px); color: var(--aw-muted); font-size: clamp(9px, 1vw, 12px); white-space: nowrap; }
+.about-aw-delivery-label { position: absolute; top: calc(100% + 12px); color: var(--aw-muted); font-size: clamp(9px, 1vw, 12px); max-width: 100%; text-align: center; white-space: normal; overflow-wrap: anywhere; }
 .about-aw-delivery-label--accent { color: var(--aw-accent-text); }
 .about-aw-delivery figcaption {
   position: absolute;

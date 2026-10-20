@@ -1,3 +1,7 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -15,6 +19,10 @@ import {
   message} from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import {
+  CloseOutlined,
+  CloseCircleOutlined,
+  InfoCircleOutlined,
+  ExclamationCircleOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -53,10 +61,11 @@ function errorMessage(error: unknown, fallback: string) {
 
 function formatDate(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? value : formatDateTime(date, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false });
 }
 
 export function EnvironmentVariablesPage() {
+  const { t } = useTranslation('environmentVariables');
   const workspaceId = useAuthStore((state) => state.currentWorkspace?.id);
   const accessLevel = useAuthStore((state) => state.accessLevel);
   const revealBoundary = `${workspaceId ?? 'none'}:${accessLevel ?? 'none'}`;
@@ -71,9 +80,10 @@ export function EnvironmentVariablesPage() {
   const [savingGeneration, setSavingGeneration] = useState<number>();
   const [deleting, setDeleting] = useState<{ generation: number; id: number }>();
   const [editing, setEditing] = useState<EnvironmentVariable | 'create'>();
-  const [operationError, setOperationError] = useState<string>();
-  const [saveError, setSaveError] = useState<string>();
+  const [operationError, setOperationError] = useState<{ error: unknown; action: 'reveal' | 'delete' }>();
+  const [saveError, setSaveError] = useState<{ error: unknown }>();
   const [form] = Form.useForm<VariableFormValues>();
+  useLocalizedValidation(form, Boolean(editing));
   const replaceValue = Form.useWatch('replaceValue', form);
 
   const clearRevealed = () => {
@@ -170,7 +180,7 @@ export function EnvironmentVariablesPage() {
         }
         await queryClient.invalidateQueries({ queryKey: environmentVariablesQueryKey(formWorkspaceId), exact: true });
         if (!stillAuthorizedForFormWorkspace()) return;
-        message.success('环境变量已创建');
+        message.success(i18n.t('environmentVariables:created'));
       } else if (editing) {
         const input = values.replaceValue
           ? { name: values.name, description: values.description, updateValue: true, value: values.value ?? '' }
@@ -188,12 +198,12 @@ export function EnvironmentVariablesPage() {
           delete next[editing.id];
           return { boundary: revealBoundary, values: next };
         });
-        message.success('环境变量已更新');
+        message.success(i18n.t('environmentVariables:updated'));
       }
       closeEditor();
     } catch (error) {
       if (stillAuthorizedForFormWorkspace()) {
-        setSaveError(errorMessage(error, '保存失败，请重试'));
+        setSaveError({ error });
       }
     } finally {
       if (stillAuthorizedForFormWorkspace()) setSavingGeneration(undefined);
@@ -226,7 +236,7 @@ export function EnvironmentVariablesPage() {
       }
     } catch (error) {
       if (isCurrentReveal()) {
-        setOperationError(errorMessage(error, '查看环境变量值失败'));
+        setOperationError({ error, action: 'reveal' });
       }
     } finally {
       if (isCurrentReveal()) setRevealingId(undefined);
@@ -250,9 +260,9 @@ export function EnvironmentVariablesPage() {
     const value = visibleValues[variable.id];
     if (value === undefined) return;
     if (await copyTextToClipboard(value)) {
-      message.success('已复制');
+      message.success(i18n.t('environmentVariables:copied'));
     } else {
-      message.error('复制失败，请手动复制');
+      message.error(i18n.t('environmentVariables:copyFailed'));
     }
   };
 
@@ -280,10 +290,10 @@ export function EnvironmentVariablesPage() {
       await queryClient.invalidateQueries({ queryKey: environmentVariablesQueryKey(deleteWorkspaceId), exact: true });
       if (!isCurrentDelete()) return;
       hide(variable.id);
-      message.success('环境变量已删除');
+      message.success(i18n.t('environmentVariables:deleted'));
     } catch (error) {
       if (isCurrentDelete()) {
-        setOperationError(errorMessage(error, '删除失败，请重试'));
+        setOperationError({ error, action: 'delete' });
       }
     } finally {
       if (isCurrentDelete()) setDeleting(undefined);
@@ -297,29 +307,29 @@ export function EnvironmentVariablesPage() {
 
   return (
     <Space direction="vertical" size={20} style={{ width: '100%' }}>
-      <PageHeading title="环境变量" description="集中管理数字员工运行时使用的敏感配置。变量值默认隐藏，仅在需要时按项查看。"
-        extra={isAdmin && <Button aria-label="新增环境变量" type="primary" icon={<PlusOutlined />} onClick={showCreate}>新增环境变量</Button>} />
+      <PageHeading title={t('title')} description={t('description')}
+        extra={isAdmin && <Button aria-label={t('add')} type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={showCreate}>{t('add')}</Button>} />
 
 
-      {operationError && <Alert closable type="error" showIcon message="操作未完成" description={operationError} onClose={() => setOperationError(undefined)} />}
-      {query.isError && <Alert type="error" showIcon message="环境变量加载失败" description={errorMessage(query.error, '请稍后重试')} />}
+      {operationError && <Alert closable={{ closeIcon: <CloseOutlined aria-hidden="true" />, 'aria-label': t('dismissError') }} type="error" showIcon icon={<CloseCircleOutlined aria-hidden="true" />} message={t('operationFailed')} description={errorMessage(operationError.error, t(operationError.action === 'reveal' ? 'revealFailed' : 'deleteFailed'))} onClose={() => setOperationError(undefined)} />}
+      {query.isError && <Alert type="error" showIcon icon={<CloseCircleOutlined aria-hidden="true" />} message={t('loadFailed')} description={errorMessage(query.error, t('retryLater'))} />}
 
       <Card styles={{ body: { padding: 0 } }}>
         <div style={{ padding: '16px 16px 8px', textAlign: 'right' }}>
-          <Button aria-label="刷新" icon={<ReloadOutlined />} loading={query.isFetching} onClick={refresh}>刷新</Button>
+          <Button aria-label={t('refresh')} icon={<ReloadOutlined aria-hidden="true" />} loading={query.isFetching} onClick={refresh}>{t('refresh')}</Button>
         </div>
         <Table<EnvironmentVariable>
           rowKey="id"
           size="middle"
-          loading={query.isLoading}
+          loading={{ spinning: query.isLoading, tip: t('loading') }}
           dataSource={query.data ?? []}
           pagination={false}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无环境变量" /> }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('empty')} /> }}
           scroll={{ x: 760 }}
           columns={[
-            { title: '名称', dataIndex: 'name', align: 'left', width: 190, render: (name: string) => <Text code>{name}</Text> },
+            { title: t('name'), dataIndex: 'name', align: 'left', width: 190, render: (name: string) => <Text code>{name}</Text> },
             {
-              title: '值',
+              title: t('value'),
               width: 280,
               render: (_, variable) => {
                 const value = visibleValues[variable.id];
@@ -329,36 +339,37 @@ export function EnvironmentVariablesPage() {
                   <Button
                     type="text"
                     size="small"
-                    icon={visible ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                    icon={visible ? <EyeInvisibleOutlined aria-hidden="true" /> : <EyeOutlined aria-hidden="true" />}
                     loading={revealingId === variable.id}
-                    aria-label={`${visible ? '隐藏' : '显示'} ${variable.name} 的值`}
+                    aria-label={t(visible ? 'hideNamed' : 'showNamed', { name: variable.name })}
                     onClick={() => visible ? hide(variable.id) : void reveal(variable)}
                   />
-                  {visible && <Button type="text" size="small" icon={<CopyOutlined />} aria-label={`复制 ${variable.name} 的值`} onClick={() => void copy(variable)} />}
+                  {visible && <Button type="text" size="small" icon={<CopyOutlined aria-hidden="true" />} aria-label={t('copyNamed', { name: variable.name })} onClick={() => void copy(variable)} />}
                 </Space>;
               },
             },
-            { title: '说明', dataIndex: 'description', align: 'left', render: (value: string | null) => value || <Text type="secondary">—</Text> },
-            { title: '更新时间', dataIndex: 'gmtModified', width: 180, render: formatDate },
+            { title: t('notes'), dataIndex: 'description', align: 'left', render: (value: string | null) => value || <Text type="secondary">—</Text> },
+            { title: t('updatedAt'), dataIndex: 'gmtModified', width: 180, render: formatDate },
             ...(isAdmin ? [{
-              title: '操作',
+              title: t('actions'),
               key: 'actions',
               width: 130,
               render: (_: unknown, variable: EnvironmentVariable) => <Space size={4}>
-                <Button type="text" size="small" icon={<EditOutlined />} aria-label={`编辑 ${variable.name}`} onClick={() => showEdit(variable)} />
+                <Button type="text" size="small" icon={<EditOutlined aria-hidden="true" />} aria-label={t('editNamed', { name: variable.name })} onClick={() => showEdit(variable)} />
                 <Popconfirm
-                  title={`确认删除环境变量 ${variable.name}？`}
-                  description="删除后无法恢复。"
-                  okText="确认删除"
-                  cancelText="取消"
+                  icon={<ExclamationCircleOutlined aria-hidden="true" />}
+                  title={t('confirmDeleteNamed', { name: variable.name })}
+                  description={t('irreversible')}
+                  okText={t('confirmDelete')}
+                  cancelText={t('cancel')}
                   okButtonProps={{
                     danger: true,
                     loading: deleting?.generation === boundaryGeneration.current && deleting.id === variable.id,
-                    'aria-label': '确认删除',
+                    'aria-label': t('confirmDelete'),
                   }}
                   onConfirm={() => remove(variable)}
                 >
-                  <Button danger type="text" size="small" icon={<DeleteOutlined />} aria-label={`删除 ${variable.name}`} />
+                  <Button danger type="text" size="small" icon={<DeleteOutlined aria-hidden="true" />} aria-label={t('deleteNamed', { name: variable.name })} />
                 </Popconfirm>
               </Space>,
             }] : []),
@@ -367,30 +378,33 @@ export function EnvironmentVariablesPage() {
       </Card>
 
       <Modal
-        title={editing === 'create' ? '新增环境变量' : '编辑环境变量'}
+        closable={{ closeIcon: <CloseOutlined aria-hidden="true" />, 'aria-label': t('close') }}
+        title={editing === 'create' ? t('add') : t('edit')}
         open={Boolean(editing)}
-        okText={editing === 'create' ? '创建' : '保存'}
-        cancelText="取消"
+        okText={editing === 'create' ? t('create') : t('save')}
+        cancelText={t('cancel')}
         confirmLoading={savingGeneration === boundaryGeneration.current}
-        okButtonProps={{ 'aria-label': editing === 'create' ? '创建' : '保存' }}
+        okButtonProps={{ 'aria-label': editing === 'create' ? t('create') : t('save') }}
         onOk={() => void save()}
         onCancel={closeEditor}
         destroyOnHidden
       >
-        {saveError && <Alert type="error" showIcon message="保存失败" description={saveError} style={{ marginTop: 20 }} />}
+        {saveError && <Alert type="error" showIcon icon={<CloseCircleOutlined aria-hidden="true" />} message={t('saveFailedTitle')} description={errorMessage(saveError.error, t('saveFailed'))} style={{ marginTop: 20 }} />}
         <Form form={form} layout="vertical" preserve={false} style={{ marginTop: 20 }}>
-          <Form.Item label="名称" name="name" rules={[{ required: true, whitespace: true, message: '请输入名称' }, { pattern: /^[A-Za-z_][A-Za-z0-9_]*$/, message: '使用字母、数字和下划线，且不能以数字开头' }]}>
-            <Input autoComplete="off" placeholder="例如 API_TOKEN" maxLength={128} />
+          <Form.Item label={t('name')} name="name" rules={[{ required: true, whitespace: true, message: t('nameRequired') }, { pattern: /^[A-Za-z_][A-Za-z0-9_]*$/, message: t('namePattern') }]}>
+            <Input autoComplete="off" placeholder={t('namePlaceholder')} maxLength={128} />
           </Form.Item>
           {editing !== 'create' && <Form.Item name="replaceValue" valuePropName="checked">
-            <Checkbox>替换当前值</Checkbox>
+            <Checkbox>{t('replaceValue')}</Checkbox>
           </Form.Item>}
-          {(editing === 'create' || replaceValue) && <Form.Item label={editing === 'create' ? '值' : '新值'} name="value">
-            <Input.Password autoComplete="new-password" placeholder="输入后将加密保存" />
+          {(editing === 'create' || replaceValue) && <Form.Item label={editing === 'create' ? t('value') : t('newValue')} name="value">
+            <Input.Password iconRender={(visible) => <Button type="text" htmlType="button" aria-label={visible ? t('hideValue') : t('showValue')}
+              icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />}
+              style={{ padding: 0, width: 16, height: 16 }} />} autoComplete="new-password" placeholder={t('valuePlaceholder')} />
           </Form.Item>}
-          {editing !== 'create' && !replaceValue && <Alert type="info" showIcon message="当前值不会被读取或更改" style={{ marginBottom: 20 }} />}
-          <Form.Item label="说明" name="description" rules={[{ max: 512, message: '说明不能超过 512 个字符' }]}>
-            <Input.TextArea rows={3} placeholder="简要说明用途（可选）" />
+          {editing !== 'create' && !replaceValue && <Alert type="info" showIcon icon={<InfoCircleOutlined aria-hidden="true" />} message={t('unchangedValue')} style={{ marginBottom: 20 }} />}
+          <Form.Item label={t('notes')} name="description" rules={[{ max: 512, message: t('descriptionLimit') }]}>
+            <Input.TextArea rows={3} placeholder={t('descriptionPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>

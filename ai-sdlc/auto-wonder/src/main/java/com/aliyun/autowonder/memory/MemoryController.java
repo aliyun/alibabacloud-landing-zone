@@ -15,7 +15,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/memories")
 @ConditionalOnProperty(name = "autowonder.memory.legacy-api-enabled", havingValue = "true")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看记忆")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看记忆", actionKey = "access.action.view_memories")
 public class MemoryController {
 
     private final MemoryService memoryService;
@@ -25,7 +25,7 @@ public class MemoryController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建记忆")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建记忆", actionKey = "access.action.create_a_memory")
     public Result<MemoryVO> create(@RequestBody CreateMemoryRequest req) {
         return Result.ok(memoryService.create(req, currentWorkspaceId(), currentUserId()));
     }
@@ -76,20 +76,20 @@ public class MemoryController {
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新记忆")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新记忆", actionKey = "access.action.update_a_memory")
     public Result<MemoryVO> update(@PathVariable("id") Long id, @RequestBody UpdateMemoryRequest req) {
         return Result.ok(memoryService.update(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除记忆")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除记忆", actionKey = "access.action.delete_a_memory")
     public Result<Void> delete(@PathVariable("id") Long id) {
         memoryService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/from-artifact")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "从产物导入记忆")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "从产物导入记忆", actionKey = "access.action.import_memory_from_an_artifact")
     public Result<MemoryVO> importFromArtifact(@RequestBody ImportFromArtifactRequest req) {
         return Result.ok(memoryService.importFromArtifact(req, currentWorkspaceId(), currentUserId()));
     }

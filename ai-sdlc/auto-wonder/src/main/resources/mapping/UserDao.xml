@@ -145,53 +145,139 @@
         WHERE id = #{id} AND is_deleted = 0
     </update>
 
-    <update id="updateDeactivation">
-        UPDATE `user`
-        SET deactivated_at = #{deactivatedAt},
-            cooling_off_expires_at = #{coolingOffExpiresAt},
-            deactivation_revoked_at = NULL,
-            gmt_modified = NOW()
-        WHERE id = #{id} AND is_deleted = 0
-    </update>
-
-    <update id="revokeDeactivation">
-        UPDATE `user`
-        SET deactivation_revoked_at = #{revokedAt},
-            gmt_modified = NOW()
-        WHERE id = #{id} AND is_deleted = 0
-          AND deactivated_at IS NOT NULL
-          AND deactivation_revoked_at IS NULL
-    </update>
-
-    <update id="anonymizeUser">
-        UPDATE `user`
-        SET nickname = NULL,
-            avatar_url = NULL,
-            phone = NULL,
-            email = NULL,
-            password_hash = 'DEACTIVATED',
-            status = 1,
-            gmt_modified = NOW()
-        WHERE id = #{id} AND is_deleted = 0
-    </update>
-
-    <select id="listExpiredDeactivations" resultType="com.aliyun.autowonder.user.UserDO">
+    <select id="findActiveByEmail" resultType="com.aliyun.autowonder.user.UserDO">
         SELECT * FROM `user`
-        WHERE is_deleted = 0
-          AND status = 0
-          AND deactivated_at IS NOT NULL
-          AND cooling_off_expires_at IS NOT NULL
-          AND cooling_off_expires_at &lt;= NOW()
-          AND deactivation_revoked_at IS NULL
-        LIMIT #{limit}
+        WHERE email = #{email} AND is_deleted = 0
+        LIMIT 1
     </select>
 
-    <select id="hasPendingDeactivation" resultType="boolean">
-        SELECT COUNT(1) > 0 FROM `user`
-        WHERE id = #{id} AND is_deleted = 0
-          AND deactivated_at IS NOT NULL
-          AND cooling_off_expires_at IS NOT NULL
-          AND deactivation_revoked_at IS NULL
-          AND cooling_off_expires_at > NOW()
+    <!-- ================= 平台用户管理（平台管理员域） ================= -->
+
+    <select id="countAllUsers" resultType="long">
+        SELECT COUNT(*) FROM `user`
     </select>
+
+    <!--
+      管理列表：全量含已删除用户。keyword 同时匹配删除前快照（deleted_username / deleted_email），
+      否则按原名搜不到已删除用户。状态口径与列表展示一致：
+        NORMAL      正常（未逻辑删除且非存量匿名化）
+        DEACTIVATED 存量已注销（匿名化：password_hash = 'DEACTIVATED'，只读、不可恢复）
+        DELETED     已逻辑删除（可恢复）
+      排序按 id 倒序，即注册时间倒序。
+    -->
+    <select id="searchUsersForAdmin" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (
+                    username LIKE CONCAT('%', #{keyword}, '%')
+                    OR nickname LIKE CONCAT('%', #{keyword}, '%')
+                    OR email LIKE CONCAT('%', #{keyword}, '%')
+                    OR phone LIKE CONCAT('%', #{keyword}, '%')
+                    OR deleted_username LIKE CONCAT('%', #{keyword}, '%')
+                    OR deleted_email LIKE CONCAT('%', #{keyword}, '%')
+                )
+            </if>
+            <if test="status == 'NORMAL'">
+                AND is_deleted = 0 AND (status &lt;&gt; 1 OR password_hash &lt;&gt; 'DEACTIVATED')
+            </if>
+            <if test="status == 'DEACTIVATED'">
+                AND is_deleted = 0 AND status = 1 AND password_hash = 'DEACTIVATED'
+            </if>
+            <if test="status == 'DELETED'">
+                AND is_deleted = 1
+            </if>
+            <if test="type == 'ADMIN'">
+                AND is_admin = 1
+            </if>
+            <if test="type == 'USER'">
+                AND is_admin = 0
+            </if>
+        </where>
+        ORDER BY id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 与 searchUsersForAdmin 同一谓词：分页器展示的筛选结果总数必须与列表长度口径一致。 -->
+    <select id="countUsersForAdmin" resultType="long">
+        SELECT COUNT(*) FROM `user`
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (
+                    username LIKE CONCAT('%', #{keyword}, '%')
+                    OR nickname LIKE CONCAT('%', #{keyword}, '%')
+                    OR email LIKE CONCAT('%', #{keyword}, '%')
+                    OR phone LIKE CONCAT('%', #{keyword}, '%')
+                    OR deleted_username LIKE CONCAT('%', #{keyword}, '%')
+                    OR deleted_email LIKE CONCAT('%', #{keyword}, '%')
+                )
+            </if>
+            <if test="status == 'NORMAL'">
+                AND is_deleted = 0 AND (status &lt;&gt; 1 OR password_hash &lt;&gt; 'DEACTIVATED')
+            </if>
+            <if test="status == 'DEACTIVATED'">
+                AND is_deleted = 0 AND status = 1 AND password_hash = 'DEACTIVATED'
+            </if>
+            <if test="status == 'DELETED'">
+                AND is_deleted = 1
+            </if>
+            <if test="type == 'ADMIN'">
+                AND is_admin = 1
+            </if>
+            <if test="type == 'USER'">
+                AND is_admin = 0
+            </if>
+        </where>
+    </select>
+
+    <!-- 展示专用：不过滤 is_deleted，供历史业务数据（工单/评论/审计等）名称解析使用。 -->
+    <select id="findByIdIncludingDeleted" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="listByIdsIncludingDeleted" resultType="com.aliyun.autowonder.user.UserDO">
+        SELECT * FROM `user`
+        WHERE id IN
+        <foreach collection="ids" item="uid" open="(" separator="," close=")">#{uid}</foreach>
+    </select>
+
+    <!--
+      逻辑删除：原用户名/邮箱落入 deleted_* 快照，username 改写为 #deleted-{id}、email 置 NULL
+      释放唯一键占用（唯一索引允许多个 NULL）。同一条原子 UPDATE 内完成；
+      昵称/头像/手机号/密码/status 保留不动；is_deleted = 0 守卫使重复删除成为 no-op。
+    -->
+    <update id="logicalDeleteUser">
+        UPDATE `user`
+        SET deleted_username = username,
+            username = CONCAT('#deleted-', id),
+            deleted_email = email,
+            email = NULL,
+            deleted_at = #{deletedAt},
+            deleted_by = #{deletedBy},
+            is_deleted = 1,
+            gmt_modified = NOW(3)
+        WHERE id = #{id} AND is_deleted = 0
+    </update>
+
+    <!--
+      恢复：由快照还原用户名/邮箱，清空 deleted_* 与历史冷静期字段；is_deleted = 1 守卫使
+      重复恢复成为 no-op。并发撞唯一键由 uk_username / uk_email 兜底拒绝。
+    -->
+    <update id="restoreUser">
+        UPDATE `user`
+        SET username = deleted_username,
+            email = deleted_email,
+            deleted_username = NULL,
+            deleted_email = NULL,
+            deleted_at = NULL,
+            deleted_by = NULL,
+            deactivated_at = NULL,
+            cooling_off_expires_at = NULL,
+            deactivation_revoked_at = NULL,
+            is_deleted = 0,
+            gmt_modified = NOW(3)
+        WHERE id = #{id} AND is_deleted = 1
+    </update>
 </mapper>

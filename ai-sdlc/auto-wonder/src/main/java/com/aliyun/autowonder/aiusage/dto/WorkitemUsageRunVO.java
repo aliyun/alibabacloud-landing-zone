@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.aiusage.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import lombok.Getter;
 import lombok.Setter;
 
@@ -15,5 +17,7 @@ public class WorkitemUsageRunVO {
     private Integer runIndex;
     /** 展示用标签，形如 `DEV run-1`。 */
     private String label;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String labelKind;
     private BigDecimal credits;
 }

@@ -463,10 +463,11 @@ class TaskPackagerTest {
                     "name": "service",
                     "branch": "%s",
                     "baseCommit": "%s",
-                    "headCommit": "%s"
+                    "headCommit": "%s",
+                    "remoteHeadCommit": "%s"
                   }]
                 }
-                """.formatted(deliveryBranch, baseCommit, headCommit);
+                """.formatted(deliveryBranch, baseCommit, headCommit, headCommit);
         var stored = storage.put("autowonder-artifacts-daily", "3/runtime-source-revision.json",
                 revision.getBytes(StandardCharsets.UTF_8));
 
@@ -490,6 +491,7 @@ class TaskPackagerTest {
         JSONObject repo = repos.getJSONArray("repos").getJSONObject(0);
 
         assertEquals(headCommit, repo.getString("ref"));
+        assertEquals(List.of(baseCommit, "master"), repo.getJSONArray("sourceRevisionFallbackRefs").toJavaList(String.class));
         assertEquals(deliveryBranch, repo.getString("deliveryBranch"));
         assertFalse(repo.containsKey("worktreeBranch"));
         assertEquals(baseCommit, repo.getString("deliveryBaseCommit"));
@@ -527,14 +529,191 @@ class TaskPackagerTest {
     }
 
     @Test
+    void legacyRevisionKeepsExactHeadAndReviewRangeForEveryConsumer() throws Exception {
+        String base = "1111111111111111111111111111111111111111";
+        String head = "2222222222222222222222222222222222222222";
+        for (String role : List.of("QA", "AW_QA", "AW_CR", "RD")) {
+            var stored = storage.put("artifacts", "legacy-" + role, ("""
+                    {"repositories":[{"name":"service","branch":"fix/legacy","baseCommit":"%s","headCommit":"%s"}]}
+                    """).formatted(base, head).getBytes(StandardCharsets.UTF_8));
+            PackageContext c = baseCtx();
+            c.setRoleCode(role);
+            c.setRepos(List.of(new LinkedHashMap<>(Map.of("name", "service", "ref", "master"))));
+            c.setSourceRevisionArtifacts(List.of(artifactRef("legacy", stored.getOssRef())));
+            JSONObject repo = JSON.parseObject(new String(unzip(storage.get(packager.build(c).getOssRef()))
+                    .get("repos.json"), StandardCharsets.UTF_8)).getJSONArray("repos").getJSONObject(0);
+            assertEquals(head, repo.getString("ref"), role);
+            assertEquals(base, repo.getString("deliveryBaseCommit"), role);
+            assertEquals("fix/legacy", repo.getString("deliveryBranch"), role);
+            assertFalse(repo.containsKey("deliveryUnpushedHeadCommit"), role);
+        }
+    }
+
+    @Test
+    void legacyHeadOnlyArtifactDoesNotRequireNewFields() throws Exception {
+        String head = "2222222222222222222222222222222222222222";
+        var stored = storage.put("artifacts", "legacy-head-only", ("""
+                {"repositories":[{"name":"service","headCommit":"%s"}]}
+                """).formatted(head).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("AW_QA");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of("name", "service", "ref", "master"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("legacy", stored.getOssRef())));
+        JSONObject repo = JSON.parseObject(new String(unzip(storage.get(packager.build(c).getOssRef()))
+                .get("repos.json"), StandardCharsets.UTF_8)).getJSONArray("repos").getJSONObject(0);
+        assertEquals(head, repo.getString("ref"));
+        assertFalse(repo.containsKey("deliveryUnpushedHeadCommit"));
+    }
+
+    @Test
+    void explicitUnverifiedRemoteCannotBorrowLegacyProofFromOlderArtifact() {
+        String base = "1111111111111111111111111111111111111111";
+        String head = "2222222222222222222222222222222222222222";
+        for (String remote : List.of("\"\"", "null", "\"invalid\"", "\"" + base + "\"")) {
+            var current = storage.put("artifacts", "modern", ("""
+                    {"repositories":[{"name":"service","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":%s}]}
+                    """).formatted(base, head, remote).getBytes(StandardCharsets.UTF_8));
+            var older = storage.put("artifacts", "older", ("""
+                    {"repositories":[{"name":"service","branch":"fix/legacy","baseCommit":"%s","headCommit":"%s"}]}
+                    """).formatted(base, head).getBytes(StandardCharsets.UTF_8));
+            PackageContext c = baseCtx();
+            c.setRoleCode("AW_QA");
+            c.setRepos(List.of(new LinkedHashMap<>(Map.of("name", "service", "ref", "master"))));
+            c.setSourceRevisionArtifacts(List.of(artifactRef("current", current.getOssRef()),
+                    artifactRef("older", older.getOssRef())));
+            BizException error = assertThrows(BizException.class, () -> packager.build(c), remote);
+            assertEquals("dispatch.repo_revision.qa_unpushed", error.getMessageKey(), remote);
+        }
+    }
+
+    @Test
+    void localOnlyHeadFallsBackToFetchableBaseForRework() throws Exception {
+        String baseCommit = "1111111111111111111111111111111111111111";
+        String localHead = "2222222222222222222222222222222222222222";
+        var stored = storage.put("autowonder-artifacts-daily", "3/local-revision.json", ("""
+                {"repositories":[{"name":"service","branch":"fix/rework","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":""}]}
+                """).formatted(baseCommit, localHead).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("RD");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of(
+                "name", "service", "url", "git@example/service.git", "ref", "master", "mode", "eager"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("local", stored.getOssRef())));
+
+        TaskPackageResult result = packager.build(c);
+        JSONObject repo = JSON.parseObject(new String(
+                unzip(storage.get(result.getOssRef())).get("repos.json"), StandardCharsets.UTF_8))
+                .getJSONArray("repos").getJSONObject(0);
+        assertEquals(baseCommit, repo.getString("ref"));
+        assertEquals(localHead, repo.getString("deliveryUnpushedHeadCommit"));
+        assertEquals("fix/rework", repo.getString("deliveryBranch"));
+        assertEquals(baseCommit, repo.getString("deliveryBaseCommit"));
+    }
+
+    @Test
+    void qaRejectsLocalOnlyHeadBeforeMaterialization() {
+        String baseCommit = "1111111111111111111111111111111111111111";
+        String localHead = "2222222222222222222222222222222222222222";
+        var stored = storage.put("autowonder-artifacts-daily", "3/local-qa-revision.json", ("""
+                {"repositories":[{"name":"service","branch":"fix/rework","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":""}]}
+                """).formatted(baseCommit, localHead).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("QA");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of(
+                "name", "service", "url", "git@example/service.git", "ref", "master", "mode", "lazy"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("local", stored.getOssRef())));
+
+        BizException error = assertThrows(BizException.class, () -> packager.build(c));
+        assertEquals("dispatch.repo_revision.qa_unpushed", error.getMessageKey());
+        assertTrue(error.getMessage().contains("push the source delivery branch"));
+    }
+
+    @Test
+    void qaRejectsLocalOnlyHeadForNamespacedRoleCode() {
+        String baseCommit = "1111111111111111111111111111111111111111";
+        String localHead = "2222222222222222222222222222222222222222";
+        var stored = storage.put("autowonder-artifacts-daily", "3/local-aw-qa-revision.json", ("""
+                {"repositories":[{"name":"service","branch":"fix/rework","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":""}]}
+                """).formatted(baseCommit, localHead).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("AW_QA");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of(
+                "name", "service", "url", "git@example/service.git", "ref", "master", "mode", "lazy"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("local", stored.getOssRef())));
+
+        BizException error = assertThrows(BizException.class, () -> packager.build(c));
+        assertEquals("dispatch.repo_revision.qa_unpushed", error.getMessageKey());
+        assertTrue(error.getMessage().contains("push the source delivery branch"));
+    }
+
+    @Test
+    void namespacedNonQaRoleKeepsFetchableBaseFallback() throws Exception {
+        String baseCommit = "1111111111111111111111111111111111111111";
+        String localHead = "2222222222222222222222222222222222222222";
+        var stored = storage.put("autowonder-artifacts-daily", "3/local-aw-dev-revision.json", ("""
+                {"repositories":[{"name":"service","branch":"fix/rework","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":""}]}
+                """).formatted(baseCommit, localHead).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("AW_FS_DEV");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of(
+                "name", "service", "url", "git@example/service.git", "ref", "master", "mode", "eager"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("local", stored.getOssRef())));
+
+        TaskPackageResult result = packager.build(c);
+        JSONObject repo = JSON.parseObject(new String(
+                unzip(storage.get(result.getOssRef())).get("repos.json"), StandardCharsets.UTF_8))
+                .getJSONArray("repos").getJSONObject(0);
+        assertEquals(baseCommit, repo.getString("ref"));
+        assertEquals(localHead, repo.getString("deliveryUnpushedHeadCommit"));
+    }
+
+    @Test
+    void sourceRevisionWithoutFetchableCommitFailsPackaging() {
+        String localHead = "2222222222222222222222222222222222222222";
+        var stored = storage.put("autowonder-artifacts-daily", "3/no-checkout-revision.json", ("""
+                {"repositories":[{"name":"service","branch":"fix/rework","headCommit":"%s","remoteHeadCommit":""}]}
+                """).formatted(localHead).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("RD");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of(
+                "name", "service", "url", "git@example/service.git", "ref", "master", "mode", "lazy"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("no-checkout", stored.getOssRef())));
+
+        BizException error = assertThrows(BizException.class, () -> packager.build(c));
+        assertEquals("dispatch.repo_revision.no_checkout", error.getMessageKey());
+        assertTrue(error.getMessage().contains("has no remotely materializable checkout commit"));
+    }
+
+    @Test
+    void qaAcceptsPublishedHeadAsCheckoutVersion() throws Exception {
+        String baseCommit = "1111111111111111111111111111111111111111";
+        String publishedHead = "2222222222222222222222222222222222222222";
+        var stored = storage.put("autowonder-artifacts-daily", "3/qa-pushed-revision.json", ("""
+                {"repositories":[{"name":"service","branch":"fix/rework","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":"%s"}]}
+                """).formatted(baseCommit, publishedHead, publishedHead).getBytes(StandardCharsets.UTF_8));
+        PackageContext c = baseCtx();
+        c.setRoleCode("QA");
+        c.setRepos(List.of(new LinkedHashMap<>(Map.of(
+                "name", "service", "url", "git@example/service.git", "ref", "master", "mode", "eager"))));
+        c.setSourceRevisionArtifacts(List.of(artifactRef("pushed", stored.getOssRef())));
+
+        TaskPackageResult result = packager.build(c);
+        JSONObject repo = JSON.parseObject(new String(
+                unzip(storage.get(result.getOssRef())).get("repos.json"), StandardCharsets.UTF_8))
+                .getJSONArray("repos").getJSONObject(0);
+        assertEquals(publishedHead, repo.getString("ref"),
+                "QA must verify the exact published delivery head");
+        assertFalse(repo.containsKey("deliveryUnpushedHeadCommit"));
+    }
+
+    @Test
     void nearestRevisionKeepsHeadAndInheritsMissingDeliveryBranch() throws Exception {
         String baseCommit = "1111111111111111111111111111111111111111";
         String currentHead = "3333333333333333333333333333333333333333";
         String previousHead = "2222222222222222222222222222222222222222";
         String deliveryBranch = "aw/reliable-rework";
         var current = storage.put("autowonder-artifacts-daily", "3/current-revision.json", ("""
-                {"repositories":[{"name":"service","baseCommit":"%s","headCommit":"%s"}]}
-                """).formatted(baseCommit, currentHead).getBytes(StandardCharsets.UTF_8));
+                {"repositories":[{"name":"service","baseCommit":"%s","headCommit":"%s","remoteHeadCommit":"%s"}]}
+                """).formatted(baseCommit, currentHead, currentHead).getBytes(StandardCharsets.UTF_8));
         var previous = storage.put("autowonder-artifacts-daily", "3/previous-revision.json", ("""
                 {"repositories":[{"name":"service","branch":"%s","baseCommit":"%s","headCommit":"%s"}]}
                 """).formatted(deliveryBranch, baseCommit, previousHead).getBytes(StandardCharsets.UTF_8));

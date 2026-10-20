@@ -1,3 +1,4 @@
+import { i18n, normalizeLocale } from '@/shared/i18n';
 import { apiClient } from '@/shared/api/client';
 import { useAuthStore } from '@/shared/auth/store';
 import type { PageResult } from '@/shared/types/common';
@@ -20,6 +21,7 @@ export interface Skill {
   gmtModified?: string;
   modifierId?: number;
   modifierName?: string;
+  modifierNameKind?: 'USER_ID_FALLBACK';
 }
 
 export interface Category {
@@ -51,6 +53,11 @@ export interface SkillConnectionTestResult {
   success: boolean;
   message: string;
   durationMs?: number;
+  ownedFailureCode?: 'SELECT_RUNTIME' | 'RUNTIME_UNAVAILABLE' | 'EMPTY_CONFIG' | 'INVALID_CONFIG_JSON'
+    | 'SECRET_CRYPTO_UNAVAILABLE' | 'CONNECTION_TIMEOUT' | 'CONNECTION_FAILED'
+    | 'LEGACY_RESULT_INCOMPATIBLE' | 'TEST_INTERRUPTED' | 'RUNTIME_WAIT_TIMEOUT'
+    | 'INVALID_RESULT' | 'REQUEST_CREATE_FAILED' | 'DISPATCH_FAILED';
+  ownedFailureArgs?: { seconds?: number };
   tools?: Array<{ name?: string; description?: string; inputSchema?: unknown }>;
 }
 
@@ -93,7 +100,7 @@ export async function getSkillPackageFile(id: number, path: string): Promise<Ski
 export async function downloadSkillPackage(id: number, fileName?: string): Promise<void> {
   const token = useAuthStore.getState().accessToken;
   const response = await fetch(`/api/skills/${id}/package/download`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    headers: { 'Accept-Language': normalizeLocale(i18n.language), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
   if (!response.ok) {
     throw new Error(await downloadErrorMessage(response));
@@ -120,7 +127,7 @@ async function downloadErrorMessage(response: Response): Promise<string> {
   } catch {
     // 错误体不是 JSON 时回落到状态码文案
   }
-  return `下载失败（HTTP ${response.status}）`;
+  return i18n.t('skill:package.downloadFailed', { status: response.status });
 }
 
 export async function listSkills(params: {

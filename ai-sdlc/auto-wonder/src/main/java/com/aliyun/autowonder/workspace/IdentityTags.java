@@ -38,15 +38,13 @@ public final class IdentityTags {
                 continue;
             }
             if (trimmed.length() > MAX_TAG_LENGTH) {
-                throw new BizException(
-                        ErrorCode.PARAM_INVALID,
-                        "Identity tags must not exceed 32 Java characters per tag");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.identity_tag_too_long",
+                        new Object[]{MAX_TAG_LENGTH}, "Identity tags must not exceed 32 Java characters per tag");
             }
             normalized.add(trimmed);
             if (normalized.size() > MAX_TAGS) {
-                throw new BizException(
-                        ErrorCode.PARAM_INVALID,
-                        "Identity tags must not contain more than 8 tags");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.identity_tags_too_many",
+                        new Object[]{MAX_TAGS}, "Identity tags must not contain more than 8 tags");
             }
         }
         return List.copyOf(normalized);
@@ -94,6 +92,7 @@ public final class IdentityTags {
     }
 
     private static BizException malformedPersistedJson() {
-        return new BizException(ErrorCode.PARAM_INVALID, "Invalid persisted identity tags JSON");
+        return BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.identity_tags_json_invalid", null,
+                "Invalid persisted identity tags JSON");
     }
 }

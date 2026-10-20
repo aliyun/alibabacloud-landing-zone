@@ -20,6 +20,7 @@ class EvolutionProposalServiceTest {
     private RepoService repoService;
     private SkillService skillService;
     private EvolutionReleaseStateCaptureService stateCaptureService;
+    private com.aliyun.autowonder.workspace.WorkspaceMemberDao workspaceMemberDao;
     private EvolutionProposalService service;
 
     @BeforeEach
@@ -30,8 +31,35 @@ class EvolutionProposalServiceTest {
         repoService = mock(RepoService.class);
         skillService = mock(SkillService.class);
         stateCaptureService = mock(EvolutionReleaseStateCaptureService.class);
+        workspaceMemberDao = mock(com.aliyun.autowonder.workspace.WorkspaceMemberDao.class);
         service = new EvolutionProposalService(proposalDao, evidenceService, repoService,
-                skillService, stateCaptureService);
+                skillService, stateCaptureService,
+                new com.aliyun.autowonder.access.WorkspaceDomainGuard(workspaceMemberDao));
+    }
+
+    @Test
+    void releaseIsBlockedBeforeAnyWriteWhenOperatorForbidsTheAssetDomain() {
+        EvolutionProposalDO proposal = storedProposal("APPROVED");
+        proposal.setAssetType("SKILL");
+        proposal.setAssetId(null);
+        proposal.setReplayJson("{\"verdict\":\"PASS\"}");
+        proposal.setCandidatePatchJson("{\"mode\":\"CREATE\",\"name\":\"x\",\"type\":\"CODEX_SKILL\",\"installSpec\":\"skill://x\"}");
+        when(proposalDao.findById(101L)).thenReturn(proposal);
+        com.aliyun.autowonder.workspace.WorkspaceMemberDO member =
+                new com.aliyun.autowonder.workspace.WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"SKILL\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(1L, 2L)).thenReturn(member);
+
+        assertThrows(com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException.class,
+                () -> service.release(101L, 1L, 2L));
+
+        verify(skillService, never()).create(any(), anyLong(), anyLong());
+        verify(skillService, never()).update(anyLong(), any(), anyLong(), anyLong());
+        verify(repoService, never()).createRelation(any(), anyLong(), anyLong());
+        verify(proposalDao, never()).markReleased(anyLong(), anyLong(), any(), anyInt(), anyLong());
     }
 
     @Test
@@ -53,6 +81,7 @@ class EvolutionProposalServiceTest {
                 () -> service.propose(memoryProposal(), 1L, 2L));
 
         assertEquals(ErrorCode.CONFLICT.getCode(), error.getCode());
+        assertEvolutionBoundary(error, "记忆提案已停用，请使用规范记忆存储");
         verifyNoInteractions(proposalDao, memoryService, repoService, skillService);
     }
 
@@ -139,8 +168,9 @@ class EvolutionProposalServiceTest {
         proposal.setReplayJson("{\"verdict\":\"PASS\",\"evidenceRefs\":[\"artifact:replay-1\"]}");
         when(proposalDao.findById(101L)).thenReturn(proposal);
         when(proposalDao.markReleased(eq(101L), eq(1L), anyString(), eq(0), eq(2L))).thenReturn(1);
-        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+        var error = assertThrows(com.aliyun.autowonder.common.error.BizException.class,
                 () -> service.release(101L, 1L, 2L));
+        assertEvolutionBoundary(error, "记忆提案已停用，请使用规范记忆存储");
         verify(memoryService, never()).createFromEvolutionProposal(any(), anyLong(), anyLong(), anyLong());
     }
 
@@ -150,8 +180,9 @@ class EvolutionProposalServiceTest {
         proposal.setTrialJson("{\"taskPatternKey\":\"repo-checkout\",\"decision\":\"ADOPT\",\"candidatePosteriorMean\":0.8,\"baselinePosteriorMean\":0.4}");
         when(proposalDao.findById(101L)).thenReturn(proposal);
         when(proposalDao.markReleased(eq(101L), eq(1L), anyString(), eq(0), eq(2L))).thenReturn(1);
-        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+        var error = assertThrows(com.aliyun.autowonder.common.error.BizException.class,
                 () -> service.release(101L, 1L, 2L));
+        assertEvolutionBoundary(error, "记忆提案已停用，请使用规范记忆存储");
         verify(memoryService, never()).createFromEvolutionProposal(any(), anyLong(), anyLong(), anyLong());
     }
 
@@ -218,6 +249,7 @@ class EvolutionProposalServiceTest {
 		BizException error = assertThrows(BizException.class, () -> service.release(101L, 1L, 2L));
 
 		assertEquals(ErrorCode.CONFLICT.getCode(), error.getCode());
+        assertEvolutionBoundary(error, "RETIRE 需要明确的数字员工版本解绑或发布决策");
 		verifyNoInteractions(skillService);
 	}
 
@@ -241,4 +273,49 @@ class EvolutionProposalServiceTest {
         proposal.setCandidatePatchJson("{\"scope\":\"ORG\",\"type\":\"ENGINEERING_RULE\",\"title\":\"Use pnpm\",\"contentMd\":\"Use pnpm for this repo.\"}");
         return proposal;
     }
+    private static void assertEvolutionBoundary(com.aliyun.autowonder.common.error.BizException error, String chinese) {
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        String diagnostic = error.getMessage();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+            assertEquals(chinese, handler.handleBiz(error).getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals(diagnostic, handler.handleBiz(error).getBody().getMessage());
+            assertEquals(409, handler.handleBiz(error).getStatusCodeValue());
+            assertEquals(diagnostic, error.getMessage()); assertNull(error.getCause());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"before,true","after,true","before,false","after,false"})
+    void skillSnapshotsKeepOriginalBytesWithoutResponseOnlyOriginAndWithoutMutatingVo(String path, boolean marker) {
+        var skill=new com.aliyun.autowonder.skill.dto.SkillVO();skill.setId(7L);skill.setName("<b>raw</b>用户 #7");
+        skill.setInstallSpec("{\"command\":\"raw\"}");skill.setModifierId(9007199254740993L);skill.setModifierName("用户 #9007199254740993");
+        if(marker)skill.setModifierNameKind("USER_ID_FALLBACK");
+        when(skillService.get(7L)).thenReturn(skill);var capture=new EvolutionReleaseStateCaptureService(skillService);
+        var proposal=new EvolutionProposalDO();proposal.setAssetType("SKILL");proposal.setAssetId(7L);
+        String expected="{\"id\":7,\"name\":\"<b>raw</b>用户 #7\",\"installSpec\":\"{\\\"command\\\":\\\"raw\\\"}\",\"modifierId\":9007199254740993,\"modifierName\":\"用户 #9007199254740993\"}";
+        String snapshot=path.equals("before") ? capture.captureBefore(proposal,1L) : capture.skillAfterJson(skill);
+        assertEquals(marker ? "USER_ID_FALLBACK" : null,skill.getModifierNameKind());
+        assertEquals(expected,snapshot);assertFalse(snapshot.contains("modifierNameKind"));
+    }
+
+    @Test
+    void actualReleasePersistsOnlyBusinessSnapshotAndLeavesResponseOriginAvailable() {
+        stateCaptureService=new EvolutionReleaseStateCaptureService(skillService);
+        service=new EvolutionProposalService(proposalDao,evidenceService,repoService,skillService,stateCaptureService,new com.aliyun.autowonder.access.WorkspaceDomainGuard(workspaceMemberDao));
+        var proposal=storedProposal("APPROVED");proposal.setAssetType("SKILL");proposal.setAssetId(9L);
+        proposal.setReplayJson("{\"verdict\":\"PASS\"}");proposal.setCandidatePatchJson("{\"name\":\"<raw>\",\"type\":\"MCP\",\"installSpec\":\"{}\"}");
+        when(proposalDao.findById(101L)).thenReturn(proposal);when(proposalDao.markReleased(eq(101L),eq(1L),anyString(),eq(0),eq(2L))).thenReturn(1);
+        var skill=new com.aliyun.autowonder.skill.dto.SkillVO();skill.setId(9L);skill.setName("<raw>");skill.setModifierNameKind("USER_ID_FALLBACK");
+        when(skillService.get(9L)).thenReturn(skill);when(skillService.update(eq(9L),any(),eq(1L),eq(2L))).thenReturn(skill);
+        service.release(101L,1L,2L);
+        var release=com.aliyun.autowonder.json.JSON.parseObject(proposal.getReleaseJson());
+        assertEquals("{\"id\":9,\"name\":\"<raw>\"}",release.getString("beforeJson"));
+        assertEquals("{\"id\":9,\"name\":\"<raw>\"}",release.getString("afterJson"));
+        assertEquals("USER_ID_FALLBACK",skill.getModifierNameKind());
+        verify(proposalDao).markReleased(eq(101L),eq(1L),anyString(),eq(0),eq(2L));
+        assertEquals("null",stateCaptureService.skillAfterJson(null));
+    }
+
 }

@@ -3,8 +3,13 @@ package com.aliyun.autowonder.ai.adapter;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONArray;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.sdlc.SdlcDO;
 import com.aliyun.autowonder.sdlc.SdlcDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
@@ -16,10 +21,12 @@ public class SdlcGenAdapter implements SceneAdapter {
 
     private final SdlcDao sdlcDao;
     private final SdlcStepDao sdlcStepDao;
+    private final WorkspaceDomainGuard domainGuard;
 
-    public SdlcGenAdapter(SdlcDao sdlcDao, SdlcStepDao sdlcStepDao) {
+    public SdlcGenAdapter(SdlcDao sdlcDao, SdlcStepDao sdlcStepDao, WorkspaceDomainGuard domainGuard) {
         this.sdlcDao = sdlcDao;
         this.sdlcStepDao = sdlcStepDao;
+        this.domainGuard = domainGuard;
     }
 
     @Override
@@ -89,27 +96,37 @@ public class SdlcGenAdapter implements SceneAdapter {
 
     @Override
     public String validateResult(String resultJson) {
+        BizException error = validateForConfirmation(resultJson);
+        return error == null ? null : error.getMessage();
+    }
+
+    @Override
+    public BizException validateForConfirmation(String resultJson) {
         try {
             JSONObject obj = JSON.parseObject(extractJsonObject(resultJson));
-            if (obj == null) return "null result";
+            if (obj == null) return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.null_result", new Object[]{}, "null result");
             JSONArray steps = obj.getJSONArray("steps");
             if (steps == null || steps.isEmpty()) {
-                return "steps array is empty";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.steps_empty", new Object[]{}, "steps array is empty");
             }
             for (int i = 0; i < steps.size(); i++) {
                 JSONObject step = steps.getJSONObject(i);
                 if (step.getString("name") == null || step.getString("instructionMd") == null) {
-                    return "step " + i + " missing name or instructionMd";
+                    return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.step_fields_missing", new Object[]{String.valueOf(i)}, "step " + i + " missing name or instructionMd");
                 }
             }
             return null;
         } catch (Exception e) {
-            return "invalid JSON: " + e.getMessage();
+            return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.invalid_json", new Object[]{e.getMessage()}, "invalid JSON: " + e.getMessage());
         }
     }
 
     @Override
     public void persistConfirmedResult(AiSessionDO session, String resultJson) {
+        // 本场景实际写入 SDLC 资源域：在 DAO 插入前校验，不能只按 AI 入口域放行。
+        domainGuard.requireWritableDomains(session.getTenantId(), AutoWonderContext.get().getUserId(),
+                "确认AI会话", "access.action.confirm_an_ai_session", WorkspaceDomain.SDLC);
+
         JSONObject obj = JSON.parseObject(extractJsonObject(resultJson));
         String name = obj.getString("name");
         if (name == null || name.isBlank()) {

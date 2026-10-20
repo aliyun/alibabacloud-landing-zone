@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import type { RuntimeTraceEvent } from '@/shared/types/workitem';
 
 /** Keep diagnostics readable; never render provider payloads as HTML. */
@@ -17,10 +18,10 @@ export function activityText(event: RuntimeTraceEvent): string | null {
     return redactDiagnostic(detail.message);
   }
   const stages: Record<string, string> = {
-    'dispatch.started': '执行器已接单', 'session.started': '执行会话已启动',
-    'turn.started': '正在处理评论和当前上下文', 'turn.completed': '本轮分析完成',
-    'turn.failed': '本轮执行失败', 'session.failed': '执行会话失败',
-    'dispatch.failed': '执行失败', 'dispatch.completed': '执行已完成',
+    'dispatch.started': i18n.t('workitem:activity.executorAccepted'), 'session.started': i18n.t('workitem:activity.sessionStarted'),
+    'turn.started': i18n.t('workitem:activity.turnStarted'), 'turn.completed': i18n.t('workitem:activity.turnCompleted'),
+    'turn.failed': i18n.t('workitem:activity.turnFailed'), 'session.failed': i18n.t('workitem:activity.sessionFailed'),
+    'dispatch.failed': i18n.t('workitem:activity.failed'), 'dispatch.completed': i18n.t('workitem:activity.completed'),
   };
   return stages[event.eventType] || null;
 }

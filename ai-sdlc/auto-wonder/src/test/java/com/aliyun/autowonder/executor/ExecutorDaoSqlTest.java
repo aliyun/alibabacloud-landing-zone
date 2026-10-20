@@ -29,17 +29,26 @@ class ExecutorDaoSqlTest {
     }
 
     @Test
-    void updateLastConnectIpFiltersByTenantIdAndIsDeleted() throws Exception {
+    void updateLastConnectInfoWritesBothColumnsUnconditionally() throws Exception {
         String xml = Files.readString(MAPPER_XML);
+        int start = xml.indexOf("<update id=\"updateLastConnectInfo\"");
+        int end = xml.indexOf("</update>", start);
+        assertTrue(start >= 0 && end > start, "mapper must contain updateLastConnectInfo statement");
+        String update = xml.substring(start, end);
 
-        assertTrue(xml.contains("id=\"updateLastConnectIp\""),
-                "mapper must contain updateLastConnectIp statement");
-        assertTrue(xml.contains("tenant_id = #{tenantId}"),
-                "updateLastConnectIp must filter by tenant_id");
-        assertTrue(xml.contains("is_deleted = 0"),
-                "updateLastConnectIp must filter by is_deleted = 0");
-        assertTrue(xml.contains("modifier_id = #{modifierId}"),
-                "updateLastConnectIp must set modifier_id");
+        assertTrue(update.contains("last_connect_ip = #{lastConnectIp}"),
+                "updateLastConnectInfo must write the connect IP");
+        assertTrue(update.contains("last_connect_hostname = #{lastConnectHostname}"),
+                "updateLastConnectInfo must write the reported hostname");
+        assertFalse(update.contains("<if"),
+                "updateLastConnectInfo must not skip null values: a legacy client reconnecting without "
+                        + "a hostname would otherwise splice the previous machine's hostname onto the new IP");
+        assertTrue(update.contains("tenant_id = #{tenantId}"),
+                "updateLastConnectInfo must filter by tenant_id");
+        assertTrue(update.contains("is_deleted = 0"),
+                "updateLastConnectInfo must filter by is_deleted = 0");
+        assertTrue(update.contains("modifier_id = #{modifierId}"),
+                "updateLastConnectInfo must set modifier_id");
     }
 
     @Test

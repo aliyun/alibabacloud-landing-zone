@@ -201,4 +201,46 @@ class InsightsParticipationServiceTest {
         assertEquals(1, vo.getTrend().get(2).getSampleSize());
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void invalidRangeRetainsIllegalArgDiagnosticAndGlobal200Boundary(boolean slowTail) {
+        when(refreshService.read(1L)).thenReturn(Optional.of(new ParsedSnapshot("2026-08-05T03:00:00Z","2026-08-04",List.of())));
+        var ex=assertThrows(IllegalArgumentException.class, () -> {
+            if(slowTail) service.getSlowTail(1L,LocalDate.of(2026,8,1),LocalDate.of(2026,7,1),1,20);
+            else service.getParticipation(1L,LocalDate.of(2026,8,1),LocalDate.of(2026,7,1),"DAY");
+        });
+        assertEquals("Invalid date range: start_date must be <= end_date and end_date <= dataThrough",ex.getMessage());
+        assertNull(ex.getCause());
+        var handler=new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var zh=handler.handleIllegalArg(ex); assertEquals("10001",zh.getCode());
+            assertEquals("日期范围无效：开始日期必须不晚于结束日期，结束日期必须不晚于数据截止日期",zh.getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("Invalid date range: start date must not be after end date, and end date must not be after the data cutoff.",handler.handleIllegalArg(ex).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"zh-CN","en-US"})
+    void actualRestRoutesKeep200CodeAndRequestIdentityForDateFailures(String language) throws Exception {
+        when(refreshService.read(1L)).thenReturn(Optional.of(new ParsedSnapshot("2026-08-05T03:00:00Z","2026-08-04",List.of())));
+        var mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(new InsightsController(service))
+                .setControllerAdvice(new com.aliyun.autowonder.common.web.GlobalExceptionHandler()).build();
+        com.aliyun.autowonder.context.AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        com.aliyun.autowonder.context.AutoWonderContext.get().setRequestId("raw-request");
+        try {
+            for(String path:List.of("/api/insights/human-agent-participation","/api/insights/human-agent-participation/slowest")) {
+                var response=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path)
+                        .param("start_date","2026-08-01").param("end_date","2026-07-01").header("Accept-Language",language)).andReturn().getResponse();
+                assertEquals(200,response.getStatus());
+                var body=new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+                assertEquals("10001",body.path("code").asText());assertFalse(body.path("success").asBoolean());
+                assertEquals("raw-request",body.path("request_id").asText());
+                assertEquals(language.equals("en-US") ? "Invalid date range: start date must not be after end date, and end date must not be after the data cutoff." : "日期范围无效：开始日期必须不晚于结束日期，结束日期必须不晚于数据截止日期",body.path("message").asText());
+            }
+        } finally { com.aliyun.autowonder.context.AutoWonderContext.destroy(); }
+    }
 }

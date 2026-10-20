@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
-import { listAllSkills, type Skill } from './api';
+import { downloadSkillPackage, listAllSkills, type Skill } from './api';
 
 function pageSkill(id: number): Skill {
   return {
@@ -75,5 +75,25 @@ describe('listAllSkills', () => {
     await listAllSkills('MCP');
 
     expect(requestedType).toBe('MCP');
+  });
+});
+
+
+describe('native package download locale', () => {
+  afterEach(async () => { vi.unstubAllGlobals(); (await import('@/shared/auth/store')).useAuthStore.getState().clear(); await (await import('@/shared/i18n')).i18n.changeLanguage('zh-CN'); });
+  it('sends current language with auth and resolves HTTP fallback at completion', async () => {
+    const { i18n } = await import('@/shared/i18n');
+    const { useAuthStore } = await import('@/shared/auth/store');
+    useAuthStore.getState().setTokens('test-token', 'refresh');
+    let release!: (response: Response) => void;
+    const gate = new Promise<Response>(resolve => { release = resolve; });
+    const fetcher = vi.fn(() => gate);
+    vi.stubGlobal('fetch', fetcher);
+    await i18n.changeLanguage('en-US');
+    const download = downloadSkillPackage(7);
+    expect(fetcher.mock.calls[0]).toEqual(['/api/skills/7/package/download', { headers: { Authorization: 'Bearer test-token', 'Accept-Language': 'en-US' } }]);
+    await i18n.changeLanguage('zh-CN');
+    release(new Response('gateway', { status: 502 }));
+    await expect(download).rejects.toThrow('下载失败（HTTP 502）');
   });
 });

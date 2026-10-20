@@ -27,7 +27,7 @@ class PlatformBrandingServiceTest {
             "${autowonder.runtime.recommended-version:";
     private static final String YAML_RECOMMENDED_VERSION_PLACEHOLDER =
             "${AUTOWONDER_RUNTIME_RECOMMENDED_VERSION:";
-    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.3.3";
+    private static final String EXPECTED_RECOMMENDED_RUNTIME_VERSION = "0.3.22";
 
     @Test
     void uploadLogoSupportsAdditionalFormatsAndPreservesBytes() {
@@ -403,6 +403,66 @@ class PlatformBrandingServiceTest {
                 "https://daily.auto-wonder.example.com", "0.3.0-beta.2", "x.x.x", false);
 
         assertEquals("0.3.0-beta.2", service.recommendedRuntimeVersion());
+    }
+
+
+    @org.junit.jupiter.api.AfterEach
+    void resetLocale() { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> ownedFailures() {
+        return java.util.stream.Stream.of(
+            org.junit.jupiter.params.provider.Arguments.of("name", "10001", "平台名称不能为空", "Platform name is required"),
+            org.junit.jupiter.params.provider.Arguments.of("theme", "10001", "主题配色不合法", "Invalid theme palette"),
+            org.junit.jupiter.params.provider.Arguments.of("color", "10001", "主题颜色格式不合法", "Invalid theme color format"),
+            org.junit.jupiter.params.provider.Arguments.of("domain", "10001", "域名格式不合法", "Invalid domain format"),
+            org.junit.jupiter.params.provider.Arguments.of("empty", "10001", "Logo 文件不能为空", "Logo file is required"),
+            org.junit.jupiter.params.provider.Arguments.of("size", "10001", "Logo 文件不能超过 512 KB", "Logo file must not exceed 512 KB"),
+            org.junit.jupiter.params.provider.Arguments.of("mime", "10001", "Logo 仅支持 PNG、JPG/JPEG、WebP、SVG、GIF、ICO、AVIF", "Logo supports only PNG, JPG/JPEG, WebP, SVG, GIF, ICO, and AVIF"),
+            org.junit.jupiter.params.provider.Arguments.of("svg", "10001", "SVG 必须为有效的静态图形，不支持脚本、外部资源、样式表或动画，请导出为使用行内样式的 SVG", "SVG must be a valid static graphic without scripts, external resources, stylesheets, or animation; export it with inline styles"),
+            org.junit.jupiter.params.provider.Arguments.of("storage", "17021", "Logo 上传失败", "Logo upload failed")
+        );
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("ownedFailures")
+    void ownedFailurePreservesDiagnosticCauseAndWriteOrderBeforeBilingualResponse(String branch, String code, String diagnostic, String english) {
+        PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
+        ObjectStorage storage = mock(ObjectStorage.class);
+        when(storage.put(anyString(), anyString(), any())).thenThrow(new IllegalStateException("raw <secret> same-looking"));
+        PlatformBrandingService service = newService(dao, storage);
+        UpdatePlatformBrandingRequest request = new UpdatePlatformBrandingRequest();
+        request.setPlatformName("raw <b>Name</b>"); request.setThemeKey("ocean-blue"); request.setPrimaryColor("#2563eb");
+        org.junit.jupiter.api.function.Executable operation;
+        if (java.util.Set.of("name", "theme", "color", "domain").contains(branch)) {
+            switch (branch) {
+                case "name" -> request.setPlatformName("  ");
+                case "theme" -> request.setThemeKey("future <b>");
+                case "color" -> request.setPrimaryColor("blue");
+                default -> request.setDomain("http://wonder.example.com");
+            }
+            operation = () -> service.update(100L, request);
+        } else {
+            MockMultipartFile file = switch (branch) {
+                case "empty" -> null;
+                case "size" -> new MockMultipartFile("file", "raw.png", "image/png", new byte[512 * 1024 + 1]);
+                case "mime" -> new MockMultipartFile("file", "raw.pdf", "application/pdf", new byte[]{1});
+                case "svg" -> new MockMultipartFile("file", "raw.svg", "image/svg+xml", "<svg xmlns='http://www.w3.org/2000/svg'><script/></svg>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                default -> new MockMultipartFile("file", "raw.png", "image/png", new byte[]{1, 2});
+            };
+            operation = () -> service.uploadLogo(100L, file);
+        }
+        BizException error = assertThrows(BizException.class, operation);
+        assertEquals(BizException.class, error.getClass());
+        assertEquals(code, error.getCode());
+        assertEquals(diagnostic, error.getMessage());
+        assertEquals(diagnostic, error.getLocalizedMessage());
+        assertNull(error.getCause());
+        verifyNoInteractions(dao);
+        if (!branch.equals("storage")) verifyNoInteractions(storage);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+        assertEquals(diagnostic, com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        assertEquals(english, com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
     }
 
     private static String constructorRecommendedRuntimeVersionDefault() {

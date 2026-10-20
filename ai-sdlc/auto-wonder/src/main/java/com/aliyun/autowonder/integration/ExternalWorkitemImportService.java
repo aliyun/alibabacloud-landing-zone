@@ -155,7 +155,7 @@ public class ExternalWorkitemImportService {
 
         WorkitemDO existing = workitemDao.findById(link.getWorkitemId());
         if (existing == null) {
-            throw new BizException(ErrorCode.WORKITEM_NOT_FOUND, "已存在外部工单映射,但本地工单不存在");
+            throw BizException.keyed(ErrorCode.WORKITEM_NOT_FOUND, "integration.import_mapping_workitem_missing", new Object[0], "已存在外部工单映射,但本地工单不存在");
         }
         String title = req.getTitle().trim();
         String content = buildContent(req);
@@ -245,7 +245,7 @@ public class ExternalWorkitemImportService {
         try {
             return Integer.parseInt(String.valueOf(value));
         } catch (NumberFormatException e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "priority必须是数字");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "integration.import_priority_numeric", new Object[0], "priority必须是数字");
         }
     }
 
@@ -255,7 +255,7 @@ public class ExternalWorkitemImportService {
 
     private void validate(ExternalWorkitemImportRequest req) {
         if (req == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "请求体不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "integration.import_body_required", new Object[0], "请求体不能为空");
         }
         required(req.getSourceSystem(), "sourceSystem");
         required(req.getExternalWorkitemId(), "externalWorkitemId");
@@ -266,7 +266,7 @@ public class ExternalWorkitemImportService {
 
     private void required(String value, String field) {
         if (isBlank(value)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, field + "不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "integration.import_field_required", new Object[]{field}, field + "不能为空");
         }
     }
 

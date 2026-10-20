@@ -1,6 +1,8 @@
-import { beforeEach, describe, it, expect } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { i18n } from '@/shared/i18n';
+import { message } from 'antd';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -18,10 +20,56 @@ function renderPage(initialPath = '/sdlcs/1') {
   );
 }
 
+beforeEach(() => {
+  server.use(http.get('/api/workspaces/current/members', () => HttpResponse.json({ success: true, data: [] })));
+});
+
 describe('SdlcDetailPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  });
+
+  it('defaults approvers to the creator and saves multiple members and identity tags', async () => {
+    let saved: Record<string, unknown> | undefined;
+    server.use(
+      http.get('/api/sdlcs/1', () => HttpResponse.json({ success: true, data: {
+        id: '1', name: '审批人配置', status: 'DRAFT', steps: [{ id: '10', stepOrder: 1, name: '编写摘要',
+          kind: 'analysis', required: true, instructionMd: '编写验收摘要', gatePolicyJson: '{"humanApprovalRequired":true}' }],
+      } })),
+      http.get('/api/workspaces/current/members', () => HttpResponse.json({ success: true, data: [
+        { userId: 2, nickname: '审批成员甲', username: 'reviewer-a', accessLevel: 'READ_WRITE', identityTags: ['验收'] },
+        { userId: 3, nickname: '只读成员', username: 'reader', accessLevel: 'READ_ONLY', identityTags: [] },
+      ] })),
+      http.put('/api/sdlcs/1/steps/10', async ({ request }) => {
+        saved = await request.json() as Record<string, unknown>; return HttpResponse.json({ success: true, data: { id: '10' } });
+      }),
+    );
+    const { container } = renderPage();
+    await screen.findByText('审批人配置');
+    fireEvent.click(container.querySelector('.ant-table-row .anticon-edit')!.closest('button')!);
+    expect(await screen.findByText('工单创建人（建单后确定）')).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '审批人' }));
+    fireEvent.click(await screen.findByText('审批成员甲'));
+    fireEvent.click(await screen.findByText('身份标签：验收'));
+    expect(screen.queryByText('只读成员')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() => expect(saved).toBeDefined());
+    expect(JSON.parse(saved!.gatePolicyJson as string)).toEqual({ humanApprovalRequired: true,
+      humanApprovers: { includeCreator: true, userIds: [2], identityTags: ['验收'] } });
+  });
+
+  it('keeps invalid step confirmation inline with the raw instruction and no POST', async () => {
+    let posts = 0;
+    server.use(http.get('/api/sdlcs/1', () => HttpResponse.json({ success: true, data: { id: '1', name: 'raw', status: 'DRAFT', steps: [] } })), http.post('/api/sdlcs/1/steps', () => { posts++; return HttpResponse.json({ success: true, data: {} }); }));
+    renderPage(); await screen.findByText('raw');
+    fireEvent.click(screen.getByRole('button', { name: /添加步骤/ }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('执行说明'), { target: { value: '<raw 中文>' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /OK|确\s*定/ }));
+    expect(await screen.findByText('请输入步骤名称')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('执行说明')).toHaveValue('<raw 中文>');
+    expect(screen.getByRole('dialog')).toBe(dialog); expect(posts).toBe(0);
   });
 
   it('renders step chain with editor controls', async () => {
@@ -214,7 +262,7 @@ describe('SdlcDetailPage', () => {
     expect(await screen.findByText('checklistJson 不是合法的 JSON')).toBeInTheDocument();
   });
 
-  it('keeps handler and transition fields out of the step-edit payload so the backend preserves them', async () => {
+  it.each([true, false])('sets human approval to %s while preserving other policy and transition fields', async (enabled) => {
     let capturedBody: Record<string, unknown> | null = null;
     server.use(
       http.get('/api/sdlcs/1', () => {
@@ -227,7 +275,8 @@ describe('SdlcDetailPage', () => {
             steps: [
               {
                 id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析', kind: 'analysis',
-                instructionMd: '理解需求', checklistJson: null, gatePolicyJson: null,
+                instructionMd: '理解需求', checklistJson: null,
+                gatePolicyJson: JSON.stringify({ evidenceRequired: true, humanApprovalRequired: !enabled }),
                 required: true, timeoutSeconds: 600, retryBudget: 2,
                 code: 'STEP_1', handlerType: 'AGENT', handlerRoleRef: 'AW_CR',
                 statusOnEnterCode: 'aone_172915',
@@ -257,6 +306,11 @@ describe('SdlcDetailPage', () => {
     expect(editButton).toBeTruthy();
     fireEvent.click(editButton!);
 
+    const approvalSwitch = await screen.findByRole('switch', { name: '完成后需要人工批准' });
+    expect(approvalSwitch).toHaveAttribute('aria-checked', String(!enabled));
+    fireEvent.click(approvalSwitch);
+    expect(approvalSwitch).toHaveAttribute('aria-checked', String(enabled));
+
     const okButton = await screen.findByRole('button', { name: /OK|确\s*定/ });
     fireEvent.click(okButton);
 
@@ -267,9 +321,58 @@ describe('SdlcDetailPage', () => {
     expect(capturedBody!.name).toBe('需求分析');
     expect(capturedBody!.timeoutSeconds).toBe(600);
     expect(capturedBody!.retryBudget).toBe(2);
+    expect(JSON.parse(capturedBody!.gatePolicyJson as string)).toEqual(
+      enabled ? { evidenceRequired: true, humanApprovalRequired: true } : { evidenceRequired: true },
+    );
+    expect(capturedBody!).not.toHaveProperty('humanApprovalRequired');
     for (const key of ['handlerRoleRef', 'statusOnEnterCode', 'onSuccess', 'onFail']) {
       expect(capturedBody!).not.toHaveProperty(key);
     }
+  });
+
+  it('keeps questions opt-in, removes the legacy question box, and explains where to configure them', async () => {
+    const otherPolicy = { evidenceRequired: true, humanApprovalRequired: true };
+    let policy = JSON.stringify(otherPolicy);
+    const saved: Record<string, unknown>[] = [];
+    server.use(
+      http.get('/api/sdlcs/1', () => HttpResponse.json({
+        success: true, data: { id: '1', name: '提问配置流程', status: 'DRAFT', steps: [{
+          id: '10', sdlcId: '1', stepOrder: 1, name: '需求分析', kind: 'analysis',
+          instructionMd: '理解需求', gatePolicyJson: policy, required: true,
+        }] },
+      })),
+      http.put('/api/sdlcs/1/steps/10', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>;
+        saved.push(body);
+        policy = body.gatePolicyJson as string;
+        return HttpResponse.json({ success: true, data: { id: '10' } });
+      }),
+    );
+    const { container } = renderPage();
+    await screen.findByText('提问配置流程');
+    const edit = () => fireEvent.click(container.querySelector('.ant-table-row .anticon-edit')!.closest('button')!);
+    edit();
+    const label = '该步骤事实不清时询问用户';
+    const questionLabel = '需要询问的问题（可选）';
+    const toggle = await screen.findByRole('switch', { name: label });
+    expect(screen.queryByRole('textbox', { name: questionLabel })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole('textbox', { name: questionLabel })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('询问用户功能说明')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(JSON.parse(policy)).toEqual({ ...otherPolicy, askWhenUnclear: true });
+    expect(saved[0]).not.toHaveProperty('askWhenUnclear');
+    expect(saved[0]).not.toHaveProperty('askWhenUnclearGuidance');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    edit();
+    await screen.findByRole('switch', { name: label });
+    expect(screen.queryByRole('textbox', { name: questionLabel })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('switch', { name: label }));
+    expect(screen.queryByRole('textbox', { name: questionLabel })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /OK|确\s*定/ }));
+    await waitFor(() => expect(saved).toHaveLength(2));
+    expect(JSON.parse(policy)).toEqual(otherPolicy);
   });
 
   it('lets users view checklist and gate policy content via popovers on an ENABLED SDLC', async () => {
@@ -449,4 +552,115 @@ describe('RetryBudgetTooltipContent', () => {
     expect(screen.getByText(/建议值：/)).toBeInTheDocument();
     expect(screen.getByText(/一般建议设置为 2~3/)).toBeInTheDocument();
   });
+});
+
+it('refreshes both open SDLC forms and existing errors without clearing raw drafts or pristine fields', async () => {
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  const id = '334208147726012416';
+  const rawJson = '[{"id":"tests-pass","text":"<b>原文</b>"}]';
+  let body: unknown;
+  server.use(http.get(`/api/sdlcs/${id}`, () => HttpResponse.json({ success: true, data: {
+    id, name: '<em>流程</em>', description: '原文说明', status: 'DRAFT', workType: 'TASK', version: 3,
+    steps: [{ id: '334208147726012417', sdlcId: id, stepOrder: 1, name: '原步骤', kind: 'analysis', required: true, instructionMd: '执行原文', checklistJson: rawJson, gatePolicyJson: '{bad json', timeoutSeconds: 600, retryBudget: 2 }],
+  } })), http.put(`/api/sdlcs/${id}/steps/334208147726012417`, async ({ request }) => { body = await request.json(); return HttpResponse.json({ success: true, data: {} }); }));
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={createMemoryRouter([{ path: '/sdlcs/:id', element: <SdlcDetailPage /> }], { initialEntries: [`/sdlcs/${id}`] })} /></QueryClientProvider>);
+  await screen.findByText('<em>流程</em>');
+  fireEvent.click(screen.getByRole('button', { name: /编辑信息/ }));
+  fireEvent.change(screen.getByLabelText('名称'), { target: { value: '' } });
+  await screen.findByText('请输入名称');
+  fireEvent.click(screen.getByRole('button', { name: '编辑步骤' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('步骤名称'), { target: { value: '' } });
+  fireEvent.change(within(dialog).getByLabelText('建议超时秒数'), { target: { value: '' } });
+  fireEvent.change(within(dialog).getByLabelText('建议重试预算'), { target: { value: '' } });
+  await screen.findByText('请输入步骤名称');
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(await screen.findByText('Enter a step name')).toBeInTheDocument();
+  expect(screen.getByText('Enter a name')).toBeInTheDocument();
+  expect(screen.queryByText('Enter execution instructions')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Description')).toHaveValue('原文说明');
+  expect(within(dialog).getByLabelText('Execution instructions')).toHaveValue('执行原文');
+  expect(within(dialog).getByLabelText('Checklist JSON')).toHaveValue(rawJson);
+  expect(within(dialog).getByLabelText('Entry/exit policy JSON')).toHaveValue('{bad json');
+  expect(screen.getByLabelText('Step 1: 原步骤')).toBeInTheDocument();
+  expect(screen.getByText('1 step')).toBeInTheDocument();
+  expect(screen.getAllByText('Analysis')).toHaveLength(2);
+  fireEvent.change(within(dialog).getByLabelText('Step name'), { target: { value: '<i>draft</i>' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: /OK|Confirm/ }));
+  expect(await screen.findByText('Enter a valid JSON object')).toBeInTheDocument();
+  expect(body).toBeUndefined();
+  fireEvent.change(within(dialog).getByLabelText('Entry/exit policy JSON'), { target: { value: '{"requiredArtifacts":["原产物"]}' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: /OK|Confirm/ }));
+  await waitFor(() => expect(body).toEqual({ name: '<i>draft</i>', kind: 'analysis', required: true, instructionMd: '执行原文', checklistJson: rawJson, gatePolicyJson: '{"requiredArtifacts":["原产物"]}', timeoutSeconds: null, retryBudget: null }));
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+});
+
+it('uses the completion locale for a pending SDLC save', async () => {
+  await i18n.changeLanguage('zh-CN');
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  let started = false;
+  const success = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+  server.use(http.get('/api/sdlcs/1', () => HttpResponse.json({ success: true, data: { id: '1', name: '原名', status: 'DRAFT', steps: [] } })), http.put('/api/sdlcs/1', async () => { started = true; await pending; return HttpResponse.json({ success: true, data: {} }); }));
+  renderPage();
+  await screen.findByText('原名');
+  fireEvent.click(screen.getByRole('button', { name: /编辑信息/ }));
+  fireEvent.click(screen.getByRole('button', { name: /保\s*存/ }));
+  await waitFor(() => expect(started).toBe(true));
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  finish();
+  await waitFor(() => expect(success).toHaveBeenCalledWith('Saved'));
+  success.mockRestore();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+});
+
+afterEach(async () => { await i18n.changeLanguage('zh-CN'); });
+
+it.each([
+  ['zh-CN', '草稿', '需求', ['分析', '实现', '测试', '审查', '产物', '交接', '清理'], '8 步'],
+  ['en-US', 'Draft', 'Requirement', ['Analysis', 'Implementation', 'Test', 'Review', 'Artifact', 'Handoff', 'Cleanup'], '8 steps'],
+])('renders every known kind and prototype-like unknown values in %s', async (locale, status, workType, kinds, count) => {
+  await i18n.changeLanguage(locale);
+  const codes = ['analysis', 'implementation', 'test', 'review', 'artifact', 'handoff', 'cleanup', 'constructor'];
+  server.use(http.get('/api/sdlcs/1', () => HttpResponse.json({ success: true, data: { id: '1', name: '原流程', workType: 'REQ', status: 'DRAFT', steps: codes.map((kind, i) => ({ id: String(i), stepOrder: i + 1, name: `raw-${i}`, kind, required: i !== 0, instructionMd: '原执行说明', timeoutSeconds: null, retryBudget: null })) } })));
+  renderPage();
+  await screen.findByText('原流程');
+  expect(screen.getByText(status)).toBeInTheDocument();
+  expect(screen.getByText(workType)).toBeInTheDocument();
+  for (const kind of kinds) expect(screen.getByText(kind)).toBeInTheDocument();
+  expect(screen.getByText('constructor')).toBeInTheDocument();
+  expect(screen.getByText(count)).toBeInTheDocument();
+  const first = screen.getByLabelText(locale === 'en-US' ? 'Step 1: raw-0' : '步骤 1: raw-0');
+  fireEvent.mouseEnter(first);
+  expect(await screen.findByText(locale === 'en-US' ? 'Timeout: Not configured' : '超时：未配置')).toBeInTheDocument();
+  expect(screen.getByText(locale === 'en-US' ? 'Required: No' : '必需：否')).toBeInTheDocument();
+});
+
+it.each([[0, '0 steps'], [1, '1 step'], [3, '3 steps']])('renders a numeric overview plural with %s steps', async (count, expected) => {
+  await i18n.changeLanguage('en-US');
+  server.use(http.get('/api/sdlcs/1', () => HttpResponse.json({ success: true, data: { id: '1', name: 'Raw', workType: 'constructor', status: 'constructor', steps: Array.from({ length: count as number }, (_, i) => ({ id: String(i), stepOrder: i + 1, name: `step-${i}` })) } })));
+  renderPage();
+  await screen.findByText('Raw');
+  expect(screen.getByText(expected)).toBeInTheDocument();
+  expect(screen.getAllByText('constructor')).toHaveLength(2);
+});
+
+it('refreshes open checklist help and retry prose while retaining exact JSON examples', async () => {
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  server.use(http.get('/api/sdlcs/1', () => HttpResponse.json({ success: true, data: { id: '1', name: 'Raw', status: 'DRAFT', steps: [] } })));
+  renderPage();
+  await screen.findByText('Raw');
+  fireEvent.click(screen.getByRole('button', { name: '添加步骤' }));
+  const dialog = screen.getByRole('dialog');
+  fireEvent.keyDown(within(dialog).getByRole('button', { name: '查看检查项 JSON帮助' }), { key: 'Enter' });
+  await screen.findByText(/先升级执行器 Runtime/);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(await screen.findByText(/Upgrade the Executor Runtime before setting/)).toBeInTheDocument();
+  expect(screen.getByText('[{"id":"code-tests","text":"代码测试通过","allowNotApplicable":true,"notApplicableWhen":"本轮仅澄清需求，未进入代码实施分支"}]')).toBeInTheDocument();
+  expect(within(dialog).getByLabelText('Checklist JSON')).toHaveAttribute('placeholder', 'e.g. [{"id": "tests-pass", "text": "运行相关测试全部通过"}]');
+  expect(within(dialog).getByLabelText('Entry/exit policy JSON')).toHaveAttribute('placeholder', 'e.g. { "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }');
+  expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  fireEvent.keyDown(within(dialog).getByRole('button', { name: 'Help for Suggested retry budget' }), { key: ' ' });
+  expect(await screen.findByText(/After a step finishes, the Runtime Gate checks/)).toBeInTheDocument();
 });

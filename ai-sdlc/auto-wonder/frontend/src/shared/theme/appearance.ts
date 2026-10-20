@@ -54,6 +54,8 @@ export function createAppearanceTheme(mode: ResolvedAppearance, accent: string):
       colorLink: v['--aw-accent-text'], colorLinkHover: v['--aw-accent-text'], colorLinkActive: v['--aw-accent-text'],
     }),
     token: {
+      // Keep popup lifecycle independent of OS motion settings and runtime toggles.
+      motion: false,
       colorPrimary: v['--aw-accent-text'], colorLink: v['--aw-accent-text'], colorLinkHover: v['--aw-accent-text'], colorLinkActive: v['--aw-accent-text'], colorBgBase: v['--aw-bg'], colorBgLayout: v['--aw-bg'],
       colorBgContainer: v['--aw-panel'], colorBgElevated: v['--aw-panel'], colorText: v['--aw-text'], colorTextSecondary: v['--aw-muted'],
       colorBorder: v['--aw-border'], colorBorderSecondary: v['--aw-border'], colorFillAlter: v['--aw-raised'],

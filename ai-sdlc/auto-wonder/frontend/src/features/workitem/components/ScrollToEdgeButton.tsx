@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState, useCallback } from 'react';
 import { Button } from 'antd';
 import { VerticalAlignTopOutlined, VerticalAlignBottomOutlined } from '@ant-design/icons';
@@ -31,6 +32,7 @@ function computeCenteredRight(el: HTMLElement): number {
 }
 
 export function ScrollToEdgeButton({ containerRef }: ScrollToEdgeButtonProps) {
+  const { t } = useTranslation('workitem');
   const [state, setState] = useState<{ scrollable: boolean; atTop: boolean; atBottom: boolean }>({
     scrollable: false,
     atTop: true,
@@ -82,8 +84,8 @@ export function ScrollToEdgeButton({ containerRef }: ScrollToEdgeButtonProps) {
     >
       <Button
         shape="circle"
-        aria-label="回到顶部"
-        title="回到顶部"
+        aria-label={t('detail.scrollTop')}
+        title={t('detail.scrollTop')}
         icon={<VerticalAlignTopOutlined />}
         disabled={state.atTop}
         style={CONTROL_STYLE}
@@ -91,8 +93,8 @@ export function ScrollToEdgeButton({ containerRef }: ScrollToEdgeButtonProps) {
       />
       <Button
         shape="circle"
-        aria-label="到达底部"
-        title="到达底部"
+        aria-label={t('detail.scrollBottom')}
+        title={t('detail.scrollBottom')}
         icon={<VerticalAlignBottomOutlined />}
         disabled={state.atBottom}
         style={CONTROL_STYLE}

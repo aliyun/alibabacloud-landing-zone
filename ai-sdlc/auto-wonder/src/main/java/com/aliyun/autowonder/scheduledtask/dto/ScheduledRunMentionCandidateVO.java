@@ -21,6 +21,7 @@ public class ScheduledRunMentionCandidateVO {
     private String executorStatus;
     private boolean mentionable;
     private String mentionDisabledReason;
+    private String mentionDisabledReasonCode;
 
     @JsonGetter("isAgent")
     public boolean isAgent() {

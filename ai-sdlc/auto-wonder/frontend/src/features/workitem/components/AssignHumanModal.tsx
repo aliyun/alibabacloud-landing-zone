@@ -1,3 +1,6 @@
+import { i18n } from '@/shared/i18n';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Modal, Form, Select, message } from 'antd';
 import { getMentionCandidates } from '../api';
@@ -12,7 +15,9 @@ interface AssignHumanModalProps {
 }
 
 export function AssignHumanModal({ open, workitemId, onClose }: AssignHumanModalProps) {
+  const { t } = useTranslation('workitem');
   const [form] = Form.useForm();
+  useLocalizedValidation(form, open);
   const assignMut = useAssignWorkitem();
   const accessCommand = useAccessCommand();
 
@@ -33,14 +38,14 @@ export function AssignHumanModal({ open, workitemId, onClose }: AssignHumanModal
       // antd already renders the field-level validation errors
       return;
     }
-    accessCommand('READ_WRITE', '指派工单给真人', async () => {
+    accessCommand('READ_WRITE', t('detail.assignHumanCommand'), async () => {
       try {
         await assignMut.mutateAsync({
           id: workitemId,
           assigneeType: 'HUMAN',
           assigneeRef: values.userId,
         });
-        message.success('已指派给真人');
+        message.success(i18n.t('workitem:assignment.success'));
         form.resetFields();
         onClose();
       } catch {
@@ -51,7 +56,7 @@ export function AssignHumanModal({ open, workitemId, onClose }: AssignHumanModal
 
   return (
     <Modal
-      title="指派给真人"
+      title={t('assignment.title')}
       open={open}
       onOk={handleOk}
       onCancel={() => {
@@ -59,18 +64,18 @@ export function AssignHumanModal({ open, workitemId, onClose }: AssignHumanModal
         onClose();
       }}
       confirmLoading={assignMut.isPending}
-      okText="指派"
-      cancelText="取消"
+      okText={t('assignment.submit')}
+      cancelText={t('detail.cancel')}
       destroyOnHidden
     >
       <Form form={form} layout="vertical">
         <Form.Item
           name="userId"
-          label="指派给"
-          rules={[{ required: true, message: '请选择指派对象' }]}
+          label={t('assignment.assignee')}
+          rules={[{ required: true, message: t('assignment.required') }]}
         >
           <Select
-            placeholder="选择真人用户"
+            placeholder={t('assignment.placeholder')}
             showSearch
             loading={candidatesLoading}
             optionFilterProp="label"
@@ -78,7 +83,7 @@ export function AssignHumanModal({ open, workitemId, onClose }: AssignHumanModal
               value: user.userId,
               label: user.displayId ? `${user.name} (${user.displayId})` : user.name,
             }))}
-            notFoundContent={candidatesLoading ? '加载中…' : '暂无可指派的真人用户'}
+            notFoundContent={candidatesLoading ? t('assignment.loading') : t('assignment.empty')}
           />
         </Form.Item>
       </Form>

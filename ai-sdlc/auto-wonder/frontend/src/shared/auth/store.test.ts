@@ -110,4 +110,26 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().user).toBeNull();
     expect(useAuthStore.getState().accessLevel).toBeNull();
   });
+
+  it('migrates legacy forbidden domains to read-only domains while filtering unknown values', () => {
+    const migrated = migrateAuthState({
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      user: null,
+      currentWorkspace: { id: 1, name: 'W', description: '' },
+      accessLevel: 'READ_WRITE',
+      forbiddenDomains: ['SDLC', 'NOPE'],
+    });
+
+    expect(migrated.readOnlyDomains).toEqual(['SDLC']);
+  });
+
+  it('clearCurrentWorkspace also clears read-only domains', () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 10, name: 'Workspace1', description: '' }, 'ADMIN');
+    useAuthStore.getState().setReadOnlyDomains(['EXECUTOR']);
+
+    useAuthStore.getState().clearCurrentWorkspace();
+
+    expect(useAuthStore.getState().readOnlyDomains).toEqual([]);
+  });
 });

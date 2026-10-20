@@ -321,4 +321,36 @@ class ExternalArtifactShareServiceTest {
         verifyNoInteractions(storage);
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"zh-CN,selector",
+            "en-US,selector",
+            "zh-CN,dispatch",
+            "en-US,dispatch",
+            "zh-CN,missing",
+            "en-US,missing",
+            "zh-CN,digest",
+            "en-US,digest"})
+    void exposureValidationPreservesSnapshotAndRawDiagnostics(String language,String problem) {
+        when(workitemDao.findById(WORKITEM_ID)).thenReturn(workitem("raw-token"));
+        String diagnostic=switch(problem) {
+            case "selector" -> "artifactId 与 name 至少提供一个";
+            case "dispatch" -> "dispatchId 必须是正整数";
+            case "missing" -> "该派发下未找到此产物（本轮可能尚未上传，请勿回退历史轮次）";
+            default -> "分享内容 SHA-256 不匹配，未公开此版本";
+        };
+        String english=switch(problem) {
+            case "selector" -> "Provide at least one of artifactId or name";
+            case "dispatch" -> "dispatchId must be a positive integer";
+            case "missing" -> "The artifact was not found in this dispatch. It may not have been uploaded yet; do not fall back to an earlier dispatch";
+            default -> "The shared content SHA-256 does not match. This version has not been published";
+        };
+        var error=assertThrows(BizException.class,()-> { if(problem.equals("digest")) ExternalArtifactShareService.verifyDigest(new byte[]{1},"a".repeat(64));else service.expose(WORKSPACE_ID,WORKITEM_ID,problem.equals("dispatch") ? 0L : DISPATCH_ID,null,problem.equals("selector") ? null : "report.md"); });
+        assertEquals(problem.equals("missing") ? ErrorCode.ARTIFACT_NOT_FOUND.getCode() : ErrorCode.PARAM_INVALID.getCode(),error.getCode());assertEquals(diagnostic,error.getMessage());assertNull(error.getCause());
+        verifyNoInteractions(storage);verify(artifactDao,never()).markExternalExposed(anyLong(),anyLong(),anyLong(),anyString());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try { assertEquals(language.equals("en-US") ? english : diagnostic,com.aliyun.autowonder.common.result.Result.fail(error).getMessage()); }
+        finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

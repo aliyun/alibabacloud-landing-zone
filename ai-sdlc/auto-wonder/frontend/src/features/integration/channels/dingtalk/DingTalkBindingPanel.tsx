@@ -1,3 +1,7 @@
+import { formatDateTime } from '@/shared/i18n/format';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
+import { getAgentRoleLabel } from '@/features/agent/constants';
 import { useMemo, useState } from 'react';
 import { Badge, Button, Card, Popconfirm, Space, Switch, Tag, Tooltip, Typography, message } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
@@ -16,8 +20,10 @@ import {
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { Text } = Typography;
+const transportLabelKeys = new Map([['STREAM', 'stream'], ['HTTP_CALLBACK', 'http']] as const);
 
 export function DingTalkBindingPanel() {
+  const { t } = useTranslation(['integration', 'agent']);
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -38,10 +44,10 @@ export function DingTalkBindingPanel() {
   const agentNameById = useMemo(() => {
     const map = new Map<number, string>();
     for (const agent of agents) {
-      map.set(agent.id, agent.roleName ? `${agent.name}（${agent.roleName}）` : agent.name);
+      map.set(agent.id, getAgentRoleLabel(agent.roleCode, agent.roleName) ? t('display.bindingLabel', { ns: 'agent', name: agent.name, label: getAgentRoleLabel(agent.roleCode, agent.roleName) }) : agent.name);
     }
     return map;
-  }, [agents]);
+  }, [agents, t]);
 
   const toggleMutation = useMutation({
     mutationFn: (binding: DingTalkBinding) =>
@@ -56,23 +62,23 @@ export function DingTalkBindingPanel() {
         status: binding.status === 'ENABLED' ? 'DISABLED' : 'ENABLED',
       }),
     onSuccess: () => {
-      message.success('状态已更新');
+      message.success(i18n.t('integration:statusUpdated'));
       queryClient.invalidateQueries({ queryKey: ['dingtalk-bindings'] });
     },
-    onError: (error: Error) => message.error(error.message || '更新失败'),
+    onError: (error: Error) => message.error(error.message || i18n.t('integration:updateFailed')),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteDingTalkBinding(id),
     onSuccess: () => {
-      message.success('绑定已删除');
+      message.success(i18n.t('integration:bindingDeleted'));
       queryClient.invalidateQueries({ queryKey: ['dingtalk-bindings'] });
     },
-    onError: (error: Error) => message.error(error.message || '删除失败'),
+    onError: (error: Error) => message.error(error.message || i18n.t('integration:deleteFailed')),
   });
 
   function openCreate() {
-    runAccessCommand('ADMIN', '新建钉钉绑定', () => {
+    runAccessCommand('ADMIN', t('newDingCommand'), () => {
       setDrawerMode('create');
       setEditing(null);
       setDrawerOpen(true);
@@ -80,7 +86,7 @@ export function DingTalkBindingPanel() {
   }
 
   function openEdit(record: DingTalkBinding) {
-    runAccessCommand('ADMIN', '编辑钉钉绑定', () => {
+    runAccessCommand('ADMIN', t('editDingCommand'), () => {
       setDrawerMode('edit');
       setEditing(record);
       setDrawerOpen(true);
@@ -88,93 +94,95 @@ export function DingTalkBindingPanel() {
   }
 
   const columns: ColumnsType<DingTalkBinding> = [
-    { title: '机器人', dataIndex: 'robotCode', width: 180, render: (v) => <Text code>{v}</Text> },
+    { title: t('robot'), dataIndex: 'robotCode', width: 180, render: (v) => <Text code>{v}</Text> },
     {
-      title: '关联数字员工',
+      title: t('linkedAgent'),
       dataIndex: 'agentId',
       render: (agentId: number) => agentNameById.get(agentId) || `#${agentId}`,
     },
     {
-      title: '传输',
+      title: t('transport'),
       dataIndex: 'transportMode',
       width: 110,
-      render: (v: TransportMode) => <Tag>{v === 'STREAM' ? 'Stream' : 'HTTP'}</Tag>,
+      render: (v: TransportMode) => {
+        const key = transportLabelKeys.get(v);
+        return <Tag>{key ? t(key) : v}</Tag>;
+      },
     },
     {
-      title: '健康',
+      title: t('health'),
       key: 'health',
       width: 120,
       render: (_, record) => {
         if (record.transportMode === 'STREAM') {
           if (record.streamStatus === 'CONNECTED') {
             const title = record.streamStatusUpdatedAt
-              ? `更新时间：${new Date(record.streamStatusUpdatedAt).toLocaleString('zh-CN')}`
+              ? t('healthUpdated', { time: formatDateTime(record.streamStatusUpdatedAt, { dateStyle: 'medium', timeStyle: 'medium' }) })
               : undefined;
             return (
               <Tooltip title={title}>
-                <Badge status="success" text="已连接钉钉服务" />
+                <Badge status="success" text={t('connected')} />
               </Tooltip>
             );
           }
           if (record.streamStatus === 'CONNECTING') {
-            return <Badge status="processing" text="连接中" />;
+            return <Badge status="processing" text={t('connecting')} />;
           }
           if (record.streamStatus === 'FAILED') {
             const title = record.streamError || record.lastError || undefined;
             return (
               <Tooltip title={title}>
-                <Badge status="error" text="连接失败" />
+                <Badge status="error" text={t('connectionFailed')} />
               </Tooltip>
             );
           }
-          return <Badge status="default" text="未连接" />;
+          const label = record.streamStatus && record.streamStatus !== 'NOT_CONNECTED' ? record.streamStatus : t('disconnected');
+          return <Badge status="default" text={label} />;
         }
         if (record.lastError) {
           return (
             <Tooltip title={record.lastError}>
-              <Badge status="error" text="失败" />
+              <Badge status="error" text={t('failed')} />
             </Tooltip>
           );
         }
         if (record.lastSuccessAt) {
           return (
-            <Tooltip title={`最近成功：${new Date(record.lastSuccessAt).toLocaleString('zh-CN')}`}>
-              <Badge status="success" text="正常" />
+            <Tooltip title={t('lastSuccess', { time: formatDateTime(record.lastSuccessAt, { dateStyle: 'medium', timeStyle: 'medium' }) })}>
+              <Badge status="success" text={t('healthy')} />
             </Tooltip>
           );
         }
-        return <Badge status="default" text="未回调" />;
+        return <Badge status="default" text={t('noCallback')} />;
       },
     },
     {
-      title: '状态',
+      title: t('status'),
       dataIndex: 'status',
       width: 110,
       render: (_, record) => (
-        <Switch
+        <Switch aria-label={t('toggleDing')}
           checked={record.status === 'ENABLED'}
           loading={toggleMutation.isPending}
-          checkedChildren="启用"
-          unCheckedChildren="停用"
+          checkedChildren={t('enabled')}
+          unCheckedChildren={t('disabled')}
           onChange={() =>
-            runAccessCommand('ADMIN', '切换钉钉绑定状态', () => toggleMutation.mutate(record))
+            runAccessCommand('ADMIN', t('toggleDing'), () => toggleMutation.mutate(record))
           }
         />
       ),
     },
     {
-      title: '操作',
+      title: t('actions'),
       key: 'actions',
       width: 140,
       render: (_, record) => (
         <Space>
-          <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
-          </Button>
+          <Button type="link" size="small" onClick={() => openEdit(record)}>{t('edit')}</Button>
           <Popconfirm
-            title="确认删除该绑定?"
-            okText="删除"
-            cancelText="取消"
+            title={t('confirmDingDelete')}
+            okText={t('delete')}
+            cancelText={t('cancel')}
             okButtonProps={{ danger: true }}
             open={deleteConfirmId === record.id}
             onOpenChange={(open) => {
@@ -182,16 +190,14 @@ export function DingTalkBindingPanel() {
                 setDeleteConfirmId(null);
                 return;
               }
-              runAccessCommand('ADMIN', '删除钉钉绑定', () => setDeleteConfirmId(record.id));
+              runAccessCommand('ADMIN', t('deleteDing'), () => setDeleteConfirmId(record.id));
             }}
             onConfirm={() => {
               setDeleteConfirmId(null);
-              runAccessCommand('ADMIN', '删除钉钉绑定', () => deleteMutation.mutate(record.id));
+              runAccessCommand('ADMIN', t('deleteDing'), () => deleteMutation.mutate(record.id));
             }}
           >
-            <Button type="link" size="small" danger>
-              删除
-            </Button>
+            <Button type="link" size="small" danger>{t('delete')}</Button>
           </Popconfirm>
         </Space>
       ),
@@ -199,12 +205,10 @@ export function DingTalkBindingPanel() {
   ];
 
   return (
-    <Card title="钉钉机器人绑定" extra={
-      <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建绑定</Button>
+    <Card title={t('dingTitle')} extra={
+      <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={openCreate}>{t('newBinding')}</Button>
     }>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        绑定一个钉钉机器人到一个数字员工。群成员 @该机器人 即可与数字员工多轮对话。
-      </Typography.Paragraph>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>{t('dingDescription')}</Typography.Paragraph>
       <Table
         scroll={{ x: 900 }}
         rowKey="id"
@@ -212,7 +216,7 @@ export function DingTalkBindingPanel() {
         dataSource={bindings}
         loading={isLoading}
         pagination={false}
-        locale={{ emptyText: '暂无绑定，点击「新建绑定」接入第一个钉钉机器人' }}
+        locale={{ emptyText: t('dingEmpty') }}
       />
       <DingTalkBindingDrawer
         open={drawerOpen}

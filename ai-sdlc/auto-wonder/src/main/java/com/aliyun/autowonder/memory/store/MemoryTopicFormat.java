@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -20,7 +22,7 @@ public final class MemoryTopicFormat {
         if (content == null) return new Topic(Map.of(), "");
         if (!content.startsWith("---\n")) return new Topic(Map.of(), content);
         int end = content.indexOf("\n---\n", 4);
-        if (end < 0) throw new IllegalArgumentException("memory frontmatter is not closed");
+        if (end < 0) throw new KeyedIllegalArgumentException("memory.validation.frontmatter_not_closed", null, "memory frontmatter is not closed");
         LoaderOptions options = new LoaderOptions();
         options.setAllowDuplicateKeys(false);
         Object value = new Yaml(new SafeConstructor(options)).load(content.substring(4, end));
@@ -28,16 +30,16 @@ public final class MemoryTopicFormat {
         if (value instanceof Map<?, ?> map) {
             map.forEach((key, field) -> metadata.put(String.valueOf(key), field));
         } else if (value != null) {
-            throw new IllegalArgumentException("memory frontmatter must be a mapping");
+            throw new KeyedIllegalArgumentException("memory.validation.frontmatter_mapping", null, "memory frontmatter must be a mapping");
         }
         return new Topic(metadata, content.substring(end + 5));
     }
 
     public static String render(String name, String type, String title, String description,
                                 String body, Map<String, Object> previous) {
-        if (!TYPES.contains(type == null ? "" : type)) throw new IllegalArgumentException("invalid memory type");
+        if (!TYPES.contains(type == null ? "" : type)) throw new KeyedIllegalArgumentException("memory.validation.type_invalid", null, "invalid memory type");
         if (title == null || title.isBlank() || description == null || description.isBlank()
-                || body == null || body.isBlank()) throw new IllegalArgumentException("title, description and body are required");
+                || body == null || body.isBlank()) throw new KeyedIllegalArgumentException("memory.validation.topic_fields_required", null, "title, description and body are required");
         Map<String, Object> metadata = new LinkedHashMap<>(previous);
         metadata.put("name", name);
         metadata.put("type", type);
@@ -59,7 +61,7 @@ public final class MemoryTopicFormat {
         MemoryPathValidator.requireSafe(path);
         String fixed = "- [](" + path + ") — ";
         int available = MemoryIndexPolicy.MAX_ENTRY_CODE_POINTS - fixed.codePointCount(0, fixed.length());
-        if (available < 2) throw new IllegalArgumentException("memory path is too long for index entry");
+        if (available < 2) throw new KeyedIllegalArgumentException("memory.validation.index_path_too_long", null, "memory path is too long for index entry");
         String label = prefix(oneLine(title), Math.min(80, available / 2));
         if (label.isEmpty()) label = "Memory";
         String hook = prefix(oneLine(description), available - label.codePointCount(0, label.length()));

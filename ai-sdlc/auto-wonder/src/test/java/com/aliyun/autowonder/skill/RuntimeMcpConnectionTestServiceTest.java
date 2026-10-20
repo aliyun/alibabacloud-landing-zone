@@ -142,4 +142,76 @@ class RuntimeMcpConnectionTestServiceTest {
                 });
         return values;
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"legacy", "invalid", "interrupted", "timeout", "untrusted"})
+    void responseOriginComesFromLocalBranchesAndNeverFromStoredPayload(String branch) {
+        var dao=mock(ExecutorDao.class);var redis=mock(RedisManager.class);
+        var service=new RuntimeMcpConnectionTestService(dao,mock(SessionRegistry.class),redis);
+        when(dao.findById(7L)).thenReturn(executor(7L,100L));var values=redisStore(redis);
+        when(redis.get(any(Serializable.class))).thenAnswer(inv -> {
+            Object rawKey=inv.getArgument(0); String key=String.valueOf(rawKey);
+            if(key.startsWith("mcp:connection:test:result:v2:")) {
+                if(branch.equals("invalid")) return "not-json";
+                if(branch.equals("untrusted")) return "{\"success\":false,\"message\":\"连接测试被中断<b>raw</b>\",\"ownedFailureCode\":\"TEST_INTERRUPTED\",\"ownedFailureArgs\":{\"seconds\":90},\"tools\":[]}";
+            }
+            if(key.startsWith("mcp:connection:test:result:")&&!key.startsWith("mcp:connection:test:result:v2:")&&branch.equals("legacy")) throw new IllegalStateException("raw deserialize");
+            return values.get(key);
+        });
+        if(branch.equals("interrupted")) Thread.currentThread().interrupt();
+        try {
+            var result=service.test(100L,7L,"raw-command",List.of("<raw>"));
+            var json=JSON.parseObject(JSON.toJSONString(result));
+            assertFalse(result.success);
+            String code=switch(branch) {case "legacy" -> "LEGACY_RESULT_INCOMPATIBLE";case "invalid" -> "INVALID_RESULT";case "interrupted" -> "TEST_INTERRUPTED";case "timeout" -> "RUNTIME_WAIT_TIMEOUT";default -> null;};
+            assertEquals(code,json.getString("ownedFailureCode"));
+            if(branch.equals("timeout")) {assertEquals(90,json.getJSONObject("ownedFailureArgs").getInteger("seconds"));assertEquals("Runtime 未在 90 秒内返回；请确认该 Runtime 在线且已更新",result.message);}
+            else assertFalse(json.containsKey("ownedFailureArgs"));
+            if(branch.equals("untrusted")) assertEquals("连接测试被中断<b>raw</b>",result.message);
+        } finally {Thread.interrupted();}
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"request","dispatch"})
+    void localThrowableOriginKeepsExactClassCauseAndHumanResponse(String branch) {
+        var dao=mock(ExecutorDao.class);var redis=mock(RedisManager.class);var skills=mock(SkillDao.class);
+        var runtime=new RuntimeMcpConnectionTestService(dao,mock(SessionRegistry.class),redis);
+        when(dao.findById(7L)).thenReturn(executor(7L,100L));redisStore(redis);
+        var cause=new IllegalArgumentException("<raw> external");
+        if(branch.equals("request")) when(redis.set(any(Serializable.class),any(Serializable.class),anyInt())).thenReturn(false);
+        else doThrow(cause).when(redis).publish(anyString(),anyString());
+        var ex=assertThrows(IllegalStateException.class,()->runtime.test(100L,7L,"raw",List.of()));
+        assertEquals(IllegalStateException.class,ex.getClass());assertSame(branch.equals("request") ? null : cause,ex.getCause());
+        String raw=branch.equals("request") ? "无法创建 Runtime 测试请求" : "Runtime MCP 测试下发失败";assertEquals(raw,ex.getMessage());
+        SkillDO skill=new SkillDO();skill.setId(1L);skill.setTenantId(100L);skill.setType("MCP");skill.setInstallSpec("{}");when(skills.findById(1L)).thenReturn(skill);
+        var vo=new SkillConnectionTestService(skills,runtime).test(1L,100L,7L);
+        var json=JSON.parseObject(JSON.toJSONString(vo));assertEquals(raw,vo.getMessage());
+        assertEquals(branch.equals("request") ? "REQUEST_CREATE_FAILED" : "DISPATCH_FAILED",json.getString("ownedFailureCode"));
+    }
+
+    @Test
+    void completionKeepsExactRuntimeFrameV2KeysAndLegacySerializationWhileBlankAndHtmlErrorsStayRaw() throws Exception {
+        var dao=mock(ExecutorDao.class);var redis=mock(RedisManager.class);var registry=mock(SessionRegistry.class);
+        var runtime=new RuntimeMcpConnectionTestService(dao,registry,redis);when(dao.findById(7L)).thenReturn(executor(7L,100L));
+        var values=redisStore(redis);var tools=List.of(Map.<String,Object>of("name","<b>raw</b>","description","用户 #7","inputSchema",Map.of("raw","<html>")));
+        doAnswer(inv -> {
+            var frame=JSON.parseObject(inv.getArgument(1));
+            assertEquals(java.util.Set.of("type","testId","executorId","transport","command","args","headers","env","timeoutSeconds"),frame.keySet());
+            assertEquals("MCP_CONNECTION_TEST",frame.getString("type"));assertEquals("raw-command",frame.getString("command"));
+            String id=frame.getString("testId");runtime.complete(100L,7L,id,false,"连接测试被中断<b>raw</b>",4L,tools);
+            var v2=JSON.parseObject((String)values.get("mcp:connection:test:result:v2:"+id));
+            assertEquals(java.util.Set.of("success","message","durationMs","tools"),v2.keySet());
+            assertEquals("连接测试被中断<b>raw</b>",v2.getString("message"));
+            var legacy=values.get("mcp:connection:test:result:"+id);
+            var bytes=new java.io.ByteArrayOutputStream();try(var out=new java.io.ObjectOutputStream(bytes)){out.writeObject(legacy);}
+            Object restored;try(var in=new java.io.ObjectInputStream(new java.io.ByteArrayInputStream(bytes.toByteArray()))){restored=in.readObject();}
+            assertEquals(java.util.Set.of("success","message","durationMs"),java.util.Arrays.stream(java.io.ObjectStreamClass.lookup(restored.getClass()).getFields()).map(java.io.ObjectStreamField::getName).collect(java.util.stream.Collectors.toSet()));
+            // Force the old-node read path using its unchanged Serializable result object.
+            values.remove("mcp:connection:test:result:v2:"+id);
+            return null;
+        }).when(redis).publish(anyString(),anyString());
+        var result=runtime.test(100L,7L,"raw-command",List.of("<raw>"));
+        assertFalse(result.success);assertNull(result.ownedFailureCode);assertNull(result.ownedFailureArgs);
+        assertEquals("连接测试被中断<b>raw</b>",result.message);assertEquals(tools,result.tools);assertEquals(4L,result.durationMs);
+    }
+
 }

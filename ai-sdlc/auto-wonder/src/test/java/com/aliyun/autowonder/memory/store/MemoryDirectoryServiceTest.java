@@ -53,4 +53,31 @@ class MemoryDirectoryServiceTest {
         assertEquals("正文\ntitle: 不是标题\n", document.getBody());
         assertEquals("mcp-123.md", document.getPath());
     }
+
+    @Test void nonAdministratorMemberDirectoryListsEveryOwnerAsReadOnly() {
+        var agents = mock(AgentDao.class); var squads = mock(SquadDao.class); var members = mock(SquadMemberDao.class);
+        var stores = mock(MemoryStoreApplicationService.class); var migration = mock(LegacyMemoryMigrationService.class);
+        var agent = new AgentDO(); agent.setId(42L); agent.setTenantId(7L); agent.setName("全栈开发");
+        var squad = new SquadDO(); squad.setId(12L); squad.setTenantId(7L); squad.setName("社区小队");
+        when(agents.listByTenant(7L)).thenReturn(List.of(agent));
+        when(squads.listByTenant(7L)).thenReturn(List.of(squad));
+        when(members.listByAgentIds(7L, List.of(42L))).thenReturn(List.of());
+        when(stores.listForUser(7, 9, false)).thenReturn(List.of(visibleStore(13L, "ORG", 0L),
+                visibleStore(14L, "SQUAD", 12L), visibleStore(11L, "AGENT", 42L)));
+
+        var result = new MemoryDirectoryService(agents, squads, members, stores, migration).list(7, 9, false);
+
+        assertEquals(3, result.owners().size());
+        assertTrue(result.owners().stream().allMatch(o -> o.storeId() != null), "every owner stays viewable");
+        assertTrue(result.owners().stream().noneMatch(MemoryDirectoryService.Owner::canCreate),
+                "members get no editing entry point");
+        assertNull(result.migration());
+        verifyNoInteractions(migration);
+    }
+
+    private MemoryStoreDO visibleStore(long id, String scope, long ownerRef) {
+        var store = new MemoryStoreDO();
+        store.setId(id); store.setScope(scope); store.setOwnerRef(ownerRef); store.setPermission("READ");
+        return store;
+    }
 }

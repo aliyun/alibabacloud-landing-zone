@@ -1,10 +1,11 @@
 import axios from 'axios';
-import { isWorkspaceAccessLevel } from './access';
+import { isWorkspaceAccessLevel, isWorkspaceDomain } from './access';
 import { useAuthStore } from './store';
 import { ErrorCodes, type ApiResult } from '@/shared/types/common';
 
 interface CurrentMembership {
   accessLevel: unknown;
+  readOnlyDomains: unknown;
 }
 
 const refreshesInFlight = new Map<string, Promise<void>>();
@@ -50,6 +51,11 @@ export function refreshCurrentMembership(): Promise<void> {
       && current.currentWorkspace?.id === workspaceId
     ) {
       current.setAccessLevel(body.data.accessLevel);
+      current.setReadOnlyDomains(
+        Array.isArray(body.data?.readOnlyDomains)
+          ? body.data.readOnlyDomains.filter(isWorkspaceDomain)
+          : [],
+      );
     }
   }).catch((error: unknown) => {
     if (axios.isAxiosError<ApiResult<unknown>>(error)) {

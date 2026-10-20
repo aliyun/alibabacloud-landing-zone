@@ -1,8 +1,12 @@
+import { useTranslation } from 'react-i18next';
+import type { ParseKeys } from 'i18next';
+import { i18n } from '@/shared/i18n';
+import { formatNumber } from '@/shared/i18n/format';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo } from 'react';
 import { Card, Tabs, Form, Input, InputNumber, Button, Spin, message, Row, Col, Statistic, Switch, Space } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
-import { SaveOutlined } from '@ant-design/icons';
+import { SaveOutlined, EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { FormInstance } from 'antd/es/form';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -23,35 +27,35 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 type SettingSchema = {
   key: string;
-  label: string;
-  hint?: string;
+  labelKey: ParseKeys<'settings'>;
+  hintKey?: ParseKeys<'settings'>;
   secret?: boolean;
-  placeholder?: string;
+  placeholderKey?: ParseKeys<'settings'>;
 };
 
 const AI_SETTINGS: SettingSchema[] = [
-  { key: 'default_model', label: '默认模型', hint: 'AI 场景适配器默认使用的模型' },
-  { key: 'request_timeout_seconds', label: '请求超时', hint: '单位：秒' },
-  { key: 'api_key', label: 'API Key', hint: '敏感配置，保存后脱敏展示', secret: true, placeholder: '输入新密钥以替换' },
+  { key: 'default_model', labelKey: 'defaultModel', hintKey: 'defaultModelHint' },
+  { key: 'request_timeout_seconds', labelKey: 'timeout', hintKey: 'secondsHint' },
+  { key: 'api_key', labelKey: 'apiKey', hintKey: 'secretHint', secret: true, placeholderKey: 'replaceSecret' },
 ];
 
 const NOTIFY_SETTINGS: SettingSchema[] = [
-  { key: 'dingtalk_enabled', label: '启用钉钉通知', hint: 'true / false' },
+  { key: 'dingtalk_enabled', labelKey: 'enableDingTalk', hintKey: 'booleanHint' },
 ];
 
 const SYSTEM_SETTINGS: SettingSchema[] = [
-  { key: 'default_sdlc_id', label: '默认 SDLC 流程', hint: '创建工单时的默认流程 ID' },
-  { key: 'default_status_template_id', label: '默认状态模板', hint: '创建工单时的默认状态模板 ID' },
-  { key: 'artifact_bucket', label: '产物 Bucket', hint: '交付产物默认存储位置' },
-  { key: 'upload_max_size_mb', label: '上传大小上限', hint: '单位：MB' },
+  { key: 'default_sdlc_id', labelKey: 'defaultSdlc', hintKey: 'defaultSdlcHint' },
+  { key: 'default_status_template_id', labelKey: 'defaultTemplate', hintKey: 'defaultTemplateHint' },
+  { key: 'artifact_bucket', labelKey: 'bucket', hintKey: 'bucketHint' },
+  { key: 'upload_max_size_mb', labelKey: 'uploadLimit', hintKey: 'mbHint' },
 ];
 
 const NOTIFY_TYPES = [
-  { type: 'WORKITEM_ASSIGNED', label: '工单指派' },
-  { type: 'DELIVERY_BLOCKED', label: '交付阻塞' },
-  { type: 'AI_SESSION_DONE', label: 'AI任务完成' },
-  { type: 'REVIEW_REQUIRED', label: '待审核' },
-];
+  { type: 'WORKITEM_ASSIGNED', labelKey: 'assigned' },
+  { type: 'DELIVERY_BLOCKED', labelKey: 'deliveryBlocked' },
+  { type: 'AI_SESSION_DONE', labelKey: 'aiDone' },
+  { type: 'REVIEW_REQUIRED', labelKey: 'reviewRequired' },
+] as const;
 
 function settingsToInitialValues(schema: SettingSchema[], settings: SettingVO[]) {
   const values = new Map(settings.map((item) => [item.key, item.valueJson]));
@@ -69,11 +73,12 @@ function buildSettingItems(schema: SettingSchema[], values: Record<string, strin
 }
 
 function SettingFields({ schema }: { schema: SettingSchema[] }) {
+  const { t } = useTranslation('settings');
   return (
     <>
       {schema.map((item) => (
-        <Form.Item key={item.key} label={item.label} name={item.key} extra={item.hint}>
-          {item.secret ? <Input.Password placeholder={item.placeholder} /> : <Input />}
+        <Form.Item key={item.key} label={t(item.labelKey)} name={item.key} extra={item.hintKey ? t(item.hintKey) : undefined}>
+          {item.secret ? <Input.Password placeholder={item.placeholderKey ? t(item.placeholderKey) : undefined} iconRender={(visible) => <Button type="text" htmlType="button" aria-label={visible ? t('hideSecret') : t('showSecret')} icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />} />} /> : <Input />}
         </Form.Item>
       ))}
     </>
@@ -96,6 +101,7 @@ function useSettingsGroup(group: string, form: FormInstance<Record<string, strin
 }
 
 function AiSettingsTab() {
+  const { t } = useTranslation('settings');
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [quotaForm] = Form.useForm<UpdateQuotaRequest>();
@@ -129,7 +135,7 @@ function AiSettingsTab() {
       ]);
     },
     onSuccess: () => {
-      message.success('AI配置已保存');
+      message.success(i18n.t('settings:aiSaved'));
       queryClient.invalidateQueries({ queryKey: ['ai-quota'] });
       queryClient.invalidateQueries({ queryKey: ['settings', 'AI'] });
     },
@@ -144,38 +150,39 @@ function AiSettingsTab() {
   const totalTokens = usage.reduce((sum, item) => sum + item.inputTokens + item.outputTokens, 0);
 
   const usageColumns: ColumnsType<AiUsageVO> = [
-    { title: '场景', dataIndex: 'scene' },
-    { title: '调用次数', dataIndex: 'callCount' },
-    { title: '输入 Token', dataIndex: 'inputTokens' },
-    { title: '输出 Token', dataIndex: 'outputTokens' },
+    { title: t('scene'), dataIndex: 'scene' },
+    { title: t('callCount'), dataIndex: 'callCount', render: (value: number) => formatNumber(value) },
+    { title: t('inputTokens'), dataIndex: 'inputTokens', render: (value: number) => formatNumber(value) },
+    { title: t('outputTokens'), dataIndex: 'outputTokens', render: (value: number) => formatNumber(value) },
   ];
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Row gutter={16}>
-        <Col xs={24} md={8}><Card size="small"><Statistic title="本月调用" value={totalCalls} /></Card></Col>
-        <Col xs={24} md={8}><Card size="small"><Statistic title="Token 使用" value={totalTokens} /></Card></Col>
-        <Col xs={24} md={8}><Card size="small"><Statistic title="活跃场景" value={usage.length} /></Card></Col>
+        <Col xs={24} md={8}><Card size="small"><Statistic title={t('monthCalls')} value={totalCalls} formatter={() => formatNumber(totalCalls)} /></Card></Col>
+        <Col xs={24} md={8}><Card size="small"><Statistic title={t('tokenUsage')} value={totalTokens} formatter={() => formatNumber(totalTokens)} /></Card></Col>
+        <Col xs={24} md={8}><Card size="small"><Statistic title={t('activeScenes')} value={usage.length} formatter={() => formatNumber(usage.length)} /></Card></Col>
       </Row>
 
       <Row gutter={16}>
         <Col xs={24} lg={12}>
-          <Card title="AI 配额" size="small">
+          <Card title={t('aiQuota')} size="small">
             <Form form={quotaForm} layout="vertical">
-              <Form.Item label="月调用次数" name="maxCalls">
-                <InputNumber min={0} style={{ width: '100%' }} />
+              {/* ponytail: upstream steppers hardcode English aria labels; restore pointer controls when the public API supports localized parent names. */}
+              <Form.Item label={t('monthlyCalls')} name="maxCalls">
+                <InputNumber controls={false} min={0} style={{ width: '100%' }} />
               </Form.Item>
-              <Form.Item label="月 Token 上限" name="maxTokens">
-                <InputNumber min={0} style={{ width: '100%' }} />
+              <Form.Item label={t('monthlyTokens')} name="maxTokens">
+                <InputNumber controls={false} min={0} style={{ width: '100%' }} />
               </Form.Item>
-              <Form.Item label="并发限制" name="concurrencyLimit">
-                <InputNumber min={0} style={{ width: '100%' }} />
+              <Form.Item label={t('concurrency')} name="concurrencyLimit">
+                <InputNumber controls={false} min={0} style={{ width: '100%' }} />
               </Form.Item>
             </Form>
           </Card>
         </Col>
         <Col xs={24} lg={12}>
-          <Card title="模型默认值" size="small">
+          <Card title={t('modelDefaults')} size="small">
             <Form form={settingsForm} layout="vertical">
               <SettingFields schema={AI_SETTINGS} />
             </Form>
@@ -183,20 +190,21 @@ function AiSettingsTab() {
         </Col>
       </Row>
 
-      <Card title="场景用量" size="small">
+      <Card title={t('sceneUsage')} size="small">
         <Table rowKey={(row) => row.scene} columns={usageColumns} dataSource={usage} pagination={false} size="small" />
       </Card>
 
-      <Button type="primary" icon={<SaveOutlined />} loading={saveMut.isPending} onClick={() =>
-        runAccessCommand('ADMIN', '保存AI配置', () => saveMut.mutate())
+      <Button type="primary" icon={<SaveOutlined aria-hidden="true" />} aria-label={t('saveAi')} loading={saveMut.isPending} onClick={() =>
+        runAccessCommand('ADMIN', t('saveAi'), () => saveMut.mutate())
       }>
-        保存AI配置
+        {t('saveAi')}
       </Button>
     </Space>
   );
 }
 
 function NotifySettingsTab() {
+  const { t } = useTranslation('settings');
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [prefForm] = Form.useForm<Record<string, boolean>>();
@@ -205,10 +213,10 @@ function NotifySettingsTab() {
   const channelQuery = useQuery({ queryKey: PLATFORM_IM_CHANNELS_QUERY_KEY, queryFn: getPlatformImChannels });
   const provider = selectedImProvider(channelQuery.data ?? []);
   const providerKey = provider === 'FEISHU' ? 'feishu' : 'dingtalk';
-  const providerLabel = provider === 'FEISHU' ? '飞书' : '钉钉';
+  const providerLabel = provider === 'FEISHU' ? t('feishu') : t('dingtalk');
   const notifySettings = useMemo(() => NOTIFY_SETTINGS.map((item) => ({
-    ...item, key: item.key.replace('dingtalk', providerKey), label: item.label.replace('钉钉', providerLabel),
-  })), [providerKey, providerLabel]);
+    ...item, key: `${providerKey}_enabled`, labelKey: providerKey === 'feishu' ? 'enableFeishu' as const : item.labelKey,
+  })), [providerKey]);
   const prefsQuery = useQuery({ queryKey: ['notify-prefs'], queryFn: listNotifyPrefs });
   const settingsQuery = useSettingsGroup('NOTIFY', settingsForm, notifySettings);
 
@@ -240,7 +248,7 @@ function NotifySettingsTab() {
       ]);
     },
     onSuccess: () => {
-      message.success('通知配置已保存');
+      message.success(i18n.t('settings:notifySaved'));
       queryClient.invalidateQueries({ queryKey: ['notify-prefs'] });
       queryClient.invalidateQueries({ queryKey: ['settings', 'NOTIFY'] });
     },
@@ -250,15 +258,15 @@ function NotifySettingsTab() {
     return <Spin />;
   }
 
-  if (channelQuery.isError || prefsQuery.isError || settingsQuery.isError) return <Alert type="error" message="通知配置加载失败，请刷新重试" />;
+  if (channelQuery.isError || prefsQuery.isError || settingsQuery.isError) return <Alert type="error" message={t('notifyLoadFailed')} />;
 
   const prefColumns: ColumnsType<{ type: string; label: string }> = [
-    { title: '事件类型', dataIndex: 'label' },
+    { title: t('eventType'), dataIndex: 'label' },
     {
-      title: '站内',
+      title: t('inApp'),
       render: (_, row) => (
         <Form.Item name={`${row.type}.inApp`} valuePropName="checked" noStyle>
-          <Switch />
+          <Switch aria-label={t('preferenceName', { event: row.label, channel: t('inApp') })} />
         </Form.Item>
       ),
     },
@@ -266,7 +274,7 @@ function NotifySettingsTab() {
       title: providerLabel,
       render: (_, row) => (
         <Form.Item name={`${row.type}.${providerKey}`} valuePropName="checked" noStyle>
-          <Switch />
+          <Switch aria-label={t('preferenceName', { event: row.label, channel: providerLabel })} />
         </Form.Item>
       ),
     },
@@ -276,32 +284,33 @@ function NotifySettingsTab() {
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <Row gutter={16}>
         <Col xs={24} lg={14}>
-          <Card title="通知偏好" size="small">
+          <Card title={t('notifyPrefs')} size="small">
             <Form form={prefForm}>
-              <Table rowKey="type" columns={prefColumns} dataSource={NOTIFY_TYPES} pagination={false} size="small" />
+              <Table rowKey="type" columns={prefColumns} dataSource={NOTIFY_TYPES.map(item => ({ ...item, label: t(item.labelKey) }))} pagination={false} size="small" />
             </Form>
           </Card>
         </Col>
         <Col xs={24} lg={10}>
-          <Card title="通知渠道" size="small" data-testid="notify-settings-panel">
+          <Card title={t('notifyChannel')} size="small" data-testid="notify-settings-panel">
             <Form form={settingsForm} layout="vertical">
-              <Alert type="info" message={`当前使用${providerLabel}，复用平台协作通知的机器人凭据，无需在项目中重复配置。`} style={{ marginBottom: 16 }} />
+              <Alert type="info" message={t('providerHint', { provider: providerLabel })} style={{ marginBottom: 16 }} />
               <SettingFields schema={notifySettings} />
             </Form>
           </Card>
         </Col>
       </Row>
 
-      <Button type="primary" icon={<SaveOutlined />} loading={saveMut.isPending} onClick={() =>
-        runAccessCommand('ADMIN', '保存通知配置', () => saveMut.mutate())
+      <Button type="primary" icon={<SaveOutlined aria-hidden="true" />} aria-label={t('saveNotify')} loading={saveMut.isPending} onClick={() =>
+        runAccessCommand('ADMIN', t('saveNotify'), () => saveMut.mutate())
       }>
-        保存通知配置
+        {t('saveNotify')}
       </Button>
     </Space>
   );
 }
 
 function SystemSettingsTab() {
+  const { t } = useTranslation('settings');
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [form] = Form.useForm<Record<string, string>>();
@@ -310,7 +319,7 @@ function SystemSettingsTab() {
   const saveMut = useMutation({
     mutationFn: () => updateSettings('SYSTEM', buildSettingItems(SYSTEM_SETTINGS, form.getFieldsValue())),
     onSuccess: () => {
-      message.success('系统配置已保存');
+      message.success(i18n.t('settings:systemSaved'));
       queryClient.invalidateQueries({ queryKey: ['settings', 'SYSTEM'] });
     },
   });
@@ -321,28 +330,29 @@ function SystemSettingsTab() {
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Card title="系统默认项" size="small">
+      <Card title={t('systemDefaults')} size="small">
         <Form form={form} layout="vertical">
           <SettingFields schema={SYSTEM_SETTINGS} />
         </Form>
       </Card>
-      <Button type="primary" icon={<SaveOutlined />} loading={saveMut.isPending} onClick={() =>
-        runAccessCommand('ADMIN', '保存系统配置', () => saveMut.mutate())
+      <Button type="primary" icon={<SaveOutlined aria-hidden="true" />} aria-label={t('saveSystem')} loading={saveMut.isPending} onClick={() =>
+        runAccessCommand('ADMIN', t('saveSystem'), () => saveMut.mutate())
       }>
-        保存系统配置
+        {t('saveSystem')}
       </Button>
     </Space>
   );
 }
 
 export function SettingsPage() {
+  const { t } = useTranslation('settings');
   return (
-    <Card className="aw-content-card" title={<PageHeading title="系统设置" description="AI、通知与系统默认项" />}>
+    <Card className="aw-content-card" title={<PageHeading title={t('settings')} description={t('settingsDescription')} />}>
       <Tabs
         items={[
-          { key: 'AI', label: 'AI 配置', children: <AiSettingsTab /> },
-          { key: 'NOTIFY', label: '通知配置', children: <NotifySettingsTab /> },
-          { key: 'SYSTEM', label: '系统配置', children: <SystemSettingsTab /> },
+          { key: 'AI', label: t('aiTab'), children: <AiSettingsTab /> },
+          { key: 'NOTIFY', label: t('notifyTab'), children: <NotifySettingsTab /> },
+          { key: 'SYSTEM', label: t('systemTab'), children: <SystemSettingsTab /> },
         ]}
       />
     </Card>

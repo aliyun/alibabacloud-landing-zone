@@ -17,4 +17,7 @@ public class NotificationDO extends BaseDO {
     private Long refId;
     private String status;
     private String channelsJson;
+    /** Delivery-only snapshot of the locale used to render this new notification. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String recipientLocale;
 }

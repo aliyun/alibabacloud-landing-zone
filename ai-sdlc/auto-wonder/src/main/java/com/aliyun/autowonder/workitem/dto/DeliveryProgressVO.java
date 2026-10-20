@@ -8,6 +8,8 @@ import java.util.List;
 @Getter
 @Setter
 public class DeliveryProgressVO {
+    /** All executions, including comment interactions and executions without a workflow step. */
+    private List<DispatchAttemptVO> executions;
     private List<DeliveryStepVO> steps;
     private List<AgentDeliveryProgressVO> agents;
     private WorkflowPlanVO workflowPlan;

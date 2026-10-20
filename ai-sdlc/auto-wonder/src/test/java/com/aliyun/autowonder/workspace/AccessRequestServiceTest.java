@@ -43,18 +43,28 @@ class AccessRequestServiceTest {
     private UserDao userDao;
     private ApplicationEventPublisher eventPublisher;
     private SystemAdminService systemAdminService;
+    private WorkspaceRoleService roleService;
     private AccessRequestService service;
 
     @BeforeEach
     void setUp() {
         workspaceDao = mock(WorkspaceDao.class);
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, "Alpha", null));
         workspaceMemberDao = mock(WorkspaceMemberDao.class);
         accessRequestDao = mock(AccessRequestDao.class);
         userDao = mock(UserDao.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
         systemAdminService = mock(SystemAdminService.class);
+        roleService = mock(WorkspaceRoleService.class);
+        when(roleService.builtIn(anyLong(), any())).thenAnswer(invocation -> {
+            WorkspaceAccessLevel level = invocation.getArgument(1);
+            WorkspaceRoleDO role = new WorkspaceRoleDO();
+            role.setId(11L + level.ordinal());
+            role.setAccessLevel(level.name());
+            return role;
+        });
         service = new AccessRequestService(workspaceDao, workspaceMemberDao, accessRequestDao,
-                userDao, eventPublisher, systemAdminService);
+                userDao, eventPublisher, systemAdminService, roleService);
     }
 
     // ---------------- listAll ----------------
@@ -181,7 +191,7 @@ class AccessRequestServiceTest {
     @Test
     void submitRequestPersistsPendingRowAndPublishesEvent() {
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", "alpha desc"));
-        when(userDao.findById(7L)).thenReturn(user(7L, "Alice"));
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user(7L, "Alice"));
         doAnswer(invocation -> {
             ((AccessRequestDO) invocation.getArgument(0)).setId(4242L);
             return null;
@@ -247,7 +257,7 @@ class AccessRequestServiceTest {
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", null));
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L))
                 .thenReturn(member(100L, 7L, 1, WorkspaceAccessLevel.READ_ONLY));
-        when(userDao.findById(7L)).thenReturn(user(7L, "Alice"));
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user(7L, "Alice"));
         doAnswer(invocation -> {
             ((AccessRequestDO) invocation.getArgument(0)).setId(12L);
             return null;
@@ -320,7 +330,7 @@ class AccessRequestServiceTest {
         rejected.setRejectReason("not now");
         when(accessRequestDao.listByTenantAndStatus(100L, "APPROVED"))
                 .thenReturn(List.of(approved, rejected));
-        when(userDao.listByIds(anyCollection()))
+        when(userDao.listByIdsIncludingDeleted(anyCollection()))
                 .thenReturn(List.of(user(7L, "Alice"), user(8L, "Bob"), user(9L, "Carol")));
 
         List<AccessRequestVO> result = service.listForWorkspace(100L, "APPROVED");
@@ -339,9 +349,9 @@ class AccessRequestServiceTest {
         assertThat(result.get(1).getRejectReason()).isEqualTo("not now");
 
         ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
-        verify(userDao).listByIds(ids.capture());
+        verify(userDao).listByIdsIncludingDeleted(ids.capture());
         assertThat(ids.getValue()).containsExactlyInAnyOrder(7L, 8L, 9L);
-        verify(userDao, never()).findById(anyLong());
+        verify(userDao, never()).findByIdIncludingDeleted(anyLong());
     }
 
     @Test
@@ -355,7 +365,13 @@ class AccessRequestServiceTest {
     // ---------------- approve ----------------
 
     @Test
-    void approveActivatesMemberAtRequestedLevelAndPublishesEvent() {
+    void approveBindsTheCurrentCollaboratorRoleWithoutCopyingItsPermissions() {
+        WorkspaceRoleDO collaborator = new WorkspaceRoleDO();
+        collaborator.setId(88L);
+        collaborator.setCode("READ_WRITE");
+        collaborator.setAccessLevel("READ_WRITE");
+        collaborator.setReadOnlyDomains("[\"SDLC\"]");
+        when(roleService.builtIn(100L, WorkspaceAccessLevel.READ_WRITE)).thenReturn(collaborator);
         when(accessRequestDao.findById(5L))
                 .thenReturn(request(5L, 100L, 7L, WorkspaceAccessLevel.READ_WRITE, "PENDING"));
         when(accessRequestDao.updateStatus(5L, "APPROVED", 9L, null)).thenReturn(1);
@@ -366,9 +382,28 @@ class AccessRequestServiceTest {
 
         ArgumentCaptor<WorkspaceMemberDO> added = ArgumentCaptor.forClass(WorkspaceMemberDO.class);
         verify(workspaceMemberDao).insertOrActivate(added.capture());
+        assertThat(added.getValue().getRoleId()).isEqualTo(88L);
+        assertThat(added.getValue().getAccessLevel()).isEqualTo("READ_WRITE");
+        assertThat(added.getValue().getReadOnlyDomains()).isNull();
+        verify(roleService).builtIn(100L, WorkspaceAccessLevel.READ_WRITE);
+    }
+
+    @Test
+    void approveActivatesMemberAtRequestedLevelAndPublishesEvent() {
+        when(accessRequestDao.findById(5L))
+                .thenReturn(request(5L, 100L, 7L, WorkspaceAccessLevel.READ_WRITE, "PENDING"));
+        when(accessRequestDao.updateStatus(5L, "APPROVED", 9L, null)).thenReturn(1);
+        when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", null));
+        when(userDao.findByIdIncludingDeleted(9L)).thenReturn(user(9L, "Carol"));
+
+        service.approve(100L, 5L, 9L);
+
+        ArgumentCaptor<WorkspaceMemberDO> added = ArgumentCaptor.forClass(WorkspaceMemberDO.class);
+        verify(workspaceMemberDao).insertOrActivate(added.capture());
         assertThat(added.getValue().getTenantId()).isEqualTo(100L);
         assertThat(added.getValue().getUserId()).isEqualTo(7L);
         assertThat(added.getValue().getAccessLevel()).isEqualTo("READ_WRITE");
+        assertThat(added.getValue().getRoleId()).isEqualTo(12L);
         assertThat(added.getValue().getStatus()).isEqualTo(0);
         assertThat(added.getValue().getIdentityTags()).isEqualTo("[]");
         // Only modifier_id is written on the ON DUPLICATE KEY UPDATE branch, so creator_id is not pinned.
@@ -398,7 +433,7 @@ class AccessRequestServiceTest {
         when(accessRequestDao.updateStatus(5L, "APPROVED", 9L, null)).thenReturn(1);
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(existing);
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", null));
-        when(userDao.findById(9L)).thenReturn(user(9L, "Carol"));
+        when(userDao.findByIdIncludingDeleted(9L)).thenReturn(user(9L, "Carol"));
 
         service.approve(100L, 5L, 9L);
 
@@ -429,7 +464,7 @@ class AccessRequestServiceTest {
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L))
                 .thenReturn(member(100L, 7L, 1, WorkspaceAccessLevel.READ_ONLY));
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", null));
-        when(userDao.findById(9L)).thenReturn(user(9L, "Carol"));
+        when(userDao.findByIdIncludingDeleted(9L)).thenReturn(user(9L, "Carol"));
 
         service.approve(100L, 5L, 9L);
 
@@ -439,6 +474,7 @@ class AccessRequestServiceTest {
         assertThat(added.getValue().getUserId()).isEqualTo(7L);
         assertThat(added.getValue().getStatus()).isEqualTo(0);
         assertThat(added.getValue().getAccessLevel()).isEqualTo("READ_WRITE");
+        assertThat(added.getValue().getRoleId()).isEqualTo(12L);
         verify(eventPublisher).publishEvent(any(WorkspaceAccessReviewedEvent.class));
     }
 
@@ -478,7 +514,7 @@ class AccessRequestServiceTest {
                 .thenReturn(request(5L, 100L, 7L, WorkspaceAccessLevel.ADMIN, "PENDING"));
         when(accessRequestDao.updateStatus(5L, "REJECTED", 9L, "not now")).thenReturn(1);
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", null));
-        when(userDao.findById(9L)).thenReturn(user(9L, "Carol"));
+        when(userDao.findByIdIncludingDeleted(9L)).thenReturn(user(9L, "Carol"));
 
         service.reject(100L, 5L, 9L, "not now");
 
@@ -515,7 +551,7 @@ class AccessRequestServiceTest {
                 .thenReturn(request(5L, 100L, 7L, WorkspaceAccessLevel.READ_WRITE, "PENDING"));
         when(accessRequestDao.deletePendingById(5L)).thenReturn(1);
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, "Alpha", null));
-        when(userDao.findById(7L)).thenReturn(user(7L, "Alice"));
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user(7L, "Alice"));
 
         service.cancelRequest(100L, 5L, 7L);
 
@@ -600,7 +636,7 @@ class AccessRequestServiceTest {
         when(accessRequestDao.findById(5L))
                 .thenReturn(request(5L, 100L, 7L, WorkspaceAccessLevel.READ_WRITE, "PENDING"));
         when(accessRequestDao.deletePendingById(5L)).thenReturn(1);
-        when(userDao.findById(7L)).thenReturn(user(7L, "Alice"));
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user(7L, "Alice"));
 
         service.cancelRequest(100L, 5L, 7L);
 
@@ -662,4 +698,23 @@ class AccessRequestServiceTest {
                 .extracting(exception -> ((BizException) exception).getCode())
                 .isEqualTo(expectedCode);
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullAndEmptySource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"pending", "<b>PENDING</b>"})
+    void invalidStatusHasOwnedBilingualDisplayWithoutQueryOrRawInputExposure(String status) {
+        BizException error = org.junit.jupiter.api.Assertions.assertThrows(BizException.class,
+                () -> service.listForWorkspace(100L, status));
+        assertThat(error.getClass()).isEqualTo(BizException.class);
+        assertThat(error.getCode()).isEqualTo("10001");
+        assertThat(error.getMessage()).isEqualTo("Invalid access request status");
+        assertThat(error.getCause()).isNull();
+        verifyNoInteractions(accessRequestDao, workspaceDao, workspaceMemberDao, userDao, eventPublisher);
+        assertThat(new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue()).isEqualTo(400);
+        assertThat(com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.US)).isEqualTo("Invalid access request status.");
+        assertThat(com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.CHINA)).isEqualTo("访问申请状态无效");
+    }
+
 }

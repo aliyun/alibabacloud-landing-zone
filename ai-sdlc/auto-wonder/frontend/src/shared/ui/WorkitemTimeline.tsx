@@ -1,3 +1,7 @@
+import { externalPrincipalName } from '@/features/workitem/runtimeLabels';
+import { Trans, useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
 import { Timeline, Typography, Tag } from 'antd';
 import {
   PlusCircleOutlined,
@@ -13,36 +17,43 @@ import type { TimelineEvent } from '@/shared/types/workitem';
 const { Text } = Typography;
 
 const iconMap: Record<string, React.ReactNode> = {
-  CREATE: <PlusCircleOutlined style={{ color: 'var(--aw-success)' }} />,
-  EDIT: <EditOutlined style={{ color: 'var(--aw-accent-text)' }} />,
-  STATUS_CHANGE: <SwapOutlined style={{ color: 'var(--aw-warning)' }} />,
-  ASSIGN: <UserSwitchOutlined style={{ color: 'var(--aw-info)' }} />,
-  DISPATCH: <RocketOutlined style={{ color: 'var(--aw-info)' }} />,
-  RESULT: <CheckCircleOutlined style={{ color: 'var(--aw-success)' }} />,
-  COMMENT: <CommentOutlined style={{ color: 'var(--aw-muted)' }} />,
+  CREATE: <PlusCircleOutlined aria-hidden="true" style={{ color: 'var(--aw-success)' }} />,
+  EDIT: <EditOutlined aria-hidden="true" style={{ color: 'var(--aw-accent-text)' }} />,
+  STATUS_CHANGE: <SwapOutlined aria-hidden="true" style={{ color: 'var(--aw-warning)' }} />,
+  ASSIGN: <UserSwitchOutlined aria-hidden="true" style={{ color: 'var(--aw-info)' }} />,
+  DISPATCH: <RocketOutlined aria-hidden="true" style={{ color: 'var(--aw-info)' }} />,
+  RESULT: <CheckCircleOutlined aria-hidden="true" style={{ color: 'var(--aw-success)' }} />,
+  COMMENT: <CommentOutlined aria-hidden="true" style={{ color: 'var(--aw-muted)' }} />,
 };
 
 function renderEventContent(event: TimelineEvent): React.ReactNode {
-  const actor = event.actorDisplayName || event.actorName || (event.actorType === 'AGENT' ? '数字员工' : '用户');
+  const actor = externalPrincipalName(event.actorDisplayName || event.actorName, event.actorNameFallback) || (event.actorType === 'AGENT' ? i18n.t('shared:timeline.agent') : i18n.t('shared:timeline.user'));
+
+  const actorText = <Text strong>{actor}</Text>;
+  const assignee = externalPrincipalName(event.toValDisplay || event.toVal, event.toValNameFallback) || '—';
 
   switch (event.eventType) {
     case 'CREATE':
-      return <><Text strong>{actor}</Text> 创建了工单</>;
+      return <><Trans ns="shared" i18nKey="timeline.created" components={{ actor: actorText }} /></>;
     case 'EDIT':
-      return <><Text strong>{actor}</Text> 编辑了工单</>;
+      return <><Trans ns="shared" i18nKey="timeline.edited" components={{ actor: actorText }} /></>;
     case 'STATUS_CHANGE':
       return (
         <>
-          <Text strong>{actor}</Text> 变更状态{' '}
+          <Trans ns="shared" i18nKey="timeline.status" components={{ actor: actorText }} />
           {event.fromVal && <Tag>{event.fromVal}</Tag>}
           {event.fromVal && event.toVal && ' → '}
           {event.toVal && <Tag color="blue">{event.toVal}</Tag>}
         </>
       );
     case 'ASSIGN':
-      return <><Text strong>{actor}</Text> 指派给 {event.toValDisplay || event.toVal || '—'}</>;
+      return <><Trans ns="shared" i18nKey="timeline.assigned" components={{ actor: actorText, assignee: <span>{assignee}</span> }} /></>;
+    case 'DISPATCH':
+      return <Trans ns="shared" i18nKey="timeline.dispatched" components={{ actor: actorText }} />;
+    case 'RESULT':
+      return <Trans ns="shared" i18nKey="timeline.result" components={{ actor: actorText }} />;
     case 'COMMENT':
-      return <><Text strong>{actor}</Text> 添加了评论</>;
+      return <><Trans ns="shared" i18nKey="timeline.commented" components={{ actor: actorText }} /></>;
     default:
       return <><Text strong>{actor}</Text> {event.eventType}</>;
   }
@@ -54,6 +65,7 @@ interface WorkitemTimelineProps {
 }
 
 export function WorkitemTimeline({ events, loading }: WorkitemTimelineProps) {
+  const { t } = useTranslation('shared');
   const items = events.map((event) => ({
     key: String(event.id),
     dot: iconMap[event.eventType] || null,
@@ -61,11 +73,11 @@ export function WorkitemTimeline({ events, loading }: WorkitemTimelineProps) {
       <div>
         <div>{renderEventContent(event)}</div>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          {event.gmtCreate ? new Date(event.gmtCreate).toLocaleString('zh-CN') : ''}
+          {event.gmtCreate ? formatDateTime(event.gmtCreate) : ''}
         </Text>
       </div>
     ),
   }));
 
-  return <Timeline pending={loading ? '加载中...' : undefined} items={items} />;
+  return <Timeline pending={loading ? t('timeline.loading') : undefined} items={items} />;
 }

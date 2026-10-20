@@ -374,4 +374,17 @@ class ArtifactServiceTest {
         assertEquals("17010", ex.getCode());
         verify(storage, never()).get(anyString());
     }
+    @Test
+    void diagnosticRetryReusesRecordedImmutableArtifact() {
+        ReportArtifactRequest request = new ReportArtifactRequest();
+        request.setWorkitemId(3L); request.setDispatchId(8L);
+        request.setName("observability/runtime/hooks/receipts/" + "a".repeat(64) + ".json");
+        request.setOssRef("bucket/same-object");
+        ArtifactDO existing = new ArtifactDO(); existing.setId(99L);
+        existing.setName(request.getName()); existing.setOssRef(request.getOssRef());
+        when(artifactDao.listByDispatch(100L, 8L)).thenReturn(List.of(existing));
+        assertEquals(99L, service.record(request, 100L));
+        verify(artifactDao, never()).insert(any());
+    }
+
 }

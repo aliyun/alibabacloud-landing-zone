@@ -31,6 +31,39 @@ describe('refreshCurrentMembership', () => {
     expect(useAuthStore.getState().accessLevel).toBe('READ_WRITE');
   });
 
+  it('stores forbidden domains from the membership payload', async () => {
+    server.use(
+      http.get('/api/workspaces/current/membership', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        data: { accessLevel: 'READ_WRITE', readOnlyDomains: ['SDLC', 'EXECUTOR', 'NOPE'] },
+        traceId: null,
+      })),
+    );
+
+    await refreshCurrentMembership();
+
+    expect(useAuthStore.getState().readOnlyDomains).toEqual(['SDLC', 'EXECUTOR']);
+  });
+
+  it('replaces a stale snapshot so a lifted restriction takes effect while another remains', async () => {
+    useAuthStore.getState().setReadOnlyDomains(['SDLC']);
+    server.use(
+      http.get('/api/workspaces/current/membership', () => HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        data: { accessLevel: 'READ_WRITE', readOnlyDomains: ['WORKSPACE'] },
+        traceId: null,
+      })),
+    );
+
+    await refreshCurrentMembership();
+
+    expect(useAuthStore.getState().readOnlyDomains).toEqual(['WORKSPACE']);
+  });
+
   it('clears only the invalid workspace after membership removal', async () => {
     server.use(
       http.get('/api/workspaces/current/membership', () => HttpResponse.json({

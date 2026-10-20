@@ -19,7 +19,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/insights")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看洞察")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看洞察", actionKey = "access.action.view_insights")
 public class InsightsController {
 
     private final InsightsService insightsService;
@@ -51,7 +51,7 @@ public class InsightsController {
     }
 
     @PostMapping("/usage/backfill")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "回填AI用量数据")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "回填AI用量数据", actionKey = "access.action.backfill_ai_usage_data")
     public Result<DispatchAiUsageBackfillResult> backfillUsage() {
         return Result.ok(insightsService.backfillUsage(currentWorkspaceId()));
     }
@@ -83,7 +83,7 @@ public class InsightsController {
     }
 
     @PostMapping("/human-agent-participation/refresh")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "强制刷新人机协作数据")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "强制刷新人机协作数据", actionKey = "access.action.force_a_refresh_of_human_and_agent_collaboration_data")
     public Result<Void> forceRefreshParticipation() {
         boolean accepted = insightsService.forceParticipationRefresh(currentWorkspaceId());
         if (!accepted) {

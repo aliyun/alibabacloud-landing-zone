@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -30,5 +31,7 @@ public class MemoryDocumentDO {
     private String title;
     private String memoryType;
     private String description;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String descriptionKind;
     private String body;
 }

@@ -32,7 +32,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/skills")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看技能")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看技能", actionKey = "access.action.view_skills")
 public class SkillController {
 
     private final SkillService skillService;
@@ -50,7 +50,7 @@ public class SkillController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建技能", actionKey = "access.action.create_a_skill")
     public Result<SkillVO> create(@RequestBody CreateSkillRequest req) {
         return Result.ok(skillService.create(req, currentWorkspaceId(), currentUserId()));
     }
@@ -61,7 +61,7 @@ public class SkillController {
     }
 
     @PostMapping("/package")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "从技能包创建技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "从技能包创建技能", actionKey = "access.action.create_a_skill_from_a_package")
     public Result<SkillVO> createFromPackage(@RequestParam("file") MultipartFile file,
 			@RequestParam(value = "type", defaultValue = "SKILL") String type,
 			@RequestParam(value = "name", required = false) String name,
@@ -104,7 +104,7 @@ public class SkillController {
         } catch (BizException ex) {
             // 响应体是裸字节而非 Result，全局异常处理器给出的 JSON 拿不到正确的 Content-Type，
             // 前端用原生 fetch 下载时必须能读到 message，所以这里自己组装错误体。
-            byte[] body = JSON.toJSONString(Result.fail(ex.getCode(), ex.getMessage()))
+            byte[] body = JSON.toJSONString(Result.fail(ex))
                     .getBytes(StandardCharsets.UTF_8);
             return ResponseEntity.status(downloadStatusFor(ex.getCode()))
                     .contentType(MediaType.APPLICATION_JSON)
@@ -129,7 +129,7 @@ public class SkillController {
     }
 
     @PostMapping("/{id}/connection-test")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "测试技能连接")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "测试技能连接", actionKey = "access.action.test_a_skill_connection")
     public Result<SkillConnectionTestVO> testConnection(@PathVariable("id") Long id,
             @RequestParam(value = "executorId", required = false) Long executorId) {
         return Result.ok(skillConnectionTestService.test(id, currentWorkspaceId(), executorId));
@@ -150,25 +150,25 @@ public class SkillController {
     // 打标是独立于技能内容的关联操作：请求体必须显式携带 categoryId 字段，
     // JSON null 表示取消打标，字段缺失视为参数错误（与 MCP set_skill_category 语义一致）
     @PutMapping("/{id}/category")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "设置能力分类")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "设置能力分类", actionKey = "access.action.set_a_capability_category")
     public Result<Long> setCategory(@PathVariable("id") Long id, @RequestBody JsonNode body) {
         if (body == null || !body.has("categoryId")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "缺少 categoryId 参数");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.category_id_required", new Object[]{}, "缺少 categoryId 参数");
         }
         Long categoryId = requireCategoryId(body);
         return Result.ok(categoryService.setSkillCategory(id, categoryId, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/category/batch")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "批量设置能力分类")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "批量设置能力分类", actionKey = "access.action.set_capability_categories_in_bulk")
     public Result<List<BatchSkillCategoryResultVO>> batchSetCategory(@RequestBody JsonNode body) {
         if (body == null || !body.has("skillIds") || !body.get("skillIds").isArray()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "缺少 skillIds 参数");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.skill_ids_required", new Object[]{}, "缺少 skillIds 参数");
         }
         List<Long> skillIds = new ArrayList<>();
         for (JsonNode node : body.get("skillIds")) {
             if (!node.isIntegralNumber() || !node.canConvertToLong() || node.asLong() <= 0) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "skillIds 必须是数字数组");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.skill_ids_invalid", new Object[]{}, "skillIds 必须是数字数组");
             }
             skillIds.add(node.asLong());
         }
@@ -179,24 +179,24 @@ public class SkillController {
 
     private Long requireCategoryId(JsonNode body) {
         if (body == null || !body.has("categoryId")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "缺少 categoryId 参数");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.category_id_required", new Object[]{}, "缺少 categoryId 参数");
         }
         JsonNode node = body.get("categoryId");
         if (node.isNull()) return null;
         if (!node.isIntegralNumber() || !node.canConvertToLong() || node.asLong() <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "categoryId 必须是正整数或 null");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.category_id_type_invalid", new Object[]{}, "categoryId 必须是正整数或 null");
         }
         return node.asLong();
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新技能", actionKey = "access.action.update_a_skill")
     public Result<SkillVO> update(@PathVariable("id") Long id, @RequestBody UpdateSkillRequest req) {
         return Result.ok(skillService.update(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/package")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新技能包")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新技能包", actionKey = "access.action.update_a_skill_package")
     public Result<SkillVO> updatePackage(@PathVariable("id") Long id, @RequestParam("file") MultipartFile file,
 			@RequestParam(value = "name", required = false) String name,
 			@RequestParam(value = "description", required = false) String description,
@@ -205,7 +205,7 @@ public class SkillController {
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除技能", actionKey = "access.action.delete_a_skill")
     public Result<Void> delete(@PathVariable("id") Long id) {
         skillService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);

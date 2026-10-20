@@ -36,7 +36,7 @@ public class InAppWorkspaceAccessReviewedListener {
             notifyEvent.setType(TYPE);
             if (approved) {
                 notifyEvent.setTitle("权限申请已通过");
-                notifyEvent.setContent("你加入「" + workspace + "」的申请已通过，授予权限："
+                notifyEvent.setContent("你加入「" + workspace + "」的申请已通过，分配角色："
                         + WorkspaceAccessNotifyText.accessLevelLabel(event.requestedLevel())
                         + "，审批人：" + reviewer);
             } else {
@@ -45,6 +45,14 @@ public class InAppWorkspaceAccessReviewedListener {
                 notifyEvent.setContent("你加入「" + workspace + "」的申请被拒绝，审批人：" + reviewer
                         + (reason.isEmpty() ? "" : "，原因：" + reason));
             }
+            notifyEvent.setTitleKey(approved ? "notification.access.approved.title" : "notification.access.rejected.title");
+            String reason = WorkspaceAccessNotifyText.safe(event.rejectReason()).trim();
+            notifyEvent.setContentKey(approved ? "notification.access.approved.content"
+                    : reason.isEmpty() ? "notification.access.rejected.content" : "notification.access.rejected.reason");
+            notifyEvent.setContentArgsResolver(locale -> approved
+                    ? new Object[]{WorkspaceAccessNotifyText.workspaceLabel(event.workspaceName(), locale),
+                            WorkspaceAccessNotifyText.accessLevelLabel(event.requestedLevel(), locale), reviewer}
+                    : new Object[]{WorkspaceAccessNotifyText.workspaceLabel(event.workspaceName(), locale), reviewer, reason});
             notifyEvent.setLink(WORKSPACE_LINK);
             notifyEvent.setRefType(REF_TYPE);
             notifyEvent.setRefId(event.requestId());

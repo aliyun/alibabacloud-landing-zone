@@ -1,0 +1,12 @@
+.aw-bootstrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;background:var(--aw-bg);color:var(--aw-text);text-align:center}
+.aw-bootstrap-mark{width:30px;height:30px;border-radius:50%;box-sizing:border-box}
+.aw-bootstrap-mark--loading{border:3px solid var(--aw-border);border-top-color:var(--aw-muted);animation:aw-bootstrap-spin .9s linear infinite}
+.aw-bootstrap-mark--failed{display:flex;align-items:center;justify-content:center;border:2px solid var(--aw-muted);color:var(--aw-muted);font-size:16px;font-weight:600}
+.aw-bootstrap-mark--failed::after{content:"!"}
+.aw-bootstrap-title{margin:0;font-size:15px;font-weight:500}
+.aw-bootstrap-detail{margin:0;font-size:13px;color:var(--aw-muted)}
+.aw-bootstrap-retry{min-width:96px;height:34px;padding:0 16px;border-radius:8px;border:1px solid var(--aw-border);background:var(--aw-button);color:var(--aw-text);font-size:14px;cursor:pointer}
+.aw-bootstrap-retry:hover:not(:disabled){background:var(--aw-button-hover)}
+.aw-bootstrap-retry:disabled{cursor:default;opacity:.6}
+@keyframes aw-bootstrap-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.aw-bootstrap-mark--loading{animation-duration:2.4s}}

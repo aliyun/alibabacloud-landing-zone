@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.skill.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Getter;
 import lombok.Setter;
 import java.util.Date;
@@ -22,6 +23,8 @@ public class SkillVO {
     private Date gmtModified;
     private Long modifierId;
     private String modifierName;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String modifierNameKind;
     private Long categoryId;
     private String categoryPath;
 }

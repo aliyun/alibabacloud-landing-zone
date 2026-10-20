@@ -449,4 +449,29 @@ class WsDispatchTransportTest {
         verify(presence, never()).supportsProtocolFeature(
                 5L, WsDispatchTransport.AGENT_ENVIRONMENT_VARIABLES_V1);
     }
+
+    @Test
+    void taskModelSelectionIsDeliveredAndRequiresRuntimeSupport() throws Exception {
+        PresenceManager presence = mock(PresenceManager.class);
+        transport = new WsDispatchTransport(sessionRegistry, redisManager, nodeIdentity, null, null, presence);
+        var decisions = mock(com.aliyun.autowonder.dispatch.DispatchModelSelectionService.class);
+        var selection = new com.aliyun.autowonder.dispatch.DispatchModelSelection();
+        selection.setModel("better"); selection.setEntryCount(3); selection.setThreshold(3);
+        selection.setReasonCode("ENTRY_THRESHOLD_REACHED"); selection.setPolicyVersion(7);
+        var row = dispatch(99, 5);
+        when(decisions.freeze(row)).thenReturn(selection);
+        ReflectionTestUtils.setField(transport, "modelSelectionService", decisions);
+        ExecutorProtocolCompatibilityException error = assertThrows(ExecutorProtocolCompatibilityException.class,
+                () -> transport.dispatch(row, pkg(false)));
+        assertEquals("TASK_MODEL_SELECTION_V1", error.getRequiredFeature());
+        verify(redisManager, never()).publish(anyString(), anyString());
+        when(presence.supportsProtocolFeature(5L, "TASK_MODEL_SELECTION_V1")).thenReturn(true);
+        transport.dispatch(row, pkg(false));
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(redisManager).publish(eq(WsDispatchTransport.BROADCAST_CHANNEL), payload.capture());
+        JsonNode sent = new ObjectMapper().readTree(payload.getValue());
+        assertEquals("better", sent.path("modelSelection").path("model").asText());
+        assertEquals(3, sent.path("modelSelection").path("entryCount").asInt());
+        assertEquals("ENTRY_THRESHOLD_REACHED", sent.path("modelSelection").path("reasonCode").asText());
+    }
 }

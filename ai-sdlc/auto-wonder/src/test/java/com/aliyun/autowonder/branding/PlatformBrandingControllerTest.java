@@ -62,7 +62,7 @@ class PlatformBrandingControllerTest {
 
         assertEquals(vo, controller.update(request).getData());
 
-        verify(systemAdminService).requireSystemAdmin(10000L, "修改平台配置");
+        verify(systemAdminService).requireSystemAdmin(10000L, "修改平台配置", "access.admin.branding_denied");
     }
 
     @Test
@@ -77,7 +77,7 @@ class PlatformBrandingControllerTest {
 
         controller.uploadLogo(file);
 
-        verify(systemAdminService).requireSystemAdmin(10000L, "上传平台 Logo");
+        verify(systemAdminService).requireSystemAdmin(10000L, "上传平台 Logo", "access.admin.logo_denied");
     }
 
     @Test

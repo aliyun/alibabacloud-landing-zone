@@ -2,6 +2,7 @@ package com.aliyun.autowonder.workitem;
 
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
@@ -161,13 +162,7 @@ public class WorkitemWatcherService {
     }
 
     public static String userName(UserDO user) {
-        if (user == null) {
-            return null;
-        }
-        if (user.getNickname() != null && !user.getNickname().isBlank()) {
-            return user.getNickname();
-        }
-        return user.getUsername();
+        return UserAccountStates.displayName(user);
     }
 
     private static <T> List<T> safeList(List<T> rows) {

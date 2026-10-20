@@ -2,6 +2,7 @@ package com.aliyun.autowonder.workspace;
 
 import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
@@ -62,6 +63,7 @@ class WorkspaceServiceTest {
     private WorkspaceDeletionLinkage deletionLinkage;
     private ApplicationEventPublisher eventPublisher;
     private WorkspaceService service;
+    private WorkspaceRoleService roleService;
 
     @BeforeEach
     void setUp() {
@@ -79,9 +81,12 @@ class WorkspaceServiceTest {
         JwtProperties props = new JwtProperties(env);
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         jwtService = new JwtService(props);
+        roleService = mock(WorkspaceRoleService.class);
+        when(roleService.builtIn(anyLong(), any())).thenAnswer(invocation -> role(invocation.getArgument(1)));
+        when(roleService.requireRole(100L, 12L)).thenReturn(role(WorkspaceAccessLevel.READ_WRITE));
         service = new WorkspaceService(workspaceDao, workspaceMemberDao, statusTemplateSeeder,
                 platformAgentSeeder, jwtService, userDao, auditLogService, systemAdminService,
-                deletionLinkage, eventPublisher);
+                deletionLinkage, eventPublisher, roleService);
     }
 
     @AfterEach
@@ -90,7 +95,7 @@ class WorkspaceServiceTest {
     }
 
     @Test
-    void createPersistsOwnerAsAdminWithoutRolesAndSeedsStatusTemplates() {
+    void createSeedsRolesAndAssignsOwnerTheAdministratorRole() {
         doAnswer(invocation -> {
             ((WorkspaceDO) invocation.getArgument(0)).setId(10L);
             return null;
@@ -109,6 +114,8 @@ class WorkspaceServiceTest {
                         && WorkspaceAccessLevel.ADMIN.name().equals(member.getAccessLevel())
                         && "[]".equals(member.getIdentityTags())
                         && Long.valueOf(7L).equals(member.getCreatorId())));
+        verify(roleService).seed(10L, 7L);
+        verify(workspaceMemberDao).insert(argThat(member -> Long.valueOf(13L).equals(member.getRoleId())));
         verify(statusTemplateSeeder).seed(10L, 7L);
     }
 
@@ -155,25 +162,28 @@ class WorkspaceServiceTest {
     }
 
     @Test
-    void addMemberUsesReadOnlyAndEmptyTagsAndActiveMemberIsIdempotent() {
+    void addMemberDefaultsToTheViewerRoleAndEmptyTagsAndActiveMemberIsIdempotent() {
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
         when(userDao.findById(8L)).thenReturn(activeUser(8L));
 
-        service.addMember(100L, 8L, 7L);
+        service.addMember(100L, 8L, null, 7L);
 
         verify(workspaceMemberDao).insertOrActivate(argThat(member ->
                 Long.valueOf(100L).equals(member.getTenantId())
                         && Long.valueOf(8L).equals(member.getUserId())
                         && Integer.valueOf(0).equals(member.getStatus())
+                        && Long.valueOf(11L).equals(member.getRoleId())
                         && WorkspaceAccessLevel.READ_ONLY.name().equals(member.getAccessLevel())
                         && "[]".equals(member.getIdentityTags())
                         && Long.valueOf(7L).equals(member.getCreatorId())
                         && Long.valueOf(7L).equals(member.getModifierId())));
+        verify(roleService).builtIn(100L, WorkspaceAccessLevel.READ_ONLY);
 
         WorkspaceMemberDO active = activeMember(100L, 9L, WorkspaceAccessLevel.READ_WRITE, "[]");
         when(userDao.findById(9L)).thenReturn(activeUser(9L));
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 9L)).thenReturn(active);
 
-        service.addMember(100L, 9L, 7L);
+        service.addMember(100L, 9L, null, 7L);
 
         verify(workspaceMemberDao, never()).insertOrActivate(argThat(member ->
                 Long.valueOf(9L).equals(member.getUserId())));
@@ -181,13 +191,14 @@ class WorkspaceServiceTest {
 
     @Test
     void addMemberRejectsMissingOrInactiveUsers() {
-        assertCode("10001", () -> service.addMember(100L, null, 7L));
-        assertCode("10404", () -> service.addMember(100L, 404L, 7L));
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
+        assertCode("10001", () -> service.addMember(100L, null, null, 7L));
+        assertCode("10404", () -> service.addMember(100L, 404L, null, 7L));
 
         UserDO inactive = activeUser(8L);
         inactive.setStatus(1);
         when(userDao.findById(8L)).thenReturn(inactive);
-        assertCode("10001", () -> service.addMember(100L, 8L, 7L));
+        assertCode("10001", () -> service.addMember(100L, 8L, null, 7L));
     }
 
     @Test
@@ -282,7 +293,7 @@ class WorkspaceServiceTest {
         user.setNickname("Alice");
         when(workspaceDao.findById(100L)).thenReturn(workspace);
         when(workspaceMemberDao.listByTenant(100L)).thenReturn(List.of(member));
-        when(userDao.findById(8L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(8L)).thenReturn(user);
 
         List<MemberVO> result = service.listMembers(100L);
 
@@ -299,6 +310,24 @@ class WorkspaceServiceTest {
     }
 
     @Test
+    void listMembersFallsBackToTheDeletedSnapshotForAnActiveMemberRow() {
+        WorkspaceMemberDO member = activeMember(100L, 8L, WorkspaceAccessLevel.READ_WRITE, "[]");
+        UserDO user = activeUser(8L);
+        user.setIsDeleted(1);
+        user.setDeletedUsername("former-alice");
+        user.setDeletedEmail("former-alice@example.com");
+        when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 7L));
+        when(workspaceMemberDao.listByTenant(100L)).thenReturn(List.of(member));
+        when(userDao.findByIdIncludingDeleted(8L)).thenReturn(user);
+
+        MemberVO actual = service.listMembers(100L).get(0);
+
+        assertEquals(8L, actual.getUserId());
+        assertEquals("former-alice", actual.getUsername());
+        assertEquals("former-alice@example.com", actual.getEmail());
+    }
+
+    @Test
     void currentMembershipMapsCurrentActiveMemberAndRejectsMissingOrInactive() {
         WorkspaceMemberDO member = activeMember(
                 100L, 7L, WorkspaceAccessLevel.ADMIN, "[\" owner \",\"owner\"]");
@@ -306,7 +335,7 @@ class WorkspaceServiceTest {
         user.setUsername("owner");
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 7L));
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
-        when(userDao.findById(7L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
 
         CurrentMembershipVO result = service.currentMembership(100L, 7L);
 
@@ -325,6 +354,25 @@ class WorkspaceServiceTest {
     }
 
     @Test
+    void currentMembershipFallsBackToTheDeletedSnapshotForAnActiveMemberRow() {
+        WorkspaceMemberDO member = activeMember(100L, 7L, WorkspaceAccessLevel.READ_ONLY, "[]");
+        UserDO user = activeUser(7L);
+        user.setIsDeleted(1);
+        user.setDeletedUsername("former-owner");
+        user.setDeletedEmail("former-owner@example.com");
+        when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 7L));
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
+
+        CurrentMembershipVO result = service.currentMembership(100L, 7L);
+
+        assertEquals(7L, result.getUserId());
+        assertEquals("former-owner", result.getUsername());
+        assertEquals("former-owner@example.com", result.getEmail());
+        assertEquals(WorkspaceAccessLevel.READ_ONLY, result.getAccessLevel());
+    }
+
+    @Test
     void currentMembershipReusesTheMemberValidatedByTheRequestFilter() {
         WorkspaceMemberDO member = activeMember(
                 100L, 7L, WorkspaceAccessLevel.ADMIN, "[\"owner\"]");
@@ -334,7 +382,7 @@ class WorkspaceServiceTest {
         context.setWorkspaceAccessLevel(WorkspaceAccessLevel.ADMIN);
         context.setWorkspaceMember(member);
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 7L));
-        when(userDao.findById(7L)).thenReturn(activeUser(7L));
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(activeUser(7L));
 
         CurrentMembershipVO result = service.currentMembership(100L, 7L);
 
@@ -351,7 +399,7 @@ class WorkspaceServiceTest {
         when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
         UserDO user = activeUser(7L);
         user.setUsername("platform-admin");
-        when(userDao.findById(7L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
 
         CurrentMembershipVO result = service.currentMembership(100L, 7L);
 
@@ -372,7 +420,7 @@ class WorkspaceServiceTest {
         when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(inactive);
         when(workspaceDao.findById(100L)).thenReturn(workspace(100L, 99L));
         when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
-        when(userDao.findById(7L)).thenReturn(activeUser(7L));
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(activeUser(7L));
 
         // AuthFilter grants ADMIN here too — an inactive row is not a membership — so the view
         // must match instead of reporting 11001. Only an active row caps the admin's level.
@@ -384,80 +432,75 @@ class WorkspaceServiceTest {
     }
 
     @Test
-    void updateMemberAccessPersistsExactLevelAndAuditsOldAndNewValues() {
+    void updateMemberRolePersistsExactLevelAndAuditsOldAndNewValues() {
         when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
         when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L))
                 .thenReturn(activeMember(100L, 8L, WorkspaceAccessLevel.READ_ONLY, "[]"));
-        when(workspaceMemberDao.updateAccessLevel(100L, 8L, "READ_WRITE", 7L)).thenReturn(1);
+        when(workspaceMemberDao.updateRole(100L, 8L, 12L, 7L)).thenReturn(1);
 
-        service.updateMemberAccess(100L, 8L, WorkspaceAccessLevel.READ_WRITE, 7L);
+        service.updateMemberRole(100L, 8L, 12L, 7L);
 
         InOrder order = inOrder(workspaceDao, workspaceMemberDao);
         order.verify(workspaceDao).findByIdForUpdate(100L);
         order.verify(workspaceMemberDao).findByWorkspaceAndUserForUpdate(100L, 8L);
-        order.verify(workspaceMemberDao).updateAccessLevel(100L, 8L, "READ_WRITE", 7L);
+        order.verify(workspaceMemberDao).updateRole(100L, 8L, 12L, 7L);
         verify(workspaceMemberDao, never()).findByWorkspaceAndUser(100L, 8L);
         AuditLogRecord audit = capturedAudit();
-        assertAudit(audit, 100L, 7L, "MEMBER_ACCESS_CHANGED", "MEMBER", 8L);
-        assertEquals("READ_ONLY", audit.getDetail().get("oldAccessLevel"));
-        assertEquals("READ_WRITE", audit.getDetail().get("newAccessLevel"));
+        assertAudit(audit, 100L, 7L, "MEMBER_ROLE_CHANGED", "MEMBER", 8L);
+        assertEquals(11L, audit.getDetail().get("oldRoleId"));
+        assertEquals(12L, audit.getDetail().get("newRoleId"));
         assertEquals(7L, audit.getDetail().get("operatorId"));
         assertEquals(8L, audit.getDetail().get("targetUserId"));
     }
 
     @Test
-    void updateMemberAccessRejectsNullSelfOwnerInactiveAndInvalidPersistedLevel() {
-        assertCode("12007", () -> service.updateMemberAccess(100L, 8L, null, 7L));
+    void updateMemberRoleRejectsSelfOwnerAndInactiveMember() {
         assertCode("12010", () ->
-                service.updateMemberAccess(100L, 7L, WorkspaceAccessLevel.ADMIN, 7L));
+                service.updateMemberRole(100L, 7L, 13L, 7L));
 
         when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 8L));
         assertCode("12009", () ->
-                service.updateMemberAccess(100L, 8L, WorkspaceAccessLevel.READ_WRITE, 7L));
+                service.updateMemberRole(100L, 8L, 12L, 7L));
         verify(workspaceMemberDao, never()).findByWorkspaceAndUser(100L, 8L);
         verify(workspaceMemberDao, never()).findByWorkspaceAndUserForUpdate(100L, 8L);
-        verify(workspaceMemberDao, never()).updateAccessLevel(anyLong(), anyLong(), any(), anyLong());
+        verify(workspaceMemberDao, never()).updateRole(anyLong(), anyLong(), any(), anyLong());
 
         when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
         WorkspaceMemberDO inactive = activeMember(100L, 8L, WorkspaceAccessLevel.READ_ONLY, "[]");
         inactive.setStatus(1);
         when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L)).thenReturn(inactive);
         assertCode("11001", () ->
-                service.updateMemberAccess(100L, 8L, WorkspaceAccessLevel.READ_WRITE, 7L));
+                service.updateMemberRole(100L, 8L, 12L, 7L));
 
-        WorkspaceMemberDO invalid = activeMember(100L, 8L, WorkspaceAccessLevel.READ_ONLY, "[]");
-        invalid.setAccessLevel("READ");
-        when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L)).thenReturn(invalid);
-        assertCode("12007", () ->
-                service.updateMemberAccess(100L, 8L, WorkspaceAccessLevel.READ_WRITE, 7L));
+
     }
 
     @Test
-    void updateMemberAccessRequiresExactlyOneUpdatedRowAndDoesNotAuditFailure() {
+    void updateMemberRoleRequiresExactlyOneUpdatedRowAndDoesNotAuditFailure() {
         when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
         when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L))
                 .thenReturn(activeMember(100L, 8L, WorkspaceAccessLevel.READ_ONLY, "[]"));
 
         assertCode("10409", () ->
-                service.updateMemberAccess(100L, 8L, WorkspaceAccessLevel.READ_WRITE, 7L));
+                service.updateMemberRole(100L, 8L, 12L, 7L));
 
         verifyNoInteractions(auditLogService);
     }
 
     @Test
-    void updateMemberAccessPropagatesRequiredAuditFailure() {
+    void updateMemberRolePropagatesRequiredAuditFailure() {
         when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
         when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L))
                 .thenReturn(activeMember(100L, 8L, WorkspaceAccessLevel.READ_ONLY, "[]"));
-        when(workspaceMemberDao.updateAccessLevel(100L, 8L, "READ_WRITE", 7L)).thenReturn(1);
+        when(workspaceMemberDao.updateRole(100L, 8L, 12L, 7L)).thenReturn(1);
         IllegalStateException failure = new IllegalStateException("audit database unavailable");
         doThrow(failure).when(auditLogService).recordRequired(any(AuditLogRecord.class));
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, () ->
-                service.updateMemberAccess(100L, 8L, WorkspaceAccessLevel.READ_WRITE, 7L));
+                service.updateMemberRole(100L, 8L, 12L, 7L));
 
         assertSame(failure, thrown);
-        verify(workspaceMemberDao).updateAccessLevel(100L, 8L, "READ_WRITE", 7L);
+        verify(workspaceMemberDao).updateRole(100L, 8L, 12L, 7L);
     }
 
     @Test
@@ -546,8 +589,8 @@ class WorkspaceServiceTest {
 
     @Test
     void governanceMutationMethodsAreTransactional() throws Exception {
-        assertTransactional("updateMemberAccess",
-                long.class, long.class, WorkspaceAccessLevel.class, long.class);
+        assertTransactional("updateMemberRole",
+                long.class, long.class, Long.class, long.class);
         assertTransactional("updateMemberIdentityTags",
                 long.class, long.class, List.class, long.class);
         assertTransactional("removeMember", long.class, long.class, long.class);
@@ -565,7 +608,7 @@ class WorkspaceServiceTest {
         when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace);
         when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 7L)).thenReturn(owner);
         when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L)).thenReturn(target);
-        when(workspaceMemberDao.updateAccessLevel(100L, 8L, "ADMIN", 7L)).thenReturn(1);
+        when(workspaceMemberDao.updateRole(100L, 8L, 13L, 7L)).thenReturn(1);
         when(workspaceDao.updateOwner(100L, 7L, 8L, 7L)).thenReturn(1);
 
         service.transferOwner(100L, 8L, 7L);
@@ -574,17 +617,40 @@ class WorkspaceServiceTest {
         order.verify(workspaceDao).findByIdForUpdate(100L);
         order.verify(workspaceMemberDao).findByWorkspaceAndUserForUpdate(100L, 7L);
         order.verify(workspaceMemberDao).findByWorkspaceAndUserForUpdate(100L, 8L);
-        order.verify(workspaceMemberDao).updateAccessLevel(100L, 8L, "ADMIN", 7L);
+        order.verify(workspaceMemberDao).updateRole(100L, 8L, 13L, 7L);
         order.verify(workspaceDao).updateOwner(100L, 7L, 8L, 7L);
         ArgumentCaptor<AuditLogRecord> captor = ArgumentCaptor.forClass(AuditLogRecord.class);
         order.verify(auditLogService).recordRequired(captor.capture());
-        verify(workspaceMemberDao, never()).updateAccessLevel(100L, 7L, "READ_WRITE", 7L);
+        verify(workspaceMemberDao, never()).updateRole(100L, 7L, 12L, 7L);
         AuditLogRecord audit = captor.getValue();
         assertAudit(audit, 100L, 7L, "ORG_OWNER_TRANSFERRED", "ORG", 100L);
         assertEquals(7L, audit.getDetail().get("oldOwnerId"));
         assertEquals(8L, audit.getDetail().get("newOwnerId"));
         assertEquals(7L, audit.getDetail().get("operatorId"));
         assertEquals(8L, audit.getDetail().get("targetUserId"));
+    }
+
+    @Test
+    void transferOwnerPromotesTargetWithoutChangingRolePermissionsOrLegacyData() {
+        WorkspaceDO workspace = workspace(100L, 7L);
+        WorkspaceMemberDO owner = activeMember(100L, 7L, WorkspaceAccessLevel.ADMIN, "[]");
+        WorkspaceMemberDO target = activeMember(100L, 8L, WorkspaceAccessLevel.READ_WRITE, "[]");
+        target.setReadOnlyDomains("[\"WORKSPACE\",\"SDLC\"]");
+        target.setForbiddenDomains("[\"SDLC\"]");
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace);
+        when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 7L)).thenReturn(owner);
+        when(workspaceMemberDao.findByWorkspaceAndUserForUpdate(100L, 8L)).thenReturn(target);
+        when(workspaceMemberDao.updateRole(100L, 8L, 13L, 7L)).thenReturn(1);
+        when(workspaceDao.updateOwner(100L, 7L, 8L, 7L)).thenReturn(1);
+
+        service.transferOwner(100L, 8L, 7L);
+
+        InOrder order = inOrder(workspaceDao, workspaceMemberDao);
+        order.verify(workspaceMemberDao).updateRole(100L, 8L, 13L, 7L);
+        order.verify(workspaceDao).updateOwner(100L, 7L, 8L, 7L);
+        assertEquals("[\"WORKSPACE\",\"SDLC\"]", target.getReadOnlyDomains());
+        assertEquals("[\"SDLC\"]", target.getForbiddenDomains());
+        assertAudit(capturedAudit(), 100L, 7L, "ORG_OWNER_TRANSFERRED", "ORG", 100L);
     }
 
     @Test
@@ -617,10 +683,41 @@ class WorkspaceServiceTest {
                 .thenReturn(activeMember(100L, 7L, WorkspaceAccessLevel.ADMIN, "[]"));
         assertCode("12011", () -> service.transferOwner(100L, 8L, 7L));
 
-        when(workspaceMemberDao.updateAccessLevel(100L, 8L, "ADMIN", 7L)).thenReturn(1);
+        when(workspaceMemberDao.updateRole(100L, 8L, 13L, 7L)).thenReturn(1);
         assertCode("12011", () -> service.transferOwner(100L, 8L, 7L));
 
         verifyNoInteractions(auditLogService);
+    }
+
+    @Test
+    void roleDomainsAreReadLiveAndAdministratorAlwaysHasAllPermissions() {
+        var member = activeMember(100L, 8L, WorkspaceAccessLevel.READ_WRITE, "[]");
+        member.setReadOnlyDomains("[\"SDLC\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 8L)).thenReturn(member);
+        assertEquals(java.util.Set.of(WorkspaceDomain.SDLC), service.activeReadOnlyDomains(100L, 8L));
+        member.setReadOnlyDomains("[\"MEMORY\"]");
+        assertEquals(java.util.Set.of(WorkspaceDomain.MEMORY), service.activeReadOnlyDomains(100L, 8L));
+        member.setAccessLevel("ADMIN");
+        assertTrue(service.activeReadOnlyDomains(100L, 8L).isEmpty());
+        member.setAccessLevel("READ_ONLY");
+        assertEquals(WorkspaceDomain.values().length, service.activeReadOnlyDomains(100L, 8L).size());
+    }
+
+    @Test
+    void addingMemberCanBindAScopedCustomRole() {
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
+        when(userDao.findById(8L)).thenReturn(activeUser(8L));
+        service.addMember(100L, 8L, 12L, 7L);
+        verify(roleService).requireRole(100L, 12L);
+        verify(workspaceMemberDao).insertOrActivate(argThat(member -> member.getRoleId() == 12L));
+    }
+
+    private static WorkspaceRoleDO role(WorkspaceAccessLevel level) {
+        WorkspaceRoleDO role = new WorkspaceRoleDO();
+        role.setId(11L + level.ordinal());
+        role.setCode(level.name());
+        role.setAccessLevel(level.name());
+        return role;
     }
 
     private AuditLogRecord capturedAudit() {
@@ -652,6 +749,8 @@ class WorkspaceServiceTest {
         member.setStatus(0);
         member.setIsDeleted(0);
         member.setAccessLevel(level.name());
+        member.setRoleId(11L + level.ordinal());
+        member.setRoleCode(level.name());
         member.setIdentityTags(tags);
         return member;
     }
@@ -722,6 +821,51 @@ class WorkspaceServiceTest {
         assertCode("12007", () -> service.activeAccessLevel(10L, 7L));
     }
 
+    @Test
+    void allowsCopyTargetGrantsPlatformAdminWithoutAnyMembership() {
+        when(systemAdminService.isSystemAdmin(7L)).thenReturn(true);
+
+        assertTrue(service.allowsCopyTarget(10L, 7L));
+
+        verify(workspaceMemberDao, never()).findByWorkspaceAndUser(anyLong(), anyLong());
+    }
+
+    @Test
+    void allowsCopyTargetRequiresActiveWriteOrAdminMembership() {
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L))
+                .thenReturn(activeMember(10L, 7L, WorkspaceAccessLevel.READ_WRITE, null));
+        assertTrue(service.allowsCopyTarget(10L, 7L));
+
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L))
+                .thenReturn(activeMember(10L, 7L, WorkspaceAccessLevel.ADMIN, null));
+        assertTrue(service.allowsCopyTarget(10L, 7L));
+
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L))
+                .thenReturn(activeMember(10L, 7L, WorkspaceAccessLevel.READ_ONLY, null));
+        assertFalse(service.allowsCopyTarget(10L, 7L));
+    }
+
+    @Test
+    void allowsCopyTargetRejectsMissingInactiveOrInvalidMembership() {
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L)).thenReturn(null);
+        assertFalse(service.allowsCopyTarget(10L, 7L));
+
+        WorkspaceMemberDO disabled = activeMember(10L, 7L, WorkspaceAccessLevel.ADMIN, null);
+        disabled.setStatus(1);
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L)).thenReturn(disabled);
+        assertFalse(service.allowsCopyTarget(10L, 7L));
+
+        WorkspaceMemberDO removed = activeMember(10L, 7L, WorkspaceAccessLevel.ADMIN, null);
+        removed.setIsDeleted(1);
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L)).thenReturn(removed);
+        assertFalse(service.allowsCopyTarget(10L, 7L));
+
+        WorkspaceMemberDO invalid = activeMember(10L, 7L, WorkspaceAccessLevel.READ_WRITE, null);
+        invalid.setAccessLevel("writer");
+        when(workspaceMemberDao.findByWorkspaceAndUser(10L, 7L)).thenReturn(invalid);
+        assertFalse(service.allowsCopyTarget(10L, 7L));
+    }
+
     private static WorkspaceMembershipDO membership(long workspaceId, String name, WorkspaceAccessLevel level) {
         WorkspaceMembershipDO membership = new WorkspaceMembershipDO();
         membership.setId(workspaceId);
@@ -759,4 +903,41 @@ class WorkspaceServiceTest {
     private interface ThrowingRunnable {
         void run() throws Exception;
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+        "workspaceMissing|10404|工作空间不存在|Workspace does not exist.",
+        "userEmpty|10001|用户不能为空|User is required.",
+        "userMissing|10404|用户不存在|User does not exist.",
+        "userInactive|10001|用户不可添加|User cannot be added."
+    })
+    void customMembershipGuardRendersEnglishWithoutMutation(
+            String branch, String code, String diagnostic, String english) {
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
+        if (branch.equals("userInactive")) {
+            UserDO user = new UserDO(); user.setId(8L); user.setStatus(1);
+            when(userDao.findById(8L)).thenReturn(user);
+        }
+        BizException error = assertThrows(BizException.class, () -> {
+            if (branch.equals("workspaceMissing")) service.getCurrent(100L);
+            else service.addMember(100L, branch.equals("userEmpty") ? null : 8L, null, 7L);
+        });
+        assertEquals(BizException.class, error.getClass());
+        assertEquals(code, error.getCode());
+        assertEquals(diagnostic, error.getMessage());
+        assertNull(error.getCause());
+        when(workspaceDao.findByIdForUpdate(100L)).thenReturn(workspace(100L, 7L));
+        if (branch.equals("userInactive")) {
+            verify(workspaceMemberDao).findByWorkspaceAndUser(100L, 8L);
+            verify(workspaceMemberDao, never()).insertOrActivate(any());
+        } else verifyNoInteractions(workspaceMemberDao);
+        verifyNoInteractions(auditLogService, eventPublisher);
+        assertEquals(code.equals("10001") ? 400 : 200,
+                new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue());
+        assertEquals(diagnostic, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.CHINA));
+        assertEquals(english, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.US));
+    }
+
 }

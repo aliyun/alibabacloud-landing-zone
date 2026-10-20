@@ -15,7 +15,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/squad-templates")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看小队模板")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看小队模板", actionKey = "access.action.view_squad_templates")
 public class SquadTemplateController {
 
     private final SquadTemplateService templateService;
@@ -35,7 +35,7 @@ public class SquadTemplateController {
     }
 
     @PostMapping("/{id}/apply")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "应用小队模板")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "应用小队模板", actionKey = "access.action.apply_a_squad_template")
     public Result<ApplyResultVO> apply(@PathVariable("id") Long id) {
         return Result.ok(templateService.apply(id, currentWorkspaceId(), currentUserId()));
     }

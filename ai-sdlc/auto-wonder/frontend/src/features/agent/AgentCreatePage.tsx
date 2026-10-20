@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { type FocusEvent, useRef, type KeyboardEvent, useState } from 'react';
@@ -9,7 +12,7 @@ import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
 import type { AgentConfigGenResult } from '@/shared/types/ai';
 import { useCreateAgent } from './hooks';
 import type { CreateAgentRequest } from './api';
-import { AGENT_ROLE_CODE_OPTIONS, AGENT_ROLE_NAME_OPTIONS, getRoleCodeByName, getRoleNameByCode } from './constants';
+import { getAgentRoleCodeOptions, getAgentRoleNameOptions, getRoleCodeByName, getRoleNameByCode } from './constants';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
 const { TextArea } = Input;
@@ -20,8 +23,10 @@ function normalizeGeneratedRoleCode(value: string) {
 }
 
 export function AgentCreatePage() {
+  const { t } = useTranslation('agent');
   const navigate = useNavigate();
   const [form] = Form.useForm<CreateAgentRequest>();
+  useLocalizedValidation(form);
   const [mode, setMode] = useState<'natural' | 'advanced'>('advanced');
   const [naturalSessionKey] = useState(0);
   const businessBackgroundRef = useRef<TextAreaRef>(null);
@@ -43,10 +48,10 @@ export function AgentCreatePage() {
   };
 
   const handleSubmit = (values: CreateAgentRequest) => {
-    accessCommand('READ_WRITE', '创建数字员工', async () => {
+    accessCommand('READ_WRITE', t('actions.create'), async () => {
       try {
         const agent = await createAgent.mutateAsync(values);
-        message.success('数字员工已创建');
+        message.success(i18n.t('create.success', { ns: 'agent' }));
         navigate(`/agents/${agent.id}`);
       } catch {
         // ApiError is surfaced by the global interceptor.
@@ -98,9 +103,9 @@ export function AgentCreatePage() {
         responsibilities: draft.responsibilities ?? '',
       });
       setMode('advanced');
-      message.success('已应用生成草稿，请确认后创建');
+      message.success(i18n.t('create.draftApplied', { ns: 'agent' }));
     } catch {
-      message.error('生成结果格式异常，请重新生成');
+      message.error(i18n.t('create.invalidDraft', { ns: 'agent' }));
     }
   };
 
@@ -108,12 +113,12 @@ export function AgentCreatePage() {
     <div>
 
       <Card
-        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/agents" label="返回列表" /><span>新建数字员工</span></span>} />}
+        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/agents" label={t('actions.backList')} /><span>{t('create.title')}</span></span>} />}
         extra={
           <Space wrap>
-            <Button onClick={() => navigate('/agents')}>取消</Button>
-            <Button type="primary" icon={<SaveOutlined />} onClick={() => form.submit()} loading={createAgent.isPending}>
-              创建
+            <Button onClick={() => navigate('/agents')}>{t('actions.cancel')}</Button>
+            <Button type="primary" icon={<SaveOutlined aria-hidden="true" />} onClick={() => form.submit()} loading={createAgent.isPending}>
+              {t('actions.createButton')}
             </Button>
           </Space>
         }
@@ -124,8 +129,8 @@ export function AgentCreatePage() {
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message="描述你需要的数字员工"
-              description="生成结果会先成为可编辑草稿。确认草稿后会回填高级表单，只有点击创建才会真正创建数字员工。"
+              message={t('create.describe')}
+              description={t('create.draftHint')}
             />
             <div style={{ height: 'calc(100% - 76px)' }}>
               <AiSessionPanel
@@ -143,31 +148,31 @@ export function AgentCreatePage() {
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
-              message="高级表单"
-              description={<Text type="secondary">请填写必填配置后创建数字员工。</Text>}
+              message={t('create.advanced')}
+              description={<Text type="secondary">{t('create.requiredHint')}</Text>}
             />
             <Form form={form} layout="vertical" onFinish={handleSubmit}>
-              <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}> 
-                <Input placeholder="如: 前端开发 Agent" maxLength={128} />
+              <Form.Item label={t('fields.name')} name="name" rules={[{ required: true, message: t('validation.name') }]}>
+                <Input placeholder={t('placeholders.name')} maxLength={128} />
               </Form.Item>
-              <Form.Item label="头像 URL" name="avatarUrl">
-                <Input placeholder="可选" maxLength={512} />
+              <Form.Item label={t('fields.avatar')} name="avatarUrl">
+                <Input placeholder={t('placeholders.optional')} maxLength={512} />
               </Form.Item>
-              <Form.Item label="角色名称" name="roleName" rules={[{ required: true, message: '请输入角色名称' }]}> 
+              <Form.Item label={t('fields.roleName')} name="roleName" rules={[{ required: true, message: t('validation.roleName') }]}>
                 <AutoComplete
-                  options={AGENT_ROLE_NAME_OPTIONS}
+                  options={getAgentRoleNameOptions()}
                   allowClear
-                  placeholder="如: 前端开发工程师"
+                  placeholder={t('placeholders.roleName')}
                   maxLength={128}
                   onSelect={handleRoleNameSelect}
                   onChange={handleRoleNameChange}
                 />
               </Form.Item>
-              <Form.Item label="角色码" name="roleCode" rules={[{ required: true, message: '请输入角色码' }]}> 
+              <Form.Item label={t('fields.roleCode')} name="roleCode" rules={[{ required: true, message: t('validation.roleCode') }]}>
                 <AutoComplete
-                  options={AGENT_ROLE_CODE_OPTIONS}
+                  options={getAgentRoleCodeOptions()}
                   allowClear
-                  placeholder="如: FRONTEND_DEV"
+                  placeholder={t('placeholders.roleCode')}
                   maxLength={64}
                   onSelect={handleRoleCodeSelect}
                   onChange={handleRoleCodeChange}
@@ -179,11 +184,11 @@ export function AgentCreatePage() {
                 <TextArea
                   ref={businessBackgroundRef}
                   rows={4}
-                  placeholder="描述该员工所在的业务背景..."
+                  placeholder={t('placeholders.background')}
                 />
               </Form.Item>
               <Form.Item label="AGENT.md" name="responsibilities">
-                <TextArea rows={4} placeholder="描述该员工的核心职责..." />
+                <TextArea rows={4} placeholder={t('placeholders.responsibilities')} />
               </Form.Item>
             </Form>
           </>

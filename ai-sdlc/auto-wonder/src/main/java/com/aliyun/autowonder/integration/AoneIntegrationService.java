@@ -93,7 +93,8 @@ public class AoneIntegrationService {
                 result.getChecks().add("writeback-staff:" + req.getWritebackStaffId());
             }
             result.setSuccess(true);
-            result.setMessage("Aone 连接测试成功");
+            result.setMessage(com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                    "integration.aone_connection_succeeded", new Object[0], "Aone 连接测试成功"));
         } catch (Exception e) {
             result.setSuccess(false);
             result.setMessage(e.getMessage());

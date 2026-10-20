@@ -183,7 +183,12 @@ class WorkspaceLifecycleDaoSqlTest {
         assertTrue(listMemberships.contains("o.owner_id"),
                 "listMembershipsByUser must select owner_id so isOwner needs no extra query, got: "
                         + listMemberships);
-        assertTrue(listMemberships.contains("m.access_level"));
+        // RBAC：有效级别来自成员角色 JOIN，不允许回退成员行上的旧 access_level 字段。
+        assertTrue(listMemberships.contains("r.access_level"),
+                "listMembershipsByUser must select the joined role's access_level, got: "
+                        + listMemberships);
+        assertTrue(listMemberships.contains("JOIN workspace_role r ON r.id = m.role_id AND r.tenant_id = m.tenant_id"),
+                "the role join must be scoped to the member's own workspace role, got: " + listMemberships);
         assertTrue(listMemberships.contains("o.is_deleted = 0"),
                 "listMembershipsByUser must hide deleted workspaces, got: " + listMemberships);
     }
@@ -218,8 +223,11 @@ class WorkspaceLifecycleDaoSqlTest {
         assertTrue(filter.contains("EXISTS (SELECT 1 FROM org_member m"),
                 "the original ADMIN must see them through their preserved membership row, got: "
                         + filter);
-        assertTrue(filter.contains("m.access_level = 'ADMIN'"),
-                "only ADMIN memberships may see the recycle bin, got: " + filter);
+        // RBAC：ADMIN 能力以成员角色 JOIN 判定，不回退成员行上的旧 access_level 字段。
+        assertTrue(filter.contains("JOIN workspace_role r ON r.id = m.role_id AND r.tenant_id = m.tenant_id AND r.is_deleted = 0"),
+                "the role join must require the member's own non-deleted workspace role, got: " + filter);
+        assertTrue(filter.contains("r.access_level = 'ADMIN'"),
+                "only ADMIN roles may see the recycle bin, got: " + filter);
         assertTrue(filter.contains("m.status = 0") && filter.contains("m.is_deleted = 0"),
                 "a deactivated or removed ADMIN must lose visibility, got: " + filter);
         assertTrue(filter.contains("m.tenant_id = o.id") && filter.contains("m.user_id = #{userId}"),

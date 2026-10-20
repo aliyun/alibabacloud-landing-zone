@@ -13,7 +13,12 @@ public class WorkspaceMemberDO {
     private Integer status;
     private Date joinedAt;
     private String accessLevel;
+    private Long roleId;
+    private String roleCode;
+    private String roleName;
+    private String readOnlyDomains;
     private String identityTags;
+    private String forbiddenDomains;
     private Date gmtCreate;
     private Date gmtModified;
     private Long creatorId;

@@ -32,6 +32,14 @@ public class ArtifactService {
     }
 
     public Long record(ReportArtifactRequest req, long workspaceId, ArtifactOwnerRef owner) {
+        // Immutable diagnostic retries may arrive after an accepted response was lost.
+        if (req.getDispatchId() != null && req.getName() != null
+                && req.getName().matches("observability/runtime/hooks/receipts/[a-f0-9]{64}\\.json")) {
+            for (ArtifactDO existing : artifactDao.listByDispatch(workspaceId, req.getDispatchId())) {
+                if (req.getName().equals(existing.getName()) && java.util.Objects.equals(req.getOssRef(), existing.getOssRef()))
+                    return existing.getId();
+            }
+        }
         ArtifactDO a = new ArtifactDO();
         a.setTenantId(workspaceId);
         a.setSourceType(owner.sourceType().name());

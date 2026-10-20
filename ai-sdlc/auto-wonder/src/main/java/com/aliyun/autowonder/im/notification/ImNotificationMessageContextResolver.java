@@ -31,9 +31,9 @@ public class ImNotificationMessageContextResolver {
     public ImNotificationMessageContext resolve(ImNotificationTask task) {
         WorkitemDO workitem = workitemDao.findById(task.workitemId());
         String workspaceName = resolveWorkspaceName(task.tenantId());
-        String statusName = resolveStatusName(workitem);
+        Status status = resolveStatus(workitem);
         String baseUrl = resolveBaseUrl();
-        return new ImNotificationMessageContext(workspaceName, statusName, baseUrl, task.tenantId());
+        return new ImNotificationMessageContext(workspaceName, status.name(), baseUrl, task.tenantId(), status.fallback());
     }
 
     private String resolveWorkspaceName(long tenantId) {
@@ -43,22 +43,24 @@ public class ImNotificationMessageContextResolver {
                 : PlatformBrandingService.DEFAULT_PLATFORM_NAME;
     }
 
-    private String resolveStatusName(WorkitemDO workitem) {
+    private Status resolveStatus(WorkitemDO workitem) {
         if (workitem == null || workitem.getStatusNodeId() == null) {
-            return FALLBACK_STATUS_NAME;
+            return new Status(FALLBACK_STATUS_NAME, true);
         }
         StatusNodeDO node = statusNodeDao.findById(workitem.getStatusNodeId());
         if (node == null) {
-            return FALLBACK_STATUS_NAME;
+            return new Status(FALLBACK_STATUS_NAME, true);
         }
         if (hasText(node.getName())) {
-            return node.getName().trim();
+            return new Status(node.getName().trim(), false);
         }
         if (hasText(node.getCode())) {
-            return node.getCode().trim();
+            return new Status(node.getCode().trim(), false);
         }
-        return FALLBACK_STATUS_NAME;
+        return new Status(FALLBACK_STATUS_NAME, true);
     }
+
+    private record Status(String name, boolean fallback) {}
 
     private String resolveBaseUrl() {
         // Branding domain first, deployment autowonder.public-base-url as the fallback; the

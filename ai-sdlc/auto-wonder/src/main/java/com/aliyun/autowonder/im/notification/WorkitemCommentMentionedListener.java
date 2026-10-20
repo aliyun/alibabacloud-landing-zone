@@ -61,7 +61,7 @@ public class WorkitemCommentMentionedListener {
                     event.workitemTitle(),
                     ImNotificationTask.TYPE_COMMENT_MENTION,
                     event.commentContentMd(),
-                    event.sourceType());
+                    event.sourceType(), null, null, event.workitemTitleKind());
             try {
                 queue.enqueue(task);
             } catch (Exception e) {

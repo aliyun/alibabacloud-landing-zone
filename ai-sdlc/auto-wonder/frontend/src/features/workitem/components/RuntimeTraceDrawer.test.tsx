@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { act } from '@testing-library/react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -43,7 +45,7 @@ describe('RuntimeTraceDrawer', () => {
     await waitFor(() => expect(turnRequests).toBe(1));
     expect(within(drawer).getByText('exact system prompt')).toBeInTheDocument();
     expect(within(drawer).getByText('exact user prompt')).toBeInTheDocument();
-    expect(within(drawer).getByText(/partial coverage/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/部分覆盖/)).toBeInTheDocument();
     expect(within(drawer).getByText('Observed Thinking')).toBeInTheDocument();
     expect(within(drawer).getByText('Model / Provider Wait')).toBeInTheDocument();
 
@@ -101,8 +103,45 @@ describe('RuntimeTraceDrawer', () => {
     );
 
     render(<RuntimeTraceDrawer node={{ key: 'dispatch:44', dispatchId: 44, agentName: '开发', status: 'SUCCEEDED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
-    await screen.findByText('Runtime & SDLC');
+    await screen.findByText('Runtime 与 SDLC');
     expect(screen.queryByText('Dispatch 失败原因')).not.toBeInTheDocument();
+  });
+
+  it('renders the bounded failure history of every failed round', async () => {
+    server.use(
+      http.get('/api/dispatches/44/runtime-trace', () => HttpResponse.json({ success: true, code: '0', message: '', data: {
+        ...failedTracePayload,
+        events: [
+          ...failedTracePayload.events,
+          { eventId: 'e-history', eventType: 'dispatch.failed', eventTime: '2026-10-15T03:41:07.331Z', detail: {
+            state: 'FAILED',
+            error: 'workflow routing preflight failed: qoder semantic inactivity timeout after 10m0s',
+            failureHistory: { truncated: false, rounds: [
+              { attemptIndex: 1, phase: 'routing_preflight', provider: 'qoder', model: 'dmodel',
+                sessionId: '689186f5-a6bd-4816-9fa1-6bff68e7b896', status: 'failed',
+                error: 'qoder turn failed: RESOURCE_LIMIT 10605 model_queued Queuing failed',
+                diagnostics: [{ source: 'provider_log', category: 'business', code: '10605', subCode: 'model_queued',
+                  businessCode: 'RESOURCE_LIMIT', message: 'Queuing failed', occurrences: 2,
+                  requestId: 'f203f510-c793-4e82-b64d-18c879abb08c' }] },
+              { attemptIndex: 2, phase: 'routing_preflight', provider: 'qoder', model: 'dmodel',
+                sessionId: 'aa2db1e7-4256-49eb-ae7b-6faea387b7e0', status: 'failed',
+                error: 'qoder semantic inactivity timeout after 10m0s' },
+            ] },
+          } },
+        ],
+      } })),
+    );
+
+    render(<RuntimeTraceDrawer node={{ key: 'dispatch:44', dispatchId: 44, agentName: '开发', status: 'FAILED' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+    const panel = await screen.findByTestId('dispatch-failure-history');
+    expect(within(panel).getByText('共 2 轮失败')).toBeInTheDocument();
+    expect(within(panel).getByTestId('failure-history-round-error-1')).toHaveTextContent('RESOURCE_LIMIT 10605 model_queued Queuing failed');
+    expect(within(panel).getByTestId('failure-history-round-error-2')).toHaveTextContent('semantic inactivity timeout after 10m0s');
+    fireEvent.click(within(panel).getByRole('button', { name: '展开第 1 轮失败详情' }));
+    fireEvent.click(within(panel).getByRole('button', { name: '展开第 1 条诊断' }));
+    expect(within(panel).getByText('f203f510-c793-4e82-b64d-18c879abb08c')).toBeInTheDocument();
+    expect(within(panel).getByText('689186f5-a6bd-4816-9fa1-6bff68e7b896')).toBeInTheDocument();
+    expect(await screen.findByTestId('dispatch-failure-reason')).toBeInTheDocument();
   });
 });
 
@@ -142,7 +181,7 @@ describe('RuntimeTraceDrawer usage display', () => {
 
     render(<RuntimeTraceDrawer node={node} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
     const drawer = await screen.findByTestId('runtime-trace-drawer');
-    await waitFor(() => expect(within(drawer).getByText(/Session s1/)).toBeInTheDocument());
+    await waitFor(() => expect(within(drawer).getByText(/会话 s1/)).toBeInTheDocument());
     expect(within(drawer).queryByText(/tokens/)).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/credits/)).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/💰/)).not.toBeInTheDocument();
@@ -161,7 +200,7 @@ describe('RuntimeTraceDrawer usage display', () => {
 
     render(<RuntimeTraceDrawer node={node} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
     const drawer = await screen.findByTestId('runtime-trace-drawer');
-    await waitFor(() => expect(within(drawer).getByText(/Session s1/)).toBeInTheDocument());
+    await waitFor(() => expect(within(drawer).getByText(/会话 s1/)).toBeInTheDocument());
     expect(within(drawer).queryByText(/credits/)).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/tokens/)).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/💰/)).not.toBeInTheDocument();
@@ -337,4 +376,16 @@ describe('dispatchFailureReason', () => {
     expect(dispatchFailureReason(null)).toBeNull();
     expect(dispatchFailureReason(undefined)).toBeNull();
   });
+});
+
+it('localizes the actual drawer close parent and hides the installed error glyph while keeping raw failure reason', async () => {
+  server.use(http.get('/api/dispatches/99/runtime-trace', () => HttpResponse.json({ success: true, code: '0', data: { schemaVersion: 'autowonder.runtime-trace.v2', source: 'LIVE', dispatchId: 99, changed: true, tokenUsage: usage, events: [{ eventType: 'step.failed', detail: { reason: 'raw <b>reason</b>' } }], sessions: [] } })));
+  render(<RuntimeTraceDrawer node={{ key: 'dispatch:99', dispatchId: 99, agentName: '真人', agentNameFallback: 'HUMAN', status: 'FAILED', error: 'raw <b>reason</b>' }} processGraph={{ nodes: [], edges: [] }} onClose={() => {}} />);
+  await screen.findByTestId('runtime-trace-drawer');
+  expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
+  expect(screen.queryByRole('img', { name: 'close-circle' })).not.toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  expect(within(screen.getByTestId('dispatch-failure-reason')).getByText('raw <b>reason</b>')).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
 });

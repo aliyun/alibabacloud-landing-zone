@@ -21,10 +21,10 @@ public enum ImProviderType {
     public static String normalize(String provider) {
         String normalized = provider == null ? "" : provider.trim().toUpperCase(Locale.ROOT);
         if (normalized.isEmpty()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "IM provider 不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.provider_required", new Object[0], "IM provider 不能为空");
         }
         if (!normalized.equals("DINGTALK") && !normalized.equals("FEISHU")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "不支持的 IM provider");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.provider_unsupported", new Object[0], "不支持的 IM provider");
         }
         return normalized;
     }

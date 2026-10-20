@@ -5,9 +5,12 @@ import { RouteGuard } from './RouteGuard';
 import { RedirectWithQuery } from './RedirectWithQuery';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { RegisterPage } from '@/features/auth/RegisterPage';
+import { SsoCompletePage } from '@/features/auth/SsoCompletePage';
 import { WorkspaceSelectPage } from '@/features/auth/WorkspaceSelectPage';
 import { WorkspaceRecycleBinPage } from '@/features/auth/WorkspaceRecycleBinPage';
+import { DeliveryOverviewPage } from '@/features/overview/DeliveryOverviewPage';
 import { WorkitemListPage } from '@/features/workitem/WorkitemListPage';
+import { WorkitemRecycleBinPage } from '@/features/workitem/WorkitemRecycleBinPage';
 import { WorkitemCreatePage } from '@/features/workitem/WorkitemCreatePage';
 import { WorkitemDetailPage } from '@/features/workitem/WorkitemDetailPage';
 import { AgentCreatePage } from '@/features/agent/AgentCreatePage';
@@ -57,6 +60,7 @@ export function createAppRoutes(): RouteObject[] {
       children: [
         { path: '/login', element: <LoginPage /> },
         { path: '/register', element: <RegisterPage /> },
+        { path: '/sso/complete', element: <SsoCompletePage /> },
       ],
     },
     {
@@ -91,8 +95,10 @@ export function createAppRoutes(): RouteObject[] {
       element: <RouteGuard><AppLayout /></RouteGuard>,
       children: [
         { index: true, element: <Navigate to="/workitems" replace /> },
+        { path: '/overview', element: <DeliveryOverviewPage /> },
         { path: '/workitems', element: <WorkitemListPage /> },
         { path: '/workitems/new', element: <WorkitemCreatePage /> },
+        { path: '/workitems/recycled', element: <WorkitemRecycleBinPage /> },
         { path: '/workitems/:id', element: <WorkitemDetailPage /> },
         { path: '/agents', element: <AgentsHubPage /> },
         { path: '/agents/reviews', element: <RedirectWithQuery to="/agents" tab="reviews" /> },

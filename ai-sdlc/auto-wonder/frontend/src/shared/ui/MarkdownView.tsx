@@ -1,5 +1,9 @@
+import { memo, useMemo } from 'react';
+import type { ComponentProps } from 'react';
+import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkAutolinkBoundary } from '@/shared/lib/remarkAutolinkBoundary';
 import './MarkdownView.css';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -35,6 +39,12 @@ export const markdownSanitizeSchema = {
     href: ['http', 'https', 'mailto'],
   },
 };
+
+type MarkdownRemarkPlugins = NonNullable<ComponentProps<typeof ReactMarkdown>['remarkPlugins']>;
+type MarkdownRehypePlugins = NonNullable<ComponentProps<typeof ReactMarkdown>['rehypePlugins']>;
+
+const markdownRemarkPlugins: MarkdownRemarkPlugins = [remarkGfm, remarkAutolinkBoundary];
+const markdownRehypePlugins: MarkdownRehypePlugins = [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]];
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -82,17 +92,22 @@ function childrenText(children: unknown): string {
   return String(children ?? '');
 }
 
-export function MarkdownView({ content, className, mentionNames, artifacts, onArtifactClick }: MarkdownViewProps) {
-  const safeContent = content ?? '';
-  const linkedContent = linkArtifacts(safeContent, artifacts);
-  const renderedContent = highlightMentions(linkedContent, mentionNames);
-  const artifactsById = new Map((artifacts ?? []).map((artifact) => [String(artifact.id), artifact]));
+export const MarkdownView = memo(function MarkdownView({ content, className, mentionNames, artifacts, onArtifactClick }: MarkdownViewProps) {
+  const { t } = useTranslation('shared');
+  const renderedContent = useMemo(
+    () => highlightMentions(linkArtifacts(content ?? '', artifacts), mentionNames),
+    [content, artifacts, mentionNames],
+  );
+  const artifactsById = useMemo(
+    () => new Map((artifacts ?? []).map((artifact) => [String(artifact.id), artifact])),
+    [artifacts],
+  );
 
   const renderArtifactButton = (label: string, artifact: Artifact | null | undefined) => (
     <button
       type="button"
       data-testid="artifact-inline-link"
-      aria-label={`打开产物 ${label}`}
+      aria-label={t('markdown.openArtifact', { label })}
       onClick={() => artifact && onArtifactClick?.(artifact)}
       style={{
         border: 0,
@@ -124,7 +139,12 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
       <ReactMarkdown
         allowedElements={markdownAllowedElements}
         components={{
-          input: ({ node: _node, checked }) => <input type="checkbox" checked={checked} disabled aria-label={checked ? '已完成任务' : '待办任务'} />,
+          // 链接统一在新标签页打开，避免把读者带离当前页面（如工单评论）；
+          // 显式属性写在展开之后，覆盖原始 HTML 已声明的 target/rel，保证取值一致。
+          a: ({ node: _node, href, children, ...props }) => (
+            <a {...props} href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+          ),
+          input: ({ node: _node, checked }) => <input type="checkbox" checked={checked} disabled aria-label={checked ? t('markdown.completed') : t('markdown.todo')} />,
           // pre 的 UA 默认 white-space:pre 会关闭折行，外层 div 的 overflowWrap/wordBreak
           // 因此对代码块整体失效，超长行会溢出正文右边界。这里只把溢出收敛成块内横向滚动。
           pre: ({ node: _node, ...props }) => (
@@ -172,12 +192,12 @@ export function MarkdownView({ content, className, mentionNames, artifacts, onAr
             );
           },
         }}
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
+        remarkPlugins={markdownRemarkPlugins}
+        rehypePlugins={markdownRehypePlugins}
         unwrapDisallowed
       >
         {renderedContent}
       </ReactMarkdown>
     </div>
   );
-}
+});

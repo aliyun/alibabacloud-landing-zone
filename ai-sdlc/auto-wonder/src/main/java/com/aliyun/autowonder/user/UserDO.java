@@ -23,4 +23,8 @@ public class UserDO {
     private Date gmtCreate;
     private Date gmtModified;
     private Integer isDeleted;
+    private String deletedUsername;
+    private String deletedEmail;
+    private Date deletedAt;
+    private Long deletedBy;
 }

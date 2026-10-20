@@ -1,0 +1,167 @@
+{
+  "actions": {
+    "save": "保存",
+    "cancel": "取消",
+    "close": "关闭",
+    "delete": "删除",
+    "edit": "编辑",
+    "back": "返回"
+  },
+  "page": {
+    "title": "记忆",
+    "create": "新增记忆",
+    "loadError": "记忆目录加载失败，请刷新重试",
+    "owners": "记忆归属",
+    "noOwners": "暂无可用归属",
+    "selectOwner": "请选择记忆归属",
+    "noWritableMemory": "暂无记忆，可通过“新增记忆”添加",
+    "noReadableMemory": "暂无可查看的记忆",
+    "revision": "记忆库修订版本 {{revision}}",
+    "topics": "记忆内容 ({{count}})",
+    "index": "记忆索引",
+    "editIndex": "编辑索引",
+    "indexHint": "记录有哪些记忆、何时值得读取；详细内容保存在下方主题中。",
+    "noTopics": "暂无记忆内容",
+    "history": "变更历史",
+    "noHistory": "暂无变更",
+    "acl": "访问权限",
+    "imports": "本地来源",
+    "agentImports": "本地来源属于具体数字人的个人记忆，请选择数字人查看。",
+    "deleteConfirm": "删除此记忆及其索引引用？"
+  },
+  "commands": {
+    "saveMemory": "保存记忆",
+    "saveIndex": "保存索引",
+    "deleteMemory": "删除记忆"
+  },
+  "messages": {
+    "memorySaved": "记忆已保存",
+    "indexSaved": "索引已保存"
+  },
+  "scope": {
+    "ORG": "组织共享",
+    "SQUAD": "小队共享",
+    "AGENT": "数字人个人"
+  },
+  "owner": {
+    "organization": "组织共享记忆",
+    "description": "{{squads}}{{scope}}{{ownerRef}}",
+    "option": "{{squads}}{{name}}",
+    "squadSeparator": "、"
+  },
+  "types": {
+    "user": "用户偏好",
+    "feedback": "反馈与约定",
+    "project": "项目背景",
+    "reference": "参考资料"
+  },
+  "migration": {
+    "summary": "历史记忆迁移：{{migrated}}，{{pending}}",
+    "hint": "后台会自动继续迁移和重试；原始记忆仍然保留。迁移数量不代表索引容量或召回效果。",
+    "migrated_other": "已迁移 {{count}} 条",
+    "pending_other": "待迁移 {{count}} 条"
+  },
+  "document": {
+    "version": "文件版本 {{version}}",
+    "metadataParseWarning": "元信息无法解析，可在文件详情中查看原文",
+    "summary": "{{description}} · {{bytes}} · {{version}}",
+    "viewer": "{{path}} · 文件版本 {{version}}"
+  },
+  "operations": {
+    "CREATE": "新增",
+    "UPDATE": "修改",
+    "DELETE": "删除"
+  },
+  "topic": {
+    "edit": "编辑记忆",
+    "hint": "归属决定哪些数字人可以使用；保存后自动维护记忆正文和索引，无需审核。",
+    "scope": "归属范围",
+    "owner": "所属对象",
+    "type": "记忆类型",
+    "title": "标题",
+    "description": "适用说明",
+    "body": "正文",
+    "descriptionPlaceholder": "在什么任务或情况下值得读取这条记忆"
+  },
+  "validation": {
+    "scope": "请选择归属范围",
+    "owner": "请选择所属对象",
+    "type": "请选择记忆类型",
+    "title": "请输入标题",
+    "description": "请输入适用说明",
+    "body": "请输入正文",
+    "path": "请输入路径",
+    "content": "请输入内容",
+    "safePath": "请输入安全的相对 Markdown 路径",
+    "subjectType": "请选择授权对象",
+    "subjectRef": "请输入对象编号",
+    "permission": "请选择允许操作"
+  },
+  "editor": {
+    "edit": "编辑记忆文档",
+    "create": "新增记忆文档",
+    "readOnly": "当前存储为只读",
+    "limitWarning": "MEMORY.md 超过 200 行或 25,000 字节；仍可保存，但会话只加载边界内的前缀",
+    "path": "路径",
+    "pathExample": "feedback_testing.md",
+    "content": "内容"
+  },
+  "acl": {
+    "subjects": {
+      "USER": "平台用户",
+      "AGENT": "数字人",
+      "SQUAD": "小队成员",
+      "ROLE": "全部数字人"
+    },
+    "permissions": {
+      "READ": "查看",
+      "WRITE": "编辑",
+      "ADMIN": "管理"
+    },
+    "adminOnly": "仅工作空间管理员可维护访问权限",
+    "setCommand": "设置记忆访问权限",
+    "removeCommand": "移除记忆访问权限",
+    "hint": "访问权限决定谁能查看或编辑这份记忆。",
+    "help": "组织共享默认供本空间数字人读取，小队共享默认供所属成员读取。数字人仅能自主编辑自己的个人记忆，不能编辑共享记忆，也不能访问其他数字人的个人记忆；平台用户的编辑权限可单独授予。",
+    "add": "添加访问权限",
+    "empty": "暂无额外授权；空间管理员仍可管理，数字人仍可维护自己的个人记忆",
+    "deleteConfirm": "移除此访问授权？",
+    "create": "新增记忆权限",
+    "subjectType": "授权对象",
+    "subjectRef": "对象编号",
+    "subjectHelp": "填写用户、数字人或小队的 ID，例如数字人 40013；选择全部数字人时填 ALL_AGENTS。",
+    "subjectPlaceholder": "例如 40013",
+    "permission": "允许操作",
+    "permissionHelp": "查看：读取内容；编辑：新增、修改、删除；管理：包含编辑权限。数字人实际写入仍仅限其个人记忆。"
+  },
+  "import": {
+    "resume": "恢复",
+    "pause": "暂停",
+    "recurate": "重新整理",
+    "retire": "退役",
+    "retireConfirm": "退役后将停止继续导入此来源，确认？",
+    "status": {
+      "MISSING": "未找到本地文件",
+      "ACTIVE": "可导入",
+      "PAUSED": "已暂停",
+      "RETIRED": "已停止导入",
+      "RECURATE_REQUESTED": "等待重新整理",
+      "STALE": "长期未检查",
+      "TOO_LARGE": "文件过大"
+    },
+    "adminOnly": "仅工作空间管理员可管理本地记忆来源",
+    "hint": "本地来源是 Qoder/QoderCN 的旧记忆文件，与平台历史记忆迁移不同。",
+    "help": "未找到本地文件不代表平台记忆丢失；可能尚未创建、已移动或不是可读取的普通文件。已经导入的平台记忆不会随本地文件消失而删除。",
+    "empty": "暂无可导入的本地文件",
+    "summary": "数字人 #{{agentId}} · {{imports}} · 最近检查 {{date}}",
+    "title": "AI 记忆导入",
+    "successCount_other": "最近记录中成功导入 {{count}} 次",
+    "missingCount_other": "未找到本地文件（{{count}}）"
+  },
+  "counts": {
+    "total_other": "共 {{count}} 条",
+    "bytes_other": "{{value}} 字节",
+    "lines_other": "{{value}} 行",
+    "measurements": "{{lines}} · {{bytes}}"
+  }
+}

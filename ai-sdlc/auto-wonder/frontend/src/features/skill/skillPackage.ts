@@ -1,16 +1,18 @@
+import { formatNumber } from '@/shared/i18n/format';
+import { i18n } from '@/shared/i18n';
 import JSZip from 'jszip';
 import type { SkillPackageFile } from './api';
 
 export async function buildDirectoryZip(filesLike: File[] | FileList): Promise<File> {
   const files = Array.from(filesLike).filter((file) => !shouldIgnore(file));
   if (!files.length || files.length > 500 || files.reduce((total, file) => total + file.size, 0) > 100 * 1024 * 1024) {
-    throw new Error('请选择文件夹，最多 500 个文件，总大小不超过 100 MB');
+    throw new Error(i18n.t('skill:package.directoryLimits'));
   }
   const rootName = relativePath(files[0]).split('/')[0];
   const zip = new JSZip();
   await Promise.all(files.map(async (file) => {
     const path = relativePath(file);
-    if (!path.startsWith(`${rootName}/`)) throw new Error('请选择一个完整的文件夹');
+    if (!path.startsWith(`${rootName}/`)) throw new Error(i18n.t('skill:package.completeFolder'));
     zip.file(path.substring(rootName.length + 1), new Uint8Array(await file.arrayBuffer()), { createFolders: false });
   }));
   const blob = await zip.generateAsync({ type: 'blob' });
@@ -30,7 +32,7 @@ export function formatBytes(size: number): string {
     return '0 B';
   }
   if (size < 1024) {
-    return `${size} B`;
+    return `${formatNumber(size)} B`;
   }
   const units = ['KB', 'MB', 'GB', 'TB'];
   let value = size;
@@ -39,7 +41,7 @@ export function formatBytes(size: number): string {
     value /= 1024;
     unit += 1;
   }
-  return `${value.toFixed(1)} ${units[unit]}`;
+  return `${formatNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ${units[unit]}`;
 }
 
 /**

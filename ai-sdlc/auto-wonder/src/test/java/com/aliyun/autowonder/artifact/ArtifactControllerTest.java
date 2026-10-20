@@ -122,4 +122,33 @@ class ArtifactControllerTest {
         assertEquals(404, response.getStatusCode().value());
         assertEquals("text/plain", response.getHeaders().getContentType().toString());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void previewLocalizesOnlyExplicitMetadataWithSamePlainResponse(String language) {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
+        try {
+            var service=mock(ArtifactService.class);
+            var controller=new ArtifactController(service, mock(RequirementDocumentService.class));
+            BizException[] errors={new BizException(ErrorCode.ARTIFACT_NOT_FOUND),
+                new BizException(ErrorCode.UNAUTHORIZED),
+                BizException.keyed(ErrorCode.PARAM_INVALID, "executor.launch.version_required", new Object[]{"<raw>"}, "raw diagnostic"),
+                new BizException(ErrorCode.ARTIFACT_NOT_FOUND, "产物不存在"),
+                BizException.keyed("unknown", "missing.key", null, "<raw>产物不存在", null)};
+            boolean en=language.equals("en-US");
+            String[] expected={en ? "Artifact not found" : "产物不存在", en ? "Not signed in or session expired" : "未登录或登录已失效",
+                en ? "version is required. Read it from <raw>." : "version 必填，取自 <raw>", "产物不存在", "<raw>产物不存在"};
+            int[] statuses={404,401,400,404,400};
+            for(int i=0;i<errors.length;i++) {
+                org.mockito.Mockito.doThrow(errors[i]).when(service).getPreviewContent(7L,100L);
+                var response=controller.preview(7L);
+                assertEquals(statuses[i],response.getStatusCode().value());
+                assertEquals("text/plain",response.getHeaders().getContentType().toString());
+                assertEquals("nosniff",response.getHeaders().getFirst("X-Content-Type-Options"));
+                assertArrayEquals(expected[i].getBytes(StandardCharsets.UTF_8),response.getBody());
+            }
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

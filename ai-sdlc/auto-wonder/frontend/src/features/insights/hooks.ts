@@ -1,6 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getInsightMetrics, getInsightAudit, getInsightWorkers, getHumanAgentParticipation, getHumanAgentSlowTail, forceRefreshParticipation } from './api';
+import { getInsightMetrics, getInsightAudit, getInsightWorkers, getHumanAgentParticipation, getHumanAgentSlowTail, forceRefreshParticipation, getRequirementDelivery } from './api';
+import { putMySetting, deleteMySetting } from '@/features/profile/userSettingApi';
 import type { TimeRange, Granularity } from './types';
+
+/** 处理时长目标落在用户级偏好，键与后端 RequirementDeliveryService.TARGET_SETTING_KEY 一致。 */
+export const REQUIREMENT_DELIVERY_TARGET_KEY = 'insights.requirementDelivery.targetHours';
 
 export function useInsightMetrics(workerId: number | undefined, timeRange: TimeRange) {
   return useQuery({
@@ -56,6 +60,31 @@ export function useForceRefreshParticipation() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['human-agent-participation'] });
       queryClient.invalidateQueries({ queryKey: ['human-agent-slow-tail'] });
+    },
+  });
+}
+
+export function useRequirementDelivery(startDate: string, endDate: string) {
+  return useQuery({
+    queryKey: ['requirement-delivery', startDate, endDate],
+    queryFn: () => getRequirementDelivery({ startDate, endDate }),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** 保存或清除处理时长目标后失效整组区间查询，让达标口径按新目标立即重算。 */
+export function useSaveRequirementDeliveryTarget() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (hours: number | null) => {
+      if (hours == null) {
+        await deleteMySetting(REQUIREMENT_DELIVERY_TARGET_KEY);
+      } else {
+        await putMySetting(REQUIREMENT_DELIVERY_TARGET_KEY, String(hours));
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['requirement-delivery'] });
     },
   });
 }

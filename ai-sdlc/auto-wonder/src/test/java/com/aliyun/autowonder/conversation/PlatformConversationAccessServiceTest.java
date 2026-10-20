@@ -64,12 +64,9 @@ class PlatformConversationAccessServiceTest {
         when(shareDao.findActive(TENANT_ID, CONVERSATION_ID, GRANTEE_ID))
                 .thenReturn(share(GRANTEE_ID, "READ"));
 
-        AgentConversationDO read = service.requireBodyRead(TENANT_ID, CONVERSATION_ID, GRANTEE_ID);
-        assertEquals(OWNER_ID, read.getOwnerUserId(), "被分享人读到的仍然是 Owner 的会话，归属不变");
-
-        BizException denied = assertThrows(BizException.class,
-                () -> service.requireBodyWrite(TENANT_ID, CONVERSATION_ID, GRANTEE_ID));
-        assertEquals(ErrorCode.PLATFORM_CONVERSATION_OWNER_ONLY.getCode(), denied.getCode());
+        assertThrowsOpaque(() -> service.requireBodyRead(TENANT_ID, CONVERSATION_ID, GRANTEE_ID));
+        assertThrowsOpaque(() -> service.requireBodyWrite(TENANT_ID, CONVERSATION_ID, GRANTEE_ID));
+        verifyNoInteractions(shareDao);
     }
 
     @Test
@@ -198,7 +195,7 @@ class PlatformConversationAccessServiceTest {
         when(shareDao.findActive(TENANT_ID, CONVERSATION_ID, GRANTEE_ID)).thenReturn(null);
 
         assertThrowsOpaque(() -> service.requireBodyRead(TENANT_ID, CONVERSATION_ID, GRANTEE_ID));
-        verify(shareDao).findActive(TENANT_ID, CONVERSATION_ID, GRANTEE_ID);
+        verifyNoInteractions(shareDao);
         verifyNoMoreInteractions(shareDao);
     }
 

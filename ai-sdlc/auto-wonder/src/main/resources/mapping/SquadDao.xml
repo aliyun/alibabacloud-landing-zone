@@ -47,4 +47,8 @@
           AND s.is_deleted = 0
           AND s.debug_log_enabled = 1
     </select>
+    <select id="countByTenantAndName" resultType="int">
+        SELECT COUNT(*) FROM squad
+        WHERE tenant_id = #{tenantId} AND name = #{name} AND is_deleted = 0
+    </select>
 </mapper>

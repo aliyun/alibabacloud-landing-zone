@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class MemoryStoreAccessService {
     public record Subjects(Long userId, Long agentId, Set<Long> squadIds, Set<String> roles,
-                           boolean workspaceAdmin) {
+                           boolean workspaceAdmin, boolean workspaceMember) {
         public Subjects {
             squadIds = squadIds == null ? Set.of() : Set.copyOf(squadIds);
             roles = roles == null ? Set.of() : Set.copyOf(roles);
@@ -28,6 +28,9 @@ public class MemoryStoreAccessService {
                 && store.getOwnerRef() != null
                 && store.getOwnerRef().equals(subjects.agentId())
                 ? MemoryPermission.WRITE : MemoryPermission.NONE;
+        if (subjects.workspaceMember()) {
+            result = MemoryPermission.strongest(result, MemoryPermission.READ);
+        }
         if (aclEntries == null) {
             return result;
         }

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.auth.federation.FederationConnectionDao">
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.auth.federation.FederationConnectionDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO federation_connection
+            (idp_id, name, protocol, enabled, issuer, saml_sso_url, saml_cert,
+             oidc_authorize_url, oidc_token_url, oidc_jwks_url, client_id, client_secret,
+             scopes, subject_claim, name_claim, email_claim, allowed_tenants, sort_order)
+        VALUES
+            (#{idpId}, #{name}, #{protocol}, #{enabled}, #{issuer}, #{samlSsoUrl}, #{samlCert},
+             #{oidcAuthorizeUrl}, #{oidcTokenUrl}, #{oidcJwksUrl}, #{clientId}, #{clientSecret},
+             #{scopes}, #{subjectClaim}, #{nameClaim}, #{emailClaim}, #{allowedTenants}, #{sortOrder})
+    </insert>
+
+    <!-- idp_id 与 protocol 不可改：改动会让已建立的绑定记录指向另一条连接语义。 -->
+    <update id="update" parameterType="com.aliyun.autowonder.auth.federation.FederationConnectionDO">
+        UPDATE federation_connection
+        SET name = #{name},
+            enabled = #{enabled},
+            issuer = #{issuer},
+            saml_sso_url = #{samlSsoUrl},
+            saml_cert = #{samlCert},
+            oidc_authorize_url = #{oidcAuthorizeUrl},
+            oidc_token_url = #{oidcTokenUrl},
+            oidc_jwks_url = #{oidcJwksUrl},
+            client_id = #{clientId},
+            client_secret = #{clientSecret},
+            scopes = #{scopes},
+            subject_claim = #{subjectClaim},
+            name_claim = #{nameClaim},
+            email_claim = #{emailClaim},
+            allowed_tenants = #{allowedTenants},
+            sort_order = #{sortOrder},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <select id="findById" resultType="com.aliyun.autowonder.auth.federation.FederationConnectionDO">
+        SELECT * FROM federation_connection
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="findByName" resultType="com.aliyun.autowonder.auth.federation.FederationConnectionDO">
+        SELECT * FROM federation_connection
+        WHERE name = #{name}
+        LIMIT 1
+    </select>
+
+    <select id="listAll" resultType="com.aliyun.autowonder.auth.federation.FederationConnectionDO">
+        SELECT * FROM federation_connection
+        ORDER BY sort_order ASC, id ASC
+    </select>
+
+    <select id="listByEnabled" resultType="com.aliyun.autowonder.auth.federation.FederationConnectionDO">
+        SELECT * FROM federation_connection
+        WHERE enabled = #{enabled}
+        ORDER BY sort_order ASC, id ASC
+    </select>
+
+    <select id="countByIdp" resultType="long">
+        SELECT COUNT(*) FROM federation_connection
+        WHERE idp_id = #{idpId}
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM federation_connection
+        WHERE id = #{id}
+    </delete>
+</mapper>

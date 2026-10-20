@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import { ChiefOfStaff } from '@/features/chiefOfStaff/ChiefOfStaff';
+import { LanguageSwitch } from '@/shared/i18n/LanguageSwitch';
 import { PlatformBrand } from '@/shared/ui/PlatformBrand';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Layout, Dropdown, Typography, Button, message, theme } from 'antd';
@@ -58,6 +61,7 @@ export function removeWorkspaceDeepLink(search: string): string {
 }
 
 export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
+  const { t } = useTranslation('common');
   const { token } = theme.useToken();
   const navigate = useNavigate();
   const location = useLocation();
@@ -99,14 +103,14 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
       setAccessToken(resp.data.accessToken);
       setCurrentWorkspace(workspace, resp.data.accessLevel);
       await refreshTenantScopedQueries(queryClient);
-      message.success(`已切换到 ${workspace.name}`);
+      message.success(t('workspace.switched', { name: workspace.name }));
     } catch (e) {
-      message.error(e instanceof ApiError ? e.message : '切换工作空间失败');
+      message.error(e instanceof ApiError ? e.message : t('workspace.switchFailed'));
     } finally {
       switchingRef.current = null;
       setSwitchingWorkspaceId(null);
     }
-  }, [currentWorkspace?.id, setAccessToken, setCurrentWorkspace, queryClient]);
+  }, [currentWorkspace?.id, setAccessToken, setCurrentWorkspace, queryClient, t]);
 
   useEffect(() => {
     if (helpCenter) return;
@@ -128,7 +132,7 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
         }
         const targetWorkspace = workspacesResp.data.find((workspace) => workspace.id === targetWorkspaceId);
         if (!targetWorkspace) {
-          message.error('你不在该工单所属工作空间中');
+          message.error(t('workspace.notMember'));
           return;
         }
         const switchResp = await apiClient.post<SwitchWorkspaceResponse>(`/api/workspaces/${targetWorkspaceId}/switch`);
@@ -141,7 +145,7 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
         navigate(cleanPath, { replace: true });
       } catch {
         if (!cancelled) {
-          message.error('切换到工单所属工作空间失败');
+          message.error(t('workspace.linkedSwitchFailed'));
         }
       }
     }
@@ -150,6 +154,7 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
       cancelled = true;
     };
   }, [
+    t,
     helpCenter,
     currentWorkspace?.id,
     location.hash,
@@ -184,11 +189,11 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
       onClick: () => { void handleWorkspaceSwitch(workspace); },
     })),
     { type: 'divider' as const },
-    { key: 'manage-workspaces', label: '管理工作空间...', onClick: () => navigate('/workspaces') },
+    { key: 'manage-workspaces', label: t('workspace.manage'), onClick: () => navigate('/workspaces') },
   ];
 
-  const workspaceName = currentWorkspace?.name || '未选择';
-  const menuButtonLabel = collapsed ? '展开菜单' : '折叠菜单';
+  const workspaceName = currentWorkspace?.name || t('workspace.unselected');
+  const menuButtonLabel = collapsed ? t('navigation.expand') : t('navigation.collapse');
 
   return (
     <Layout className={helpCenter ? 'help-layout' : 'aw-shell'} style={{ height: '100vh', minWidth: 0 }}>
@@ -259,9 +264,10 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
       <Layout style={{ minWidth: 0 }}>
         <PageHeader actions={<>
             {!helpCenter && <HelpCenterLink />}
+            <LanguageSwitch />
             <AppearanceSwitch />
             {(!helpCenter || user) && <NotificationBell fetchUnread={!helpCenter} />}
-            {helpCenter && !user ? <Button href="/login">登录</Button> : <UserMenu />}
+            {helpCenter && !user ? <Button href="/login">{t('account.login')}</Button> : <UserMenu />}
           </>}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1, overflow: 'hidden' }}>
             {helpCenter ? (
@@ -274,12 +280,13 @@ export function AppLayout({ helpCenter = false }: { helpCenter?: boolean }) {
               icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
               style={{ width: 32, padding: 0, fontSize: 16, color: token.colorTextSecondary, flexShrink: 0 }}
             />}
-            {helpCenter && <Text type="secondary" style={{ marginLeft: 12 }}>帮助中心</Text>}
+            {helpCenter && <Text type="secondary" style={{ marginLeft: 12 }}>{t('navigation.help')}</Text>}
           </div>
         </PageHeader>
         {!helpCenter && <PlatformAgentStatusBanner />}
+        {user && <ChiefOfStaff />}
         <Content style={{ padding: helpCenter ? 0 : 12, overflow: helpCenter ? 'hidden' : 'auto', background: token.colorBgLayout, minWidth: 0, minHeight: 0 }}>
-          {helpCenter ? <Outlet /> : <section className="aw-content-frame" aria-label="页面内容"><Outlet /></section>}
+          {helpCenter ? <Outlet /> : <section className="aw-content-frame" aria-label={t('navigation.content')}><Outlet /></section>}
         </Content>
       </Layout>
     </Layout>

@@ -1,8 +1,9 @@
+import { i18n } from '@/shared/i18n';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -395,5 +396,34 @@ describe('AgentListPage', () => {
 
     await waitFor(() => expect(container.querySelectorAll('.agent-squad-group-header')).toHaveLength(1));
     expect(container.querySelector('.agent-squad-group-header')).toHaveTextContent('Squad A');
+  });
+});
+
+
+describe('routed squad grouping localization', () => {
+  it('refreshes group fallbacks and preserves authored labels without rebuilding group identity', async () => {
+    await i18n.changeLanguage('zh-CN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    localStorage.removeItem('autowonder.agents.view');
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({ success: true, data: [{ id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] }] })),
+      http.get('/api/squads/7', () => HttpResponse.json({ success: true, data: { id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] } })),
+      http.get('/api/agents', () => HttpResponse.json({ success: true, data: [{ id: 1, name: '<b>自定义资源</b>', status: 'ONLINE', roleCode: 'CUSTOM', roleName: '自定义角色', squadIds: [], squadNames: [] }, { id: 2, name: 'Known', status: 'ONLINE', squadIds: [7], squadNames: ['<b>自定义小队</b>'] }, { id: 3, name: 'Missing', status: 'ONLINE', squadIds: [42] }] })),
+    );
+    const router = createMemoryRouter([{ path: '/', element: <AgentListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await screen.findByRole('combobox', { name: '按小队筛选' });
+
+    await screen.findAllByText('未分组');
+    const groupHeader = screen.getAllByText('未分组')[0];
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    await screen.findAllByText('Ungrouped');
+    expect(screen.getAllByText('Ungrouped')[0]).toBe(groupHeader);
+    expect(screen.getAllByText('Squad #42').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('<b>自定义小队</b>').length).toBeGreaterThan(0);
+    expect(screen.getByText('<b>自定义资源</b>')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Filter by squad' })).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
   });
 });

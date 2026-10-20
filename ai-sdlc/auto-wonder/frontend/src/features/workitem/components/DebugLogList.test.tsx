@@ -112,7 +112,7 @@ describe('DebugLogList', () => {
     expect(container.querySelectorAll('.ant-typography-danger')).toHaveLength(1);
 
     // 非终态 dispatch_status 原样展示，不按白名单过滤
-    expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    expect(screen.getByText('执行中')).toBeInTheDocument();
 
     // downloadUrl 为 null 的 FAILED 行没有下载链接
     const downloads = screen.getAllByRole('link', { name: /下\s?载/ });

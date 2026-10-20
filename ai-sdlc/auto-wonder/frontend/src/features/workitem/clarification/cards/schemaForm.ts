@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 export type ElicitationControl = 'select' | 'multiselect' | 'text' | 'boolean' | 'number' | 'json';
 
 export interface ElicitationOption {
@@ -25,6 +26,12 @@ export interface ElicitationForm {
 }
 
 const FALLBACK_FIELD_NAME = '_raw';
+
+export function elicitationMessage(message: string | undefined, schema: unknown): string | undefined {
+  // Only Runtime-owned headings carry this intent; raw and historical questions stay unchanged.
+  return asRecord(schema)?.['x-autowonder-message-kind'] === 'CONFIRMATION_REQUIRED'
+    ? i18n.t('workitem:clarification.confirmation') : message;
+}
 
 export function parseElicitationSchema(schema: unknown): ElicitationForm {
   const root = asRecord(schema);
@@ -54,7 +61,7 @@ function fallbackForm(schema: unknown): ElicitationForm {
     fields: [
       {
         name: FALLBACK_FIELD_NAME,
-        label: '回答（JSON）',
+        label: i18n.t('workitem:clarification.jsonAnswer'),
         control: 'json',
         required: true,
         rawSchema: schema,
@@ -72,7 +79,7 @@ function toField(name: string, rawField: unknown, required: boolean): Elicitatio
   const base: ElicitationField = { name, label, control: 'text', required };
 
   if (field?.type === 'string') {
-    const options = toOptions(field.oneOf);
+    const options = toOptions(field.oneOf) ?? toOptions(Array.isArray(field.enum) ? field.enum.map(value => ({ const: value })) : undefined);
     if (!options) {
       return { ...base, description };
     }
@@ -91,7 +98,8 @@ function toField(name: string, rawField: unknown, required: boolean): Elicitatio
   if (field?.type === 'array') {
     // 实测 qodercli 多选题把选项放在 items.anyOf；保留 oneOf 兼容旧载荷与合成夹具。
     const items = asRecord(field.items);
-    const options = toOptions(items?.anyOf) ?? toOptions(items?.oneOf);
+    const options = toOptions(items?.anyOf) ?? toOptions(items?.oneOf)
+      ?? toOptions(Array.isArray(items?.enum) ? items.enum.map(value => ({ const: value })) : undefined);
     if (options) {
       const split = splitOptionHints(description, options);
       return { ...base, control: 'multiselect', description: split, options };

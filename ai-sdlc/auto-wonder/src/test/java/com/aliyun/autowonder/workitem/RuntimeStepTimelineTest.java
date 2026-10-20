@@ -43,6 +43,45 @@ class RuntimeStepTimelineTest {
     }
 
     @Test
+    void acceptedCompletionSurvivesTelemetryButNotAReopenedStep() {
+        var first = step(1L, 1, "code");
+        var later = step(2L, 2, "report");
+        var events = new java.util.ArrayList<>(List.of(
+                event(1L, 1, "step.completed", 1_000L),
+                event(2L, 1, "artifact.sealed", 2_000L),
+                event(3L, 2, "step.started", 3_000L)));
+        assertEquals("done", RuntimeStepTimeline.from(events, List.of(first, later),
+                new Date(4_000L)).statusOf(first));
+        events.add(event(4L, 1, "step.started", 4_000L));
+        events.add(event(5L, 2, "agent.progress", 5_000L));
+        assertEquals("pending", RuntimeStepTimeline.from(events, List.of(first, later),
+                new Date(6_000L)).statusOf(first));
+    }
+
+    @Test
+    void completionRequestDoesNotProveGateAcceptance() {
+        var only = step(1L, 1, "code");
+        var timeline = RuntimeStepTimeline.from(List.of(
+                event(1L, 1, "step.started", 1_000L),
+                event(2L, 1, "step.completion_requested", 2_000L)), List.of(only), new Date(3_000L));
+        assertEquals("active", timeline.statusOf(only));
+    }
+
+    @Test
+    void jumpingToLaterStepDoesNotInventCompletionForUnfinishedSteps() {
+        List<SdlcStepDO> steps = List.of(step(1L, 1, "input"), step(2L, 2, "code"),
+                step(3L, 3, "review"), step(4L, 4, "report"));
+        RuntimeStepTimeline timeline = RuntimeStepTimeline.from(List.of(
+                event(1L, 1, "step.completed", 1_000L),
+                event(2L, 2, "step.started", 2_000L),
+                event(3L, 4, "step.started", 3_000L)), steps, new Date(4_000L));
+        assertEquals("done", timeline.statusOf(steps.get(0)));
+        assertEquals("pending", timeline.statusOf(steps.get(1)));
+        assertEquals("pending", timeline.statusOf(steps.get(2)));
+        assertEquals("active", timeline.statusOf(steps.get(3)));
+    }
+
+    @Test
     void doesNotMutateTheOrderOfSharedEventBuckets() {
         List<SdlcStepDO> steps = List.of(step(1L, 1, "编码"));
         // id 递增但 eventTime 乱序：若就地重排，lastEventOf 会从 completed 变成 started
@@ -211,4 +250,17 @@ class RuntimeStepTimelineTest {
         Long duration = timeline.durationOf(steps.get(0));
         assertEquals(0L, duration);
     }
+
+    @Test
+    void missingRuntimeLabelIsEnglishButReportedSameLookingLabelIsRaw() {
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            DispatchRuntimeEventDO event = new DispatchRuntimeEventDO(); event.setEventType("step.gate_started");
+            assertEquals("Start validation", org.springframework.test.util.ReflectionTestUtils.invokeMethod(RuntimeStepTimeline.class, "labelOf", event));
+            event.setMessage("开始校验");
+            assertEquals("开始校验", org.springframework.test.util.ReflectionTestUtils.invokeMethod(RuntimeStepTimeline.class, "labelOf", event));
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
 }

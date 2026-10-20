@@ -92,6 +92,8 @@ class V037LegacyWorkitemIntegrationTest {
         fixture.createDatabase("pre_v037_workitems");
         try (Connection connection = fixture.open("pre_v037_workitems")) {
             fixture.applyClasspath(connection, "schema/autowonder-pre-v037.sql");
+            // Dispatch requests require V061 regardless of the optional scheduled-task migration.
+            fixture.applyFile(connection, "docs/migration/V077__dispatch_requests.sql");
         }
         DataSource dataSource = new DriverManagerDataSource(
                 "jdbc:mysql://" + MYSQL.getHost() + ":" + MYSQL.getMappedPort(3306)
@@ -143,15 +145,15 @@ class V037LegacyWorkitemIntegrationTest {
         workitems.insert(workitem);
         assertNotNull(workitem.getId());
         assertEquals(1, workitems.list(7L, null, null, null, null, null,
-                false, null, 7L, null, null, null, null, 0, 20).size());
+                false, null, 7L, null, null, null, null, null, null, 0, 20).size());
         assertEquals(1, workitems.count(7L, null, null, null, null, null,
-                false, null, 7L, null, null, null, null));
+                false, null, 7L, null, null, null, null, null, null));
         assertEquals(1, workitems.updateContent(workitem.getId(), 7L,
                 "legacy-updated", "updated", 0, 7L));
         assertEquals("legacy-updated", workitems.findById(workitem.getId()).getTitle());
         Tenant8Poison poison = seedTenant8Poison(workitem.getId());
         assertEquals(1, workitems.list(7L, null, null, null, null, null,
-                false, null, 7L, null, null, null, null, 0, 20).size());
+                false, null, 7L, null, null, null, null, null, null, 0, 20).size());
         assertEquals(0, workitems.updateContent(poison.workitemId(), 7L,
                 "cross-tenant-write", "forbidden", 0, 7L));
 
@@ -159,6 +161,14 @@ class V037LegacyWorkitemIntegrationTest {
         exerciseInteractions(workitem.getId(), poison);
         DispatchDO latest = exerciseDispatchLifecycle(workitems, workitem.getId(), poison);
         exerciseAggregateQueries(workitems, workitem.getId(), latest, poison);
+        try (Connection connection = fixture.open("pre_v037_workitems");
+             var statement = connection.prepareStatement("INSERT INTO dispatch_request "
+                     + "(tenant_id,dispatch_id,kind,request_key,body_json,actor_id) VALUES (7,?,'APPROVAL','legacy','{}',7)")) {
+            statement.setLong(1, latest.getId());
+            statement.executeUpdate();
+        }
+        assertEquals(List.of(7L), workitems.listHumanRequestActors(7L, workitem.getId()));
+        assertTrue(workitems.listHumanRequestActors(8L, workitem.getId()).isEmpty());
         assertWorkspace8PoisonUnchanged(poison);
 
         assertTrue(sqlFailures.failures.isEmpty(), () -> "production mapper SQL failures: " + sqlFailures.failures);
@@ -345,9 +355,9 @@ class V037LegacyWorkitemIntegrationTest {
                                           Tenant8Poison poison)
             throws Exception {
         assertEquals(1, workitems.list(7L, null, null, null, null, null,
-                true, null, 7L, null, null, null, null, 0, 20).size());
+                true, null, 7L, null, null, null, null, null, null, 0, 20).size());
         assertEquals(1, workitems.count(7L, null, null, null, null, null,
-                true, null, 7L, null, null, null, null));
+                true, null, 7L, null, null, null, null, null, null));
 
         DashboardDao dashboard = mapper(DashboardDao.class);
         assertEquals(0, dashboard.countRunningDispatches(7L));

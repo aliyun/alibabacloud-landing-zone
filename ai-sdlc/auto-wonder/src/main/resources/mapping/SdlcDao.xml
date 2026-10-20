@@ -67,4 +67,8 @@
         SELECT * FROM sdlc WHERE work_type = #{workType} AND is_default = 1
             AND status = 'ENABLED' AND is_deleted = 0 LIMIT 1
     </select>
+    <select id="countByTenantAndName" resultType="int">
+        SELECT COUNT(*) FROM sdlc
+        WHERE tenant_id = #{tenantId} AND name = #{name} AND is_deleted = 0
+    </select>
 </mapper>

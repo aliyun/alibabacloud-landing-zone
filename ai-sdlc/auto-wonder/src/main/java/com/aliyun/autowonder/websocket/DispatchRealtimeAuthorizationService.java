@@ -46,7 +46,7 @@ public class DispatchRealtimeAuthorizationService implements RealtimeChannelAuth
             return false;
         }
         WorkspaceMemberDO member = memberDao.findByWorkspaceAndUser(workspaceId, userId);
-        return member != null && Integer.valueOf(1).equals(member.getStatus()) && allowsRead(member.getAccessLevel());
+        return member != null && Integer.valueOf(0).equals(member.getStatus()) && allowsRead(member.getAccessLevel());
     }
 
     private boolean allowsRead(String level) {

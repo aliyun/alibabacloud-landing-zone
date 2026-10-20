@@ -1,3 +1,7 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
+import { getAgentRoleLabel, getAgentStatusLabel } from './constants';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Empty, Segmented, Select, Spin, Tag, Tooltip } from 'antd';
@@ -18,14 +22,16 @@ import './AgentListPage.css';
 const AGENTS_VIEW_STORAGE_KEY = 'autowonder.agents.view';
 const AGENTS_VIEW_OPTIONS = ['list', 'grouped'] as const;
 
-const statusMap: Record<string, { color: string; label: string; className: string }> = {
-  DRAFT: { color: 'default', label: '草稿', className: 'is-muted' },
-  ONLINE: { color: 'success', label: '使用中', className: 'is-active' },
-  OFFLINE: { color: 'default', label: '未启用', className: 'is-muted' },
-  PENDING_REVIEW: { color: 'processing', label: '待审核', className: 'is-review' },
+const statusMap: Record<string, { color: string; className: string }> = {
+  DRAFT: { color: 'default', className: 'is-muted' },
+  ONLINE: { color: 'success', className: 'is-active' },
+  OFFLINE: { color: 'default', className: 'is-muted' },
+  PENDING_REVIEW: { color: 'processing', className: 'is-review' },
 };
 
 export function AgentListPage() {
+  const { t } = useTranslation('agent');
+  const agentColumns = getAgentColumns();
   const navigate = useNavigate();
   const accessCommand = useAccessCommand();
   const [kindTab, setKindTab] = useState<AgentKind>('STANDARD');
@@ -43,7 +49,7 @@ export function AgentListPage() {
 
   const squadGroups = useMemo(
     () => groupBySquad(agents, (agent) => agent.squadIds, squadNameById),
-    [agents, squadNameById],
+    [agents, squadNameById, t],
   );
 
   return (
@@ -53,8 +59,8 @@ export function AgentListPage() {
           value={kindTab}
           onChange={(key) => setKindTab(key as AgentKind)}
           options={[
-            { label: '标准数字员工', value: 'STANDARD' },
-            { label: '系统平台智能体', value: 'PLATFORM' },
+            { label: t('display.standardAgents'), value: 'STANDARD' },
+            { label: t('display.platformAgents'), value: 'PLATFORM' },
           ]}
         />
         <SquadFilterBar
@@ -71,36 +77,36 @@ export function AgentListPage() {
         {!grouped && (
           <Select
             allowClear
-            placeholder="按状态筛选"
+            placeholder={t('display.filterStatus')}
             style={{ minWidth: 140 }}
             value={statusFilter}
             onChange={setStatusFilter}
-            options={Object.entries(statusMap).map(([value, meta]) => ({ value, label: meta.label }))}
-            aria-label="按状态筛选"
+            options={Object.keys(statusMap).map((value) => ({ value, label: statusMeta({ status: value }).label }))}
+            aria-label={t('display.filterStatus')}
           />
         )}
         {kindTab === 'STANDARD' && (
-          <Button type="primary" icon={<PlusOutlined />}
-            onClick={() => accessCommand('READ_WRITE', '新建数字员工', () => navigate('/agents/new'))}>新建</Button>
+          <Button type="primary" icon={<PlusOutlined aria-hidden />}
+            onClick={() => accessCommand('READ_WRITE', t('display.createAction'), () => navigate('/agents/new'))}>{t('display.create')}</Button>
         )}
       </div>
 
       <div className="agent-summary-strip">
-        <SummaryPill label={kindTab === 'PLATFORM' ? '平台智能体' : '全部数字员工'} value={agents.length} />
-        <SummaryPill label="使用中" value={activeCount} />
-        <SummaryPill label="执行器在线" value={executorOnlineCount} />
-        <SummaryPill label="待审核" value={reviewCount} />
-        <Tooltip title={<><div>点击任一数字员工卡片进入详情与配置。</div><div>可维护 SOUL.md、AGENT.md、记忆、仓库权限、SDLC 模板及技能/能力配置。</div></>}>
-          <Button type="text" size="small" aria-label="配置说明" icon={<InfoCircleOutlined />} className="agent-config-help">配置说明</Button>
+        <SummaryPill label={kindTab === 'PLATFORM' ? t('display.platformAgent') : t('display.allAgents')} value={agents.length} />
+        <SummaryPill label={t('display.inUse')} value={activeCount} />
+        <SummaryPill label={t('display.executorOnline')} value={executorOnlineCount} />
+        <SummaryPill label={t('display.status.PENDING_REVIEW')} value={reviewCount} />
+        <Tooltip title={<><div>{t('display.configHelpOpen')}</div><div>{t('display.configHelpContent')}</div></>}>
+          <Button type="text" size="small" aria-label={t('display.configHelp')} icon={<InfoCircleOutlined aria-hidden />} className="agent-config-help">{t('display.configHelp')}</Button>
         </Tooltip>
       </div>
 
       <Spin spinning={isLoading}>
         {agents.length === 0 && !isLoading ? (
           kindTab === 'PLATFORM' ? (
-            <Empty description="暂无平台智能体" />
+            <Empty description={t('display.emptyPlatform')} />
           ) : (
-            <Empty description="暂无数字员工" />
+            <Empty description={t('display.emptyAgents')} />
           )
         ) : grouped ? (
           <div className="agent-squad-groups">
@@ -112,7 +118,7 @@ export function AgentListPage() {
                   ) : (
                     <Link to={`/agents?tab=squads&squadId=${group.squadId}`}>{group.label}</Link>
                   )}
-                  <span className="agent-squad-group-count">{group.items.length} 个</span>
+                  <span className="agent-squad-group-count">{t('display.groupCount', { count: group.items.length })}</span>
                 </header>
                 <div className="agent-card-grid">
                   {group.items.map((agent, index) => (
@@ -129,7 +135,7 @@ export function AgentListPage() {
             columns={agentColumns}
             dataSource={agents}
             pagination={false}
-            locale={{ emptyText: kindTab === 'PLATFORM' ? '暂无平台智能体' : '暂无数字员工' }}
+            locale={{ emptyText: kindTab === 'PLATFORM' ? t('display.emptyPlatform') : t('display.emptyAgents') }}
             tableLayout="fixed"
             scroll={{ x: 900 }}
           />
@@ -139,65 +145,69 @@ export function AgentListPage() {
   );
 }
 
-const agentColumns: ColumnsType<Agent> = [
-  { title: 'ID', dataIndex: 'id', width: 84 },
-  {
-    title: '名称',
-    dataIndex: 'name',
-    align: 'left',
-    width: 220,
-    render: (_, agent) => (
-      <EllipsisText tooltip={agent.name}>
-        <Link to={`/agents/${agent.id}`}>{agent.name}</Link>
-      </EllipsisText>
-    ),
-  },
-  {
-    title: '角色',
-    dataIndex: 'roleName',
-    align: 'left',
-    width: 200,
-    render: (_, agent) => (
-      <EllipsisText tooltip={agent.roleName || agent.roleCode}>
-        {agent.roleName || agent.roleCode || '-'}
-      </EllipsisText>
-    ),
-  },
-  {
-    title: '状态',
-    render: (_, agent) => (
-      <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
-        {statusMeta(agent).label}
-      </Tag>
-    ),
-  },
-  {
-    title: '执行器',
-    render: (_, agent) => executorShortText(agent),
-  },
-  {
-    title: '小队',
-    align: 'left',
-    render: (_, agent) => <SquadTags squadIds={agent.squadIds} squadNames={agent.squadNames} />,
-  },
-  { title: '技能', width: 72, render: (_, agent) => agent.skillCount ?? 0 },
-  { title: '记忆', width: 72, render: (_, agent) => agent.memoryCount ?? 0 },
-  { title: '仓库', width: 72, render: (_, agent) => agent.repoPermCount ?? 0 },
-  { title: '版本', width: 76, render: (_, agent) => versionText(agent) },
-  {
-    title: '操作',
-    width: 76,
-    render: (_, agent) => <Link to={`/agents/${agent.id}`}>详情</Link>,
-  },
-];
+function getAgentColumns(): ColumnsType<Agent> {
+  const t = i18n.getFixedT(null, 'agent');
+  return [
+    { title: 'ID', dataIndex: 'id', width: 84 },
+    {
+      title: t('fields.name'),
+      dataIndex: 'name',
+      align: 'left',
+      width: 220,
+      render: (_, agent) => (
+        <EllipsisText tooltip={agent.name}>
+          <Link to={`/agents/${agent.id}`}>{agent.name}</Link>
+        </EllipsisText>
+      ),
+    },
+    {
+      title: t('display.role'),
+      dataIndex: 'roleName',
+      align: 'left',
+      width: 200,
+      render: (_, agent) => (
+        <EllipsisText tooltip={getAgentRoleLabel(agent.roleCode, agent.roleName)}>
+          {getAgentRoleLabel(agent.roleCode, agent.roleName) || '-'}
+        </EllipsisText>
+      ),
+    },
+    {
+      title: t('display.statusTitle'),
+      render: (_, agent) => (
+        <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
+          {statusMeta(agent).label}
+        </Tag>
+      ),
+    },
+    {
+      title: t('display.executor'),
+      render: (_, agent) => executorText(agent, true),
+    },
+    {
+      title: t('display.squads'),
+      align: 'left',
+      render: (_, agent) => <SquadTags squadIds={agent.squadIds} squadNames={agent.squadNames} />,
+    },
+    { title: t('display.skills'), width: 72, render: (_, agent) => agent.skillCount ?? 0 },
+    { title: t('display.memories'), width: 72, render: (_, agent) => agent.memoryCount ?? 0 },
+    { title: t('fields.repository'), width: 72, render: (_, agent) => agent.repoPermCount ?? 0 },
+    { title: t('fields.version'), width: 76, render: (_, agent) => versionText(agent) },
+    {
+      title: t('fields.actions'),
+      width: 76,
+      render: (_, agent) => <Link to={`/agents/${agent.id}`}>{t('display.details')}</Link>,
+    },
+  ];
+}
 
 function AgentCard({ agent, index }: { agent: Agent; index: number }) {
+  const { t } = useTranslation('agent');
   return (
     <article className="agent-person-card">
       <Link
         className="agent-card-detail-link"
         to={`/agents/${agent.id}`}
-        aria-label={`查看 ${agent.name} 的详情与配置`}
+        aria-label={t('display.viewDetails', { name: agent.name })}
       />
       <div className="agent-card-content">
         <div className="agent-card-topline" />
@@ -214,13 +224,13 @@ function AgentCard({ agent, index }: { agent: Agent; index: number }) {
             <div className="agent-card-title">
               {agent.name}
             </div>
-            <div className="agent-card-role">{agent.roleName || agent.roleCode || versionText(agent)}</div>
+            <div className="agent-card-role">{getAgentRoleLabel(agent.roleCode, agent.roleName) || versionText(agent)}</div>
           </div>
           <div className="agent-card-status">
           <Tag className={`agent-status-tag ${statusMeta(agent).className}`} color={statusMeta(agent).color}>
             {statusMeta(agent).label}
           </Tag>
-          {agent.kind === 'PLATFORM' && <Tag color="gold">平台</Tag>}
+          {agent.kind === 'PLATFORM' && <Tag color="gold">{t('display.platform')}</Tag>}
           </div>
         </div>
 
@@ -240,9 +250,9 @@ function AgentCard({ agent, index }: { agent: Agent; index: number }) {
         </div>
 
         <div className="agent-metric-grid">
-          <Metric icon={<SafetyCertificateOutlined />} label="技能" value={agent.skillCount ?? 0} />
-          <Metric icon={<DatabaseOutlined />} label="记忆" value={agent.memoryCount ?? 0} />
-          <Metric icon={<ApiOutlined />} label="仓库" value={agent.repoPermCount ?? 0} />
+          <Metric icon={<SafetyCertificateOutlined aria-hidden />} label={t('display.skills')} value={agent.skillCount ?? 0} />
+          <Metric icon={<DatabaseOutlined aria-hidden />} label={t('display.memories')} value={agent.memoryCount ?? 0} />
+          <Metric icon={<ApiOutlined aria-hidden />} label={t('fields.repository')} value={agent.repoPermCount ?? 0} />
         </div>
       </div>
     </article>
@@ -268,27 +278,21 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
   );
 }
 
-function statusMeta(agent: Agent) {
-  return statusMap[agent.status] || { color: 'default', label: agent.status, className: 'is-muted' };
+function statusMeta(agent: { status: string }) {
+  const meta = Object.prototype.hasOwnProperty.call(statusMap, agent.status) ? statusMap[agent.status] : undefined;
+  const label = agent.status === 'ONLINE' ? i18n.t('display.inUse', { ns: 'agent' })
+    : agent.status === 'OFFLINE' ? i18n.t('display.notEnabled', { ns: 'agent' }) : getAgentStatusLabel(agent.status);
+  return { ...(meta || { color: 'default', className: 'is-muted' }), label };
 }
 
-function executorText(agent: Agent) {
+function executorText(agent: Agent, short = false) {
   const online = agent.executorOnlineCount ?? 0;
   const total = agent.executorTotalCount ?? 0;
   if (total <= 1) {
-    return online > 0 ? '执行器在线' : '执行器离线';
+    return short ? getAgentStatusLabel(online > 0 ? 'ONLINE' : 'OFFLINE')
+      : i18n.t(online > 0 ? 'display.executorOnline' : 'display.executorOffline', { ns: 'agent' });
   }
-  return `${online}/${total} 在线`;
-}
-
-// 表格列里省略「执行器」前缀，列头已说明含义；卡片视图仍用完整文案。
-function executorShortText(agent: Agent) {
-  const online = agent.executorOnlineCount ?? 0;
-  const total = agent.executorTotalCount ?? 0;
-  if (total <= 1) {
-    return online > 0 ? '在线' : '离线';
-  }
-  return `${online}/${total} 在线`;
+  return i18n.t('display.onlineRatio', { ns: 'agent', online, total });
 }
 
 function versionText(agent: Agent) {
@@ -296,10 +300,7 @@ function versionText(agent: Agent) {
 }
 
 function formatDate(value: string) {
-  if (!value) {
-    return '-';
-  }
-  return new Date(value).toLocaleDateString('zh-CN');
+  return formatDateTime(value, { dateStyle: 'medium' });
 }
 
 function agentInitials(agent: Agent, index: number) {

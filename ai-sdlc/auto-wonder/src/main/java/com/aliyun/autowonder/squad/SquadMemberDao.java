@@ -15,4 +15,5 @@ public interface SquadMemberDao {
     SquadMemberDO findBySquadAndAgent(@Param("squadId") Long squadId, @Param("agentId") Long agentId);
     int deleteBySquadAndAgent(@Param("squadId") Long squadId, @Param("agentId") Long agentId, @Param("tenantId") Long tenantId);
     int deleteBySquad(@Param("squadId") Long squadId, @Param("tenantId") Long tenantId);
+    int deleteByAgent(@Param("agentId") Long agentId, @Param("tenantId") Long tenantId);
 }

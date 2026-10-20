@@ -1,3 +1,6 @@
+import { i18n } from '@/shared/i18n';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal, Form, Select, DatePicker, message } from 'antd';
@@ -29,7 +32,9 @@ function createRestartToken(): string {
 }
 
 export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: StartDeliveryModalProps) {
+  const { t } = useTranslation('workitem');
   const [form] = Form.useForm();
+  useLocalizedValidation(form, open);
   const assignMut = useAssignWorkitem();
   const accessCommand = useAccessCommand();
   const queryClient = useQueryClient();
@@ -66,11 +71,12 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
   });
 
   const handleOk = async () => {
-    const values = await form.validateFields();
+    const values = await form.validateFields().catch(() => null);
+    if (!values) return;
     const scheduledStartAt = values.scheduledStartAt
       ? (values.scheduledStartAt as Dayjs).toISOString()
       : undefined;
-    accessCommand('READ_WRITE', hasSdlc ? '重新指派工单' : '启动工单交付', async () => {
+    accessCommand('READ_WRITE', hasSdlc ? t('start.reassignCommand') : t('start.deliveryCommand'), async () => {
       try {
         await assignMut.mutateAsync({
           id: workitemId,
@@ -82,9 +88,9 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
         // The restart itself is asynchronous (stop old executions, then start the
         // new round); its live progress shows in the delivery recovery panel.
         if (hasSdlc) {
-          message.success(scheduledStartAt ? '已重新指派，将在计划时间重启交付' : '已重新指派，正在重启交付');
+          message.success(i18n.t(scheduledStartAt ? 'workitem:start.reassignedScheduled' : 'workitem:start.reassigned'));
         } else {
-          message.success('已启动交付');
+          message.success(i18n.t('workitem:start.started'));
         }
         queryClient.invalidateQueries({ queryKey: ['workitem-recovery', String(workitemId)] });
         if (!hasSdlc) {
@@ -93,14 +99,14 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
         form.resetFields();
         onClose();
       } catch (err) {
-        message.error(err instanceof ApiError ? err.message : '启动交付失败，请稍后重试');
+        message.error(err instanceof ApiError ? err.message : i18n.t('workitem:start.failed'));
       }
     });
   };
 
   return (
     <Modal
-      title={hasSdlc ? '重新指派' : '启动交付'}
+      title={hasSdlc ? t('start.reassign') : t('start.title')}
       open={open}
       onOk={handleOk}
       onCancel={() => {
@@ -108,21 +114,21 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
         onClose();
       }}
       confirmLoading={assignMut.isPending}
-      okText={hasSdlc ? '重新指派' : '启动交付'}
-      cancelText="取消"
+      okText={hasSdlc ? t('start.reassign') : t('start.title')}
+      cancelText={t('schedule.cancelEdit')}
       destroyOnHidden
     >
       <Form form={form} layout="vertical">
-        <Form.Item name="squadId" label="小队" rules={[{ required: true, message: '请选择小队' }]}>
+        <Form.Item name="squadId" label={t('start.squad')} rules={[{ required: true, message: t('start.squadRequired') }]}>
           <Select
-            placeholder="选择交付小队"
+            placeholder={t('start.squadPlaceholder')}
             options={(squads?.list || []).map((s) => ({ value: s.id, label: s.name }))}
             onChange={() => form.setFieldValue('agentId', undefined)}
           />
         </Form.Item>
-        <Form.Item name="agentId" label="首步执行 Agent" rules={[{ required: true, message: '请选择执行 Agent' }]}>
+        <Form.Item name="agentId" label={t('start.agent')} rules={[{ required: true, message: t('start.agentRequired') }]}>
           <Select
-            placeholder={squadId ? '选择小队成员' : '请先选择小队'}
+            placeholder={squadId ? t('start.memberPlaceholder') : t('start.chooseSquadFirst')}
             disabled={!squadId}
             loading={membersLoading}
             options={members
@@ -133,11 +139,11 @@ export function StartDeliveryModal({ open, workitemId, hasSdlc, onClose }: Start
               }))}
           />
         </Form.Item>
-        <Form.Item name="scheduledStartAt" label="计划执行时间（可选）">
+        <Form.Item name="scheduledStartAt" label={t('start.scheduledTime')}>
           <DatePicker
             showTime
             style={{ width: '100%' }}
-            placeholder="留空则立即执行"
+            placeholder={t('start.timePlaceholder')}
             disabledDate={(current) => !!current && current.isBefore(new Date(), 'minute')}
           />
         </Form.Item>

@@ -27,4 +27,5 @@ public interface SdlcDao {
     int softDelete(@Param("id") Long id, @Param("tenantId") Long tenantId,
                    @Param("version") Integer version, @Param("modifierId") Long modifierId);
     SdlcDO findDefault(@Param("workType") String workType);
+    int countByTenantAndName(@Param("tenantId") Long tenantId, @Param("name") String name);
 }

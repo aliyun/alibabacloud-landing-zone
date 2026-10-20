@@ -3,6 +3,8 @@ package com.aliyun.autowonder.evolution;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONArray;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.repo.RepoService;
@@ -26,15 +28,18 @@ public class EvolutionProposalService {
     private final RepoService repoService;
     private final SkillService skillService;
     private final EvolutionReleaseStateCaptureService stateCaptureService;
+    private final WorkspaceDomainGuard domainGuard;
 
     public EvolutionProposalService(EvolutionProposalDao proposalDao, BayesianEvidenceLiteService evidenceService,
                                     RepoService repoService, SkillService skillService,
-                                    EvolutionReleaseStateCaptureService stateCaptureService) {
+                                    EvolutionReleaseStateCaptureService stateCaptureService,
+                                    WorkspaceDomainGuard domainGuard) {
         this.proposalDao = proposalDao;
         this.evidenceService = evidenceService;
         this.repoService = repoService;
         this.skillService = skillService;
         this.stateCaptureService = stateCaptureService;
+        this.domainGuard = domainGuard;
     }
 
     public EvolutionProposalDO propose(EvolutionProposalCommand cmd, long tenantId, long userId) {
@@ -42,7 +47,7 @@ public class EvolutionProposalService {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
         if ("MEMORY".equals(cmd.getAssetType())) {
-            throw new BizException(ErrorCode.CONFLICT,
+            throw BizException.keyed(ErrorCode.CONFLICT, "evolution.memory_retired", null,
                     "Memory proposals are retired; use the canonical memory store");
         }
         requireEvidence(cmd.getRootEvidenceJson());
@@ -119,10 +124,14 @@ public class EvolutionProposalService {
             throw new BizException(ErrorCode.CONFLICT);
         }
         if ("MEMORY".equals(proposal.getAssetType())) {
-            throw new BizException(ErrorCode.CONFLICT,
+            throw BizException.keyed(ErrorCode.CONFLICT, "evolution.memory_retired", null,
                     "Memory proposals are retired; use the canonical memory store");
         }
         JSONObject patch = requireObject(proposal.getCandidatePatchJson());
+        // 发布按 assetType 写入 REPO/SKILL 资源域，在任何写入前校验操作者未被禁用目标域。
+        domainGuard.requireWritableDomains(tenantId, userId,
+                "发布演进提案", "access.action.publish_an_evolution_proposal",
+                assetDomain(proposal.getAssetType()));
         Map<String, Object> release = new LinkedHashMap<>();
         release.put("proposalId", proposalId);
         release.put("assetType", proposal.getAssetType());
@@ -135,8 +144,8 @@ public class EvolutionProposalService {
             afterJson = stateCaptureService.relationAfterJson(relation);
         } else if ("SKILL".equals(proposal.getAssetType())) {
 			if ("RETIRE".equalsIgnoreCase(patch.getString("policyAction"))) {
-				throw new BizException(ErrorCode.CONFLICT,
-						"RETIRE requires an explicit agent-version unbind/release decision");
+				throw BizException.keyed(ErrorCode.CONFLICT, "evolution.retire_decision", null,
+                    "RETIRE requires an explicit agent-version unbind/release decision");
 			}
             String mode = skillMode(patch);
             release.put("mode", mode);
@@ -171,8 +180,7 @@ public class EvolutionProposalService {
         }
     }
 
-    public void reject(long proposalId, long tenantId, String reason, long userId) {
-        EvolutionProposalDO proposal = requireProposal(proposalId, tenantId);
+    public void reject(long proposalId, long tenantId, String reason, long userId) {        EvolutionProposalDO proposal = requireProposal(proposalId, tenantId);
         Map<String, Object> release = new LinkedHashMap<>();
         release.put("verdict", "REJECT");
         release.put("reason", reason == null ? "" : reason);
@@ -296,6 +304,17 @@ public class EvolutionProposalService {
 	private boolean hasPackageReference(JSONObject patch) {
 		return !blank(patch.getString("packageOssRef"));
 	}
+
+    /** 提案 assetType 对应的资源域；release/rollback 只存在 REPO_RELATION 与 SKILL 两种。 */
+    static WorkspaceDomain assetDomain(String assetType) {
+        if ("REPO_RELATION".equals(assetType)) {
+            return WorkspaceDomain.REPO;
+        }
+        if ("SKILL".equals(assetType)) {
+            return WorkspaceDomain.SKILL;
+        }
+        throw new BizException(ErrorCode.PARAM_INVALID);
+    }
 
 	private com.aliyun.autowonder.skill.SkillService.PackageReference packageReference(JSONObject patch) {
 		return new com.aliyun.autowonder.skill.SkillService.PackageReference(

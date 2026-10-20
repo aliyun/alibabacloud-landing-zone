@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { message } from 'antd';
+import { Form, message } from 'antd';
+import { i18n } from '@/shared/i18n';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -97,6 +98,27 @@ describe('WorkspaceEditModal', () => {
 
     expect(screen.queryByPlaceholderText(NAME_PLACEHOLDER)).not.toBeInTheDocument();
     expect(screen.queryByText(/编辑「/)).not.toBeInTheDocument();
+  });
+
+  it('does not read the disconnected real Form while the workspace editor is closed', async () => {
+    const read = vi.fn();
+    const original = Form.useForm;
+    const seen = new Set();
+    vi.spyOn(Form, 'useForm').mockImplementation(initial => {
+      const result = original(initial);
+      const instance = result[0];
+      if (!seen.has(instance)) {
+        seen.add(instance);
+        const getErrors = instance.getFieldsError.bind(instance);
+        vi.spyOn(instance, 'getFieldsError').mockImplementation(names => { read(); return getErrors(names); });
+      }
+      return result;
+    });
+    renderModal(null);
+    expect(read).not.toHaveBeenCalled();
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(read).not.toHaveBeenCalled();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
   });
 
   it('echoes the stored name, description and background', async () => {

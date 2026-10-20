@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Modal } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
@@ -12,6 +13,7 @@ interface ArtifactPreviewModalProps {
 }
 
 export function ArtifactPreviewModal({ open, artifact, onClose }: ArtifactPreviewModalProps) {
+  const { t } = useTranslation('workitem');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const id = artifact?.id;
   const loadBlob = useCallback(() => getArtifactPreviewBlob(id!), [id]);
@@ -24,8 +26,8 @@ export function ArtifactPreviewModal({ open, artifact, onClose }: ArtifactPrevie
     return () => { cancelled = true; };
   }, [id, open]);
 
-  return <Modal title={artifact?.name ?? '产物预览'} open={open} onCancel={onClose} width={880} forceRender
-    footer={downloadUrl ? [<Button key="download" icon={<DownloadOutlined />} href={downloadUrl} target="_blank" rel="noreferrer">下载</Button>] : null}>
+  return <Modal title={artifact?.name ?? t('artifacts.preview')} open={open} onCancel={onClose} width={880} forceRender
+    footer={downloadUrl ? [<Button key="download" icon={<DownloadOutlined />} href={downloadUrl} target="_blank" rel="noreferrer">{t('artifacts.download')}</Button>] : null}>
     {open && artifact && <FilePreview name={artifact.name} size={artifact.size} loadBlob={loadBlob} />}
   </Modal>;
 }

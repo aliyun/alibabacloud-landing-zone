@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/admin")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进管理信息")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进管理信息", actionKey = "access.action.view_evolution_administration_information")
 public class EvolutionAdminController {
 
     private final EvolutionAdminQueryLiteService adminQueryService;

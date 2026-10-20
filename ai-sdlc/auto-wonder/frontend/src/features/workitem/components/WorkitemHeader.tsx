@@ -1,3 +1,4 @@
+import { Trans, useTranslation } from 'react-i18next';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { Typography, Tooltip } from 'antd';
 import { ScheduledExecutionBadge } from './ScheduledExecutionBadge';
@@ -19,11 +20,12 @@ interface WorkitemHeaderProps {
 }
 
 export function WorkitemHeader({ title, workitemId, origin, scheduledStartAt, scheduledStartTriggeredAt, gmtCreate, usage }: WorkitemHeaderProps) {
+  const { t } = useTranslation('workitem');
 
   return (
     <div className="aw-workitem-header">
       <div className="aw-detail-title">
-        <PageBackButton to="/workitems" label="返回工单列表" />
+        <PageBackButton to="/workitems" label={t('detail.backToList')} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <Tooltip title={title}>
@@ -44,7 +46,7 @@ export function WorkitemHeader({ title, workitemId, origin, scheduledStartAt, sc
       </div>
       {origin?.type === 'SCHEDULED_TASK_RUN' && origin.id ? (
         <Typography.Link href={`/scheduled-task-runs/${origin.id}`} style={{ display: 'inline-block', marginTop: 8 }}>
-          来自 7×24 Task {origin.scheduledTaskName || origin.scheduledTaskId || ''} / Run #{origin.id}
+          <Trans ns="workitem" i18nKey="detail.origin" values={{ id: origin.id }} components={{ name: <span>{origin.scheduledTaskName || origin.scheduledTaskId || ''}</span> }} />
         </Typography.Link>
       ) : null}
     </div>

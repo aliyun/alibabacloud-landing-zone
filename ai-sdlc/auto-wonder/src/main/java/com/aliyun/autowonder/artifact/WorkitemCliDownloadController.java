@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.artifact;
 
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.common.error.BizException;
@@ -55,7 +56,7 @@ public class WorkitemCliDownloadController {
                     requirementDocumentService.list(workitemId, workitem.getTenantId())));
         } catch (BizException ex) {
             return ResponseEntity.status(statusFor(ex.getCode()))
-                    .body(Result.fail(ex.getCode(), ex.getMessage()));
+                    .body(Result.fail(ex));
         }
     }
 
@@ -77,7 +78,7 @@ public class WorkitemCliDownloadController {
             headers.set("X-Content-Type-Options", "nosniff");
             return new ResponseEntity<>(content.bytes(), headers, HttpStatus.OK);
         } catch (BizException ex) {
-            byte[] body = JSON.toJSONString(Result.fail(ex.getCode(), ex.getMessage()))
+            byte[] body = JSON.toJSONString(Result.fail(ex))
                     .getBytes(StandardCharsets.UTF_8);
             return ResponseEntity.status(statusFor(ex.getCode()))
                     .contentType(MediaType.APPLICATION_JSON)
@@ -92,7 +93,7 @@ public class WorkitemCliDownloadController {
         if (workitem == null || workitem.getTenantId() == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        tokenService.requireReadMembership(workitem.getTenantId(), userId);
+        tokenService.requireReadMembership(workitem.getTenantId(), userId, WorkspaceDomain.ARTIFACT);
         return workitem;
     }
 

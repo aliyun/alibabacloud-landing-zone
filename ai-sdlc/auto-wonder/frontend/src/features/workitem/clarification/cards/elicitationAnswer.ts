@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import type { ElicitationField } from './schemaForm';
 
 /** 「有其他想法」在控件 value 里的哨兵值；不会出现在回传载荷里。 */
@@ -34,7 +35,7 @@ export function isFieldAnswered(field: ElicitationField, values: AnswerValues, o
 }
 
 /**
- * 把作答编码回 schema 已声明的原字段：单选替换、多选追加「补充想法：」、文本逐字。
+ * 把作答编码回 schema 已声明的原字段：单选替换、多选追加自定义值、文本逐字。
  * 绝不产生 q0_note 等未声明顶层字段——实测 Qoder 会过滤掉。
  */
 export function computeElicitationContent(
@@ -73,7 +74,7 @@ export function computeElicitationContent(
     if (field.control === 'multiselect') {
       const all = selectedArray(value);
       const arr = all.filter((x) => x !== OTHER_SENTINEL);
-      if (all.includes(OTHER_SENTINEL) && note) arr.push(`补充想法：${note}`);
+      if (all.includes(OTHER_SENTINEL) && note) arr.push(note);
       if (arr.length > 0) content[field.name] = arr;
       continue;
     }
@@ -107,7 +108,7 @@ export function validateElicitation(
     const otherOnly = field.control === 'select'
       ? value === OTHER_SENTINEL
       : field.control === 'multiselect' && selectedArray(value).includes(OTHER_SENTINEL);
-    errors[field.name] = otherOnly ? '请填写其他想法' : `请填写「${field.label}」`;
+    errors[field.name] = otherOnly ? i18n.t('workitem:clarification.otherRequired') : i18n.t('workitem:clarification.fieldRequired', { label: field.label });
     if (firstInvalidIndex === -1) firstInvalidIndex = index;
   });
 

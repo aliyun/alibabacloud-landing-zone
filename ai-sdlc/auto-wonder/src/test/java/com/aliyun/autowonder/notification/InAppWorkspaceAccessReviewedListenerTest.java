@@ -60,7 +60,7 @@ class InAppWorkspaceAccessReviewedListenerTest {
         assertEquals(List.of(9L), sent.getRecipientIds());
         assertEquals("权限申请已通过", sent.getTitle());
         assertTrue(sent.getContent().contains("研发效能部"));
-        assertTrue(sent.getContent().contains("读写"));
+        assertTrue(sent.getContent().contains("读写者"));
         assertTrue(sent.getContent().contains("王五"));
     }
 
@@ -101,7 +101,7 @@ class InAppWorkspaceAccessReviewedListenerTest {
 
         ArgumentCaptor<NotifyEvent> captor = ArgumentCaptor.forClass(NotifyEvent.class);
         verify(notifyService).notify(captor.capture());
-        assertEquals("你加入「未命名工作空间」的申请已通过，授予权限：读写，审批人：王五",
+        assertEquals("你加入「未命名工作空间」的申请已通过，分配角色：读写者，审批人：王五",
                 captor.getValue().getContent());
     }
 

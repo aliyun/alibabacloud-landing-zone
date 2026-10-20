@@ -29,7 +29,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/scheduled-task-runs")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务运行记录")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务运行记录", actionKey = "access.action.view_scheduled_task_run_records")
 @RequiresScheduledTaskCapability(entry = "http")
 public class ScheduledTaskRunController {
     private final ScheduledTaskRunDao runDao;
@@ -70,7 +70,7 @@ public class ScheduledTaskRunController {
     }
 
     @PostMapping("/{runId}/pause")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "暂停定时任务运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "暂停定时任务运行", actionKey = "access.action.pause_a_scheduled_task_run")
     public Result<ScheduledTaskRunVO> pause(@PathVariable long runId, @RequestParam Integer version) {
         requireOwnerOrAdmin(requireRun(runId).getOwnerId());
         dispatchControlService.pauseActive(workspaceId(), runId, userId(), false);
@@ -78,7 +78,7 @@ public class ScheduledTaskRunController {
     }
 
     @PostMapping("/{runId}/resume")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "恢复定时任务运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "恢复定时任务运行", actionKey = "access.action.resume_a_scheduled_task_run")
     public Result<ScheduledTaskRunVO> resume(@PathVariable long runId, @RequestParam Integer version) {
         requireOwnerOrAdmin(requireRun(runId).getOwnerId());
         ScheduledTaskRunDO run = runService.transition(workspaceId(), runId, version, "QUEUED", userId());
@@ -88,7 +88,7 @@ public class ScheduledTaskRunController {
     }
 
     @PostMapping("/{runId}/cancel")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "取消定时任务运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "取消定时任务运行", actionKey = "access.action.cancel_a_scheduled_task_run")
     public Result<ScheduledTaskRunVO> cancel(@PathVariable long runId, @RequestParam Integer version,
                                              @RequestParam(required = false, defaultValue = "false") boolean force) {
         ScheduledTaskRunDO existing = requireRun(runId);
@@ -113,7 +113,7 @@ public class ScheduledTaskRunController {
     public Result<List<CommentVO>> comments(@PathVariable long runId) { return Result.ok(commentService.list(workspaceId(), runId)); }
 
     @PostMapping("/{runId}/comments")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "评论定时任务运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "评论定时任务运行", actionKey = "access.action.comment_on_a_scheduled_task_run")
     public Result<CommentVO> comment(@PathVariable long runId, @RequestBody RunCommentRequest request) {
         return Result.ok(commentService.addHumanComment(workspaceId(), runId, userId(),
                 request == null ? null : request.contentMd,

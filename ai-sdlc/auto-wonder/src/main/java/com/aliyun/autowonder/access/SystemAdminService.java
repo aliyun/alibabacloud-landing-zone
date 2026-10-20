@@ -5,6 +5,7 @@ import com.aliyun.autowonder.access.dto.PlatformAdminListVO;
 import com.aliyun.autowonder.access.dto.PlatformAdminVO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,13 @@ public class SystemAdminService {
     public void requireSystemAdmin(Long userId, String action) {
         if (!isSystemAdmin(userId)) {
             throw new BizException(ErrorCode.NO_PERMISSION, SYSTEM_ADMIN_DENIED_PREFIX + action);
+        }
+    }
+
+    public void requireSystemAdmin(Long userId, String action, String messageKey) {
+        if (!isSystemAdmin(userId)) {
+            throw BizException.keyed(ErrorCode.NO_PERMISSION, messageKey, null,
+                    SYSTEM_ADMIN_DENIED_PREFIX + action);
         }
     }
 
@@ -134,7 +142,7 @@ public class SystemAdminService {
      * guard and two concurrent promotions must not both report a change.
      */
     public void addPlatformAdmin(Long operatorId, Long targetUserId) {
-        requireSystemAdmin(operatorId, "添加平台管理员");
+        requireSystemAdmin(operatorId, "添加平台管理员", "access.admin.add_denied");
         if (targetUserId == null) {
             throw new BizException(ErrorCode.SYSTEM_ADMIN_USER_REQUIRED);
         }
@@ -151,19 +159,19 @@ public class SystemAdminService {
      * The self-check runs first so a sole admin removing themselves is told the actionable reason.
      */
     public void removePlatformAdmin(Long operatorId, Long targetUserId) {
-        requireSystemAdmin(operatorId, "移除平台管理员");
+        requireSystemAdmin(operatorId, "移除平台管理员", "access.admin.remove_denied");
         if (targetUserId == null) {
             throw new BizException(ErrorCode.SYSTEM_ADMIN_USER_REQUIRED);
         }
         if (Objects.equals(operatorId, targetUserId)) {
-            throw new BizException(ErrorCode.SYSTEM_ADMIN_SELF_REMOVAL_FORBIDDEN, SELF_REMOVAL_DENIED);
+            throw BizException.keyed(ErrorCode.SYSTEM_ADMIN_SELF_REMOVAL_FORBIDDEN, ErrorCode.SYSTEM_ADMIN_SELF_REMOVAL_FORBIDDEN.getMessageKey(), null, SELF_REMOVAL_DENIED);
         }
         UserDO target = userDao.findById(targetUserId);
         if (target == null || !Integer.valueOf(1).equals(target.getIsAdmin())) {
             throw new BizException(ErrorCode.SYSTEM_ADMIN_TARGET_NOT_ADMIN);
         }
         if (userDao.countSystemAdmins() <= 1) {
-            throw new BizException(ErrorCode.SYSTEM_ADMIN_LAST_ONE_FORBIDDEN, LAST_ADMIN_DENIED);
+            throw BizException.keyed(ErrorCode.SYSTEM_ADMIN_LAST_ONE_FORBIDDEN, ErrorCode.SYSTEM_ADMIN_LAST_ONE_FORBIDDEN.getMessageKey(), null, LAST_ADMIN_DENIED);
         }
         userDao.revokeSystemAdmin(targetUserId);
     }
@@ -188,10 +196,10 @@ public class SystemAdminService {
 
     private String disabledReason(boolean self, boolean moreThanOneAdmin) {
         if (self) {
-            return SELF_REMOVAL_DENIED;
+            return SystemMessages.render(ErrorCode.SYSTEM_ADMIN_SELF_REMOVAL_FORBIDDEN.getMessageKey(), null, SELF_REMOVAL_DENIED);
         }
         if (!moreThanOneAdmin) {
-            return LAST_ADMIN_DENIED;
+            return SystemMessages.render(ErrorCode.SYSTEM_ADMIN_LAST_ONE_FORBIDDEN.getMessageKey(), null, LAST_ADMIN_DENIED);
         }
         return null;
     }

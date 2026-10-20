@@ -1,7 +1,11 @@
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
 import { Alert, DatePicker, Form, Input, Segmented, Space, TimePicker, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import type { ScheduleType } from '../types';
 import { previewScheduledTask } from '../api';
+
+const previewDateOptions: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' };
 
 export type SchedulePreset = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
 export const PRESET_CRON: Record<Exclude<SchedulePreset, 'custom'>, string> = {
@@ -14,6 +18,7 @@ export function isSixFieldCron(value?: string): boolean {
 }
 
 export function ScheduleEditor({ timezone = 'Asia/Shanghai' }: { timezone?: string }) {
+  const { t } = useTranslation('scheduledTask');
   const form = Form.useFormInstance();
   const scheduleType = (Form.useWatch('scheduleType', form) as ScheduleType | undefined) ?? 'CRON';
   const cronExpression = (Form.useWatch('cronExpression', form) as string | undefined) ?? '0 0 2 * * *';
@@ -29,26 +34,26 @@ export function ScheduleEditor({ timezone = 'Asia/Shanghai' }: { timezone?: stri
   };
 
   return <>
-    <Form.Item name="scheduleType" label="调度方式" rules={[{ required: true }]}>
-      <Segmented options={[{ value: 'CRON', label: '周期执行' }, { value: 'ONCE', label: '单次执行' }]} />
+    <Form.Item name="scheduleType" label={t('schedule.type')} rules={[{ required: true, message: t('validation.required', { field: t('schedule.type') }) }]}>
+      <Segmented options={[{ value: 'CRON', label: t('schedule.recurring') }, { value: 'ONCE', label: t('schedule.once') }]} />
     </Form.Item>
     {scheduleType === 'CRON' ? <>
-      <Form.Item name="schedulePreset" label="执行频率">
+      <Form.Item name="schedulePreset" label={t('schedule.frequency')}>
         <Segmented value={preset} onChange={(value) => changePreset(value as SchedulePreset)} options={[
-          { value: 'hourly', label: '每小时' }, { value: 'daily', label: '每天' }, { value: 'weekly', label: '每周' }, { value: 'monthly', label: '每月' }, { value: 'custom', label: '自定义' },
+          { value: 'hourly', label: t('schedule.hourly') }, { value: 'daily', label: t('schedule.daily') }, { value: 'weekly', label: t('schedule.weekly') }, { value: 'monthly', label: t('schedule.monthly') }, { value: 'custom', label: t('schedule.custom') },
         ]} />
       </Form.Item>
-      <Form.Item name="cronExpression" label="Cron 表达式" rules={[{ required: true, validator: (_, value) => isSixFieldCron(value) ? Promise.resolve() : Promise.reject(new Error('请输入合法的六字段 Cron 表达式')) }]}>
-        <Input disabled={preset !== 'custom'} onChange={() => form.setFieldValue('schedulePreset', 'custom')} placeholder="秒 分 时 日 月 星期，例如 0 0 2 * * *" />
+      <Form.Item name="cronExpression" label={t('form.cron')} rules={[{ required: true, validator: (_, value) => isSixFieldCron(value) ? Promise.resolve() : Promise.reject(new Error(t('validation.cron'))) }]}>
+        <Input disabled={preset !== 'custom'} onChange={() => form.setFieldValue('schedulePreset', 'custom')} placeholder={t('schedule.cronPlaceholder')} />
       </Form.Item>
-      <Alert type="info" showIcon message="下方为服务端 Cron 计算的未来五次执行时间。" style={{ marginBottom: 16 }} />
-      <Space direction="vertical" size={2} aria-label="未来执行时间">
-        {preview.isLoading ? <Typography.Text type="secondary">正在计算未来执行时间…</Typography.Text> : null}
-        {(preview.data ?? []).map((instant) => <Typography.Text key={instant}>{new Date(instant).toLocaleString('zh-CN')}</Typography.Text>)}
+      <Alert type="info" showIcon message={t('schedule.previewHelp')} style={{ marginBottom: 16 }} />
+      <Space direction="vertical" size={2} aria-label={t('schedule.previewAria')}>
+        {preview.isLoading ? <Typography.Text type="secondary">{t('schedule.previewLoading')}</Typography.Text> : null}
+        {(preview.data ?? []).map((instant) => <Typography.Text key={instant}>{formatDateTime(instant, previewDateOptions)}</Typography.Text>)}
       </Space>
     </> : <Space size="large" align="start">
-      <Form.Item name="runAtDate" label="执行日期" rules={[{ required: true, message: '请选择单次执行日期' }]}><DatePicker /></Form.Item>
-      <Form.Item name="runAtTime" label="执行时间" rules={[{ required: true, message: '请选择单次执行时间' }]}><TimePicker format="HH:mm" /></Form.Item>
+      <Form.Item name="runAtDate" label={t('schedule.runDate')} rules={[{ required: true, message: t('validation.runDate') }]}><DatePicker /></Form.Item>
+      <Form.Item name="runAtTime" label={t('schedule.runTime')} rules={[{ required: true, message: t('validation.runTime') }]}><TimePicker format="HH:mm" /></Form.Item>
     </Space>}
   </>;
 }

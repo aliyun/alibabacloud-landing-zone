@@ -10,6 +10,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DispatchDaoContractTest {
 
     @Test
+    void dailyWorkitemExecutionScanUsesTenantWindowSourceAndStableKeysetInBothSchemas() throws Exception {
+        for (String databaseId : java.util.List.of("autowonder-source-aware", "autowonder-legacy")) {
+            var config = new org.apache.ibatis.session.Configuration();
+            config.setDatabaseId(databaseId);
+            try (var input = getClass().getResourceAsStream("/mapping/DispatchDao.xml")) {
+                new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, config,
+                        "mapping/DispatchDao.xml", config.getSqlFragments()).parse();
+            }
+            var args = new java.util.HashMap<String, Object>();
+            args.put("tenantId", 7L);
+            args.put("from", new java.util.Date(1000));
+            args.put("to", new java.util.Date(2000));
+            args.put("cursorCreatedAt", new java.util.Date(1500));
+            args.put("cursorId", 12L);
+            args.put("limit", 101);
+            String sql = config.getMappedStatement(DispatchDao.class.getName()
+                    + ".listWorkitemExecutionsCreatedBetween").getBoundSql(args).getSql();
+            assertTrue(sql.contains("tenant_id = ?"));
+            assertTrue(sql.contains("gmt_create >= ? AND gmt_create < ?"));
+            assertTrue(sql.contains("gmt_create = ? AND id < ?"));
+            assertTrue(sql.contains("ORDER BY gmt_create DESC, id DESC"));
+            assertFalse(sql.contains("status ="));
+            assertTrue(sql.contains("source_type = 'WORKITEM'")
+                    == databaseId.equals("autowonder-source-aware"));
+        }
+    }
+
+    @Test
+    void executorRecoveryScanUsesKeysetPagination() throws Exception {
+        String sql = mapperStatement(mapperXml(), "listByExecutorAndStatusesAfterId", "select");
+        assertTrue(sql.contains("executor_id = #{executorId}"));
+        assertTrue(sql.contains("id &gt; #{afterId}"));
+        assertTrue(sql.contains("ORDER BY id ASC"));
+        assertTrue(sql.contains("LIMIT #{limit}"));
+    }
+
+    @Test
     void mapperDefinesCapacityQueueAndLeaseOperations() throws Exception {
         String xml = new String(
                 getClass().getResourceAsStream("/mapping/DispatchDao.xml").readAllBytes(),

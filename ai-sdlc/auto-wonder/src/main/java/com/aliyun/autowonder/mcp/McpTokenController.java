@@ -47,7 +47,7 @@ public class McpTokenController {
     @GetMapping("/tools")
     public Result<List<McpToolVO>> tools() {
         currentUserId();
-        return Result.ok(toolService.listTools());
+        return Result.ok(toolService.listPersonalTools());
     }
 
     @GetMapping("/platform-skills")

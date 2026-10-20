@@ -105,6 +105,22 @@ class ImNotificationWorkerTest {
                 ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED, "READ_WRITE", "APPROVED")));
     }
 
+    @Test
+    void literalEnglishSnapshotsDriveEachPushTitleWithoutAmbientLocale() throws Exception {
+        String[][] cases = {{"WORKITEM_ASSIGNED", "Work item assignment notification"},
+                {"COMMENT_MENTION", "Work item comment reminder"},
+                {"WORKSPACE_ACCESS_REQUEST", "Access request notification"},
+                {"WORKSPACE_ACCESS_REVIEWED", "Access request review result"}};
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+        try {
+            for (String[] c : cases) {
+                var tree = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(task());
+                ((com.fasterxml.jackson.databind.node.ObjectNode) tree).put("recipientLocale", "en-US").put("notificationType", c[0]);
+                assertEquals(c[1], titleFor(new com.fasterxml.jackson.databind.ObjectMapper().treeToValue(tree, ImNotificationTask.class)));
+            }
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
     private static String titleFor(ImNotificationTask task) {
         Fixture fixture = new Fixture();
         when(fixture.identityService.find(9L, "DINGTALK")).thenReturn(identity("staff-001"));

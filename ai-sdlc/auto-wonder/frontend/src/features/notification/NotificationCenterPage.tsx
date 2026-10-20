@@ -1,8 +1,12 @@
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   Alert, Button, Card, Empty, List, Pagination, Popconfirm, Space, Tabs, Tag, Typography, message,
 } from 'antd';
+import { CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   deleteNotification, listNotifications, markAllNotificationsRead, markNotificationRead,
@@ -15,12 +19,7 @@ const { Text } = Typography;
 
 const PAGE_SIZE = 10;
 const SUMMARY_LENGTH = 60;
-
-const TAB_ITEMS = [
-  { key: 'ALL', label: '全部' },
-  { key: 'UNREAD', label: '未读' },
-  { key: 'READ', label: '已读' },
-];
+const DATE_FORMAT = { dateStyle: 'medium', timeStyle: 'medium' } as const;
 
 function stopRowClick(event: MouseEvent<HTMLElement>) {
   event.stopPropagation();
@@ -32,6 +31,8 @@ function summaryOf(content: string | null): string {
 }
 
 export function NotificationCenterPage() {
+  const { t } = useTranslation('notification');
+  const tabItems = [{ key: 'ALL', label: t('all') }, { key: 'UNREAD', label: t('unread') }, { key: 'READ', label: t('read') }];
   const queryClient = useQueryClient();
   const [tab, setTab] = useState('ALL');
   const [page, setPage] = useState(1);
@@ -64,13 +65,13 @@ export function NotificationCenterPage() {
   const markRead = useMutation({
     mutationFn: markNotificationRead,
     onSuccess: invalidate,
-    onError: () => message.error('标记已读失败'),
+    onError: () => message.error(i18n.t('notification:readFailed')),
   });
 
   const markAllRead = useMutation({
     mutationFn: markAllNotificationsRead,
     onSuccess: invalidate,
-    onError: () => message.error('全部已读失败'),
+    onError: () => message.error(i18n.t('notification:readAllFailed')),
   });
 
   const remove = useMutation({
@@ -79,7 +80,7 @@ export function NotificationCenterPage() {
       if (selected?.id === id) setDrawerOpen(false);
       invalidate();
     },
-    onError: () => message.error('删除失败'),
+    onError: () => message.error(i18n.t('notification:deleteFailed')),
   });
 
   // 通知接口只校验「是否为当前工作空间成员」，不区分读写级别，所以这里不套 runWithAccess：
@@ -120,7 +121,7 @@ export function NotificationCenterPage() {
             disabled={markRead.isPending}
             onClick={() => markRead.mutate(item.id)}
           >
-            标记已读
+            {t('markRead')}
           </Button>
         </span>,
       );
@@ -128,16 +129,17 @@ export function NotificationCenterPage() {
     actions.push(
       <span key="delete" onClick={stopRowClick}>
         <Popconfirm
-          title="确认删除这条通知？"
-          description="删除后不可恢复"
-          okText="确认删除"
-          cancelText="取消"
+          icon={<ExclamationCircleFilled aria-hidden="true" />}
+          title={t('deleteConfirm')}
+          description={t('deleteWarning')}
+          okText={t('confirmDelete')}
+          cancelText={t('cancel')}
           // 重复确认会让第二次请求命中后端 0 行分支抛 NOT_FOUND，弹出与事实不符的「删除失败」
-          okButtonProps={{ disabled: remove.isPending }}
+          okButtonProps={{ disabled: remove.isPending, 'aria-label': t('confirmDelete') }}
           onConfirm={() => handleDelete(item.id)}
         >
           <Button type="link" size="small" danger disabled={remove.isPending}>
-            删除
+            {t('delete')}
           </Button>
         </Popconfirm>
       </span>,
@@ -147,22 +149,23 @@ export function NotificationCenterPage() {
 
   return (
     <Card
-      className="aw-content-card" title={<PageHeading title="通知中心" />}
+      className="aw-content-card" title={<PageHeading title={t('title')} />}
       extra={
-        <Button onClick={handleMarkAllRead} loading={markAllRead.isPending}>
-          全部已读
+        <Button aria-label={t('markAllRead')} onClick={handleMarkAllRead} loading={markAllRead.isPending}>
+          {t('markAllRead')}
         </Button>
       }
     >
-      <Tabs activeKey={tab} items={TAB_ITEMS} onChange={handleTabChange} />
+      <Tabs activeKey={tab} items={tabItems} onChange={handleTabChange} />
 
       {isError ? (
         <Alert
           type="error"
           showIcon
-          message="通知列表加载失败"
+          icon={<CloseCircleFilled aria-hidden="true" />}
+          message={t('loadFailed')}
           description={error instanceof Error ? error.message : undefined}
-          action={<Button size="small" onClick={() => refetch()}>重试</Button>}
+          action={<Button size="small" onClick={() => refetch()}>{t('retry')}</Button>}
         />
       ) : (
         <>
@@ -170,7 +173,7 @@ export function NotificationCenterPage() {
             rowKey="id"
             dataSource={items}
             loading={isLoading}
-            locale={{ emptyText: <Empty description="暂无通知" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+            locale={{ emptyText: <Empty description={t('empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
             renderItem={(item) => (
               <List.Item
                 style={{ cursor: 'pointer' }}
@@ -180,7 +183,7 @@ export function NotificationCenterPage() {
                 <List.Item.Meta
                   title={
                     <Space size={8}>
-                      {item.status === 'UNREAD' && <Tag color="blue">未读</Tag>}
+                      {item.status === 'UNREAD' && <Tag color="blue">{t('unread')}</Tag>}
                       <Text strong={item.status === 'UNREAD'}>{item.title}</Text>
                     </Space>
                   }
@@ -188,7 +191,7 @@ export function NotificationCenterPage() {
                     <div>
                       {item.content && <div style={{ marginBottom: 4 }}>{summaryOf(item.content)}</div>}
                       <Text type="secondary" style={{ fontSize: 12 }}>
-                        {new Date(item.gmtCreate).toLocaleString('zh-CN')}
+                        {formatDateTime(item.gmtCreate, DATE_FORMAT)}
                       </Text>
                     </div>
                   }
@@ -206,7 +209,7 @@ export function NotificationCenterPage() {
               marginTop: 16,
             }}
           >
-            <Text type="secondary">{`共 ${total} 条`}</Text>
+            <Text type="secondary">{t('total', { count: total })}</Text>
             <Pagination
               current={page}
               pageSize={PAGE_SIZE}

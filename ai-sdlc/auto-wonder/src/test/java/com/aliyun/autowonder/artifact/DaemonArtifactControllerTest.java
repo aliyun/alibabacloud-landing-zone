@@ -530,4 +530,26 @@ class DaemonArtifactControllerTest {
         assertEquals("REJECTED", receipts.get(0).get("status"));
         assertEquals("DEBUG_LOG_DISABLED", receipts.get(0).get("code"));
     }
+    @Test
+    void terminalDiagnosticUploadCannotBypassBusinessFenceOrAlterBytes() throws Exception {
+        when(authenticator.authenticate(99L, "tok")).thenReturn(DaemonUploadAuthenticator.AuthResult.success(10L,20L,30L));
+        when(authenticator.isMutationFenced(99L)).thenReturn(true);
+        var realStorage = new com.aliyun.autowonder.storage.InMemoryObjectStorage();
+        ReflectionTestUtils.setField(controller, "storage", realStorage);
+        byte[] raw = "original damaged receipt".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(raw));
+        String path = "observability/runtime/hooks/receipts/"+digest+".json";
+        var file = new MultipartFile[]{new MockMultipartFile("files", "receipt.json", null, raw)};
+        String metadata = "[{\"path\":\""+path+"\"}]";
+        assertEquals(401,controller.upload(99L,"tok",null,metadata,file).getStatusCode().value());
+        var result=controller.uploadDiagnostics(99L,"tok",null,metadata,file);
+        var receipt=(Map<?,?>)((List<?>)((Map<?,?>)result.getBody()).get("files")).get(0);
+        assertEquals("ACCEPTED",receipt.get("status"));
+        assertArrayEquals(raw,realStorage.get(receipt.get("remoteRef").toString()));
+        var rejected=controller.uploadDiagnostics(99L,"tok",null,"[{\"path\":\"deliverables/evil.md\"}]",file);
+        var rejectedFile=(Map<?,?>)((List<?>)((Map<?,?>)rejected.getBody()).get("files")).get(0);
+        assertEquals("INVALID_DIAGNOSTIC",rejectedFile.get("code"));
+        verifyNoInteractions(memorySedimentation,evolutionDeltaIngestion,auditLogService,evolutionModeResolver,usageService);
+    }
+
 }

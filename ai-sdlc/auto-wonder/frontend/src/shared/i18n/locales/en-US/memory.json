@@ -1,0 +1,174 @@
+{
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "delete": "Delete",
+    "edit": "Edit",
+    "back": "Back"
+  },
+  "page": {
+    "title": "Memory",
+    "create": "Add memory",
+    "loadError": "Could not load the memory directory. Refresh and try again.",
+    "owners": "Memory owners",
+    "noOwners": "No owners available",
+    "selectOwner": "Select a memory owner",
+    "noWritableMemory": "No memory yet. Use “Add memory” to create one.",
+    "noReadableMemory": "No memory available to view",
+    "revision": "Memory store revision {{revision}}",
+    "topics": "Memory content ({{count}})",
+    "index": "Memory index",
+    "editIndex": "Edit index",
+    "indexHint": "Records available memories and when to read them. Details are stored in the topics below.",
+    "noTopics": "No memory content",
+    "history": "Change history",
+    "noHistory": "No changes",
+    "acl": "Access permissions",
+    "imports": "Local sources",
+    "agentImports": "Local sources belong to an Agent’s personal memory. Select an Agent to view them.",
+    "deleteConfirm": "Delete this memory and its index reference?"
+  },
+  "commands": {
+    "saveMemory": "Save memory",
+    "saveIndex": "Save index",
+    "deleteMemory": "Delete memory"
+  },
+  "messages": {
+    "memorySaved": "Memory saved",
+    "indexSaved": "Index saved"
+  },
+  "scope": {
+    "ORG": "Organization shared",
+    "SQUAD": "Squad shared",
+    "AGENT": "Agent personal"
+  },
+  "owner": {
+    "organization": "Organization shared memory",
+    "description": "{{squads}}{{scope}}{{ownerRef}}",
+    "option": "{{squads}}{{name}}",
+    "squadSeparator": ", "
+  },
+  "types": {
+    "user": "User preferences",
+    "feedback": "Feedback and agreements",
+    "project": "Project context",
+    "reference": "References"
+  },
+  "migration": {
+    "summary": "Legacy memory migration: {{migrated}}; {{pending}}",
+    "hint": "Migration and retries continue automatically in the background. Original memories are retained. Migration counts do not indicate index capacity or recall quality.",
+    "migrated_one": "{{count}} memory migrated",
+    "migrated_other": "{{count}} memories migrated",
+    "pending_one": "{{count}} memory pending",
+    "pending_other": "{{count}} memories pending"
+  },
+  "document": {
+    "version": "File version {{version}}",
+    "metadataParseWarning": "Metadata could not be parsed. View the original text in the file details.",
+    "summary": "{{description}} · {{bytes}} · {{version}}",
+    "viewer": "{{path}} · File version {{version}}"
+  },
+  "operations": {
+    "CREATE": "Created",
+    "UPDATE": "Updated",
+    "DELETE": "Deleted"
+  },
+  "topic": {
+    "edit": "Edit memory",
+    "hint": "The owner determines which Agents can use this memory. Saving maintains the body and index automatically, without review.",
+    "scope": "Owner scope",
+    "owner": "Owner",
+    "type": "Memory type",
+    "title": "Title",
+    "description": "When to use",
+    "body": "Body",
+    "descriptionPlaceholder": "Describe the tasks or situations where this memory is useful"
+  },
+  "validation": {
+    "scope": "Select an owner scope",
+    "owner": "Select an owner",
+    "type": "Select a memory type",
+    "title": "Enter a title",
+    "description": "Describe when to use this memory",
+    "body": "Enter a body",
+    "path": "Enter a path",
+    "content": "Enter content",
+    "safePath": "Enter a safe relative Markdown path",
+    "subjectType": "Select a subject",
+    "subjectRef": "Enter a subject ID",
+    "permission": "Select a permission"
+  },
+  "editor": {
+    "edit": "Edit memory document",
+    "create": "Add memory document",
+    "readOnly": "This store is read-only",
+    "limitWarning": "MEMORY.md exceeds 200 lines or 25,000 bytes. You can still save, but sessions load only the prefix within these limits.",
+    "path": "Path",
+    "pathExample": "feedback_testing.md",
+    "content": "Content"
+  },
+  "acl": {
+    "subjects": {
+      "USER": "Platform user",
+      "AGENT": "Agent",
+      "SQUAD": "Squad members",
+      "ROLE": "All Agents"
+    },
+    "permissions": {
+      "READ": "View",
+      "WRITE": "Edit",
+      "ADMIN": "Manage"
+    },
+    "adminOnly": "Only Workspace administrators can manage access permissions",
+    "setCommand": "Set memory access permissions",
+    "removeCommand": "Remove memory access permissions",
+    "hint": "Access permissions determine who can view or edit this memory.",
+    "help": "Organization shared memory is readable by Agents in this Workspace by default; Squad shared memory is readable by its members. Agents can edit only their own personal memory, cannot edit shared memory, and cannot access other Agents’ personal memory. Platform users may receive separate edit permissions.",
+    "add": "Add access permission",
+    "empty": "No additional grants. Workspace administrators can still manage memory, and Agents can maintain their own personal memory.",
+    "deleteConfirm": "Remove this access grant?",
+    "create": "Add memory permission",
+    "subjectType": "Subject",
+    "subjectRef": "Subject ID",
+    "subjectHelp": "Enter a user, Agent or Squad ID, such as Agent 40013. For all Agents, enter ALL_AGENTS.",
+    "subjectPlaceholder": "For example, 40013",
+    "permission": "Permission",
+    "permissionHelp": "View: read content. Edit: create, update and delete. Manage: includes edit permissions. Agents can still write only to their own personal memory."
+  },
+  "import": {
+    "resume": "Resume",
+    "pause": "Pause",
+    "recurate": "Recurate",
+    "retire": "Retire",
+    "retireConfirm": "Retiring stops further imports from this source. Continue?",
+    "status": {
+      "MISSING": "Local file not found",
+      "ACTIVE": "Ready to import",
+      "PAUSED": "Paused",
+      "RETIRED": "Imports stopped",
+      "RECURATE_REQUESTED": "Waiting for recuration",
+      "STALE": "Not checked recently",
+      "TOO_LARGE": "File too large"
+    },
+    "adminOnly": "Only Workspace administrators can manage local memory sources",
+    "hint": "Local sources are legacy Qoder/QoderCN memory files, separate from platform legacy memory migration.",
+    "help": "A missing local file does not mean platform memory was lost. It may not exist yet, may have moved, or may not be a readable regular file. Imported platform memory is retained even if the local file disappears.",
+    "empty": "No local files available to import",
+    "summary": "Agent #{{agentId}} · {{imports}} · Last checked {{date}}",
+    "title": "AI memory import",
+    "successCount_one": "{{count}} successful import in recent records",
+    "successCount_other": "{{count}} successful imports in recent records",
+    "missingCount_one": "Local file not found ({{count}})",
+    "missingCount_other": "Local files not found ({{count}})"
+  },
+  "counts": {
+    "total_one": "{{count}} item in total",
+    "total_other": "{{count}} items in total",
+    "bytes_one": "{{value}} byte",
+    "bytes_other": "{{value}} bytes",
+    "lines_one": "{{value}} line",
+    "lines_other": "{{value}} lines",
+    "measurements": "{{lines}} · {{bytes}}"
+  }
+}

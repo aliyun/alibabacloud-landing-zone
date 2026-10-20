@@ -1,0 +1,21 @@
+{
+  "title": "帮助中心",
+  "chapters": "帮助章节",
+  "outline": "本页目录",
+  "download": "下载",
+  "previous": "上一章",
+  "next": "下一章",
+  "load": {
+    "failed": "帮助文档加载失败，请刷新页面重试。",
+    "loading": "正在加载帮助文档…",
+    "retry": "重试"
+  },
+  "code": {
+    "label": "代码",
+    "copyLabel": "复制代码",
+    "copy": "复制",
+    "copied": "已复制",
+    "success": "代码已复制",
+    "failure": "复制失败，请选中代码手动复制"
+  }
+}

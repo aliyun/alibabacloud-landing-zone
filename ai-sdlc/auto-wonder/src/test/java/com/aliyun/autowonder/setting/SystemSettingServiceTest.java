@@ -242,4 +242,23 @@ class SystemSettingServiceTest {
         assertFalse(block.contains("`key`"));
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"FEISHU","DINGTALK"})
+    void selectedChannelRestrictionRendersWorkspaceMeaningAndKeepsProviderAndNoWrites(String provider) {
+        var configs=mock(com.aliyun.autowonder.im.PlatformImChannelConfigService.class);
+        when(configs.selectedProvider()).thenReturn(provider);
+        service=new SystemSettingService(settingDao,secretCrypto,configs);
+        var item=new UpdateSettingsRequest.SettingItem();item.setKey(provider.equals("FEISHU")?"dingtalk_enabled":"feishu_enabled");item.setValueJson("<b>{0}</b>");
+        var req=new UpdateSettingsRequest();req.setItems(List.of(item));
+        var error=assertThrows(BizException.class,()->service.updateGroup("NOTIFY",req,1L,2L));
+        assertEquals("项目通知必须使用平台选择的 IM 渠道",error.getMessage());assertEquals("10001",error.getCode());assertEquals(BizException.class,error.getClass());assertNull(error.getCause());
+        verifyNoInteractions(settingDao);assertEquals("<b>{0}</b>",item.getValueJson());
+        try {for(var locale:List.of(java.util.Locale.CHINA,java.util.Locale.US)) {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+            var response=new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals(400,response.getStatusCodeValue());assertEquals(locale.equals(java.util.Locale.US)?"Workspace notifications must use the IM channel selected by the platform":"项目通知必须使用平台选择的 IM 渠道",response.getBody().getMessage());
+        }} finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

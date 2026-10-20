@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { message } from 'antd';
 import { useAuthStore } from '@/shared/auth/store';
+import { i18n } from '@/shared/i18n';
 import type { Workitem, WorkitemDetail } from '@/shared/types/workitem';
 import type { StatusNode, TemplateDetail } from '@/features/statemachine/types';
 import { getTemplateDetail } from '@/features/statemachine/api';
@@ -46,6 +47,22 @@ beforeEach(() => {
   vi.mocked(getWorkitem).mockResolvedValue(item as WorkitemDetail);
   vi.mocked(getTemplateDetail).mockResolvedValue(template);
   vi.mocked(transitionWorkitem).mockResolvedValue(item);
+});
+afterEach(async () => { await i18n.changeLanguage('zh-CN'); });
+
+it('updates an open state-choice dialog in place and preserves authored workflow node names', async () => {
+  vi.mocked(getWorkitem).mockResolvedValue({ ...item, statusName: '<strong>待处理</strong>' } as WorkitemDetail);
+  vi.mocked(getTemplateDetail).mockResolvedValue({ ...template, transitions: [
+    ...template.transitions, { fromNodeId: 20, toNodeId: 22 } as TemplateDetail['transitions'][number],
+  ] });
+  setup();
+  await move();
+  expect(screen.getByText('选择目标状态')).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByText('Choose a target status')).toBeInTheDocument();
+  expect(screen.getByText('Current status “<strong>待处理</strong>” can transition to:')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '验证中' })).toBeInTheDocument();
+  expect(document.querySelector('.ant-modal-body strong')).toBeNull();
 });
 
 describe('nodeColumn（节点类别 → 看板列，规格 3.1）', () => {
@@ -155,6 +172,8 @@ describe('看板流转门禁', () => {
     ] });
     setup();
     await move();
+    expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('en-US'); });
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(hook.busy).toBe(false);
     expect(transitionWorkitem).not.toHaveBeenCalled();
@@ -245,4 +264,19 @@ describe('看板流转门禁', () => {
     ] } as TemplateDetail;
     expect(kanbanTransitionTargets(item as WorkitemDetail, named, 'IN_PROGRESS').map(node => node.id)).toEqual([21]);
   });
+});
+
+it('uses completion-time locale for an owned warning and preserves legacy/raw warning collisions', async () => {
+  let finish!: (value: Workitem) => void;
+  vi.mocked(transitionWorkitem).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  setup();
+  await act(async () => {
+    const moving = hook.move(item, 'IN_PROGRESS');
+    await waitFor(() => expect(transitionWorkitem).toHaveBeenCalled());
+    await i18n.changeLanguage('en-US');
+    finish({ ...item, transitionWarning: '该流转不在模板推荐范围内', transitionWarningCode: 'OUT_OF_TEMPLATE' });
+    await moving;
+  });
+  expect(message.warning).toHaveBeenCalledWith('This transition is outside the template recommendations.');
+  expect(transitionWorkitem).toHaveBeenCalledTimes(1);
 });

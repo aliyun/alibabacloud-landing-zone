@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/memory-stores/directory")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看记忆归属")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看记忆归属", actionKey = "access.action.view_memory_ownership")
 public class MemoryDirectoryController {
     private final MemoryDirectoryService directory;
     public MemoryDirectoryController(MemoryDirectoryService directory) { this.directory = directory; }

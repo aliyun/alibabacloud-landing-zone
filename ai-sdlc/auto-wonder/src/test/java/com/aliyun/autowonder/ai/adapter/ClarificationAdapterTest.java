@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.ai.adapter;
 
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
 import com.aliyun.autowonder.clarification.ClarificationDO;
@@ -11,8 +13,12 @@ import com.aliyun.autowonder.repo.RepoDO;
 import com.aliyun.autowonder.repo.RepoDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
 import com.aliyun.autowonder.workitem.WorkitemCommentDao;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +35,7 @@ class ClarificationAdapterTest {
     private WorkitemCommentDao workitemCommentDao;
     private RepoDao repoDao;
     private RepoConclusionDao repoConclusionDao;
+    private WorkspaceMemberDao workspaceMemberDao;
     private ClarificationAdapter adapter;
 
     @BeforeEach
@@ -38,8 +45,79 @@ class ClarificationAdapterTest {
         workitemCommentDao = mock(WorkitemCommentDao.class);
         repoDao = mock(RepoDao.class);
         repoConclusionDao = mock(RepoConclusionDao.class);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
         adapter = new ClarificationAdapter(clarificationDao, workitemDao,
-                workitemCommentDao, repoDao, repoConclusionDao);
+                workitemCommentDao, repoDao, repoConclusionDao,
+                new WorkspaceDomainGuard(workspaceMemberDao));
+        AutoWonderContext.get().setUserId(7L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        AutoWonderContext.destroy();
+    }
+
+    @Test
+    void buildSystemPromptCanReadRepositoryAndWorkitemContextForReadOnlyDomains() {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"REPO\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+        AiSessionDO session = new AiSessionDO();
+        session.setTenantId(100L);
+        session.setCreatorId(7L);
+        session.setBizRefType("WORKITEM");
+        session.setBizRefId(9L);
+
+        assertNotNull(adapter.buildSystemPrompt(session));
+        verify(workitemDao).findById(9L);
+        verify(repoDao).list(100L, 0, 100);
+
+    }
+
+    @Test
+    void buildSystemPromptReadsContextsWhenCreatorHasNoForbiddenDomains() {
+        AiSessionDO session = new AiSessionDO();
+        session.setTenantId(100L);
+        session.setCreatorId(7L);
+        session.setBizRefType("WORKITEM");
+        session.setBizRefId(9L);
+        WorkitemDO workitem = new WorkitemDO();
+        workitem.setId(9L);
+        workitem.setTitle("原始标题");
+        workitem.setContentMd("工单正文");
+        when(workitemDao.findById(9L)).thenReturn(workitem);
+        when(workitemCommentDao.listByWorkitem(100L, 9L)).thenReturn(List.of());
+        RepoDO repo = new RepoDO();
+        repo.setId(5L);
+        repo.setName("auto-wonder");
+        when(repoDao.list(100L, 0, 100)).thenReturn(List.of(repo));
+
+        String prompt = adapter.buildSystemPrompt(session);
+
+        assertTrue(prompt.contains("原始标题"));
+        assertTrue(prompt.contains("auto-wonder"));
+    }
+
+    @Test
+    void persistIsBlockedBeforeAnyWriteWhenOperatorForbidsClarificationDomain() {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"CLARIFICATION\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+        AiSessionDO session = new AiSessionDO();
+        session.setTenantId(100L);
+        session.setBizRefId(9L);
+
+        assertThrows(WorkspaceDomainReadOnlyException.class,
+                () -> adapter.persistConfirmedResult(session, "{\"clarificationMd\":\"x\"}"));
+
+        verify(clarificationDao, never()).insert(any(ClarificationDO.class));
+        verify(clarificationDao, never()).update(anyLong(), anyLong(), any());
     }
 
     @Test
@@ -81,6 +159,7 @@ class ClarificationAdapterTest {
     void buildSystemPromptIncludesWorkitemContext() {
         AiSessionDO session = new AiSessionDO();
         session.setTenantId(100L);
+        session.setCreatorId(7L);
         session.setBizRefType("WORKITEM");
         session.setBizRefId(10L);
 
@@ -108,6 +187,7 @@ class ClarificationAdapterTest {
     void buildSystemPromptIncludesRepoContext() {
         AiSessionDO session = new AiSessionDO();
         session.setTenantId(100L);
+        session.setCreatorId(7L);
         session.setBizRefType("WORKITEM");
         session.setBizRefId(10L);
 
@@ -140,6 +220,7 @@ class ClarificationAdapterTest {
     void buildSystemPromptHandlesNoWorkitemGracefully() {
         AiSessionDO session = new AiSessionDO();
         session.setTenantId(100L);
+        session.setCreatorId(7L);
         session.setBizRefType("OTHER");
         session.setBizRefId(10L);
 

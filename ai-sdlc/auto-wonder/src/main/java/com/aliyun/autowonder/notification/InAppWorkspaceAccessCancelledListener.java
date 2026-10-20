@@ -52,8 +52,9 @@ public class InAppWorkspaceAccessCancelledListener {
                 return;
             }
 
+            String cancelTime = LocalDateTime.now().format(CANCEL_TIME_FORMAT);
             String content = WorkspaceAccessNotifyText.safe(event.requesterDisplayName())
-                    + " 于 " + LocalDateTime.now().format(CANCEL_TIME_FORMAT)
+                    + " 于 " + cancelTime
                     + " 撤销了加入「" + WorkspaceAccessNotifyText.workspaceLabel(event.workspaceName())
                     + "」的申请，申请记录将删除";
 
@@ -61,7 +62,7 @@ public class InAppWorkspaceAccessCancelledListener {
             // NotifyService.notify has no per-recipient guard and this listener runs AFTER_COMMIT.
             for (Long adminUserId : admins) {
                 try {
-                    notifyService.notify(notifyEvent(event, content, adminUserId));
+                    notifyService.notify(notifyEvent(event, content, cancelTime, adminUserId));
                 } catch (Exception e) {
                     log.error("failed to send in-app notification for access cancel tenantId={} "
                                     + "requestId={} recipientId={}",
@@ -77,12 +78,16 @@ public class InAppWorkspaceAccessCancelledListener {
     }
 
     /** A fresh event per recipient: NotifyEvent is mutable, so a shared instance would alias. */
-    private static NotifyEvent notifyEvent(WorkspaceAccessCancelledEvent event, String content, long recipientId) {
+    private static NotifyEvent notifyEvent(WorkspaceAccessCancelledEvent event, String content, String cancelTime, long recipientId) {
         NotifyEvent notifyEvent = new NotifyEvent();
         notifyEvent.setTenantId(event.tenantId());
         notifyEvent.setType(REF_TYPE);
         notifyEvent.setTitle("权限申请已撤销");
         notifyEvent.setContent(content);
+        notifyEvent.setTitleKey("notification.access.cancelled.title");
+        notifyEvent.setContentKey("notification.access.cancelled.content");
+        notifyEvent.setContentArgsResolver(locale -> new Object[]{WorkspaceAccessNotifyText.safe(event.requesterDisplayName()),
+                cancelTime, WorkspaceAccessNotifyText.workspaceLabel(event.workspaceName(), locale)});
         notifyEvent.setLink(WorkspaceAccessNotifyText.reviewLink(event.tenantId()));
         notifyEvent.setRefType(REF_TYPE);
         notifyEvent.setRefId(event.requestId());

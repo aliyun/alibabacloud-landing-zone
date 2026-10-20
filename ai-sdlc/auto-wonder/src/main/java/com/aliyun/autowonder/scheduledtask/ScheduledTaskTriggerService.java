@@ -125,7 +125,7 @@ public class ScheduledTaskTriggerService {
         return "task:" + taskId + ":scheduled:" + scheduledAt;
     }
     public static String manualKey(long taskId, String requestId) {
-        if (requestId == null || requestId.isBlank()) throw new BizException(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED, "requestId is required");
+        if (requestId == null || requestId.isBlank()) throw BizException.keyed(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED, "scheduled_task.trigger.request_id_required", new Object[0], "requestId is required");
         return "task:" + taskId + ":manual:" + requestId.trim();
     }
 
@@ -284,8 +284,8 @@ public class ScheduledTaskTriggerService {
             if (version == null || !Objects.equals(version.getTenantId(), task.getWorkspaceId())) continue;
             out.add(agentContext(agent, version)); initialFound |= Objects.equals(agent.getId(), task.getInitialAgentId());
         }
-        if (!initialFound) throw new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "initial agent is not an executable squad member");
-        if (out.isEmpty()) throw new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "squad has no executable online agents");
+        if (!initialFound) throw BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "scheduled_task.trigger.initial_agent_not_executable", new Object[0], "initial agent is not an executable squad member");
+        if (out.isEmpty()) throw BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "scheduled_task.trigger.no_online_agents", new Object[0], "squad has no executable online agents");
         return out;
     }
 
@@ -336,12 +336,14 @@ public class ScheduledTaskTriggerService {
                     || !ExecutionSourceType.SCHEDULED_TASK.name().equals(a.getSourceType())
                     || !RequirementDocumentService.TYPE.equals(a.getType())
                     || !Objects.equals(a.getWorkitemId(), task.getId()) || a.getOssRef() == null) {
-                throw new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+                throw BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+                        "scheduled_task.trigger.document_wrong_owner", new Object[]{String.valueOf(a == null ? null : a.getId())},
                         "requirement document does not belong to scheduled task: " + (a == null ? null : a.getId()));
             }
             byte[] bytes = storage.get(a.getOssRef());
-            if (bytes == null) throw new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
-                    "requirement document is unavailable: " + a.getId());
+            if (bytes == null) throw BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+                        "scheduled_task.trigger.document_unavailable", new Object[]{String.valueOf(a.getId())},
+                        "requirement document is unavailable: " + a.getId());
             docs.add(map("artifactId", a.getId(), "name", a.getName(), "ossRef", a.getOssRef(), "sha256", sha256(bytes)));
         }
         return docs;

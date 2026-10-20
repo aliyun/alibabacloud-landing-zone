@@ -54,7 +54,7 @@ public class RequirementDocumentService {
     private static final String DOCX_REQUIRED_ENTRY = "word/document.xml";
     private static final Pattern DRIVE_LETTER_ENTRY = Pattern.compile("^[A-Za-z]:");
 
-    private enum ContextKind { MARKDOWN, TEXT, CODE, VISUAL, PDF, WORD, ARCHIVE }
+    private enum ContextKind { MARKDOWN, TEXT, CODE, VISUAL, PDF, WORD, ARCHIVE, BINARY }
 
     private record ContextFileType(String contentType, ContextKind contextKind) { }
 
@@ -84,18 +84,17 @@ public class RequirementDocumentService {
             new ContextFileType("text/x-python", ContextKind.CODE);
     private static final ContextFileType ZIP_TYPE =
             new ContextFileType("application/zip", ContextKind.ARCHIVE);
+    private static final ContextFileType BINARY_TYPE =
+            new ContextFileType("application/octet-stream", ContextKind.BINARY);
 
     /**
-     * Single source of truth for the attachment whitelist: extension (lowercase, no dot) to content
-     * type plus the context kind that decides how the bytes are validated and how the dispatch
-     * runtime tells a digital worker to read the file. Insertion order is user-facing, it backs
-     * {@link #SUPPORTED_EXTENSIONS} in every MCP, CLI and web surface.
+     * Known formats retain their content validation and metadata. Other files are stored as
+     * opaque attachments; format recognition does not restrict which extensions can be uploaded.
      */
     private static final Map<String, ContextFileType> TYPES_BY_EXTENSION = buildTypesByExtension();
 
-    public static final List<String> SUPPORTED_EXTENSIONS = TYPES_BY_EXTENSION.keySet().stream()
-            .map(extension -> "." + extension)
-            .toList();
+    /** Wildcard advertised by MCP/CLI metadata: any filename extension (including none). */
+    public static final List<String> SUPPORTED_EXTENSIONS = List.of("*");
 
     private static Map<String, ContextFileType> buildTypesByExtension() {
         Map<String, ContextFileType> types = new LinkedHashMap<>();
@@ -436,12 +435,7 @@ public class RequirementDocumentService {
     }
 
     private ContextFileType fileTypeFor(String filename) {
-        ContextFileType type = TYPES_BY_EXTENSION.get(extensionOf(filename));
-        if (type == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "不支持的文件格式，仅支持 " + String.join("、", SUPPORTED_EXTENSIONS));
-        }
-        return type;
+        return TYPES_BY_EXTENSION.getOrDefault(extensionOf(filename), BINARY_TYPE);
     }
 
     private static String extensionOf(String filename) {
@@ -456,11 +450,17 @@ public class RequirementDocumentService {
         }
         switch (type.contextKind()) {
             case MARKDOWN, TEXT, CODE -> validateTextBytes(bytes);
-            case PDF -> requireSignature(hasPdfSignature(bytes), "文件内容与 PDF 格式不符");
+            case PDF -> requireSignature(hasPdfSignature(bytes), "artifact.document.signature_pdf", "文件内容与 PDF 格式不符");
             case VISUAL -> requireSignature(hasImageSignature(type.contentType(), bytes),
-                    "文件内容与图片格式不符");
+                    "artifact.document.signature_image", "文件内容与图片格式不符");
             case WORD -> validateWordBytes(bytes, type.contentType());
             case ARCHIVE -> validateZipBytes(bytes, null);
+            case BINARY -> {
+                // OOXML (including Excel), JAR and renamed ZIP files keep archive protections.
+                if (hasZipSignature(bytes)) {
+                    validateZipBytes(bytes, null);
+                }
+            }
             // Exhaustive today; an explicit default keeps a future ContextKind from failing open.
             default -> throw new BizException(ErrorCode.PARAM_INVALID);
         }
@@ -476,17 +476,17 @@ public class RequirementDocumentService {
             validateZipBytes(bytes, DOCX_REQUIRED_ENTRY);
             return;
         }
-        requireSignature(hasOle2Signature(bytes), "文件内容与 .doc 格式不符");
+        requireSignature(hasOle2Signature(bytes), "artifact.document.signature_doc", "文件内容与 .doc 格式不符");
     }
 
-    private static void requireSignature(boolean valid, String message) {
+    private static void requireSignature(boolean valid, String key, String message) {
         if (!valid) {
-            throw new BizException(ErrorCode.PARAM_INVALID, message);
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, key, null, message);
         }
     }
 
     private void validateZipBytes(byte[] bytes, String requiredEntry) {
-        requireSignature(hasZipSignature(bytes), "文件内容与 ZIP 格式不符");
+        requireSignature(hasZipSignature(bytes), "artifact.document.signature_zip", "文件内容与 ZIP 格式不符");
         int entries = 0;
         long inflated = 0;
         boolean foundRequired = requiredEntry == null;
@@ -495,7 +495,8 @@ public class RequirementDocumentService {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (++entries > MAX_ZIP_ENTRIES) {
-                    throw new BizException(ErrorCode.PARAM_INVALID,
+                    throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                            "artifact.document.zip_entries_limit", new Object[]{MAX_ZIP_ENTRIES},
                             "压缩包条目数超过上限 " + MAX_ZIP_ENTRIES);
                 }
                 validateZipEntryName(entry.getName());
@@ -509,16 +510,21 @@ public class RequirementDocumentService {
                 while ((read = zis.read(buffer)) >= 0) {
                     inflated += read;
                     if (inflated > MAX_ZIP_INFLATED_BYTES) {
-                        throw new BizException(ErrorCode.PARAM_INVALID,
+                        throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                                "artifact.document.zip_inflated_limit", new Object[]{MAX_ZIP_INFLATED_BYTES / 1024L / 1024L},
                                 "压缩包解压后大小超过上限 " + (MAX_ZIP_INFLATED_BYTES / 1024L / 1024L) + "MB");
                     }
                 }
             }
         } catch (IOException | IllegalArgumentException e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "压缩包无法解析");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.document.zip_unparseable", null,
+                    "压缩包无法解析");
         }
         if (!foundRequired) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "文件内容与 .docx 格式不符");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.document.docx_content_invalid", null,
+                    "文件内容与 .docx 格式不符");
         }
     }
 
@@ -527,7 +533,9 @@ public class RequirementDocumentService {
         if (name == null || name.isBlank() || name.startsWith("/") || name.startsWith("\\")
                 || name.contains("..") || name.contains("\\")
                 || DRIVE_LETTER_ENTRY.matcher(name).find()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "压缩包条目名非法，疑似路径穿越");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.document.zip_path_invalid", null,
+                    "压缩包条目名非法，疑似路径穿越");
         }
         int depth = 0;
         for (String segment : name.split("/")) {
@@ -536,7 +544,8 @@ public class RequirementDocumentService {
             }
         }
         if (depth > MAX_ZIP_PATH_DEPTH) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.document.zip_depth_limit", new Object[]{MAX_ZIP_PATH_DEPTH},
                     "压缩包目录层级超过上限 " + MAX_ZIP_PATH_DEPTH);
         }
     }

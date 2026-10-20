@@ -15,6 +15,8 @@ public class ExecutorVO {
     private String status;       // reflects live online status
     private String clientKind;
     private String lastConnectIp;
+    /** Daemon-reported hostname from the most recent WebSocket connection; null for older clients. */
+    private String lastConnectHostname;
     private Date lastHeartbeat;
     private Date lastStartedAt;
     /**
@@ -30,6 +32,8 @@ public class ExecutorVO {
     private Date gmtCreate;
     private boolean restartSupported;
     private boolean updateRestartSupported;
+    private boolean launchCommandSupported;
+    private boolean restartPolicySupported;
     private com.aliyun.autowonder.json.JSONObject restart;
     /** Whether the connected client understands the {@code EXECUTOR_UPGRADE} command. */
     private boolean upgradeSupported;

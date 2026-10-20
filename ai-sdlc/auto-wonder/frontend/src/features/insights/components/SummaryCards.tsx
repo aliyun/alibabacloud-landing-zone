@@ -21,9 +21,9 @@ export function SummaryCards({ cards, dateLabel }: SummaryCardsProps) {
       {cards.map((card, index) => {
         const style = SEVERITY_STYLES[card.severity];
         return (
-          <div key={card.title} style={{ background: 'var(--aw-panel)', border: `1px solid ${style.border}`, borderRadius: 10, padding: '14px 16px' }}>
+          <div key={index} style={{ background: 'var(--aw-panel)', border: `1px solid ${style.border}`, borderRadius: 10, padding: '14px 16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ width: 26, height: 26, borderRadius: 6, background: style.bg, color: style.color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span aria-hidden="true" style={{ width: 26, height: 26, borderRadius: 6, background: style.bg, color: style.color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                 {ICONS[index]}
               </span>
               <span style={{ fontSize: 12, color: 'var(--aw-muted)', fontWeight: 600 }}>{card.title}</span>

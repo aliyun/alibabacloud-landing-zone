@@ -1,12 +1,18 @@
 package com.aliyun.autowonder.ai.adapter;
 
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.sdlc.SdlcDO;
 import com.aliyun.autowonder.sdlc.SdlcDao;
 import com.aliyun.autowonder.sdlc.SdlcStepDO;
 import com.aliyun.autowonder.sdlc.SdlcStepDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,15 +28,42 @@ class SdlcGenAdapterTest {
 
     private SdlcDao sdlcDao;
     private SdlcStepDao sdlcStepDao;
+    private WorkspaceMemberDao workspaceMemberDao;
     private SdlcGenAdapter adapter;
 
     @BeforeEach
     void setUp() {
         sdlcDao = mock(SdlcDao.class);
         sdlcStepDao = mock(SdlcStepDao.class);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
         doAnswer(inv -> { ((SdlcDO) inv.getArgument(0)).setId(1L); return null; })
                 .when(sdlcDao).insert(any(SdlcDO.class));
-        adapter = new SdlcGenAdapter(sdlcDao, sdlcStepDao);
+        adapter = new SdlcGenAdapter(sdlcDao, sdlcStepDao, new WorkspaceDomainGuard(workspaceMemberDao));
+        AutoWonderContext.get().setUserId(7L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        AutoWonderContext.destroy();
+    }
+
+    @Test
+    void persistConfirmedResultIsBlockedBeforeAnyWriteWhenOperatorForbidsSdlcDomain() {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"SDLC\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+        AiSessionDO session = new AiSessionDO();
+        session.setTenantId(100L);
+        String json = "{\"name\":\"x\",\"steps\":[{\"order\":1,\"name\":\"s\",\"instructionMd\":\"i\"}]}";
+
+        assertThrows(WorkspaceDomainReadOnlyException.class,
+                () -> adapter.persistConfirmedResult(session, json));
+
+        verify(sdlcDao, never()).insert(any(SdlcDO.class));
+        verify(sdlcStepDao, never()).insert(any(SdlcStepDO.class));
     }
 
     @Test

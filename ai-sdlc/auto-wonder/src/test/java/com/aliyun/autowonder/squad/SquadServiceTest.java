@@ -213,6 +213,12 @@ class SquadServiceTest {
         return m;
     }
 
+    private AgentDO agent(long id) {
+        AgentDO agent = new AgentDO();
+        agent.setId(id);
+        return agent;
+    }
+
     private ExecutorDO squadExecutor(long id, long agentId, String agentName) {
         ExecutorDO e = new ExecutorDO();
         e.setId(id);
@@ -308,6 +314,7 @@ class SquadServiceTest {
         sq.setId(10L);
         sq.setVersion(0);
         when(squadDao.findById(10L)).thenReturn(sq);
+        when(agentDao.listByIds(eq(100L), any())).thenReturn(List.of(agent(1L), agent(2L)));
         SquadMemberDO existing = new SquadMemberDO();
         existing.setAgentId(1L);
         when(memberDao.findBySquadAndAgent(10L, 1L)).thenReturn(existing);
@@ -316,6 +323,63 @@ class SquadServiceTest {
         service.addMembers(10L, List.of(1L, 2L), 100L);
         verify(memberDao, times(1)).insert(argThat((SquadMemberDO m) -> m.getAgentId() == 2L));
         verify(memberDao, never()).insert(argThat((SquadMemberDO m) -> m.getAgentId() == 1L));
+    }
+
+    @Test
+    void addMembers_rejects_the_whole_batch_when_any_agent_is_unresolvable() {
+        SquadDO sq = new SquadDO();
+        sq.setId(10L);
+        sq.setVersion(0);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        // listByIds only returns live agents of the same workspace, so 99L models a deleted
+        // agent or one that belongs to another workspace.
+        when(agentDao.listByIds(eq(100L), any())).thenReturn(List.of(agent(1L)));
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.addMembers(10L, List.of(1L, 99L), 100L));
+
+        assertEquals("15004", ex.getCode());
+        assertEquals("error.squad_member_agent_invalid", ex.getMessageKey());
+        assertArrayEquals(new Object[] { 99L }, ex.getMessageArgs());
+        verify(memberDao, never()).insert(any());
+        verify(memberDao, never()).findBySquadAndAgent(anyLong(), anyLong());
+    }
+
+    @Test
+    void addMembers_rejects_agent_from_another_workspace_without_inserting() {
+        SquadDO sq = new SquadDO();
+        sq.setId(10L);
+        sq.setVersion(0);
+        when(squadDao.findById(10L)).thenReturn(sq);
+        when(agentDao.listByIds(eq(200L), any())).thenReturn(List.of());
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.addMembers(10L, List.of(7L), 200L));
+
+        assertEquals("15004", ex.getCode());
+        verify(agentDao).listByIds(eq(200L), any());
+        verify(memberDao, never()).insert(any());
+    }
+
+    @Test
+    void addMembers_empty_batch_returns_before_any_lookup() {
+        service.addMembers(10L, List.of(), 100L);
+        service.addMembers(10L, null, 100L);
+
+        verify(agentDao, never()).listByIds(any(), any());
+        verify(memberDao, never()).insert(any());
+        verify(squadDao, never()).findById(anyLong());
+    }
+
+    @Test
+    void addMembers_oversized_batch_is_rejected_before_agent_lookup() {
+        List<Long> tooMany = java.util.stream.LongStream.rangeClosed(1, 51).boxed().toList();
+        BizException ex = assertThrows(BizException.class,
+                () -> service.addMembers(10L, tooMany, 100L));
+
+        assertEquals("10001", ex.getCode());
+        verify(agentDao, never()).listByIds(any(), any());
+        verify(memberDao, never()).insert(any());
     }
 
     @Test

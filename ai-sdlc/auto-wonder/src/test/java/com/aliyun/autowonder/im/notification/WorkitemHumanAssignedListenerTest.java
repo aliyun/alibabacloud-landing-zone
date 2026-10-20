@@ -125,6 +125,23 @@ class WorkitemHumanAssignedListenerTest {
         verify(fixture.queue, never()).enqueue(any());
     }
 
+    @Test
+    void sourceActorIntentReachesNewTaskWhileOriginalActorFieldsRemainRaw() throws Exception {
+        for (String kind : java.util.List.of("AGENT_NAME_FALLBACK", "HUMAN_NAME_FALLBACK", "SYSTEM_NAME_FALLBACK")) {
+            Fixture fixture = new Fixture();
+            when(fixture.identityService.find(99L, "DINGTALK")).thenReturn(identity());
+            when(fixture.channelConfigService.isReady("DINGTALK")).thenReturn(true);
+            fixture.listener.onWorkitemHumanAssigned(new WorkitemHumanAssignedEvent(
+                    100, 500, "raw", 9001, 99, "SYSTEM", 0, "系统", "rid-1", kind));
+            ArgumentCaptor<ImNotificationTask> task = ArgumentCaptor.forClass(ImNotificationTask.class);
+            verify(fixture.queue).enqueue(task.capture());
+            assertEquals("系统", task.getValue().actorDisplayName());
+            assertEquals("9001:DINGTALK:99", task.getValue().notificationKey());
+            assertEquals(kind, new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(task.getValue())
+                    .path("actorNameKind").asText());
+        }
+    }
+
     private static WorkitemHumanAssignedEvent event() {
         return new WorkitemHumanAssignedEvent(
                 100L,

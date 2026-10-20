@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Alert, Button, Tooltip } from 'antd';
 import { ExclamationCircleFilled } from '@ant-design/icons';
@@ -10,13 +11,9 @@ import {
   platformAgentStatusQueryKey,
 } from '@/features/agent/platformAgentStatusApi';
 
-const VALUE_PROPOSITION =
-  '平台智能体 Chief of Staff 是项目组的智能管家：自动接单并拆解需求、调度数字员工协作交付、沉淀团队记忆，让研发流程进入自动驾驶。配置执行器并保持在线后，工单即可全自动流转。';
-
 // 常驻横幅按此间隔复查，执行器上线后无需手动刷新即可消失。
 export const PLATFORM_AGENT_STATUS_POLL_MS = 30_000;
 
-const VALUE_PROPOSITION_TRIGGER = '平台智能体能力说明';
 const DISMISSED_KEY = 'autowonder.platform-agent-status.dismissed';
 
 // 横幅贴在 60px Header 下方,与内容区争高度,故压成单行细条:继承 Header 的水平内边距与 1px 分隔线,
@@ -50,6 +47,7 @@ const HINT_STYLE: CSSProperties = {
 };
 
 export function PlatformAgentStatusBanner() {
+  const { t } = useTranslation('shell');
   const [dismissed, setDismissed] = useState(() =>
     readViewPreference(DISMISSED_KEY, ['1', '0'], '0') === '1');
   const navigate = useNavigate();
@@ -68,24 +66,22 @@ export function PlatformAgentStatusBanner() {
   }
 
   const title = data.state === 'NOT_CONFIGURED'
-    ? '平台智能体 Chief of Staff 未配置执行器'
-    : '平台智能体 Chief of Staff 执行器全部离线';
+    ? t('banner.notConfigured')
+    : t('banner.offline');
 
   const message: ReactNode = (
     <span style={MESSAGE_STYLE}>
       <ExclamationCircleFilled style={{ color: '#faad14', flexShrink: 0, fontSize: 12 }} />
       <span style={TITLE_STYLE}>{title}</span>
-      <Tooltip placement="bottomLeft" title={VALUE_PROPOSITION}>
-        <span aria-label={VALUE_PROPOSITION_TRIGGER} style={HINT_STYLE}>
-          说明
-        </span>
+      <Tooltip placement="bottomLeft" title={t('banner.explanation')}>
+        <span aria-label={t('banner.capabilities')} style={HINT_STYLE}>{t('banner.details')}</span>
       </Tooltip>
     </span>
   );
 
   return (
     <Alert
-      closable={{ closeIcon: true, 'aria-label': '关闭系统通知' }}
+      closable={{ closeIcon: true, 'aria-label': t('banner.dismiss') }}
       onClose={() => {
         setDismissed(true);
         writeViewPreference(DISMISSED_KEY, '1');
@@ -96,9 +92,7 @@ export function PlatformAgentStatusBanner() {
           type="link"
           onClick={() => navigate('/executors')}
           style={{ fontSize: 12, height: 20, padding: 0 }}
-        >
-          去配置执行器
-        </Button>
+        >{t('banner.configure')}</Button>
       )}
       message={message}
       showIcon={false}

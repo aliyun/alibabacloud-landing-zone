@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 import { Button, Tooltip } from 'antd';
 import { SwapOutlined, UserSwitchOutlined, CommentOutlined, RocketOutlined, SyncOutlined, DeleteOutlined, UserAddOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
@@ -37,34 +38,35 @@ export function WorkitemActionBar({
   deleteDisabled,
   deleteDisabledReason,
 }: WorkitemActionBarProps) {
+  const { t } = useTranslation('workitem');
   return (
     <div data-testid="workitem-action-bar" className="aw-workitem-actions">
-      <Button type="primary" icon={hasSdlc ? <UserSwitchOutlined /> : <RocketOutlined />} onClick={onStartDelivery}>
-        {hasSdlc ? '重新指派' : '启动交付'}
+      <Button type="primary" icon={hasSdlc ? <UserSwitchOutlined aria-hidden="true" /> : <RocketOutlined aria-hidden="true" />} onClick={onStartDelivery}>
+        {hasSdlc ? t('detail.reassign') : t('detail.startDelivery')}
       </Button>
-      <Button icon={<UserAddOutlined />} onClick={onAssignHuman}>指派给真人</Button>
-      <Button icon={<SwapOutlined />} onClick={onTransition}>流转状态</Button>
-      <Tooltip title={watched ? '取消关注工单' : '关注工单'}>
+      <Button icon={<UserAddOutlined aria-hidden="true" />} onClick={onAssignHuman}>{t('assignment.title')}</Button>
+      <Button icon={<SwapOutlined aria-hidden="true" />} onClick={onTransition}>{t('detail.transitionTitle')}</Button>
+      <Tooltip title={watched ? t('actions.unwatchAria') : t('actions.watchAria')}>
         <Button
           data-testid="workitem-watch-toggle"
           type={watched ? 'primary' : 'default'}
           ghost={watched}
-          icon={watched ? <StarFilled /> : <StarOutlined />}
-          aria-label={watched ? '取消关注工单' : '关注工单'}
+          icon={watched ? <StarFilled aria-hidden="true" /> : <StarOutlined aria-hidden="true" />}
+          aria-label={watched ? t('actions.unwatchAria') : t('actions.watchAria')}
           aria-pressed={!!watched}
           onClick={onToggleWatch}
           loading={watchLoading}
         />
       </Tooltip>
-      <Tooltip title="立即对账">
-        <Button aria-label="立即对账" icon={<SyncOutlined />} onClick={onSyncExternal} loading={syncExternalLoading} />
+      <Tooltip title={t('detail.reconcile')}>
+        <Button aria-label={t('detail.reconcile')} icon={<SyncOutlined aria-hidden="true" />} onClick={onSyncExternal} loading={syncExternalLoading} />
       </Tooltip>
-      <Tooltip title="添加评论">
-        <Button aria-label="添加评论" icon={<CommentOutlined />} onClick={onAddComment} />
+      <Tooltip title={t('comment.add')}>
+        <Button aria-label={t('comment.add')} icon={<CommentOutlined aria-hidden="true" />} onClick={onAddComment} />
       </Tooltip>
-      <Tooltip title={deleteDisabled ? deleteDisabledReason : '删除工单'}>
+      <Tooltip title={deleteDisabled ? deleteDisabledReason : t('actions.delete')}>
         <span>
-          <Button danger aria-label="删除工单" icon={<DeleteOutlined />} onClick={onDelete}
+          <Button danger aria-label={t('actions.delete')} icon={<DeleteOutlined aria-hidden="true" />} onClick={onDelete}
             loading={deleteLoading} disabled={deleteDisabled} />
         </span>
       </Tooltip>

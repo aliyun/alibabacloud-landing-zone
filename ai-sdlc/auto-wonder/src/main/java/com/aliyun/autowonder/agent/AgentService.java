@@ -29,6 +29,7 @@ import com.aliyun.autowonder.memory.MemoryScopeResolver;
 import com.aliyun.autowonder.skill.SkillDO;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.squad.SquadAttributionService;
+import com.aliyun.autowonder.squad.SquadMemberDao;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,7 @@ public class AgentService {
     private final SkillDao capabilityDao;
     private MemoryScopeResolver memoryScopeResolver;
     private SquadAttributionService squadAttributionService;
+    private SquadMemberDao squadMemberDao;
 
     @Autowired(required = false)
     public void setMemoryScopeResolver(MemoryScopeResolver memoryScopeResolver) {
@@ -62,6 +64,11 @@ public class AgentService {
     @Autowired(required = false)
     public void setSquadAttributionService(SquadAttributionService squadAttributionService) {
         this.squadAttributionService = squadAttributionService;
+    }
+
+    @Autowired(required = false)
+    public void setSquadMemberDao(SquadMemberDao squadMemberDao) {
+        this.squadMemberDao = squadMemberDao;
     }
 
     public AgentService(AgentDao agentDao, AgentVersionDao versionDao,
@@ -441,6 +448,11 @@ public class AgentService {
         if (rows == 0) {
             throw new BizException(ErrorCode.AGENT_VERSION_CONFLICT);
         }
+        // A deleted Agent must not stay behind as a squad member: a stale membership makes
+        // squad copy pre-checks fail with an unresolvable dependency (agent#<id>).
+        if (squadMemberDao != null) {
+            squadMemberDao.deleteByAgent(agentId, tenantId);
+        }
     }
 
     public List<AgentVersionSummaryVO> listVersions(long agentId, long tenantId) {
@@ -452,6 +464,7 @@ public class AgentService {
             sv.setVersionNo(v.getVersionNo());
             sv.setStatus(v.getStatus());
             sv.setRoleName(v.getRoleName());
+            sv.setRoleCode(v.getRoleCode());
             sv.setGmtCreate(v.getGmtCreate());
             result.add(sv);
         }
@@ -523,7 +536,7 @@ public class AgentService {
 
     private void updateRepoPermOrThrow(AgentRepoPermDO permission) {
         if (repoPermDao.update(permission) != 1) {
-            throw new BizException(ErrorCode.CONFLICT, "仓库权限已被修改，请刷新后重试");
+            throw BizException.keyed(ErrorCode.CONFLICT, "agent.repository_permission_conflict", null, "仓库权限已被修改，请刷新后重试");
         }
     }
 
@@ -743,6 +756,41 @@ public class AgentService {
         return scope == null || scope.isBlank() ? "DIRECT" : scope + "_IMPORT";
     }
 
+    /** Only resume an unchanged online clone with additive built-in skill bindings. */
+    @Transactional
+    public String validateChiefSetupDraft(long agentId, long tenantId, java.util.Set<Long> builtinSkillIds) {
+        AgentDO agent = lockAgentInTenant(agentId, tenantId);
+        if (agent.getEditingVersionId() == null) return null;
+        AgentVersionDO draft = versionDao.findById(agent.getEditingVersionId());
+        AgentVersionDO online = versionDao.findById(agent.getOnlineVersionId());
+        boolean safe = isPlatform(agent) && isVersionForAgent(draft, agent, tenantId)
+                && isVersionForAgent(online, agent, tenantId)
+                && ("DRAFT".equals(draft.getStatus()) || "PENDING_REVIEW".equals(draft.getStatus()))
+                && java.util.Objects.equals(draft.getRoleName(), online.getRoleName())
+                && java.util.Objects.equals(draft.getRoleCode(), online.getRoleCode())
+                && java.util.Objects.equals(draft.getBusinessBackground(), online.getBusinessBackground())
+                && java.util.Objects.equals(draft.getResponsibilities(), online.getResponsibilities())
+                && java.util.Objects.equals(draft.getSdlcId(), online.getSdlcId())
+                && java.util.Objects.equals(draft.getIdentityJson(), online.getIdentityJson());
+        if (safe) {
+            var sourceSkills = skillDao.listByVersion(online.getId()).stream().map(AgentSkillDO::getSkillId).collect(java.util.stream.Collectors.toSet());
+            var targetSkills = skillDao.listByVersion(draft.getId()).stream().map(AgentSkillDO::getSkillId).collect(java.util.stream.Collectors.toSet());
+            safe = targetSkills.containsAll(sourceSkills)
+                    && targetSkills.stream().allMatch(id -> sourceSkills.contains(id) || builtinSkillIds.contains(id))
+                    && repoPermDao.listByVersion(online.getId()).stream().map(p -> java.util.Arrays.asList(p.getRepoId(), p.getPermLevel(), p.getAllowedBranchPatterns())).toList()
+                        .equals(repoPermDao.listByVersion(draft.getId()).stream().map(p -> java.util.Arrays.asList(p.getRepoId(), p.getPermLevel(), p.getAllowedBranchPatterns())).toList())
+                    && memoryRefDao.listByVersion(online.getId()).stream().map(p -> java.util.Arrays.asList(p.getMemoryId(), p.getSource())).toList()
+                        .equals(memoryRefDao.listByVersion(draft.getId()).stream().map(p -> java.util.Arrays.asList(p.getMemoryId(), p.getSource())).toList());
+            if (safe && environmentVariableRefDao != null) {
+                safe = environmentVariableRefDao.listByVersion(tenantId, online.getId()).stream().map(AgentEnvironmentVariableRefDO::getEnvironmentVariableId).collect(java.util.stream.Collectors.toSet())
+                        .equals(environmentVariableRefDao.listByVersion(tenantId, draft.getId()).stream().map(AgentEnvironmentVariableRefDO::getEnvironmentVariableId).collect(java.util.stream.Collectors.toSet()));
+            }
+        }
+        if (!safe) throw BizException.keyed(ErrorCode.CONFLICT, "chief.setup.pending_draft", null,
+                "Chief of Staff draft contains custom changes; review it before completing setup");
+        return draft.getStatus();
+    }
+
     private AgentVersionDO ensureDraftForEdit(long agentId, long tenantId, long userId) {
         AgentDO agent = lockAgentInTenant(agentId, tenantId);
         return ensureDraft(agent, tenantId, userId);
@@ -939,6 +987,7 @@ public class AgentService {
             for (AgentSkillDO s : skillRows) {
                 AgentVersionVO.SkillItem item = new AgentVersionVO.SkillItem();
                 item.setSkillId(s.getSkillId());
+                item.setSkillName(capabilityName(s.getSkillId(), v.getTenantId()));
                 skills.add(item);
             }
         }
@@ -961,6 +1010,18 @@ public class AgentService {
             vo.setEnvironmentVariables(environmentVariables == null ? List.of() : environmentVariables);
         }
         return vo;
+    }
+
+    /** 能力名称只用于展示：能力已删除、跨租户或依赖缺失时返回 null，由调用方回退为 id。 */
+    private String capabilityName(Long skillId, Long tenantId) {
+        if (capabilityDao == null) {
+            return null;
+        }
+        SkillDO capability = capabilityDao.findById(skillId);
+        if (capability == null || capability.getTenantId() == null || !capability.getTenantId().equals(tenantId)) {
+            return null;
+        }
+        return capability.getName();
     }
 
     AgentVO toVO(AgentDO a) {

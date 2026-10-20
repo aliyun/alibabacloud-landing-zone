@@ -1,5 +1,6 @@
 package com.aliyun.autowonder.artifact;
 
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -54,13 +55,13 @@ public class WorkitemCliUploadController {
             if (workitem == null || workitem.getTenantId() == null) {
                 throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
             }
-            tokenService.requireWriteMembership(workitem.getTenantId(), userId);
+            tokenService.requireWriteMembership(workitem.getTenantId(), userId, WorkspaceDomain.ARTIFACT);
             return ResponseEntity.ok(Result.ok(
                     requirementDocumentService.uploadCli(workitemId, files,
                             workitem.getTenantId(), userId)));
         } catch (BizException ex) {
             return ResponseEntity.status(statusFor(ex.getCode()))
-                    .body(Result.fail(ex.getCode(), ex.getMessage()));
+                    .body(Result.fail(ex));
         } catch (IOException ex) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Result.fail(ErrorCode.PARAM_INVALID));

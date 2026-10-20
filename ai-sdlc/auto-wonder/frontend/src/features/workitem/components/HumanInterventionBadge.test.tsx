@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect } from 'vitest';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import {
   HumanInterventionBadge,
   HumanInterventionAlert,
@@ -7,6 +8,18 @@ import {
   isHumanInterventionRequired,
 } from './HumanInterventionBadge';
 import { stripAssigneeIdSuffix } from '../nameDisplay';
+
+afterEach(async () => { cleanup(); await act(async () => { await i18n.changeLanguage('zh-CN'); }); });
+
+it('keeps human guidance and raw names readable across languages without decorative image names', async () => {
+  const item = { statusCategory: 'PENDING_DECISION', assigneeType: 'HUMAN' as const, assigneeRef: 1, assigneeName: '<raw 用户>' };
+  render(<><HumanInterventionBadge item={item} /><HumanInterventionAlert item={item} /></>);
+  expect(screen.queryAllByRole('img')).toHaveLength(0);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getAllByText(/<raw 用户>/)).toHaveLength(1);
+  expect(screen.getByText('Human action')).toBeInTheDocument();
+  expect(screen.queryAllByRole('img')).toHaveLength(0);
+});
 
 describe('getHumanInterventionName', () => {
   it('marks external pending decisions as unclaimed without naming a local owner', () => {
@@ -36,11 +49,14 @@ describe('getHumanInterventionName', () => {
     })).toBe('用户 10000');
   });
 
-  it('returns null for agent assignees', () => {
-    expect(getHumanInterventionName({
+  it('shows a pending human answer while preserving the agent assignee', async () => {
+    const item = {
       statusCategory: 'PENDING_DECISION',
-      assigneeType: 'AGENT', assigneeRef: 40013, assigneeName: 'Coder-01', assigneeDisplayName: 'Coder-01',
-    })).toBeNull();
+      assigneeType: 'AGENT' as const, assigneeRef: 40013, assigneeName: 'Coder-01', assigneeDisplayName: 'Coder-01',
+    };
+    expect(getHumanInterventionName(item)).toBe('待回答');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(getHumanInterventionName(item)).toBe('Awaiting an answer');
   });
 
   it('returns null when no human is explicitly assigned', () => {
@@ -123,12 +139,12 @@ describe('stripAssigneeIdSuffix', () => {
 });
 
 describe('HumanInterventionBadge', () => {
-  it('renders the warning tag with the assignee name for a pending-decision workitem', () => {
+  it('renders the warning tag without the assignee name for a pending-decision workitem', () => {
     render(<HumanInterventionBadge item={{
       statusCategory: 'PENDING_DECISION',
       assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何',
     }} />);
-    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+    expect(screen.getByText('需要人工')).toBeInTheDocument();
   });
 
   it('renders the tag without the employee id when the display name carries one', () => {
@@ -136,16 +152,17 @@ describe('HumanInterventionBadge', () => {
       statusCategory: 'PENDING_DECISION',
       assigneeType: 'HUMAN', assigneeRef: 10000, assigneeName: 'caihe', assigneeDisplayName: '蔡何(10000)',
     }} />);
-    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+    expect(screen.getByText('需要人工')).toBeInTheDocument();
     expect(screen.queryByText(/需人工（蔡何\(10000\)）/)).not.toBeInTheDocument();
   });
 
-  it('renders nothing for agent assignees', () => {
-    const { container } = render(<HumanInterventionBadge item={{
+  it('shows pending input without pretending the agent is a human assignee', () => {
+    render(<HumanInterventionBadge item={{
       statusCategory: 'PENDING_DECISION',
       assigneeType: 'AGENT', assigneeRef: 40013, assigneeName: 'Coder-01',
     }} />);
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByText('需要人工')).toBeInTheDocument();
+    expect(screen.queryByText('Coder-01')).not.toBeInTheDocument();
   });
 
   it('renders nothing when assigneeRef is null', () => {
@@ -175,7 +192,7 @@ describe('HumanInterventionAlert', () => {
     const item = { statusCategory: 'PENDING_DECISION', assigneeType: 'EXTERNAL' as const,
       assigneeRef: 0, assigneeName: null };
     render(<><HumanInterventionBadge item={item} /><HumanInterventionAlert item={item} /></>);
-    expect(screen.getByText('需人工（待认领）')).toBeInTheDocument();
+    expect(screen.getByText('需要人工')).toBeInTheDocument();
     expect(screen.getByText('需人工介入：待认领')).toBeInTheDocument();
     expect(screen.getByText('当前工单尚未指派本地负责人，请指派真人接手，或指派数字员工继续交付。')).toBeInTheDocument();
   });
@@ -197,12 +214,12 @@ describe('HumanInterventionAlert', () => {
     expect(screen.queryByText(/蔡何\(10000\)/)).not.toBeInTheDocument();
   });
 
-  it('renders nothing for agent assignees', () => {
-    const { container } = render(<HumanInterventionAlert item={{
+  it('guides the user to answer the running agent instead of reassigning it', () => {
+    render(<HumanInterventionAlert item={{
       statusCategory: 'PENDING_DECISION',
       assigneeType: 'AGENT', assigneeRef: 40013, assigneeName: 'Coder-01',
     }} />);
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByText(/数字员工正在等待人工回答/)).toBeInTheDocument();
   });
 
   it('renders nothing when assigneeRef is null', () => {

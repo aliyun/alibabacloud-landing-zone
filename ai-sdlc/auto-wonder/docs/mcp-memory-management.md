@@ -1,5 +1,7 @@
 # MCP Memory Management
 
+> Personal token users: see [个人 MCP 记忆管理](personal-mcp-memory.md) for the current memory-page-aligned contract. The legacy lifecycle examples below do not describe personal MCP memory operations.
+
 AutoWonder MCP exposes the server memory store directly to agents. An agent can write, retrieve, correct, and retire memories through MCP tool calls while it is thinking or executing, instead of writing a `learning_delta/memory_delta.json` file and relying on artifact upload.
 
 The legacy learning-delta path is untouched and keeps running in parallel; the two write paths are distinguished by the memory `source` field (`MCP` vs `LEARNING_DELTA`).
@@ -16,7 +18,7 @@ The memory tools are part of the existing built-in `autowonder` MCP server, so n
 | Credential | How memories are attributed | Visibility and mutation limits |
 |---|---|---|
 | Dispatch token (`awdispatch_…`, issued per dispatch) | Server derives `agentId`, `workitemId`, and `dispatchId` from the credential. Memories are always `AGENT`-scoped and owned by that agent. | Can read all memories in its workspace, including other agents. With workspace write access, can review, update, deprecate, or delete them. Creation still forces its own `AGENT` ownership; cannot create `SQUAD` / `ORG` memories. |
-| Long-lived token (`awmcp_…`, issued by a user) | Behaves like the `/api/memories` web path: `source=MANUAL`, `status=PENDING`, creator is the token owner. | `scope` is required and may be `AGENT`, `SQUAD`, or `ORG`. Not restricted to a single agent. |
+| Long-lived token (`awmcp_…`, issued by a user) | Uses the current memory page topic/index services; audited as `USER`. | Same live workspace membership and store WRITE permissions as the page. See [personal memory contract](personal-mcp-memory.md). |
 
 Provenance is never taken from tool arguments. When calling `create_memory`, a dispatch caller that passes `ownerRef` has it ignored in every scope, so an agent cannot attribute a memory to a different agent, squad, or organization. Changing scope at adoption is a separate review decision through `autowonder.review_memory` or `POST /api/memories/{id}/review`. Both require workspace write access and record the review. A dispatch credential calling `create_memory` with `scope=SQUAD` or `scope=ORG` is rejected with `27003` rather than silently downgraded, so the agent gets actionable feedback.
 

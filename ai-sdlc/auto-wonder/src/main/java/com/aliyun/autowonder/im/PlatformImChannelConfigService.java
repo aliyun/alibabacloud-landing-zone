@@ -72,7 +72,7 @@ public class PlatformImChannelConfigService {
 
     public void requireSelected(String provider) {
         if (!selectedProvider().equals(ImProviderType.normalize(provider))) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "请使用平台当前选择的 IM 渠道");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.channel_selected_required", new Object[0], "请使用平台当前选择的 IM 渠道");
         }
     }
 
@@ -81,7 +81,7 @@ public class PlatformImChannelConfigService {
         provider = ImProviderType.normalize(provider);
         try {
             if (request == null) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "请求不能为空");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.request_required", new Object[0], "请求不能为空");
             }
             String appKey = normalizeLength(request.getAppKey(), 128, "appKey");
             String secret = normalizeLength(request.getAppSecret(), 1024, "appSecret");
@@ -89,7 +89,7 @@ public class PlatformImChannelConfigService {
             String baseUrl = normalizeHttpsUrl(request.getBaseUrl());
             String credentialRef = secret == null ? null : secretCrypto.encrypt(secret);
             if (credentialRef != null && credentialRef.length() > 1024) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "加密凭据引用过长");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.credential_reference_too_long", new Object[0], "加密凭据引用过长");
             }
 
             PlatformImChannelConfigDO next = new PlatformImChannelConfigDO();
@@ -211,7 +211,7 @@ public class PlatformImChannelConfigService {
     private static String normalizeLength(String value, int maxLength, String field) {
         String normalized = trimToNull(value);
         if (normalized != null && normalized.length() > maxLength) {
-            throw new BizException(ErrorCode.PARAM_INVALID, field + " 长度不能超过 " + maxLength);
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.field_too_long", new Object[]{field, maxLength}, field + " 长度不能超过 " + maxLength);
         }
         return normalized;
     }
@@ -236,7 +236,7 @@ public class PlatformImChannelConfigService {
             }
             return normalized;
         } catch (Exception e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "baseUrl 必须是绝对 HTTPS URL");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.base_url_https_required", new Object[0], "baseUrl 必须是绝对 HTTPS URL");
         }
     }
 

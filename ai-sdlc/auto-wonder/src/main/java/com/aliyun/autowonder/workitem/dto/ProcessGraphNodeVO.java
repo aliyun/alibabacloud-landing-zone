@@ -12,6 +12,8 @@ public class ProcessGraphNodeVO {
     private Long dispatchId;
     private Long agentId;
     private String agentName;
+    /** HUMAN only when neither nickname nor username exists. */
+    private String agentNameFallback;
     private Long stepId;
     private String stepName;
     private String status;

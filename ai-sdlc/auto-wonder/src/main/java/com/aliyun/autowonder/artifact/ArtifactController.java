@@ -2,6 +2,7 @@ package com.aliyun.autowonder.artifact;
 
 import com.aliyun.autowonder.artifact.dto.ArtifactVO;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
@@ -18,7 +19,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看工作项文档")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看工作项文档", actionKey = "access.action.view_work_item_documents")
 public class ArtifactController {
 
     private final ArtifactService artifactService;
@@ -41,14 +42,14 @@ public class ArtifactController {
     }
 
     @PostMapping("/workitems/{id}/requirement-documents")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上传需求文档")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上传需求文档", actionKey = "access.action.upload_requirement_documents")
     public Result<List<ArtifactVO>> uploadRequirementDocuments(@PathVariable("id") Long id,
                                                                @RequestParam("files") MultipartFile[] files) throws Exception {
         return Result.ok(requirementDocumentService.uploadWeb(id, files, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/workitems/{id}/requirement-documents/{artifactId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除需求文档")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除需求文档", actionKey = "access.action.delete_requirement_documents")
     public Result<Boolean> deleteRequirementDocument(@PathVariable("id") Long id,
                                                      @PathVariable("artifactId") Long artifactId) {
         requirementDocumentService.delete(id, artifactId, currentWorkspaceId(), currentUserId());
@@ -77,7 +78,8 @@ public class ArtifactController {
             return ResponseEntity.status(statusFor(ex.getCode()))
                     .contentType(MediaType.TEXT_PLAIN)
                     .header("X-Content-Type-Options", "nosniff")
-                    .body(ex.getMessage().getBytes(StandardCharsets.UTF_8));
+                    .body(SystemMessages.render(ex.getMessageKey(), ex.getMessageArgs(), ex.getMessage())
+                            .getBytes(StandardCharsets.UTF_8));
         }
     }
 

@@ -113,4 +113,35 @@ class DaemonMemoryControllerTest {
         assertEquals(202, response.getStatusCode().value());
         verify(memories).validateRecall(principal, 11L, "feedback.md");
     }
+    @Test void daemonSuccessPreservesTheEntireBaselineJsonIncludingExistingNullFields() throws Exception {
+        var document = new MemoryDocumentDO(); document.setPath("raw.md");
+        document.setContentMd("<b>原始内容</b>"); document.setVersion(7);
+        var request = MemoryMutationRequest.create("raw.md", "<b>原始内容</b>", "key");
+        when(memories.mutateForAgent(principal, 11L, request)).thenReturn(document);
+        var response = controller.mutate(99L, 11L, "Bearer awdispatch_token", request);
+        assertEquals(200, response.getStatusCode().value()); assertSame(document, response.getBody());
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        var expected = json.readTree("{\"id\":null,\"tenantId\":null,\"storeId\":null,\"path\":\"raw.md\",\"contentMd\":\"<b>原始内容</b>\",\"contentSha256\":null,\"byteSize\":null,\"modifiedAt\":null,\"deletedAt\":null,\"creatorType\":null,\"creatorRef\":null,\"sourceDispatchId\":null,\"sourceSessionId\":null,\"creatorId\":null,\"modifierId\":null,\"version\":7,\"gmtCreate\":null,\"gmtModified\":null,\"title\":null,\"memoryType\":null,\"description\":null,\"body\":null}");
+        assertEquals(expected, json.valueToTree(response.getBody()));
+    }
+
+    @Test void sharedKeyedValidationStillProducesRawDaemon400AndFixedRetryTokens() {
+        var request = MemoryMutationRequest.create("../raw.md", "body", "key");
+        IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> MemoryPathValidator.requireSafe(request.path()));
+        when(memories.mutateForAgent(principal, 11L, request)).thenThrow(error);
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var response = controller.mutate(99L, 11L, "Bearer awdispatch_token", request);
+            assertEquals(400, response.getStatusCode().value());
+            assertEquals(Map.of("error", "unsafe memory path: empty or traversal segments are not allowed"), response.getBody());
+            doThrow(new MemoryDocumentService.MemoryConflictException("<b>raw conflict</b>")).when(memories).mutateForAgent(principal, 11L, request);
+            response = controller.mutate(99L, 11L, "Bearer awdispatch_token", request);
+            assertEquals(409, response.getStatusCode().value()); assertEquals(Map.of("error", "MEMORY_VERSION_CONFLICT"), response.getBody());
+            doThrow(new MemoryStoreApplicationService.MemoryMaintenanceLeaseConflictException()).when(memories).mutateForAgent(principal, 11L, request);
+            response = controller.mutate(99L, 11L, "Bearer awdispatch_token", request);
+            assertEquals(423, response.getStatusCode().value()); assertEquals(Map.of("error", "MEMORY_MAINTENANCE_LOCKED"), response.getBody());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

@@ -28,6 +28,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class PlatformConversationService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private PlatformConversationImageService imageService;
 
     private static final String CHANNEL = PlatformConversationChannel.CHANNEL;
     private static final String STATUS_ACTIVE = "ACTIVE";
@@ -94,7 +96,7 @@ public class PlatformConversationService {
         conv.setTitle(normalizedTitle);
         conv.setTitleSource(normalizedTitle == null ? null : TITLE_SOURCE_USER);
         conv.setAgentVersionId(agent.getOnlineVersionId());
-        conv.setExecutorId(executorRouter.select(tenantId, agent.getId(),
+        conv.setExecutorId(executorRouter.selectPlatform(tenantId, agent.getId(),
                 agent.getOnlineVersionId(), null));
         conv.setStatus(STATUS_ACTIVE);
         conv.setLastTurnAt(new Date());
@@ -123,8 +125,10 @@ public class PlatformConversationService {
                         .id(t.getId())
                         .direction(t.getDirection())
                         .content(t.getContent())
+                        .images(imageService==null ? List.of() : imageService.images(t.getSourceContext(),tenantId,conv.getOwnerUserId(),conversationId))
                         .status(t.getStatus())
                         .error(t.getError())
+                        .display(ConversationTurnDisplay.project(conv.getChannel(), t.getSourceContext()))
                         .gmtCreate(t.getGmtCreate())
                         .build())
                 .collect(Collectors.toList());
@@ -137,7 +141,7 @@ public class PlatformConversationService {
         applyProcessing(vo, tenantId, conversationId);
         if (accessService.isOwner(conv, userId)) {
             // 分享名单本身就是隐私，只给 Owner 看。
-            vo.setShares(shares(tenantId, conversationId));
+            vo.setShares(List.of());
         }
         return vo;
     }
@@ -226,15 +230,8 @@ public class PlatformConversationService {
     @Transactional
     public List<PlatformShareVO> share(Long tenantId, Long conversationId, Long ownerUserId,
             Long granteeUserId) {
-        AgentConversationDO conv = accessService.requireBodyWrite(tenantId, conversationId, ownerUserId);
-        if (granteeUserId == null || granteeUserId <= 0
-                || Objects.equals(granteeUserId, conv.getOwnerUserId())) {
-            throw new BizException(ErrorCode.PLATFORM_CONVERSATION_SHARE_INVALID);
-        }
-        // 必须是同工作空间的在职成员，否则等于把会话内容泄露给工作空间外的人。
-        workspaceService.activeAccessLevel(tenantId, granteeUserId);
-        shareDao.upsertReadShare(tenantId, conversationId, granteeUserId, conv.getOwnerUserId());
-        return shares(tenantId, conversationId);
+        accessService.requireBodyWrite(tenantId, conversationId, ownerUserId);
+        throw new BizException(ErrorCode.NO_PERMISSION);
     }
 
     @Transactional
@@ -242,17 +239,23 @@ public class PlatformConversationService {
             Long granteeUserId) {
         AgentConversationDO conv = accessService.requireBodyWrite(tenantId, conversationId, ownerUserId);
         shareDao.revoke(tenantId, conversationId, granteeUserId, conv.getOwnerUserId(), new Date());
-        return shares(tenantId, conversationId);
+        return List.of();
     }
 
     public List<PlatformShareVO> listShares(Long tenantId, Long conversationId, Long userId) {
         accessService.requireBodyWrite(tenantId, conversationId, userId);
-        return shares(tenantId, conversationId);
+        return List.of();
     }
 
     @Transactional
     public void submitTurn(Long tenantId, Long conversationId, Long userId, String content,
             String clientMessageId) {
+        submitTurn(tenantId, conversationId, userId, content, clientMessageId, null);
+    }
+
+    @Transactional
+    public void submitTurn(Long tenantId, Long conversationId, Long userId, String content,
+            String clientMessageId, String sourceContext) {
         AgentConversationDO conv = accessService.requireBodyWrite(tenantId, conversationId, userId);
         if (conv.getArchivedAt() != null) {
             throw new BizException(ErrorCode.PLATFORM_CONVERSATION_ARCHIVED);
@@ -261,10 +264,10 @@ public class PlatformConversationService {
             throw new BizException(ErrorCode.PLATFORM_CONVERSATION_DELETED);
         }
         if (content == null || content.isBlank()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "消息内容不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "conversation.message_required", null, "消息内容不能为空");
         }
         AgentDO agent = requireUsableChief(tenantId, conv.getAgentId());
-        Long executorId = executorRouter.select(tenantId, conv.getAgentId(),
+        Long executorId = executorRouter.selectPlatform(tenantId, conv.getAgentId(),
                 agent.getOnlineVersionId(), conv.getExecutorId());
         if (executorId == null) {
             throw new IllegalStateException("RUNTIME_OFFLINE");
@@ -278,8 +281,13 @@ public class PlatformConversationService {
         String externalMsgId = EXTERNAL_MESSAGE_PREFIX + conversationId + ":"
                 + (clientMessageId == null || clientMessageId.isBlank()
                         ? UUID.randomUUID().toString() : clientMessageId);
-        conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
-                conv.getChannelConversationId(), content, externalMsgId);
+        if (sourceContext == null) {
+            conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
+                    conv.getChannelConversationId(), content, externalMsgId);
+        } else {
+            conversationService.submitTurn(tenantId, conv.getAgentId(), CHANNEL,
+                    conv.getChannelConversationId(), content, externalMsgId, sourceContext);
+        }
         applyAutoTitle(tenantId, conv, content);
     }
 
@@ -288,7 +296,7 @@ public class PlatformConversationService {
         AgentConversationDO conv = accessService.requireBodyWrite(tenantId, conversationId, userId);
         AgentConversationTurnDO turn = turnDao.findByConversationTurn(tenantId, conversationId, turnId);
         if (turn == null) {
-            throw new BizException(ErrorCode.NOT_FOUND, "轮次不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "conversation.turn_not_found", null, "轮次不存在");
         }
         conversationService.requestTurnCancel(tenantId, conv.getId(), turnId);
     }
@@ -320,7 +328,7 @@ public class PlatformConversationService {
 
     private AgentDO requireUsableChief(Long tenantId, Long agentId) {
         AgentDO agent = agentId == null ? null : agentDao.findById(agentId);
-        if (agent == null || !Objects.equals(agent.getTenantId(), tenantId)
+        if (agent == null || !"PLATFORM".equals(agent.getKind()) || !Objects.equals(agent.getTenantId(), tenantId)
                 || Objects.equals(agent.getIsDeleted(), 1)) {
             throw new BizException(ErrorCode.AGENT_NOT_FOUND);
         }

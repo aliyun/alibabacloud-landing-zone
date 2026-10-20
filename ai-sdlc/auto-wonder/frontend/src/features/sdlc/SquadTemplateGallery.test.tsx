@@ -1,7 +1,8 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { i18n } from '@/shared/i18n';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -17,12 +18,7 @@ function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/sdlcs']}>
-        <SquadTemplateGallery />
-        <Routes>
-          <Route path="*" element={<LocationDisplay />} />
-        </Routes>
-      </MemoryRouter>
+      <RouterProvider router={createMemoryRouter([{ path: '*', element: <><SquadTemplateGallery /><LocationDisplay /></> }], { initialEntries: ['/sdlcs'] })} />
     </QueryClientProvider>,
   );
 }
@@ -224,4 +220,67 @@ describe('SquadTemplateGallery', () => {
 
     expect(await screen.findByText('创建失败，请稍后重试')).toBeInTheDocument();
   });
+});
+
+it('refreshes known role chips and independent member subtitles without translating custom template content', async () => {
+  const { i18n } = await import('@/shared/i18n');
+  const { act } = await import('@testing-library/react');
+  const ok = (data: unknown) => HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
+  const agents = [
+    { ...mockDetail.agents[0], roleCode: 'QA', roleName: '测试工程师', name: '<em>员工</em>', responsibilities: '原始职责' },
+    { ...mockDetail.agents[0], roleCode: 'constructor', roleName: '<b>用户角色</b>' },
+  ];
+  server.use(http.get('/api/squad-templates', () => ok(mockTemplates)), http.get('/api/squad-templates/1', () => ok({ ...mockDetail, agents })));
+  const { container } = renderPage();
+  await userEvent.click(await screen.findByText('Solo Dev'));
+  await screen.findByText('<em>员工</em>');
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  try {
+    expect(screen.getAllByText('QA engineer')).toHaveLength(2);
+    expect(screen.getAllByText('<b>用户角色</b>')).toHaveLength(2);
+    expect(screen.getByText('原始职责')).toBeInTheDocument();
+    expect(screen.getAllByText(/SDLC steps · Standard/)).toHaveLength(2);
+    expect(container.querySelector('em')).toBeNull();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(screen.getAllByText('测试工程师')).toHaveLength(2);
+  } finally { await act(async () => { await i18n.changeLanguage('zh-CN'); }); }
+});
+
+it.each([
+  [HttpResponse.error, '网络异常，创建失败，请稍后重试', 'Network error. Creation failed; try again later.'],
+  [() => HttpResponse.json({ success: false, code: '15000', message: '', traceId: null }), '创建失败，请稍后重试', 'Creation failed; try again later.'],
+  [() => HttpResponse.json({ success: false, code: '15000', message: '<b>原始原因</b>', traceId: 'trace-1' }), '<b>原始原因</b>（TraceId: trace-1）', '<b>原始原因</b> (TraceId: trace-1)'],
+])('refreshes the retained failed apply dialog in the current locale', async (respond, zh, en) => {
+  const { i18n } = await import('@/shared/i18n');
+  const { act } = await import('@testing-library/react');
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  server.use(http.get('/api/squad-templates', () => HttpResponse.json({ success: true, data: mockTemplates })), http.post('/api/squad-templates/1/apply', () => respond()));
+  renderPage();
+  await userEvent.click(await screen.findByText('基于此模版创建'));
+  await userEvent.click(screen.getByText('确定创建'));
+  await screen.findByText(zh);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(await screen.findByText(en)).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Create a squad from “Solo Dev”' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Confirm creation' })).toBeInTheDocument();
+  expect(screen.getByText('1-person squad')).toBeInTheDocument();
+  expect(screen.getByTestId('location')).toHaveTextContent('/sdlcs');
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+});
+
+afterEach(async () => { await i18n.changeLanguage('zh-CN'); });
+
+it.each([[0, '0-person squad'], [1, '1-person squad'], [3, '3-person squad']])('refreshes card and independent preview counts with %s members', async (squadSize, count) => {
+  const { act } = await import('@testing-library/react');
+  server.use(http.get('/api/squad-templates', () => HttpResponse.json({ success: true, data: [{ ...mockTemplates[0], squadSize }] })), http.get('/api/squad-templates/1', () => HttpResponse.json({ success: true, data: { ...mockDetail, squadSize } })));
+  renderPage();
+  await userEvent.click(await screen.findByText('Solo Dev'));
+  await screen.findByText('协作流程');
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getAllByText(count)).toHaveLength(2);
+  expect(screen.getByText('Collaboration workflow')).toBeInTheDocument();
+  expect(screen.getByText('Member details')).toBeInTheDocument();
+  expect(screen.getByText('WORK')).toBeInTheDocument();
+  expect(screen.getByText('Write code')).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(2);
 });

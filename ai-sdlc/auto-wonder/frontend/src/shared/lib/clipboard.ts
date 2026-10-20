@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import copy from 'copy-to-clipboard';
 
 export async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -11,7 +12,7 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     }
   }
   try {
-    return copy(text, { message: '请手动复制以下内容：#{key}' });
+    return copy(text, { message: i18n.t('shared:clipboard.manual') });
   } catch {
     return false;
   }

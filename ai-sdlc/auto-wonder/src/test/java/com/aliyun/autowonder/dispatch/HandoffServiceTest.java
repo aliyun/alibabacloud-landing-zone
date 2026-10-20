@@ -74,6 +74,26 @@ class HandoffServiceTest {
     }
 
     @Test
+    void canceledRecoverySourceCannotHandoffAfterWaitingForWorkitemLock() {
+        WorkitemDao workitemDao = mock(WorkitemDao.class);
+        DispatchService dispatchService = mock(DispatchService.class);
+        DispatchDao dispatchDao = mock(DispatchDao.class);
+        var source = workitemDispatch(300L, 100L, 500L);
+        source.setStatus(DispatchStatus.CANCELED);
+        when(dispatchDao.findById(300L)).thenReturn(source);
+        when(workitemDao.findByIdForUpdate(500L, 100L)).thenReturn(workitem(500L, 100L, 3));
+        when(workitemDao.updateAssignee(500L, 100L, "HUMAN", 7L, 3, 0L)).thenReturn(1);
+        HandoffService service = new HandoffService(workitemDao, dispatchService,
+                mock(AgentRoleResolver.class), mock(AgentSdlcResolver.class), workspaceDao,
+                workspaceMemberDao, userDao, mock(WorkitemEventDao.class), dispatchDao,
+                mock(AgentDao.class), null);
+        var result = service.handle(100L, 500L, 300L, "7", "HUMAN");
+        assertEquals(HandoffResult.Status.REJECTED, result.status());
+        assertEquals("SOURCE_SUPERSEDED", result.reasonCode());
+        verify(workitemDao, never()).updateAssignee(anyLong(), anyLong(), anyString(), any(), anyInt(), anyLong());
+    }
+
+    @Test
     void staleHandoffIsRejectedAfterCommentReworkBecomesAuthoritative() {
         WorkitemDao workitemDao = mock(WorkitemDao.class);
         DispatchService dispatchService = mock(DispatchService.class);
@@ -581,6 +601,9 @@ class HandoffServiceTest {
         assertEquals(0L, published.getValue().actorRef());
         assertEquals("系统", published.getValue().actorDisplayName());
         assertEquals(77L, published.getValue().recipientUserId());
+        assertEquals("SYSTEM_NAME_FALLBACK", new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(published.getValue()).path("actorNameKind").asText());
+        assertEquals("System assigned work item “需要兜底” to raw recipient.",
+                com.aliyun.autowonder.notification.RecipientNotificationTestSupport.watchedAssignment(published.getValue(), "\"en-US\"").getContent());
     }
 
     @Test

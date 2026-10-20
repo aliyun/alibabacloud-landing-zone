@@ -1,3 +1,6 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Typography, message } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
@@ -28,6 +31,7 @@ function toFormValues(profile: MyProfile): ProfileFormValues {
 }
 
 export function BasicProfilePanel() {
+  const { t } = useTranslation('profile');
   const [form] = Form.useForm<ProfileFormValues>();
   const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);
@@ -38,6 +42,7 @@ export function BasicProfilePanel() {
     queryFn: getMyProfile,
     retry: false,
   });
+  useLocalizedValidation(form, !profileQuery.isError);
   const profile = profileQuery.data;
 
   useEffect(() => {
@@ -66,7 +71,7 @@ export function BasicProfilePanel() {
       });
     },
     onSuccess: async (data) => {
-      message.success('基本信息已保存');
+      message.success(i18n.t('profile:basic.saved'));
       form.setFieldsValue(toFormValues(data));
       // The authoritative server row refreshes the cache; the auth-store copy keeps its
       // tokens/permissions untouched so the top-bar nickname updates without re-login.
@@ -82,7 +87,7 @@ export function BasicProfilePanel() {
       await queryClient.invalidateQueries({ queryKey: USER_PROFILE_QUERY_KEY });
     },
     onError: (error) => {
-      message.error(getApiMessage(error, '基本信息保存失败'));
+      message.error(getApiMessage(error, i18n.t('profile:basic.saveFailed')));
     },
   });
 
@@ -90,26 +95,24 @@ export function BasicProfilePanel() {
 
   if (profileQuery.isError) {
     return (
-      <Card title="基本信息" styles={{ body: { padding: 18 } }}>
+      <Card title={t('basic.title')} styles={{ body: { padding: 18 } }}>
         <Alert
           type="error"
           showIcon
-          message="基本信息加载失败"
-          description={getApiMessage(profileQuery.error, '请稍后重试')}
+          message={t('basic.loadFailed')}
+          description={getApiMessage(profileQuery.error, t('retryLater'))}
         />
-        <Button
+        <Button aria-label={t('retry')}
           style={{ marginTop: 16 }}
           onClick={() => profileQuery.refetch()}
           loading={profileQuery.isFetching}
-        >
-          重试
-        </Button>
+        >{t('retry')}</Button>
       </Card>
     );
   }
 
   return (
-    <Card title="基本信息" styles={{ body: { padding: 18 } }}>
+    <Card title={t('basic.title')} styles={{ body: { padding: 18 } }}>
       <Form
         form={form}
         layout="vertical"
@@ -117,62 +120,56 @@ export function BasicProfilePanel() {
         onFinish={() => saveMutation.mutate()}
       >
         <div style={{ marginBottom: 16 }}>
-          <label htmlFor="basic-profile-username" style={{ display: 'inline-block', marginBottom: 8 }}>
-            用户名
-          </label>
+          <label htmlFor="basic-profile-username" style={{ display: 'inline-block', marginBottom: 8 }}>{t('basic.username')}</label>
           <Input id="basic-profile-username" value={profile?.username ?? ''} disabled readOnly />
-          <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-            用户名是登录标识，不可修改。
-          </Text>
+          <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>{t('basic.usernameHint')}</Text>
         </div>
 
         <Form.Item
-          label="昵称"
+          label={t('basic.nickname')}
           name="nickname"
           rules={[
-            { required: true, whitespace: true, message: '请输入昵称' },
-            { max: 64, message: '昵称最多 64 个字符' },
+            { required: true, whitespace: true, message: t('basic.nicknameRequired') },
+            { max: 64, message: t('basic.nicknameMax') },
           ]}
         >
-          <Input placeholder="请输入昵称" maxLength={64} autoComplete="off" />
+          <Input placeholder={t('basic.nicknameRequired')} maxLength={64} autoComplete="off" />
         </Form.Item>
 
         <Form.Item
-          label="邮箱"
+          label={t('basic.email')}
           name="email"
-          extra="可用于成员与账号展示；清空保存即删除邮箱。"
+          extra={t('basic.emailHint')}
           rules={[
-            { type: 'email', message: '邮箱格式不正确' },
-            { max: 128, message: '邮箱最多 128 个字符' },
+            { type: 'email', message: t('basic.emailInvalid') },
+            { max: 128, message: t('basic.emailMax') },
           ]}
         >
-          <Input placeholder="例如 alice@example.com" maxLength={128} autoComplete="off" />
+          <Input placeholder={t('basic.emailPlaceholder')} maxLength={128} autoComplete="off" />
         </Form.Item>
 
         <Form.Item
-          label="联系方式"
+          label={t('basic.phone')}
           name="phone"
-          extra="支持国际区号、空格与连字符；清空保存即删除联系方式。"
+          extra={t('basic.phoneHint')}
           rules={[
-            { max: 32, message: '联系方式最多 32 个字符' },
-            { pattern: PHONE_PATTERN, message: '联系方式仅支持数字、空格、连字符，可带国际区号前缀 +' },
+            { max: 32, message: t('basic.phoneMax') },
+            { pattern: PHONE_PATTERN, message: t('basic.phoneInvalid') },
           ]}
         >
-          <Input placeholder="例如 +86 138-0000-0000" maxLength={32} autoComplete="off" />
+          <Input placeholder={t('basic.phonePlaceholder')} maxLength={32} autoComplete="off" />
         </Form.Item>
 
         <Form.Item style={{ marginBottom: 0 }}>
-          <Button
+          <Button aria-label={t('basic.save')}
             type="primary"
             htmlType="submit"
-            icon={<SaveOutlined />}
+            icon={<SaveOutlined aria-hidden="true" />}
             loading={saveMutation.isPending}
             disabled={!isDirty}
-          >
-            保存修改
-          </Button>
+          >{t('basic.save')}</Button>
           {profileQuery.isSuccess && !isDirty ? (
-            <Text type="secondary" style={{ marginLeft: 12 }}>未修改</Text>
+            <Text type="secondary" style={{ marginLeft: 12 }}>{t('basic.unchanged')}</Text>
           ) : null}
         </Form.Item>
       </Form>

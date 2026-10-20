@@ -12,6 +12,9 @@ public class AgentDeliveryProgressVO {
     private Long agentId;
     private String agentName;
     private String status;
+    private Long currentDispatchId;
+    private String executionStatus;
+    private String waitingReason;
     private Long durationMs;
     /** Latest replace-in-place activity; not an append-only timeline. */
     private String currentActivity;

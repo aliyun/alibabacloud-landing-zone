@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/run")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进运行")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进运行", actionKey = "access.action.view_evolution_runs")
 public class EvolutionRunController {
 
     private final EvolutionAssetRouterLiteService routerService;
@@ -20,7 +20,7 @@ public class EvolutionRunController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "执行演进运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "执行演进运行", actionKey = "access.action.execute_an_evolution_run")
     public Result<EvolutionRunResult> run(@RequestBody EvolutionRunCommand req) {
         return Result.ok(routerService.run(req, currentWorkspaceId(), currentUserId()));
     }

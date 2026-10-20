@@ -1,6 +1,7 @@
+import { i18n } from '@/shared/i18n';
 import type { ExecutorVO } from './api';
 
-export const UNKNOWN_AGENT_LABEL = '未知 Agent';
+export const unknownAgentLabel = () => i18n.t('executor:unknownAgent');
 export const UNKNOWN_AGENT_GROUP_KEY = 'unknown-agent';
 
 export interface ExecutorGroupStatusSummary {
@@ -40,7 +41,7 @@ export function buildExecutorAgentGroups(
       group = {
         key,
         agentId: named ? executor.agentId : null,
-        label: named ? label : UNKNOWN_AGENT_LABEL,
+        label: named ? label : unknownAgentLabel(),
         executors: [],
         statusSummary: { online: 0, busy: 0, offline: 0 },
       };
@@ -48,7 +49,7 @@ export function buildExecutorAgentGroups(
     }
 
     group.executors.push(executor);
-    const field = STATUS_SUMMARY_FIELD[executor.status];
+    const field = Object.prototype.hasOwnProperty.call(STATUS_SUMMARY_FIELD, executor.status) ? STATUS_SUMMARY_FIELD[executor.status] : undefined;
     if (field) {
       group.statusSummary[field] += 1;
     }

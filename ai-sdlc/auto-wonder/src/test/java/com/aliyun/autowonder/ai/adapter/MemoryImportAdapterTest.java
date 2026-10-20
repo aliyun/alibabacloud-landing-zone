@@ -1,10 +1,16 @@
 package com.aliyun.autowonder.ai.adapter;
 
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.memory.MemoryDO;
 import com.aliyun.autowonder.memory.MemoryDao;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -18,12 +24,38 @@ import static org.mockito.Mockito.*;
 class MemoryImportAdapterTest {
 
     private MemoryDao memoryDao;
+    private WorkspaceMemberDao workspaceMemberDao;
     private MemoryImportAdapter adapter;
 
     @BeforeEach
     void setUp() {
         memoryDao = mock(MemoryDao.class);
-        adapter = new MemoryImportAdapter(memoryDao);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        adapter = new MemoryImportAdapter(memoryDao, new WorkspaceDomainGuard(workspaceMemberDao));
+        AutoWonderContext.get().setUserId(7L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        AutoWonderContext.destroy();
+    }
+
+    @Test
+    void persistIsBlockedBeforeAnyWriteWhenOperatorForbidsMemoryDomain() {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"MEMORY\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+        AiSessionDO session = new AiSessionDO();
+        session.setTenantId(100L);
+        String json = JSON.toJSONString(Map.of("items", List.of(Map.of("title", "t", "contentMd", "c"))));
+
+        assertThrows(WorkspaceDomainReadOnlyException.class,
+                () -> adapter.persistConfirmedResult(session, json));
+
+        verify(memoryDao, never()).insert(any(MemoryDO.class));
     }
 
     @Test

@@ -52,6 +52,7 @@ describe('ShareWorkitemButton', () => {
   it('renders a light-gray share entry with the share icon', () => {
     const { container } = renderButton(branding({ domain: null }));
 
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
     const button = screen.getByTestId('workitem-share-button');
     expect(button).toHaveTextContent('分享');
     expect(button).toHaveClass('ant-btn-text');

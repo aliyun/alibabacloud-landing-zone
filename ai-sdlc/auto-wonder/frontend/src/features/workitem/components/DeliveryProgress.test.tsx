@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { ConfigProvider } from 'antd';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import * as workitemApi from '../api';
@@ -7,6 +8,7 @@ import { DeliveryProgress, formatDuration, convergeStepsForTerminalStatus } from
 import type { Artifact, DeliveryProgress as DeliveryProgressModel, DeliveryStep } from '@/shared/types/workitem';
 
 beforeEach(() => {
+  server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/events', ({ params }) => HttpResponse.json({ success: true, code: '0', data: { dispatchId: Number(params.dispatchId), events: [], changed: true } })));
   server.use(http.get('/api/dispatches/:dispatchId/runtime-trace/activities', ({ params }) => HttpResponse.json({
     success: true,
     code: '0',
@@ -42,12 +44,12 @@ describe('formatDuration', () => {
 });
 
 describe('DeliveryProgress', () => {
-  it('expands only handoff and evidence, folding other categories and history', () => {
+  it('expands only handoff and evidence, folding other categories and history', async () => {
     const progress: DeliveryProgressModel = {
       steps: [],
       agents: [{ agentId: 41, agentName: 'RD', status: 'failed', durationMs: null, steps: [{
-        stepId: 101, name: '开发', status: 'failed', executorName: 'RD', error: null, subSteps: null, durationMs: null,
-        attempts: [301, 302].map(dispatchId => ({ dispatchId, executorName: 'RD', status: 'FAILED', startedAt: null, durationMs: null })),
+        stepId: 101, name: '开发', status: 'failed', agentName: 'RD', executorName: null, error: null, subSteps: null, durationMs: null,
+        attempts: [301, 302].map(dispatchId => ({ dispatchId, agentName: 'RD', executorName: null, status: 'FAILED', startedAt: null, durationMs: null })),
       }] }],
     };
     const artifacts: Artifact[] = [
@@ -67,7 +69,7 @@ describe('DeliveryProgress', () => {
     expect(screen.queryByText('old.md')).not.toBeInTheDocument();
     expect(screen.queryByText('snapshot.md')).not.toBeInTheDocument();
     expect(screen.queryByText(/优先阅读/)).not.toBeInTheDocument();
-    expect(screen.getByText('交接说明（1）')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('交接说明（1）')).toBeVisible());
     expect(screen.getByText('验证证据（1）')).toBeVisible();
     expect(screen.getByText('summary.md')).toBeVisible();
     expect(screen.getByText('triage-report.md')).toBeVisible();
@@ -76,8 +78,10 @@ describe('DeliveryProgress', () => {
     fireEvent.click(screen.getByText('执行记录（3）'));
     expect(screen.getByText('runtime-source-revision.json')).toBeVisible();
     expect(screen.getByText('metadata.json')).toBeVisible();
-    expect(screen.getByRole('button', { name: `预览产物 ${artifacts[2].name}` })).toBeVisible();
-    fireEvent.click(screen.getByText('第 1 次执行 · FAILED · 1 个产物'));
+    const preview = screen.getByLabelText(`预览产物 ${artifacts[2].name}`);
+    expect(preview.tagName).toBe('BUTTON');
+    expect(preview).toBeVisible();
+    fireEvent.click(screen.getByText('第 1 次执行 · 失败 · 1 个产物'));
     expect(screen.queryByText('old.md')).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByText('交付结果（1）')[1]);
     expect(screen.getByText('old.md')).toBeVisible();
@@ -113,7 +117,7 @@ describe('DeliveryProgress', () => {
           status: 'active',
           planStatus: 'RUN',
           sourceAttempt: 2,
-          executorName: '开发 Dev',
+          agentName: '开发 Dev', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 30_000,
@@ -143,7 +147,7 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'done',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 30_000,
@@ -160,7 +164,7 @@ describe('DeliveryProgress', () => {
         stepId: 10,
         name: '获取上下文与评论',
         status: 'done',
-        executorName: 'AW代码评审工程师',
+        agentName: 'AW代码评审工程师', executorName: null,
         error: null,
         subSteps: [
           { name: '读取工单上下文', status: 'done' },
@@ -169,7 +173,7 @@ describe('DeliveryProgress', () => {
         durationMs: 240_000,
         attempts: [{
           dispatchId: 30,
-          executorName: 'AW代码评审工程师',
+          agentName: 'AW代码评审工程师', executorName: null,
           status: 'SUCCEEDED',
           error: null,
           startedAt: null,
@@ -184,9 +188,39 @@ describe('DeliveryProgress', () => {
     fireEvent.click(within(stepCard).getByText('执行记录'));
 
     expect(within(stepCard).getByText(/执行者: AW代码评审工程师/)).toBeInTheDocument();
-    expect(within(stepCard).getByText(/第1次: AW代码评审工程师 · SUCCEEDED · 4分/)).toBeInTheDocument();
+    expect(within(stepCard).getByText(/第1次: AW代码评审工程师 · 成功 · 4分/)).toBeInTheDocument();
     expect(within(stepCard).getByText('读取工单上下文')).toBeInTheDocument();
     expect(within(stepCard).getByText('发布评审评论')).toBeInTheDocument();
+  });
+
+  it('shows the real executor alongside the agent on steps and attempts', () => {
+    const steps: DeliveryStep[] = [
+      {
+        stepId: 11,
+        name: '编码实现',
+        status: 'active',
+        agentName: 'AW全栈开发', executorName: 'runner-daily-01',
+        error: null,
+        subSteps: null,
+        durationMs: null,
+        attempts: [{
+          dispatchId: 40,
+          agentName: 'AW全栈开发', executorName: 'runner-daily-01',
+          status: 'RUNNING',
+          error: null,
+          startedAt: null,
+          durationMs: null,
+        }],
+      },
+    ];
+
+    render(<DeliveryProgress steps={steps} />);
+
+    const stepCard = screen.getByTestId('delivery-step-11');
+
+    expect(within(stepCard).getByText(/执行者: AW全栈开发/)).toBeInTheDocument();
+    expect(within(stepCard).getByText('执行器: runner-daily-01')).toBeInTheDocument();
+    expect(within(stepCard).getByText(/第1次: AW全栈开发 @ runner-daily-01 · 执行中/)).toBeInTheDocument();
   });
 
   it('loads and renders safe activity messages for a default-expanded failed attempt', async () => {
@@ -225,13 +259,13 @@ describe('DeliveryProgress', () => {
       stepId: 11,
       name: '执行代码评审',
       status: 'failed',
-      executorName: '评审 Agent',
+      agentName: '评审 Agent', executorName: null,
       error: 'Runtime 执行失败',
       subSteps: null,
       durationMs: 10_000,
       attempts: [{
         dispatchId: 301,
-        executorName: '评审 Agent',
+        agentName: '评审 Agent', executorName: null,
         status: 'FAILED',
         error: 'Runtime 执行失败',
         startedAt: null,
@@ -265,13 +299,13 @@ describe('DeliveryProgress', () => {
         stepId: 13,
         name: '正在执行的代码评审',
         status: 'active',
-        executorName: '评审 Agent',
+        agentName: '评审 Agent', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 10_000,
         attempts: [{
           dispatchId: 303,
-          executorName: '评审 Agent',
+          agentName: '评审 Agent', executorName: null,
           status: 'RUNNING',
           error: null,
           startedAt: null,
@@ -316,13 +350,13 @@ describe('DeliveryProgress', () => {
       stepId: 12,
       name: '已完成的代码评审',
       status: 'done',
-      executorName: '评审 Agent',
+      agentName: '评审 Agent', executorName: null,
       error: null,
       subSteps: null,
       durationMs: 10_000,
       attempts: [{
         dispatchId: 302,
-        executorName: '评审 Agent',
+        agentName: '评审 Agent', executorName: null,
         status: 'SUCCEEDED',
         error: null,
         startedAt: null,
@@ -342,13 +376,13 @@ describe('DeliveryProgress', () => {
       stepId: 14,
       name: '等待执行的代码评审',
       status: 'pending',
-      executorName: '评审 Agent',
+      agentName: '评审 Agent', executorName: null,
       error: null,
       subSteps: null,
       durationMs: null,
       attempts: [{
         dispatchId: 304,
-        executorName: '评审 Agent',
+        agentName: '评审 Agent', executorName: null,
         status: 'RUNNING',
         error: null,
         startedAt: null,
@@ -388,13 +422,13 @@ describe('DeliveryProgress', () => {
       stepId: 16,
       name: '等待暂停的代码评审',
       status: 'pending',
-      executorName: '评审 Agent',
+      agentName: '评审 Agent', executorName: null,
       error: null,
       subSteps: null,
       durationMs: null,
       attempts: [{
         dispatchId: 306,
-        executorName: '评审 Agent',
+        agentName: '评审 Agent', executorName: null,
         status: 'PAUSED',
         error: null,
         startedAt: null,
@@ -437,13 +471,13 @@ describe('DeliveryProgress', () => {
       stepId: 17,
       name: '完成后失败的代码评审',
       status: 'done',
-      executorName: '评审 Agent',
+      agentName: '评审 Agent', executorName: null,
       error: null,
       subSteps: null,
       durationMs: null,
       attempts: [{
         dispatchId: 307,
-        executorName: '评审 Agent',
+        agentName: '评审 Agent', executorName: null,
         status: 'FAILED',
         error: '执行失败',
         startedAt: null,
@@ -484,24 +518,24 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '需求分析与评论',
               status: 'done',
-              executorName: 'AW全栈开发',
+              agentName: 'AW全栈开发', executorName: null,
               error: null,
               subSteps: [{ name: '发布分析评论', status: 'done' }],
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 301, executorName: 'AW全栈开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+                { dispatchId: 301, agentName: 'AW全栈开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
               ],
             },
             {
               stepId: 102,
               name: '编码实现',
               status: 'done',
-              executorName: 'AW全栈开发',
+              agentName: 'AW全栈开发', executorName: null,
               error: null,
               subSteps: [{ name: '提交修复代码', status: 'done' }],
               durationMs: 480_000,
               attempts: [
-                { dispatchId: 302, executorName: 'AW全栈开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 480_000 },
+                { dispatchId: 302, agentName: 'AW全栈开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 480_000 },
               ],
             },
           ],
@@ -510,12 +544,13 @@ describe('DeliveryProgress', () => {
     };
 
     render(<DeliveryProgress progress={progress} />);
+    fireEvent.click(screen.getByRole('button', { name: '查看执行详情' }));
 
     expect(screen.getByTestId('delivery-step-101')).toBeInTheDocument();
     const secondStep = screen.getByTestId('delivery-step-102');
     fireEvent.click(within(secondStep).getByText('执行记录'));
 
-    expect(within(secondStep).getByText(/第1次: AW全栈开发 · SUCCEEDED · 8分/)).toBeInTheDocument();
+    expect(within(secondStep).getByText(/第1次: AW全栈开发 · 成功 · 8分/)).toBeInTheDocument();
     expect(within(secondStep).getByText('提交修复代码')).toBeInTheDocument();
   });
 
@@ -525,13 +560,13 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'active',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 30_000,
         attempts: [
-          { dispatchId: 30, executorName: 'worker', status: 'FAILED', error: null, startedAt: null, durationMs: 161_000 },
-          { dispatchId: 31, executorName: 'worker', status: 'PENDING', error: null, startedAt: null, durationMs: 30_000 },
+          { dispatchId: 30, agentName: 'worker', executorName: null, status: 'FAILED', error: null, startedAt: null, durationMs: 161_000 },
+          { dispatchId: 31, agentName: 'worker', executorName: null, status: 'PENDING', error: null, startedAt: null, durationMs: 30_000 },
         ],
       },
     ];
@@ -547,13 +582,13 @@ describe('DeliveryProgress', () => {
       stepId: 20,
       name: '编码实现',
       status: 'failed',
-      executorName: 'worker',
+      agentName: 'worker', executorName: null,
       error: 'provider unavailable',
       subSteps: null,
       durationMs: 30_000,
       attempts: [{
         dispatchId: 30,
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         status: 'FAILED',
         error: 'provider unavailable',
         startedAt: null,
@@ -573,13 +608,13 @@ describe('DeliveryProgress', () => {
       stepId: 20,
       name: '编码实现',
       status: 'active',
-      executorName: 'worker',
+      agentName: 'worker', executorName: null,
       error: null,
       subSteps: null,
       durationMs: 30_000,
       attempts: [{
         dispatchId: 30,
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         status: 'RUNNING',
         error: null,
         startedAt: null,
@@ -599,13 +634,13 @@ describe('DeliveryProgress', () => {
       stepId: 20,
       name: '编码实现',
       status: 'active',
-      executorName: 'worker',
+      agentName: 'worker', executorName: null,
       error: null,
       subSteps: null,
       durationMs: 30_000,
       attempts: [{
         dispatchId: 30,
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         status: 'PAUSING',
         error: null,
         startedAt: null,
@@ -636,13 +671,13 @@ describe('DeliveryProgress', () => {
           stepId: 20,
           name: '编码实现',
           status: 'active',
-          executorName: 'worker',
+          agentName: 'worker', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 30_000,
           attempts: [{
             dispatchId: 30,
-            executorName: 'worker',
+            agentName: 'worker', executorName: null,
             status: 'PAUSING',
             error: null,
             startedAt: null,
@@ -665,13 +700,13 @@ describe('DeliveryProgress', () => {
       stepId: 20,
       name: '编码实现',
       status: 'failed',
-      executorName: 'worker',
+      agentName: 'worker', executorName: null,
       error: null,
       subSteps: null,
       durationMs: 30_000,
       attempts: [{
         dispatchId: 30,
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         status: 'PAUSE_FAILED',
         error: null,
         startedAt: null,
@@ -692,13 +727,13 @@ describe('DeliveryProgress', () => {
         stepId: 10,
         name: '需求分析',
         status: 'done',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 30_000,
         attempts: [{
           dispatchId: 30,
-          executorName: 'worker',
+          agentName: 'worker', executorName: null,
           status: 'RUNNING',
           error: null,
           startedAt: null,
@@ -710,7 +745,7 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'active',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 10_000,
@@ -744,13 +779,13 @@ describe('DeliveryProgress', () => {
         stepId: 10,
         name: '需求分析',
         status: 'done',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 30_000,
         attempts: [{
           dispatchId: 30,
-          executorName: 'worker',
+          agentName: 'worker', executorName: null,
           status: 'RUNNING',
           error: '迁移前的执行错误',
           startedAt: null,
@@ -762,7 +797,7 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'active',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 10_000,
@@ -781,7 +816,7 @@ describe('DeliveryProgress', () => {
 
     fireEvent.click(within(sourceStep).getByText('执行记录'));
 
-    expect(within(sourceStep).getByText(/第1次: worker · RUNNING.*迁移前的执行错误/)).toBeInTheDocument();
+    expect(within(sourceStep).getByText(/第1次: worker · 执行中.*迁移前的执行错误/)).toBeInTheDocument();
     expect(getRuntimeActivities).toHaveBeenCalledTimes(1);
     expect(requests).toBe(1);
     expect(within(sourceStep).queryByTestId('dispatch-activities-30')).not.toBeInTheDocument();
@@ -795,13 +830,13 @@ describe('DeliveryProgress', () => {
         stepId: 10,
         name: '需求分析',
         status: 'done',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 30_000,
         attempts: [{
           dispatchId: 30,
-          executorName: 'worker',
+          agentName: 'worker', executorName: null,
           status: 'RUNNING',
           resumeMode: 'SIDE_INTERACTION',
           error: null,
@@ -814,7 +849,7 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'active',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 10_000,
@@ -836,13 +871,13 @@ describe('DeliveryProgress', () => {
         stepId: 10,
         name: '需求分析',
         status: 'done',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 30_000,
         attempts: [{
           dispatchId: 30,
-          executorName: 'worker',
+          agentName: 'worker', executorName: null,
           status: 'FAILED',
           error: 'provider unavailable',
           startedAt: null,
@@ -854,7 +889,7 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'failed',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: 'provider unavailable',
         subSteps: null,
         durationMs: 10_000,
@@ -876,7 +911,7 @@ describe('DeliveryProgress', () => {
         stepId: 10,
         name: '需求分析',
         status: 'failed',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: 'previous failure',
         subSteps: null,
         durationMs: 30_000,
@@ -886,13 +921,13 @@ describe('DeliveryProgress', () => {
         stepId: 20,
         name: '编码实现',
         status: 'paused',
-        executorName: 'worker',
+        agentName: 'worker', executorName: null,
         error: null,
         subSteps: null,
         durationMs: 10_000,
         attempts: [{
           dispatchId: 40,
-          executorName: 'worker',
+          agentName: 'worker', executorName: null,
           status: 'PAUSED',
           error: null,
           startedAt: null,
@@ -923,12 +958,12 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '需求分析与建分支',
               status: 'done',
-              executorName: 'Agent Dev',
+              agentName: 'Agent Dev', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 301, executorName: 'Agent Dev', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+                { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
               ],
             },
           ],
@@ -943,14 +978,14 @@ describe('DeliveryProgress', () => {
               stepId: 201,
               name: 'Code Review',
               status: 'failed',
-              executorName: 'Agent CR',
+              agentName: 'Agent CR', executorName: null,
               error: 'execute dispatch: load skills: skill name is required.',
               subSteps: null,
               durationMs: 40_000,
               attempts: [
                 {
                   dispatchId: 302,
-                  executorName: 'Agent CR',
+                  agentName: 'Agent CR', executorName: null,
                   status: 'FAILED',
                   error: 'execute dispatch: load skills: skill name is required.',
                   startedAt: null,
@@ -962,12 +997,12 @@ describe('DeliveryProgress', () => {
               stepId: 202,
               name: '修复意见',
               status: 'active',
-              executorName: 'Agent CR',
+              agentName: 'Agent CR', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 300_000,
               attempts: [
-                { dispatchId: 303, executorName: 'Agent CR', status: 'RUNNING', error: null, startedAt: null, durationMs: 300_000 },
+                { dispatchId: 303, agentName: 'Agent CR', executorName: null, status: 'RUNNING', error: null, startedAt: null, durationMs: 300_000 },
               ],
             },
           ],
@@ -984,14 +1019,48 @@ describe('DeliveryProgress', () => {
     expect(screen.getAllByText(/Agent Dev/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Agent CR/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/执行中/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Code Review/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看执行详情' }));
+    expect(screen.getAllByText(/Code Review/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/skill name is required/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByTestId('agent-progress-name')[0]);
-    expect(screen.getAllByText(/2 artifacts/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByText(/产物/)[0]);
+    fireEvent.click(within(screen.getByTestId('delivery-workbench')).getByText('Agent Dev', { selector: '[data-testid="agent-progress-name"]' }));
+    fireEvent.click(within(screen.getByTestId('delivery-workbench')).getByRole('tab', { name: /2 artifacts/ }));
     fireEvent.click(screen.getByText(/其他文件（/));
     expect(screen.getByText('dev-summary.md')).toBeInTheDocument();
     expect(screen.getByText('screenshot.png')).toBeInTheDocument();
+  });
+
+  it('shows each agent output when historical executions no longer match current steps', async () => {
+    const progress: DeliveryProgressModel = {
+      steps: [],
+      executions: [16943, 16950, 16953].map((dispatchId, index) => ({
+        dispatchId, agentId: index + 1, agentName: `Worker ${index + 1}`, executorName: null, status: 'SUCCEEDED',
+        error: null, startedAt: null, durationMs: 1000,
+      })),
+      agents: [1, 2, 3].map(agentId => ({
+        agentId, agentName: `Worker ${agentId}`, status: 'finished', durationMs: 1000, steps: [],
+      })),
+    };
+    const artifacts: Artifact[] = [16943, 16950, 16953].map((dispatchId, index) => ({
+      id: index + 1, workitemId: 100, dispatchId, name: `evidence/report-${dispatchId}.md`,
+      type: 'EVIDENCE', size: 100, gmtCreate: '',
+    }));
+    render(<ConfigProvider theme={{ token: { motion: false } }}><DeliveryProgress progress={progress} artifacts={artifacts} /></ConfigProvider>);
+    fireEvent.click(screen.getByRole('button', { name: '查看执行详情' }));
+    const workbenchElement = screen.getByTestId('delivery-workbench');
+    // rc-dialog prepares its portal asynchronously even when theme motion is disabled.
+    await waitFor(() => expect(workbenchElement).toBeVisible());
+    const workbench = within(workbenchElement);
+    for (const dispatchId of [16953, 16950, 16943]) {
+      const index = [16943, 16950, 16953].indexOf(dispatchId);
+      fireEvent.click(workbench.getByText(`Worker ${index + 1}`, { selector: '[data-testid="agent-progress-name"]' }));
+      fireEvent.click(workbench.getByRole('tab', { name: /1 artifacts/ }));
+      // The explicit aria-label identifies this control without a document-wide
+      // accessible-role/style walk that can delay the modal's animation frames.
+      const button = workbench.getByLabelText(`预览产物 evidence/report-${dispatchId}.md`);
+      expect(button.tagName).toBe('BUTTON');
+      await waitFor(() => expect(button).toBeVisible());
+      expect(screen.queryByLabelText(`预览产物 evidence/report-${dispatchId === 16953 ? 16950 : 16953}.md`)).not.toBeInTheDocument();
+    }
   });
 
   it('opens artifact previews from agent artifact lists', async () => {
@@ -1010,12 +1079,12 @@ describe('DeliveryProgress', () => {
           stepId: 101,
           name: '编码实现',
           status: 'done',
-          executorName: 'Agent Dev',
+          agentName: 'Agent Dev', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 120_000,
           attempts: [
-            { dispatchId: 301, executorName: 'Agent Dev', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+            { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
           ],
         }],
       }],
@@ -1055,12 +1124,12 @@ describe('DeliveryProgress', () => {
           stepId: 101,
           name: '编码实现',
           status: 'done',
-          executorName: 'Agent Dev',
+          agentName: 'Agent Dev', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 120_000,
           attempts: [
-            { dispatchId: 301, executorName: 'Agent Dev', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+            { dispatchId: 301, agentName: 'Agent Dev', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
           ],
         }],
       }],
@@ -1104,24 +1173,24 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '开发首轮',
               status: 'done',
-              executorName: '开发',
+              agentName: '开发', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 301, executorName: '开发', status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:00:00Z', durationMs: 120_000 },
+                { dispatchId: 301, agentName: '开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:00:00Z', durationMs: 120_000 },
               ],
             },
             {
               stepId: 102,
               name: '开发返工',
               status: 'done',
-              executorName: '开发',
+              agentName: '开发', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 303, executorName: '开发', status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:20:00Z', durationMs: 120_000 },
+                { dispatchId: 303, agentName: '开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:20:00Z', durationMs: 120_000 },
               ],
             },
           ],
@@ -1136,24 +1205,24 @@ describe('DeliveryProgress', () => {
               stepId: 201,
               name: '评审驳回',
               status: 'failed',
-              executorName: '评审',
+              agentName: '评审', executorName: null,
               error: '需要返工',
               subSteps: null,
               durationMs: 60_000,
               attempts: [
-                { dispatchId: 302, executorName: '评审', status: 'FAILED', error: '需要返工', startedAt: '2026-07-01T10:10:00Z', durationMs: 60_000 },
+                { dispatchId: 302, agentName: '评审', executorName: null, status: 'FAILED', error: '需要返工', startedAt: '2026-07-01T10:10:00Z', durationMs: 60_000 },
               ],
             },
             {
               stepId: 202,
               name: '评审通过',
               status: 'done',
-              executorName: '评审',
+              agentName: '评审', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 304, executorName: '评审', status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:30:00Z', durationMs: 120_000 },
+                { dispatchId: 304, agentName: '评审', executorName: null, status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:30:00Z', durationMs: 120_000 },
               ],
             },
           ],
@@ -1168,12 +1237,12 @@ describe('DeliveryProgress', () => {
               stepId: 301,
               name: '测试验证',
               status: 'active',
-              executorName: '测试',
+              agentName: '测试', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 60_000,
               attempts: [
-                { dispatchId: 305, executorName: '测试', status: 'RUNNING', error: null, startedAt: '2026-07-01T10:40:00Z', durationMs: 60_000 },
+                { dispatchId: 305, agentName: '测试', executorName: null, status: 'RUNNING', error: null, startedAt: '2026-07-01T10:40:00Z', durationMs: 60_000 },
               ],
             },
           ],
@@ -1266,13 +1335,13 @@ describe('DeliveryProgress', () => {
           stepId: 101,
           name: 'Implementation',
           status: 'active',
-          executorName: '开发',
+          agentName: '开发', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 10000,
           attempts: [
-            { dispatchId: 301, executorName: '开发', status: 'PAUSED', error: null, startedAt: '2026-07-30T10:00:00Z', durationMs: 6000 },
-            { dispatchId: 302, executorName: '开发', status: 'RUNNING', error: null, startedAt: '2026-07-30T10:01:00Z', durationMs: 4000 },
+            { dispatchId: 301, agentName: '开发', executorName: null, status: 'PAUSED', error: null, startedAt: '2026-07-30T10:00:00Z', durationMs: 6000 },
+            { dispatchId: 302, agentName: '开发', executorName: null, status: 'RUNNING', error: null, startedAt: '2026-07-30T10:01:00Z', durationMs: 4000 },
           ],
         }],
       }],
@@ -1294,15 +1363,15 @@ describe('DeliveryProgress', () => {
     await waitFor(() => expect(requestedUrl).toContain('/api/dispatches/302/runtime-trace'));
     expect(within(drawer).getByText(/Dispatch #302/)).toBeInTheDocument();
     expect(within(drawer).getByText(/恢复自 #301/)).toBeInTheDocument();
-    expect(within(drawer).getByText(/Session s1/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/会话 s1/)).toBeInTheDocument();
     expect(within(drawer).getAllByText(/12\.34 credits/).length).toBeGreaterThan(0);
     expect(within(drawer).queryByText(/tokens/)).not.toBeInTheDocument();
     expect(within(drawer).getByText(/Turn t2/)).toBeInTheDocument();
-    expect(within(drawer).getByText(/Runtime & SDLC/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/Runtime 与 SDLC/)).toBeInTheDocument();
     expect(within(drawer).getByText('runtime.recovery_completed')).toBeInTheDocument();
     fireEvent.click(within(drawer).getByText(/Turn t2/));
-    expect(within(drawer).getByText('User Prompt')).toBeInTheDocument();
-    expect(within(drawer).getByText('System Prompt')).toBeInTheDocument();
+    expect(within(drawer).getByText('用户提示词')).toBeInTheDocument();
+    expect(within(drawer).getByText('系统提示词')).toBeInTheDocument();
     expect(within(drawer).getByText(/pnpm test/)).toBeInTheDocument();
     expect(within(drawer).getByText('Run the implementation tests')).toBeInTheDocument();
     expect(within(drawer).getByText('Follow the worker SDLC')).toBeInTheDocument();
@@ -1323,11 +1392,11 @@ describe('DeliveryProgress', () => {
             stepId: 101,
             name: '开发',
             status: 'done',
-            executorName: '开发',
+            agentName: '开发', executorName: null,
             error: null,
             subSteps: null,
             durationMs: 120_000,
-            attempts: [{ dispatchId: 301, executorName: '开发', status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:00:00Z', durationMs: 120_000 }],
+            attempts: [{ dispatchId: 301, agentName: '开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: '2026-07-01T10:00:00Z', durationMs: 120_000 }],
           }],
         },
         {
@@ -1339,11 +1408,11 @@ describe('DeliveryProgress', () => {
             stepId: 201,
             name: '评审',
             status: 'active',
-            executorName: '评审',
+            agentName: '评审', executorName: null,
             error: null,
             subSteps: null,
             durationMs: 60_000,
-            attempts: [{ dispatchId: 302, executorName: '评审', status: 'RUNNING', error: null, startedAt: '2026-07-01T10:10:00Z', durationMs: 60_000 }],
+            attempts: [{ dispatchId: 302, agentName: '评审', executorName: null, status: 'RUNNING', error: null, startedAt: '2026-07-01T10:10:00Z', durationMs: 60_000 }],
           }],
         },
       ],
@@ -1398,24 +1467,24 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '开发首轮',
               status: 'done',
-              executorName: '开发',
+              agentName: '开发', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 301, executorName: '开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+                { dispatchId: 301, agentName: '开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
               ],
             },
             {
               stepId: 102,
               name: '开发返工',
               status: 'done',
-              executorName: '开发',
+              agentName: '开发', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 303, executorName: '开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+                { dispatchId: 303, agentName: '开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
               ],
             },
           ],
@@ -1430,24 +1499,24 @@ describe('DeliveryProgress', () => {
               stepId: 201,
               name: '评审驳回',
               status: 'failed',
-              executorName: '评审',
+              agentName: '评审', executorName: null,
               error: '需要返工',
               subSteps: null,
               durationMs: 60_000,
               attempts: [
-                { dispatchId: 302, executorName: '评审', status: 'FAILED', error: '需要返工', startedAt: null, durationMs: 60_000 },
+                { dispatchId: 302, agentName: '评审', executorName: null, status: 'FAILED', error: '需要返工', startedAt: null, durationMs: 60_000 },
               ],
             },
             {
               stepId: 202,
               name: '评审通过',
               status: 'done',
-              executorName: '评审',
+              agentName: '评审', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 304, executorName: '评审', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+                { dispatchId: 304, agentName: '评审', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
               ],
             },
           ],
@@ -1462,12 +1531,12 @@ describe('DeliveryProgress', () => {
               stepId: 301,
               name: '测试验证',
               status: 'active',
-              executorName: '测试',
+              agentName: '测试', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 60_000,
               attempts: [
-                { dispatchId: 305, executorName: '测试', status: 'RUNNING', error: null, startedAt: null, durationMs: 60_000 },
+                { dispatchId: 305, agentName: '测试', executorName: null, status: 'RUNNING', error: null, startedAt: null, durationMs: 60_000 },
               ],
             },
           ],
@@ -1494,12 +1563,12 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '需求分析',
               status: 'active',
-              executorName: '开发',
+              agentName: '开发', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 30_000,
               attempts: [
-                { dispatchId: 301, executorName: '开发', status: 'RUNNING', error: null, startedAt: '2026-08-03T10:00:00Z', durationMs: 30_000 },
+                { dispatchId: 301, agentName: '开发', executorName: null, status: 'RUNNING', error: null, startedAt: '2026-08-03T10:00:00Z', durationMs: 30_000 },
               ],
             },
           ],
@@ -1521,7 +1590,7 @@ describe('DeliveryProgress', () => {
     expect(within(graph).getByText('开发')).toBeInTheDocument();
   });
 
-  it('opens finished agents by default so completed step history is discoverable', () => {
+  it('opens finished execution history through the shared detail panel', () => {
     const progress: DeliveryProgressModel = {
       steps: [],
       agents: [
@@ -1535,13 +1604,13 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '获取上下文与评论',
               status: 'done',
-              executorName: 'AW代码评审工程师',
+              agentName: 'AW代码评审工程师', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 240_000,
               attempts: [
-                { dispatchId: 301, executorName: 'AW代码评审工程师', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 240_000 },
-                { dispatchId: 302, executorName: 'AW代码评审工程师', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 240_000 },
+                { dispatchId: 301, agentName: 'AW代码评审工程师', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 240_000 },
+                { dispatchId: 302, agentName: 'AW代码评审工程师', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 240_000 },
               ],
             },
           ],
@@ -1550,15 +1619,16 @@ describe('DeliveryProgress', () => {
     };
 
     render(<DeliveryProgress progress={progress} />);
+    fireEvent.click(screen.getByRole('button', { name: '查看执行详情' }));
 
-    const progressCard = screen.getByTestId('delivery-progress-card');
-    expect(within(progressCard).getByText('获取上下文与评论')).toBeInTheDocument();
+    const progressCard = screen.getByTestId('delivery-workbench');
+    expect(within(progressCard).getAllByText('获取上下文与评论').length).toBeGreaterThan(0);
     expect(within(progressCard).getByText('执行记录')).toBeInTheDocument();
 
     fireEvent.click(within(progressCard).getByText('执行记录'));
 
-    expect(within(progressCard).getByText(/第1次: AW代码评审工程师 · SUCCEEDED · 4分/)).toBeInTheDocument();
-    expect(within(progressCard).getByText(/第2次: AW代码评审工程师 · SUCCEEDED · 4分/)).toBeInTheDocument();
+    expect(within(progressCard).getByText(/第1次: AW代码评审工程师 · 成功 · 4分/)).toBeInTheDocument();
+    expect(within(progressCard).getByText(/第2次: AW代码评审工程师 · 成功 · 4分/)).toBeInTheDocument();
   });
 
   it('mounts the live activity panel and defaults the dispatch selector to the latest attempt', async () => {
@@ -1587,13 +1657,13 @@ describe('DeliveryProgress', () => {
           stepId: 101,
           name: '编码实现',
           status: 'done',
-          executorName: 'AW全栈开发',
+          agentName: 'AW全栈开发', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 240_000,
           attempts: [
-            { dispatchId: 301, executorName: 'AW全栈开发', status: 'FAILED', error: 'provider unavailable', startedAt: null, durationMs: 120_000 },
-            { dispatchId: 302, executorName: 'AW全栈开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+            { dispatchId: 301, agentName: 'AW全栈开发', executorName: null, status: 'FAILED', error: 'provider unavailable', startedAt: null, durationMs: 120_000 },
+            { dispatchId: 302, agentName: 'AW全栈开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
           ],
         }],
       }],
@@ -1602,7 +1672,9 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} />);
 
     // NB-8: retry/multi-dispatch history stays reachable and the selector defaults to the latest.
-    const liveRegion = screen.getByTestId('agent-live-activity');
+    fireEvent.click(screen.getByRole('button', { name: '打开终端' }));
+    fireEvent.click(within(screen.getByTestId('delivery-workbench')).getByRole('tab', { name: '近期动作' }));
+    const liveRegion = screen.getByTestId('delivery-workbench');
     expect(within(liveRegion).getByTestId('live-activity-dispatch-select')).toBeInTheDocument();
     expect(within(liveRegion).getByText(/Dispatch 302（最新）/)).toBeInTheDocument();
     // CR-1: a finished agent (realtime disabled) still shows its persisted actions.
@@ -1623,12 +1695,12 @@ describe('DeliveryProgress', () => {
               stepId: 101,
               name: '需求分析与建分支',
               status: 'done',
-              executorName: 'AutoWonder前后端1号开发',
+              agentName: 'AutoWonder前后端1号开发', executorName: null,
               error: null,
               subSteps: null,
               durationMs: 120_000,
               attempts: [
-                { dispatchId: 301, executorName: 'AutoWonder前后端1号开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
+                { dispatchId: 301, agentName: 'AutoWonder前后端1号开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 120_000 },
               ],
             },
           ],
@@ -1648,7 +1720,7 @@ describe('DeliveryProgress', () => {
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
 
     const agentName = screen.getByTestId('agent-progress-name');
-    expect(agentName).toHaveStyle({ whiteSpace: 'nowrap' });
+    expect(agentName).toHaveTextContent('AutoWonder前后端1号开发');
     expect(screen.getAllByText(/6 artifacts/).length).toBeGreaterThan(0);
     expect(screen.queryByText('artifact-1.md')).not.toBeInTheDocument();
 
@@ -1829,6 +1901,7 @@ describe('DeliveryProgress terminal convergence rendering', () => {
       }],
     };
     render(<DeliveryProgress progress={progress} terminalStatus="SUCCEEDED" />);
+    fireEvent.click(screen.getByRole('button', { name: '查看执行详情' }));
     const stepCard = screen.getByTestId('delivery-step-5');
     expect(within(stepCard).getByText('已完成')).toBeInTheDocument();
     expect(screen.queryByText('执行中')).not.toBeInTheDocument();
@@ -1849,13 +1922,13 @@ describe('DeliveryProgress usage display', () => {
           stepId: 101,
           name: '编码实现',
           status: 'done',
-          executorName: 'AW全栈开发',
+          agentName: 'AW全栈开发', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 1_050_000,
           usage: { inputTokens: 800_000, outputTokens: 200_000, credits: 82.61 },
           attempts: [
-            { dispatchId: 301, executorName: 'AW全栈开发', status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 1_050_000 },
+            { dispatchId: 301, agentName: 'AW全栈开发', executorName: null, status: 'SUCCEEDED', error: null, startedAt: null, durationMs: 1_050_000 },
           ],
         }],
       }],
@@ -1866,6 +1939,7 @@ describe('DeliveryProgress usage display', () => {
     ];
 
     render(<DeliveryProgress progress={progress} artifacts={artifacts} />);
+    fireEvent.click(screen.getByRole('button', { name: '查看执行详情' }));
 
     expect(screen.getAllByText('82.61 credits').length).toBe(2);
     expect(screen.queryByText('1M')).not.toBeInTheDocument();
@@ -1889,7 +1963,7 @@ describe('DeliveryProgress usage display', () => {
           stepId: 201,
           name: '编码实现',
           status: 'done',
-          executorName: 'AW全栈开发',
+          agentName: 'AW全栈开发', executorName: null,
           error: null,
           subSteps: null,
           durationMs: 60_000,

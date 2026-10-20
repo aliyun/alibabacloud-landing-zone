@@ -1,10 +1,11 @@
+import { i18n } from '@/shared/i18n';
 import type { EChartsOption } from 'echarts';
 import type { DurationSummary, TrendEntry, Granularity } from '../types';
-import { formatDurationCompact, formatDurationZh } from '@/shared/lib/duration';
+import { formatDurationCompact, formatDuration } from '@/shared/lib/duration';
 
 export type ChartKind = 'distribution' | 'ratio' | 'duration';
 export interface ChartPalette { human: string; agent: string; text: string; muted: string; border: string; panel: string }
-export const SERIES = { human: '人工', agent: 'Agent', total: '总时长' };
+export const SERIES = { human: 'human', agent: 'agent', total: 'total' } as const;
 
 export function humanShare(human: number, agent: number, share?: number | null): number | null {
   return share !== undefined ? share : human + agent > 0 ? human / (human + agent) : null;
@@ -12,11 +13,12 @@ export function humanShare(human: number, agent: number, share?: number | null):
 
 export function participationChartOptions(kind: ChartKind, data: TrendEntry[], average: DurationSummary | null,
   palette: ChartPalette, hidden: string[] = [], granularity: Granularity = 'DAY'): EChartsOption {
+  const labels = { human: i18n.t('insights:series.human'), agent: i18n.t('insights:series.agent'), total: i18n.t('insights:series.total') };
   const colors = { [SERIES.human]: palette.human, [SERIES.agent]: palette.agent, [SERIES.total]: palette.text };
   const base: EChartsOption = {
     animation: false,
     textStyle: { fontFamily: '-apple-system, BlinkMacSystemFont, PingFang SC, sans-serif' },
-    aria: { enabled: true, label: { description: kind === 'distribution' ? '人工与 Agent 负责阶段耗时占比（含等待），可通过数据表查看精确数值。' : `包含 ${data.length} 个统计周期的${kind === 'ratio' ? '人机占比' : '完成时长'}趋势，可通过缩放按钮选择区间，通过数据表查看精确数值。` } },
+    aria: { enabled: true, label: { description: kind === 'distribution' ? i18n.t('insights:chart.distributionAria') : i18n.t('insights:chart.trendAria', { count: data.length, trend: i18n.t(kind === 'ratio' ? 'insights:chart.ratioTrend' : 'insights:chart.durationTrend') }) } },
     backgroundColor: palette.panel,
     tooltip: { trigger: 'axis', confine: true, renderMode: 'richText', backgroundColor: palette.panel,
       borderColor: palette.border, textStyle: { color: palette.text, fontSize: 12 },
@@ -24,20 +26,20 @@ export function participationChartOptions(kind: ChartKind, data: TrendEntry[], a
   };
   if (kind === 'distribution') {
     const share = average ? humanShare(average.humanDurationSeconds, average.agentDurationSeconds, average.humanShare) : null;
-    const values = [{ name: SERIES.human, value: share == null ? 0 : share * 100 },
-      { name: SERIES.agent, value: share == null ? 0 : (1 - share) * 100 }];
+    const values = [{ id: SERIES.human, name: labels.human, value: share == null ? 0 : share * 100 },
+      { id: SERIES.agent, name: labels.agent, value: share == null ? 0 : (1 - share) * 100 }];
     return { ...base,
       tooltip: { ...base.tooltip, trigger: 'item', formatter: (item: unknown) => {
-        const p = item as { name: string; value: number; percent: number };
-        return `${p.name}负责阶段（含等待）\n平均 ${formatDurationZh(p.name === SERIES.human ? average?.humanDurationSeconds ?? 0 : average?.agentDurationSeconds ?? 0)}  ·  ${p.percent}%`;
+        const p = item as { name: string; data: { id: string }; value: number; percent: number };
+        return i18n.t('insights:chart.distributionTooltip', { name: p.name, duration: formatDuration(p.data.id === SERIES.human ? average?.humanDurationSeconds ?? 0 : average?.agentDurationSeconds ?? 0), percent: p.percent });
       } },
-      title: { text: formatDurationCompact(average?.totalDurationSeconds ?? 0), subtext: '平均总时长',
+      title: { text: formatDurationCompact(average?.totalDurationSeconds ?? 0), subtext: i18n.t('insights:chart.averageTotal'),
         left: 'center', top: '40%', textStyle: { fontSize: 24, fontWeight: 600, color: palette.text },
         subtextStyle: { color: palette.muted, fontSize: 12 }, itemGap: 10 },
       series: [{ type: 'pie', radius: ['66%', '85%'], center: ['50%', '50%'],
         stillShowZeroSum: false, label: { show: false }, emphasis: { scaleSize: 5 },
         itemStyle: { borderColor: palette.panel, borderWidth: 3, borderRadius: 5 },
-        data: values.map(v => ({ ...v, itemStyle: { color: colors[v.name] } })) }],
+        data: values.map(v => ({ ...v, itemStyle: { color: colors[v.id] } })) }],
     };
   }
   const ratio = kind === 'ratio';
@@ -72,17 +74,17 @@ export function participationChartOptions(kind: ChartKind, data: TrendEntry[], a
     tooltip: { ...base.tooltip, transitionDuration: 0,
       axisPointer: { type: 'line', animation: false, lineStyle: { color: palette.muted, type: 'dashed' } },
       formatter: (items: unknown) => {
-      const points = items as { dataIndex: number; seriesName: string; value: number | null }[];
+      const points = items as { dataIndex: number; seriesId: string; seriesName: string; value: number | null }[];
       const row = data[points[0]?.dataIndex];
       if (!row) return '';
-      if (row.sampleSize === 0) return `${row.label}\n无完成样本`;
-      return [row.label + (row.sampleSize == null ? '' : ` · ${row.sampleSize} 条完成样本`), '负责阶段耗时（含等待）', ...points.map(p => {
-        const seconds = p.seriesName === SERIES.human ? row.averageHumanSeconds : p.seriesName === SERIES.agent ? row.averageAgentSeconds : row.averageTotalSeconds;
-        return `${p.seriesName}   ${formatDurationZh(seconds)}${ratio ? `  ·  ${p.value == null ? '—' : Number(p.value).toFixed(1) + '%'}` : ''}`;
+      if (row.sampleSize === 0) return i18n.t('insights:chart.emptyPeriod', { label: row.label });
+      return [row.sampleSize == null ? row.label : i18n.t('insights:chart.periodSamples', { label: row.label, count: row.sampleSize }), i18n.t('insights:chart.responsibilityTime'), ...points.map(p => {
+        const seconds = p.seriesId === SERIES.human ? row.averageHumanSeconds : p.seriesId === SERIES.agent ? row.averageAgentSeconds : row.averageTotalSeconds;
+        return i18n.t('insights:chart.seriesTooltip', { name: p.seriesName, duration: formatDuration(seconds), ratio: ratio ? `  ·  ${p.value == null ? '—' : Number(p.value).toFixed(1) + '%'}` : '' });
       })].join('\n');
     } },
     series: definitions.filter(name => !hidden.includes(name)).map(name => ({
-      name, type: ratio ? 'bar' : 'line', ...(ratio ? { stack: 'ratio', barMaxWidth: 36 } : { showSymbol: data.length <= 12, symbol: name === SERIES.agent ? 'diamond' : 'circle', symbolSize: 6, connectNulls: false }),
+      id: name, name: labels[name], type: ratio ? 'bar' : 'line', ...(ratio ? { stack: 'ratio', barMaxWidth: 36 } : { showSymbol: data.length <= 12, symbol: name === SERIES.agent ? 'diamond' : 'circle', symbolSize: 6, connectNulls: false }),
       itemStyle: { color: colors[name] },
       lineStyle: { width: name === SERIES.total ? 2 : 2.5, type: name === SERIES.total ? 'dashed' : 'solid' },
       emphasis: ratio ? { disabled: true } : { focus: 'series' },

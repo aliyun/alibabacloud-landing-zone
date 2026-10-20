@@ -14,7 +14,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/sdlcs")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看SDLC流程")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看SDLC流程", actionKey = "access.action.view_sdlc_workflows")
 public class SdlcController {
 
     private final SdlcService sdlcService;
@@ -24,7 +24,7 @@ public class SdlcController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建SDLC流程")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建SDLC流程", actionKey = "access.action.create_an_sdlc_workflow")
     public Result<SdlcVO> create(@RequestBody CreateSdlcRequest req) {
         return Result.ok(sdlcService.create(req, currentWorkspaceId(), currentUserId()));
     }
@@ -56,26 +56,26 @@ public class SdlcController {
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新SDLC流程")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新SDLC流程", actionKey = "access.action.update_an_sdlc_workflow")
     public Result<SdlcVO> update(@PathVariable("id") Long id, @RequestBody UpdateSdlcRequest req) {
         return Result.ok(sdlcService.update(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除SDLC流程")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除SDLC流程", actionKey = "access.action.delete_an_sdlc_workflow")
     public Result<Void> delete(@PathVariable("id") Long id) {
         sdlcService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/steps")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加SDLC步骤")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加SDLC步骤", actionKey = "access.action.add_an_sdlc_step")
     public Result<StepVO> addStep(@PathVariable("id") Long id, @RequestBody CreateStepRequest req) {
         return Result.ok(sdlcService.addStep(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}/steps/{stepId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新SDLC步骤")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新SDLC步骤", actionKey = "access.action.update_an_sdlc_step")
     public Result<StepVO> updateStep(@PathVariable("id") Long id,
                                      @PathVariable("stepId") Long stepId,
                                      @RequestBody UpdateStepRequest req) {
@@ -83,28 +83,28 @@ public class SdlcController {
     }
 
     @DeleteMapping("/{id}/steps/{stepId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除SDLC步骤")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除SDLC步骤", actionKey = "access.action.delete_an_sdlc_step")
     public Result<Void> deleteStep(@PathVariable("id") Long id, @PathVariable("stepId") Long stepId) {
         sdlcService.deleteStep(id, stepId, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PutMapping("/{id}/steps/reorder")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "重排SDLC步骤")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "重排SDLC步骤", actionKey = "access.action.reorder_sdlc_steps")
     public Result<Void> reorder(@PathVariable("id") Long id, @RequestBody ReorderRequest req) {
         sdlcService.reorderSteps(id, req, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/enable")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "启用SDLC流程")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "启用SDLC流程", actionKey = "access.action.enable_an_sdlc_workflow")
     public Result<SdlcVO> enable(@PathVariable("id") Long id,
                                  @RequestParam(value = "statusTemplateId", required = false) Long statusTemplateId) {
         return Result.ok(sdlcService.enable(id, statusTemplateId, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/{id}/disable")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "停用SDLC流程")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "停用SDLC流程", actionKey = "access.action.disable_an_sdlc_workflow")
     public Result<Void> disable(@PathVariable("id") Long id) {
         sdlcService.disable(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);

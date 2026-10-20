@@ -1,10 +1,16 @@
 import { apiClient } from '@/shared/api/client';
-import type { ClarificationConversation, ClarificationTurnEvent } from './types';
+import { i18n, normalizeLocale } from '@/shared/i18n';
+import { useAuthStore } from '@/shared/auth/store';
+import type {
+  ClarificationAttachment,
+  ClarificationConversation,
+  ClarificationTurnEvent,
+} from './types';
 
 const base = (workitemId: number | string) =>
   `/api/workitems/${workitemId}/clarification-conversations`;
 
-function createClientMessageId(): string {
+export function createClientMessageId(): string {
   const webCrypto = globalThis.crypto;
   if (typeof webCrypto?.randomUUID === 'function') {
     return webCrypto.randomUUID();
@@ -47,16 +53,122 @@ export async function getClarificationConversation(
   return resp.data;
 }
 
+export interface SubmitClarificationTurnOptions {
+  attachmentIds?: number[];
+  /** 由调用方持有以便失败重试复用：服务端按它去重，避免超时重发产生两条消息。 */
+  clientMessageId?: string;
+}
+
 export async function submitClarificationTurn(
   workitemId: number | string,
   conversationId: number,
   content: string,
+  options: SubmitClarificationTurnOptions = {},
 ): Promise<void> {
-  const clientMessageId = createClientMessageId();
+  const clientMessageId = options.clientMessageId ?? createClientMessageId();
   await apiClient.post(`${base(workitemId)}/${conversationId}/turns`, {
     content,
     clientMessageId,
+    attachmentIds: options.attachmentIds ?? [],
   });
+}
+
+/** 单文件上限 20MB，与 ClarificationAttachmentService.MAX_FILE_BYTES 对齐。 */
+export async function uploadClarificationAttachment(
+  workitemId: number | string,
+  conversationId: number,
+  file: File,
+  options: { signal?: AbortSignal } = {},
+): Promise<ClarificationAttachment> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const resp = await apiClient.post<ClarificationAttachment>(
+    `${base(workitemId)}/${conversationId}/attachments`,
+    formData,
+    {
+      signal: options.signal,
+      transformRequest: [(data, headers) => {
+        // 交给浏览器生成 multipart boundary，不能沿用实例默认的 application/json。
+        if (headers) {
+          headers.delete?.('Content-Type');
+          delete headers['Content-Type'];
+          delete headers['content-type'];
+        }
+        return data;
+      }],
+    },
+  );
+  return resp.data;
+}
+
+export async function deleteClarificationAttachment(
+  workitemId: number | string,
+  conversationId: number,
+  attachmentId: number,
+): Promise<void> {
+  await apiClient.delete(`${base(workitemId)}/${conversationId}/attachments/${attachmentId}`);
+}
+
+async function attachmentBytes(
+  workitemId: number | string,
+  conversationId: number,
+  attachmentId: number,
+  mode: 'preview' | 'download',
+): Promise<Blob> {
+  // 这两个端点返回裸字节而非 Result 信封，走 apiClient 会被响应拦截器判为失败；
+  // 也不能用 window.open —— 工作空间权限校验依赖 Authorization 头。
+  const token = useAuthStore.getState().accessToken;
+  const response = await fetch(
+    `${base(workitemId)}/${conversationId}/attachments/${attachmentId}/${mode}`,
+    {
+      headers: {
+        'Accept-Language': normalizeLocale(i18n.language),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await attachmentErrorMessage(response));
+  }
+  return response.blob();
+}
+
+async function attachmentErrorMessage(response: Response): Promise<string> {
+  try {
+    const text = (await response.text()).trim();
+    if (text) return text;
+  } catch {
+    // 二进制或空响应体：退回状态文案。
+  }
+  return response.statusText || i18n.t('workitem:clarification.attachmentLoadFailed');
+}
+
+export async function fetchClarificationAttachmentPreview(
+  workitemId: number | string,
+  conversationId: number,
+  attachmentId: number,
+): Promise<Blob> {
+  return attachmentBytes(workitemId, conversationId, attachmentId, 'preview');
+}
+
+/** 浏览器直接下载：后端统一按 octet-stream + attachment 下发，避免 HTML/SVG 内联执行。 */
+export async function downloadClarificationAttachment(
+  workitemId: number | string,
+  conversationId: number,
+  attachment: Pick<ClarificationAttachment, 'id' | 'name'>,
+): Promise<void> {
+  const blob = await attachmentBytes(workitemId, conversationId, attachment.id, 'download');
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = attachment.name;
+  link.rel = 'noreferrer';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // 同步 revoke 会让 Safari/Firefox 在浏览器接管 blob 之前失效 URL。
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export async function cancelClarificationTurn(

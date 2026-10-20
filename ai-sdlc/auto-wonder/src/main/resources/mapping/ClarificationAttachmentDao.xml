@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.conversation.ClarificationAttachmentDao">
+
+    <resultMap id="BaseResultMap" type="com.aliyun.autowonder.conversation.ClarificationAttachmentDO">
+        <id column="id" property="id"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="workitem_id" property="workitemId"/>
+        <result column="conversation_id" property="conversationId"/>
+        <result column="turn_id" property="turnId"/>
+        <result column="uploader_user_id" property="uploaderUserId"/>
+        <result column="name" property="name"/>
+        <result column="content_type" property="contentType"/>
+        <result column="size_bytes" property="sizeBytes"/>
+        <result column="oss_ref" property="ossRef"/>
+        <result column="previewable" property="previewable"/>
+        <result column="deleting_at" property="deletingAt"/>
+        <result column="gmt_create" property="gmtCreate"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, tenant_id, workitem_id, conversation_id, turn_id, uploader_user_id, name,
+        content_type, size_bytes, oss_ref, previewable, deleting_at, gmt_create
+    </sql>
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.conversation.ClarificationAttachmentDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO clarification_attachment
+        (tenant_id, workitem_id, conversation_id, turn_id, uploader_user_id, name, content_type,
+         size_bytes, oss_ref, previewable)
+        VALUES
+        (#{tenantId}, #{workitemId}, #{conversationId}, #{turnId}, #{uploaderUserId}, #{name},
+         #{contentType}, #{sizeBytes}, #{ossRef}, #{previewable})
+    </insert>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM clarification_attachment
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId} AND id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="listByIds" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM clarification_attachment
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        ORDER BY id ASC
+    </select>
+
+    <select id="listByTurnIds" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM clarification_attachment
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND turn_id IN
+        <foreach collection="turnIds" item="turnId" open="(" separator="," close=")">#{turnId}</foreach>
+        ORDER BY turn_id ASC, id ASC
+    </select>
+
+    <update id="bindTurn">
+        UPDATE clarification_attachment
+        SET turn_id = #{turnId}
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND uploader_user_id = #{uploaderUserId}
+          AND turn_id IS NULL
+          AND deleting_at IS NULL
+          AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </update>
+
+    <update id="markDeleting">
+        UPDATE clarification_attachment
+        SET deleting_at = CURRENT_TIMESTAMP(3)
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND uploader_user_id = #{uploaderUserId}
+          AND turn_id IS NULL
+          AND deleting_at IS NULL
+          AND id = #{id}
+    </update>
+
+    <update id="markOrphanDeleting">
+        UPDATE clarification_attachment
+        SET deleting_at = CURRENT_TIMESTAMP(3)
+        WHERE tenant_id = #{tenantId}
+          AND id = #{id}
+          AND turn_id IS NULL
+          AND deleting_at IS NULL
+    </update>
+
+    <delete id="deleteClaimed">
+        DELETE FROM clarification_attachment
+        WHERE tenant_id = #{tenantId} AND conversation_id = #{conversationId}
+          AND id = #{id}
+          AND deleting_at IS NOT NULL
+    </delete>
+
+    <select id="listOrphans" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM clarification_attachment
+        WHERE (deleting_at IS NOT NULL)
+           OR (turn_id IS NULL AND gmt_create &lt; #{cutoff})
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listByWorkitem" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM clarification_attachment
+        WHERE tenant_id = #{tenantId} AND workitem_id = #{workitemId}
+        ORDER BY id ASC
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM clarification_attachment
+        WHERE tenant_id = #{tenantId} AND id = #{id}
+    </delete>
+
+</mapper>

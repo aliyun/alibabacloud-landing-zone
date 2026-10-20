@@ -1,17 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, waitFor, fireEvent, act, cleanup, within } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider, MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { RepoMapPage, getRepoMapLayout, repoHasDirectPath } from './RepoMapPage';
 import { DagreLayout, D3ForceLayout } from '@antv/layout';
 import { RELATION_TYPES } from './api';
+import type { EdgeData, NodeData } from '@antv/g6';
+import { i18n } from '@/shared/i18n';
 import { useAuthStore } from '@/shared/auth/store';
 import userEvent from '@testing-library/user-event';
 import { ConfigProvider, message } from 'antd';
 
+let rejectGraphRender = false;
 const graphOptions: unknown[] = [];
+const bilingualRepo = { id: 1, name: 'repo-a', url: 'git@example.com:r.git', defaultBranch: 'main', description: null, scanStatus: 'DONE', version: 1, gmtCreate: '2026-07-01' };
+const bilingualRelation = { id: 8, fromRepoId: 1, toRepoId: 2, relationType: 'CLIENT_SERVER', description: null, aiSessionId: null, gmtCreate: '2026-07-01' };
 const graphInstances: Array<{
   onCalls: number;
   renderCalls: number;
@@ -19,6 +24,11 @@ const graphInstances: Array<{
   fitViewCalls: number;
   zoomToCalls: number[];
   setSizeCalls: number;
+  layoutCalls: number;
+  nodes: NodeData[];
+  edges: EdgeData[];
+  events: Map<string, (event?: unknown) => void>;
+  zoom: number;
 }> = [];
 
 vi.mock('@antv/g6', () => ({
@@ -30,18 +40,26 @@ vi.mock('@antv/g6', () => ({
       fitViewCalls: 0,
       zoomToCalls: [] as number[],
       setSizeCalls: 0,
+      layoutCalls: 0,
+      nodes: [] as NodeData[],
+      edges: [] as EdgeData[],
+      events: new Map<string, (event?: unknown) => void>(),
+      zoom: 0.2,
     };
 
-    constructor(options: unknown) {
+    constructor(options: { data: { nodes: NodeData[]; edges: EdgeData[] } }) {
+      this.instanceState.nodes = options.data.nodes;
+      this.instanceState.edges = options.data.edges;
       graphOptions.push(options);
       graphInstances.push(this.instanceState);
     }
-    on() {
+    on(event: string, callback: (event?: unknown) => void) {
+      this.instanceState.events.set(event, callback);
       this.instanceState.onCalls += 1;
     }
     render() {
       this.instanceState.renderCalls += 1;
-      return Promise.resolve();
+      return rejectGraphRender ? Promise.reject(new Error('canvas unavailable')) : Promise.resolve();
     }
     destroy() {
       this.instanceState.destroyCalls += 1;
@@ -52,10 +70,20 @@ vi.mock('@antv/g6', () => ({
     }
     zoomTo(zoom: number) {
       this.instanceState.zoomToCalls.push(zoom);
+      this.instanceState.zoom = zoom;
       return Promise.resolve();
     }
-    layout() { return Promise.resolve(); }
-    getZoom() { return 0.2; }
+    layout() { this.instanceState.layoutCalls += 1; return Promise.resolve(); }
+    getZoom() { return this.instanceState.zoom; }
+    getNodeData() { return this.instanceState.nodes; }
+    getEdgeData() { return this.instanceState.edges; }
+    updateEdgeData(edges: EdgeData[]) {
+      this.instanceState.edges = this.instanceState.edges.map(edge => {
+        const update = edges.find(item => item.id === edge.id);
+        return update ? { ...edge, ...update, style: { ...edge.style, ...update.style } } : edge;
+      });
+    }
+    draw() { return Promise.resolve(); }
     fitCenter() { return Promise.resolve(); }
     setSize() {
       this.instanceState.setSizeCalls += 1;
@@ -74,7 +102,9 @@ function renderPage(accessLevel: 'READ_ONLY' | 'READ_WRITE' = 'READ_WRITE') {
 }
 
 describe('RepoMapPage', () => {
+  afterEach(async () => { cleanup(); await i18n.changeLanguage('zh-CN'); });
   beforeEach(() => {
+    rejectGraphRender = false;
     graphOptions.length = 0;
     graphInstances.length = 0;
   });
@@ -264,7 +294,7 @@ describe('RepoMapPage', () => {
   it('rebuilds canvas labels with resolved colors when the appearance changes', async () => {
     server.use(
       http.get('/api/repos', () => HttpResponse.json({ success: true, data: [] })),
-      http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [{ id: 1, fromRepoId: 1, toRepoId: 2, relationType: 'SERVICE' }] })),
+      http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [{ ...bilingualRelation, id: 1, relationType: 'SERVICE' }] })),
     );
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const page = (panel: string, text: string) => (
@@ -290,6 +320,123 @@ describe('RepoMapPage', () => {
     ]));
   });
 
+  it('updates a mounted graph and selected edge in place without resetting manual geometry, zoom, fullscreen or a relation draft', async () => {
+    const rawName = '<b>中文仓库</b>';
+    const rawDescription = '<img>原始描述';
+    server.use(
+      http.get('/api/repos', () => HttpResponse.json({ success: true, data: [{ ...bilingualRepo, name: rawName }] })),
+      http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [{ ...bilingualRelation, description: rawDescription }] })),
+    );
+    useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+    const router = createMemoryRouter([{ path: '/repos', element: <RepoMapPage /> }], { initialEntries: ['/repos'] });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><RouterProvider router={router} /></QueryClientProvider>);
+    await waitFor(() => expect(graphInstances).toHaveLength(1));
+    const graph = graphInstances[0];
+    await waitFor(() => expect(graph.fitViewCalls).toBe(1));
+    graph.nodes[0].style = { ...graph.nodes[0].style, x: 777, y: 333 };
+    await act(async () => graph.events.get('node:dragend')?.());
+    await userEvent.click(screen.getByRole('button', { name: /全屏查看/ }));
+    await userEvent.click(screen.getByRole('button', { name: '放大关系图' }));
+    await act(async () => graph.events.get('edge:click')?.({ target: { id: 'edge-8' } }));
+    await userEvent.click(screen.getByRole('button', { name: /添加关系/ }));
+    const draft = within(screen.getByRole('dialog', { name: '添加仓库关系' })).getByLabelText('描述');
+    fireEvent.change(draft, { target: { value: '<em>草稿</em>' } });
+    const fitCount = graph.fitViewCalls;
+    const zoom = graph.zoom;
+    const options = graphOptions[0] as { plugins: Array<{ getContent: (event: unknown, items: unknown[]) => Promise<HTMLElement> }> };
+    const shownTooltip = await options.plugins[0].getContent({}, [{ data: { relationType: 'CLIENT_SERVER' } }]);
+    expect(shownTooltip.textContent).toBe('客户端调用服务端');
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(screen.getByRole('button', { name: 'Zoom in relationship map' })).toBeInTheDocument();
+    await waitFor(() => expect(graph.edges[0].style?.labelText).toBe('Client calls server'));
+    expect(graphInstances).toHaveLength(1);
+    expect(graph.destroyCalls).toBe(0);
+    expect(graph.nodes[0].style).toMatchObject({ x: 777, y: 333 });
+    expect(graph.zoom).toBe(zoom);
+    expect(graph.fitViewCalls).toBe(fitCount);
+    expect(graph.layoutCalls).toBe(0);
+    expect(screen.getByTestId('repo-map-frame')).toHaveAttribute('data-fullscreen', 'true');
+    expect(within(screen.getByRole('dialog', { name: 'Add repository relationship' })).getByLabelText('Description')).toBe(draft);
+    expect(draft).toHaveValue('<em>草稿</em>');
+    const details = screen.getByRole('dialog', { name: 'Relationship details' });
+    expect(within(details).getByText(rawName)).toBeInTheDocument();
+    expect(within(details).getByText(rawDescription)).toBeInTheDocument();
+    expect(within(details).getByText('Client calls server')).toBeInTheDocument();
+    expect(shownTooltip.textContent).toBe('Client calls server');
+    expect((await options.plugins[0].getContent({}, [{ data: { relationType: 'CLIENT_SERVER' } }])).textContent).toBe('Client calls server');
+    const rawTooltip = await options.plugins[0].getContent({}, [{ data: { name: rawName } }]);
+    expect(rawTooltip.textContent).toBe(rawName);
+    expect(rawTooltip.children).toHaveLength(0);
+    await act(() => i18n.changeLanguage('zh-CN'));
+    await waitFor(() => expect(graph.edges[0].style?.labelText).toBe('客户端调用服务端'));
+    expect(graph.destroyCalls).toBe(0);
+    expect(draft).toHaveValue('<em>草稿</em>');
+  });
+
+  it('rerenders a stored graph failure in the current locale without recreating or refetching the graph', async () => {
+    rejectGraphRender = true;
+    let requests = 0;
+    server.use(
+      http.get('/api/repos', () => { requests += 1; return HttpResponse.json({ success: true, data: [] }); }),
+      http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [{ ...bilingualRelation, id: 1, relationType: 'SERVICE' }] })),
+    );
+    renderPage();
+    expect(await screen.findByText('关系图暂时无法渲染，请刷新页面后重试。')).toBeInTheDocument();
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(screen.getByText('The relationship map could not be rendered. Refresh the page and try again.')).toBeInTheDocument();
+    expect(graphInstances).toHaveLength(1);
+    expect(graphInstances[0].destroyCalls).toBe(0);
+    expect(requests).toBe(1);
+  });
+
+  it('switches displayed relationship validation and submits the same canonical relation after a delayed response', async () => {
+    let finish!: () => void;
+    let payload: unknown;
+    const success = vi.spyOn(message, 'success').mockImplementation(() => undefined as never);
+    server.use(
+      http.get('/api/repos', () => HttpResponse.json({ success: true, data: [bilingualRepo, { ...bilingualRepo, id: 2, name: 'repo-b' }] })),
+      http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [] })),
+      http.post('/api/repos/relations', async ({ request }) => {
+        payload = await request.json();
+        await new Promise<void>(resolve => { finish = resolve; });
+        return HttpResponse.json({ success: true, data: bilingualRelation });
+      }),
+    );
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: '添加关系' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(await screen.findByText('请选择来源仓库')).toBeInTheDocument();
+    await act(() => i18n.changeLanguage('en-US'));
+    await waitFor(() => expect(screen.getAllByText('Select a source repository').length).toBeGreaterThan(0));
+    const dialog = screen.getByRole('dialog', { name: 'Add repository relationship' });
+    fireEvent.mouseDown(within(dialog).getByLabelText('Source repository'));
+    fireEvent.click(await screen.findByText('repo-a'));
+    fireEvent.mouseDown(within(dialog).getByLabelText('Target repository'));
+    fireEvent.click((await screen.findAllByText('repo-b')).at(-1)!);
+    fireEvent.mouseDown(within(dialog).getByLabelText('Relationship type'));
+    fireEvent.click(await screen.findByText('Client calls server'));
+    fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: '<b>关系草稿</b>' } });
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    await act(() => i18n.changeLanguage('zh-CN'));
+    await act(async () => finish());
+    await waitFor(() => expect(success).toHaveBeenCalledWith('关系已创建'));
+    expect(payload).toEqual({ fromRepoId: 1, toRepoId: 2, relationType: 'CLIENT_SERVER', description: '<b>关系草稿</b>' });
+    success.mockRestore();
+  });
+
+  it('renders unknown prototype-like relation codes as raw text with the fallback color', async () => {
+    server.use(
+      http.get('/api/repos', () => HttpResponse.json({ success: true, data: [] })),
+      http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [{ ...bilingualRelation, relationType: 'constructor' }] })),
+    );
+    renderPage();
+    await waitFor(() => expect(graphInstances).toHaveLength(1));
+    expect(graphInstances[0].edges[0].style).toMatchObject({ labelText: 'constructor', stroke: '#8c8c8c' });
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(graphInstances[0].edges[0].style?.labelText).toBe('constructor');
+  });
+
   it('keeps add relation visible but blocks opening it for read-only members', async () => {
     const errorSpy = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
     server.use(
@@ -308,6 +455,35 @@ describe('RepoMapPage', () => {
     expect(screen.queryByRole('dialog', { name: /添加仓库关系/ })).not.toBeInTheDocument();
     errorSpy.mockRestore();
   });
+
+  it.each(['zh-CN', 'en-US'])('final widget open relation confirmation keeps its visible warning decorative in %s', async locale => {
+    server.use(http.get('/api/repos', () => HttpResponse.json({ success: true, data: [bilingualRepo] })), http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [{ ...bilingualRelation, description: '<raw>关系' }] })));
+    await i18n.changeLanguage(locale); renderPage();
+    await waitFor(() => expect(graphInstances).toHaveLength(1));
+    await act(async () => graphInstances[0].events.get('edge:click')?.({ target: { id: 'edge-8' } }));
+    await userEvent.click(screen.getByRole('button', { name: locale === 'en-US' ? 'Delete relationship' : '删除关系' }));
+    await screen.findByText(locale === 'en-US' ? 'Delete this relationship?' : '确认删除此关系？');
+    expect(screen.queryByRole('img', { name: 'exclamation-circle' })).not.toBeInTheDocument();
+    expect(document.querySelector('.ant-popconfirm .anticon-exclamation-circle')).not.toBeNull();
+    expect(screen.getByText('<raw>关系')).toBeInTheDocument();
+  });
+  it.each(['zh-CN', 'en-US'])('final widget pending relation deletion preserves its name and exact id in %s', async locale => {
+    let finish!: () => void; const ids: string[] = [];
+    server.use(http.get('/api/repos', () => HttpResponse.json({ success: true, data: [bilingualRepo] })), http.get('/api/repos/relations', () => HttpResponse.json({ success: true, data: [bilingualRelation] })), http.delete('/api/repos/relations/:id', async ({ params }) => { ids.push(String(params.id)); await new Promise<void>(resolve => { finish = resolve; }); return HttpResponse.json({ success: true, data: null }); }));
+    await i18n.changeLanguage(locale); renderPage();
+    await waitFor(() => expect(graphInstances).toHaveLength(1));
+    await act(async () => graphInstances[0].events.get('edge:click')?.({ target: { id: 'edge-8' } }));
+    const label = locale === 'en-US' ? 'Delete relationship' : '删除关系';
+    const button = screen.getByRole('button', { name: label }); await userEvent.click(button);
+    const popup = await screen.findByRole('tooltip'); await userEvent.click(within(popup).getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(finish).toBeTypeOf('function'));
+    try {
+      expect(ids).toEqual(['8']); expect(button).toHaveClass('ant-btn-loading'); expect(button).toHaveAccessibleName(label);
+      expect(button.querySelector('.anticon-loading')).toHaveAttribute('aria-hidden', 'true');
+      expect(graphInstances).toHaveLength(1);
+    } finally { await act(async () => { finish(); }); }
+  });
+
 });
 
 it('balances different graph topologies without overlapping repository cards', async () => {

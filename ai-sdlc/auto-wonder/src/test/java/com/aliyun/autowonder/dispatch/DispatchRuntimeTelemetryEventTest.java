@@ -58,6 +58,29 @@ class DispatchRuntimeTelemetryEventTest {
     }
 
     @Test
+    void persistsCompactLifecycleAndTiming() {
+        DispatchDO dispatch = new DispatchDO();
+        dispatch.setId(44L);
+        dispatch.setTenantId(1L);
+        dispatch.setWorkitemId(10L);
+        dispatch.setAgentId(7L);
+        dispatch.setStatus(DispatchStatus.RUNNING);
+        when(dispatchDao.findById(44L)).thenReturn(dispatch);
+        for (String type : new String[]{"context.compact_started", "context.compact_completed"}) {
+            JSONObject detail = new JSONObject().fluentPut("eventType", type)
+                    .fluentPut("provider", "qodercn").fluentPut("sessionId", "session-1")
+                    .fluentPut("trigger", "manual");
+            if (type.endsWith("completed")) detail.put("durationMs", 1234L);
+            service.onProgress(1L, 44L, new JSONObject().fluentPut("runtimeEvent", detail));
+            verify(runtimeEventDao).insert(argThat(e -> type.equals(e.getEventType())
+                    && e.getDetailJson().contains("session-1")
+                    && e.getDetailJson().contains("manual")
+                    && (!type.endsWith("completed") || e.getDetailJson().contains("1234"))));
+        }
+        org.junit.jupiter.api.Assertions.assertFalse(DispatchService.isRuntimeEventType("context.unknown"));
+    }
+
+    @Test
     void acceptsTheWholeCanonicalRuntimeVocabulary() {
         for (String eventType : new String[]{
                 "workspace.created", "bootstrap.generated", "repo.prepared", "upload.completed",

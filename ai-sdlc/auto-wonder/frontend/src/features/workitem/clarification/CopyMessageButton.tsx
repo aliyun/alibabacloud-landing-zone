@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Tooltip, message } from 'antd';
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons';
@@ -14,7 +16,8 @@ interface CopyMessageButtonProps {
 
 /** 单击即复制一段文本，图标瞬变 ✓。刻意不弹 antd message：✓ 本身就是反馈，
  *  再弹一次是双重反馈（失败才需要 message，因为没有可视的失败态）。 */
-export function CopyMessageButton({ text, label = '复制' }: CopyMessageButtonProps) {
+export function CopyMessageButton({ text, label }: CopyMessageButtonProps) {
+  const { t } = useTranslation('workitem');
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
@@ -27,7 +30,7 @@ export function CopyMessageButton({ text, label = '复制' }: CopyMessageButtonP
   const handleCopy = useCallback(async () => {
     const ok = await copyTextToClipboard(text);
     if (!ok) {
-      message.error('复制失败，请检查浏览器剪贴板权限');
+      message.error(i18n.t('workitem:clarification.copyFailed'));
       return;
     }
     // await 期间可能已卸载（比如幽灵气泡被落库的 turn 顶掉），此时清理函数早就
@@ -39,14 +42,14 @@ export function CopyMessageButton({ text, label = '复制' }: CopyMessageButtonP
     timerRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
   }, [text]);
 
-  const name = copied ? '已复制' : label;
+  const name = copied ? t('clarification.copied') : label ?? t('clarification.copy');
 
   return (
     <Tooltip title={name}>
       <Button
         type="text"
         size="small"
-        icon={copied ? <CheckOutlined /> : <CopyOutlined />}
+        icon={copied ? <CheckOutlined aria-hidden="true" /> : <CopyOutlined aria-hidden="true" />}
         aria-label={name}
         data-testid="copy-message-button"
         onClick={handleCopy}

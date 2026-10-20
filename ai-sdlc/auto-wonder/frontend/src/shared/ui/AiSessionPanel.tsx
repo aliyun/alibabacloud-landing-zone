@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Alert, Input, Button, List, Typography, Space, Tag, Spin, message } from 'antd';
 import { SendOutlined } from '@ant-design/icons';
@@ -42,12 +44,13 @@ function stableStringify(value: unknown): string {
 }
 
 export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, onConfirm }: AiSessionPanelProps) {
+  const { t } = useTranslation('shared');
   const runWithAccess = useAccessCommand();
   const [session, setSession] = useState<AiSession | null>(null);
   const [streamingContent, setStreamingContent] = useState('');
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [autoStartError, setAutoStartError] = useState<string | null>(null);
+  const [autoStartError, setAutoStartError] = useState<{ message: string } | { key: 'ai.createFailed' } | null>(null);
   const [narrow, setNarrow] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -132,7 +135,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
     const text = autoStartInput?.trim();
     if (!text || session || autoStartedRef.current || loading) return;
     autoStartedRef.current = true;
-    const pending = runWithAccess('READ_WRITE', '启动 AI 会话', () => {
+    const pending = runWithAccess('READ_WRITE', t('ai.start'), () => {
       setAutoStartError(null);
       setLoading(true);
       return createSession(text);
@@ -140,15 +143,15 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
     if (!pending) return;
     pending
       .catch((e: Error) => {
-        setAutoStartError(e.message || '创建 AI 扫描会话失败');
+        setAutoStartError(e.message ? { message: e.message } : { key: 'ai.createFailed' });
       })
       .finally(() => setLoading(false));
-  }, [autoStartInput, createSession, loading, runWithAccess, session]);
+  }, [autoStartInput, createSession, loading, runWithAccess, session, t]);
 
   const handleSend = () => {
     const text = input.trim();
     if (!text || loading) return;
-    void runWithAccess('READ_WRITE', '发送 AI 会话消息', async () => {
+    void runWithAccess('READ_WRITE', t('ai.sendAction'), async () => {
       const previousSession = session;
       setInput('');
       setLoading(true);
@@ -171,7 +174,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
           await apiClient.post(`/api/ai/sessions/${session.id}/messages`, { content: text });
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '发送失败，请稍后重试';
+        const errorMessage = error instanceof Error ? error.message : i18n.t('shared:ai.sendFailed');
         message.error(errorMessage);
         if (previousSession) {
           try {
@@ -216,11 +219,12 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
 
   const renderMessageContent = (msg: AiSession['messages'][number]) => {
     if (msg.role === 'AI' && isStructuredResultMessage(msg.content)) {
-      return <Alert type="success" showIcon message="已生成结构化结果，请在右侧预览和确认。" />;
+      return <Alert type="success" showIcon message={t('ai.resultReady')} />;
     }
     return <MarkdownView content={msg.content} />;
   };
 
+  const autoStartErrorText = autoStartError && ('key' in autoStartError ? t(autoStartError.key) : autoStartError.message);
   const chat = (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
       <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
@@ -228,15 +232,15 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
           <Alert
             type="error"
             showIcon
-            message="AI 扫描会话创建失败"
-            description={autoStartError}
+            message={t('ai.errorTitle')}
+            description={autoStartErrorText}
             style={{ marginBottom: 12 }}
           />
         )}
         {!session && loading && (
           <div style={{ padding: '24px 0', textAlign: 'center' }}>
             <Spin />
-            <div style={{ marginTop: 8 }}><Text type="secondary">正在创建 AI 扫描会话...</Text></div>
+            <div style={{ marginTop: 8 }}><Text type="secondary">{t('ai.creating')}</Text></div>
           </div>
         )}
         <List
@@ -245,7 +249,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
             <List.Item style={{ border: 'none', padding: '8px 0' }}>
               <div style={{ width: '100%' }}>
                 <Text strong type={msg.role === 'USER' ? 'success' : msg.role === 'AI' ? undefined : 'secondary'}>
-                  {msg.role === 'USER' ? '你' : msg.role === 'AI' ? 'AI' : '系统'}
+                  {msg.role === 'USER' ? t('ai.you') : msg.role === 'AI' ? 'AI' : t('ai.system')}
                 </Text>
                 <div style={{ marginTop: 4 }}>
                   {renderMessageContent(msg)}
@@ -266,8 +270,8 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
             <Spin size="small" />
             <Text type="secondary">
               {scene === 'CLARIFICATION' && messages.length === 0
-                ? '正在准备上下文，更好的跟你探讨...'
-                : 'AI 正在思考...'}
+                ? t('ai.preparing')
+                : t('ai.thinking')}
             </Text>
           </div>
         )}
@@ -278,7 +282,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
           <TextArea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="输入消息..."
+            placeholder={t('ai.input')}
             autoSize={{ minRows: 1, maxRows: 4 }}
             disabled={!canSend}
             onKeyDown={(e) => {
@@ -292,9 +296,7 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
             onCompositionStart={() => { composingRef.current = true; }}
             onCompositionEnd={() => { composingRef.current = false; }}
           />
-          <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading} disabled={!canSend}>
-            发送
-          </Button>
+          <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading} disabled={!canSend}>{t('ai.send')}</Button>
         </Space.Compact>
       </div>
     </div>
@@ -311,8 +313,8 @@ export function AiSessionPanel({ scene, bizRefType, bizRefId, autoStartInput, on
       {session && (
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--aw-border)' }}>
           <Space>
-            <Text type="secondary">会话 #{session.id}</Text>
-            <Tag color={statusColor[session.status]}>{session.status}</Tag>
+            <Text type="secondary">{t('ai.session', { id: session.id })}</Text>
+            <Tag color={statusColor[session.status]}>{t(`ai.status.${session.status}`)}</Tag>
           </Space>
         </div>
       )}

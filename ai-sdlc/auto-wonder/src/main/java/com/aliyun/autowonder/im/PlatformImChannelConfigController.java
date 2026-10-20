@@ -35,14 +35,14 @@ public class PlatformImChannelConfigController {
     @PutMapping("/feishu")
     public Result<PlatformImChannelConfigVO> updateFeishu(
             @Valid @RequestBody UpdateDingTalkChannelRequest request) {
-        systemAdminService.requireSystemAdmin(AutoWonderContext.get().getUserId(), "配置协作通知");
+        systemAdminService.requireSystemAdmin(AutoWonderContext.get().getUserId(), "配置协作通知", "access.admin.im_denied");
         return Result.ok(configService.update(AutoWonderContext.get().getUserId(), "FEISHU", request));
     }
 
     @PutMapping("/dingtalk")
     public Result<PlatformImChannelConfigVO> updateDingTalk(
             @Valid @RequestBody UpdateDingTalkChannelRequest request) {
-        systemAdminService.requireSystemAdmin(AutoWonderContext.get().getUserId(), "配置协作通知");
+        systemAdminService.requireSystemAdmin(AutoWonderContext.get().getUserId(), "配置协作通知", "access.admin.im_denied");
         return Result.ok(configService.updateDingTalk(
                 AutoWonderContext.get().getUserId(), request));
     }

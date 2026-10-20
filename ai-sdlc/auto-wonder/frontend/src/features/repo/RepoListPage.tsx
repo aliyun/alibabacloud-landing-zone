@@ -1,3 +1,7 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { useState } from 'react';
 import { Card, Button, Space, Modal, Form, Input, message, Popconfirm } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
@@ -7,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createRepo, listRepos, deleteRepo } from './api';
 import type { Repo } from './api';
 import type { ColumnsType } from 'antd/es/table';
-import { isValidRepoName, REPO_NAME_INVALID_MESSAGE } from './repoNameValidation';
+import { isValidRepoName, repoNameInvalidMessage } from './repoNameValidation';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 
@@ -23,11 +27,13 @@ function isValidRepoUrl(value?: string) {
 }
 
 export function RepoListPage() {
+  const { t } = useTranslation('repo');
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const runWithAccess = useAccessCommand();
   const [form] = Form.useForm();
   const [createOpen, setCreateOpen] = useState(false);
+  useLocalizedValidation(form, createOpen);
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
 
   // The page lives in the /repos hub now, so the relation map is a sibling tab on the
@@ -46,32 +52,32 @@ export function RepoListPage() {
   const createMutation = useMutation({
     mutationFn: createRepo,
     onSuccess: () => {
-      message.success('仓库已添加');
+      message.success(i18n.t('repo:feedback.added'));
       setCreateOpen(false);
       form.resetFields();
       queryClient.invalidateQueries({ queryKey: ['repos'] });
     },
     onError: (error: Error) => {
-      message.error(error.message || '添加仓库失败');
+      message.error(error.message || i18n.t('repo:errors.addRepo'));
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteRepo(id),
     onSuccess: () => {
-      message.success('仓库已删除');
+      message.success(i18n.t('repo:feedback.deleted'));
       setPendingDeleteId(null);
       queryClient.invalidateQueries({ queryKey: ['repos'] });
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
     },
     onError: (error: Error) => {
       setPendingDeleteId(null);
-      message.error(error.message || '删除仓库失败');
+      message.error(error.message || i18n.t('repo:errors.deleteRepo'));
     },
   });
 
   const handleCreateRepo = async () => {
-    await runWithAccess('READ_WRITE', '添加仓库', async () => {
+    await runWithAccess('READ_WRITE', t('actions.addRepo'), async () => {
       // 校验失败时 antd 已在表单项下方展示错误信息，这里吞掉拒绝避免未处理 Promise。
       const values = await form.validateFields().catch(() => null);
       if (values) {
@@ -81,54 +87,54 @@ export function RepoListPage() {
   };
 
   const columns: ColumnsType<Repo> = [
-    { title: 'ID', dataIndex: 'id', width: 70 },
+    { title: t('fields.id'), dataIndex: 'id', width: 70 },
     {
-      title: '名称', dataIndex: 'name', align: 'left', width: 220, ellipsis: { showTitle: false },
+      title: t('fields.name'), dataIndex: 'name', align: 'left', width: 220, ellipsis: { showTitle: false },
       render: (name: string, record: Repo) => (
         <EllipsisText tooltip={name}><Link to={`/repos/${record.id}`}>{name}</Link></EllipsisText>
       ),
     },
     {
-      title: 'URL', dataIndex: 'url', align: 'left', width: 260, ellipsis: { showTitle: false },
+      title: t('fields.url'), dataIndex: 'url', align: 'left', width: 260, ellipsis: { showTitle: false },
       render: (v: string) => <EllipsisText>{v}</EllipsisText>,
     },
     {
-      title: '描述', dataIndex: 'description', align: 'left', width: 240, ellipsis: { showTitle: false },
+      title: t('fields.description'), dataIndex: 'description', align: 'left', width: 240, ellipsis: { showTitle: false },
       render: (v: string | null) => (v ? <EllipsisText>{v}</EllipsisText> : '-'),
     },
     {
-      title: '创建时间', dataIndex: 'gmtCreate', width: 160,
-      render: (t: string) => new Date(t).toLocaleString('zh-CN'),
+      title: t('fields.created'), dataIndex: 'gmtCreate', width: 160,
+      render: (t: string) => formatDateTime(t),
     },
     {
-      title: '操作', width: 80,
+      title: t('fields.actions'), width: 80,
       render: (_: unknown, record: Repo) => (
         <Popconfirm
-          title={`确认删除仓库「${record.name}」？`}
-          description="删除后仓库及其所有关系将一并移除，此操作不可恢复。"
+          title={t('confirm.deleteRepo', { name: record.name })}
+          description={t('confirm.deleteHint')}
           open={pendingDeleteId === record.id}
           onOpenChange={(open) => {
             if (!open) setPendingDeleteId(null);
           }}
           onConfirm={() => runWithAccess(
             'READ_WRITE',
-            '删除仓库',
+            t('actions.deleteRepo'),
             () => deleteMutation.mutate(record.id),
           )}
-          okText="删除"
+          okText={t('actions.delete')}
           okButtonProps={{ danger: true }}
-          cancelText="取消"
+          cancelText={t('actions.cancel')}
         >
           <Button
             type="link"
             size="small"
             danger
-            aria-label={`删除仓库 ${record.name}`}
-            title={`删除仓库 ${record.name}`}
-            icon={<DeleteOutlined />}
+            aria-label={t('actions.deleteRepoLabel', { name: record.name })}
+            title={t('actions.deleteRepoLabel', { name: record.name })}
+            icon={<DeleteOutlined aria-hidden="true" />}
             onClick={() => runWithAccess(
               'READ_WRITE',
-              '删除仓库',
+              t('actions.deleteRepo'),
               () => setPendingDeleteId(record.id),
             )}
           />
@@ -142,13 +148,13 @@ export function RepoListPage() {
       className="aw-content-card"
       extra={
         <Space>
-          <Button icon={<ShareAltOutlined />} onClick={switchToMapTab}>关系图</Button>
+          <Button icon={<ShareAltOutlined aria-hidden="true" />} onClick={switchToMapTab}>{t('actions.map')}</Button>
           <Button
             type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => runWithAccess('READ_WRITE', '添加仓库', () => setCreateOpen(true))}
+            icon={<PlusOutlined aria-hidden="true" />}
+            onClick={() => runWithAccess('READ_WRITE', t('actions.addRepo'), () => setCreateOpen(true))}
           >
-            添加仓库
+            {t('actions.addRepo')}
           </Button>
         </Space>
       }
@@ -162,10 +168,10 @@ export function RepoListPage() {
         pagination={false}
       />
       <Modal
-        title="添加仓库"
+        title={t('actions.addRepo')}
         open={createOpen}
-        okText="确定"
-        cancelText="取消"
+        okText={t('actions.confirm')}
+        cancelText={t('actions.cancel')}
         confirmLoading={createMutation.isPending}
         onOk={handleCreateRepo}
         onCancel={() => {
@@ -179,15 +185,15 @@ export function RepoListPage() {
           layout="vertical"
         >
           <Form.Item
-            label="仓库名称"
+            label={t('fields.repoName')}
             name="name"
             rules={[
-              { required: true, message: '请输入仓库名称' },
+              { required: true, message: t('validation.nameRequired') },
               {
                 validator: (_, value) => (
                   isValidRepoName(value)
                     ? Promise.resolve()
-                    : Promise.reject(new Error(REPO_NAME_INVALID_MESSAGE))
+                    : Promise.reject(new Error(repoNameInvalidMessage()))
                 ),
               },
             ]}
@@ -195,25 +201,25 @@ export function RepoListPage() {
             <Input placeholder="auto-wonder" />
           </Form.Item>
           <Form.Item
-            label="仓库地址"
+            label={t('fields.repoUrl')}
             name="url"
             rules={[
-              { required: true, message: '请输入仓库地址' },
+              { required: true, message: t('validation.urlRequired') },
               {
                 validator: (_, value) => (
                   isValidRepoUrl(value)
                     ? Promise.resolve()
-                    : Promise.reject(new Error('请输入合法 URL'))
+                    : Promise.reject(new Error(t('validation.urlInvalid')))
                 ),
               },
             ]}
           >
-            <Input placeholder="https://github.com/example/repo 或 git@example.com:workspace/repo.git" />
+            <Input placeholder={t('placeholders.urlExample')} />
           </Form.Item>
-          <Form.Item label="默认分支" name="defaultBranch">
+          <Form.Item label={t('fields.branch')} name="defaultBranch">
             <Input placeholder="main" />
           </Form.Item>
-          <Form.Item label="描述" name="description">
+          <Form.Item label={t('fields.description')} name="description">
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>

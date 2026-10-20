@@ -48,7 +48,7 @@ class PlatformAdminControllerTest {
         assertEquals(candidates, controller.candidates("carol").getData());
 
         InOrder order = inOrder(systemAdminService);
-        order.verify(systemAdminService).requireSystemAdmin(10000L, "搜索平台管理员候选人");
+        order.verify(systemAdminService).requireSystemAdmin(10000L, "搜索平台管理员候选人", "access.admin.search_denied");
         order.verify(systemAdminService).searchPlatformAdminCandidates("carol");
     }
 

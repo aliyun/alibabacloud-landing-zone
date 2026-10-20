@@ -27,6 +27,7 @@ public class InAppWorkitemAssignedListener {
             notifyEvent.setTenantId(event.tenantId());
             notifyEvent.setType("WORKITEM_ASSIGNED");
             notifyEvent.setTitle("有新工单指派给你");
+            notifyEvent.setTitleKey("notification.assigned.title");
             notifyEvent.setContent(event.workitemTitle());
             notifyEvent.setLink("/workitems/" + event.workitemId());
             notifyEvent.setRefType("WORKITEM");

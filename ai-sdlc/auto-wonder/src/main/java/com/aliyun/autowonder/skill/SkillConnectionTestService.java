@@ -52,31 +52,42 @@ public class SkillConnectionTestService {
             throw new BizException(ErrorCode.SKILL_NOT_FOUND);
         }
         if (!"MCP".equalsIgnoreCase(skill.getType())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "仅 MCP 类型能力支持连接测试");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.connection_mcp_required", new Object[]{}, "仅 MCP 类型能力支持连接测试");
         }
         long startedAt = System.nanoTime();
         String transport = "unknown";
+        var origin = new RuntimeMcpConnectionTestService.FailureOrigin();
         try {
-            JSONObject config = parseConfig(skill.getInstallSpec());
+            JSONObject config = parseConfig(skill.getInstallSpec(), origin);
             transport = config.getString("transport");
             if (transport == null || transport.isBlank()) {
                 transport = "http";
             }
             if (executorId == null) {
-                return failure(startedAt, "请选择在线 Runtime 测试 MCP");
+                var vo = failure(startedAt, "请选择在线 Runtime 测试 MCP");
+                vo.setOwnedFailureCode("SELECT_RUNTIME");
+                return vo;
             }
             if (runtimeTestService == null) {
-                return failure(startedAt, "Runtime MCP 测试服务不可用");
+                var vo = failure(startedAt, "Runtime MCP 测试服务不可用");
+                vo.setOwnedFailureCode("RUNTIME_UNAVAILABLE");
+                return vo;
             }
-			Map<String, String> headers = headers(config);
-			Map<String, String> env = env(config);
-			RuntimeMcpConnectionTestService.SkillConnectionTestResult result = env.isEmpty()
-					? runtimeTestService.test(tenantId, executorId, transport, config.getString("command"), args(config), config.getString("url"), headers, timeoutSeconds(config))
-					: runtimeTestService.test(tenantId, executorId, transport, config.getString("command"), args(config), config.getString("url"), headers, env, timeoutSeconds(config));
+			Map<String, String> headers = headers(config, origin);
+			Map<String, String> env = env(config, origin);
+			RuntimeMcpConnectionTestService.SkillConnectionTestResult result = runtimeTestService.test(
+                    tenantId, executorId, transport, config.getString("command"), args(config), config.getString("url"),
+                    headers, env, timeoutSeconds(config), origin);
             SkillConnectionTestVO vo = failure(startedAt, result.message);
             vo.setSuccess(result.success);
             vo.setDurationMs(result.durationMs == null ? elapsedMillis(startedAt) : result.durationMs);
             vo.setTools(result.tools);
+            if (result.success) {
+                vo.setOwnedFailureCode(null);
+            } else if (result.ownedFailureCode != null) {
+                vo.setOwnedFailureCode(result.ownedFailureCode);
+                vo.setOwnedFailureArgs(result.ownedFailureArgs);
+            }
             return vo;
         } catch (Exception e) {
             // Do not log installSpec, headers or env: they may contain MCP credentials.
@@ -87,7 +98,10 @@ public class SkillConnectionTestService {
                 LOGGER.error("MCP connection test failed skillId={} tenantId={} executorId={} transport={} errorType={}",
                         id, tenantId, executorId, transport, e.getClass().getName(), e);
             }
-            return failure(startedAt, normalizeError(e));
+            SkillConnectionTestVO vo = failure(startedAt, normalizeError(e));
+            if (e instanceof java.util.concurrent.TimeoutException) origin.code = "CONNECTION_TIMEOUT";
+            if (origin.code != null) vo.setOwnedFailureCode(origin.code);
+            return vo;
         }
     }
 
@@ -99,15 +113,15 @@ public class SkillConnectionTestService {
         return config.getJSONArray("args") == null ? List.of() : config.getJSONArray("args").toJavaList(String.class);
     }
 
-    private Map<String, String> headers(JSONObject config) {
-		return resolveValues(config.getJSONObject("headers"));
+    private Map<String, String> headers(JSONObject config, RuntimeMcpConnectionTestService.FailureOrigin origin) {
+		return resolveValues(config.getJSONObject("headers"), origin);
 	}
 
-	private Map<String, String> env(JSONObject config) {
-		return resolveValues(config.getJSONObject("env"));
+	private Map<String, String> env(JSONObject config, RuntimeMcpConnectionTestService.FailureOrigin origin) {
+		return resolveValues(config.getJSONObject("env"), origin);
 	}
 
-	private Map<String, String> resolveValues(JSONObject source) {
+	private Map<String, String> resolveValues(JSONObject source, RuntimeMcpConnectionTestService.FailureOrigin origin) {
         if (source == null || source.isEmpty()) {
             return Map.of();
         }
@@ -115,7 +129,10 @@ public class SkillConnectionTestService {
         for (Map.Entry<String, Object> entry : source.entrySet()) {
 			Object value = entry.getValue();
 			if (value instanceof Map && "secretRef".equals(String.valueOf(((Map<?, ?>) value).get("kind")))) {
-				if (secretCrypto == null) throw new IllegalStateException("密文存储未配置，无法测试私密 MCP 配置");
+				if (secretCrypto == null) {
+                    origin.code = "SECRET_CRYPTO_UNAVAILABLE";
+                    throw new IllegalStateException("密文存储未配置，无法测试私密 MCP 配置");
+                }
 				headers.put(entry.getKey(), secretCrypto.decrypt(String.valueOf(((Map<?, ?>) value).get("ref"))));
 			} else headers.put(entry.getKey(), String.valueOf(value));
         }
@@ -127,13 +144,15 @@ public class SkillConnectionTestService {
         return timeout == null ? 60 : timeout;
     }
 
-    private JSONObject parseConfig(String installSpec) {
+    private JSONObject parseConfig(String installSpec, RuntimeMcpConnectionTestService.FailureOrigin origin) {
         if (installSpec == null || installSpec.isBlank()) {
+            origin.code = "EMPTY_CONFIG";
             throw new IllegalArgumentException("MCP 配置为空");
         }
         try {
             return JSON.parseObject(installSpec);
         } catch (RuntimeException e) {
+            origin.code = "INVALID_CONFIG_JSON";
             throw new IllegalArgumentException("MCP 配置不是有效 JSON");
         }
     }
@@ -142,6 +161,7 @@ public class SkillConnectionTestService {
         SkillConnectionTestVO vo = new SkillConnectionTestVO();
         vo.setSuccess(false);
         vo.setMessage(message == null || message.isBlank() ? "连接失败" : message);
+        if (message == null || message.isBlank()) vo.setOwnedFailureCode("CONNECTION_FAILED");
         vo.setDurationMs(elapsedMillis(startedAt));
         return vo;
     }

@@ -1,3 +1,6 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { act } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { RunStatusTag } from './RunStatusTag';
@@ -21,7 +24,19 @@ describe('RunStatusTag', () => {
   });
 
   it('falls back to the raw status text for unknown statuses', () => {
-    render(<RunStatusTag status="TIMED_OUT" />);
-    expect(screen.getByText('TIMED_OUT')).toBeInTheDocument();
+    render(<RunStatusTag status="SERVER_NEW_STATUS" />);
+    expect(screen.getByText('SERVER_NEW_STATUS')).toBeInTheDocument();
   });
 });
+
+it('switches all eleven known statuses and keeps prototype-like unknowns literal', async () => {
+  const codes = ['QUEUED', 'STARTING', 'WAITING_EXECUTOR', 'WAITING_HUMAN', 'RUNNING', 'PAUSED', 'SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED', 'SKIPPED'];
+  const { container } = render(<>{[...codes, 'toString', '__proto__'].map(status => <RunStatusTag key={status} status={status} />)}</>);
+  expect(Array.from(container.querySelectorAll('.ant-tag')).map(tag => tag.textContent)).toEqual(['排队中', '启动中', '等待执行器', '等待人工处理', '运行中', '已暂停', '成功', '失败', '已超时', '已取消', '跳过', 'toString', '__proto__']);
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(Array.from(container.querySelectorAll('.ant-tag')).map(tag => tag.textContent)).toEqual(['Queued', 'Starting', 'Waiting for executor', 'Waiting for human', 'Running', 'Paused', 'Succeeded', 'Failed', 'Timed out', 'Canceled', 'Skipped', 'toString', '__proto__']);
+  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });

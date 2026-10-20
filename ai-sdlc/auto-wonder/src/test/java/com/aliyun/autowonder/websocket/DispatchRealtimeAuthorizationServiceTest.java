@@ -6,6 +6,9 @@ import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -36,7 +39,7 @@ class DispatchRealtimeAuthorizationServiceTest {
         when(dispatchDao.findById(10L)).thenReturn(dispatch);
 
         WorkspaceMemberDO member = new WorkspaceMemberDO();
-        member.setStatus(1);
+        member.setStatus(0);
         member.setAccessLevel("READ_ONLY");
         when(memberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
 
@@ -56,6 +59,7 @@ class DispatchRealtimeAuthorizationServiceTest {
         dispatch.setTenantId(200L);
         when(dispatchDao.findById(10L)).thenReturn(dispatch);
         assertFalse(service.authorize(100L, 42L, "dispatch:10"));
+        verifyNoInteractions(memberDao);
     }
 
     @Test
@@ -68,16 +72,32 @@ class DispatchRealtimeAuthorizationServiceTest {
         assertFalse(service.authorize(100L, 42L, "dispatch:10"));
     }
 
-    @Test
-    void deniesWhenMemberInactive() {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(ints = {1, 2, -1})
+    void deniesWhenMemberInactive(Integer status) {
         DispatchDO dispatch = new DispatchDO();
         dispatch.setId(10L);
         dispatch.setTenantId(100L);
         when(dispatchDao.findById(10L)).thenReturn(dispatch);
 
         WorkspaceMemberDO member = new WorkspaceMemberDO();
-        member.setStatus(0);
+        member.setStatus(status);
         member.setAccessLevel("READ_ONLY");
+        when(memberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
+        assertFalse(service.authorize(100L, 42L, "dispatch:10"));
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", "UNKNOWN"})
+    void deniesActiveMemberWithoutReadAccess(String accessLevel) {
+        DispatchDO dispatch = new DispatchDO();
+        dispatch.setTenantId(100L);
+        when(dispatchDao.findById(10L)).thenReturn(dispatch);
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setAccessLevel(accessLevel);
         when(memberDao.findByWorkspaceAndUser(100L, 42L)).thenReturn(member);
         assertFalse(service.authorize(100L, 42L, "dispatch:10"));
     }

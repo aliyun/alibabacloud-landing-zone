@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
@@ -65,7 +66,7 @@ public class WorkitemCliUploadTokenService {
         if (workitem == null || workitem.getTenantId() == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        requireWriteMembership(workitem.getTenantId(), userId);
+        requireWriteMembership(workitem.getTenantId(), userId, WorkspaceDomain.ARTIFACT);
 
         String token = TOKEN_PREFIX
                 + jwtService.signUserPurpose(userId, PURPOSE, TOKEN_TTL.getSeconds());
@@ -150,7 +151,7 @@ public class WorkitemCliUploadTokenService {
     }
 
     /** Live authorization reused by the CLI upload endpoint: active, write-capable membership. */
-    public void requireWriteMembership(long tenantId, long userId) {
+    public void requireWriteMembership(long tenantId, long userId, WorkspaceDomain domain) {
         WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(tenantId, userId);
         if (member == null
                 || !Integer.valueOf(0).equals(member.getStatus())
@@ -164,6 +165,11 @@ public class WorkitemCliUploadTokenService {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
         if (!WRITE_LEVELS.contains(level)) {
+            throw new BizException(ErrorCode.NO_PERMISSION);
+        }
+        // 已签发令牌仍按次读取角色的写权限。
+        if (level != WorkspaceAccessLevel.ADMIN
+                && WorkspaceDomain.fromJson(member.getReadOnlyDomains()).contains(domain)) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
     }

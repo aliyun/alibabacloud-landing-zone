@@ -1,4 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import type { ReactNode, DragEvent } from 'react';
 import { Badge, Button, Card, Tag, Typography, Empty, Spin, theme } from 'antd';
 import { LinkOutlined } from '@ant-design/icons';
@@ -13,17 +15,17 @@ import type { Workitem } from '@/shared/types/workitem';
 const { Text, Paragraph } = Typography;
 
 function localCreatorLabel(item: Workitem) {
-  return displayNameWithoutId(item.creatorDisplayName, item.creatorName) ?? '未提供';
+  return displayNameWithoutId(item.creatorDisplayName, item.creatorName) ?? i18n.t('workitem:kanban.notProvided');
 }
 
 function reporterLabel(item: Workitem) {
   const reporter = item.sourceCreator;
-  if (!reporter) return '未返回';
-  return displayNameWithoutId(reporter.displayName) || reporter.subjectId || '未返回';
+  if (!reporter) return i18n.t('workitem:kanban.notReturned');
+  return displayNameWithoutId(reporter.displayName) || reporter.subjectId || i18n.t('workitem:kanban.notReturned');
 }
 
 function sourceProviderLabel(provider?: string | null) {
-  if (!provider) return '外部工单';
+  if (!provider) return i18n.t('workitem:kanban.externalWorkitem');
   if (provider.toUpperCase() === 'AONE') return 'Aone';
   return provider.charAt(0).toUpperCase() + provider.slice(1).toLowerCase();
 }
@@ -35,13 +37,14 @@ interface CardDragProps {
 }
 
 function WorkitemCard({ item, ...dragProps }: { item: Workitem } & CardDragProps) {
+  const { t } = useTranslation('workitem');
   const navigate = useNavigate();
   const priority = getPriorityMeta(item.priority);
   const workType = workTypeMap[item.workType] || { color: 'default', label: item.workType };
   const creatorText = item.sourceType === 'EXTERNAL'
-    ? `来源提出人: ${reporterLabel(item)}`
-    : `创建者: ${localCreatorLabel(item)}`;
-  const assigneeText = displayNameWithoutId(item.assigneeDisplayName, item.assigneeName) ?? '未指派';
+    ? t('kanban.sourceReporter', { name: reporterLabel(item) })
+    : t('kanban.creator', { name: localCreatorLabel(item) });
+  const assigneeText = displayNameWithoutId(item.assigneeDisplayName, item.assigneeName) ?? t('assignee.unassigned');
 
   return (
     <Card
@@ -55,15 +58,15 @@ function WorkitemCard({ item, ...dragProps }: { item: Workitem } & CardDragProps
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 }}>
         <Tag color={workType.color} style={{ margin: 0, flexShrink: 0 }}>{workType.label}</Tag>
-        <Tag title={`状态: ${item.statusName || '未提供'}`} style={{ margin: 0, minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--aw-accent-text)', borderColor: 'var(--aw-accent)', background: 'rgba(var(--aw-accent-rgb),.10)' }}>
-          {item.statusName || '未提供'}
+        <Tag title={t('kanban.status', { name: item.statusName || t('kanban.notProvided') })} style={{ margin: 0, minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--aw-accent-text)', borderColor: 'var(--aw-accent)', background: 'rgba(var(--aw-accent-rgb),.10)' }}>
+          {item.statusName || i18n.t('workitem:kanban.notProvided')}
         </Tag>
         <WorkitemHealthBadge item={item} />
         <Tag color={priority.color} style={{ margin: 0, marginLeft: 'auto', flexShrink: 0 }}>{priority.label}</Tag>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
         {item.executionStatus === 'PENDING' && statusCategoryOf(item) !== 'DONE' && (
-          <Tag color="gold" style={{ margin: 0 }}>排队中</Tag>
+          <Tag color="gold" style={{ margin: 0 }}>{t('status.queued')}</Tag>
         )}
       </div>
       <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8, fontWeight: 500 }}>
@@ -79,10 +82,10 @@ function WorkitemCard({ item, ...dragProps }: { item: Workitem } & CardDragProps
         <div style={{ marginBottom: 6, fontSize: 12 }} onClick={(event) => event.stopPropagation()}>
           {item.sourceUrl ? (
             <Typography.Link href={item.sourceUrl} target="_blank" rel="noreferrer">
-              <LinkOutlined /> 来自 {sourceProviderLabel(item.sourceProvider)}
+              <LinkOutlined /> {t('kanban.source', { provider: sourceProviderLabel(item.sourceProvider) })}
             </Typography.Link>
           ) : (
-            <Text type="secondary"><LinkOutlined /> 来自 {sourceProviderLabel(item.sourceProvider)}</Text>
+            <Text type="secondary"><LinkOutlined /> {t('kanban.source', { provider: sourceProviderLabel(item.sourceProvider) })}</Text>
           )}
         </div>
       )}
@@ -90,8 +93,8 @@ function WorkitemCard({ item, ...dragProps }: { item: Workitem } & CardDragProps
         <Text type="secondary" ellipsis title={creatorText} style={{ fontSize: 12, minWidth: 0 }}>
           {creatorText}
         </Text>
-        <Text type="secondary" ellipsis title={`当前处理人: ${assigneeText}`} style={{ fontSize: 12, minWidth: 0, textAlign: 'right' }}>
-          当前处理人: {assigneeText}
+        <Text type="secondary" ellipsis title={t('kanban.assignee', { name: assigneeText })} style={{ fontSize: 12, minWidth: 0, textAlign: 'right' }}>
+          {t('kanban.assignee', { name: assigneeText })}
         </Text>
       </div>
     </Card>
@@ -103,12 +106,13 @@ function WorkitemCard({ item, ...dragProps }: { item: Workitem } & CardDragProps
  * onlyMine 为真且无命中时给出专属空态。
  */
 function PendingColumnContent({ items, onlyMine, renderCard }: { items: Workitem[]; onlyMine?: boolean; renderCard: (item: Workitem) => ReactNode }) {
-  const groups = useMemo(() => groupPendingDecisionsByAssignee(items), [items]);
+  const { t } = useTranslation('workitem');
+  const groups = useMemo(() => groupPendingDecisionsByAssignee(items), [items, t]);
   if (groups.length === 0) {
     return (
       <Empty
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description={onlyMine ? '暂无需要您决策的工单' : '暂无工单'}
+        description={onlyMine ? t('kanban.emptyDecision') : t('kanban.empty')}
       />
     );
   }
@@ -156,6 +160,7 @@ export function WorkitemKanban({
   onMove,
   transitionBusy = false,
 }: WorkitemKanbanProps) {
+  const { t } = useTranslation('workitem');
   const { token } = theme.useToken();
   const dragged = useRef<Workitem | null>(null);
   const [overColumn, setOverColumn] = useState<string | null>(null);
@@ -193,7 +198,7 @@ export function WorkitemKanban({
     : STATUS_COLUMNS;
 
   return (
-    <Spin spinning={!!loading || transitionBusy} tip={transitionBusy ? '正在检查并更新状态…' : undefined}>
+    <Spin spinning={!!loading || transitionBusy} tip={transitionBusy ? t('kanban.updating') : undefined}>
     <div style={{ display: 'flex', gap: 16, overflowX: 'auto', padding: '4px 0', minHeight: 400 }}>
       {visibleColumns.map(col => {
         const isPending = col.key === 'PENDING_DECISION';
@@ -225,7 +230,8 @@ export function WorkitemKanban({
             style={{
               flex: '1 1 0',
               minWidth: 260,
-              maxWidth: 360,
+              // 多列（默认 4 列）等分铺满整行；状态筛选后仅剩 1 列，保留 360px 上限并靠左
+              maxWidth: visibleColumns.length > 1 ? undefined : 360,
               background: overColumn === col.key ? token.colorPrimaryBg : token.colorFillAlter,
               outline: overColumn === col.key ? `2px dashed ${token.colorPrimary}` : undefined,
               borderRadius: 8,
@@ -239,7 +245,7 @@ export function WorkitemKanban({
               <Text strong style={{ flexShrink: 0 }}>{col.title}</Text>
               <Badge overflowCount={Number.MAX_SAFE_INTEGER} count={badgeCount} style={{ flexShrink: 0, backgroundColor: token.colorBgContainer, color: token.colorTextSecondary, boxShadow: `0 0 0 1px ${token.colorBorder}` }} />
               {isPending && !onlyMine && pendingDecisionSummary && (
-                <div aria-label="决策人汇总" style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', minWidth: 0 }}>
+                <div aria-label={t('kanban.decisionSummary')} style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', minWidth: 0 }}>
                   <Text type="secondary" strong ellipsis title={pendingDecisionSummary.name} style={{ minWidth: 0, maxWidth: 96, fontSize: 12 }}>{pendingDecisionSummary.name}</Text>
                   <Badge showZero overflowCount={Number.MAX_SAFE_INTEGER} count={pendingDecisionSummary.count} style={{ flexShrink: 0, backgroundColor: 'var(--aw-panel)', color: 'var(--aw-warning)' }} />
                 </div>
@@ -251,7 +257,7 @@ export function WorkitemKanban({
               ) : colItems.length > 0 ? (
                 colItems.map(renderCard)
               ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无工单" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('kanban.empty')} />
               )}
               {columnHasMore?.[col.key] && onLoadMore ? (
                 <Button
@@ -260,7 +266,7 @@ export function WorkitemKanban({
                   type="link"
                   onClick={() => onLoadMore(col.key)}
                 >
-                  加载更多（已显示 {colItems.length}/{badgeCount}）
+                  {t('kanban.loadMore', { shown: colItems.length, total: badgeCount })}
                 </Button>
               ) : null}
             </div>

@@ -26,6 +26,30 @@ class MemoryServiceTest {
         verify(memoryDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void customLegacyGuardMessagesRenderWithoutChangingRawDiagnostics(boolean migratedBranch) {
+        MemoryDO source = new MemoryDO(); source.setId(41L); source.setTenantId(7L); source.setStatus("PENDING");
+        when(memoryDao.findById(41L)).thenReturn(source);
+        var review = new ReviewRequest(); review.setDecision("<b>ADOPT</b>");
+        BizException decision = assertThrows(BizException.class, () -> service.review(41L, review, 7L, 9L));
+        assertEquals("decision 必须为 ADOPT 或 REJECT", decision.getMessage());
+        assertEquals("10001", decision.getCode()); assertNull(decision.getCause());
+        when(memoryDao.isMigrated(7L, 41L)).thenReturn(true);
+        BizException migrated = assertThrows(BizException.class, () -> service.update(41L, new UpdateMemoryRequest(), 7L, 9L));
+        assertEquals("该记忆已迁移，请在记忆页面维护正文和索引", migrated.getMessage());
+        assertEquals("10001", migrated.getCode()); assertNull(migrated.getCause());
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals(migratedBranch ? "This memory has been migrated. Maintain its body and index on the Memory page." : "Decision must be ADOPT or REJECT",
+                    com.aliyun.autowonder.common.result.Result.fail(migratedBranch ? migrated : decision).getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            assertEquals(decision.getMessage(), com.aliyun.autowonder.common.result.Result.fail(decision).getMessage());
+            assertEquals(migrated.getMessage(), com.aliyun.autowonder.common.result.Result.fail(migrated).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+        verify(memoryReviewDao, never()).insert(any());
+        verify(memoryDao, never()).update(any(), any(), any(), any(), any(), any(), any());
+    }
+
     private MemoryDao memoryDao;
     private MemoryReviewDao memoryReviewDao;
     private AgentMemoryRefDao agentMemoryRefDao;

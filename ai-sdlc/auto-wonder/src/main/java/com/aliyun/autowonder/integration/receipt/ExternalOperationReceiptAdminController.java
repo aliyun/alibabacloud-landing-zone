@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/integrations/receipts")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "处理外部操作回执")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "处理外部操作回执", actionKey = "access.action.process_external_operation_receipts")
 public class ExternalOperationReceiptAdminController {
 
     private final ExternalOperationReceiptAdminService adminService;

@@ -1,6 +1,8 @@
+import { useTranslation } from 'react-i18next';
 // Tabler Icons robot-face, MIT, https://github.com/tabler/tabler-icons
-export function RobotHeadIcon() {
-  return <span className="anticon aw-robot-head" role="img" aria-label="机器人"><svg
+export function RobotHeadIcon({ 'aria-hidden': hidden }: { 'aria-hidden'?: boolean | 'true' | 'false' } = {}) {
+  const { t } = useTranslation('shared');
+  return <span className="anticon aw-robot-head" role="img" aria-label={t('robot')} aria-hidden={hidden}><svg
   xmlns="http://www.w3.org/2000/svg"
   width="24"
   height="24"

@@ -75,9 +75,9 @@ describe('AccessRequestsPanel', () => {
     renderPanel();
 
     expect(await screen.findByText('张三')).toBeInTheDocument();
-    expect(screen.getByText('读写权限')).toBeInTheDocument();
-    expect(screen.getByText('管理员权限')).toBeInTheDocument();
-    expect(screen.getByText(new Date('2026-08-20T10:30:00').toLocaleDateString())).toBeInTheDocument();
+    expect(screen.getByText('读写者')).toBeInTheDocument();
+    expect(screen.getByText('管理员')).toBeInTheDocument();
+    expect(screen.getByText('2026/8/20')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '通过' }).length).toBe(2);
     expect(screen.getAllByRole('button', { name: '拒绝' }).length).toBe(2);
   });

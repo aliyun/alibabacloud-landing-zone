@@ -337,6 +337,15 @@ class ExecutorSelectorTest {
         assertEquals(10L, selector.select(1L, 20L, "FEATURE_V1"));
     }
 
+    @Test void humanGateRequiresEveryFeatureWhenEnvironmentBindingsAreAlsoPresent() {
+        when(redisManager.smembers(ExecutorSelector.execsKey(1L))).thenReturn(Set.of("10","20"));
+        when(executorRegistry.isAvailable(anyLong())).thenReturn(true);
+        when(presenceManager.capacity(anyLong())).thenReturn(10);
+        when(presenceManager.supportsProtocolFeature(anyLong(),eq("ENV_V1"))).thenReturn(true);
+        when(presenceManager.supportsProtocolFeature(20L,"DISPATCH_REQUESTS_V1")).thenReturn(true);
+        assertEquals(20L,selector.select(1L,10L,"ENV_V1,DISPATCH_REQUESTS_V1"));
+    }
+
     @Test
     void requiredFeatureFailsClearlyWhenCapacityEligibleExecutorsAreAllUnsupported() {
         when(redisManager.smembers(ExecutorSelector.execsKey(1L))).thenReturn(Set.of("10", "20"));

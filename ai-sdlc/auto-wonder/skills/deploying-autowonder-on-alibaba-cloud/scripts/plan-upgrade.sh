@@ -63,26 +63,47 @@ pending="$work_dir/pending.json"; blocked="$work_dir/blocked.txt"
 : >"$blocked"
 
 collect_env_contract() {
-  local commit=$1 output=$2 raw="$work_dir/env-raw-$3" path pattern key key_file
-  : >"$raw"; : >"$output"
+  local commit=$1 output=$2 raw="$work_dir/env-raw-$3" path pattern key key_file kind
+  : >"$raw"; : >"$output"; : >"$output.optional"
   while IFS= read -r path; do
+    kind=consumer
     case "$path" in
       docs/community/application.env.example)
+        kind=example
         pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}|^[A-Z][A-Z0-9_]*=.*$';;
-      src/main/resources/application*.yml|skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
+      src/main/resources/application*.yml)
+        kind=spring
+        pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}';;
+      skills/deploying-autowonder-on-alibaba-cloud/assets/templates/*|skills/deploying-autowonder-on-alibaba-cloud/assets/systemd/*|skills/deploying-autowonder-on-alibaba-cloud/scripts/*.sh)
         pattern='\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}';;
       *) continue;;
     esac
     git -C "$source_dir" show "$commit:./$path" 2>/dev/null |
       grep -Eo "$pattern" 2>/dev/null |
       sed -E 's/^\$\{//; s/\}$//' |
-      awk -F '[:=]' 'NF {print $1 "\t" $0}' >>"$raw" || true
+      awk -F '[:=]' -v kind="$kind" 'NF {print $1 "\t" $0 "\t" kind}' >>"$raw" || true
   done < <(git -C "$source_dir" ls-tree -r --name-only "$commit" -- .)
   cut -f1 "$raw" | LC_ALL=C sort -u | while IFS= read -r key; do
     [[ -n "$key" && "$key" != ANTHROPIC_AUTH_TOKEN ]] || continue
     key_file=$(mktemp); TEMP_FILES+=("$key_file")
     awk -F '\t' -v wanted="$key" '$1 == wanted {print $2}' "$raw" | LC_ALL=C sort -u >"$key_file"
     printf '%s\t%s\n' "$key" "$(sha256_file "$key_file")" >>"$output"
+    # Examples document values; only runtime declarations establish defaults.
+    # A required consumer overrides an optional Spring declaration. Nested
+    # placeholders are not proof of a usable literal fallback.
+    if awk -F '\t' -v wanted="$key" '
+      $1 == wanted && $3 == "spring" {
+        spring = 1
+        colon = index($2, ":")
+        fallback = substr($2, colon + 1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", fallback)
+        if (!colon || fallback == "" || index(fallback, "${")) required = 1
+      }
+      $1 == wanted && $3 == "consumer" { required = 1 }
+      END { exit !(spring && !required) }
+    ' "$raw"; then
+      printf '%s\n' "$key" >>"$output.optional"
+    fi
   done
 }
 
@@ -117,6 +138,7 @@ upgrade_requires_env_key() {
     S3_ENABLED|S3_PUBLIC_ENDPOINT|S3_REGION)
       return 1;;
     *)
+      grep -Fxq "$1" "$new_env.optional" && return 1
       return 0;;
   esac
 }

@@ -46,26 +46,6 @@ public class ExecutorLaunchConfigService {
      * and best-effort written back, so the page prompts the operator to pick again instead of launching a dead id; the
      * write-back never blocks the read and, when it lands, the returned version already reflects the bump.
      */
-    public ExecutorLaunchConfigVO getConfig(long id, long tenantId, long userId) {
-        ExecutorDO executor = requireExecutor(id, tenantId);
-        int version = versionOf(executor);
-        LaunchConfig stored = parse(executor.getLaunchConfig());
-        String provider = ExecutorLaunchOptionsService.resolveProvider(executor.getClientKind());
-        if (!ExecutorLaunchOptionsService.isQoderFamily(provider)) {
-            return toVo(null, null, null, stored.memoryMode, stored.maxConcurrentDispatches, version);
-        }
-        String model = stored.model;
-        if (isNotBlank(model) && !modelIds(provider).contains(model)) {
-            stored.model = null;
-            Integer bumped = writeBackCleared(executor, stored, version, tenantId, userId);
-            if (bumped != null) {
-                version = bumped;
-            }
-            model = null;
-        }
-        return toVo(model, stored.reasoningEffort, stored.contextWindow, stored.memoryMode, stored.maxConcurrentDispatches, version);
-    }
-
     /**
      * Read-only view of exactly what the database holds, for the MCP config query tool. Never writes back and never
      * re-resolves a rotated-out model, so a caller learns the truth instead of a silently repaired value; an
@@ -76,10 +56,7 @@ public class ExecutorLaunchConfigService {
         LaunchConfig stored = parse(executor.getLaunchConfig());
         int version = versionOf(executor);
         String provider = ExecutorLaunchOptionsService.resolveProvider(executor.getClientKind());
-        if (!ExecutorLaunchOptionsService.isQoderFamily(provider)) {
-            return toVo(null, null, null, stored.memoryMode, stored.maxConcurrentDispatches, version);
-        }
-        return toVo(stored.model, stored.reasoningEffort, stored.contextWindow, stored.memoryMode, stored.maxConcurrentDispatches, version);
+        return toVo(stored, version, ExecutorLaunchOptionsService.isQoderFamily(provider));
     }
 
     /**
@@ -95,15 +72,12 @@ public class ExecutorLaunchConfigService {
             long userId) {
         ExecutorDO executor = requireExecutor(id, tenantId);
         if (req == null || req.getVersion() == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "缺少启动配置版本号");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.version_required", null, "缺少启动配置版本号");
         }
         int expectedVersion = req.getVersion();
         String kindToPersist = resolveRecoveryClientKind(executor.getClientKind(), req.getClientKind());
-        LaunchConfig stored = resolve(kindToPersist != null ? kindToPersist : executor.getClientKind(),
-                req.getMemoryMode(), req.getModel(),
-                req.getReasoningEffort(), req.getContextWindow(), true);
-        stored.maxConcurrentDispatches = resolveMaxConcurrentDispatches(req.getMaxConcurrentDispatches() != null
-                ? req.getMaxConcurrentDispatches() : parse(executor.getLaunchConfig()).maxConcurrentDispatches);
+        LaunchConfig stored = resolveUpdatedConfig(executor, req,
+                kindToPersist != null ? kindToPersist : executor.getClientKind());
         int rows = kindToPersist != null
                 ? executorDao.updateLaunchConfigWithClientKind(id, tenantId, toJson(stored), kindToPersist,
                         expectedVersion, userId)
@@ -111,8 +85,67 @@ public class ExecutorLaunchConfigService {
         if (rows == 0) {
             throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
         }
-        return toVo(stored.model, stored.reasoningEffort, stored.contextWindow, stored.memoryMode, stored.maxConcurrentDispatches,
-                expectedVersion + 1);
+        return toVo(stored, expectedVersion + 1, ExecutorLaunchOptionsService.isQoderFamily(
+                ExecutorLaunchOptionsService.resolveProvider(kindToPersist != null ? kindToPersist : executor.getClientKind())));
+    }
+
+    public LaunchConfig previewConfig(long id, long tenantId, UpdateExecutorLaunchConfigRequest request) {
+        ExecutorDO executor = requireExecutor(id, tenantId);
+        if (request == null || request.getVersion() == null) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.version_required", null, "缺少启动配置版本号");
+        }
+        if (request.getVersion() != versionOf(executor)) {
+            throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
+        }
+        String recoveredKind = resolveRecoveryClientKind(executor.getClientKind(), request.getClientKind());
+        return resolveUpdatedConfig(executor, request,
+                recoveredKind != null ? recoveredKind : executor.getClientKind());
+    }
+
+    private LaunchConfig resolveUpdatedConfig(ExecutorDO executor, UpdateExecutorLaunchConfigRequest req, String clientKind) {
+        LaunchConfig previous = parse(executor.getLaunchConfig());
+        LaunchConfig stored = resolve(clientKind,
+                req.getMemoryMode(), req.getModel(),
+                req.getReasoningEffort(), req.getContextWindow(), true);
+        stored.maxConcurrentDispatches = resolveMaxConcurrentDispatches(req.getMaxConcurrentDispatches() != null
+                ? req.getMaxConcurrentDispatches() : previous.maxConcurrentDispatches);
+        stored.modelUpgradePolicy = req.getModelUpgradePolicy() == null
+                ? previous.modelUpgradePolicy : validatePolicy(req.getModelUpgradePolicy(),
+                        clientKind);
+        stored.runtimeVersion = req.getRuntimeVersion() == null ? previous.runtimeVersion : runtimeVersion(req.getRuntimeVersion());
+        stored.workspaceRoot = req.getWorkspaceRoot() == null ? previous.workspaceRoot : launchText(req.getWorkspaceRoot(), 4096);
+        stored.daemonName = req.getDaemonName() == null ? previous.daemonName : launchText(req.getDaemonName(), 200);
+        stored.debug = req.getDebug() == null ? previous.debug : req.getDebug();
+        return stored;
+    }
+
+    /** Policy-only write: preserve every launch field, including legacy and retired model values. */
+    public ExecutorLaunchConfigVO updateModelUpgradePolicy(long id, long tenantId,
+            UpdateExecutorLaunchConfigRequest request, long userId) {
+        ExecutorDO executor = requireExecutor(id, tenantId);
+        if (request == null || request.getVersion() == null) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.version_required", null, "缺少启动配置版本号");
+        }
+        if (request.getModelUpgradePolicy() == null) throw invalidPolicy();
+        LaunchConfig stored = parse(executor.getLaunchConfig());
+        stored.modelUpgradePolicy = validatePolicy(request.getModelUpgradePolicy(), executor.getClientKind());
+        if (executorDao.updateLaunchConfig(id, tenantId, mergePolicy(executor.getLaunchConfig(), stored.modelUpgradePolicy), request.getVersion(), userId) == 0)
+            throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
+        return toVo(stored, request.getVersion() + 1, ExecutorLaunchOptionsService.isQoderFamily(
+                ExecutorLaunchOptionsService.resolveProvider(executor.getClientKind())));
+    }
+
+    private String mergePolicy(String json, ModelUpgradePolicy policy) {
+        try {
+            var root = json == null || json.isBlank() ? JSON_MAPPER.createObjectNode() : JSON_MAPPER.readTree(json);
+            if (!(root instanceof com.fasterxml.jackson.databind.node.ObjectNode object)) {
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.serialization_failed", null, "Invalid stored launch config");
+            }
+            object.set("modelUpgradePolicy", JSON_MAPPER.valueToTree(policy));
+            return JSON_MAPPER.writeValueAsString(object);
+        } catch (JsonProcessingException error) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.serialization_failed", null, "Invalid stored launch config");
+        }
     }
 
     /**
@@ -124,13 +157,13 @@ public class ExecutorLaunchConfigService {
     private static String resolveRecoveryClientKind(String currentKind, String requestedKind) {
         if (isNotBlank(currentKind)) {
             if (isNotBlank(requestedKind) && !currentKind.trim().equalsIgnoreCase(requestedKind.trim())) {
-                throw new BizException(ErrorCode.PARAM_INVALID,
-                        "执行器客户端类型已存在（" + currentKind + "），不允许通过启动配置修改");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.client_kind_immutable",
+                        new Object[]{currentKind}, "执行器客户端类型已存在（" + currentKind + "），不允许通过启动配置修改");
             }
             return null;
         }
         if (!isNotBlank(requestedKind)) {
-            throw new BizException(ErrorCode.EXECUTOR_CLIENT_KIND_MISSING,
+            throw BizException.keyed(ErrorCode.EXECUTOR_CLIENT_KIND_MISSING, "executor.config.client_kind_required", null,
                     "该执行器缺少客户端类型，请在保存启动配置时选择客户端类型");
         }
         String canonical = ExecutorLaunchOptionsService.canonicalClientKind(requestedKind);
@@ -165,7 +198,14 @@ public class ExecutorLaunchConfigService {
      * the catalog no longer offers must be re-saved before a command may be generated again.
      */
     public LaunchConfig requireCompleteConfig(long id, long tenantId) {
+        return requireCompleteConfig(id, tenantId, null);
+    }
+
+    public LaunchConfig requireCompleteConfig(long id, long tenantId, Integer expectedVersion) {
         ExecutorDO executor = requireExecutor(id, tenantId);
+        if (expectedVersion != null && expectedVersion != versionOf(executor)) {
+            throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_VERSION_CONFLICT);
+        }
         LaunchConfig stored = parse(executor.getLaunchConfig());
         String provider = ExecutorLaunchOptionsService.resolveProvider(executor.getClientKind());
         if (!isNotBlank(stored.memoryMode)) {
@@ -182,8 +222,8 @@ public class ExecutorLaunchConfigService {
             throw incomplete();
         }
         if (!modelIds(provider).contains(stored.model)) {
-            throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID,
-                    "已保存的模型 " + stored.model + " 已不可用，请重新选择并保存启动配置");
+            throw BizException.keyed(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID, "executor.config.saved_model_unavailable",
+                    new Object[]{stored.model}, "已保存的模型 " + stored.model + " 已不可用，请重新选择并保存启动配置");
         }
         return stored;
     }
@@ -192,7 +232,7 @@ public class ExecutorLaunchConfigService {
         try {
             return JSON_MAPPER.writeValueAsString(config);
         } catch (JsonProcessingException exception) {
-            throw new BizException(ErrorCode.SYSTEM_ERROR, "启动配置序列化失败");
+            throw BizException.keyed(ErrorCode.SYSTEM_ERROR, "executor.config.serialization_failed", null, "启动配置序列化失败");
         }
     }
 
@@ -233,17 +273,6 @@ public class ExecutorLaunchConfigService {
         return executor;
     }
 
-    private Integer writeBackCleared(ExecutorDO executor, LaunchConfig cleared, int expectedVersion, long tenantId,
-            long userId) {
-        try {
-            int rows = executorDao.updateLaunchConfig(executor.getId(), tenantId, toJson(cleared), expectedVersion,
-                    userId);
-            return rows == 1 ? expectedVersion + 1 : null;
-        } catch (RuntimeException exception) {
-            log.warn("executor launch config cleanup write-back failed executorId={}", executor.getId(), exception);
-            return null;
-        }
-    }
 
     private List<String> modelIds(String provider) {
         return options.models(provider).stream().map(SelectOptionVO::getValue).toList();
@@ -253,7 +282,7 @@ public class ExecutorLaunchConfigService {
         return executor.getConfigVersion() == null ? 1 : executor.getConfigVersion();
     }
 
-    private static LaunchConfig parse(String json) {
+    public static LaunchConfig parse(String json) {
         if (json == null || json.isBlank()) {
             return new LaunchConfig();
         }
@@ -270,24 +299,71 @@ public class ExecutorLaunchConfigService {
         }
     }
 
-    private static ExecutorLaunchConfigVO toVo(String model, String reasoningEffort, String contextWindow,
-            String memoryMode, Integer maxConcurrentDispatches, int version) {
+    private static ExecutorLaunchConfigVO toVo(LaunchConfig config, int version, boolean qoder) {
         ExecutorLaunchConfigVO vo = new ExecutorLaunchConfigVO();
-        vo.setModel(model);
-        vo.setReasoningEffort(reasoningEffort);
-        vo.setContextWindow(contextWindow);
-        vo.setMemoryMode(memoryMode);
-        vo.setMaxConcurrentDispatches(maxConcurrentDispatches);
+        vo.setModel(qoder ? config.model : null);
+        vo.setReasoningEffort(qoder ? config.reasoningEffort : null);
+        vo.setContextWindow(qoder ? config.contextWindow : null);
+        vo.setMemoryMode(config.memoryMode);
+        vo.setMaxConcurrentDispatches(config.maxConcurrentDispatches);
+        vo.setModelUpgradePolicy(config.modelUpgradePolicy);
+        vo.setRuntimeVersion(config.runtimeVersion);
+        vo.setWorkspaceRoot(config.workspaceRoot);
+        vo.setDaemonName(config.daemonName);
+        vo.setDebug(config.debug);
         vo.setVersion(version);
         return vo;
+    }
+
+    private static String runtimeVersion(String value) {
+        String version = launchText(value, 64);
+        if (version != null && (!version.matches("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)")
+                || RuntimeVersion.compare(version, version).isEmpty())) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.command.version_invalid", null,
+                    "执行器版本必须是 X.Y.Z 格式的稳定发布版本");
+        }
+        return version;
+    }
+
+    private static String launchText(String value, int maxLength) {
+        if (value.isBlank()) return null;
+        if (value.length() > maxLength || value.chars().anyMatch(Character::isISOControl)) {
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.command.parameter_invalid", null,
+                    "启动参数过长或包含控制字符");
+        }
+        return value;
     }
 
     public static int resolveMaxConcurrentDispatches(Integer value) {
         if (value == null) return DEFAULT_MAX_CONCURRENT_DISPATCHES;
         if (value < 1 || value > 10) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "最大并发任务数必须为 1 到 10 的整数");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.concurrency_invalid", null, "最大并发任务数必须为 1 到 10 的整数");
         }
         return value;
+    }
+
+    private ModelUpgradePolicy validatePolicy(ModelUpgradePolicy policy, String clientKind) {
+        if (policy.getLevels() == null) policy.setLevels(List.of());
+        if (policy.isEnabled() && policy.getLevels().isEmpty()) throw invalidPolicy();
+        if (policy.getLevels().size() > 20) throw invalidPolicy();
+        int previous = 1;
+        java.util.Set<String> models = new java.util.HashSet<>();
+        String provider = ExecutorLaunchOptionsService.resolveProvider(clientKind);
+        for (ModelUpgradePolicy.Level level : policy.getLevels()) {
+            if (level == null || level.getEntryCount() == null || level.getEntryCount() <= previous
+                    || level.getModel() == null || level.getModel().isBlank()
+                    || level.getModel().length() > 200 || !level.getModel().matches("[A-Za-z0-9_.:/+-]+")
+                    || !models.add(level.getModel())) throw invalidPolicy();
+            if (policy.isEnabled() && ExecutorLaunchOptionsService.isQoderFamily(provider) && !modelIds(provider).contains(level.getModel()))
+                throw new BizException(ErrorCode.EXECUTOR_LAUNCH_CONFIG_MODEL_INVALID);
+            previous = level.getEntryCount();
+        }
+        return policy;
+    }
+
+    private static BizException invalidPolicy() {
+        return BizException.keyed(ErrorCode.PARAM_INVALID, "executor.config.upgrade_policy_invalid", null,
+                "模型升级策略必须包含递增且不小于 2 的进入次数，以及不重复的有效模型 ID");
     }
 
     private static boolean isNotBlank(String value) {
@@ -297,10 +373,15 @@ public class ExecutorLaunchConfigService {
     /** Persisted shape of executor.launch_config; public fields mirror the repo's JSON-column POJO style. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class LaunchConfig {
+        public ModelUpgradePolicy modelUpgradePolicy;
         public String model;
         public String reasoningEffort;
         public String contextWindow;
         public String memoryMode;
         public Integer maxConcurrentDispatches;
+        public String runtimeVersion;
+        public String workspaceRoot;
+        public String daemonName;
+        public Boolean debug;
     }
 }

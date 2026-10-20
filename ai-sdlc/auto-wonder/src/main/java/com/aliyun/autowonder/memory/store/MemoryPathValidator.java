@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Set;
@@ -17,34 +19,34 @@ public final class MemoryPathValidator {
 
     public static String requireSafe(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
-            throw invalid("path is blank");
+            throw invalid("memory.path.blank", "path is blank");
         }
         String normalized = Normalizer.normalize(rawPath, Normalizer.Form.NFKC);
         if (normalized.length() > MAX_PATH_LENGTH) {
-            throw invalid("path is too long");
+            throw invalid("memory.path.too_long", "path is too long");
         }
         if (normalized.startsWith("/") || DRIVE_ABSOLUTE.matcher(normalized).matches()) {
-            throw invalid("absolute paths are not allowed");
+            throw invalid("memory.path.absolute", "absolute paths are not allowed");
         }
         if (normalized.indexOf('\\') >= 0) {
-            throw invalid("backslashes are not allowed");
+            throw invalid("memory.path.backslash", "backslashes are not allowed");
         }
         if (ENCODED_TRAVERSAL.matcher(normalized).find()) {
-            throw invalid("encoded traversal is not allowed");
+            throw invalid("memory.path.encoded_traversal", "encoded traversal is not allowed");
         }
         for (int i = 0; i < normalized.length(); i++) {
             char value = normalized.charAt(i);
             if (Character.isISOControl(value) || value == 0) {
-                throw invalid("control characters are not allowed");
+                throw invalid("memory.path.control", "control characters are not allowed");
             }
         }
         String[] segments = normalized.split("/", -1);
         for (String segment : segments) {
             if (segment.isBlank() || segment.equals(".") || segment.equals("..")) {
-                throw invalid("empty or traversal segments are not allowed");
+                throw invalid("memory.path.segments", "empty or traversal segments are not allowed");
             }
             if (segment.startsWith(".")) {
-                throw invalid("hidden path segments are not allowed");
+                throw invalid("memory.path.hidden", "hidden path segments are not allowed");
             }
             String stem = segment;
             int dot = stem.indexOf('.');
@@ -52,17 +54,17 @@ public final class MemoryPathValidator {
                 stem = stem.substring(0, dot);
             }
             if (RESERVED.matcher(stem).matches()) {
-                throw invalid("platform-reserved path segment");
+                throw invalid("memory.path.reserved", "platform-reserved path segment");
             }
         }
         String lower = normalized.toLowerCase(Locale.ROOT);
         if (ALLOWED_EXTENSIONS.stream().noneMatch(lower::endsWith)) {
-            throw invalid("autonomous memory documents must be Markdown");
+            throw invalid("memory.path.markdown", "autonomous memory documents must be Markdown");
         }
         return normalized;
     }
 
-    private static IllegalArgumentException invalid(String reason) {
-        return new IllegalArgumentException("unsafe memory path: " + reason);
+    private static IllegalArgumentException invalid(String key, String reason) {
+        return new KeyedIllegalArgumentException(key, null, "unsafe memory path: " + reason);
     }
 }

@@ -133,10 +133,48 @@ describe('AgentEditPage', () => {
     renderPage();
     expect(await screen.findByText('web-repo')).toBeInTheDocument();
     expect(screen.getAllByText('web-repo')).toHaveLength(1);
-    expect(screen.getByText('WRITE')).toBeInTheDocument();
+    expect(screen.getByText('读写')).toBeInTheDocument();
     expect(screen.getByText('Code Review')).toBeInTheDocument();
     expect(screen.getAllByText('Code Review')).toHaveLength(1);
     expect(screen.queryByText('React rules')).not.toBeInTheDocument();
+  });
+
+  it('prefers the server-resolved capability name over the locally listed skills', async () => {
+    server.use(
+      http.get('/api/agents/1', () => ok(agentData)),
+      http.get('/api/agents/1/versions/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...versionData, skills: [{ skillId: 77, skillName: '服务端能力名称' }] },
+      })),
+      http.get('/api/repos', () => okPage([])),
+      // 本地能力列表只取第一页，超出范围的已绑定能力不会出现在这里
+      http.get('/api/skills', () => okPage([])),
+      http.get('/api/memories', () => okPage([])),
+      http.get('/api/sdlcs', () => okPage([])),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('服务端能力名称')).toBeInTheDocument();
+    expect(screen.queryByText('#77')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the capability id when neither the server nor the local list has a name', async () => {
+    server.use(
+      http.get('/api/agents/1', () => ok(agentData)),
+      http.get('/api/agents/1/versions/1', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { ...versionData, skills: [{ skillId: 77 }] },
+      })),
+      http.get('/api/repos', () => okPage([])),
+      http.get('/api/skills', () => okPage([])),
+      http.get('/api/memories', () => okPage([])),
+      http.get('/api/sdlcs', () => okPage([])),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('#77')).toBeInTheDocument();
   });
 
   it('uses multi-select controls for repositories and capabilities only', async () => {

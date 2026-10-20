@@ -1,6 +1,9 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { useEffect, useRef, useState } from 'react';
 import { Card, Button, Modal, Form, Select, Input, Space, Empty, Spin, message, Popconfirm, theme } from 'antd';
-import { PlusOutlined, DeleteOutlined, ReloadOutlined, FullscreenOutlined, FullscreenExitOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, ReloadOutlined, FullscreenOutlined, FullscreenExitOutlined, ZoomInOutlined, ZoomOutOutlined, ExclamationCircleFilled, LoadingOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Graph } from '@antv/g6';
@@ -117,11 +120,13 @@ export function getRepoMapLayout(width: number, height: number, nodeCount: numbe
 }
 
 export function RepoMapPage() {
+  const { t } = useTranslation('repo');
   const { token } = theme.useToken();
   const frameRef = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
+  const tooltipRef = useRef<{ content: HTMLDivElement; relationType: string } | null>(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const runWithAccess = useAccessCommand();
@@ -129,7 +134,7 @@ export function RepoMapPage() {
   const [addRelationOpen, setAddRelationOpen] = useState(false);
   const [selectedRelation, setSelectedRelation] = useState<RepoRelation | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [graphError, setGraphError] = useState<string | null>(null);
+  const [graphError, setGraphError] = useState<'errors.graphRender' | 'errors.graphResize' | null>(null);
   const [relationForm] = Form.useForm();
 
   const { data: repos = [], isLoading: reposLoading } = useQuery({
@@ -145,18 +150,18 @@ export function RepoMapPage() {
   const createRelationMut = useMutation({
     mutationFn: (data: CreateRelationRequest) => createRelation(data),
     onSuccess: () => {
-      message.success('关系已创建');
+      message.success(i18n.t('repo:feedback.relationCreated'));
       setAddRelationOpen(false);
       relationForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
     },
-    onError: (e: Error) => message.error(e.message || '创建失败'),
+    onError: (e: Error) => message.error(e.message || i18n.t('repo:errors.create')),
   });
 
   const deleteRelationMut = useMutation({
     mutationFn: deleteRelation,
     onSuccess: () => {
-      message.success('关系已删除');
+      message.success(i18n.t('repo:feedback.relationDeleted'));
       setDeleteConfirmOpen(false);
       setSelectedRelation(null);
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
@@ -213,7 +218,7 @@ export function RepoMapPage() {
         labelBackgroundFill: token.colorBgContainer,
         labelFill: token.colorText,
         labelBackgroundOpacity: 1,
-        stroke: RELATION_COLORS[rel.relationType] || '#8c8c8c',
+        stroke: Object.prototype.hasOwnProperty.call(RELATION_COLORS, rel.relationType) ? RELATION_COLORS[rel.relationType] : '#8c8c8c',
         endArrow: true,
       },
     }));
@@ -235,7 +240,7 @@ export function RepoMapPage() {
         zoomRange: [0.05, 2],
         autoResize: true,
         animation: false,
-        data: { nodes, edges },
+        data: { nodes, edges: edges.map(edge => ({ ...edge, style: { ...edge.style, labelText: RELATION_TYPES.find(type => type.value === edge.data.relationType)?.label || edge.data.relationType } })) },
         node: {
           type: 'rect',
           style: {
@@ -275,7 +280,9 @@ export function RepoMapPage() {
             const content = document.createElement('div');
             // textContent keeps repository names and descriptions as plain text.
             content.textContent = String(item?.data?.name ?? item?.data?.description ??
-              RELATION_TYPES.find(type => type.value === item?.data?.relationType)?.label ?? '');
+              RELATION_TYPES.find(type => type.value === item?.data?.relationType)?.label ?? item?.data?.relationType ?? '');
+            tooltipRef.current = item?.data?.name == null && item?.data?.description == null
+              ? { content, relationType: String(item?.data?.relationType ?? '') } : null;
             content.style.maxWidth = '360px';
             content.style.overflowWrap = 'anywhere';
             return content;
@@ -321,7 +328,7 @@ export function RepoMapPage() {
         })
         .catch(() => {
           if (!cancelled) {
-            setGraphError('关系图暂时无法渲染，请刷新页面后重试。');
+            setGraphError('errors.graphRender');
           }
         });
 
@@ -335,7 +342,7 @@ export function RepoMapPage() {
           // Preserve manual placement when resizing or toggling fullscreen.
           const update = manuallyArranged ? Promise.resolve() : graph.layout(layout);
           void update.then(() => { if (!cancelled) return fitCanvas(graph); })
-            .catch(() => { if (!cancelled) setGraphError('画布适配失败，请刷新重试。'); })
+            .catch(() => { if (!cancelled) setGraphError('errors.graphResize'); })
             .finally(() => { resizing = false; });
         });
         resizeObserver.observe(container);
@@ -346,6 +353,7 @@ export function RepoMapPage() {
       cancelled = true;
       window.cancelAnimationFrame(animationFrame);
       resizeObserver?.disconnect();
+      tooltipRef.current = null;
       if (graphRef.current) {
         graphRef.current.destroy();
         graphRef.current = null;
@@ -353,10 +361,24 @@ export function RepoMapPage() {
     };
   }, [repos, relations, navigate, token.colorSuccess, token.colorBorder, token.colorWarning, token.colorBgContainer, token.colorText]);
 
+  useEffect(() => {
+    const tooltip = tooltipRef.current;
+    if (tooltip) tooltip.content.textContent = RELATION_TYPES.find(type => type.value === tooltip.relationType)?.label || tooltip.relationType;
+    const graph = graphRef.current;
+    if (!graph) return;
+    graph.updateEdgeData(graph.getEdgeData().map(edge => ({
+      id: edge.id,
+      style: { labelText: RELATION_TYPES.find(type => type.value === edge.data?.relationType)?.label || String(edge.data?.relationType ?? '') },
+    })));
+    void graph.draw().catch(() => {
+      if (graphRef.current === graph) setGraphError('errors.graphRender');
+    });
+  }, [t]);
+
   const handleAddRelation = async () => {
-    await runWithAccess('READ_WRITE', '添加仓库关系', async () => {
-      const values = await relationForm.validateFields();
-      createRelationMut.mutate(values);
+    await runWithAccess('READ_WRITE', t('actions.addRepoRelation'), async () => {
+      const values = await relationForm.validateFields().catch(() => null);
+      if (values) createRelationMut.mutate(values);
     });
   };
 
@@ -368,6 +390,8 @@ export function RepoMapPage() {
   const isLoading = reposLoading || relationsLoading;
   const hasGraphData = repos.length > 0 || relations.length > 0;
 
+  useLocalizedValidation(relationForm, !isLoading && addRelationOpen);
+
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
 
   return (
@@ -375,23 +399,23 @@ export function RepoMapPage() {
       <Card
         style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
         styles={{ body: { flex: 1, padding: 0, position: 'relative', minHeight: fullscreen ? 0 : 500, display: 'flex', flexDirection: 'column' } }}
-        title={<span style={{ fontSize: 12, fontWeight: 400, color: token.colorTextSecondary }}>滚轮缩放 · 拖动仓库或画布 · 点击查看详情</span>}
+        title={<span style={{ fontSize: 12, fontWeight: 400, color: token.colorTextSecondary }}>{t('map.help')}</span>}
         extra={
           <Space wrap>
-            <Button aria-label="缩小关系图" icon={<ZoomOutOutlined />} onClick={() => { const graph = graphRef.current; if (graph) void graph.zoomTo(graph.getZoom() / 1.2, false); }} />
-            <Button aria-label="放大关系图" icon={<ZoomInOutlined />} onClick={() => { const graph = graphRef.current; if (graph) void graph.zoomTo(graph.getZoom() * 1.2, false); }} />
-            <Button icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />} onClick={() => setFullscreen(value => !value)}>{fullscreen ? '退出全屏' : '全屏查看'}</Button>
-            <Button icon={<ReloadOutlined />} onClick={handleFitView}>适应画布</Button>
+            <Button aria-label={t('map.zoomOut')} icon={<ZoomOutOutlined aria-hidden="true" />} onClick={() => { const graph = graphRef.current; if (graph) void graph.zoomTo(graph.getZoom() / 1.2, false); }} />
+            <Button aria-label={t('map.zoomIn')} icon={<ZoomInOutlined aria-hidden="true" />} onClick={() => { const graph = graphRef.current; if (graph) void graph.zoomTo(graph.getZoom() * 1.2, false); }} />
+            <Button icon={fullscreen ? <FullscreenExitOutlined aria-hidden="true" /> : <FullscreenOutlined aria-hidden="true" />} onClick={() => setFullscreen(value => !value)}>{fullscreen ? t('map.exitFullscreen') : t('map.fullscreen')}</Button>
+            <Button icon={<ReloadOutlined aria-hidden="true" />} onClick={handleFitView}>{t('map.fit')}</Button>
             <Button
               type="primary"
-              icon={<PlusOutlined />}
+              icon={<PlusOutlined aria-hidden="true" />}
               onClick={() => runWithAccess(
                 'READ_WRITE',
-                '添加仓库关系',
+                t('actions.addRepoRelation'),
                 () => setAddRelationOpen(true),
               )}
             >
-              添加关系
+              {t('actions.addRelation')}
             </Button>
           </Space>
         }
@@ -400,84 +424,85 @@ export function RepoMapPage() {
           <Empty
             description={
               <div>
-                <div>暂无仓库或关系数据</div>
+                <div>{t('map.empty')}</div>
                 <div style={{ color: 'var(--aw-muted)', marginTop: 8 }}>
-                  添加仓库并创建关系后，这里会展示调用与依赖关系。
+                  {t('map.emptyHint')}
                 </div>
               </div>
             }
             style={{ marginTop: 100 }}
           />
         ) : graphError ? (
-          <Empty description={graphError} style={{ marginTop: 100 }} />
+          <Empty description={t(graphError)} style={{ marginTop: 100 }} />
         ) : (
           <div ref={containerRef} style={{ width: '100%', height: fullscreen ? '100%' : 'clamp(500px, 65vh, 800px)', flex: fullscreen ? 1 : undefined, minHeight: 0 }} />
         )}
       </Card>
 
       {/* Add Relation Modal */}
-      <Modal getContainer={false} title="添加仓库关系" open={addRelationOpen}
+      <Modal getContainer={false} title={t('actions.addRepoRelation')} open={addRelationOpen}
         onOk={handleAddRelation} onCancel={() => setAddRelationOpen(false)}
         confirmLoading={createRelationMut.isPending}>
         <Form form={relationForm} layout="vertical">
-          <Form.Item label="来源仓库" name="fromRepoId" rules={[{ required: true, message: '请选择来源仓库' }]}>
-            <Select placeholder="选择来源仓库" showSearch optionFilterProp="label"
+          <Form.Item label={t('fields.source')} name="fromRepoId" rules={[{ required: true, message: t('validation.sourceRequired') }]}>
+            <Select placeholder={t('placeholders.source')} showSearch optionFilterProp="label"
               options={repos.map(r => ({ value: r.id, label: r.name }))}
             />
           </Form.Item>
-          <Form.Item label="目标仓库" name="toRepoId" rules={[{ required: true, message: '请选择目标仓库' }]}>
-            <Select placeholder="选择目标仓库" showSearch optionFilterProp="label"
+          <Form.Item label={t('fields.target')} name="toRepoId" rules={[{ required: true, message: t('validation.targetRequired') }]}>
+            <Select placeholder={t('placeholders.target')} showSearch optionFilterProp="label"
               options={repos.map(r => ({ value: r.id, label: r.name }))}
             />
           </Form.Item>
-          <Form.Item label="关系类型" name="relationType" rules={[{ required: true, message: '请选择关系类型' }]}>
-            <Select placeholder="选择关系类型" options={RELATION_TYPES.map(t => ({ value: t.value, label: t.label }))} />
+          <Form.Item label={t('fields.relationType')} name="relationType" rules={[{ required: true, message: t('validation.typeRequired') }]}>
+            <Select placeholder={t('placeholders.type')} options={RELATION_TYPES.map(t => ({ value: t.value, label: t.label }))} />
           </Form.Item>
-          <Form.Item label="描述" name="description">
-            <Input placeholder="可选描述" />
+          <Form.Item label={t('fields.description')} name="description">
+            <Input placeholder={t('placeholders.description')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* Selected Edge Info */}
-      <Modal getContainer={false} title="关系详情" open={!!selectedRelation}
+      <Modal getContainer={false} title={t('map.details')} open={!!selectedRelation}
         onCancel={() => setSelectedRelation(null)}
         footer={[
-          <Popconfirm getPopupContainer={trigger => trigger.parentElement!} key="delete" title="确认删除此关系？"
+          <Popconfirm icon={<ExclamationCircleFilled aria-hidden="true" />} getPopupContainer={trigger => trigger.parentElement!} key="delete" title={t('confirm.deleteRelation')}
             open={deleteConfirmOpen}
             onOpenChange={(open) => {
               if (!open) setDeleteConfirmOpen(false);
             }}
             onConfirm={() => runWithAccess(
               'READ_WRITE',
-              '删除仓库关系',
+              t('actions.deleteRepoRelation'),
               () => selectedRelation && deleteRelationMut.mutate(selectedRelation.id),
             )}>
             <Button
               danger
-              icon={<DeleteOutlined />}
-              loading={deleteRelationMut.isPending}
+              icon={<DeleteOutlined aria-hidden="true" />}
+              aria-label={t('actions.deleteRelation')}
+              loading={deleteRelationMut.isPending ? { icon: <LoadingOutlined aria-hidden="true" /> } : false}
               onClick={() => runWithAccess(
                 'READ_WRITE',
-                '删除仓库关系',
+                t('actions.deleteRepoRelation'),
                 () => setDeleteConfirmOpen(true),
               )}
             >
-              删除关系
+              {t('actions.deleteRelation')}
             </Button>
           </Popconfirm>,
           <Button key="close" onClick={() => {
             setDeleteConfirmOpen(false);
             setSelectedRelation(null);
-          }}>关闭</Button>,
+          }}>{t('actions.close')}</Button>,
         ]}
       >
         {selectedRelation && (
           <div>
-            <p><strong>来源:</strong> {repos.find(r => r.id === selectedRelation.fromRepoId)?.name || `#${selectedRelation.fromRepoId}`}</p>
-            <p><strong>目标:</strong> {repos.find(r => r.id === selectedRelation.toRepoId)?.name || `#${selectedRelation.toRepoId}`}</p>
-            <p><strong>类型:</strong> {RELATION_TYPES.find(t => t.value === selectedRelation.relationType)?.label || selectedRelation.relationType}</p>
-            <p><strong>描述:</strong> {selectedRelation.description || '-'}</p>
+            <p><strong>{t('map.source')}</strong> {repos.find(r => r.id === selectedRelation.fromRepoId)?.name || `#${selectedRelation.fromRepoId}`}</p>
+            <p><strong>{t('map.target')}</strong> {repos.find(r => r.id === selectedRelation.toRepoId)?.name || `#${selectedRelation.toRepoId}`}</p>
+            <p><strong>{t('map.type')}</strong> {RELATION_TYPES.find(t => t.value === selectedRelation.relationType)?.label || selectedRelation.relationType}</p>
+            <p><strong>{t('map.description')}</strong> {selectedRelation.description || '-'}</p>
           </div>
         )}
       </Modal>

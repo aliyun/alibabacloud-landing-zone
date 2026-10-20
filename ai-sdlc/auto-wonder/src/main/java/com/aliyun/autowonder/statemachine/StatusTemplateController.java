@@ -13,7 +13,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/status-templates")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看状态模板")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看状态模板", actionKey = "access.action.view_status_templates")
 public class StatusTemplateController {
 
     private final StatusTemplateService service;
@@ -33,19 +33,19 @@ public class StatusTemplateController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建状态模板")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建状态模板", actionKey = "access.action.create_a_status_template")
     public Result<TemplateVO> create(@RequestBody CreateTemplateRequest req) {
         return Result.ok(service.createTemplate(req, currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新状态模板")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新状态模板", actionKey = "access.action.update_a_status_template")
     public Result<TemplateVO> update(@PathVariable("id") Long id, @RequestBody UpdateTemplateRequest req) {
         return Result.ok(service.updateTemplate(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除状态模板")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除状态模板", actionKey = "access.action.delete_a_status_template")
     public Result<Void> delete(@PathVariable("id") Long id) {
         service.deleteTemplate(id, currentWorkspaceId());
         return Result.ok(null);
@@ -59,20 +59,20 @@ public class StatusTemplateController {
     }
 
     @PostMapping("/{id}/nodes")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建状态节点")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建状态节点", actionKey = "access.action.create_a_status_node")
     public Result<NodeVO> createNode(@PathVariable("id") Long id, @RequestBody CreateNodeRequest req) {
         return Result.ok(service.createNode(id, req, currentWorkspaceId()));
     }
 
     @PutMapping("/{id}/nodes/{nodeId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新状态节点")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新状态节点", actionKey = "access.action.update_a_status_node")
     public Result<NodeVO> updateNode(@PathVariable("id") Long id, @PathVariable("nodeId") Long nodeId,
                                      @RequestBody UpdateNodeRequest req) {
         return Result.ok(service.updateNode(nodeId, req));
     }
 
     @DeleteMapping("/{id}/nodes/{nodeId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除状态节点")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除状态节点", actionKey = "access.action.delete_a_status_node")
     public Result<Void> deleteNode(@PathVariable("id") Long id, @PathVariable("nodeId") Long nodeId) {
         service.deleteNode(nodeId);
         return Result.ok(null);
@@ -86,21 +86,21 @@ public class StatusTemplateController {
     }
 
     @PostMapping("/{id}/transitions")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建状态流转")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建状态流转", actionKey = "access.action.create_a_status_transition")
     public Result<TransitionVO> createTransition(@PathVariable("id") Long id,
                                                   @RequestBody CreateTransitionRequest req) {
         return Result.ok(service.createTransition(id, req, currentWorkspaceId()));
     }
 
     @PutMapping("/{id}/transitions/{tid}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新状态流转")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新状态流转", actionKey = "access.action.update_a_status_transition")
     public Result<TransitionVO> updateTransition(@PathVariable("id") Long id, @PathVariable("tid") Long tid,
                                                   @RequestBody UpdateTransitionRequest req) {
         return Result.ok(service.updateTransition(tid, req));
     }
 
     @DeleteMapping("/{id}/transitions/{tid}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除状态流转")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除状态流转", actionKey = "access.action.delete_a_status_transition")
     public Result<Void> deleteTransition(@PathVariable("id") Long id, @PathVariable("tid") Long tid) {
         service.deleteTransition(tid);
         return Result.ok(null);

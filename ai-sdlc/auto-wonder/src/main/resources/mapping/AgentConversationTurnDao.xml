@@ -126,9 +126,27 @@
           AND status = 'PROCESSING'
     </update>
 
+    <update id="updateInboundStatusAndContextIfProcessing">
+        UPDATE agent_conversation_turn
+        SET status = #{status}, error = #{error},
+            source_context = CASE WHEN source_context IS NULL THEN #{sourceContext} ELSE source_context END
+        WHERE tenant_id = #{tenantId}
+          AND conversation_id = #{conversationId}
+          AND id = #{id}
+          AND direction = 'IN'
+          AND status = 'PROCESSING'
+    </update>
+
     <update id="updateStatusIfCurrent">
         UPDATE agent_conversation_turn
         SET status = #{toStatus}, error = #{error}
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND status = #{fromStatus}
+    </update>
+
+    <update id="updateStatusAndContextIfCurrent">
+        UPDATE agent_conversation_turn
+        SET status = #{toStatus}, error = #{error},
+            source_context = CASE WHEN source_context IS NULL THEN #{sourceContext} ELSE source_context END
         WHERE tenant_id = #{tenantId} AND id = #{id} AND status = #{fromStatus}
     </update>
 

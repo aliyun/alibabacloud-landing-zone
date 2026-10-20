@@ -15,5 +15,10 @@ public class ExecutorLaunchConfigVO {
     private String contextWindow;
     private String memoryMode;
     private Integer maxConcurrentDispatches;
+    private String runtimeVersion;
+    private String workspaceRoot;
+    private String daemonName;
+    private Boolean debug;
+    private com.aliyun.autowonder.executor.ModelUpgradePolicy modelUpgradePolicy;
     private Integer version;
 }

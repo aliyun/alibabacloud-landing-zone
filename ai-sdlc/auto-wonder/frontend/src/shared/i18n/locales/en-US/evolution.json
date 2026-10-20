@@ -1,0 +1,119 @@
+{
+  "pageTitle": "Self-evolution",
+  "actions": {
+    "refresh": "Refresh",
+    "submitDelta": "Submit Delta",
+    "validate": "Validate",
+    "replay": "Replay",
+    "trialPass": "Trial pass",
+    "trialFail": "Trial fail",
+    "decide": "Decide",
+    "approve": "Approve",
+    "agentRelease": "Release Agent",
+    "release": "Release",
+    "rollback": "Rollback",
+    "reject": "Reject",
+    "submit": "Submit",
+    "record": "Record",
+    "cancel": "Cancel",
+    "close": "Close",
+    "confirm": "Confirm"
+  },
+  "commands": {
+    "validate": "Validate evolution candidate",
+    "replay": "Record evolution Replay",
+    "trialPass": "Record successful evolution trial",
+    "trialFail": "Record failed evolution trial",
+    "decide": "Decide evolution trial",
+    "approve": "Approve evolution candidate",
+    "agentRelease": "Release Agent evolution",
+    "release": "Release evolution candidate",
+    "rollback": "Roll back evolution release",
+    "reject": "Reject evolution candidate",
+    "submitDelta": "Submit evolution Delta"
+  },
+  "columns": {
+    "id": "ID",
+    "asset": "Asset",
+    "status": "Status",
+    "trigger": "Trigger",
+    "action": "Action",
+    "policy": "Policy",
+    "trial": "Trial",
+    "candidateSummary": "Candidate summary",
+    "createdAt": "Created at",
+    "actions": "Actions",
+    "posterior": "Posterior",
+    "context": "Context",
+    "source": "Source",
+    "sourceRef": "Source reference",
+    "outcome": "Outcome",
+    "mean": "Mean",
+    "sampleSize": "N",
+    "time": "Time",
+    "name": "Name",
+    "category": "Category",
+    "triggerHint": "Trigger hint",
+    "lazyLoadRef": "Lazy load reference"
+  },
+  "proposalStatus": {
+    "proposed": "Proposed",
+    "validated": "Validated",
+    "trial": "Trial",
+    "replayPassed": "Replay passed",
+    "replayFail": "Replay failed",
+    "replayInconclusive": "Replay inconclusive",
+    "approved": "Approved",
+    "released": "Released",
+    "rejected": "Rejected"
+  },
+  "assetType": {
+    "memory": "Memory",
+    "repoRelation": "Repository relation",
+    "skill": "Skill"
+  },
+  "verdict": {
+    "pass": "Passed",
+    "fail": "Failed",
+    "inconclusive": "Inconclusive",
+    "positive": "Positive",
+    "negative": "Negative"
+  },
+  "decision": {
+    "continueTrial": "Continue trial",
+    "adopt": "Adopt",
+    "reject": "Reject"
+  },
+  "trial": {
+    "posterior": "Baseline {{baseline}} / candidate {{candidate}} · N={{samples}}",
+    "probability": "Win probability {{win}} / loss probability {{lose}} · lift {{lift}}"
+  },
+  "confirm": {
+    "rollback": "Roll back this release?",
+    "reject": "Reject this candidate?"
+  },
+  "messages": {
+    "actionSubmitted": "Action submitted",
+    "replayRecorded": "Replay recorded",
+    "enteredTrial": "Entered trial #{{id}}",
+    "submitted": "Submitted: {{action}}",
+    "invalidDelta": "Delta JSON is not valid JSON",
+    "invalidReplay": "Replay JSON is not valid JSON"
+  },
+  "forms": {
+    "deltaTitle": "Submit Worker Delta",
+    "replayTitle": "Record Replay #{{id}}",
+    "deltaJson": "Delta JSON",
+    "replayJson": "Replay JSON",
+    "deltaRequired": "Enter Delta JSON",
+    "replayRequired": "Enter Replay JSON"
+  },
+  "tabs": {
+    "proposals_one": "Proposal inbox ({{count}})",
+    "proposals_other": "Proposal inbox ({{count}})",
+    "evidence_one": "Audit evidence ({{count}})",
+    "evidence_other": "Audit evidence ({{count}})",
+    "manifest_one": "Asset manifest ({{count}})",
+    "manifest_other": "Asset manifest ({{count}})"
+  }
+}

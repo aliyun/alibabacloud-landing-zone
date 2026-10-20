@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Alert, Button, Empty, List, Modal, Spin } from 'antd';
 import type { KpiKey } from './KpiRow';
 import type { CompletedWorkitem, RunningTask } from './api';
@@ -8,13 +9,14 @@ interface Props {
   onClose: () => void;
 }
 
-const TITLES: Record<KpiKey, string> = {
-  runningDispatches: '正在运行',
-  todayCompletedTasks: '今日完成',
-  weekCompletedTasks: '本周完成',
-};
+const TITLES = {
+  runningDispatches: 'kpi.runningDispatches',
+  todayCompletedTasks: 'kpi.todayCompletedTasks',
+  weekCompletedTasks: 'kpi.weekCompletedTasks',
+} as const satisfies Record<KpiKey, string>;
 
 export default function KpiDetailModal({ kpiKey, onClose }: Props) {
+  const { t } = useTranslation(['insights', 'common']);
   const open = kpiKey != null;
   const completedToday = useTodayCompleted(kpiKey === 'todayCompletedTasks');
   const completedWeek = useWeekCompleted(kpiKey === 'weekCompletedTasks');
@@ -38,7 +40,7 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
 
   return (
     <Modal
-      title={kpiKey ? TITLES[kpiKey] : ''}
+      title={kpiKey ? t(TITLES[kpiKey]) : ''}
       open={open}
       onCancel={onClose}
       footer={null}
@@ -46,13 +48,13 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
       destroyOnHidden
       styles={{ body: { maxHeight: '65vh', overflowY: 'auto' } }}
     >
-      {query.isError ? <Alert type="error" showIcon message="工单加载失败" action={<Button onClick={() => { void query.refetch(); }}>重试</Button>} /> : isLoading ? (
+      {query.isError ? <Alert type="error" showIcon message={t('kpi.loadFailure')} action={<Button onClick={() => { void query.refetch(); }}>{t('kpi.retry')}</Button>} /> : isLoading ? (
         <div style={{ textAlign: 'center', padding: '40px 0' }}>
-          <Spin />
+          <Spin tip={t('kpi.loading')}><div style={{ minHeight: 40 }} /></Spin>
         </div>
       ) : kpiKey === 'runningDispatches' ? (
         runningList.length === 0 ? (
-          <Empty description="暂无运行中的工单" />
+          <Empty description={t('kpi.emptyRunning')} />
         ) : (
           <List
             dataSource={runningList}
@@ -62,14 +64,14 @@ export default function KpiDetailModal({ kpiKey, onClose }: Props) {
                   #{item.workitemId} {item.workitemTitle ?? ''}
                 </a>
                 <span style={{ marginLeft: 'auto', color: 'var(--aw-muted)', fontSize: 12 }}>
-                  {item.agentName} · <span className="insight-realtime-metric">{item.runningMinutes} 分钟</span>
+                  {item.agentName} · <span className="insight-realtime-metric">{t('common:duration.minute', { count: item.runningMinutes })}</span>
                 </span>
               </List.Item>
             )}
           />
         )
       ) : completedList.length === 0 ? (
-        <Empty description="暂无工单" />
+        <Empty description={t('kpi.emptyCompleted')} />
       ) : (
         <List
           dataSource={completedList}

@@ -44,6 +44,8 @@ public class AgentVersionVO {
     @Setter
     public static class SkillItem {
         private Long skillId;
+        /** Capability name for display; null when the bound capability was removed or is not resolvable. */
+        private String skillName;
     }
 
     @Getter

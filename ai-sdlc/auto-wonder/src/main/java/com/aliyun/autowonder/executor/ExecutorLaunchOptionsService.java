@@ -2,6 +2,7 @@ package com.aliyun.autowonder.executor;
 
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.executor.dto.ExecutorLaunchOptionsVO;
 import com.aliyun.autowonder.executor.dto.ProviderModelCatalogItemVO;
 import com.aliyun.autowonder.executor.dto.ProviderModelCatalogVO;
@@ -111,7 +112,10 @@ public class ExecutorLaunchOptionsService {
     }
 
     public static List<SelectOptionVO> creatableClientKinds() {
-        return CREATABLE_CLIENT_KINDS;
+        return CREATABLE_CLIENT_KINDS.stream().map(option -> new SelectOptionVO(option.getValue(),
+                option.getLabel(), SystemMessages.render(CLIENT_KIND_QODER_CLI.equals(option.getValue())
+                        ? "executor.option.client.qoder_cli.description" : "executor.option.client.qoder_cn_cli.description",
+                null, option.getDescription()))).toList();
     }
 
     public static List<String> creatableClientKindValues() {
@@ -131,7 +135,10 @@ public class ExecutorLaunchOptionsService {
     }
 
     public static List<SelectOptionVO> fallbackModels() {
-        return FALLBACK_MODELS;
+        return FALLBACK_MODELS.stream().map(option -> SelectOptionVO.of(option.getValue(),
+                List.of("auto", "ultimate", "performance", "efficient", "lite").contains(option.getValue())
+                        ? SystemMessages.render("executor.option.model." + option.getValue(), null, option.getLabel())
+                        : option.getLabel())).toList();
     }
 
     public static String resolveProvider(String clientKind) {
@@ -165,14 +172,17 @@ public class ExecutorLaunchOptionsService {
         // requireCreatableClientKind already limits the provider to the Qoder family, so a catalog always applies.
         String provider = resolveProvider(canonical);
         ProviderModelCatalogVO catalog = liveCatalog(provider);
-        List<SelectOptionVO> models = catalog == null ? FALLBACK_MODELS : toOptions(catalog.getModels());
+        List<SelectOptionVO> models = catalog == null ? fallbackModels() : toOptions(catalog.getModels());
         ExecutorLaunchOptionsVO vo = new ExecutorLaunchOptionsVO();
         vo.setClientKind(canonical);
         vo.setProvider(provider);
         vo.setModels(models);
-        vo.setReasoningEfforts(REASONING_EFFORTS);
-        vo.setContextWindows(CONTEXT_WINDOWS);
-        vo.setMemoryModes(MEMORY_MODES);
+        vo.setReasoningEfforts(REASONING_EFFORTS.stream().map(option -> SelectOptionVO.of(option.getValue(),
+                SystemMessages.render("executor.option.reasoning." + option.getValue(), null, option.getLabel()))).toList());
+        vo.setContextWindows(CONTEXT_WINDOWS.stream().map(option -> SelectOptionVO.of(option.getValue(), option.getLabel())).toList());
+        vo.setMemoryModes(MEMORY_MODES.stream().map(option -> new SelectOptionVO(option.getValue(),
+                SystemMessages.render("executor.option.memory." + option.getValue().replace('-', '_') + ".label", null, option.getLabel()),
+                SystemMessages.render("executor.option.memory." + option.getValue().replace('-', '_') + ".description", null, option.getDescription()))).toList());
         vo.setDefaultModel(chooseModel(models, DEFAULT_MODEL));
         vo.setDefaultCreateModel(chooseModel(models, AUTO_MODEL));
         vo.setDefaultReasoningEffort(defaultReasoningEffort(vo.getDefaultModel()));
@@ -210,7 +220,7 @@ public class ExecutorLaunchOptionsService {
         }
         ProviderModelCatalogVO catalog = readCatalogQuietly(provider);
         List<SelectOptionVO> models = catalog == null ? List.of() : toOptions(catalog.getModels());
-        return models.isEmpty() ? FALLBACK_MODELS : models;
+        return models.isEmpty() ? fallbackModels() : models;
     }
 
     public String requireCreatableClientKind(String clientKind) {
@@ -223,7 +233,8 @@ public class ExecutorLaunchOptionsService {
      */
     public static String requireCreatableClientKind(String clientKind, ErrorCode invalid) {
         if (!isCreatableClientKind(clientKind)) {
-            throw new BizException(invalid,
+            throw BizException.keyed(invalid, "executor.option.only_supported",
+                    new Object[]{"clientKind", String.join("/", creatableClientKindValues())},
                     "clientKind 仅支持 " + String.join("/", creatableClientKindValues()));
         }
         return canonicalClientKind(clientKind);
@@ -319,7 +330,7 @@ public class ExecutorLaunchOptionsService {
     }
 
     private static BizException invalid(String field, List<String> allowed) {
-        return new BizException(ErrorCode.MCP_TOOL_ARGUMENT_INVALID,
-                field + " 仅支持 " + String.join("/", allowed));
+        return BizException.keyed(ErrorCode.MCP_TOOL_ARGUMENT_INVALID, "executor.option.only_supported",
+                new Object[]{field, String.join("/", allowed)}, field + " 仅支持 " + String.join("/", allowed));
     }
 }

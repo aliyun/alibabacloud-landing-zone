@@ -12,6 +12,10 @@ public interface DispatchRuntimeEventDao {
     List<DispatchRuntimeEventDO> listByWorkitem(@Param("tenantId") Long tenantId,
                                                 @Param("workitemId") Long workitemId);
 
+    /** All progress events in arrival order; only workflow plans need detail_json. */
+    List<DispatchRuntimeEventDO> listForProgress(@Param("tenantId") Long tenantId,
+                                                @Param("workitemId") Long workitemId);
+
     List<DispatchRuntimeEventDO> listByDispatch(@Param("tenantId") Long tenantId,
                                                 @Param("dispatchId") Long dispatchId);
 

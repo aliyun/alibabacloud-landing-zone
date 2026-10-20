@@ -66,7 +66,53 @@
 .insights-page { container-type: inline-size; min-width: 0; }
 .insight-toolbar, .insight-filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .insight-toolbar { margin-bottom: 16px; }
-.insight-realtime > .insight-toolbar { justify-content: space-between; }
+
+/* Cost and realtime are two independent scopes: warm Panel A above, cool Panel B below. */
+.insight-panel { position: relative; overflow: hidden; border: 1px solid var(--aw-border); border-radius: 12px; padding: 18px 20px 20px; }
+.insight-panel::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; }
+.insight-panel--cost { background: color-mix(in srgb, var(--aw-warning) 7%, var(--aw-panel)); border-color: color-mix(in srgb, var(--aw-warning) 32%, var(--aw-border)); }
+.insight-panel--cost::before { background: linear-gradient(90deg, var(--aw-warning), color-mix(in srgb, var(--aw-warning) 45%, transparent) 55%, transparent); }
+.insight-panel--rt { background: var(--aw-panel); border-color: var(--aw-border); }
+.insight-panel--rt::before { background: linear-gradient(90deg, var(--aw-muted), color-mix(in srgb, var(--aw-muted) 32%, transparent) 55%, transparent); }
+.insight-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.insight-panel-id { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.insight-panel-id h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .3px; color: var(--aw-text); }
+.insight-panel-glyph { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.insight-panel-glyph--cost { background: color-mix(in srgb, var(--aw-warning) 16%, var(--aw-panel)); color: var(--aw-warning); }
+.insight-panel-glyph--rt { background: var(--aw-raised); color: var(--aw-muted); }
+.insight-panel-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.insight-panel-note { margin: 10px 0 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; line-height: 1.6; color: var(--aw-muted); }
+.insight-panel-note b { color: var(--aw-text); font-weight: 600; }
+.insight-dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--aw-muted); flex: none; }
+.insight-panel-body { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+.insight-panel-state { display: grid; place-items: center; min-height: 160px; }
+.metric-card-kpis { display: flex; flex-wrap: wrap; column-gap: 18px; row-gap: 12px; }
+.metric-card-kpis.is-centered { justify-content: center; column-gap: 56px; row-gap: 16px; }
+/* grid 居中会把 Spin 外层收缩为内容宽度（空占位宽度为 0），导致 tip 逐字换行；补满面板宽度使其单行居中。 */
+.insight-panel-state .ant-spin-nested-loading { width: 100%; }
+
+.insight-scope-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed color-mix(in srgb, var(--aw-warning) 55%, var(--aw-border)); border-radius: 999px; background: var(--aw-panel); color: var(--aw-muted); font-size: 12px; font-weight: 500; }
+.insight-scope-chip.is-specific { border-style: solid; background: color-mix(in srgb, var(--aw-warning) 12%, var(--aw-panel)); color: var(--aw-text); }
+.insight-scope-clear { display: inline-flex; align-items: center; padding: 0 0 0 2px; border: 0; background: transparent; color: var(--aw-text); font: inherit; line-height: 1; cursor: pointer; }
+.insight-scope-clear:hover { color: var(--aw-error); }
+.insight-scope-clear:focus-visible { outline: 2px solid var(--aw-accent-text); outline-offset: 2px; border-radius: 4px; }
+
+.insight-scope-divider { display: flex; align-items: center; gap: 14px; margin: 16px 0; color: var(--aw-muted); }
+.insight-scope-divider::before, .insight-scope-divider::after { content: ''; height: 1px; flex: 1; background: repeating-linear-gradient(90deg, var(--aw-border) 0 6px, transparent 6px 12px); }
+.insight-scope-divider span { padding: 5px 14px; border: 1px solid var(--aw-border); border-radius: 999px; background: var(--aw-raised); font-size: 12px; letter-spacing: .4px; white-space: nowrap; }
+
+.insight-live-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid color-mix(in srgb, var(--aw-success) 40%, var(--aw-border)); border-radius: 999px; background: color-mix(in srgb, var(--aw-success) 9%, var(--aw-panel)); color: var(--aw-text); font-size: 12px; }
+.insight-live-badge i { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--aw-success); flex: none; }
+.insight-live-badge i::after { content: ''; position: absolute; inset: -4px; border: 1px solid var(--aw-success); border-radius: 50%; opacity: .5; animation: insight-ping 1.6s ease-out infinite; }
+.insight-live-badge b { font-variant-numeric: tabular-nums; }
+.insight-live-badge.is-off { background: var(--aw-raised); border-color: var(--aw-border); color: var(--aw-muted); }
+.insight-live-badge.is-off i { background: var(--aw-muted); }
+.insight-live-badge.is-off i::after { animation: none; opacity: 0; }
+.insight-stamp { font-size: 12px; color: var(--aw-muted); font-variant-numeric: tabular-nums; }
+.insight-stamp.is-updating { color: var(--aw-accent-text); }
+@keyframes insight-ping { 0% { transform: scale(.6); opacity: .7; } 80%, 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .insight-live-badge i::after { animation: none; } }
+
 .insight-realtime-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; align-items: stretch; }
 .insight-realtime-grid > .ant-card { display: flex; flex-direction: column; }
 .insight-realtime-grid > .ant-card > .ant-card-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
@@ -98,6 +144,11 @@
 @container (max-width: 900px) {
   .insight-realtime-grid { grid-template-columns: minmax(0,1fr); }
   .participation-chart-grid { grid-template-columns: minmax(0,1fr); }
+}
+@container (max-width: 720px) {
+  .insight-panel { padding: 14px; }
+  .insight-panel-tools { width: 100%; }
+  .insight-panel-tools .ant-select { flex: 1 1 180px; }
 }
 @container (max-width: 560px) {
   .participation-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }

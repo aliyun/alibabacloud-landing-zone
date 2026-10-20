@@ -191,16 +191,33 @@ class WorkitemCliUploadControllerTest {
     }
 
     @Test
-    void unsupportedExtensionAndBadMagicBytesReturn400() throws Exception {
+    void knownFormatsWithBadMagicBytesReturn400() throws Exception {
         String token = mintToken();
 
-        for (String filename : new String[]{"a.exe", "fake.png", "fake.jpg", "fake.jpeg",
+        for (String filename : new String[]{"fake.png", "fake.jpg", "fake.jpeg",
                 "fake.webp", "fake.pdf", "fake.zip", "fake.docx", "fake.doc"}) {
             mvc.perform(multipart(uploadPath)
                             .file(new MockMultipartFile("files", filename, "application/octet-stream",
                                     "not-a-real-file".getBytes(StandardCharsets.UTF_8)))
                             .header("Authorization", "Bearer " + token))
                     .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void arbitraryExtensionsAndExtensionlessFilesPreserveBytes() throws Exception {
+        String token = mintToken();
+        byte[] bytes = {(byte) 0xFF, 0x00, 0x01, (byte) 0x80};
+
+        for (String filename : new String[]{"a.exe", "custom.backup", "README"}) {
+            mvc.perform(multipart(uploadPath)
+                            .file(new MockMultipartFile("files", filename, "application/octet-stream", bytes))
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data[0].name").value("requirements/" + filename));
+            assertArrayEquals(bytes, storage.get(
+                    "artifact-bucket/t/100/workitem/50063/requirements/" + filename));
         }
     }
 
@@ -324,6 +341,21 @@ class WorkitemCliUploadControllerTest {
     }
 
     // ---- fixtures ----
+
+    @Test
+    void issuedTokenStopsWorkingOnceOperatorForbiddenFromArtifactDomain() throws Exception {
+        String token = mintToken();
+        // 令牌签发后被禁用 ARTIFACT：按次检查实时禁域，30 分钟 TTL 不构成授权窗口。
+        WorkspaceMemberDO forbidden = member(TENANT_ID, "READ_WRITE", 0, 0);
+        forbidden.setReadOnlyDomains("[\"ARTIFACT\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(forbidden);
+
+        mvc.perform(multipart(uploadPath)
+                        .file(markdown("a.md", "# A"))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("10403"));
+    }
 
     private String mintToken() {
         return tokenService.mint(

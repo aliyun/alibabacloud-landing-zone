@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.auth.federation.FederationIdpDao">
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.auth.federation.FederationIdpDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO federation_idp
+            (name, description, enabled, created_by)
+        VALUES
+            (#{name}, #{description}, #{enabled}, #{createdBy})
+    </insert>
+
+    <update id="update" parameterType="com.aliyun.autowonder.auth.federation.FederationIdpDO">
+        UPDATE federation_idp
+        SET name = #{name},
+            description = #{description},
+            enabled = #{enabled},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <select id="findById" resultType="com.aliyun.autowonder.auth.federation.FederationIdpDO">
+        SELECT * FROM federation_idp
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="listAll" resultType="com.aliyun.autowonder.auth.federation.FederationIdpDO">
+        SELECT * FROM federation_idp
+        ORDER BY id ASC
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM federation_idp
+        WHERE id = #{id}
+    </delete>
+</mapper>

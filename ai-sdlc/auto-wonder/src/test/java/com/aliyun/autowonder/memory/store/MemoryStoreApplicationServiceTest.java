@@ -15,6 +15,7 @@ import static org.mockito.Mockito.*;
 class MemoryStoreApplicationServiceTest {
     private MemoryStoreDao stores;
     private MemoryDocumentDao documents;
+    private MemoryChangeDao changes;
     private MemoryStoreAclDao acls;
     private MemoryDocumentService documentService;
     private MemoryStoreBootstrapService bootstrap;
@@ -24,10 +25,11 @@ class MemoryStoreApplicationServiceTest {
     void setUp() {
         stores = mock(MemoryStoreDao.class);
         documents = mock(MemoryDocumentDao.class);
+        changes = mock(MemoryChangeDao.class);
         acls = mock(MemoryStoreAclDao.class);
         documentService = mock(MemoryDocumentService.class);
         bootstrap = mock(MemoryStoreBootstrapService.class);
-        service = new MemoryStoreApplicationService(stores, documents, mock(MemoryChangeDao.class), acls,
+        service = new MemoryStoreApplicationService(stores, documents, changes, acls,
                 mock(SquadMemberDao.class), new MemoryStoreAccessService(), documentService,
                 new MemorySnapshotService(), bootstrap);
     }
@@ -241,6 +243,92 @@ class MemoryStoreApplicationServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.archiveStore(7L, 9L, true, 11L, 0));
         verify(stores, never()).archive(anyLong(), anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void memberListsEveryActiveStoreIncludingOtherAgentsPersonalStoresAsReadOnly() {
+        MemoryStoreDO org = store(13L, 7L, "ORG", 0L);
+        MemoryStoreDO squad = store(14L, 7L, "SQUAD", 8L);
+        MemoryStoreDO own = store(11L, 7L, "AGENT", 42L);
+        MemoryStoreDO other = store(12L, 7L, "AGENT", 43L);
+        when(stores.listActive(7L)).thenReturn(List.of(org, squad, own, other));
+        when(acls.listByStore(anyLong(), anyLong())).thenReturn(List.of());
+
+        var visible = service.listForUser(7L, 9L, false);
+
+        assertEquals(List.of(13L, 14L, 11L, 12L), visible.stream().map(MemoryStoreDO::getId).toList());
+        assertEquals(List.of("READ", "READ", "READ", "READ"),
+                visible.stream().map(MemoryStoreDO::getPermission).toList());
+    }
+
+    @Test
+    void memberReadsAnotherAgentsStoreButCannotMutateIt() {
+        MemoryStoreDO other = store(12L, 7L, "AGENT", 43L);
+        MemoryDocumentDO document = new MemoryDocumentDO();
+        document.setPath("topic.md");
+        when(stores.findById(7L, 12L)).thenReturn(other);
+        when(acls.listByStore(7L, 12L)).thenReturn(List.of());
+        when(documents.listLive(7L, 12L)).thenReturn(List.of(document));
+        when(changes.listAfterRevision(7L, 12L, 0L, 100)).thenReturn(List.of(new MemoryChangeDO()));
+
+        assertEquals(List.of(document), service.documentsForUser(7L, 9L, false, 12L));
+        assertEquals(1, service.historyForUser(7L, 9L, false, 12L, 0L, 100).size());
+        assertThrows(MemoryStoreApplicationService.MemoryAccessDeniedException.class,
+                () -> service.mutateForUser(7L, 9L, false, 12L,
+                        MemoryMutationRequest.create("topic.md", "body", "key")));
+        verifyNoInteractions(documentService);
+    }
+
+    @Test
+    void memberCannotAdministerStoresOrAccessControlLists() {
+        when(stores.findById(7L, 12L)).thenReturn(store(12L, 7L, "AGENT", 43L));
+        when(acls.listByStore(7L, 12L)).thenReturn(List.of());
+
+        assertThrows(MemoryStoreApplicationService.MemoryAccessDeniedException.class,
+                () -> service.aclsForUser(7L, 9L, false, 12L));
+        assertThrows(MemoryStoreApplicationService.MemoryAccessDeniedException.class,
+                () -> service.archiveStore(7L, 9L, false, 12L, 0));
+        assertThrows(MemoryStoreApplicationService.MemoryAccessDeniedException.class,
+                () -> service.createStore(7L, 9L, false, store(0L, 7L, "ORG", 0L)));
+        verify(acls, never()).insert(any());
+    }
+
+    @Test
+    void workspaceAdministratorStillSeesAndMutatesEveryStore() {
+        MemoryStoreDO other = store(12L, 7L, "AGENT", 43L);
+        MemoryMutationRequest request = MemoryMutationRequest.create("topic.md", "body", "key");
+        MemoryDocumentDO acknowledged = new MemoryDocumentDO();
+        when(stores.listActive(7L)).thenReturn(List.of(other));
+        when(stores.findById(7L, 12L)).thenReturn(other);
+        when(acls.listByStore(7L, 12L)).thenReturn(List.of());
+        when(documentService.mutate(eq(7L), eq(12L), eq(request), any())).thenReturn(acknowledged);
+
+        assertEquals(List.of("ADMIN"),
+                service.listForUser(7L, 9L, true).stream().map(MemoryStoreDO::getPermission).toList());
+        assertSame(acknowledged, service.mutateForUser(7L, 9L, true, 12L, request));
+    }
+
+    @Test
+    void aclGrantedMemberRegainsWriteOnThatStoreOnly() {
+        MemoryStoreDO granted = store(13L, 7L, "SQUAD", 8L);
+        MemoryStoreDO baseline = store(14L, 7L, "SQUAD", 9L);
+        MemoryStoreAclDO acl = new MemoryStoreAclDO();
+        acl.setTenantId(7L);
+        acl.setStoreId(13L);
+        acl.setSubjectType("USER");
+        acl.setSubjectRef("9");
+        acl.setPermission("WRITE");
+        MemoryMutationRequest request = MemoryMutationRequest.create("topic.md", "body", "key");
+        MemoryDocumentDO acknowledged = new MemoryDocumentDO();
+        when(stores.findById(7L, 13L)).thenReturn(granted);
+        when(stores.findById(7L, 14L)).thenReturn(baseline);
+        when(acls.listByStore(7L, 13L)).thenReturn(List.of(acl));
+        when(acls.listByStore(7L, 14L)).thenReturn(List.of());
+        when(documentService.mutate(eq(7L), eq(13L), eq(request), any())).thenReturn(acknowledged);
+
+        assertSame(acknowledged, service.mutateForUser(7L, 9L, false, 13L, request));
+        assertThrows(MemoryStoreApplicationService.MemoryAccessDeniedException.class,
+                () -> service.mutateForUser(7L, 9L, false, 14L, request));
     }
 
     private MemoryStoreDO store(long id, long tenantId, String scope, long ownerRef) {

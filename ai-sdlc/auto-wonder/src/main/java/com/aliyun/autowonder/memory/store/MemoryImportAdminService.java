@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,7 +32,7 @@ public class MemoryImportAdminService {
     public void changeStatus(long tenantId, long sourceId, String status, int version) {
         requireSource(tenantId, sourceId);
         if (!MANAGED_STATUSES.contains(status)) {
-            throw new IllegalArgumentException("unsupported import source status");
+            throw new KeyedIllegalArgumentException("memory.validation.import_status", null, "unsupported import source status");
         }
         if (imports.updateSourceStatus(tenantId, sourceId, status, version) != 1) {
             throw new MemoryDocumentService.MemoryConflictException("memory import source version changed");
@@ -39,7 +41,7 @@ public class MemoryImportAdminService {
 
     private MemoryImportSourceDO requireSource(long tenantId, long sourceId) {
         MemoryImportSourceDO source = imports.findSourceById(tenantId, sourceId);
-        if (source == null) throw new IllegalArgumentException("memory import source not found");
+        if (source == null) throw new KeyedIllegalArgumentException("memory.validation.import_source_missing", null, "memory import source not found");
         return source;
     }
 }

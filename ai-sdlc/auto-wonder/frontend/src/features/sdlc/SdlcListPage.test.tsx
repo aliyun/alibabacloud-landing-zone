@@ -1,8 +1,9 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -31,6 +32,19 @@ describe('SdlcListPage', () => {
     window.localStorage.removeItem('autowonder.sdlcs.view');
     window.localStorage.removeItem('autowonder.sdlcs.pageSize');
     vi.restoreAllMocks();
+  });
+
+  it('keeps invalid create confirmation inline with the raw description and no POST', async () => {
+    let posts = 0;
+    useSquadsAndSdlcs([]);
+    server.use(http.post('/api/sdlcs', () => { posts++; return HttpResponse.json({ success: true, data: {} }); }));
+    renderPage();
+    await userEvent.click(screen.getByRole('button', { name: /新建$/ }));
+    await userEvent.type(screen.getByLabelText('描述'), '<raw 中文>');
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /OK|确\s*定/ }));
+    expect(await screen.findByText('请输入名称')).toBeInTheDocument();
+    expect(screen.getByLabelText('描述')).toHaveValue('<raw 中文>');
+    expect(screen.getByRole('dialog')).toBeInTheDocument(); expect(posts).toBe(0);
   });
 
   it('renders SDLC template table with create button', async () => {
@@ -355,4 +369,83 @@ describe('SDLC server pagination', () => {
     await userEvent.click(screen.getByTitle('1'));
     expect(await screen.findByText('流程-0')).toBeInTheDocument();
   });
+});
+
+
+describe('routed squad grouping localization', () => {
+  it('refreshes group fallbacks and preserves authored labels without rebuilding group identity', async () => {
+    await i18n.changeLanguage('zh-CN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    localStorage.removeItem('autowonder.sdlcs.view');
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({ success: true, data: [{ id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] }] })),
+      http.get('/api/squads/7', () => HttpResponse.json({ success: true, data: { id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] } })),
+      http.get('/api/sdlcs/page', () => HttpResponse.json({ success: true, data: { list: [{ id: 1, name: '<b>自定义资源</b>', status: 'ENABLED', workType: 'REQ', squadIds: [], squadNames: [] }, { id: 2, name: 'Known', status: 'ENABLED', squadIds: [7], squadNames: ['<b>自定义小队</b>'] }, { id: 3, name: 'Missing', status: 'ENABLED', squadIds: [42] }], total: 3, pageNum: 1, pageSize: 10 } })),
+    );
+    const router = createMemoryRouter([{ path: '/', element: <SdlcListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await screen.findByRole('combobox', { name: '按小队筛选' });
+
+    await screen.findAllByText('未分组');
+    const groupHeader = screen.getAllByText('未分组')[0];
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    await screen.findAllByText('Ungrouped');
+    expect(screen.getAllByText('Ungrouped')[0]).toBe(groupHeader);
+    expect(screen.getAllByText('Squad #42').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('<b>自定义小队</b>').length).toBeGreaterThan(0);
+    expect(screen.getByText('<b>自定义资源</b>')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Filter by squad' })).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
+});
+
+it('switches a cached SDLC route and open create errors while preserving draft and query identity', async () => {
+  await i18n.changeLanguage('zh-CN');
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  localStorage.setItem('autowonder.sdlcs.view', 'list');
+  let requests = 0;
+  server.use(http.get('/api/sdlcs/page', () => {
+    requests++;
+    return HttpResponse.json({ success: true, data: { list: [
+      { id: '334208147726012416', name: '<b>我的流程</b>', status: 'DRAFT', workType: 'REQUIREMENT', steps: [] },
+      { id: '2', name: 'unknown', status: 'constructor', workType: 'constructor', steps: [] },
+    ], total: 2, pageNum: 1, pageSize: 10 } });
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><RouterProvider router={createMemoryRouter([{ path: '/sdlcs', element: <SdlcListPage /> }], { initialEntries: ['/sdlcs'] })} /></QueryClientProvider>);
+  await screen.findByText('<b>我的流程</b>');
+  await userEvent.click(screen.getByRole('button', { name: /新建$/ }));
+  await userEvent.type(screen.getByLabelText('描述'), '原始 draft <i>内容</i>');
+  await userEvent.type(screen.getByLabelText('模版名称'), 'x');
+  await userEvent.clear(screen.getByLabelText('模版名称'));
+  await screen.findByText('请输入名称');
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(await screen.findByText('Enter a name')).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'New SDLC workflow' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Description')).toHaveValue('原始 draft <i>内容</i>');
+  expect(screen.getAllByRole('button', { name: 'Delete SDLC workflow' })[0]).toBeInTheDocument();
+  expect(screen.getByText('Draft')).toBeInTheDocument();
+  expect(screen.getByText('Requirement')).toBeInTheDocument();
+  expect(screen.getAllByText('constructor')).toHaveLength(2);
+  expect(screen.getByText('2 workflows total')).toBeInTheDocument();
+  expect(requests).toBe(1);
+  expect(client.getQueryCache().findAll({ queryKey: ['sdlcs'] })).toHaveLength(1);
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+});
+
+afterEach(async () => { await i18n.changeLanguage('zh-CN'); });
+
+it.each([[0, '0 workflows total'], [1, '1 workflow total'], [3, '3 workflows total']])('renders list total with the %s count and keeps the create command guarded', async (count, total) => {
+  await i18n.changeLanguage('en-US');
+  localStorage.setItem('autowonder.sdlcs.view', 'grouped');
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+  server.use(http.get('/api/sdlcs/page', () => HttpResponse.json({ success: true, data: { list: [], total: count, pageNum: 1, pageSize: 10 } })));
+  const error = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+  renderPage();
+  await screen.findByText(total);
+  await userEvent.click(screen.getByRole('button', { name: 'New' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(error).toHaveBeenCalledWith('Current access: Read-only access. New SDLC workflow requires Read and write access.');
+  error.mockRestore();
 });

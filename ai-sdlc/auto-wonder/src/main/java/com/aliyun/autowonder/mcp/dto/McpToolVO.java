@@ -11,6 +11,7 @@ public class McpToolVO {
     private String name;
     private String description;
     private Map<String, Object> inputSchema;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Map<String, Object> outputSchema;
 
     public McpToolVO() {

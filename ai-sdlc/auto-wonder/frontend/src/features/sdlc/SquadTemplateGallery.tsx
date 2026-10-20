@@ -1,3 +1,6 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
+import { getAgentRoleLabel } from '@/features/agent/constants';
 import { useState } from 'react';
 import { Card, Row, Col, Tag, Button, Modal, message, Space, Typography, Avatar, Spin, Steps, Alert } from 'antd';
 import { TeamOutlined, UserOutlined, UsergroupAddOutlined, ArrowRightOutlined } from '@ant-design/icons';
@@ -11,9 +14,9 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 const { Text, Paragraph } = Typography;
 
 const iconMap: Record<string, React.ReactNode> = {
-  solo: <UserOutlined style={{ fontSize: 32 }} />,
-  pair: <UsergroupAddOutlined style={{ fontSize: 32 }} />,
-  team: <TeamOutlined style={{ fontSize: 32 }} />,
+  solo: <UserOutlined aria-hidden="true" style={{ fontSize: 32 }} />,
+  pair: <UsergroupAddOutlined aria-hidden="true" style={{ fontSize: 32 }} />,
+  team: <TeamOutlined aria-hidden="true" style={{ fontSize: 32 }} />,
 };
 
 const kindColors: Record<string, string> = {
@@ -27,22 +30,24 @@ const kindColors: Record<string, string> = {
 function applyErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === '10000' && !error.traceId) {
-      return '网络异常，创建失败，请稍后重试';
+      return i18n.t('sdlc:gallery.networkError');
     }
     if (error.traceId) {
-      return `${error.message}（TraceId: ${error.traceId}）`;
+      return i18n.t('sdlc:gallery.traceError', { message: error.message, traceId: error.traceId });
     }
-    return error.message || '创建失败，请稍后重试';
+    return error.message || i18n.t('sdlc:gallery.defaultError');
   }
-  return '创建失败，请稍后重试';
+  return i18n.t('sdlc:gallery.defaultError');
 }
 
 export function SquadTemplateGallery() {
+  const { t } = useTranslation('sdlc');
   const navigate = useNavigate();
   const accessCommand = useAccessCommand();
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [confirming, setConfirming] = useState<SquadTemplateItem | null>(null);
-  const [applyErrorText, setApplyErrorText] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<unknown>(null);
+  const applyErrorText = applyError === null ? null : applyErrorMessage(applyError);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['squad-templates'],
@@ -58,28 +63,28 @@ export function SquadTemplateGallery() {
   const applyMut = useMutation({
     mutationFn: applySquadTemplate,
     onSuccess: () => {
-      message.success('创建成功');
-      setApplyErrorText(null);
+      message.success(i18n.t('sdlc:messages.created'));
+      setApplyError(null);
       setConfirming(null);
       setPreviewId(null);
       navigate('/agents?tab=squads');
     },
     onError: (error) => {
-      setApplyErrorText(applyErrorMessage(error));
+      setApplyError(error);
     },
   });
 
   const handleApply = (template: SquadTemplateItem) => {
-    accessCommand('READ_WRITE', '应用小队模版', () => {
-      setApplyErrorText(null);
+    accessCommand('READ_WRITE', t('gallery.applyCommand'), () => {
+      setApplyError(null);
       setConfirming(template);
     });
   };
 
   const handleConfirmOk = () => {
-    accessCommand('READ_WRITE', '应用小队模版', () => {
+    accessCommand('READ_WRITE', t('gallery.applyCommand'), () => {
       if (confirming) {
-        setApplyErrorText(null);
+        setApplyError(null);
         applyMut.mutate(confirming.id);
       }
     });
@@ -87,7 +92,7 @@ export function SquadTemplateGallery() {
 
   const closeConfirm = () => {
     setConfirming(null);
-    setApplyErrorText(null);
+    setApplyError(null);
   };
 
   if (isLoading) {
@@ -97,39 +102,39 @@ export function SquadTemplateGallery() {
   return (
     <>
       <Row gutter={[16, 16]} style={{ padding: '16px 0' }}>
-        {templates.map((t) => (
-          <Col key={t.id} xs={24} sm={12} lg={8}>
+        {templates.map((template) => (
+          <Col key={template.id} xs={24} sm={12} lg={8}>
             <Card
               hoverable
               style={{ height: '100%', cursor: 'pointer' }}
-              onClick={() => setPreviewId(t.id)}
+              onClick={() => setPreviewId(template.id)}
             >
               <Space direction="vertical" style={{ width: '100%' }} size="middle">
                 <Space align="start">
                   <Avatar
                     size={48}
-                    icon={iconMap[t.icon || ''] || <TeamOutlined />}
+                    icon={(Object.prototype.hasOwnProperty.call(iconMap, template.icon || '') ? iconMap[template.icon || ''] : null) || <TeamOutlined aria-hidden="true" />}
                     style={{ backgroundColor: 'rgba(var(--aw-accent-rgb), .10)', color: 'var(--aw-accent-text)' }}
                   />
                   <div>
-                    <Text strong style={{ fontSize: 16 }}>{t.name}</Text>
+                    <Text strong style={{ fontSize: 16 }}>{template.name}</Text>
                     <br />
-                    <Text type="secondary">{t.squadSize} 人小队</Text>
+                    <Text type="secondary">{t('gallery.squadSize', { count: template.squadSize })}</Text>
                   </div>
                 </Space>
                 <Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ marginBottom: 0 }}>
-                  {t.description}
+                  {template.description}
                 </Paragraph>
                 <Space wrap>
-                  {t.tags?.map((tag) => <Tag key={tag}>{tag}</Tag>)}
+                  {template.tags?.map((tag) => <Tag key={tag}>{tag}</Tag>)}
                 </Space>
                 <Button
                   type="primary"
                   block
-                  onClick={(e) => { e.stopPropagation(); handleApply(t); }}
+                  onClick={(e) => { e.stopPropagation(); handleApply(template); }}
                   loading={applyMut.isPending}
                 >
-                  基于此模版创建
+                  {t('gallery.create')}
                 </Button>
               </Space>
             </Card>
@@ -139,20 +144,21 @@ export function SquadTemplateGallery() {
 
       <Modal
         open={previewId !== null}
+        closable={{ 'aria-label': t('gallery.close') }}
         onCancel={() => setPreviewId(null)}
         width={760}
         footer={
           <Space>
-            <Button onClick={() => setPreviewId(null)}>关闭</Button>
+            <Button onClick={() => setPreviewId(null)}>{t('gallery.close')}</Button>
             <Button
               type="primary"
               loading={applyMut.isPending}
               onClick={() => {
-                const t = templates.find((x) => x.id === previewId);
-                if (t) handleApply(t);
+                const template = templates.find((x) => x.id === previewId);
+                if (template) handleApply(template);
               }}
             >
-              基于此模版创建
+              {t('gallery.create')}
             </Button>
           </Space>
         }
@@ -168,19 +174,20 @@ export function SquadTemplateGallery() {
 
       <Modal
         open={confirming !== null}
-        title={confirming ? `基于「${confirming.name}」创建小队` : null}
-        okText="确定创建"
-        cancelText="取消"
+        closable={{ 'aria-label': t('gallery.close') }}
+        title={confirming ? t('gallery.confirmTitle', { name: confirming.name }) : null}
+        okText={t('gallery.confirm')}
+        cancelText={t('actions.cancel')}
         confirmLoading={applyMut.isPending}
         onOk={handleConfirmOk}
         onCancel={closeConfirm}
       >
-        <p style={{ marginBottom: applyErrorText ? 16 : 0 }}>将自动创建小队、数字员工、SDLC 并绑定所有仓库。</p>
+        <p style={{ marginBottom: applyErrorText ? 16 : 0 }}>{t('gallery.creationInfo')}</p>
         {applyErrorText && (
           <Alert
             type="error"
             showIcon
-            message="创建失败"
+            message={t('gallery.failed')}
             description={applyErrorText}
           />
         )}
@@ -190,6 +197,8 @@ export function SquadTemplateGallery() {
 }
 
 function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
+  useTranslation('agent');
+  const { t } = useTranslation('sdlc');
   return (
     <div style={{ margin: '-20px -24px 0' }}>
       {/* Header */}
@@ -200,7 +209,7 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
             <div style={{ color: 'var(--aw-muted)', marginTop: 4 }}>{detail.description}</div>
           </div>
           <Space>
-            <Tag color="blue">{detail.squadSize} 人小队</Tag>
+            <Tag color="blue">{t('gallery.squadSize', { count: detail.squadSize })}</Tag>
             {detail.tags?.map((tag) => <Tag key={tag}>{tag}</Tag>)}
           </Space>
         </Space>
@@ -208,15 +217,15 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
 
       {/* Workflow flow */}
       <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--aw-border)' }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 10 }}>协作流程</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 10 }}>{t('gallery.workflow')}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {detail.agents.map((agent, idx) => (
             <span key={agent.roleCode} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <Tag color="geekblue" style={{ margin: 0, fontSize: 13, padding: '2px 10px' }}>
-                {agent.roleName}
+                {getAgentRoleLabel(agent.roleCode, agent.roleName)}
               </Tag>
               {idx < detail.agents.length - 1 && (
-                <ArrowRightOutlined style={{ color: 'var(--aw-muted)', fontSize: 12 }} />
+                <ArrowRightOutlined aria-hidden="true" style={{ color: 'var(--aw-muted)', fontSize: 12 }} />
               )}
             </span>
           ))}
@@ -225,7 +234,7 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
 
       {/* Agent details */}
       <div style={{ padding: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 14 }}>成员详情</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 14 }}>{t('gallery.members')}</div>
         <div style={{ display: 'grid', gap: 16 }}>
           {detail.agents.map((agent, idx) => (
             <AgentCard key={agent.roleCode} agent={agent} index={idx} />
@@ -237,6 +246,8 @@ function TemplatePreview({ detail }: { detail: SquadTemplateDetail }) {
 }
 
 function AgentCard({ agent }: { agent: SquadTemplateAgent; index: number }) {
+  useTranslation('agent');
+  const { t } = useTranslation('sdlc');
 
   return (
     <div style={{ border: '1px solid var(--aw-border)', borderRadius: 8, overflow: 'hidden' }}>
@@ -250,20 +261,20 @@ function AgentCard({ agent }: { agent: SquadTemplateAgent; index: number }) {
           </div>
           <div>
             <span style={{ fontWeight: 600 }}>{agent.name}</span>
-            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{agent.roleName}</Text>
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{getAgentRoleLabel(agent.roleCode, agent.roleName)}</Text>
           </div>
         </Space>
       </div>
       <div style={{ padding: 16 }}>
         <Paragraph
           type="secondary"
-          ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}
+          ellipsis={{ rows: 3, expandable: true, symbol: t('gallery.expand') }}
           style={{ marginBottom: 12, fontSize: 13, whiteSpace: 'pre-wrap' }}
         >
           {agent.responsibilities}
         </Paragraph>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--aw-muted)', marginBottom: 8 }}>
-          SDLC 步骤 · {agent.sdlc.name}
+          {t('gallery.sdlcSteps', { name: agent.sdlc.name })}
         </div>
         <Steps
           direction="vertical"
@@ -271,7 +282,7 @@ function AgentCard({ agent }: { agent: SquadTemplateAgent; index: number }) {
           current={-1}
           items={agent.sdlc.steps.map((step) => ({
             title: <span style={{ fontSize: 13 }}>{step.name}</span>,
-            description: <Tag color={kindColors[step.kind] || 'default'} style={{ fontSize: 11 }}>{step.kind}</Tag>,
+            description: <Tag color={Object.prototype.hasOwnProperty.call(kindColors, step.kind) ? kindColors[step.kind] : 'default'} style={{ fontSize: 11 }}>{step.kind}</Tag>,
           }))}
         />
       </div>

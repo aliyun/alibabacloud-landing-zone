@@ -3,7 +3,7 @@ import { apiClient } from '@/shared/api/client';
 export type MemoryScope = 'ORG' | 'SQUAD' | 'AGENT';
 export type MemoryPermission = 'READ' | 'WRITE' | 'ADMIN';
 export interface MemoryStore { id: number; scope: MemoryScope; ownerRef: number; name: string; currentRevision: number; status: string; version: number; permission?: MemoryPermission }
-export interface MemoryDocument { id: number; storeId: number; path: string; contentMd: string; contentSha256: string; byteSize: number; modifiedAt: string; version: number; title?: string; memoryType?: string; description?: string; body?: string }
+export interface MemoryDocument { id: number; storeId: number; path: string; contentMd: string; contentSha256: string; byteSize: number; modifiedAt: string; version: number; title?: string; memoryType?: string; description?: string; descriptionKind?: string; body?: string }
 export type MemoryType = 'user' | 'feedback' | 'project' | 'reference';
 export interface MemoryOwner { scope: MemoryScope; ownerRef: number; name: string; squadNames: string[]; storeId?: number; permission?: MemoryPermission; currentRevision?: number; canCreate: boolean }
 export interface MemoryDirectory { owners: MemoryOwner[]; migration?: { migrated: number; pending: number } }

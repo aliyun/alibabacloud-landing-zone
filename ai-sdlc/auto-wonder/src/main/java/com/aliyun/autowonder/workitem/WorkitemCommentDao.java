@@ -3,6 +3,7 @@ package com.aliyun.autowonder.workitem;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 @Mapper
@@ -27,4 +28,11 @@ public interface WorkitemCommentDao {
     List<WorkitemCommentDO> listBySource(@Param("tenantId") Long tenantId,
                                          @Param("sourceType") String sourceType,
                                          @Param("sourceId") Long sourceId);
+    /**
+     * 本人在给定工单下最近一次评论的时间，按工单分组（工单 #55705「我评论过的」列表回填）。
+     * 只统计平台真人成功提交的工单评论；数字人代发与外部同步评论不计入。
+     */
+    List<WorkitemCommentDO> listMyLastCommentTimes(@Param("tenantId") Long tenantId,
+                                                   @Param("workitemIds") Collection<Long> workitemIds,
+                                                   @Param("authorRef") Long authorRef);
 }

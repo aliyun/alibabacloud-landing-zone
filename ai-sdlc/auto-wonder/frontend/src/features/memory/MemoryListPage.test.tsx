@@ -18,7 +18,7 @@ function renderPage(level: 'READ_ONLY' | 'READ_WRITE' | 'ADMIN' = 'ADMIN') {
 function handlers(permission: 'READ' | 'WRITE' | 'ADMIN' = 'ADMIN') {
   server.use(
     http.get('/api/memory-stores/directory', () => HttpResponse.json({ success: true, data: { owners: [
-      { scope: 'AGENT', ownerRef: 42, name: '社区发布工程师', squadNames: ['社区发布小队'], storeId: 11, permission, currentRevision: 8, canCreate: false },
+      { scope: 'AGENT', ownerRef: 42, name: '社区发布工程师', squadNames: ['社区发布小队'], storeId: 11, permission, currentRevision: 8, canCreate: permission !== 'READ' },
       { scope: 'AGENT', ownerRef: 43, name: '尚未执行的测试工程师', squadNames: ['社区发布小队'], canCreate: permission === 'ADMIN' },
       { scope: 'ORG', ownerRef: 0, name: '组织共享记忆', squadNames: [], canCreate: permission === 'ADMIN' },
     ], migration: { migrated: 3, pending: 0 } } })),
@@ -48,8 +48,8 @@ describe('MemoryListPage', () => {
     await userEvent.click(screen.getByTitle('2'));
     expect(await screen.findByRole('button', { name: '分页主题10' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: '变更历史' }));
-    expect(await screen.findByText('UPDATE · history_0.md')).toBeInTheDocument();
-    expect(screen.queryByText('UPDATE · history_10.md')).not.toBeInTheDocument();
+    expect(await screen.findByText('修改 · history_0.md')).toBeInTheDocument();
+    expect(screen.queryByText('修改 · history_10.md')).not.toBeInTheDocument();
   });
 
   it('keeps the access dialog open when required fields are invalid', async () => {
@@ -57,7 +57,7 @@ describe('MemoryListPage', () => {
     await screen.findByText('社区发布工程师');
     await userEvent.click(screen.getByRole('tab', { name: '访问权限' }));
     await userEvent.click(await screen.findByRole('button', { name: '添加访问权限' }));
-    await userEvent.click(screen.getByRole('button', { name: 'OK' }));
+    await userEvent.click(screen.getByRole('button', { name: '保 存' }));
     expect(await screen.findByRole('dialog', { name: '新增记忆权限' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('对象编号')).toHaveAttribute('aria-invalid', 'true'));
   });
@@ -152,5 +152,28 @@ describe('MemoryListPage', () => {
     expect(screen.queryByText('qoder · other-agent.md')).not.toBeInTheDocument();
     await userEvent.click(screen.getByText(/未找到本地文件（1）/));
     expect(await screen.findByText('qoder · MEMORY.md')).toBeInTheDocument();
+  });
+
+  it('disables every editing entry for a member with read-only store access while content stays readable', async () => {
+    handlers('READ'); renderPage('READ_WRITE');
+    expect(await screen.findByText('社区发布工程师')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /新增记忆/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '编辑索引' })).toBeDisabled();
+    for (const button of screen.getAllByRole('button', { name: /编辑/ })) {
+      expect(button).toBeDisabled();
+    }
+    expect(screen.getAllByRole('button', { name: /删除/ })[0]).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '社区发布检查' }));
+    expect(await screen.findByText('需要 E2E 验证')).toBeInTheDocument();
+  });
+
+  it('disables every editing entry for a read-only workspace member regardless of store permission', async () => {
+    handlers('ADMIN'); renderPage('READ_ONLY');
+    expect(await screen.findByText('MEMORY.md')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /新增记忆/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '编辑索引' })).toBeDisabled();
+    for (const button of screen.getAllByRole('button', { name: /编辑/ })) {
+      expect(button).toBeDisabled();
+    }
   });
 });

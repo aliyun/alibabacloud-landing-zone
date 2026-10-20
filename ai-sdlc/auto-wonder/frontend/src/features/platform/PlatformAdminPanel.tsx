@@ -1,6 +1,9 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { Table } from '@/shared/theme/ThemedTable';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { useState, type ReactNode } from 'react';
+import { CloseOutlined, InfoCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import { Alert, Button, Popconfirm, Select, Space, Tag, Tooltip, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,13 +17,14 @@ import {
   type PlatformAdmin,
 } from './adminApi';
 
-const NOT_PLATFORM_ADMIN = '仅平台管理员可操作';
 
 function displayName(admin: PlatformAdmin): string {
   return admin.nickname || admin.username;
 }
 
 export function PlatformAdminPanel() {
+  const { t } = useTranslation('platform');
+  const permissionHint = t('adminPermission');
   const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<number>();
@@ -46,24 +50,24 @@ export function PlatformAdminPanel() {
   const addMutation = useMutation({
     mutationFn: addPlatformAdmin,
     onSuccess: async (list) => {
-      message.success('已添加平台管理员');
+      message.success(i18n.t('platform:adminAdded'));
       // The write endpoints return the refreshed roster, so one round trip updates both queries.
       queryClient.setQueryData(PLATFORM_ADMINS_QUERY_KEY, list);
       await queryClient.invalidateQueries({ queryKey: PLATFORM_ADMIN_CANDIDATES_QUERY_KEY });
       setSelectedUserId(undefined);
       setKeyword('');
     },
-    onError: (err: Error) => message.error(err.message || '添加平台管理员失败'),
+    onError: (err: Error) => message.error(err.message || i18n.t('platform:adminAddFailed')),
   });
 
   const removeMutation = useMutation({
     mutationFn: removePlatformAdmin,
     onSuccess: async (list) => {
-      message.success('已移除平台管理员');
+      message.success(i18n.t('platform:adminRemoved'));
       queryClient.setQueryData(PLATFORM_ADMINS_QUERY_KEY, list);
       await queryClient.invalidateQueries({ queryKey: PLATFORM_ADMIN_CANDIDATES_QUERY_KEY });
     },
-    onError: (err: Error) => message.error(err.message || '移除平台管理员失败'),
+    onError: (err: Error) => message.error(err.message || i18n.t('platform:adminRemoveFailed')),
   });
 
   const handleAdd = () => {
@@ -88,54 +92,55 @@ export function PlatformAdminPanel() {
 
   const columns: ColumnsType<PlatformAdmin> = [
     {
-      title: '管理员',
+      title: t('admin'),
       key: 'administrator',
       width: '24%',
       render: (_, admin) => (
         <span style={{ position: 'relative' }}>
           <span style={{ fontWeight: 500 }}>{displayName(admin)}</span>
-          {admin.self && <Tag color="blue" style={{ position: 'absolute', marginLeft: 6, whiteSpace: 'nowrap' }}>我</Tag>}
+          {admin.self && <Tag color="blue" style={{ position: 'absolute', marginLeft: 6, whiteSpace: 'nowrap' }}>{t('me')}</Tag>}
         </span>
       ),
     },
     {
-      title: '登录账号',
+      title: t('username'),
       dataIndex: 'username',
       width: '20%',
       ellipsis: { showTitle: false },
       render: (v: string) => <EllipsisText tooltip={v}>{v ?? '—'}</EllipsisText>,
     },
     {
-      title: '联系邮箱',
+      title: t('email'),
       dataIndex: 'email',
       width: '32%',
       ellipsis: { showTitle: false },
       render: (email: string | null) => <EllipsisText tooltip={email ?? undefined}>{email || '-'}</EllipsisText>,
     },
     {
-      title: '账号状态',
+      title: t('accountStatus'),
       key: 'status',
       width: '12%',
       render: (_, admin) => (
-        <Tag color={admin.active ? 'success' : 'orange'}>{admin.active ? '正常' : '已停用'}</Tag>
+        <Tag color={admin.active ? 'success' : 'orange'}>{admin.active ? t('active') : t('deactivated')}</Tag>
       ),
     },
     {
-      title: '操作',
+      title: t('actions'),
       key: 'action',
       width: '12%',
       render: (_, admin) => {
-        const reason = canManage ? admin.removeDisabledReason : NOT_PLATFORM_ADMIN;
+        const reason = !canManage ? permissionHint : !admin.removable && admin.self ? t('selfRemoval') : !admin.removable && admins.length <= 1 ? t('lastAdmin') : admin.removeDisabledReason;
         const enabled = canManage && admin.removable;
         return withReason(
           <Popconfirm
-            title={`确定移除 ${displayName(admin)} 的平台管理员权限？`}
-            okText="确定移除"
-            cancelText="取消"
+            icon={<ExclamationCircleFilled aria-hidden="true" />}
+            title={t('removeConfirm', { name: displayName(admin) })}
+            okText={t('confirmRemove')}
+            cancelText={t('cancel')}
             disabled={!enabled}
             onConfirm={() => handleRemove(admin.userId)}
           >
-            <Button type="link" size="small" danger disabled={!enabled}>移除</Button>
+            <Button type="link" size="small" aria-label={t('remove')} danger disabled={!enabled}>{t('remove')}</Button>
           </Popconfirm>,
           enabled ? null : reason,
         );
@@ -148,8 +153,9 @@ export function PlatformAdminPanel() {
       <Alert
         type="error"
         showIcon
-        message="平台管理员加载失败"
-        description={error instanceof Error ? error.message : '请稍后重试'}
+        icon={<CloseCircleFilled aria-hidden="true" />}
+        message={t('adminLoadFailed')}
+        description={error instanceof Error ? error.message : t('retryLater')}
       />
     );
   }
@@ -159,46 +165,46 @@ export function PlatformAdminPanel() {
       <Alert
         type="info"
         showIcon
-        message="平台管理员可以管理平台配置、协作通知和所有工作空间（含回收站）。管理员不可移除自己，且至少保留一名。"
+        icon={<InfoCircleFilled aria-hidden="true" />}
+        message={t('adminHint')}
       />
 
       <Space.Compact>
         {withReason(
           <Select
             showSearch
-            allowClear
             filterOption={false}
-            aria-label="搜索可添加的用户"
+            aria-label={t('searchUsers')}
             disabled={!canManage}
             value={selectedUserId}
-            placeholder="搜索可添加的用户"
+            placeholder={t('searchUsers')}
             loading={candidatesLoading}
             style={{ width: 320 }}
+            searchValue={keyword}
             onSearch={setKeyword}
-            onClear={() => {
-              setSelectedUserId(undefined);
-              setKeyword('');
-            }}
             onChange={setSelectedUserId}
             options={candidates.map((candidate) => ({
               value: candidate.userId,
               label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
             }))}
-            notFoundContent={keyword.trim() ? '暂无可添加的用户' : '输入姓名、用户名或邮箱搜索'}
+            notFoundContent={keyword.trim() ? t('noCandidates') : t('searchHint')}
           />,
-          canManage ? null : NOT_PLATFORM_ADMIN,
+          canManage ? null : permissionHint,
         )}
         {withReason(
           <Button
             type="primary"
             disabled={!canManage || selectedUserId === undefined}
+            aria-label={t('addAdmin')}
             loading={addMutation.isPending}
             onClick={handleAdd}
           >
-            添加管理员
+            {t('addAdmin')}
           </Button>,
-          canManage ? null : NOT_PLATFORM_ADMIN,
+          canManage ? null : permissionHint,
         )}
+        {/* ponytail: rc-select hides its clear parent from accessibility; keep a public keyboard button until upstream exposes an accessible clear API. */}
+        {(selectedUserId !== undefined || keyword) && <Button aria-label={t('clearUser')} icon={<CloseOutlined aria-hidden="true" />} disabled={!canManage} onClick={() => { setSelectedUserId(undefined); setKeyword(''); }} />}
       </Space.Compact>
 
       <Table

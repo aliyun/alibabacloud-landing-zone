@@ -2,6 +2,8 @@ package com.aliyun.autowonder.conversation;
 
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.conversation.dto.ClarificationConversationVO;
 import com.aliyun.autowonder.dispatch.ExecutorSelector;
 import org.junit.jupiter.api.Test;
@@ -22,11 +24,13 @@ class WorkitemClarificationConversationServiceTest {
     private final ConversationCommandsService commandsService =
             mock(ConversationCommandsService.class);
     private final ConversationExecutorRouter executorRouter = mock(ConversationExecutorRouter.class);
+    private final ClarificationAttachmentService attachmentService =
+            mock(ClarificationAttachmentService.class);
 
     private final WorkitemClarificationConversationService service =
             new WorkitemClarificationConversationService(convDao, turnDao, conversationService,
                     agentDao, runtimePresence, elicitationService, commandsService,
-                    executorRouter);
+                    executorRouter, attachmentService);
 
     private AgentConversationDO clarificationConversation(Long workitemId) {
         AgentConversationDO conv = new AgentConversationDO();
@@ -206,12 +210,122 @@ class WorkitemClarificationConversationServiceTest {
         agent.setOnlineVersionId(50L);
         when(agentDao.findById(3L)).thenReturn(agent);
         when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(10L);
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:client-1"))
+                .thenReturn(null, turn(90L, "IN", "clarify"));
 
-        service.submitTurn(1L, 10011L, 77L, "clarify", "client-1");
+        service.submitTurn(1L, 10011L, 77L, 42L, "clarify", "client-1", null);
 
         verify(convDao).updateExecutor(1L, 77L, 10L);
         verify(conversationService).submitTurn(1L, 3L, "WORKITEM_CLARIFICATION",
                 conv.getChannelConversationId(), "clarify", "web-clarification:client-1");
+    }
+
+    /** E2E 回归：执行器离线返回可判定的业务错误码，而不是落到 10000 系统错误。 */
+    @Test
+    void submitTurnReportsCodedErrorWhenNoExecutorAvailable() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        AgentDO agent = new AgentDO();
+        agent.setId(3L);
+        agent.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(agent);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> service.submitTurn(1L, 10011L, 77L, 42L, "hello", "c-offline", null));
+
+        assertEquals(ErrorCode.CLARIFICATION_EXECUTOR_OFFLINE.getCode(), ex.getCode());
+        verify(conversationService, never()).submitTurn(anyLong(), anyLong(), anyString(),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void submitTurnBindsUploadedAttachmentsToPersistedTurn() {
+        AgentConversationDO conv = clarificationConversation(10011L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentDO agent = new AgentDO();
+        agent.setId(3L);
+        agent.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(agent);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(9L);
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-1"))
+                .thenReturn(null, turn(90L, "IN", "look at this"));
+        when(attachmentService.requireBindableIds(1L, 77L, 42L, java.util.List.of(5L, 6L)))
+                .thenReturn(java.util.List.of(5L, 6L));
+
+        service.submitTurn(1L, 10011L, 77L, 42L, "look at this", "c-1",
+                java.util.List.of(5L, 6L));
+
+        verify(attachmentService).bindToTurn(1L, 77L, 42L,
+                java.util.List.of(5L, 6L), 90L);
+    }
+
+    @Test
+    void submitTurnAllowsAttachmentOnlyMessage() {
+        AgentConversationDO conv = clarificationConversation(10011L);
+        when(convDao.findById(1L, 77L)).thenReturn(conv);
+        AgentDO agent = new AgentDO();
+        agent.setId(3L);
+        agent.setOnlineVersionId(50L);
+        when(agentDao.findById(3L)).thenReturn(agent);
+        when(executorRouter.select(1L, 3L, 50L, 9L)).thenReturn(9L);
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-2"))
+                .thenReturn(null, turn(91L, "IN", ""));
+        when(attachmentService.requireBindableIds(1L, 77L, 42L, java.util.List.of(5L)))
+                .thenReturn(java.util.List.of(5L));
+
+        service.submitTurn(1L, 10011L, 77L, 42L, "   ", "c-2",
+                java.util.List.of(5L));
+
+        verify(conversationService).submitTurn(1L, 3L, "WORKITEM_CLARIFICATION",
+                conv.getChannelConversationId(), "", "web-clarification:c-2");
+        verify(attachmentService).bindToTurn(1L, 77L, 42L, java.util.List.of(5L), 91L);
+    }
+
+    @Test
+    void submitTurnRejectsEmptyMessageWithoutAttachments() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+
+        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+                () -> service.submitTurn(1L, 10011L, 77L, 42L, "   ", "c-3",
+                        java.util.List.of()));
+        verify(conversationService, never()).submitTurn(anyLong(), anyLong(), anyString(),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void submitTurnReplayDoesNotDispatchAgainAndBindsUnboundAttachments() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        AgentConversationTurnDO persisted = turn(90L, "IN", "look");
+        when(turnDao.findByExternalMsgId(1L, "web-clarification:c-1")).thenReturn(persisted);
+        when(attachmentService.verifyReplay(1L, 77L, 42L, java.util.List.of(5L), 90L))
+                .thenReturn(java.util.List.of(5L));
+
+        service.submitTurn(1L, 10011L, 77L, 42L, "look", "c-1",
+                java.util.List.of(5L));
+
+        verify(attachmentService).verifyReplay(1L, 77L, 42L, java.util.List.of(5L), 90L);
+        verify(attachmentService).bindToTurn(1L, 77L, 42L, java.util.List.of(5L), 90L);
+        verify(conversationService, never()).submitTurn(anyLong(), anyLong(), anyString(),
+                anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void getConversationAttachesHistoryAttachmentsPerTurn() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        when(turnDao.listTurnsByConversation(1L, 77L)).thenReturn(java.util.List.of(
+                turn(1L, "IN", "带图的问题"), turn(2L, "OUT", "回答")));
+        com.aliyun.autowonder.conversation.dto.ClarificationAttachmentVO image =
+                com.aliyun.autowonder.conversation.dto.ClarificationAttachmentVO.builder()
+                        .id(5L).name("shot.png").contentType("image/png").size(12L)
+                        .previewable(true).build();
+        when(attachmentService.listByTurnIds(1L, 77L, java.util.List.of(1L, 2L)))
+                .thenReturn(java.util.Map.of(1L, java.util.List.of(image)));
+
+        ClarificationConversationVO vo = service.getConversation(1L, 10011L, 77L);
+
+        assertEquals(1, vo.getTurns().get(0).getAttachments().size());
+        assertEquals("shot.png", vo.getTurns().get(0).getAttachments().get(0).getName());
+        assertTrue(vo.getTurns().get(1).getAttachments().isEmpty());
     }
 
     private AgentConversationTurnDO turn(long id, String direction, String content) {
@@ -308,7 +422,8 @@ class WorkitemClarificationConversationServiceTest {
     void getConversationDegradesWhenRuntimePresenceMissing() {
         WorkitemClarificationConversationService bare =
                 new WorkitemClarificationConversationService(convDao, turnDao, conversationService,
-                        agentDao, null, elicitationService, commandsService, executorRouter);
+                        agentDao, null, elicitationService, commandsService, executorRouter,
+                        attachmentService);
         when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
         when(turnDao.listTurnsByConversation(1L, 77L)).thenReturn(java.util.List.of());
 
@@ -339,4 +454,46 @@ class WorkitemClarificationConversationServiceTest {
         assertEquals(1, list.size());
         assertFalse(list.get(0).isExecutorOnline());
     }
+    @Test
+    void projectsOnlyFiniteBrowserDisplayWithoutSourcePrivacy() {
+        when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(10011L));
+        AgentConversationTurnDO turn = new AgentConversationTurnDO();
+        turn.setId(55L); turn.setDirection("OUT"); turn.setStatus("CANCELED");
+        turn.setContent("响应已终止");
+        turn.setSourceContext("{\"senderNick\":\"private\",\"conversationDisplay\":{\"content\":{\"code\":\"CANCELED\",\"args\":{}}}}");
+        when(turnDao.listTurnsByConversation(1L, 77L)).thenReturn(java.util.List.of(turn));
+        var json = com.aliyun.autowonder.json.JSON.parseObject(com.aliyun.autowonder.json.JSON.toJSONString(
+                service.getConversation(1L, 10011L, 77L).getTurns().get(0)));
+        assertEquals("响应已终止", json.getString("content"));
+        assertFalse(json.containsKey("sourceContext"));
+        assertFalse(json.toJSONString().contains("private"));
+        assertNotNull(json.getJSONObject("display"));
+        assertEquals("CANCELED", json.getJSONObject("display").getJSONObject("content").getString("code"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing", "wrong", "agent"})
+    void humanValidationKeepsRawTypeAndLocalizesAtGlobal200(String branch) {
+        if ("wrong".equals(branch)) when(convDao.findById(1L, 77L)).thenReturn(clarificationConversation(999L));
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> {
+            if ("agent".equals(branch)) service.createConversation(1L, 10011L, 3L);
+            else service.verifyConversationBelongsToWorkitem(1L, 10011L, 77L);
+        });
+        String raw = switch(branch) { case "wrong" -> "conversation does not belong to this workitem";
+            case "agent" -> "agent not found"; default -> "conversation not found"; };
+        assertEquals(raw, error.getMessage()); assertNull(error.getCause());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {
+            var result = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleIllegalArg(error);
+            assertEquals("10001", result.getCode());
+            assertEquals(switch(branch) {case "wrong" -> "This conversation does not belong to this Workitem.";
+                case "agent" -> "Agent not found."; default -> "Conversation not found.";}, result.getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            assertEquals(switch(branch) {case "wrong" -> "此会话不属于当前工单。";
+                case "agent" -> "数字员工不存在。"; default -> "会话不存在。";},
+                new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleIllegalArg(error).getMessage());
+
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

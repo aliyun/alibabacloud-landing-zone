@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent } from 'react';
 import { Button, Card, List, message, Popconfirm, Space, Spin, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, DownloadOutlined, EyeOutlined, FileImageOutlined, FileMarkdownOutlined, UploadOutlined } from '@ant-design/icons';
@@ -43,6 +44,7 @@ function formatBytes(size: number | null): string {
 }
 
 export function RequirementDocumentsCard({ workitemId, documents, loading }: RequirementDocumentsCardProps) {
+  const { t } = useTranslation('workitem');
   const inputRef = useRef<HTMLInputElement>(null);
   const [previewArtifact, setPreviewArtifact] = useState<Artifact | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<Artifact['id'] | null>(null);
@@ -64,7 +66,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
   }, []);
 
   const submitFiles = (incoming: File[]) => {
-    accessCommand('READ_WRITE', '上传需求/设计上下文', () => {
+    accessCommand('READ_WRITE', t('documents.uploadCommand'), () => {
       if (incoming.length === 0) return;
       const verdict = validateDocumentSelection(incoming, {
         existingCount: documents.length,
@@ -130,13 +132,13 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
   return (
     <Card
       data-testid="requirement-documents-card"
-      title="需求/设计上下文"
+      title={t('documents.title')}
       extra={(
         <>
           <input
             ref={inputRef}
             data-testid="requirement-document-file-input"
-            aria-label="选择需求/设计上下文文件"
+            aria-label={t('documents.selectFile')}
             type="file"
             multiple
             accept={DOCUMENT_ACCEPT_ATTRIBUTE}
@@ -152,11 +154,11 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
             disabled={uploadMutation.isPending || documents.length >= DOCUMENT_MAX_DOCUMENTS}
             onClick={() => accessCommand(
               'READ_WRITE',
-              '上传需求/设计上下文',
+              t('documents.uploadCommand'),
               () => inputRef.current?.click(),
             )}
           >
-            上传
+            {t('documents.upload')}
           </Button>
         </>
       )}
@@ -165,7 +167,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
       <div
         data-testid="requirement-document-dropzone"
         data-drag-active={dragActive ? 'true' : 'false'}
-        aria-label="需求/设计上下文上传区"
+        aria-label={t('documents.dropzone')}
         tabIndex={0}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
@@ -182,29 +184,29 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
         }}
       >
         <Text type="secondary" style={{ display: 'block', marginBottom: documents.length === 0 ? 0 : 8 }}>
-          支持 Markdown、TXT、HTML、PDF、PNG、JPEG、WebP、Word（.docx/.doc）、Java、Python、ZIP；可点击「上传」、拖拽到此处或按 Ctrl/Cmd+V 粘贴截图；最多 10 个附件，单个最大 5 MB，总计不超过 20 MB。
+          {t('documents.help')}
         </Text>
         {loading ? (
           <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
         ) : documents.length === 0 ? (
-          <Text type="secondary">暂无需求/设计上下文，可上传需求澄清、设计 Markdown 文档或设计截图。</Text>
+          <Text type="secondary">{t('documents.empty')}</Text>
         ) : (
           <List
             dataSource={documents}
             renderItem={(artifact) => (
               <List.Item
                 actions={[
-                  <Tooltip title="预览" key="preview">
+                  <Tooltip title={t('documents.preview')} key="preview">
                     <Button
-                      aria-label={`预览 ${displayName(artifact.name)}`}
+                      aria-label={t('documents.previewFile', { name: displayName(artifact.name) })}
                       icon={<EyeOutlined />}
                       size="small"
                       onClick={() => setPreviewArtifact(artifact)}
                     />
                   </Tooltip>,
-                  <Tooltip title="下载" key="download">
+                  <Tooltip title={t('documents.download')} key="download">
                     <Button
-                      aria-label={`下载 ${displayName(artifact.name)}`}
+                      aria-label={t('documents.downloadFile', { name: displayName(artifact.name) })}
                       icon={<DownloadOutlined />}
                       size="small"
                       onClick={() => handleDownload(artifact)}
@@ -212,9 +214,9 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
                   </Tooltip>,
                   <Popconfirm
                     key="delete"
-                    title={`确认删除 ${displayName(artifact.name)}？`}
-                    okText="删除"
-                    cancelText="取消"
+                    title={t('documents.deleteConfirm', { name: displayName(artifact.name) })}
+                    okText={t('detail.delete')}
+                    cancelText={t('detail.cancel')}
                     open={deleteConfirmId === artifact.id}
                     onOpenChange={(open) => {
                       if (!open) {
@@ -223,7 +225,7 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
                       }
                       accessCommand(
                         'READ_WRITE',
-                        '删除需求文档',
+                        t('documents.deleteCommand'),
                         () => setDeleteConfirmId(artifact.id),
                       );
                     }}
@@ -231,13 +233,13 @@ export function RequirementDocumentsCard({ workitemId, documents, loading }: Req
                       setDeleteConfirmId(null);
                       accessCommand(
                         'READ_WRITE',
-                        '删除需求文档',
+                        t('documents.deleteCommand'),
                         () => deleteMutation.mutate({ artifactId: artifact.id }),
                       );
                     }}
                   >
                     <Button
-                      aria-label={`删除 ${displayName(artifact.name)}`}
+                      aria-label={t('documents.deleteFile', { name: displayName(artifact.name) })}
                       danger
                       icon={<DeleteOutlined />}
                       loading={deleteMutation.isPending}

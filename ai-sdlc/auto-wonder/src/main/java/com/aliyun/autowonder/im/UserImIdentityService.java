@@ -5,6 +5,9 @@ import com.aliyun.autowonder.common.error.AlreadyLoggedException;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.im.dto.UserImIdentityVO;
+import com.aliyun.autowonder.user.UserSettingService;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,17 +29,24 @@ public class UserImIdentityService {
     private final PlatformImChannelConfigService channelConfigService;
     private final ImProviderRegistry providerRegistry;
     private final PlatformBrandingService brandingService;
+    private final UserSettingService userSettingService;
 
     public UserImIdentityService(UserImIdentityDao identityDao,
                                  PlatformImChannelConfigService channelConfigService) {
         this(identityDao, channelConfigService, null, null);
     }
 
-    @Autowired
     public UserImIdentityService(UserImIdentityDao identityDao,
                                  PlatformImChannelConfigService channelConfigService,
                                  ImProviderRegistry providerRegistry,
                                  PlatformBrandingService brandingService) {
+        this(identityDao, channelConfigService, providerRegistry, brandingService, null);
+    }
+
+    @Autowired
+    public UserImIdentityService(UserImIdentityDao identityDao, PlatformImChannelConfigService channelConfigService,
+            ImProviderRegistry providerRegistry, PlatformBrandingService brandingService, UserSettingService userSettingService) {
+        this.userSettingService = userSettingService;
         this.identityDao = identityDao;
         this.channelConfigService = channelConfigService;
         this.providerRegistry = providerRegistry;
@@ -69,16 +79,25 @@ public class UserImIdentityService {
 
     @Transactional
     public UserImIdentityVO update(long userId, String provider, String externalUserId) {
+        return update(userId, provider, externalUserId, userId);
+    }
+
+    /**
+     * 管理端（平台用户管理）代改工号时 operatorId 才是操作人，落库的 creator/modifier 必须记录
+     * 实际操作者而不是被改用户。
+     */
+    @Transactional
+    public UserImIdentityVO update(long userId, String provider, String externalUserId, long operatorId) {
         String normalizedProvider = ImProviderType.normalize(provider);
         try {
             channelConfigService.requireSelected(normalizedProvider);
             String normalizedExternalId = trimToNull(externalUserId);
             if (normalizedExternalId != null && normalizedExternalId.length() > 256) {
-                throw new BizException(ErrorCode.PARAM_INVALID,
-                        "externalUserId 长度不能超过 256");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "im.external_user_id_too_long",
+                        new Object[0], "externalUserId 长度不能超过 256");
             }
             if (normalizedExternalId == null) {
-                identityDao.softDelete(userId, normalizedProvider, userId);
+                identityDao.softDelete(userId, normalizedProvider, operatorId);
                 log.info("IM notification user identity updated provider={} userId={} configured=false externalIdFingerprint=none",
                         normalizedProvider, userId);
                 return emptyVO(normalizedProvider, channelConfigService.isReady(normalizedProvider));
@@ -88,8 +107,8 @@ public class UserImIdentityService {
             identity.setUserId(userId);
             identity.setProvider(normalizedProvider);
             identity.setExternalUserId(normalizedExternalId);
-            identity.setCreatorId(userId);
-            identity.setModifierId(userId);
+            identity.setCreatorId(operatorId);
+            identity.setModifierId(operatorId);
             identityDao.upsert(identity);
             log.info("IM notification user identity updated provider={} userId={} configured=true externalIdFingerprint={}",
                     normalizedProvider, userId, fingerprint(normalizedExternalId));
@@ -180,12 +199,15 @@ public class UserImIdentityService {
             if (!hasText(brand)) {
                 brand = PlatformBrandingService.DEFAULT_PLATFORM_NAME;
             }
-            String title = brand + " 协作通知测试成功";
+            Locale locale = userSettingService == null ? Locale.CHINA : userSettingService.recipientLocale(userId);
+            String title = SystemMessages.render("im.test.success_title", new Object[]{brand},
+                    brand + " 协作通知测试成功", locale);
             providerRegistry.require(normalizedProvider).send(new ImSendCommand(
                     normalizedProvider,
                     identity.getExternalUserId(),
                     title,
-                    "## " + title + "\n\n你的 IM 协作通知配置可正常使用。"));
+                    SystemMessages.render("im.test.success_body", new Object[]{title},
+                            "## " + title + "\n\n你的 IM 协作通知配置可正常使用。", locale)));
             log.info("IM notification test delivered provider={} userId={} recipientFingerprint={}",
                     normalizedProvider, userId, recipientFingerprint);
         } catch (AlreadyLoggedException e) {
@@ -194,7 +216,9 @@ public class UserImIdentityService {
             AlreadyLoggedException safe = ImLogSupport.safeThrowable(e);
             log.error("IM notification test failed provider={} userId={} recipientFingerprint={}",
                     normalizedProvider, userId, recipientFingerprint, safe);
-            throw new BizException(e.getCode(), e.getMessage(), safe);
+            throw e.getMessageKey() == null
+                    ? new BizException(e.getCode(), e.getMessage(), safe)
+                    : BizException.keyed(e.getCode(), e.getMessageKey(), e.getMessageArgs(), e.getMessage(), safe);
         } catch (ImDeliveryException e) {
             AlreadyLoggedException safe = ImLogSupport.safeThrowable(e);
             log.error("IM notification test failed provider={} userId={} recipientFingerprint={} "

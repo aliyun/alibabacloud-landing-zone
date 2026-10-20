@@ -74,16 +74,17 @@ public class ExecutorWsEndpoint {
         }
 
         String clientIp = null;
+        String hostname = ExecutorService.sanitizeHostname(firstParam(params, "hostname"));
         try {
             clientIp = ClientIpResolver.resolve(session);
             ExecutorService service = WsSpringContext.getBean(ExecutorService.class);
-            service.recordLastConnectIp(auth.getExecutorId(), auth.getTenantId(), clientIp);
+            service.recordLastConnectInfo(auth.getExecutorId(), auth.getTenantId(), clientIp, hostname);
         } catch (RuntimeException ex) {
             log.warn("record executor ip failed executorId={}", auth.getExecutorId(), ex);
         }
 
-        log.info("executor connected executorId={} agentId={} tenantId={} capacity={} ip={}",
-                auth.getExecutorId(), auth.getAgentId(), auth.getTenantId(), capacity, clientIp);
+        log.info("executor connected executorId={} agentId={} tenantId={} capacity={} ip={} hostname={}",
+                auth.getExecutorId(), auth.getAgentId(), auth.getTenantId(), capacity, clientIp, hostname);
     }
 
     @OnMessage

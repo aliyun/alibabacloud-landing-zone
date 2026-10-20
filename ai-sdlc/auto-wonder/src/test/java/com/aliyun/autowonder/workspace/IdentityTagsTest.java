@@ -117,4 +117,37 @@ class IdentityTagsTest {
         assertEquals(ErrorCode.PARAM_INVALID.getCode(), exception.getCode());
         assertTrue(exception.getMessage().toLowerCase().contains("identity tags"));
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(delimiter = '|', value = {
+        "normalizeLength|Identity tags must not exceed 32 Java characters per tag|每个身份标签不能超过 32 个 Java 字符|Identity tags must not exceed 32 Java characters per tag.",
+        "toJsonLength|Identity tags must not exceed 32 Java characters per tag|每个身份标签不能超过 32 个 Java 字符|Identity tags must not exceed 32 Java characters per tag.",
+        "fromJsonLength|Identity tags must not exceed 32 Java characters per tag|每个身份标签不能超过 32 个 Java 字符|Identity tags must not exceed 32 Java characters per tag.",
+        "normalizeCount|Identity tags must not contain more than 8 tags|身份标签不能超过 8 个|Identity tags must not contain more than 8 tags.",
+        "toJsonCount|Identity tags must not contain more than 8 tags|身份标签不能超过 8 个|Identity tags must not contain more than 8 tags.",
+        "fromJsonCount|Identity tags must not contain more than 8 tags|身份标签不能超过 8 个|Identity tags must not contain more than 8 tags.",
+        "persistedCorruption|Invalid persisted identity tags JSON|持久化的身份标签 JSON 无效|Invalid persisted identity tags JSON."
+    })
+    void tagValidationLocalizesOnlyOwnedDetailWithRawJsonAndUtf16RulesIntact(
+            String branch, String diagnostic, String chinese, String english) {
+        List<String> tags = branch.endsWith("Length") ? List.of("😀".repeat(17))
+                : List.of("1", "2", "3", "4", "5", "6", "7", "8", "9");
+        String json = branch.equals("persistedCorruption") ? "[\"<b>raw</b>\",null]"
+                : com.aliyun.autowonder.json.JSON.toJSONString(tags);
+        BizException error = assertThrows(BizException.class, () -> {
+            if (branch.startsWith("normalize")) IdentityTags.normalize(tags);
+            else if (branch.startsWith("toJson")) IdentityTags.toJson(tags);
+            else IdentityTags.fromJson(json);
+        });
+        assertEquals(BizException.class, error.getClass());
+        assertEquals("10001", error.getCode());
+        assertEquals(diagnostic, error.getMessage());
+        org.junit.jupiter.api.Assertions.assertNull(error.getCause());
+        assertEquals(400, new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue());
+        assertEquals(chinese, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.CHINA));
+        assertEquals(english, com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                error.getMessageKey(), error.getMessageArgs(), error.getMessage(), java.util.Locale.US));
+    }
+
 }

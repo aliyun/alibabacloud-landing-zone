@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MetricCards } from './MetricCards';
 import type { InsightMetrics } from '../types';
+
+// antd Tooltip 延迟出现，负向断言必须等过该延迟，否则回归会被漏过。
+async function waitPastTooltipDelay() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+}
 
 const metrics: InsightMetrics = {
   cost: {
@@ -30,19 +35,34 @@ describe('MetricCards', () => {
     expect(screen.getByText('2.75')).toBeInTheDocument();
   });
 
-  it('keeps the three token metrics out of the card face until hover', async () => {
+  it('keeps legacy metric card KPI groups left-aligned with the default layout', () => {
+    const { container } = render(<MetricCards metrics={metrics} />);
+
+    const groups = Array.from(container.querySelectorAll('.metric-card-kpis'));
+    expect(groups).toHaveLength(4);
+    expect(groups.filter((group) => group.classList.contains('is-centered'))).toHaveLength(1);
+    expect(screen.getByText('完成率').closest('.metric-card-kpis')).not.toHaveClass('is-centered');
+  });
+
+  it('shows no tooltip or token detail when hovering the cost card KPIs', async () => {
     const user = userEvent.setup();
     render(<MetricCards metrics={metrics} />);
 
-    expect(screen.queryByText('总 Token:')).not.toBeInTheDocument();
-    expect(screen.queryByText('100K')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 
     await user.hover(screen.getByText('总 Credits'));
+    await waitPastTooltipDelay();
 
-    expect(await screen.findByText('总 Token:')).toBeInTheDocument();
-    expect(screen.getByText('100K')).toBeInTheDocument();
-    expect(screen.getByText('5.0K')).toBeInTheDocument();
-    expect(screen.getByText('14K')).toBeInTheDocument();
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(screen.queryByText('总 Token:')).not.toBeInTheDocument();
+    expect(screen.queryByText('均/任务:')).not.toBeInTheDocument();
+    expect(screen.queryByText('日均:')).not.toBeInTheDocument();
+    expect(screen.queryByText('100K')).not.toBeInTheDocument();
+    expect(screen.queryByText('5.0K')).not.toBeInTheDocument();
+    expect(screen.queryByText('14K')).not.toBeInTheDocument();
+
+    expect(screen.getByText('总 Credits')).toBeInTheDocument();
+    expect(screen.getByText('82.61')).toBeInTheDocument();
   });
 
   it('renders zero credits without NaN when there is no usage data', () => {

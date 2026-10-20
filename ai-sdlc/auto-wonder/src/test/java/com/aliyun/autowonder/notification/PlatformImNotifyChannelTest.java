@@ -21,7 +21,7 @@ class PlatformImNotifyChannelTest {
         var identity = new UserImIdentityDO(); identity.setExternalUserId("fs-user");
         when(identities.find(2L, "FEISHU")).thenReturn(identity);
         when(registry.require("FEISHU")).thenReturn(provider);
-        var channel = new PlatformImNotifyChannel(configs, identities, registry, settings);
+        var channel = new PlatformImNotifyChannel(configs, identities, registry, settings, mock(com.aliyun.autowonder.im.notification.ImNotificationQueue.class));
         var notification = new NotificationDO(); notification.setTenantId(1L); notification.setRecipientId(2L);
         notification.setTitle("新通知"); notification.setContent("内容");
         assertEquals("feishu", channel.name());

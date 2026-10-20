@@ -20,12 +20,25 @@ import java.util.Set;
 
 /**
  * debug 日志直传签发端点（设计文档 §4.4）。executor token 鉴权（DaemonUploadAuthenticator 同款链），
- * 校验顺序与协议契约一致：404 → 403 → 409（未终态）→ 422（未开启 debug）→ 400（请求体非法）。
+ * 校验顺序与协议契约一致：404 → 403 → 409（未终态且不满足收尾阶段签发）→ 422（未开启 debug）→
+ * 400（请求体非法）。
  * runtime 侧对 4xx 一律 best-effort：记录错误、不重试直传。
  *
  * <p>404 先于 403 的次序是契约要求（runtime 对 4xx 的分类依赖该次序），不可重排。已评估由此
  * 暴露的 dispatchId 存在性 oracle：本端点仅限 daemon 前缀、executor token 鉴权在前置层完成、
  * 且 dispatchId 顺序递增本就可枚举——接受该权衡，暴露面与 checkpoint/artifact 端点同级别。
+ *
+ * <p>收尾阶段签发（2026-09-21 修复，工单 55510）：runtime 的协议顺序是先申请上传、后发送
+ * TASK_RESULT，而数据库终态恰恰由 TASK_RESULT 驱动（InboundFrameRouter → DispatchService.onResult），
+ * 所以「RUNNING 派发先上传后上报」是协议固有顺序而非异常时序，旧闸门对该顺序必然 409
+ * dispatch_not_terminal，且 runtime 将 4xx 判为永久失败（不重试、不中转），日志即永久丢失。
+ * 放行条件（三项同时满足）：鉴权已绑定当前执行器归属（403 前置）；派发已交付执行器
+ * （DISPATCHED/ACKED/RUNNING，见 {@link #CLOSING_PHASE_STATUSES}）；请求体申报合法终态
+ * dispatchStatus（执行器本地执行结果）。签发只把 debug_log 行 upsert 为 PENDING 快照，
+ * 不改派发状态、不伪造终态；终值仍由 TASK_RESULT 的 recordTaskResultReport 或 24h 对账收敛，
+ * 与 artifacts 中转通道（relayTarget 不检查终态）语义对齐。暂停族
+ * （PAUSING/PAUSED/PAUSE_FAILED/WAITING_FOR_PAUSE）与未交付态（PENDING/PACKAGING）不构成
+ * 收尾阶段，维持 409——暂停路径不得被当作终态上传，未交付的派发不存在可申报的本地执行结果。
  */
 @RestController
 @RequestMapping("/api/daemon")
@@ -35,6 +48,10 @@ public class DebugLogUploadController {
     private static final Set<String> REPORTABLE_STATUSES = Set.of(
             DispatchStatus.SUCCEEDED, DispatchStatus.FAILED,
             DispatchStatus.TIMEOUT, DispatchStatus.CANCELED);
+
+    /** 已交付执行器、可申报本地终态收尾的派发状态族（协议契约：收尾阶段签发的放行面）。 */
+    private static final Set<String> CLOSING_PHASE_STATUSES = Set.of(
+            DispatchStatus.DISPATCHED, DispatchStatus.ACKED, DispatchStatus.RUNNING);
 
     private final DaemonUploadAuthenticator authenticator;
     private final DebugLogService debugLogService;
@@ -59,7 +76,8 @@ public class DebugLogUploadController {
             return ResponseEntity.status(403).body(Map.of("error", "token_invalid"));
         }
         DispatchDO dispatch = auth.dispatch();
-        if (!DispatchStatus.isTerminal(dispatch.getStatus())) {
+        if (!DispatchStatus.isTerminal(dispatch.getStatus())
+                && !closingPhaseIssuance(dispatch, request)) {
             return ResponseEntity.status(409).body(Map.of("error", "dispatch_not_terminal"));
         }
         if (!Boolean.TRUE.equals(dispatch.getDebugLogEnabled())) {
@@ -99,5 +117,21 @@ public class DebugLogUploadController {
                     issueFailure);
             return ResponseEntity.status(503).body(Map.of("error", "issue_failed"));
         }
+    }
+
+    /**
+     * 收尾阶段签发判定：派发行尚未落库终态，但本轮已交付执行器（DISPATCHED/ACKED/RUNNING）
+     * 且请求体申报合法终态 dispatchStatus（执行器本地执行结果）时，允许在 TASK_RESULT 之前签发。
+     * 请求体为 null 或申报非终态/非法状态返回 false—— premature 请求维持 409，
+     * 契约「409 先于请求体 400 校验」的次序由此保留。
+     * 暂停族与未交付态（PENDING/PACKAGING）恒为 false：暂停路径不得被当作终态上传，
+     * 未交付的派发不存在可申报的本地执行结果。本判定不修改派发状态、不伪造终态。
+     */
+    private boolean closingPhaseIssuance(DispatchDO dispatch, DebugLogUploadRequest request) {
+        if (dispatch.getStatus() == null || !CLOSING_PHASE_STATUSES.contains(dispatch.getStatus())) {
+            return false;
+        }
+        return request != null && request.getDispatchStatus() != null
+                && REPORTABLE_STATUSES.contains(request.getDispatchStatus());
     }
 }

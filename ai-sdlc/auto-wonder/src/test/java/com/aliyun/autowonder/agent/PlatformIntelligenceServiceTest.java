@@ -71,6 +71,9 @@ class PlatformIntelligenceServiceTest {
         var error = assertThrows(PlatformIntelligenceService.UnavailableException.class,
                 () -> service.invoke(1L, requestId, "Summarize"));
         assertEquals(RUNTIME_UNAVAILABLE, error.getCapabilityStatus().status());
+        assertInstanceOf(IllegalStateException.class, error);
+        assertEquals("Platform intelligence unavailable: " + error.getCapabilityStatus().status(), error.getMessage());
+        assertNull(error.getCause());
         verifyNoInteractions(conversations);
     }
 
@@ -151,4 +154,29 @@ class PlatformIntelligenceServiceTest {
         when(turns.listTurnsByConversation(1L, 77L)).thenReturn(
                 reply == null ? List.of(inbound) : List.of(inbound, outbound));
     }
+    @Test void localizesInputReasonsWhileRetainingIllegalArgumentContractAndRawResults() {
+        assertPlatformBoundary(assertThrows(IllegalArgumentException.class, () -> service.getStatus(null)), "workspaceId 必须为正数");
+        assertPlatformBoundary(assertThrows(IllegalArgumentException.class, () -> service.invoke(1L, null, "hello")), "requestId 不能为空");
+        assertPlatformBoundary(assertThrows(IllegalArgumentException.class, () -> service.invoke(1L, requestId, "  ")), "prompt 不能为空白");
+        persist("SUCCESS", "<b>{0}'AI");
+        assertPlatformBoundary(assertThrows(IllegalArgumentException.class, () -> service.invoke(1L, requestId, "Different")), "requestId 已用于不同的 prompt");
+        assertEquals("<b>{0}'AI", service.getResult(1L, requestId).content());
+        AgentConversationDO other = new AgentConversationDO(); other.setChannel("DINGTALK");
+        when(conversationDao.findById(1L, 77L)).thenReturn(other);
+        assertPlatformBoundary(assertThrows(IllegalArgumentException.class, () -> service.getResult(1L, requestId)), "请求不属于平台智能服务");
+        verifyNoInteractions(conversations);
+    }
+    private static void assertPlatformBoundary(IllegalArgumentException error, String chinese) {
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        String diagnostic = error.getMessage();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+            assertEquals(chinese, handler.handleIllegalArg(error).getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals(diagnostic, handler.handleIllegalArg(error).getMessage());
+            assertEquals("10001", handler.handleIllegalArg(error).getCode());
+            assertEquals(diagnostic, error.getMessage()); assertNull(error.getCause());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

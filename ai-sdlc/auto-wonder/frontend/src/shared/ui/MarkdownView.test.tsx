@@ -5,6 +5,27 @@ import userEvent from '@testing-library/user-event';
 import { MarkdownView } from './MarkdownView';
 
 describe('MarkdownView', () => {
+  it.each(['（head 510042516）', '，请查看', '。', '【报告】'])('keeps adjacent prose outside bare URL links: %s', suffix => {
+    const url = 'https://github.com/aliyun/terraform-provider-alicloud/pull/10748';
+    const { container } = render(<MarkdownView content={`PR: ${url}${suffix}`} />);
+    const link = screen.getByRole('link');
+    expect(link).toHaveAttribute('href', url);
+    expect(link).toHaveTextContent(url);
+    expect(link.textContent).toBe(url);
+    expect(container.textContent).toBe(`PR: ${url}${suffix}`);
+  });
+
+  it('preserves explicit destinations, encoded punctuation, balanced ASCII parentheses and code', () => {
+    const { container } = render(<MarkdownView content={'[explicit](https://example.com/（head)\n\n<https://example.com/（head>\n\nhttps://example.com/%EF%BC%88head\n\nhttps://example.com/wiki/Example_(test)\n\n`https://example.com/（head`'} />);
+    expect(screen.getAllByRole('link').map(link => link.getAttribute('href'))).toEqual([
+      'https://example.com/%EF%BC%88head',
+      'https://example.com/%EF%BC%88head',
+      'https://example.com/%EF%BC%88head',
+      'https://example.com/wiki/Example_(test)',
+    ]);
+    expect(container.querySelector('code')).toHaveTextContent('https://example.com/（head');
+  });
+
   it('ignores null member names when highlighting mentions', () => {
     render(
       <MarkdownView
@@ -28,6 +49,48 @@ describe('MarkdownView', () => {
     expect(link).toHaveAttribute('href', 'https://api.example.com/#/autotest?groupId=1&quickItem=released');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).not.toHaveAttribute('onclick');
+  });
+
+  it('opens explicit, bare, relative, mailto and raw html links in a new tab with safe rel', () => {
+    render(
+      <MarkdownView
+        content={[
+          '[文档](https://example.com/doc)',
+          '',
+          'https://example.com/bare',
+          '',
+          '[站内](/workitems/56329)',
+          '',
+          '[邮件](mailto:dev@example.com)',
+          '',
+          '<a href="https://api.aliyun-inc.com/#/autotest?groupId=1&amp;quickItem=released" target="_blank" rel="noopener noreferrer">Aone</a>',
+        ].join('\n')}
+      />,
+    );
+
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(5);
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      'https://example.com/doc',
+      'https://example.com/bare',
+      '/workitems/56329',
+      'mailto:dev@example.com',
+      'https://api.aliyun-inc.com/#/autotest?groupId=1&quickItem=released',
+    ]);
+    for (const link of links) {
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    expect(screen.getByRole('link', { name: '文档' })).toHaveTextContent('文档');
+  });
+
+  it('normalizes an explicit non-blank target on raw html links to a new tab', () => {
+    render(<MarkdownView content={'<a href="https://example.com/doc" target="_self">文档</a>'} />);
+
+    const link = screen.getByRole('link', { name: '文档' });
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(link).toHaveAttribute('href', 'https://example.com/doc');
   });
 
   it('allows long urls and json snippets to wrap inside workitem content', () => {

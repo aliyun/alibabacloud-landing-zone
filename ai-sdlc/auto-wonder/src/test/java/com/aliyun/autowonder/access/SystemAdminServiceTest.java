@@ -414,6 +414,112 @@ class SystemAdminServiceTest {
         verify(userDao, never()).revokeSystemAdmin(any());
     }
 
+
+    @org.junit.jupiter.api.AfterEach
+    void resetRequestContext() {
+        org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();
+        com.aliyun.autowonder.context.AutoWonderContext.destroy();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "add,添加平台管理员,Only platform administrators may add a platform administrator",
+        "remove,移除平台管理员,Only platform administrators may remove a platform administrator",
+        "search,搜索平台管理员候选人,Only platform administrators may search platform administrator candidates",
+        "branding,修改平台配置,Only platform administrators may update platform configuration",
+        "logo,上传平台 Logo,Only platform administrators may upload the platform Logo",
+        "feishu,配置协作通知,Only platform administrators may configure collaboration notifications",
+        "dingtalk,配置协作通知,Only platform administrators may configure collaboration notifications"
+    })
+    void allSevenActualAdminGuardsKeepRaw403AndStopBeforeWrites(String branch, String action, String english) {
+        UserDao dao = mock(UserDao.class);
+        when(dao.findById(10000L)).thenReturn(user(10000L, 0));
+        SystemAdminService service = new SystemAdminService(dao);
+        com.aliyun.autowonder.context.AutoWonderContext.get().setUserId(10000L);
+        var branding = mock(com.aliyun.autowonder.branding.PlatformBrandingService.class);
+        var im = mock(com.aliyun.autowonder.im.PlatformImChannelConfigService.class);
+        Runnable operation = switch (branch) {
+            case "add" -> () -> service.addPlatformAdmin(10000L, 10001L);
+            case "remove" -> () -> service.removePlatformAdmin(10000L, 10001L);
+            case "search" -> () -> new PlatformAdminController(service).candidates("raw <b>");
+            case "branding" -> () -> new com.aliyun.autowonder.branding.PlatformBrandingController(branding, service).update(null);
+            case "logo" -> () -> new com.aliyun.autowonder.branding.PlatformBrandingController(branding, service).uploadLogo(null);
+            case "feishu" -> () -> new com.aliyun.autowonder.im.PlatformImChannelConfigController(im, service).updateFeishu(null);
+            default -> () -> new com.aliyun.autowonder.im.PlatformImChannelConfigController(im, service).updateDingTalk(null);
+        };
+        BizException error = assertThrows(BizException.class, operation::run);
+        assertEquals(BizException.class, error.getClass());
+        assertEquals("10403", error.getCode());
+        assertEquals("仅平台管理员可以" + action, error.getMessage());
+        assertEquals(error.getMessage(), error.getLocalizedMessage());
+        assertNull(error.getCause());
+        verify(dao, never()).findById(10001L);
+        verify(dao, never()).markSystemAdmin(any());
+        verify(dao, never()).revokeSystemAdmin(any());
+        verify(dao, never()).searchSystemAdminCandidates(any(), anyInt());
+        org.mockito.Mockito.verifyNoInteractions(branding, im);
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+        assertEquals(error.getMessage(), handler.handleBiz(error).getBody().getMessage());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        var response = handler.handleBiz(error);
+        assertEquals(403, response.getStatusCodeValue());
+        assertEquals("10403", response.getBody().getCode());
+        assertEquals(english, response.getBody().getMessage());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void freshRosterProjectsKnownReasonWithSameAuthoredNames(boolean self) {
+        UserDao dao = mock(UserDao.class);
+        when(dao.findById(10000L)).thenReturn(user(10000L, 1));
+        when(dao.listSystemAdmins()).thenReturn(List.of(user(self ? 10000L : 10001L, "<b>平台管理员不可移除自己</b>", 1, 0)));
+        SystemAdminService service = new SystemAdminService(dao);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        var row = service.listPlatformAdmins(10000L).getAdmins().get(0);
+        assertEquals("<b>平台管理员不可移除自己</b>", row.getNickname());
+        assertFalse(row.isRemovable());
+        assertEquals(self, row.isSelf());
+        assertEquals(self ? "Platform administrators cannot remove themselves" : "At least one platform administrator must remain; the last administrator cannot be removed", row.getRemoveDisabledReason());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void currentRosterReasonsAndRemovalGuardTranslateKnownFactsOnly(boolean self) {
+        UserDao dao = mock(UserDao.class);
+        when(dao.findById(10000L)).thenReturn(user(10000L, 1));
+        when(dao.findById(10001L)).thenReturn(user(10001L, 1));
+        when(dao.countSystemAdmins()).thenReturn(1L);
+        when(dao.listSystemAdmins()).thenReturn(List.of(user(self ? 10000L : 10001L, "<b>平台管理员不可移除自己</b>", 1, 0)));
+        SystemAdminService service = new SystemAdminService(dao);
+        BizException error = assertThrows(BizException.class, () -> service.removePlatformAdmin(10000L, self ? 10000L : 10001L));
+        String diagnostic = self ? "平台管理员不可移除自己" : "平台管理员至少保留一名，无法移除最后一名";
+        String english = self ? "Platform administrators cannot remove themselves" : "At least one platform administrator must remain; the last administrator cannot be removed";
+        assertEquals(self ? "31003" : "31004", error.getCode());
+        assertEquals(diagnostic, error.getMessage());
+        assertNull(error.getCause());
+        verify(dao, never()).revokeSystemAdmin(any());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        assertEquals(english, com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
+        var row = service.listPlatformAdmins(10000L).getAdmins().get(0);
+        assertEquals("<b>平台管理员不可移除自己</b>", row.getNickname());
+        assertEquals(english, row.getRemoveDisabledReason());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+        assertEquals(diagnostic, service.listPlatformAdmins(10000L).getAdmins().get(0).getRemoveDisabledReason());
+    }
+
+    @Test
+    void oldTwoArgumentAdminGuardKeepsRawCollisionAndNullCause() {
+        UserDao dao = mock(UserDao.class); SystemAdminService service = new SystemAdminService(dao);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        for (String action : new String[]{"添加平台管理员", "<b>修改平台配置</b>", "future", null}) {
+            var error = assertThrows(BizException.class, () -> service.requireSystemAdmin(null, action));
+            assertEquals("10403", error.getCode()); assertNull(error.getCause()); assertNull(error.getMessageKey());
+            assertEquals("仅平台管理员可以" + action, com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
+        }
+        org.mockito.Mockito.verifyNoInteractions(dao);
+    }
+
     private static UserDO user(long id, int isAdmin) {
         return user(id, "user-" + id, isAdmin, 0);
     }

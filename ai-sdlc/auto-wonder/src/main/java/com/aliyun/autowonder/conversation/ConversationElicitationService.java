@@ -159,12 +159,12 @@ public class ConversationElicitationService {
                 elicitationDao.findByRequestId(tenantId, conversationId, requestId);
         if (record == null) {
             // findByRequestId 按 conversationId 收口，跨会话猜 requestId 走到这里。
-            throw new BizException(ErrorCode.NOT_FOUND,
-                    "elicitation not found in this conversation: " + requestId);
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "conversation.elicitation_not_found",
+                    new Object[]{requestId}, "elicitation not found in this conversation: " + requestId);
         }
         if (!STATUS_PENDING.equals(record.getStatus())) {
-            throw new BizException(ErrorCode.CONFLICT,
-                    "elicitation already settled: " + record.getStatus());
+            throw BizException.keyed(ErrorCode.CONFLICT, "conversation.elicitation_settled",
+                    new Object[]{record.getStatus()}, "elicitation already settled: " + record.getStatus());
         }
         String normalizedAnswer = normalizeReply(action, answerJson);
         requireProcessingTurn(tenantId, conversationId, record.getTurnId());
@@ -175,8 +175,8 @@ public class ConversationElicitationService {
                 normalizedAnswer);
         if (settled != 1) {
             // 过期任务或取消联动刚好先抢到，答案已无处可去。
-            throw new BizException(ErrorCode.CONFLICT,
-                    "elicitation was settled concurrently: " + requestId);
+            throw BizException.keyed(ErrorCode.CONFLICT, "conversation.elicitation_concurrent",
+                    new Object[]{requestId}, "elicitation was settled concurrently: " + requestId);
         }
         try {
             transport.sendElicitationReply(conv, record.getTurnId(), requestId, action,
@@ -202,8 +202,8 @@ public class ConversationElicitationService {
         AgentConversationTurnDO turn = turnDao.findByConversationTurn(tenantId, conversationId,
                 turnId);
         if (turn == null || !TURN_STATUS_PROCESSING.equals(turn.getStatus())) {
-            throw new BizException(ErrorCode.CONFLICT,
-                    "elicitation turn is no longer processing: " + turnId);
+            throw BizException.keyed(ErrorCode.CONFLICT, "conversation.elicitation_turn_inactive",
+                    new Object[]{String.valueOf(turnId)}, "elicitation turn is no longer processing: " + turnId);
         }
     }
 
@@ -216,11 +216,11 @@ public class ConversationElicitationService {
             return null;
         }
         if (!ACTION_ACCEPT.equals(action)) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "unsupported elicitation action: " + action);
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "conversation.elicitation_action_unsupported",
+                    new Object[]{action}, "unsupported elicitation action: " + action);
         }
         if (answerJson == null || answerJson.isBlank()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "elicitation answer is required");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "conversation.elicitation_answer_required", null, "elicitation answer is required");
         }
         // content 必须是 JSON 对象：帧构造要把它放进 content 键，数组、裸标量、
         // 字面量 null 都会在投递时炸掉，而那时卡片已经落成 ANSWERED 了。
@@ -228,10 +228,10 @@ public class ConversationElicitationService {
         try {
             parsed = JSON.parse(answerJson);
         } catch (RuntimeException e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "elicitation answer must be a JSON object");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "conversation.elicitation_answer_object", null, "elicitation answer must be a JSON object");
         }
         if (!(parsed instanceof JSONObject)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "elicitation answer must be a JSON object");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "conversation.elicitation_answer_object", null, "elicitation answer must be a JSON object");
         }
         return answerJson;
     }

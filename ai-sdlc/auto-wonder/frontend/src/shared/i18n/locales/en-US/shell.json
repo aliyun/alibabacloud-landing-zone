@@ -1,0 +1,40 @@
+{
+  "nav": {
+    "delivery": "Delivery",
+    "overview": "Overview",
+    "workitems": "Work items",
+    "scheduledTasks": "Scheduled tasks",
+    "executions": "Executions",
+    "recycled": "Recycle bin",
+    "agentsGroup": "Agents",
+    "agents": "Manage",
+    "executors": "Executors",
+    "knowledge": "Knowledge",
+    "repos": "Repositories",
+    "memories": "Memory",
+    "skills": "Capabilities",
+    "configuration": "Configuration",
+    "sdlc": "SDLC workflows",
+    "statusTemplates": "Status templates",
+    "integrations": "Integrations",
+    "members": "Members",
+    "backups": "Project configuration backups",
+    "environment": "Environment variables",
+    "settings": "System settings",
+    "insightsGroup": "Insights",
+    "insights": "Data insights",
+    "audit": "Audit logs",
+    "evolution": "Self-improvement",
+    "learn": "Learn",
+    "about": "About"
+  },
+  "banner": {
+    "explanation": "The Chief of Staff platform agent coordinates your project: it accepts and breaks down work items, dispatches agents to deliver together, and builds team memory. Configure an executor and keep it online to automate work item delivery.",
+    "capabilities": "Platform agent capabilities",
+    "notConfigured": "The Chief of Staff platform agent has no executor configured",
+    "offline": "All executors for the Chief of Staff platform agent are offline",
+    "details": "Details",
+    "dismiss": "Dismiss system notice",
+    "configure": "Configure executors"
+  }
+}

@@ -4,7 +4,6 @@ import {
   DOCUMENT_UPLOAD_MESSAGES,
   documentsFromDataTransfer,
   filesFromClipboard,
-  isSupportedDocumentName,
   pastedFileForUpload,
   transferContainsFiles,
   validateDocumentSelection,
@@ -17,16 +16,12 @@ function file(name: string, options: { size?: number; type?: string } = {}): Fil
 const emptyContext = { existingCount: 0, existingNames: [], existingTotalBytes: 0 };
 
 describe('documentUpload rules', () => {
-  it('exposes the whole backend extension whitelist through the accept attribute', () => {
-    for (const extension of ['.md', '.markdown', '.txt', '.html', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.docx', '.doc', '.java', '.py', '.zip']) {
-      expect(DOCUMENT_ACCEPT_ATTRIBUTE).toContain(extension);
-    }
+  it('does not restrict the file picker by extension', () => {
+    expect(DOCUMENT_ACCEPT_ATTRIBUTE).toBeUndefined();
   });
 
-  it('matches supported extensions case-insensitively', () => {
-    expect(isSupportedDocumentName('Plan.MD')).toBe(true);
-    expect(isSupportedDocumentName('shot.jpeg')).toBe(true);
-    expect(isSupportedDocumentName('notes.xlsx')).toBe(false);
+  it.each(['notes.xlsx', 'legacy.xls', 'data.csv', 'slides.pptx', 'custom.backup', 'README'])('accepts %s without a format whitelist', (name) => {
+    expect(validateDocumentSelection([file(name)], emptyContext)).toEqual({ ok: true });
   });
 
   it('accepts an empty selection and a supported batch within every limit', () => {
@@ -37,11 +32,10 @@ describe('documentUpload rules', () => {
     )).toEqual({ ok: true });
   });
 
-  it('rejects unsupported extensions with the shared copy', () => {
-    expect(validateDocumentSelection([file('notes.xlsx')], emptyContext)).toEqual({
-      ok: false,
-      message: DOCUMENT_UPLOAD_MESSAGES.unsupportedType,
-    });
+  it('preserves the filename and bytes of arbitrary clipboard files', () => {
+    const attachment = file('data.custom');
+    expect(pastedFileForUpload(attachment)).toBe(attachment);
+    expect(pastedFileForUpload(file('README'))).toHaveProperty('name', 'README');
   });
 
   it('rejects a file above the 5 MB single-file limit', () => {
@@ -104,9 +98,9 @@ describe('pastedFileForUpload', () => {
     expect(pastedFileForUpload(pdf, 1)).toBe(pdf);
   });
 
-  it('keeps an unsupported clipboard file untouched so validation reports it', () => {
-    const gif = new File(['gif'], 'anim.gif', { type: 'image/gif' });
-    expect(pastedFileForUpload(gif, 1)).toBe(gif);
+  it('gives pasted GIF images and unnamed binary files usable names', () => {
+    expect(pastedFileForUpload(file('anim.gif', { type: 'image/gif' }), 1).name).toMatch(/\.gif$/);
+    expect(pastedFileForUpload(file(''), 1).name).toMatch(/\.bin$/);
   });
 });
 

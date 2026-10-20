@@ -60,7 +60,7 @@ public class ProjectBackupService {
         String bucket = StringUtils.hasText(properties.getBackupBucket()) ? properties.getBackupBucket()
                 : StringUtils.hasText(properties.getArtifactBucket()) ? properties.getArtifactBucket() : properties.getBucket();
         if (storage instanceof InMemoryObjectStorage || !StringUtils.hasText(bucket)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "请先配置持久化对象存储和 oss.backup-bucket（可回退至 oss.artifact-bucket / oss.bucket）");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "backup.storage_required", null, "请先配置持久化对象存储和 oss.backup-bucket（可回退至 oss.artifact-bucket / oss.bucket）");
         }
         String id = UUID.randomUUID().toString();
         String ref = bucket + "/project-backups/" + workspaceId + "/" + id + ".zip";
@@ -80,18 +80,21 @@ public class ProjectBackupService {
                 jdbc.update("UPDATE project_backup SET status = 'FAILED', error_message = ?, gmt_finished = CURRENT_TIMESTAMP(3) WHERE id = ? AND tenant_id = ?",
                         message, id, workspaceId);
             } catch (Exception historyFailure) { failure.addSuppressed(historyFailure); }
-            throw new BizException("10000", message, failure);
+            if (failure instanceof BizException biz) {
+                throw BizException.keyed("10000", biz.getMessageKey(), biz.getMessageArgs(), message, failure);
+            }
+            throw BizException.keyed("10000", "backup.failed", null, message, failure);
         }
         return find(workspaceId, id);
     }
 
-    public String download(long workspaceId, String id) {
+    public String download(long workspaceId, String id, long userId) {
         Backup backup = find(workspaceId, id);
         if (!"SUCCEEDED".equals(backup.status())) {
-            throw new BizException(ErrorCode.CONFLICT, "备份尚未成功，无法下载");
+            throw BizException.keyed(ErrorCode.CONFLICT, "backup.not_succeeded", null, "备份尚未成功，无法下载");
         }
         if (!storage.exists(backup.ossRef())) {
-            throw new BizException(ErrorCode.NOT_FOUND, "备份文件已不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "backup.file_missing", null, "备份文件已不存在");
         }
         return storage.presignGet(backup.ossRef(), 300);
     }
@@ -116,7 +119,7 @@ public class ProjectBackupService {
         String capturedAt = Instant.now().toString();
         for (ProjectBackupRules.Rule rule : ProjectBackupRules.RULES) {
             List<Map<String, Object>> rows = jdbc.queryForList(rule.sql() + " LIMIT " + (MAX_ROWS + 1), workspaceId);
-            if (rows.size() > MAX_ROWS) throw new BizException(ErrorCode.PARAM_INVALID, "配置数据过多，超过单表 100000 条备份上限");
+            if (rows.size() > MAX_ROWS) throw BizException.keyed(ErrorCode.PARAM_INVALID, "backup.rows_limit", null, "配置数据过多，超过单表 100000 条备份上限");
             byte[] bytes = encode(rows);
             total += bytes.length;
             checkSize(total);
@@ -137,13 +140,13 @@ public class ProjectBackupService {
             Object declaredSize = skill.get("package_size");
             if (declaredSize instanceof Number size) checkSize(total + size.longValue());
             byte[] bytes = storage.get(ref.toString());
-            if (bytes == null) throw new BizException(ErrorCode.NOT_FOUND, "技能包文件缺失，备份未完成（技能 ID：" + skill.get("id") + "）");
+            if (bytes == null) throw BizException.keyed(ErrorCode.NOT_FOUND, "backup.skill_missing", new Object[]{String.valueOf(skill.get("id"))}, "技能包文件缺失，备份未完成（技能 ID：" + skill.get("id") + "）");
             total += bytes.length;
             checkSize(total);
             Object expectedMd5 = skill.get("package_md5");
             String actualMd5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(bytes));
             if (expectedMd5 != null && !expectedMd5.toString().equalsIgnoreCase(actualMd5)) {
-                throw new BizException(ErrorCode.CONFLICT, "技能包校验失败，备份未完成（技能 ID：" + skill.get("id") + "）");
+                throw BizException.keyed(ErrorCode.CONFLICT, "backup.skill_corrupt", new Object[]{String.valueOf(skill.get("id"))}, "技能包校验失败，备份未完成（技能 ID：" + skill.get("id") + "）");
             }
             String path = "packages/skill-" + skill.get("id") + ".zip";
             files.put(path, bytes);
@@ -188,6 +191,6 @@ public class ProjectBackupService {
     }
 
     private static void checkSize(long bytes) {
-        if (bytes > MAX_BYTES) throw new BizException(ErrorCode.PARAM_INVALID, "备份原始数据超过 64 MiB 上限");
+        if (bytes > MAX_BYTES) throw BizException.keyed(ErrorCode.PARAM_INVALID, "backup.size_limit", null, "备份原始数据超过 64 MiB 上限");
     }
 }

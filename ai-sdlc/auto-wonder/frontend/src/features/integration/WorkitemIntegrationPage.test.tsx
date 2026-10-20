@@ -1,3 +1,4 @@
+import { formatDateTime } from '@/shared/i18n/format';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -102,6 +103,6 @@ describe('WorkitemIntegrationPage', () => {
 
     expect(await screen.findByRole('columnheader', { name: '最近成功同步' })).toBeInTheDocument();
     expect(await screen.findByText('最近同步失败')).toBeInTheDocument();
-    expect(screen.getByText(/2026\/8\/6/)).toBeInTheDocument();
+    expect(screen.getByText(formatDateTime('2026-08-06T14:43:07Z', { dateStyle: 'medium', timeStyle: 'medium' }))).toBeInTheDocument();
   });
 });

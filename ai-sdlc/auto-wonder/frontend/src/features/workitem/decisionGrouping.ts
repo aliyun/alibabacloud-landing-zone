@@ -1,6 +1,7 @@
 import { statusCategoryOf } from './constants';
 import { displayNameWithoutId } from './nameDisplay';
 import type { Workitem } from '@/shared/types/workitem';
+import { i18n, normalizeLocale } from '@/shared/i18n';
 
 /**
  * 待决策按人分类工具。
@@ -17,8 +18,6 @@ export interface DecisionGroup {
   label: string;
   items: Workitem[];
 }
-
-const UNASSIGNED_LABEL = '未指派';
 
 export function isPendingDecision(item: Workitem): boolean {
   return statusCategoryOf(item) === 'PENDING_DECISION';
@@ -41,8 +40,8 @@ function assigneeKey(item: Workitem): string {
 }
 
 function assigneeLabel(item: Workitem): string {
-  if (item.assigneeType === 'EXTERNAL') return '待认领（外部负责人）';
-  return displayNameWithoutId(item.assigneeDisplayName, item.assigneeName) ?? UNASSIGNED_LABEL;
+  if (item.assigneeType === 'EXTERNAL') return i18n.t('workitem:assignee.externalUnclaimed');
+  return displayNameWithoutId(item.assigneeDisplayName, item.assigneeName) ?? i18n.t('workitem:assignee.unassigned');
 }
 
 /**
@@ -63,6 +62,6 @@ export function groupPendingDecisionsByAssignee(items: Workitem[]): DecisionGrou
   }
   return Array.from(map.values()).sort((a, b) => {
     if (a.items.length !== b.items.length) return b.items.length - a.items.length;
-    return a.label.localeCompare(b.label, 'zh-CN');
+    return a.label.localeCompare(b.label, normalizeLocale(i18n.language));
   });
 }

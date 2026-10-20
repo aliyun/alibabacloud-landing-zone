@@ -1,7 +1,8 @@
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect } from 'vitest';
 import {
   UNSQUADED_KEY,
-  UNSQUADED_LABEL,
+  getUnsquadedLabel,
   buildSquadNameById,
   groupBySquad,
 } from './squadGrouping';
@@ -46,7 +47,7 @@ describe('groupBySquad', () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].key).toBe(UNSQUADED_KEY);
-    expect(groups[0].label).toBe(UNSQUADED_LABEL);
+    expect(groups[0].label).toBe(getUnsquadedLabel());
     expect(groups[0].squadId).toBeNull();
     expect(groups[0].items.map((row) => row.id)).toEqual([1, 2, 3]);
   });
@@ -88,7 +89,7 @@ describe('groupBySquad', () => {
       buildSquadNameById([{ value: 7, label: 'B 队' }, { value: 8, label: 'A 队' }]),
     );
 
-    expect(groups.map((group) => group.label)).toEqual(['A 队', 'B 队', UNSQUADED_LABEL]);
+    expect(groups.map((group) => group.label)).toEqual(['A 队', 'B 队', getUnsquadedLabel()]);
     expect(groups[2].items.map((row) => row.id)).toEqual([1]);
   });
 
@@ -102,4 +103,18 @@ describe('groupBySquad', () => {
   it('returns no groups for an empty list', () => {
     expect(groupBySquad([], readSquadIds, new Map())).toEqual([]);
   });
+});
+
+
+it('uses the current locale without changing keys, memberships or authored names', async () => {
+  const rows = [{ id: 1 }, { id: 2, squadIds: [42] }, { id: 3, squadIds: [7] }];
+  await i18n.changeLanguage('zh-CN');
+  const zh = groupBySquad(rows, readSquadIds, new Map([[7, '<b>自定义小队</b>']]));
+  await i18n.changeLanguage('en-US');
+  const en = groupBySquad(rows, readSquadIds, new Map([[7, '<b>自定义小队</b>']]));
+  expect(en.find(group => group.key === 'squad-unsquaded')?.label).toBe('Ungrouped');
+  expect(en.find(group => group.key === 'squad-42')?.label).toBe('Squad #42');
+  expect(en.find(group => group.key === 'squad-7')?.label).toBe('<b>自定义小队</b>');
+  expect(en.map(({ key, items }) => [key, items])).toEqual(zh.map(({ key, items }) => [key, items]));
+  await i18n.changeLanguage('zh-CN');
 });

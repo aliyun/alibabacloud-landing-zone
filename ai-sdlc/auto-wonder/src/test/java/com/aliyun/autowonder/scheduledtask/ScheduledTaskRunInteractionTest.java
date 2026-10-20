@@ -182,8 +182,15 @@ class ScheduledTaskRunInteractionTest {
         ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
         service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
 
-        assertThrows(IllegalArgumentException.class, () -> service.addHumanComment(
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, () -> service.addHumanComment(
                 1L, 77L, 10000L, "请复核失败日志", List.of(22L), List.of()));
+        assertEquals("guidance target is not a frozen scheduled-run participant", failure.getMessage());
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleIllegalArg(failure);
+            assertEquals("10001", response.getCode());
+            assertEquals("Guidance target is not a frozen scheduled-run participant", response.getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
 
         verify(mentions, never()).insert(any());
         verifyNoInteractions(guidance);
@@ -273,4 +280,63 @@ class ScheduledTaskRunInteractionTest {
         verify(events).publishEvent(any(WorkitemCommentMentionedEvent.class));
         verifyNoInteractions(guidance);
     }
+    @Test
+    void missingTaskTitleIsRecipientOwnedButAuthoredSameLookingTitleStaysRaw() {
+        var runs = mock(ScheduledTaskRunDao.class); var comments = mock(WorkitemCommentDao.class);
+        var mentions = mock(WorkitemCommentMentionDao.class); var users = mock(UserDao.class);
+        var members = mock(WorkspaceMemberDao.class); var events = mock(ApplicationEventPublisher.class);
+        var tasks = mock(ScheduledTaskDao.class);
+        var run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L); run.setScheduledTaskId(12L);
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        var user = new UserDO(); user.setId(10L); user.setUsername("raw");
+        var member = new WorkspaceMemberDO(); member.setStatus(0);
+        when(users.findById(10L)).thenReturn(user); when(members.findByWorkspaceAndUser(1L, 10L)).thenReturn(member);
+        doAnswer(i -> { i.<WorkitemCommentDO>getArgument(0).setId(9L); return null; }).when(comments).insert(any());
+        var service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, null, null, null); service.configureHumanMentions(users, members, tasks, events);
+        var recipient = new com.aliyun.autowonder.notification.RecipientNotificationTestSupport();
+        recipient.preference(10L, "\"en-US\"");
+        doAnswer(i -> { new com.aliyun.autowonder.notification.InAppCommentMentionedListener(recipient.service)
+                .onMentioned(i.getArgument(0)); return null; }).when(events).publishEvent(any(WorkitemCommentMentionedEvent.class));
+        service.addAgentComment(1L, 77L, 20L, "raw {0} <b>", List.of(), List.of(10L));
+        var task = new ScheduledTaskDO(); task.setName("定时任务运行 #77");
+        when(tasks.findById(1L, 12L)).thenReturn(task);
+        service.addAgentComment(1L, 77L, 20L, "raw {0} <b>", List.of(), List.of(10L));
+        assertEquals(2, recipient.rows.size());
+        verify(tasks, times(2)).findById(1L, 12L);
+        assertEquals("AGENT mentioned you in a run comment for Scheduled task “定时任务运行 #77”: raw {0} <b>", recipient.rows.get(1).getContent());
+        assertEquals("AGENT mentioned you in a run comment for Scheduled task “Scheduled task run #77”: raw {0} <b>", recipient.rows.get(0).getContent());
+    }
+
+    @Test
+    void humanCommentResolvesTheDeletedAuthorSnapshotForTheMentionEvent() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        WorkitemCommentDao comments = mock(WorkitemCommentDao.class);
+        WorkitemCommentMentionDao mentions = mock(WorkitemCommentMentionDao.class);
+        GuidanceService guidance = mock(GuidanceService.class);
+        AgentDao agents = mock(AgentDao.class);
+        UserDao users = mock(UserDao.class);
+        ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO(); run.setId(77L); run.setWorkspaceId(1L);
+        run.setExecutionSnapshotJson("{\"agentContexts\":[{\"agentId\":21,\"agentVersionId\":2}]}");
+        UserDO author = new UserDO(); author.setId(500L); author.setIsDeleted(1); author.setDeletedUsername("bob");
+        UserDO target = new UserDO(); target.setId(10000L); target.setUsername("caihe"); target.setNickname("蔡何");
+        when(runs.findById(1L, 77L)).thenReturn(run);
+        doAnswer(i -> { ((WorkitemCommentDO) i.getArgument(0)).setId(9L); return null; }).when(comments).insert(any());
+        when(users.findById(10000L)).thenReturn(target);
+        when(users.findByIdIncludingDeleted(500L)).thenReturn(author);
+        ScheduledTaskRunCommentService service = new ScheduledTaskRunCommentService(runs, comments);
+        service.configureInteractions(mentions, guidance, agents, mock(RedisManager.class));
+        service.configureHumanMentions(users, null, null, events);
+
+        service.addHumanComment(1L, 77L, 500L, "@蔡何 请复核", List.of(), List.of(10000L));
+
+        ArgumentCaptor<WorkitemCommentMentionedEvent> event = ArgumentCaptor.forClass(WorkitemCommentMentionedEvent.class);
+        verify(events).publishEvent(event.capture());
+        assertEquals("HUMAN", event.getValue().actorType());
+        assertEquals(500L, event.getValue().actorRef());
+        assertEquals("bob", event.getValue().actorDisplayName());
+        assertEquals(10000L, event.getValue().recipientUserId());
+    }
+
 }

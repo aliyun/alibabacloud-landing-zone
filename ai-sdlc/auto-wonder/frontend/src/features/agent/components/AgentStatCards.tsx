@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Card, Col, Row, Statistic } from 'antd';
 import { statusCategoryOf } from '@/features/workitem/constants';
 import type { Workitem } from '@/shared/types/workitem';
@@ -8,15 +9,16 @@ interface AgentStatCardsProps {
 }
 
 export function AgentStatCards({ workitems, memoryCount }: AgentStatCardsProps) {
+  const { t } = useTranslation('agent');
   const inProgress = workitems.filter(w => statusCategoryOf(w) === 'IN_PROGRESS').length;
   const pending = workitems.filter(w => statusCategoryOf(w) === 'PENDING_DECISION').length;
   const done = workitems.filter(w => statusCategoryOf(w) === 'DONE').length;
 
   const cards = [
-    { title: '执行中', value: inProgress, color: 'var(--aw-accent-text)' },
-    { title: '待决策', value: pending, color: 'var(--aw-warning)' },
-    { title: '已完成', value: done, color: 'var(--aw-success)' },
-    { title: '记忆数', value: memoryCount, color: 'var(--aw-text)' },
+    { title: t('display.inProgress'), value: inProgress, color: 'var(--aw-accent-text)' },
+    { title: t('display.pendingDecision'), value: pending, color: 'var(--aw-warning)' },
+    { title: t('display.done'), value: done, color: 'var(--aw-success)' },
+    { title: t('display.memoryCount'), value: memoryCount, color: 'var(--aw-text)' },
   ];
 
   return (

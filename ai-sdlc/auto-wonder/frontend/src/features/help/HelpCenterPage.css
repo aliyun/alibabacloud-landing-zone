@@ -65,30 +65,30 @@
 
 .help-faq { margin: 20px 0; padding: 6px 22px; border: 1px solid var(--help-border); border-radius: var(--help-radius); }
 .help-faq > p:first-child { font-size: 18px; line-height: 1.7; }
-/* 等高两列：列宽按两图宽高比分配（01: 1.9286，02: 1.7692） */
-.help-image-pair { display: grid; grid-template-columns: 1.9286fr 1.7692fr; align-items: center; gap: 16px; margin: 24px 0; }
+/* Keep the compact account menu beside the wider token controls. */
+.help-image-pair { display: grid; grid-template-columns: 1fr 2fr; align-items: center; gap: 16px; margin: 24px 0; }
 .help-image-pair img { width: 100%; height: auto; margin: 0; box-sizing: border-box; }
 .help-markdown .help-download { color: var(--help-primary); border-color: var(--help-primary); background: var(--help-selected); }
 
 .help-image-row { display: grid; align-items: center; gap: 16px; margin: 24px auto; }
-/* Column ratios match the refreshed dark-mode screenshots so both images retain the same height. */
-.help-image-row-clarification { grid-template-columns: 1.5192fr 4.3478fr; max-width: 1000px; }
-.help-image-row-delivery { grid-template-columns: 5.625fr 1.2683fr; max-width: 1200px; }
+/* Ratios follow the complete feature captures rather than the old clipped images. */
+.help-image-row-clarification { grid-template-columns: 1.4342fr .946fr; max-width: 1000px; }
+.help-image-row-delivery { grid-template-columns: 2.9886fr 1.3206fr; max-width: 1200px; }
 .help-image-row img { width: 100%; height: auto; min-width: 0; margin: 0; box-sizing: border-box; }
 
-.help-image-row-mcp { grid-template-columns: 3.7624fr 1.2593fr; max-width: 1100px; }
+.help-image-row-mcp { grid-template-columns: 1fr; max-width: 800px; }
+.help-image-row-mcp img { width: auto; max-width: 100%; justify-self: center; }
 
-.help-image-row-im { grid-template-columns: 3.0303fr 3.1226fr; max-width: 1200px; }
+.help-image-row-im { grid-template-columns: 1fr; max-width: 1200px; }
 
-.help-image-row-im-project { grid-template-columns: 2.896fr 1.2fr; max-width: 1100px; }
+.help-image-row-im-project { grid-template-columns: 2.1254fr .9411fr; max-width: 1100px; }
 
 .help-article img[src^="/help/assets/05-"],
 .help-article img[src^="/help/assets/10-"] {
-  max-height: 320px;
   max-width: 100%;
   width: auto;
   height: auto;
 }
 
 .help-outline { min-height: 0; overflow-y: auto; }
-.help-outline a.help-outline-step { padding-left: 18px; font-size: 13px; white-space: nowrap; }
+.help-outline a.help-outline-step { padding-left: 18px; font-size: 13px; }

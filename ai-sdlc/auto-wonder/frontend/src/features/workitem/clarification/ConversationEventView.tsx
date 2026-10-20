@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Fragment } from 'react';
 import { Typography, Spin } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
@@ -13,6 +14,7 @@ interface ConversationEventViewProps {
 export function ConversationEventView({
   nodes, isProcessing,
 }: ConversationEventViewProps) {
+  const { t } = useTranslation('workitem');
   const hasReplyText = nodes.some((node) => node.kind === 'text' && !!node.text);
 
   if (nodes.length === 0 && isProcessing) {
@@ -20,7 +22,7 @@ export function ConversationEventView({
       <div style={{ padding: 16, textAlign: 'center' }}>
         <Spin indicator={<LoadingOutlined />} />
         <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
-          等待 AI 响应...
+          {t('clarification.waiting')}
         </Typography.Text>
       </div>
     );

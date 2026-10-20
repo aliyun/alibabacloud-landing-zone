@@ -6,6 +6,8 @@ import com.aliyun.autowonder.storage.StoredObject;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 import java.util.List;
+import java.util.function.Supplier;
+import org.springframework.test.util.ReflectionTestUtils;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -25,6 +27,8 @@ class CheckpointClosureAuditTest {
         dispatch.setAgentId(300L);
         DispatchCheckpointDO old = new DispatchCheckpointDO();
         old.setId(1L);
+        old.setTenantId(100L);
+        old.setDispatchId(55L);
         old.setOssRef("bucket/old");
         DispatchCheckpointDO[] durable = new DispatchCheckpointDO[1];
         when(dao.findByDispatchAndSeq(100L, 55L, 3L)).thenAnswer(i -> durable[0]);
@@ -44,12 +48,28 @@ class CheckpointClosureAuditTest {
         assertSame(first, replay);
         verify(dao, times(1)).insert(any());
         verify(storage, times(1)).put(eq("bucket"), anyString(), any(byte[].class));
+        verify(dao, times(2)).markGarbage(100L, 55L, 1L);
+        verify(storage, never()).delete(anyString());
+
+        // Upload/replay only mark garbage. The compensation sweep retries deletion
+        // after the marker has committed, without invalidating the durable receipt.
+        DispatchResultStore resultStore = mock(DispatchResultStore.class);
+        when(resultStore.transaction(any())).thenAnswer(i -> ((Supplier<?>) i.getArgument(0)).get());
+        ReflectionTestUtils.setField(service, "resultStore", resultStore);
+        when(dao.listGarbage(200)).thenReturn(List.of(old));
+        when(dao.findGarbageById(1L)).thenReturn(old);
+        assertDoesNotThrow(service::reconcileRetention);
+        assertSame(first, service.store(dispatch, 3, "codex", "session", "runtime", "step", new byte[]{1}));
+        assertDoesNotThrow(service::reconcileRetention);
         verify(storage, times(2)).delete("bucket/old");
         verify(dao, never()).deleteById(anyLong(), anyLong(), anyLong());
 
         doNothing().when(storage).delete("bucket/old");
         assertSame(first, service.store(dispatch, 3, "codex", "session", "runtime", "step", new byte[]{1}));
+        assertDoesNotThrow(service::reconcileRetention);
+        verify(storage, times(3)).delete("bucket/old");
         verify(storage).delete("bucket/old.repo-state.json");
+        verify(storage).delete(LegacyCheckpointNormalizer.compatibilityRef("bucket/old"));
         verify(dao).deleteById(100L, 55L, 1L);
     }
 

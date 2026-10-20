@@ -15,7 +15,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/ai-usage")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看AI用量")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看AI用量", actionKey = "access.action.view_ai_usage")
 public class AiUsageController {
 
     private final AiUsageService aiUsageService;
@@ -31,13 +31,13 @@ public class AiUsageController {
     }
 
     @GetMapping("/quota")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看AI用量配额")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看AI用量配额", actionKey = "access.action.view_ai_usage_quotas")
     public Result<AiQuotaVO> getQuota() {
         return Result.ok(aiUsageService.getQuota(currentWorkspaceId()));
     }
 
     @PutMapping("/quota")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新AI用量配额")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新AI用量配额", actionKey = "access.action.update_ai_usage_quotas")
     public Result<Void> updateQuota(@RequestBody UpdateQuotaRequest req) {
         aiUsageService.updateQuota(req, currentWorkspaceId());
         return Result.ok(null);

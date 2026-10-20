@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.guidance.InteractionWorkflowService;
+import com.aliyun.autowonder.executor.ExecutorRegistry;
 import com.aliyun.autowonder.redis.RedisManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,10 +43,25 @@ public class DispatchCompensationTask {
     private final RedisManager redisManager;
     private DispatchRecoveryService recovery;
     private DeliveryRestartOrchestrator restartOrchestrator;
+    private DispatchRequestService requests;
+    private ExecutorRegistry executorRegistry;
+    private DispatchRuntimeReconciler runtimeReconciler;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDispatchRequests(DispatchRequestService value) { requests = value; }
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setRuntimeReconciliation(ExecutorRegistry registry, DispatchRuntimeReconciler reconciler) {
+        this.executorRegistry = registry;
+        this.runtimeReconciler = reconciler;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     public void setRecovery(DispatchRecoveryService service) { this.recovery = service; }
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRestartOrchestrator(DeliveryRestartOrchestrator orchestrator) { this.restartOrchestrator = orchestrator; }
+
+    private DispatchCheckpointService checkpoints;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setCheckpoints(DispatchCheckpointService checkpoints) { this.checkpoints = checkpoints; }
 
     public DispatchCompensationTask(DispatchDao dispatchDao, DispatchService dispatchService,
             DispatchPauseService pauseService, InteractionWorkflowService interactionWorkflowService,
@@ -65,6 +81,14 @@ public class DispatchCompensationTask {
         }
         try {
             log.info("compensation sweep started");
+            if (requests != null) {
+                try { requests.reconcile(); }
+                catch (RuntimeException e) { log.warn("dispatch request reconciliation failed", e); }
+            }
+            if (checkpoints != null) {
+                try { checkpoints.reconcileRetention(); }
+                catch (RuntimeException failure) { log.warn("checkpoint retention reconciliation deferred", failure); }
+            }
             if (recovery != null) {
                 try {
                     recovery.reconcile();
@@ -150,9 +174,22 @@ public class DispatchCompensationTask {
             }
             for (DispatchDO d : inflight) {
                 try {
-                    dispatchService.onTimeout(d.getTenantId(), d.getId());
+                    if (d.executionSourceType() != ExecutionSourceType.WORKITEM) {
+                        dispatchService.onTimeout(d.getTenantId(), d.getId());
+                        continue;
+                    }
+                    // Silence can mean the machine is offline or recovering its local checkpoint.
+                    // Only an authoritative inventory can prove abandonment; wall-clock age must
+                    // not terminalize an execution that the runtime can still reclaim on restart.
+                    if (executorRegistry == null || runtimeReconciler == null
+                            || d.getExecutorId() == null || d.getAgentId() == null) continue;
+                    executorRegistry.currentDispatchSnapshot(d.getExecutorId())
+                            .filter(snapshot -> snapshot.authoritativeInventory() && snapshot.inventoryReady()
+                                    && snapshot.inventoryError() == null)
+                            .ifPresent(snapshot -> runtimeReconciler.request(d.getTenantId(), d.getExecutorId(),
+                                    d.getAgentId(), snapshot.sessionId()));
                 } catch (Exception e) {
-                    log.warn("compensation timeout failed dispatchId={}", d.getId(), e);
+                    log.warn("compensation runtime reconciliation failed dispatchId={}", d.getId(), e);
                 }
             }
         } finally {

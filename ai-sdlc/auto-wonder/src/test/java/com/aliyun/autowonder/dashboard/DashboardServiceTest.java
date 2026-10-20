@@ -6,6 +6,7 @@ import com.aliyun.autowonder.dashboard.dto.RunningTaskVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -126,6 +127,23 @@ class DashboardServiceTest {
         assertEquals(12, vo.getInventory().getByType().getReq());
         assertEquals(41, vo.getInventory().getByType().getTask());
         assertEquals(6, vo.getInventory().getByType().getBug());
+    }
+
+    @Test
+    void generatedAtIsAnInstantExpressingTheRealGenerationMoment() {
+        Instant before = Instant.now();
+        RealtimeDashboardVO vo = service.getRealtime(1L);
+        Instant after = Instant.now();
+        Instant generatedAt = Instant.parse(vo.getGeneratedAt());
+        assertFalse(generatedAt.isBefore(before), "generatedAt 不得早于调用前采样时刻");
+        assertFalse(generatedAt.isAfter(after), "generatedAt 不得晚于调用后采样时刻");
+    }
+
+    @Test
+    void generatedAtCarriesExplicitUtcDesignatorInsteadOfBareWallClock() {
+        RealtimeDashboardVO vo = service.getRealtime(1L);
+        assertTrue(vo.getGeneratedAt().matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z"),
+                "generatedAt 必须是带 Z 明确时区的 ISO-8601 instant，当前值: " + vo.getGeneratedAt());
     }
 
     @Test

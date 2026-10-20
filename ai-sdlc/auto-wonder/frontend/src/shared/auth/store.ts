@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { allows, isWorkspaceAccessLevel } from './access';
-import type { UserInfo, WorkspaceAccessLevel, WorkspaceInfo } from '@/shared/types/common';
+import { allows, isWorkspaceAccessLevel, isWorkspaceDomain } from './access';
+import type { UserInfo, WorkspaceAccessLevel, WorkspaceDomain, WorkspaceInfo } from '@/shared/types/common';
 
 interface AuthState {
   accessToken: string | null;
@@ -9,6 +9,7 @@ interface AuthState {
   user: UserInfo | null;
   currentWorkspace: WorkspaceInfo | null;
   accessLevel: WorkspaceAccessLevel | null;
+  readOnlyDomains: WorkspaceDomain[];
 
   setTokens: (access: string, refresh: string) => void;
   setAccessToken: (token: string) => void;
@@ -16,6 +17,7 @@ interface AuthState {
   setCurrentWorkspace: (workspace: WorkspaceInfo, accessLevel: WorkspaceAccessLevel) => void;
   clearCurrentWorkspace: () => void;
   setAccessLevel: (accessLevel: WorkspaceAccessLevel) => void;
+  setReadOnlyDomains: (domains: WorkspaceDomain[]) => void;
   hasAccess: (required: WorkspaceAccessLevel) => boolean;
   isAuthenticated: () => boolean;
   clear: () => void;
@@ -27,6 +29,7 @@ interface PersistedAuthState {
   user: UserInfo | null;
   currentWorkspace: WorkspaceInfo | null;
   accessLevel: WorkspaceAccessLevel | null;
+  readOnlyDomains: WorkspaceDomain[];
 }
 
 export function migrateAuthState(persistedState: unknown): PersistedAuthState {
@@ -36,6 +39,7 @@ export function migrateAuthState(persistedState: unknown): PersistedAuthState {
   const currentWorkspace =
     (state.currentWorkspace ?? state.currentOrg ?? null) as WorkspaceInfo | null;
 
+  const readOnlyDomains = state.readOnlyDomains ?? state.forbiddenDomains;
   return {
     accessToken: typeof state.accessToken === 'string' ? state.accessToken : null,
     refreshToken: typeof state.refreshToken === 'string' ? state.refreshToken : null,
@@ -44,6 +48,9 @@ export function migrateAuthState(persistedState: unknown): PersistedAuthState {
     accessLevel: isWorkspaceAccessLevel(state.accessLevel)
       ? state.accessLevel
       : currentWorkspace ? 'READ_ONLY' : null,
+    readOnlyDomains: Array.isArray(readOnlyDomains)
+      ? readOnlyDomains.filter(isWorkspaceDomain)
+      : [],
   };
 }
 
@@ -55,13 +62,18 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       currentWorkspace: null,
       accessLevel: null,
+      readOnlyDomains: [],
 
       setTokens: (access, refresh) => set({ accessToken: access, refreshToken: refresh }),
       setAccessToken: (token) => set({ accessToken: token }),
       setUser: (user) => set({ user }),
-      setCurrentWorkspace: (workspace, accessLevel) => set({ currentWorkspace: workspace, accessLevel }),
-      clearCurrentWorkspace: () => set({ currentWorkspace: null, accessLevel: null }),
+      setCurrentWorkspace: (workspace, accessLevel) => set({
+        // 进入新空间时角色只读功能快照一律作废，由 membership 同步重新填充，避免跨空间残留。
+        currentWorkspace: workspace, accessLevel, readOnlyDomains: [],
+      }),
+      clearCurrentWorkspace: () => set({ currentWorkspace: null, accessLevel: null, readOnlyDomains: [] }),
       setAccessLevel: (accessLevel) => set({ accessLevel }),
+      setReadOnlyDomains: (domains) => set({ readOnlyDomains: domains }),
       hasAccess: (required) => allows(get().accessLevel, required),
       isAuthenticated: () => get().accessToken !== null,
       clear: () => set({
@@ -70,11 +82,12 @@ export const useAuthStore = create<AuthState>()(
         user: null,
         currentWorkspace: null,
         accessLevel: null,
+        readOnlyDomains: [],
       }),
     }),
     {
       name: 'aw-auth',
-      version: 2,
+      version: 3,
       migrate: (persistedState) => migrateAuthState(persistedState),
       partialize: (state) => ({
         accessToken: state.accessToken,
@@ -82,6 +95,7 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         currentWorkspace: state.currentWorkspace,
         accessLevel: state.accessLevel,
+        readOnlyDomains: state.readOnlyDomains,
       }),
     }
   )

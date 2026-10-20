@@ -18,7 +18,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/dashboard")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看仪表盘")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看仪表盘", actionKey = "access.action.view_the_dashboard")
 public class DashboardController {
 
     private final DashboardService dashboardService;

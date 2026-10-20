@@ -220,4 +220,89 @@ class ShareControllerTest {
         assertEquals(404, controller.artifact(TOKEN, 999L, false, "").getStatusCode().value());
         verify(shareService, never()).loadContent(any());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void publicPagesTranslateLabelsButEscapeAndPreserveAuthoredData(String language) {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try {
+            boolean en=language.equals("en-US");
+            String missing=en ? "This link is invalid or the artifact is no longer available" : "链接无效或产物已下线";
+            var notFound=controller.directory("invalid");
+            assertEquals(404,notFound.getStatusCode().value());
+            assertEquals(missing,notFound.getBody());
+            var missingBytes=controller.artifact("invalid",301L,false,"");
+            assertArrayEquals(missing.getBytes(java.nio.charset.StandardCharsets.UTF_8),missingBytes.getBody());
+            when(shareService.findWorkitemByShareToken(TOKEN)).thenReturn(workitem());
+            var receipt=new ArtifactShareRequestDO(); receipt.setStatus("PENDING"); receipt.setName("<raw文件>");
+            when(requests.findById(TENANT_ID,WORKITEM_ID,41L)).thenReturn(receipt);
+            var pending=controller.request(TOKEN,41L,false,"");
+            String page=new String(pending.getBody(),java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(202,pending.getStatusCode().value());
+            assertEquals("5",pending.getHeaders().getFirst("Retry-After"));
+            assertEquals("no-store",pending.getHeaders().getCacheControl());
+            assertTrue(page.contains("lang=\""+(en ? "en" : "zh")+"\""),page);
+            assertTrue(page.contains(en ? "Artifact generation in progress" : "产物生成中"),page);
+            assertTrue(page.contains(en ? "The artifact is being generated. It will be available after execution succeeds and verification passes. This page refreshes automatically." : "产物正在生成，执行成功并校验通过后可读取。此页面会自动刷新。"),page);
+            assertTrue(page.contains("content=\"5\""),page);
+            assertEquals("<raw文件>",controller.metadata(TOKEN,"requests",41L).getBody().name());
+            when(shareService.listExposed(TENANT_ID,WORKITEM_ID)).thenReturn(List.of());
+            String empty=controller.directory(TOKEN).getBody();
+            assertTrue(empty.contains(en ? "No artifacts have been shared publicly." : "暂无对外公开的产物。"),empty);
+            when(shareService.listExposed(TENANT_ID,WORKITEM_ID)).thenReturn(List.of(artifact(301L,"<script>文件.md",3L)));
+            String directory=controller.directory(TOKEN).getBody();
+            assertTrue(org.springframework.web.util.HtmlUtils.htmlUnescape(directory).contains(en ? "AutoWonder read-only shared artifacts (1) · Only authorized public conclusion files are included" : "AutoWonder 对外只读产物（1）· 仅含已授权公开的结论文件"),directory);
+            for(String label: en ? new String[]{"File","Type","Size","Published at","Download"} : new String[]{"文件","类型","大小","发布时间","下载"}) assertTrue(directory.contains(">"+label+"<"),directory);
+            assertTrue(directory.contains("工单 &lt;标题&gt; &amp; 测试"),directory);
+            assertTrue(directory.contains("&lt;script&gt;文件.md"),directory);
+            assertFalse(directory.contains("<script>"),directory);
+            assertTrue(directory.contains("/api/share/workitems/"+TOKEN+"/artifacts/301?download=1"),directory);
+            assertTrue(directory.contains("DELIVERABLE"),directory);
+            verify(shareService,never()).loadContent(any());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"zh-CN,pending",
+            "en-US,pending",
+            "zh-CN,empty",
+            "en-US,empty",
+            "zh-CN,directory",
+            "en-US,directory"})
+    void eachPublicPageUsesCurrentLanguageWithoutChangingCapabilityData(String language,String kind) {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try {
+            boolean en=language.equals("en-US");
+            when(shareService.findWorkitemByShareToken(TOKEN)).thenReturn(workitem());
+            String page;
+            if(kind.equals("pending")) {
+                var receipt=new ArtifactShareRequestDO();receipt.setStatus("PENDING");
+                when(requests.findById(TENANT_ID,WORKITEM_ID,41L)).thenReturn(receipt);
+                var response=controller.request(TOKEN,41L,false,"");
+                assertEquals(202,response.getStatusCode().value());
+                assertEquals("5",response.getHeaders().getFirst("Retry-After"));
+                assertEquals("no-store",response.getHeaders().getCacheControl());
+                page=new String(response.getBody(),java.nio.charset.StandardCharsets.UTF_8);
+                assertTrue(page.contains(en ? "Artifact generation in progress" : "产物生成中"),page);
+                assertTrue(page.contains(en ? "The artifact is being generated. It will be available after execution succeeds and verification passes. This page refreshes automatically." : "产物正在生成，执行成功并校验通过后可读取。此页面会自动刷新。"),page);
+                assertTrue(page.contains("content=\"5\""),page);
+            } else {
+                when(shareService.listExposed(TENANT_ID,WORKITEM_ID)).thenReturn(kind.equals("empty") ? List.of() : List.of(artifact(301L,"<script>文件.md",3L)));
+                var response=controller.directory(TOKEN);page=response.getBody();
+                assertEquals(200,response.getStatusCode().value());
+                assertTrue(page.contains("工单 &lt;标题&gt; &amp; 测试"),page);
+                if(kind.equals("empty")) assertTrue(page.contains(en ? "No artifacts have been shared publicly." : "暂无对外公开的产物。"),page);
+                else {
+                    assertTrue(org.springframework.web.util.HtmlUtils.htmlUnescape(page).contains(en ? "AutoWonder read-only shared artifacts (1) · Only authorized public conclusion files are included" : "AutoWonder 对外只读产物（1）· 仅含已授权公开的结论文件"),page);
+                    for(String label: en ? new String[]{"File","Type","Size","Published at","Download"} : new String[]{"文件","类型","大小","发布时间","下载"}) assertTrue(page.contains(">"+label+"<"),page);
+                    assertTrue(page.contains("&lt;script&gt;文件.md"),page);
+                    assertTrue(page.contains("/api/share/workitems/"+TOKEN+"/artifacts/301?download=1"),page);
+                }
+            }
+            assertTrue(page.contains("lang=\""+(en ? "en" : "zh")+"\""),page);
+            verify(shareService,never()).loadContent(any());
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

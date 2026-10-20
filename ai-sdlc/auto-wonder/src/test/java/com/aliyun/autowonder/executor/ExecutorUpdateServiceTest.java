@@ -95,6 +95,59 @@ class ExecutorUpdateServiceTest {
         return taskDao.only();
     }
 
+    @org.junit.jupiter.api.AfterEach void clearLocale() {
+        org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();
+        com.aliyun.autowonder.context.AutoWonderContext.destroy();
+    }
+    @Test void requestFailuresKeepStatusCodesDiagnosticsAndRawVersion() {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        when(presence.currentVersion(7L)).thenReturn(TARGET);
+        BizException current = assertThrows(BizException.class, () -> service.updateOne(7, 1, 3L));
+        assertEquals("执行器版本不低于目标版本 " + TARGET + "，无需升级", current.getMessage());
+        var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(current);
+        assertEquals(400, response.getStatusCodeValue());
+        assertEquals("The Executor version is at or above target version " + TARGET + ". No update is needed.", response.getBody().getMessage());
+        when(presence.currentVersion(7L)).thenReturn(BEHIND);
+        when(presence.supportsProtocolFeature(eq(7L), anyString())).thenReturn(false);
+        BizException unsupported = assertThrows(BizException.class, () -> service.updateOne(7, 1, 3L));
+        assertEquals("This client does not support remote updates. Upgrade it locally first.", com.aliyun.autowonder.common.result.Result.fail(unsupported).getMessage());
+        when(presence.supportsProtocolFeature(eq(7L), anyString())).thenReturn(true);
+        service.updateOne(7, 1, 3L);
+        BizException active = assertThrows(BizException.class, () -> service.updateOne(7, 1, 3L));
+        assertEquals("An update is already in progress. Wait for the result.", com.aliyun.autowonder.common.result.Result.fail(active).getMessage());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+        for (BizException error : List.of(current, unsupported, active)) {
+            assertEquals("10001", error.getCode()); assertNull(error.getCause());
+            assertEquals(error.getMessage(), com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
+        }
+    }
+    @Test void batchSkipCodesAreNewResponseMetadataAndLastErrorRemainsRawHistory() {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        when(executorDao.listAll(1L, null)).thenReturn(List.of(executor(11, 1, "<b>raw name</b>"), executor(12, 1, "已有升级任务进行中")));
+        taskDao.seedPending(1, 11);
+        when(registry.isOnline(12L)).thenReturn(true);
+        when(presence.supportsProtocolFeature(eq(12L), anyString())).thenReturn(false);
+        var skipped = service.updateAll(1, null, 3L).getSkipped();
+        var json = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(skipped);
+        assertEquals("ACTIVE_TASK", json.get(0).path("reasonCode").asText());
+        assertEquals("UNSUPPORTED_CLIENT", json.get(1).path("reasonCode").asText());
+        assertEquals("An update is already in progress.", skipped.get(0).getReason());
+        assertEquals("The client does not support remote updates.", skipped.get(1).getReason());
+        assertEquals("<b>raw name</b>", skipped.get(0).getExecutorName());
+        assertEquals("已有升级任务进行中", skipped.get(1).getExecutorName());
+        for (String error : List.of("等待客户端响应超时", "<b>client raw</b>")) {
+            service.onUpgradeResult(new ExecutorSession(11, 8, 1, null), failed(taskDao.byExecutor(11).getRequestId(), error));
+            assertEquals(error, taskDao.byExecutor(11).getLastError());
+            assertEquals(error, service.latestByExecutors(1L, List.of(11L)).get(11L).getLastError());
+        }
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+        assertEquals("已有升级任务进行中", service.updateAll(1, null, 3L).getSkipped().get(0).getReason());
+        assertEquals("<b>client raw</b>", service.latestByExecutors(1L, List.of(11L)).get(11L).getLastError());
+        var legacy = new com.aliyun.autowonder.executor.dto.ExecutorUpdateSkipVO(9L, "raw", "已有升级任务进行中");
+        assertTrue(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(legacy).path("reasonCode").isNull());
+        assertEquals("已有升级任务进行中", legacy.getReason());
+    }
+
     // ------------------------------------------------------------ manual upgrade
 
     @Test
@@ -307,6 +360,16 @@ class ExecutorUpdateServiceTest {
 
         service.onHeartbeat(session, versionFrame(BEHIND));
         assertEquals(1, taskDao.size(), "an in-flight task blocks a second one");
+    }
+
+    @Test void heartbeatAutomaticUpdatesRespectAnExplicitVersionInTheSavedCommand() {
+        ExecutorDO pinned = executor(7, 1, "pinned");
+        pinned.setLaunchConfig("{\"runtimeVersion\":\"0.2.150\"}");
+        when(executorDao.findById(7L)).thenReturn(pinned);
+        when(presence.currentVersion(7L)).thenReturn(BEHIND);
+        service.onHeartbeat(session, versionFrame(BEHIND));
+        assertEquals(0, taskDao.size());
+        verify(redis, never()).publish(anyString(), anyString());
     }
 
     /**
@@ -887,11 +950,11 @@ class ExecutorUpdateServiceTest {
     }
 
     @Test
-    void upgradeEndpointsRequireWorkspaceAdministrator() throws Exception {
+    void upgradeEndpointsFollowRoleWritePermission() throws Exception {
         var one = ExecutorController.class.getMethod("update", Long.class);
-        assertEquals(WorkspaceAccessLevel.ADMIN, one.getAnnotation(RequireWorkspaceAccess.class).value());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, one.getAnnotation(RequireWorkspaceAccess.class).value());
         var all = ExecutorController.class.getMethod("updateAll", List.class);
-        assertEquals(WorkspaceAccessLevel.ADMIN, all.getAnnotation(RequireWorkspaceAccess.class).value());
+        assertEquals(WorkspaceAccessLevel.READ_WRITE, all.getAnnotation(RequireWorkspaceAccess.class).value());
     }
 
     /**

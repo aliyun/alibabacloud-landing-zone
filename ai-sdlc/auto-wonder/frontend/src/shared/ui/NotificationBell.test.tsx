@@ -44,10 +44,9 @@ describe('NotificationBell', () => {
       vi.useRealTimers();
     }
   });
-  it('renders bell icon', () => {
-    mockUnreadCount(0);
-    renderBell();
-    expect(screen.getByRole('img', { name: /bell/ })).toBeInTheDocument();
+  it('renders an accessible notification action', () => {
+    renderBell(false);
+    expect(screen.getByRole('button', { name: '通知中心' })).toBeInTheDocument();
   });
 
   it('shows unread count badge', async () => {
@@ -69,7 +68,7 @@ describe('NotificationBell', () => {
     // 先等接口真的返回 0，否则「没有角标」可能只是请求还没落地
     await waitFor(() => expect(countCalls).toBe(1));
     await waitFor(() => expect(container.querySelector('.ant-badge-count')).toBeNull());
-    expect(screen.getByRole('img', { name: /bell/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '通知中心' })).toBeInTheDocument();
   });
 
   it('navigates to the notification center when clicked', async () => {
@@ -77,7 +76,7 @@ describe('NotificationBell', () => {
     renderBell();
     await screen.findByText('1');
 
-    await userEvent.click(screen.getByRole('img', { name: /bell/ }));
+    await userEvent.click(screen.getByRole('button', { name: '通知中心' }));
 
     expect(await screen.findByTestId('notifications-page')).toBeInTheDocument();
   });
@@ -117,7 +116,7 @@ describe('NotificationBell', () => {
     renderBell();
     await screen.findByText('1');
 
-    await userEvent.click(screen.getByRole('img', { name: /bell/ }));
+    await userEvent.click(screen.getByRole('button', { name: '通知中心' }));
 
     expect(await screen.findByTestId('notifications-page')).toBeInTheDocument();
     expect(screen.queryByText('暂无通知')).not.toBeInTheDocument();

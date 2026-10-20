@@ -2,6 +2,7 @@ package com.aliyun.autowonder.evolution;
 
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.repo.RepoService;
@@ -19,13 +20,16 @@ public class EvolutionReleaseRollbackLiteService {
     private final EvolutionProposalDao proposalDao;
     private final RepoService repoService;
     private final SkillService skillService;
+    private final WorkspaceDomainGuard domainGuard;
 
     public EvolutionReleaseRollbackLiteService(EvolutionProposalDao proposalDao,
                                                RepoService repoService,
-                                               SkillService skillService) {
+                                               SkillService skillService,
+                                               WorkspaceDomainGuard domainGuard) {
         this.proposalDao = proposalDao;
         this.repoService = repoService;
         this.skillService = skillService;
+        this.domainGuard = domainGuard;
     }
 
     @Transactional
@@ -43,6 +47,10 @@ public class EvolutionReleaseRollbackLiteService {
         if (assetId == null) {
             throw new BizException(ErrorCode.CONFLICT);
         }
+        // 回滚同样按 assetType 写入 REPO/SKILL 资源域，在任何写入前校验。
+        domainGuard.requireWritableDomains(tenantId, userId,
+                "回滚演进变更", "access.action.roll_back_evolution_changes",
+                EvolutionProposalService.assetDomain(proposal.getAssetType()));
         if ("REPO_RELATION".equals(proposal.getAssetType())) {
             repoService.deleteRelation(assetId, tenantId);
             action = "DELETE_CREATED_REPO_RELATION";

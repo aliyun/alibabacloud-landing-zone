@@ -1,3 +1,5 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { i18n } from '@/shared/i18n';
 import { isValidElement, useEffect, type ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
@@ -182,3 +184,26 @@ describe('ScheduledTaskCapabilityGate', () => {
     expect(scheduledApiCalls).toBe(0);
   });
 });
+
+it('switches pending, unavailable and request-error displays while keeping children blocked', async () => {
+  let release!: () => void;
+  const deferred = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get('/api/capabilities/scheduled-task', async () => {
+    await deferred;
+    return HttpResponse.json({ success: true, code: '0', data: { available: false, mode: 'V037_READY', clusterReady: true, reason: 'FEATURE_DISABLED' } });
+  }));
+  const { queryClient } = renderGate();
+  expect(screen.getByText('正在检查功能可用性…')).toBeInTheDocument();
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByText('Checking feature availability…')).toBeInTheDocument();
+  act(() => release());
+  expect(await screen.findByText('Feature is not enabled')).toBeInTheDocument();
+  expect(screen.queryByText('scheduled child')).not.toBeInTheDocument();
+  server.use(http.get('/api/capabilities/scheduled-task', () => HttpResponse.error()));
+  await act(() => queryClient.invalidateQueries({ queryKey: scheduledTaskCapabilityQueryKey }));
+  expect(await screen.findByText('Unable to confirm feature availability')).toBeInTheDocument();
+  await act(() => i18n.changeLanguage('zh-CN'));
+  expect(screen.getByText('暂时无法确认功能状态')).toBeInTheDocument();
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });

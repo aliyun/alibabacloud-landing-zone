@@ -2,10 +2,15 @@ package com.aliyun.autowonder.ai.adapter;
 
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.clarification.ClarificationDO;
 import com.aliyun.autowonder.clarification.ClarificationDao;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.repo.RepoConclusionDO;
 import com.aliyun.autowonder.repo.RepoConclusionDao;
 import com.aliyun.autowonder.repo.RepoDO;
@@ -30,17 +35,20 @@ public class ClarificationAdapter implements SceneAdapter {
     private final WorkitemCommentDao workitemCommentDao;
     private final RepoDao repoDao;
     private final RepoConclusionDao repoConclusionDao;
+    private final WorkspaceDomainGuard domainGuard;
 
     public ClarificationAdapter(ClarificationDao clarificationDao,
             WorkitemDao workitemDao,
             WorkitemCommentDao workitemCommentDao,
             RepoDao repoDao,
-            RepoConclusionDao repoConclusionDao) {
+            RepoConclusionDao repoConclusionDao,
+            WorkspaceDomainGuard domainGuard) {
         this.clarificationDao = clarificationDao;
         this.workitemDao = workitemDao;
         this.workitemCommentDao = workitemCommentDao;
         this.repoDao = repoDao;
         this.repoConclusionDao = repoConclusionDao;
+        this.domainGuard = domainGuard;
     }
 
     @Override
@@ -150,20 +158,28 @@ public class ClarificationAdapter implements SceneAdapter {
 
     @Override
     public String validateResult(String resultJson) {
+        BizException error = validateForConfirmation(resultJson);
+        return error == null ? null : error.getMessage();
+    }
+
+    @Override
+    public BizException validateForConfirmation(String resultJson) {
         try {
             JSONObject obj = JSON.parseObject(resultJson);
             if (obj == null || obj.getString("clarificationMd") == null
                     || obj.getString("clarificationMd").isBlank()) {
-                return "missing clarificationMd field";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.clarification_missing", new Object[]{}, "missing clarificationMd field");
             }
             return null;
         } catch (Exception e) {
-            return "invalid JSON: " + e.getMessage();
+            return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.invalid_json", new Object[]{e.getMessage()}, "invalid JSON: " + e.getMessage());
         }
     }
 
     @Override
     public void persistConfirmedResult(AiSessionDO session, String resultJson) {
+        domainGuard.requireWritableDomains(session.getTenantId(), AutoWonderContext.get().getUserId(),
+                "确认AI会话", "access.action.confirm_an_ai_session", WorkspaceDomain.CLARIFICATION);
         JSONObject obj = JSON.parseObject(resultJson);
         String md = obj.getString("clarificationMd");
 

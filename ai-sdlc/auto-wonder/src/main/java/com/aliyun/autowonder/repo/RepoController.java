@@ -14,7 +14,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/repos")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看代码仓库")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看代码仓库", actionKey = "access.action.view_code_repositories")
 public class RepoController {
 
     private final RepoService repoService;
@@ -24,13 +24,13 @@ public class RepoController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建代码仓库")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建代码仓库", actionKey = "access.action.create_a_code_repository")
     public Result<RepoVO> create(@RequestBody CreateRepoRequest req) {
         return Result.ok(repoService.create(req, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/test-connection")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "测试代码仓库连接")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "测试代码仓库连接", actionKey = "access.action.test_a_code_repository_connection")
     public Result<RepoConnectionTestResult> testConnection(@RequestBody TestRepoConnectionRequest req) {
         return Result.ok(repoService.testConnection(req));
     }
@@ -48,21 +48,21 @@ public class RepoController {
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新代码仓库")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新代码仓库", actionKey = "access.action.update_a_code_repository")
     public Result<RepoVO> update(@PathVariable("id") Long id, @RequestBody JsonNode body) {
         return Result.ok(repoService.update(id, UpdateRepoRequest.fromJson(body),
                 currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除代码仓库")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除代码仓库", actionKey = "access.action.delete_a_code_repository")
     public Result<Void> delete(@PathVariable("id") Long id) {
         repoService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/scan")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "扫描代码仓库")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "扫描代码仓库", actionKey = "access.action.scan_a_code_repository")
     public Result<Void> startScan(@PathVariable("id") Long id) {
         repoService.startScan(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
@@ -74,7 +74,7 @@ public class RepoController {
     }
 
     @PutMapping("/{id}/conclusion")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新代码仓库结论")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新代码仓库结论", actionKey = "access.action.update_a_code_repository_conclusion")
     public Result<RepoConclusionVO> updateConclusion(@PathVariable("id") Long id,
                                                       @RequestBody UpdateConclusionRequest req) {
         return Result.ok(repoService.updateConclusion(id, req, currentWorkspaceId(), currentUserId()));
@@ -90,13 +90,13 @@ public class RepoController {
     }
 
     @PostMapping("/relations")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建代码仓库关联")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建代码仓库关联", actionKey = "access.action.create_a_code_repository_relation")
     public Result<RepoRelationVO> createRelation(@RequestBody CreateRelationRequest req) {
         return Result.ok(repoService.createRelation(req, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/relations/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除代码仓库关联")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除代码仓库关联", actionKey = "access.action.delete_a_code_repository_relation")
     public Result<Void> deleteRelation(@PathVariable("id") Long id) {
         repoService.deleteRelation(id, currentWorkspaceId());
         return Result.ok(null);

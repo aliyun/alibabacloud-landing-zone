@@ -1,5 +1,8 @@
 package com.aliyun.autowonder.notification;
 
+import com.aliyun.autowonder.common.i18n.SystemMessages;
+import java.util.Locale;
+
 final class WorkspaceAccessNotifyText {
 
     private WorkspaceAccessNotifyText() {
@@ -11,14 +14,23 @@ final class WorkspaceAccessNotifyText {
 
     /** The workspace may have been deleted mid-review, in which case the event carries a null name. */
     static String workspaceLabel(String workspaceName) {
-        return workspaceName == null || workspaceName.isBlank() ? "未命名工作空间" : workspaceName;
+        return workspaceLabel(workspaceName, Locale.CHINA);
+    }
+
+    static String workspaceLabel(String workspaceName, Locale locale) {
+        return workspaceName == null || workspaceName.isBlank()
+                ? SystemMessages.render("notification.workspace_fallback", null, "未命名工作空间", locale) : workspaceName;
     }
 
     static String accessLevelLabel(String accessLevel) {
+        return accessLevelLabel(accessLevel, Locale.CHINA);
+    }
+
+    static String accessLevelLabel(String accessLevel, Locale locale) {
         return switch (safe(accessLevel)) {
-            case "READ_ONLY" -> "只读";
-            case "READ_WRITE" -> "读写";
-            case "ADMIN" -> "管理员";
+            case "READ_ONLY" -> SystemMessages.render("notification.role.viewer", null, "只读者", locale);
+            case "READ_WRITE" -> SystemMessages.render("notification.role.collaborator", null, "读写者", locale);
+            case "ADMIN" -> SystemMessages.render("notification.access.admin", null, "管理员", locale);
             default -> safe(accessLevel);
         };
     }

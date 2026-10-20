@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { ApartmentOutlined } from '@ant-design/icons';
 import { Tag } from 'antd';
 import type { WorkerFinding, RiskLevel } from '../types';
@@ -13,11 +14,12 @@ interface SdlcLinkIssuesProps {
 }
 
 export function SdlcLinkIssues({ findings }: SdlcLinkIssuesProps) {
+  const { t } = useTranslation('insights');
   return (
     <div style={{ background: 'var(--aw-panel)', border: '1px solid var(--aw-border)', borderRadius: 10, padding: '18px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <ApartmentOutlined style={{ color: 'var(--aw-warning)' }} />
-        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--aw-text)' }}>SDLC 链路问题</span>
+        <ApartmentOutlined aria-hidden="true" style={{ color: 'var(--aw-warning)' }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--aw-text)' }}>{t('panels.sdlcIssues')}</span>
       </div>
       <div style={{ display: 'grid', gap: 9 }}>
         {findings.map((item) => {
@@ -29,7 +31,7 @@ export function SdlcLinkIssues({ findings }: SdlcLinkIssuesProps) {
                   <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--aw-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.worker}</span>
                   <Tag style={{ margin: 0, borderRadius: 4, color: style.color, borderColor: style.border, background: style.bg }}>{item.link}</Tag>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--aw-muted)', lineHeight: '18px' }}>{item.issue}，{item.impact}</div>
+                <div style={{ fontSize: 12, color: 'var(--aw-muted)', lineHeight: '18px' }}>{t('panels.issueImpact', { issue: item.issue, impact: item.impact })}</div>
               </div>
               <span style={{ alignSelf: 'start', fontSize: 11, color: style.color, fontWeight: 700 }}>{item.signal}</span>
             </div>

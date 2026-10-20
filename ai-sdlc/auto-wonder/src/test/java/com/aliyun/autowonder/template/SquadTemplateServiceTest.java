@@ -14,6 +14,8 @@ import com.aliyun.autowonder.squad.SquadDao;
 import com.aliyun.autowonder.squad.SquadMemberDao;
 import com.aliyun.autowonder.template.dto.ApplyResultVO;
 import com.aliyun.autowonder.template.dto.SquadTemplateVO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -43,6 +45,7 @@ class SquadTemplateServiceTest {
     SdlcDao sdlcDao;
     SdlcStepDao sdlcStepDao;
     RepoDao repoDao;
+    WorkspaceMemberDao workspaceMemberDao;
     SquadTemplateService service;
 
     @BeforeEach
@@ -56,8 +59,31 @@ class SquadTemplateServiceTest {
         sdlcDao = mock(SdlcDao.class);
         sdlcStepDao = mock(SdlcStepDao.class);
         repoDao = mock(RepoDao.class);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
         service = new SquadTemplateService(templateDao, squadDao, squadMemberDao,
-                agentDao, agentVersionDao, agentRepoPermDao, sdlcDao, sdlcStepDao, repoDao);
+                agentDao, agentVersionDao, agentRepoPermDao, sdlcDao, sdlcStepDao, repoDao,
+                new com.aliyun.autowonder.access.WorkspaceDomainGuard(workspaceMemberDao));
+    }
+
+    @Test
+    void apply_throws_before_any_write_when_operator_forbids_a_written_domain() {
+        SquadTemplateDO template = new SquadTemplateDO();
+        template.setId(1L);
+        template.setContentJson("{\"squad\":{\"name\":\"s\"},\"agents\":[]}");
+        when(templateDao.findById(1L)).thenReturn(template);
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"SDLC\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+
+        assertThrows(com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException.class,
+                () -> service.apply(1L, 100L, 7L));
+
+        verify(squadDao, never()).insert(any(SquadDO.class));
+        verify(sdlcDao, never()).insert(any(SdlcDO.class));
+        verify(agentDao, never()).insert(any(AgentDO.class));
     }
 
     @Test

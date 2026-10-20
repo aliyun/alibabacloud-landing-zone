@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { apiClient } from '@/shared/api/client';
 
 export interface Repo {
@@ -64,14 +65,14 @@ export interface CreateRelationRequest {
 }
 
 export const RELATION_TYPES = [
-  { value: 'FRONTEND', label: '前端' },
-  { value: 'BACKEND', label: '后端' },
-  { value: 'CLIENT_SERVER', label: '客户端调用服务端' },
-  { value: 'SERVER_CLIENT', label: '服务端下发客户端' },
-  { value: 'GATEWAY', label: '网关' },
-  { value: 'DEPENDENCY', label: '依赖' },
-  { value: 'SERVICE', label: '服务调用' },
-  { value: 'OTHER', label: '其他' },
+  { value: 'FRONTEND', get label() { return i18n.t('repo:relation.frontend'); } },
+  { value: 'BACKEND', get label() { return i18n.t('repo:relation.backend'); } },
+  { value: 'CLIENT_SERVER', get label() { return i18n.t('repo:relation.clientServer'); } },
+  { value: 'SERVER_CLIENT', get label() { return i18n.t('repo:relation.serverClient'); } },
+  { value: 'GATEWAY', get label() { return i18n.t('repo:relation.gateway'); } },
+  { value: 'DEPENDENCY', get label() { return i18n.t('repo:relation.dependency'); } },
+  { value: 'SERVICE', get label() { return i18n.t('repo:relation.service'); } },
+  { value: 'OTHER', get label() { return i18n.t('repo:relation.other'); } },
 ] as const;
 
 export async function listRepos(params: { page: number; size: number }): Promise<Repo[]> {

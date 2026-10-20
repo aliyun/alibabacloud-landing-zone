@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime, formatNumber } from '@/shared/i18n/format';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState } from 'react';
 import { Alert, Button, Card, Space, Tag, Typography, message } from 'antd';
@@ -28,6 +31,7 @@ export function ProjectBackupsPage() {
 }
 
 function ProjectBackupsPanel({ workspaceId, isAdmin }: { workspaceId?: number; isAdmin: boolean }) {
+  const { t } = useTranslation('settings');
   const [page, setPage] = useState(1);
   const [backupPageSize, setBackupPageSize] = useState(10);
   const queryClient = useQueryClient();
@@ -45,7 +49,7 @@ function ProjectBackupsPanel({ workspaceId, isAdmin }: { workspaceId?: number; i
     mutationFn: async () => (await apiClient.post<ProjectBackup>('/api/workspaces/current/backups', {}, {
       timeout: 300000,
     })).data,
-    onSuccess: () => { message.success('项目配置已备份到对象存储'); setPage(1); },
+    onSuccess: () => { message.success(i18n.t('settings:backupCreated')); setPage(1); },
     onSettled: () => queryClient.invalidateQueries({ queryKey }),
   });
   const download = useMutation({
@@ -58,29 +62,31 @@ function ProjectBackupsPanel({ workspaceId, isAdmin }: { workspaceId?: number; i
       link.click();
     },
   });
-  return <Card className="aw-content-card" title={<PageHeading title="项目配置备份" />}
+  return <Card className="aw-content-card" title={<PageHeading title={t('backups')} />}
     extra={isAdmin && <Space>
-      <Button type="primary" icon={<CloudUploadOutlined />} loading={create.isPending} onClick={() =>
-        runAccessCommand('ADMIN', '创建项目备份', () => create.mutate())}>立即备份到云端</Button>
-      <Button onClick={() => query.refetch()} loading={query.isFetching}>刷新</Button>
+      <Button type="primary" icon={<CloudUploadOutlined aria-hidden="true" />} aria-label={t('backupNow')} loading={create.isPending} onClick={() =>
+        runAccessCommand('ADMIN', t('createBackup'), () => create.mutate())}>{t('backupNow')}</Button>
+      <Button aria-label={t('refresh')} onClick={() => query.refetch()} loading={query.isFetching}>{t('refresh')}</Button>
     </Space>}>
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      <Alert type="info" showIcon message="备份当前项目的配置与知识" description="包含 SDLC、数字员工及版本、小队、仓库关系、记忆、技能及技能包、成员权限、集成与定时任务配置。排除工单、执行记录、会话、审核、日志与用量数据。密钥仅保留凭据引用，迁移后需重新绑定。" />
-      {!isAdmin ? <Alert type="warning" message="仅项目管理员可以创建、查看和下载备份。" /> : <>
-        <Typography.Text type="secondary">ZIP 包包含配置 JSON、技能包和校验清单。备份原始数据上限 64 MiB；下载链接有效期 5 分钟。</Typography.Text>
-        {query.isError && <Alert type="error" message="备份记录加载失败，请重试；首次使用前需执行备份建表 SQL。" />}
-        {create.isError && <Alert type="error" message="备份请求未完成，请刷新记录确认结果后重试。" />}
+      <Alert type="info" showIcon message={t('backupInfo')} description={t('backupDescription')} />
+      {!isAdmin ? <Alert type="warning" message={t('backupAdminOnly')} /> : <>
+        <Typography.Text type="secondary">{t('backupArchiveHint')}</Typography.Text>
+        {query.isError && <Alert type="error" message={t('backupLoadFailed')} />}
+        {create.isError && <Alert type="error" message={t('backupCreateFailed')} />}
         <Table<ProjectBackup> rowKey="id" loading={query.isLoading} dataSource={query.data ?? []} pagination={false}
           scroll={{ x: 850 }} columns={[
-            { title: '创建时间', dataIndex: 'createdAt' },
-            { title: '状态', dataIndex: 'status', render: (status: ProjectBackup['status']) =>
-              <Tag color={{ RUNNING: 'processing', SUCCEEDED: 'success', FAILED: 'error' }[status]}>
-                {{ RUNNING: '备份中', SUCCEEDED: '成功', FAILED: '失败' }[status]}</Tag> },
-            { title: '大小', dataIndex: 'sizeBytes', render: (size?: number) => size == null ? '-' : `${(size / 1024).toFixed(1)} KiB` },
-            { title: '存储位置 / 失败原因', render: (_, row) => row.errorMessage || row.ossRef || '-' },
-            { title: '操作', render: (_, row) => <Button icon={<DownloadOutlined />} disabled={row.status !== 'SUCCEEDED'}
+            { title: t('createdAt'), dataIndex: 'createdAt', render: (value: string) => value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value, { dateStyle: 'medium', timeStyle: 'medium' }) : value || '-' },
+            { title: t('status'), dataIndex: 'status', render: (status: ProjectBackup['status']) => {
+              const label = status === 'RUNNING' ? t('backupRunning') : status === 'SUCCEEDED' ? t('backupSucceeded') : status === 'FAILED' ? t('backupFailed') : status;
+              const color = status === 'RUNNING' ? 'processing' : status === 'SUCCEEDED' ? 'success' : status === 'FAILED' ? 'error' : undefined;
+              return <Tag color={color}>{label}</Tag>;
+            } },
+            { title: t('size'), dataIndex: 'sizeBytes', render: (size?: number) => size == null ? '-' : t('backupSize', { size: formatNumber(size / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) }) },
+            { title: t('backupLocation'), render: (_, row) => row.errorMessage || row.ossRef || '-' },
+            { title: t('actions'), render: (_, row) => <Button aria-label={t('download')} icon={<DownloadOutlined aria-hidden="true" />} disabled={row.status !== 'SUCCEEDED'}
               loading={download.isPending && download.variables === row.id}
-              onClick={() => runAccessCommand('ADMIN', '下载项目备份', () => download.mutate(row.id))}>下载</Button> },
+              onClick={() => runAccessCommand('ADMIN', t('downloadBackup'), () => download.mutate(row.id))}>{t('download')}</Button> },
           ]} />
         <OffsetPagination
           storageKey="autowonder.projectBackups.pageSize"

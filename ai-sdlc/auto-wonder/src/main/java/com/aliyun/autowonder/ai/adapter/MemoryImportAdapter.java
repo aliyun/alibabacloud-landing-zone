@@ -3,8 +3,13 @@ package com.aliyun.autowonder.ai.adapter;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONArray;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.memory.MemoryDO;
 import com.aliyun.autowonder.memory.MemoryDao;
 import org.slf4j.Logger;
@@ -19,9 +24,11 @@ public class MemoryImportAdapter implements SceneAdapter {
     private static final Logger log = LoggerFactory.getLogger(MemoryImportAdapter.class);
 
     private final MemoryDao memoryDao;
+    private final WorkspaceDomainGuard domainGuard;
 
-    public MemoryImportAdapter(MemoryDao memoryDao) {
+    public MemoryImportAdapter(MemoryDao memoryDao, WorkspaceDomainGuard domainGuard) {
         this.memoryDao = memoryDao;
+        this.domainGuard = domainGuard;
     }
 
     @Override
@@ -52,27 +59,35 @@ public class MemoryImportAdapter implements SceneAdapter {
 
     @Override
     public String validateResult(String resultJson) {
+        BizException error = validateForConfirmation(resultJson);
+        return error == null ? null : error.getMessage();
+    }
+
+    @Override
+    public BizException validateForConfirmation(String resultJson) {
         try {
             JSONObject obj = JSON.parseObject(resultJson);
-            if (obj == null) return "null result";
+            if (obj == null) return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.null_result", new Object[]{}, "null result");
             JSONArray items = obj.getJSONArray("items");
             if (items == null || items.isEmpty()) {
-                return "items array is empty";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.items_empty", new Object[]{}, "items array is empty");
             }
             for (int i = 0; i < items.size(); i++) {
                 JSONObject item = items.getJSONObject(i);
                 if (item.getString("title") == null || item.getString("title").isBlank()) {
-                    return "item[" + i + "] missing title";
+                    return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.item_title_missing", new Object[]{String.valueOf(i)}, "item[" + i + "] missing title");
                 }
             }
             return null;
         } catch (Exception e) {
-            return "invalid JSON: " + e.getMessage();
+            return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.invalid_json", new Object[]{e.getMessage()}, "invalid JSON: " + e.getMessage());
         }
     }
 
     @Override
     public void persistConfirmedResult(AiSessionDO session, String resultJson) {
+        domainGuard.requireWritableDomains(session.getTenantId(), AutoWonderContext.get().getUserId(),
+                "确认AI会话", "access.action.confirm_an_ai_session", WorkspaceDomain.MEMORY);
         JSONObject obj = JSON.parseObject(resultJson);
         JSONArray items = obj.getJSONArray("items");
         int count = 0;

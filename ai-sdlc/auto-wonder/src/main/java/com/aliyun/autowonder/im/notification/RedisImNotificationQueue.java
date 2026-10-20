@@ -6,6 +6,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.aliyun.autowonder.user.UserSettingService;
 import redis.clients.jedis.StreamEntry;
 
 import java.nio.charset.StandardCharsets;
@@ -24,8 +26,16 @@ public class RedisImNotificationQueue implements ImNotificationQueue {
     private final RedisManager redisManager;
     private final ImNotificationProperties properties;
     private volatile boolean consumerGroupEnsured;
+    private final UserSettingService userSettingService;
 
     public RedisImNotificationQueue(RedisManager redisManager, ImNotificationProperties properties) {
+        this(redisManager, properties, null);
+    }
+
+    @Autowired
+    public RedisImNotificationQueue(RedisManager redisManager, ImNotificationProperties properties,
+            UserSettingService userSettingService) {
+        this.userSettingService = userSettingService;
         this.redisManager = redisManager;
         this.properties = properties;
     }
@@ -33,6 +43,12 @@ public class RedisImNotificationQueue implements ImNotificationQueue {
     @Override
     public void enqueue(ImNotificationTask task) {
         ensureConsumerGroupOnce();
+        if (task.recipientLocale() == null) {
+            task = task.withRecipientLocale(userSettingService == null ? "zh-CN"
+                    : userSettingService.recipientLocale(task.recipientUserId()).toLanguageTag());
+        } else if (!"en-US".equals(task.recipientLocale()) && !"zh-CN".equals(task.recipientLocale())) {
+            task = task.withRecipientLocale("zh-CN");
+        }
         redisManager.xadd(properties.getStreamKey(),
                 Map.of(PAYLOAD_FIELD, serialize(task)),
                 properties.getMaxLength());

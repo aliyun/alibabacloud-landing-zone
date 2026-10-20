@@ -1,3 +1,5 @@
+import { act } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { renderTimelineNode } from './eventRegistry';
@@ -163,4 +165,29 @@ describe('renderTimelineNode', () => {
     const plan = render(<>{renderTimelineNode(node('plan'))}</>);
     expect(plan.container.textContent).toBe('');
   });
+});
+
+
+it('updates independently rendered timeline labels while preserving raw provider content', async () => {
+  render(<>{renderTimelineNode(node('thinking', { text: '原始思路' }))}{renderTimelineNode(node('unknown', {
+    raw: { eventType: 'provider_custom', payload: { type: 'custom', content: '<b>外部内容</b>' } },
+  }))}</>);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByText('Thinking process')).toBeInTheDocument();
+  expect(screen.getByText('Unrecognized event: provider_custom')).toBeInTheDocument();
+  expect(screen.getByText('原始思路')).toBeInTheDocument();
+  expect(screen.getByTestId('timeline-unknown-raw')).toHaveTextContent('<b>外部内容</b>');
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(screen.getByText('思考过程')).toBeInTheDocument();
+});
+
+
+it('keeps Runtime error text raw across cached locale switches', async () => {
+  const text = '回复失败：<b>Runtime</b>';
+  const view = render(<>{renderTimelineNode(node('error', { text }))}</>);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(view.container).toHaveTextContent(text);
+  expect(view.container.querySelector('b')).toBeNull();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(view.container).toHaveTextContent(text);
 });

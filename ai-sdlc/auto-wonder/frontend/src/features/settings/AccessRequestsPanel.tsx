@@ -1,9 +1,12 @@
+import { useTranslation } from 'react-i18next';
+import { formatDateTime } from '@/shared/i18n/format';
+import { isWorkspaceAccessLevel } from '@/shared/auth/access';
 import { useState } from 'react';
 import { Button, Empty, Input, Modal, Radio, Space, Tag } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
-import { ACCESS_LEVEL_LABEL } from '@/shared/auth/access';
+import { workspaceRoleLabel } from './roles';
 import { useAccessRequests, useApproveAccessRequest, useRejectAccessRequest } from './hooks';
 import type { AccessRequestVO } from './api';
 
@@ -15,13 +18,9 @@ const LEVEL_COLORS: Record<string, string> = {
   ADMIN: 'green',
 };
 
-const STATUS_LABELS: Record<RequestStatus, string> = {
-  PENDING: '待审批',
-  APPROVED: '已通过',
-  REJECTED: '已拒绝',
-};
-
 export function AccessRequestsPanel() {
+  useTranslation('shared');
+  const { t } = useTranslation('settings');
   const accessCommand = useAccessCommand();
   const [status, setStatus] = useState<RequestStatus>('PENDING');
   const { data: requests = [], isLoading, isError } = useAccessRequests(status);
@@ -31,13 +30,13 @@ export function AccessRequestsPanel() {
   const [reason, setReason] = useState('');
 
   const handleApprove = (request: AccessRequestVO) => {
-    accessCommand('ADMIN', '通过权限申请', () => {
+    accessCommand('ADMIN', t('approveRequest'), () => {
       approveMutation.mutate(request.id);
     });
   };
 
   const openReject = (request: AccessRequestVO) => {
-    accessCommand('ADMIN', '拒绝权限申请', () => {
+    accessCommand('ADMIN', t('rejectRequest'), () => {
       setReason('');
       setRejectTarget(request);
     });
@@ -54,25 +53,25 @@ export function AccessRequestsPanel() {
 
   const columns: ColumnsType<AccessRequestVO> = [
     {
-      title: '申请人',
+      title: t('requester'),
       key: 'requester',
       render: (_, request) => request.requesterName || String(request.requesterId),
     },
     {
-      title: '申请权限',
+      title: t('requestedAccess'),
       dataIndex: 'requestedLevel',
       render: (level: string) => (
-        <Tag color={LEVEL_COLORS[level]}>{ACCESS_LEVEL_LABEL[level as keyof typeof ACCESS_LEVEL_LABEL]}</Tag>
+        <Tag color={isWorkspaceAccessLevel(level) ? LEVEL_COLORS[level] : undefined}>{isWorkspaceAccessLevel(level) ? workspaceRoleLabel({ id: 0, code: level, name: null }) : level}</Tag>
       ),
     },
     {
-      title: '提交时间',
+      title: t('submittedAt'),
       dataIndex: 'gmtCreate',
-      render: (value: string) => (value ? new Date(value).toLocaleDateString() : '-'),
+      render: (value: string) => (value ? formatDateTime(value, { year: 'numeric', month: 'numeric', day: 'numeric' }) : '-'),
     },
     ...(status !== 'PENDING'
       ? [{
-          title: '审批人',
+          title: t('reviewer'),
           key: 'reviewer',
           render: (_, request: AccessRequestVO) => request.reviewerName
             || (request.reviewerId != null ? String(request.reviewerId) : '-'),
@@ -80,14 +79,14 @@ export function AccessRequestsPanel() {
       : []),
     ...(status === 'REJECTED'
       ? [{
-          title: '拒绝原因',
+          title: t('rejectReason'),
           dataIndex: 'rejectReason',
           render: (value: string | null) => value || '-',
         } as ColumnsType<AccessRequestVO>[number]]
       : []),
     ...(status === 'PENDING'
       ? [{
-          title: '操作',
+          title: t('actions'),
           key: 'action',
           render: (_, request: AccessRequestVO) => (
             <Space>
@@ -96,7 +95,7 @@ export function AccessRequestsPanel() {
                 size="small"
                 onClick={() => handleApprove(request)}
               >
-                通过
+                {t('approve')}
               </Button>
               <Button
                 type="link"
@@ -104,13 +103,15 @@ export function AccessRequestsPanel() {
                 danger
                 onClick={() => openReject(request)}
               >
-                拒绝
+                {t('reject')}
               </Button>
             </Space>
           ),
         } as ColumnsType<AccessRequestVO>[number]]
       : []),
   ];
+
+  const emptyDescription = status === 'PENDING' ? t('emptyPending') : status === 'APPROVED' ? t('emptyApproved') : t('emptyRejected');
 
   return (
     <div>
@@ -119,9 +120,9 @@ export function AccessRequestsPanel() {
           value={status}
           onChange={(event) => setStatus(event.target.value as RequestStatus)}
           options={[
-            { label: STATUS_LABELS.PENDING, value: 'PENDING' },
-            { label: STATUS_LABELS.APPROVED, value: 'APPROVED' },
-            { label: STATUS_LABELS.REJECTED, value: 'REJECTED' },
+            { label: t('pending'), value: 'PENDING' },
+            { label: t('approved'), value: 'APPROVED' },
+            { label: t('rejected'), value: 'REJECTED' },
           ]}
           optionType="button"
         />
@@ -134,27 +135,29 @@ export function AccessRequestsPanel() {
         pagination={false}
         locale={{
           emptyText: isError
-            ? <Empty description="权限申请加载失败，请稍后重试" />
-            : <Empty description={status === 'PENDING' ? '暂无待审批的申请' : `暂无${STATUS_LABELS[status]}的申请`} />,
+            ? <Empty description={t('requestsLoadFailed')} />
+            : <Empty description={emptyDescription} />,
         }}
       />
       <Modal
-        title="拒绝权限申请"
+        closable={{ 'aria-label': t('close') }}
+        title={t('rejectRequest')}
         open={rejectTarget !== null}
         onCancel={() => setRejectTarget(null)}
         onOk={handleRejectConfirm}
         confirmLoading={rejectMutation.isPending}
-        okText="确认拒绝"
-        cancelText="取消"
-        okButtonProps={{ danger: true }}
+        okText={t('confirmReject')}
+        cancelText={t('cancel')}
+        okButtonProps={{ danger: true, 'aria-label': t('confirmReject') }}
       >
         <p style={{ color: 'var(--aw-muted)' }}>
-          拒绝 {rejectTarget ? (rejectTarget.requesterName || rejectTarget.requesterId) : ''} 的申请
+          {t('rejectDescription', { name: rejectTarget ? (rejectTarget.requesterName || rejectTarget.requesterId) : '' })}
         </p>
         <Input.TextArea
+          aria-label={t('optionalReason')}
           value={reason}
           onChange={(event) => setReason(event.target.value)}
-          placeholder="拒绝原因（可选）"
+          placeholder={t('optionalReason')}
           maxLength={512}
           rows={3}
         />

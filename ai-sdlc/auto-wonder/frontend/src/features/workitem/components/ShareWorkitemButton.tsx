@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Tooltip, message } from 'antd';
 import { CheckOutlined, ShareAltOutlined } from '@ant-design/icons';
@@ -21,6 +23,7 @@ interface ShareWorkitemButtonProps {
 /** 详情页右上角的分享入口：单击即复制「链接 《标题》」，图标瞬变 ✓。
  *  刻意不弹成功 message——✓ 加「已复制」本身就是反馈，失败才需要 message。 */
 export function ShareWorkitemButton({ workitemId, title }: ShareWorkitemButtonProps) {
+  const { t } = useTranslation('workitem');
   const { data: branding } = useQuery({
     queryKey: BRANDING_QUERY_KEY,
     queryFn: getPublicBranding,
@@ -43,7 +46,7 @@ export function ShareWorkitemButton({ workitemId, title }: ShareWorkitemButtonPr
     const text = buildWorkitemShareText(resolvePlatformBaseUrl(branding), workitemId, title);
     const ok = await copyTextToClipboard(text);
     if (!ok) {
-      message.error('复制失败，请检查浏览器剪贴板权限');
+      message.error(i18n.t('workitem:share.copyFailed'));
       return;
     }
     // await 期间可能已卸载（比如从详情页返回列表），此时清理函数早跑过了，
@@ -55,15 +58,15 @@ export function ShareWorkitemButton({ workitemId, title }: ShareWorkitemButtonPr
     timerRef.current = setTimeout(() => setCopied(false), SHARE_FEEDBACK_MS);
   }, [branding, workitemId, title]);
 
-  const label = copied ? '已复制' : '分享';
+  const label = copied ? t('share.copied') : t('share.label');
 
   return (
-    <Tooltip title={copied ? '链接已复制到剪贴板' : '复制工单链接'}>
+    <Tooltip title={copied ? t('share.copiedHint') : t('share.copyHint')}>
       <Button
         data-testid="workitem-share-button"
         type="text"
         size="small"
-        icon={copied ? <CheckOutlined /> : <ShareAltOutlined />}
+        icon={copied ? <CheckOutlined aria-hidden="true" /> : <ShareAltOutlined aria-hidden="true" />}
         // 图标自带 aria-label="share-alt"，不显式命名的话可访问名会变成「share-alt 分享」
         aria-label={label}
         style={{ color: SHARE_COLOR, fontSize: 13 }}

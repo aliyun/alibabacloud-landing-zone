@@ -594,9 +594,10 @@ public class PackageContextAssembler {
     }
 
     private Map<String, Object> buildRepoEntry(RepoDO repo, boolean writable, List<String> allowedBranchPatterns) {
-        String nameProblem = RepoNameValidator.validate(repo.getName());
-        if (nameProblem != null) {
-            throw new BizException(ErrorCode.REPO_NAME_INVALID,
+        RepoNameValidator.Problem problem = RepoNameValidator.inspect(repo.getName());
+        if (problem != null) {
+            String nameProblem = RepoNameValidator.validate(repo.getName());
+            throw BizException.keyed(ErrorCode.REPO_NAME_INVALID, "dispatch.repo_name." + problem.name().toLowerCase(java.util.Locale.ROOT), new Object[]{repo.getName(), repo.getId(), repo.getName() == null ? null : repo.getName().trim()},
                     "仓库「" + repo.getName() + "」(#" + repo.getId() + ")名称不是合法的单级目录名，无法派发任务："
                             + nameProblem + " 请先在仓库中心将名称改为单级目录名（Git 地址保持不变）后再重试。");
         }

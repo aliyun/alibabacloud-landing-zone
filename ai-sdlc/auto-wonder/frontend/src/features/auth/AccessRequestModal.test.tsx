@@ -62,8 +62,8 @@ describe('AccessRequestModal', () => {
     renderModal(terra);
 
     expect(await screen.findByText('申请加入「星云工坊」')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /只读/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /读写/ })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: /只读者/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /读写者/ })).not.toBeChecked();
     expect(screen.getByRole('radio', { name: /管理员/ })).not.toBeChecked();
   });
 
@@ -84,7 +84,7 @@ describe('AccessRequestModal', () => {
 
     renderModal(terra, onClose);
 
-    await user.click(await screen.findByRole('radio', { name: /读写/ }));
+    await user.click(await screen.findByRole('radio', { name: /读写者/ }));
     await user.click(screen.getByRole('button', { name: /提交申请/ }));
 
     await waitFor(() => {
@@ -150,7 +150,7 @@ describe('AccessRequestModal', () => {
 
     expect(await screen.findByText('申请加入「云效集成平台」')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('radio', { name: /只读/ })).toBeChecked();
+      expect(screen.getByRole('radio', { name: /只读者/ })).toBeChecked();
     });
     expect(screen.getByRole('radio', { name: /管理员/ })).not.toBeChecked();
   });
@@ -182,9 +182,9 @@ describe('AccessRequestModal', () => {
   it('describes what each access level allows', async () => {
     renderModal(terra);
 
-    expect(await screen.findByRole('radio', { name: /只读/ })).toBeInTheDocument();
-    expect(screen.getByText(/仅查看/)).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /读写/ })).toBeInTheDocument();
+    expect(await screen.findByRole('radio', { name: /只读者/ })).toBeInTheDocument();
+    expect(screen.getByText(/可查看工作空间内的信息/)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /读写者/ })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /管理员/ })).toBeInTheDocument();
   });
 

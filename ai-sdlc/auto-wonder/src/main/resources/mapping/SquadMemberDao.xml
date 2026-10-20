@@ -37,4 +37,7 @@
     <delete id="deleteBySquad">
         DELETE FROM squad_member WHERE squad_id = #{squadId} AND tenant_id = #{tenantId}
     </delete>
+    <delete id="deleteByAgent">
+        DELETE FROM squad_member WHERE agent_id = #{agentId} AND tenant_id = #{tenantId}
+    </delete>
 </mapper>

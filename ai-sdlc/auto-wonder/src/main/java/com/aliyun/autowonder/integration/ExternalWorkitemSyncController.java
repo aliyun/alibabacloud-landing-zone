@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/workitems")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看外部工作项同步")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看外部工作项同步", actionKey = "access.action.view_external_work_item_synchronization")
 public class ExternalWorkitemSyncController {
 
     private final ExternalWorkitemSyncService syncService;
@@ -24,7 +24,7 @@ public class ExternalWorkitemSyncController {
     }
 
     @PostMapping("/{id}/external-sync")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "同步外部工作项")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "同步外部工作项", actionKey = "access.action.synchronize_an_external_work_item")
     public Result<AoneSyncResult> syncExternal(@PathVariable("id") Long id) {
         return Result.ok(syncService.syncLocalWorkitem(id, currentWorkspaceId(), currentUserId()));
     }

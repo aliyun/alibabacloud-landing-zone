@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Typography } from 'antd';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import type { Clarification } from '@/shared/types/workitem';
@@ -9,6 +10,7 @@ interface ClarificationResultProps {
 }
 
 export function ClarificationResult({ clarification }: ClarificationResultProps) {
+  const { t } = useTranslation('workitem');
   if (!clarification || !clarification.contentMd) {
     return null;
   }
@@ -23,7 +25,7 @@ export function ClarificationResult({ clarification }: ClarificationResultProps)
       }}
     >
       <Text strong style={{ display: 'block', marginBottom: 12, fontSize: 14, color: 'var(--aw-accent-text)' }}>
-        澄清材料 (AI 生成)
+        {t('detail.clarificationResult')}
       </Text>
       <MarkdownView content={clarification.contentMd} />
     </div>

@@ -21,23 +21,32 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- =============================================================================
 
 -- 用户（全局表，无 tenant_id）
+-- 注销语义（V067 起）：注销=逻辑删除（is_deleted=1），数据保留、只读、可由平台管理员恢复；
+-- deleted_username/deleted_email 保存删除前的用户名/邮箱快照（恢复还原 + 展示），
+-- 删除时 username 改写为 #deleted-{id}、email 置 NULL 以释放唯一键占用。
+-- deactivated_at / cooling_off_expires_at / deactivation_revoked_at 为历史冷静期字段：
+-- 不再写入，仅用于识别存量已注销（匿名化）用户，恢复时清空。
 CREATE TABLE IF NOT EXISTS `user` (
   `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `username`      VARCHAR(64)     NOT NULL COMMENT '登录名，全局唯一',
   `email`         VARCHAR(128)    DEFAULT NULL COMMENT '邮箱，全局唯一（可空）',
-  `password_hash` VARCHAR(100)    NOT NULL COMMENT 'BCrypt 哈希（含盐）',
+  `password_hash` VARCHAR(100)    DEFAULT NULL COMMENT 'BCrypt 哈希（含盐）；纯 SSO 账号为空',
   `nickname`      VARCHAR(64)     DEFAULT NULL COMMENT '昵称',
   `avatar_url`    VARCHAR(512)    DEFAULT NULL COMMENT '头像（OSS 引用）',
   `phone`         VARCHAR(32)     DEFAULT NULL COMMENT '联系方式',
   `status`        TINYINT         NOT NULL DEFAULT 0 COMMENT '0 正常 / 1 禁用',
   `is_admin`      TINYINT         NOT NULL DEFAULT 0 COMMENT '0 普通用户 / 1 平台管理员',
-  `deactivated_at`          DATETIME(3) DEFAULT NULL COMMENT '注销申请时间',
-  `cooling_off_expires_at`  DATETIME(3) DEFAULT NULL COMMENT '冷静期截止时间（7天后）',
-  `deactivation_revoked_at` DATETIME(3) DEFAULT NULL COMMENT '撤销注销时间',
+  `deactivated_at`          DATETIME(3) DEFAULT NULL COMMENT '注销申请时间（历史冷静期字段，不再写入）',
+  `cooling_off_expires_at`  DATETIME(3) DEFAULT NULL COMMENT '冷静期截止时间（历史冷静期字段，不再写入）',
+  `deactivation_revoked_at` DATETIME(3) DEFAULT NULL COMMENT '撤销注销时间（历史冷静期字段，不再写入）',
   `last_login_at` DATETIME(3)     DEFAULT NULL COMMENT '最近登录',
   `gmt_create`    DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_modified`  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  `is_deleted`    TINYINT         NOT NULL DEFAULT 0,
+  `is_deleted`    TINYINT         NOT NULL DEFAULT 0 COMMENT '0 正常 / 1 逻辑删除（可恢复）',
+  `deleted_username` VARCHAR(64)  DEFAULT NULL COMMENT '逻辑删除时保留的原用户名（展示/恢复还原）',
+  `deleted_email`    VARCHAR(128) DEFAULT NULL COMMENT '逻辑删除时保留的原邮箱（恢复还原）',
+  `deleted_at`       DATETIME(3)  DEFAULT NULL COMMENT '逻辑删除时间（仅详情展示）',
+  `deleted_by`       BIGINT UNSIGNED DEFAULT NULL COMMENT '逻辑删除操作人 user_id（本人注销即本人）',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_username` (`username`),
   UNIQUE KEY `uk_email` (`email`)
@@ -156,14 +165,36 @@ CREATE TABLE IF NOT EXISTS `org` (
   KEY `idx_org_recycle_bin` (`is_deleted`, `deleted_at`, `id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间（历史物理表 org）';
 
+-- 工作空间角色；权限由角色统一维护，成员只保存角色绑定。
+CREATE TABLE IF NOT EXISTS `workspace_role` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT UNSIGNED NOT NULL,
+  `code` VARCHAR(64) DEFAULT NULL COMMENT '预置角色或迁移标识；自定义角色为空',
+  `name` VARCHAR(80) DEFAULT NULL COMMENT '用户输入原文；系统角色按 code 本地化',
+  `active_name_key` VARCHAR(80) DEFAULT NULL,
+  `access_level` VARCHAR(16) NOT NULL COMMENT '内部校验能力上限；不作为成员配置项',
+  `read_only_domains` JSON DEFAULT NULL COMMENT '只读功能域；NULL 表示没有额外写入限制',
+  `version` INT NOT NULL DEFAULT 0,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `creator_id` BIGINT UNSIGNED DEFAULT NULL,
+  `modifier_id` BIGINT UNSIGNED DEFAULT NULL,
+  `is_deleted` TINYINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_workspace_role_code` (`tenant_id`, `code`),
+  UNIQUE KEY `uk_workspace_role_name` (`tenant_id`, `active_name_key`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间授权角色';
+
 -- 工作空间成员（历史物理表名 org_member）
 CREATE TABLE IF NOT EXISTS `org_member` (
   `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `tenant_id`    BIGINT UNSIGNED NOT NULL COMMENT '工作空间 ID（历史物理字段 tenant_id）',
   `user_id`      BIGINT UNSIGNED NOT NULL COMMENT '成员',
   `status`       TINYINT         NOT NULL DEFAULT 0 COMMENT '0 正常 / 1 待审批 / 2 已移除',
-  `access_level` VARCHAR(16)     NOT NULL DEFAULT 'READ_ONLY' COMMENT 'READ_ONLY/READ_WRITE/ADMIN',
+  `access_level` VARCHAR(16)     NOT NULL DEFAULT 'READ_ONLY' COMMENT '迁移保留字段；鉴权读取角色',
+  `role_id` BIGINT UNSIGNED NOT NULL COMMENT 'workspace_role.id；每个成员一个角色',
   `identity_tags` JSON           DEFAULT NULL COMMENT '成员业务身份标签；仅用于协作上下文，不参与鉴权',
+  `forbidden_domains` JSON       DEFAULT NULL COMMENT '禁用的功能域（WorkspaceDomain 枚举名数组）；NULL 表示无限制',
   `joined_at`    DATETIME(3)     DEFAULT NULL,
   `gmt_create`   DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `gmt_modified` DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -172,6 +203,7 @@ CREATE TABLE IF NOT EXISTS `org_member` (
   `is_deleted`   TINYINT         NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_org_user` (`tenant_id`, `user_id`),
+  KEY `idx_member_role` (`tenant_id`, `role_id`, `is_deleted`),
   KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工作空间成员（历史物理表 org_member）';
 
@@ -354,6 +386,7 @@ CREATE TABLE IF NOT EXISTS `workitem` (
   `creator_id`      BIGINT UNSIGNED DEFAULT NULL,
   `modifier_id`     BIGINT UNSIGNED DEFAULT NULL,
   `is_deleted`      TINYINT         NOT NULL DEFAULT 0,
+  `deleted_at`      DATETIME(3)     DEFAULT NULL COMMENT '软删除时间（回收站排序/筛选；NULL 表示未删除）',
   `version`         INT             NOT NULL DEFAULT 0,
   `scheduled_start_at` DATETIME(3)  DEFAULT NULL COMMENT '计划执行时间，NULL表示立即执行',
   `scheduled_start_triggered_at` DATETIME(3) DEFAULT NULL COMMENT '定时执行实际触发时间，NULL表示尚未触发',
@@ -362,6 +395,7 @@ CREATE TABLE IF NOT EXISTS `workitem` (
   PRIMARY KEY (`id`),
   KEY `idx_status` (`tenant_id`, `status_node_id`),
   KEY `idx_assignee` (`tenant_id`, `assignee_type`, `assignee_ref`),
+  KEY `idx_recycled` (`tenant_id`, `is_deleted`, `deleted_at`),
   KEY `idx_workitem_origin` (`tenant_id`, `origin_type`, `origin_id`),
   KEY `idx_workitem_scheduled` (`tenant_id`, `scheduled_start_at`, `assignee_type`, `sdlc_id`),
   UNIQUE KEY `uk_workitem_external_share_token` (`external_share_token`)
@@ -379,7 +413,8 @@ CREATE TABLE IF NOT EXISTS `workitem_comment` (
   `gmt_create`  DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   KEY `idx_workitem` (`tenant_id`, `workitem_id`),
-  KEY `idx_comment_source` (`tenant_id`, `source_type`, `workitem_id`, `id`)
+  KEY `idx_comment_source` (`tenant_id`, `source_type`, `workitem_id`, `id`),
+  KEY `idx_comment_author_time` (`tenant_id`, `author_type`, `author_ref`, `workitem_id`, `gmt_create`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单评论';
 
 -- 工单评论mention明细
@@ -452,6 +487,7 @@ CREATE TABLE IF NOT EXISTS `executor` (
   `last_heartbeat` DATETIME(3)     DEFAULT NULL,
   `last_started_at` DATETIME(3) DEFAULT NULL COMMENT '客户端进程启动时间',
   `last_connect_ip` VARCHAR(64)    DEFAULT NULL COMMENT '最近一次成功 WebSocket 接入 IP',
+  `last_connect_hostname` VARCHAR(128) DEFAULT NULL COMMENT '最近一次成功 WebSocket 接入时客户端自报的主机名',
   `client_kind`    VARCHAR(64)     DEFAULT NULL COMMENT '客户端形态（claude-cli/qoder-cli）',
   `launch_config`  JSON            NULL     COMMENT '启动配置 JSON: {model, reasoningEffort, contextWindow, memoryMode}',
   `config_version` INT             NOT NULL DEFAULT 1 COMMENT '启动配置乐观锁版本号',
@@ -554,6 +590,10 @@ CREATE TABLE IF NOT EXISTS `dispatch_recovery_checkpoint` (
   `sha256`              VARCHAR(80) NOT NULL,
   `size_bytes`          BIGINT NOT NULL,
   `gmt_create`          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `completion_result_id` VARCHAR(36) DEFAULT NULL,
+  `gc_pending` TINYINT NOT NULL DEFAULT 0,
+  KEY `idx_checkpoint_gc` (`gc_pending`, `id`),
+  UNIQUE KEY `uk_checkpoint_completion` (`tenant_id`, `dispatch_id`, `completion_result_id`),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_dispatch_seq` (`tenant_id`, `dispatch_id`, `checkpoint_seq`),
   KEY `idx_dispatch_latest` (`tenant_id`, `dispatch_id`, `id`),
@@ -1210,7 +1250,7 @@ CREATE TABLE IF NOT EXISTS `external_workitem_link` (
   `remote_version_hash` VARCHAR(64) DEFAULT NULL,
   `last_sync_direction` VARCHAR(16) DEFAULT NULL,
   `last_sync_at` DATETIME(3) DEFAULT NULL COMMENT '当前工单最后成功同步时间',
-  `sync_status` VARCHAR(32) NOT NULL DEFAULT 'HEALTHY' COMMENT '同步状态：HEALTHY、DELAYED 或 ACTION_REQUIRED',
+  `sync_status` VARCHAR(32) NOT NULL DEFAULT 'HEALTHY' COMMENT '同步状态：HEALTHY、DELAYED、ACTION_REQUIRED、MAPPING_MISSING、MAPPING_INVALID、LOCAL_UPDATE_FAILED 或 DEFERRED_ACTIVE_EXECUTION',
   `last_error_code` VARCHAR(64) DEFAULT NULL COMMENT '工单级稳定错误码',
   `last_error` TEXT DEFAULT NULL COMMENT '脱敏后的工单同步错误摘要',
   `comment_sync_cursor` VARCHAR(128) NOT NULL DEFAULT '0' COMMENT '已同步的最大 Aone commentId',
@@ -1283,6 +1323,10 @@ CREATE TABLE IF NOT EXISTS `external_status_mapping` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_external_status` (`tenant_id`, `provider`, `binding_id`, `external_status_name`, `work_type`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='外部状态映射';
+
+-- 来源业务状态到本地状态节点的显式映射（工单 #55817：外部工单状态持续同步回 AutoWonder）。
+-- 与上方已废弃的 external_status_mapping 区分：本表按（绑定 + 工作项类型 + 来源状态名）显式配置目标节点，
+-- 只由管理员维护，不做名称猜测；未配置即视为映射缺口并按缺口上报。
 
 -- 外部评论写回回执（兼容存量写回队列）
 CREATE TABLE IF NOT EXISTS `integration_outbox` (
@@ -1586,7 +1630,8 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- 详设08: notification, notify_pref, ai_usage, ai_quota, system_setting
 -- 模版间: squad_template
 -- 集成: external_principal, external_project_binding, external_workitem_link,
---       external_comment_link, external_status_mapping, integration_outbox
+--       external_comment_link, external_status_mapping,
+--       integration_outbox
 -- MCP: mcp_access_token
 -- 平台 IM: platform_im_channel_config, user_im_identity
 -- 钉钉: dingtalk_robot_binding, agent_conversation, agent_conversation_turn
@@ -1686,6 +1731,31 @@ CREATE TABLE IF NOT EXISTS `conversation_turn_artifact` (
   UNIQUE KEY `uk_turn_artifact_direction` (`turn_id`, `artifact_id`, `direction`),
   KEY `idx_conversation_artifact` (`tenant_id`, `conversation_id`, `artifact_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='Turn 与文件的不可变引用';
+
+-- 工单澄清会话附件（V067__clarification_attachment）：
+-- turn_id 为 NULL 表示已上传未发送；发送后绑定且不可删除；未绑定附件 24 小时后清理；
+-- deleting_at 非 NULL 表示删除认领中，认领行不可绑定，删除失败由清理任务重试。
+CREATE TABLE IF NOT EXISTS `clarification_attachment` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `tenant_id` BIGINT NOT NULL,
+  `workitem_id` BIGINT NOT NULL,
+  `conversation_id` BIGINT NOT NULL,
+  `turn_id` BIGINT NULL COMMENT 'NULL 表示已上传未发送',
+  `uploader_user_id` BIGINT NOT NULL,
+  `name` VARCHAR(256) NOT NULL,
+  `content_type` VARCHAR(128) NOT NULL DEFAULT 'application/octet-stream',
+  `size_bytes` BIGINT NOT NULL,
+  `oss_ref` VARCHAR(512) NOT NULL,
+  `previewable` TINYINT NOT NULL DEFAULT 0 COMMENT '1 = 服务端嗅探确认的位图，可内联预览',
+  `deleting_at` DATETIME(3) NULL COMMENT '非 NULL 表示删除认领中，禁止绑定，删除失败由清理任务重试',
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_clarification_attachment_oss_ref` (`oss_ref`),
+  KEY `idx_clarification_attachment_turn` (`tenant_id`, `conversation_id`, `turn_id`),
+  KEY `idx_clarification_attachment_orphan` (`turn_id`, `gmt_create`),
+  KEY `idx_clarification_attachment_deleting` (`deleting_at`),
+  KEY `idx_clarification_attachment_workitem` (`tenant_id`, `workitem_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='工单澄清会话附件';
 
 CREATE TABLE IF NOT EXISTS `conversation_action_plan` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -1958,3 +2028,156 @@ CREATE TABLE IF NOT EXISTS `artifact_share_request` (
     KEY `idx_share_request_due` (`status`, `next_attempt_at`),
     KEY `idx_share_request_dispatch` (`dispatch_id`, `status`)
 ) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4;
+
+-- Apply before the platform and Runtime dispatch interaction release.
+CREATE TABLE IF NOT EXISTS dispatch_request (
+ id BIGINT NOT NULL AUTO_INCREMENT,
+ tenant_id BIGINT NOT NULL,
+ dispatch_id BIGINT NOT NULL,
+ kind VARCHAR(16) NOT NULL,
+ request_key VARCHAR(191) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ body_json LONGTEXT NOT NULL,
+ status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+ answer_json LONGTEXT NULL,
+ actor_id BIGINT NULL,
+ expires_at DATETIME(3) NULL,
+ suspend_requested TINYINT NOT NULL DEFAULT 0,
+ resume_dispatch_id BIGINT NULL,
+ gmt_create DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ gmt_modified DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ PRIMARY KEY (id),
+ UNIQUE KEY uk_dispatch_request (tenant_id, dispatch_id, request_key),
+ KEY idx_request_sweep (status, expires_at),
+ KEY idx_request_dispatch (tenant_id, dispatch_id, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS dispatch_result_decision (
+  tenant_id BIGINT UNSIGNED NOT NULL,
+  dispatch_id BIGINT UNSIGNED NOT NULL,
+  result_id VARCHAR(36) NOT NULL,
+  executor_id BIGINT UNSIGNED NOT NULL,
+  payload_sha256 CHAR(64) NOT NULL,
+  checkpoint_seq BIGINT DEFAULT NULL,
+  checkpoint_sha256 VARCHAR(80) DEFAULT NULL,
+  failure_category VARCHAR(128) DEFAULT NULL,
+  disposition VARCHAR(16) NOT NULL,
+  reason_code VARCHAR(64) DEFAULT NULL,
+  ack_json JSON NOT NULL,
+  handoff_json JSON DEFAULT NULL,
+  decided_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (tenant_id, dispatch_id, result_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Durable runtime result decisions; retained independently of checkpoint objects';
+
+-- Keep fresh installations aligned with V062__dispatch_model_selection.sql.
+CREATE TABLE IF NOT EXISTS dispatch_model_selection (
+    tenant_id BIGINT NOT NULL,
+    dispatch_id BIGINT NOT NULL,
+    selection_json JSON NOT NULL,
+    gmt_create DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (tenant_id, dispatch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- 企业 SSO 联合登录（迁移 V066__enterprise_sso_federation.sql）
+-- =============================================================================
+
+-- IdP 实例：一个实际 AD FS 部署或 Entra 租户，下挂多条协议连接
+CREATE TABLE IF NOT EXISTS `federation_idp` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(64) NOT NULL COMMENT 'IdP 实例名（如「AD FS 生产」「Entra 租户 A」）',
+  `description` VARCHAR(255) DEFAULT NULL,
+  `enabled` TINYINT NOT NULL DEFAULT 1 COMMENT '0 停用 / 1 启用；停用后其连接不进入登录页',
+  `created_by` BIGINT DEFAULT NULL COMMENT '创建者 user.id',
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='企业 SSO 身份提供方实例';
+
+-- 协议连接（providerId）：IdP 实例与一种协议的组合，是登录页入口、回调地址与绑定归属的最小配置单元
+CREATE TABLE IF NOT EXISTS `federation_connection` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `idp_id` BIGINT NOT NULL COMMENT '所属 IdP 实例（federation_idp.id）',
+  `name` VARCHAR(64) NOT NULL COMMENT '登录方式名（登录页入口文案）',
+  `protocol` VARCHAR(16) NOT NULL COMMENT 'SAML2 / OIDC',
+  `enabled` TINYINT NOT NULL DEFAULT 1 COMMENT '0 停用 / 1 启用',
+  `issuer` VARCHAR(255) NOT NULL COMMENT 'idpId 的 Issuer（OIDC 支持 {tid} 模板）',
+  `saml_sso_url` VARCHAR(512) DEFAULT NULL COMMENT 'SAML SSO 地址（HTTP-Redirect 发起）',
+  `saml_cert` TEXT DEFAULT NULL COMMENT 'SAML 签名证书（PEM/Base64 DER）',
+  `oidc_authorize_url` VARCHAR(512) DEFAULT NULL,
+  `oidc_token_url` VARCHAR(512) DEFAULT NULL,
+  `oidc_jwks_url` VARCHAR(512) DEFAULT NULL,
+  `client_id` VARCHAR(255) DEFAULT NULL,
+  `client_secret` VARCHAR(1024) DEFAULT NULL COMMENT '客户端密钥密文（SecretCrypto 加密后落库）',
+  `scopes` VARCHAR(255) DEFAULT NULL COMMENT 'OIDC scope，空则默认 openid profile email',
+  `subject_claim` VARCHAR(128) DEFAULT NULL COMMENT '稳定主体声明映射（如 Entra 的 tid:oid；SAML 为属性名，nameid 表示 NameID）',
+  `name_claim` VARCHAR(128) DEFAULT NULL,
+  `email_claim` VARCHAR(128) DEFAULT NULL,
+  `allowed_tenants` VARCHAR(1024) DEFAULT NULL COMMENT '逗号分隔的允许租户（Entra tid）清单，空为不限制',
+  `sort_order` INT NOT NULL DEFAULT 0,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_federation_connection_name` (`name`),
+  KEY `idx_federation_connection_idp` (`idp_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='企业 SSO 协议连接（providerId）';
+
+-- 外部身份绑定：唯一键为 (provider_id, issuer, subject)，email/UPN 不参与匹配
+CREATE TABLE IF NOT EXISTS `federated_identity` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `provider_id` BIGINT NOT NULL COMMENT '建立该绑定的连接（federation_connection.id）',
+  `issuer` VARCHAR(255) NOT NULL COMMENT '校验通过的 Issuer',
+  `subject` VARCHAR(255) NOT NULL COMMENT '稳定主体标识（如 Entra tid:oid、SAML NameID/属性）',
+  `user_id` BIGINT NOT NULL COMMENT '绑定的 AW 账号（user.id）',
+  `display_name` VARCHAR(128) DEFAULT NULL COMMENT '最近一次登录同步的展示名',
+  `email` VARCHAR(128) DEFAULT NULL COMMENT '最近一次登录同步的邮箱（仅展示，不参与匹配）',
+  `last_login_at` DATETIME(3) DEFAULT NULL,
+  `gmt_create` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `gmt_modified` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_federated_identity_subject` (`provider_id`, `issuer`, `subject`),
+  KEY `idx_federated_identity_user` (`user_id`),
+  KEY `idx_federated_identity_provider` (`provider_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=10000 DEFAULT CHARSET=utf8mb4 COMMENT='企业 SSO 外部身份绑定';
+
+CREATE TABLE IF NOT EXISTS dispatch_guidance (
+ id BIGINT NOT NULL AUTO_INCREMENT,
+ workspace_id BIGINT NOT NULL,
+ workitem_id BIGINT NOT NULL,
+ dispatch_id BIGINT NOT NULL,
+ executor_id BIGINT NOT NULL,
+ actor_id BIGINT NOT NULL,
+ request_key VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ content LONGTEXT NOT NULL,
+ status VARCHAR(16) NOT NULL DEFAULT 'QUEUED',
+ error TEXT NULL,
+ applied_at DATETIME(3) NULL,
+ gmt_create DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ gmt_modified DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ PRIMARY KEY (id),
+ UNIQUE KEY uk_dispatch_guidance_request (workspace_id, dispatch_id, request_key),
+ KEY idx_dispatch_guidance_history (workspace_id, workitem_id, dispatch_id, id),
+ KEY idx_dispatch_guidance_pending (status, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Keep fresh installations aligned with V066__squad_copy_operation.sql.
+CREATE TABLE IF NOT EXISTS squad_copy_operation (
+ id BIGINT NOT NULL AUTO_INCREMENT,
+ source_workspace_id BIGINT NOT NULL,
+ source_squad_id BIGINT NOT NULL,
+ user_id BIGINT NOT NULL,
+ request_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ target_workspace_id BIGINT NOT NULL,
+ request_fingerprint CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ source_snapshot_ref CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ status VARCHAR(16) NOT NULL,
+ target_squad_id BIGINT NULL,
+ error_code VARCHAR(32) NULL,
+ error_message VARCHAR(512) NULL,
+ resource_cleanup_json TEXT NULL,
+ gmt_create DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ gmt_modified DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ PRIMARY KEY (id),
+ UNIQUE KEY uk_squad_copy_request (source_workspace_id, user_id, request_id, target_workspace_id),
+ KEY idx_squad_copy_source (source_workspace_id, source_squad_id),
+ KEY idx_squad_copy_target (target_workspace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -132,4 +132,23 @@ class AoneIntegrationServiceTest {
         return summary;
     }
 
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void successMessageIsCurrentDisplayButFalseSdkMessageAndCheckTokensStayRaw(String tag) {
+        var projects = mock(ExternalProjectProvider.class); var workitems = mock(ExternalWorkitemProvider.class);
+        var project = new com.aliyun.autowonder.integration.provider.ExternalProject(); project.setName("<b>raw project</b>");
+        when(projects.getProject(any(), eq("PROJECT-1"))).thenReturn(project); when(projects.listMembers(any(), eq("PROJECT-1"))).thenReturn(List.of());
+        var service = new AoneIntegrationService(mock(ExternalProjectBindingDao.class), mock(SecretCrypto.class), projects, workitems, mock(AoneInboundSyncService.class));
+        var request = bindingRequest(); request.setWritebackStaffId("<b>raw staff</b>");
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(tag));
+        try {
+            var result = service.testConnection(request); assertTrue(result.isSuccess());
+            org.junit.jupiter.api.Assertions.assertEquals(List.of("project:<b>raw project</b>", "members:0", "workitem-search:ok", "writeback-staff:<b>raw staff</b>"), result.getChecks());
+            String raw = "Aone 连接测试成功";
+            org.mockito.Mockito.doThrow(new IllegalStateException(raw)).when(projects).getProject(any(), eq("PROJECT-1"));
+            var failed = service.testConnection(request); org.junit.jupiter.api.Assertions.assertFalse(failed.isSuccess());
+            org.junit.jupiter.api.Assertions.assertEquals(raw, failed.getMessage());
+            org.junit.jupiter.api.Assertions.assertEquals(tag.equals("en-US") ? "Aone connection test succeeded" : raw, result.getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

@@ -33,12 +33,31 @@ export interface ClarificationElicitation {
   gmtCreate: string;
 }
 
+export type ConversationContentDisplay =
+  | { code: 'CANCELED' | 'EMPTY_OUTPUT'; args: Record<string, never> }
+  | { code: 'REPLY_FAILED' | 'DISPATCH_REPLY_FAILED'; args: { detail: string } };
+export type ConversationErrorDisplay =
+  | { code: 'DISPATCH_FAILED' | 'EXECUTOR_COMPATIBILITY_FAILED'; args: { detail: string } }
+  | { code: 'DELIVERY_ATTEMPTS_EXHAUSTED'; args: { attempts: number } };
+
+export interface ClarificationAttachment {
+  id: number;
+  name: string;
+  contentType: string;
+  size: number;
+  /** 服务端按魔数确认可安全内联预览的位图；其余附件只给下载入口。 */
+  previewable: boolean;
+  gmtCreate: string;
+}
+
 export interface ClarificationTurn {
   id: number;
   direction: string;
   content: string;
   status: string;
   error: string | null;
+  display?: { content?: ConversationContentDisplay; error?: ConversationErrorDisplay };
+  attachments?: ClarificationAttachment[] | null;
   gmtCreate: string;
 }
 

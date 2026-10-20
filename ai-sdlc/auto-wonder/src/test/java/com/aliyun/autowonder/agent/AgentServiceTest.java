@@ -10,10 +10,14 @@ import com.aliyun.autowonder.agent.dto.UpdateConfigRequest;
 import com.aliyun.autowonder.executor.ExecutorDO;
 import com.aliyun.autowonder.executor.ExecutorDao;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.skill.SkillDO;
+import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.squad.SquadAttributionService;
+import com.aliyun.autowonder.squad.SquadMemberDao;
 import com.aliyun.autowonder.workspace.WorkspaceDao;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.util.List;
 
@@ -30,6 +34,8 @@ class AgentServiceTest {
     WorkspaceDao workspaceDao;
     ExecutorDao executorDao;
     ExecutorRegistry executorRegistry;
+    SkillDao capabilityDao;
+    SquadMemberDao squadMemberDao;
     AgentService service;
 
     @BeforeEach
@@ -42,8 +48,43 @@ class AgentServiceTest {
         workspaceDao = mock(WorkspaceDao.class);
         executorDao = mock(ExecutorDao.class);
         executorRegistry = mock(ExecutorRegistry.class);
+        capabilityDao = mock(SkillDao.class);
+        squadMemberDao = mock(SquadMemberDao.class);
         service = new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
                 executorDao, executorRegistry);
+    }
+
+    /** 生产装配含能力目录依赖；默认 service 走旧构造器，用于验证依赖缺失时的兜底。 */
+    private AgentService serviceWithCapabilities() {
+        return new AgentService(agentDao, versionDao, repoPermDao, skillDao, memoryRefDao, workspaceDao,
+                executorDao, executorRegistry, capabilityDao);
+    }
+
+    /** 生产装配含小队成员依赖；默认 service 不注入该依赖，用于验证依赖缺失时的兜底。 */
+    private AgentService serviceWithSquadMembers() {
+        AgentService withMembers = new AgentService(agentDao, versionDao, repoPermDao, skillDao,
+                memoryRefDao, workspaceDao, executorDao, executorRegistry);
+        withMembers.setSquadMemberDao(squadMemberDao);
+        return withMembers;
+    }
+
+    @Test
+    void chiefSetupResumesOnlyAdditiveBuiltinDraftsAndPreservesCustomChanges() {
+        var agent = new AgentDO(); agent.setId(1L); agent.setTenantId(100L); agent.setKind("PLATFORM");
+        agent.setOnlineVersionId(2L); agent.setEditingVersionId(3L);
+        var online = new AgentVersionDO(); online.setId(2L); online.setTenantId(100L); online.setAgentId(1L);
+        var draft = new AgentVersionDO(); draft.setId(3L); draft.setTenantId(100L); draft.setAgentId(1L); draft.setStatus("DRAFT");
+        when(agentDao.findById(1L)).thenReturn(agent);
+        when(versionDao.findById(2L)).thenReturn(online); when(versionDao.findById(3L)).thenReturn(draft);
+        var binding = new AgentSkillDO(); binding.setSkillId(9L);
+        when(skillDao.listByVersion(3L)).thenReturn(List.of(binding));
+        assertEquals("DRAFT", service.validateChiefSetupDraft(1L, 100L, java.util.Set.of(9L)));
+        draft.setStatus("PENDING_REVIEW");
+        assertEquals("PENDING_REVIEW", service.validateChiefSetupDraft(1L, 100L, java.util.Set.of(9L)));
+        assertThrows(BizException.class, () -> service.validateChiefSetupDraft(1L, 100L, java.util.Set.of()));
+        draft.setResponsibilities("User customization");
+        assertThrows(BizException.class, () -> service.validateChiefSetupDraft(1L, 100L, java.util.Set.of(9L)));
+        verify(versionDao, never()).updateStatus(anyLong(), anyLong(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -276,6 +317,75 @@ class AgentServiceTest {
     }
 
     @Test
+    void getVersion_resolves_capability_names_for_bound_skills() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(versionDao.findByAgentAndNo(1L, 1)).thenReturn(versionRow(10L, 1, "DRAFT"));
+
+        AgentSkillDO bound = new AgentSkillDO();
+        bound.setSkillId(22L);
+        when(skillDao.listByVersion(10L)).thenReturn(List.of(bound));
+
+        SkillDO capability = new SkillDO();
+        capability.setId(22L);
+        capability.setTenantId(100L);
+        capability.setName("代码评审");
+        when(capabilityDao.findById(22L)).thenReturn(capability);
+
+        AgentVersionVO vo = serviceWithCapabilities().getVersion(1L, 1, 100L);
+
+        assertEquals(22L, vo.getSkills().get(0).getSkillId());
+        assertEquals("代码评审", vo.getSkills().get(0).getSkillName());
+    }
+
+    @Test
+    void getVersion_falls_back_to_id_when_capability_name_is_unresolvable() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(versionDao.findByAgentAndNo(1L, 1)).thenReturn(versionRow(10L, 1, "DRAFT"));
+
+        AgentSkillDO deleted = new AgentSkillDO();
+        deleted.setSkillId(22L);
+        AgentSkillDO blankTenant = new AgentSkillDO();
+        blankTenant.setSkillId(23L);
+        AgentSkillDO foreignTenant = new AgentSkillDO();
+        foreignTenant.setSkillId(24L);
+        when(skillDao.listByVersion(10L)).thenReturn(List.of(deleted, blankTenant, foreignTenant));
+
+        SkillDO withoutTenant = new SkillDO();
+        withoutTenant.setId(23L);
+        withoutTenant.setName("无租户能力");
+        when(capabilityDao.findById(23L)).thenReturn(withoutTenant);
+        SkillDO otherTenant = new SkillDO();
+        otherTenant.setId(24L);
+        otherTenant.setTenantId(200L);
+        otherTenant.setName("其他租户能力");
+        when(capabilityDao.findById(24L)).thenReturn(otherTenant);
+
+        AgentVersionVO vo = serviceWithCapabilities().getVersion(1L, 1, 100L);
+
+        // 能力行已删除(findById 返回 null)、无租户、跨租户时都只保留 id，由前端回退展示
+        assertEquals(22L, vo.getSkills().get(0).getSkillId());
+        assertNull(vo.getSkills().get(0).getSkillName());
+        assertNull(vo.getSkills().get(1).getSkillName());
+        assertNull(vo.getSkills().get(2).getSkillName());
+    }
+
+    @Test
+    void getVersion_keeps_capability_names_null_without_the_capability_dependency() {
+        when(agentDao.findById(1L)).thenReturn(agentRow(1L, "DRAFT", null, 10L));
+        when(versionDao.findByAgentAndNo(1L, 1)).thenReturn(versionRow(10L, 1, "DRAFT"));
+
+        AgentSkillDO bound = new AgentSkillDO();
+        bound.setSkillId(22L);
+        when(skillDao.listByVersion(10L)).thenReturn(List.of(bound));
+
+        AgentVersionVO vo = service.getVersion(1L, 1, 100L);
+
+        assertEquals(22L, vo.getSkills().get(0).getSkillId());
+        assertNull(vo.getSkills().get(0).getSkillName());
+        verify(capabilityDao, never()).findById(anyLong());
+    }
+
+    @Test
     void getVersion_rejects_agent_from_another_tenant() {
         AgentDO agent = new AgentDO();
         agent.setId(1L);
@@ -435,6 +545,43 @@ class AgentServiceTest {
 
         BizException ex = assertThrows(BizException.class, () -> service.delete(1L, 100L, 7L));
         assertEquals("14003", ex.getCode());
+    }
+
+    @Test
+    void delete_clears_squad_memberships_after_soft_deleting_the_agent() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(100L);
+        agent.setStatus("DRAFT");
+        agent.setVersion(2);
+        when(agentDao.findById(1L)).thenReturn(agent);
+        when(versionDao.listByAgent(1L)).thenReturn(List.of());
+        when(agentDao.softDelete(1L, 100L, 2, 7L)).thenReturn(1);
+
+        serviceWithSquadMembers().delete(1L, 100L, 7L);
+
+        InOrder order = inOrder(agentDao, squadMemberDao);
+        order.verify(agentDao).softDelete(1L, 100L, 2, 7L);
+        // 清理范围限定在调用方租户内，其他工作空间的同名关联不受影响。
+        order.verify(squadMemberDao).deleteByAgent(1L, 100L);
+    }
+
+    @Test
+    void delete_version_conflict_leaves_squad_memberships_untouched() {
+        AgentDO agent = new AgentDO();
+        agent.setId(1L);
+        agent.setTenantId(100L);
+        agent.setStatus("PENDING_REVIEW");
+        agent.setVersion(2);
+        when(agentDao.findById(1L)).thenReturn(agent);
+        when(versionDao.listByAgent(1L)).thenReturn(List.of());
+        when(agentDao.softDelete(1L, 100L, 2, 7L)).thenReturn(0);
+
+        AgentService withMembers = serviceWithSquadMembers();
+        BizException ex = assertThrows(BizException.class, () -> withMembers.delete(1L, 100L, 7L));
+
+        assertEquals("14003", ex.getCode());
+        verify(squadMemberDao, never()).deleteByAgent(anyLong(), anyLong());
     }
 
     @Test

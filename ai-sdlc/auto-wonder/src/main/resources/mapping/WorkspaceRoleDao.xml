@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.workspace.WorkspaceRoleDao">
+    <select id="listByTenant" resultType="com.aliyun.autowonder.workspace.WorkspaceRoleDO">
+        SELECT r.*, (SELECT COUNT(*) FROM org_member m WHERE m.tenant_id = r.tenant_id
+            AND m.role_id = r.id AND m.status = 0 AND m.is_deleted = 0) AS member_count
+        FROM workspace_role r WHERE r.tenant_id = #{tenantId} AND r.is_deleted = 0 ORDER BY r.id
+    </select>
+    <select id="findById" resultType="com.aliyun.autowonder.workspace.WorkspaceRoleDO">
+        SELECT * FROM workspace_role WHERE tenant_id = #{tenantId} AND id = #{id} AND is_deleted = 0
+    </select>
+    <select id="findByCode" resultType="com.aliyun.autowonder.workspace.WorkspaceRoleDO">
+        SELECT * FROM workspace_role WHERE tenant_id = #{tenantId} AND code = #{code} AND is_deleted = 0
+    </select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO workspace_role (tenant_id, code, name, active_name_key, access_level,
+            read_only_domains, creator_id, modifier_id, version, is_deleted)
+        VALUES (#{tenantId}, #{code}, #{name}, #{name}, #{accessLevel}, #{readOnlyDomains},
+            #{creatorId}, #{modifierId}, 0, 0)
+    </insert>
+    <update id="update">
+        UPDATE workspace_role SET name = #{name}, active_name_key = #{name},
+            read_only_domains = #{readOnlyDomains}, modifier_id = #{modifierId},
+            version = version + 1, gmt_modified = NOW(3)
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND is_deleted = 0
+    </update>
+    <update id="softDelete">
+        UPDATE workspace_role SET is_deleted = 1, active_name_key = NULL,
+            version = version + 1, modifier_id = #{modifierId}, gmt_modified = NOW(3)
+        WHERE tenant_id = #{tenantId} AND id = #{id} AND version = #{version} AND is_deleted = 0
+    </update>
+    <select id="countAssignments" resultType="int">
+        SELECT COUNT(*) FROM org_member WHERE tenant_id = #{tenantId} AND role_id = #{id}
+            AND status = 0 AND is_deleted = 0
+    </select>
+</mapper>

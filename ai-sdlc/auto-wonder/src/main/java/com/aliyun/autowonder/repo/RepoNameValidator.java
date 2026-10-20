@@ -13,28 +13,41 @@ public final class RepoNameValidator {
     /**
      * @return null 表示合法；否则返回用于提示的可执行修正说明。
      */
+    public enum Problem { EMPTY, INVALID_SEGMENT, RESERVED_PREFIX, CONTROL_CHARACTER }
+
     public static String validate(String rawName) {
+        Problem problem = inspect(rawName);
+        if (problem == null) return null;
+        return switch (problem) {
+            case EMPTY -> "仓库名称不能为空";
+            case INVALID_SEGMENT -> invalidSegmentMessage(rawName.trim());
+            case RESERVED_PREFIX -> "仓库名称不能以 ~ 或 % 开头";
+            case CONTROL_CHARACTER -> "仓库名称不能包含控制字符";
+        };
+    }
+
+    public static Problem inspect(String rawName) {
         if (rawName == null || rawName.isBlank()) {
-            return "仓库名称不能为空";
+            return Problem.EMPTY;
         }
         String name = rawName.trim();
         if (name.isEmpty()) {
-            return "仓库名称不能为空";
+            return Problem.EMPTY;
         }
         if (name.contains("/") || name.contains("\\")) {
-            return invalidSegmentMessage(name);
+            return Problem.INVALID_SEGMENT;
         }
         if (".".equals(name) || "..".equals(name)) {
-            return invalidSegmentMessage(name);
+            return Problem.INVALID_SEGMENT;
         }
         if (name.startsWith("~") || name.startsWith("%")) {
-            return "仓库名称不能以 ~ 或 % 开头";
+            return Problem.RESERVED_PREFIX;
         }
         if (isWindowsDrive(name)) {
-            return invalidSegmentMessage(name);
+            return Problem.INVALID_SEGMENT;
         }
         if (name.chars().anyMatch(c -> Character.isISOControl(c))) {
-            return "仓库名称不能包含控制字符";
+            return Problem.CONTROL_CHARACTER;
         }
         return null;
     }

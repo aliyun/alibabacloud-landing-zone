@@ -883,7 +883,7 @@ class DispatchServiceRunPendingTest {
                 "oss://b/failover.zip", "md5", 10L, "http://dl", "deadbeef"));
 
         assertTrue(service.onExecutorUnavailableResult(TENANT, 9L, 500L,
-                "agent_error.provider_quota_limit", "quota exhausted"));
+                "agent_error.provider_quota_limit", "quota exhausted", 0L));
         assertTrue(service.runPending(500L));
 
         verify(agentVersionDao).findById(401L);
@@ -1283,6 +1283,32 @@ class DispatchServiceRunPendingTest {
     }
 
     @Test
+    void runPendingFailsPermanentlyWithLocalizedReasonWhenQaSourceHeadIsUnpushed() {
+        DispatchDO d = pending();
+        when(dispatchDao.findById(500L)).thenReturn(d);
+        when(agentDao.findById(400L)).thenReturn(onlineAgent());
+        when(agentVersionDao.findById(410L)).thenReturn(onlineVersion());
+        when(executorSelector.select(400L)).thenReturn(9L);
+        when(assembler.assemble(eq(d), any(AgentVersionDO.class))).thenReturn(new PackageContext());
+        Object[] args = {"service"};
+        String diagnostic = "source revision for repo service has local HEAD but no matching pushed branch head";
+        when(taskPackager.build(any())).thenThrow(BizException.keyed(
+                ErrorCode.PACKAGE_BUILD_FAILED, TaskPackager.MESSAGE_KEY_QA_UNPUSHED, args, diagnostic));
+        String localized = com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                TaskPackager.MESSAGE_KEY_QA_UNPUSHED, args, diagnostic);
+
+        assertFalse(service.runPending(500L));
+
+        verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
+                isNull(), isNull(), isNull(), isNull(),
+                argThat(error -> error.startsWith("TASK_PACKAGE_CONFIG_ERROR: ") && error.contains(localized)),
+                eq(1), eq(0L));
+        verify(dispatchDao, never()).returnPackagingToPending(anyLong(), anyLong(), anyInt(), anyLong());
+        verify(transport, never()).dispatch(any(), any());
+        verify(sdlcDriver).onFail(TENANT, 200L, 300L);
+    }
+
+    @Test
     void runPendingFailsPermanentlyWhenBoundCapabilityIsMissing() {
         DispatchDO d = pending();
         when(dispatchDao.findById(500L)).thenReturn(d);
@@ -1467,4 +1493,26 @@ class DispatchServiceRunPendingTest {
         verify(recovery).transition(eq(d), eq(DispatchStatus.FAILED), isNull(), isNull(), isNull(),
                 isNull(), startsWith("SELECTION_INTERNAL_ERROR:"));
     }
+
+    @Test
+    void permanentPackageClassifierKeepsExceptionTypesExactPrefixesAndRawRootDiagnostic() {
+        var permanent = new Throwable[]{
+            com.aliyun.autowonder.common.error.BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE,"unknown.key",new Object[0],"raw-version"),
+            com.aliyun.autowonder.common.error.BizException.keyed(ErrorCode.PACKAGE_BUILD_FAILED,TaskPackager.MESSAGE_KEY_QA_UNPUSHED,new Object[]{"service"},"raw-qa-unpushed"),
+            com.aliyun.autowonder.common.error.BizException.keyed(ErrorCode.PACKAGE_BUILD_FAILED,TaskPackager.MESSAGE_KEY_NO_CHECKOUT,new Object[]{"service"},"raw-no-checkout"),
+            new com.aliyun.autowonder.common.error.KeyedIllegalArgumentException("unknown.key",new Object[0],"raw-argument"),
+            new IllegalStateException("bound capability is missing raw"),
+            new IllegalStateException("capability config must be a JSON object raw"),
+            new IllegalStateException("COMMENT_REWORK_CONTEXT_MISSING: raw")};
+        for (Throwable cause : permanent) {
+            assertEquals(true, org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"isPermanentPackageInputFailure",new RuntimeException("wrapper",cause)));
+            assertEquals(cause.getMessage(), org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"rootFailureMessage",new RuntimeException("wrapper",cause)));
+        }
+        assertEquals(false,org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"isPermanentPackageInputFailure",new IllegalStateException("raw bound capability is missing")));
+        assertEquals(false,org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"isPermanentPackageInputFailure",new IllegalStateException("localized-looking capability config")));
+        assertEquals(false,org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"isPermanentPackageInputFailure",new RuntimeException("wrapper",com.aliyun.autowonder.common.error.BizException.keyed(ErrorCode.PACKAGE_BUILD_FAILED,"dispatch.repo_revision.unrelated",new Object[]{"service"},"raw-unrelated"))));
+        assertEquals(false,org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"isPermanentPackageInputFailure",new RuntimeException("wrapper",new com.aliyun.autowonder.common.error.BizException(ErrorCode.NOT_FOUND,"non-keyed raw diagnostic"))));
+        assertEquals("non-keyed raw diagnostic",org.springframework.test.util.ReflectionTestUtils.invokeMethod(DispatchService.class,"packageInputFailureDetail",new RuntimeException("wrapper",new com.aliyun.autowonder.common.error.BizException(ErrorCode.NOT_FOUND,"non-keyed raw diagnostic"))));
+    }
+
 }

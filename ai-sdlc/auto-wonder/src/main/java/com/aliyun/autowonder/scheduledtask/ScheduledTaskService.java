@@ -62,7 +62,7 @@ public class ScheduledTaskService {
     public ScheduledTaskVO create(CreateScheduledTaskRequest request, long workspaceId, long userId) {
         requireMutationContext(workspaceId, userId);
         if (request == null) {
-            throw validation("请求不能为空");
+            throw validation("scheduled_task.validation.request_required", "请求不能为空");
         }
         ScheduledTaskDO task = fromCreate(request);
         task.setWorkspaceId(workspaceId);
@@ -84,12 +84,12 @@ public class ScheduledTaskService {
                                   long workspaceId, long userId) {
         requireMutationContext(id, workspaceId, userId);
         if (request == null || request.getVersion() == null || request.getVersion() < 0) {
-            throw validation("version 必须提供且不能为负数");
+            throw validation("scheduled_task.validation.version_required", "version 必须提供且不能为负数");
         }
         ScheduledTaskDO existing = requireTask(workspaceId, id);
         requireExpectedVersion(existing, request.getVersion());
         if (ScheduledTaskStatus.ARCHIVED.name().equals(existing.getStatus())) {
-            throw invalidState("归档任务不可修改");
+            throw invalidState("scheduled_task.state.archived_immutable", "归档任务不可修改");
         }
 
         applyUpdate(existing, request);
@@ -116,7 +116,7 @@ public class ScheduledTaskService {
                                       int limit, int offset) {
         if (workspaceId <= 0 || (status != null && !LIST_STATUSES.contains(status))
                 || (creatorId != null && creatorId <= 0)) {
-            throw validation("查询条件不合法");
+            throw validation("scheduled_task.validation.query_invalid", "查询条件不合法");
         }
         int boundedLimit = Math.min(Math.max(limit, 1), MAX_PAGE_SIZE);
         int boundedOffset = Math.max(offset, 0);
@@ -145,7 +145,7 @@ public class ScheduledTaskService {
         ScheduledTaskDO task = requireTask(workspaceId, id);
         requireExpectedVersion(task, version);
         if (!ScheduledTaskStatus.PAUSED.name().equals(task.getStatus())) {
-            throw invalidState("只有暂停任务可以启用");
+            throw invalidState("scheduled_task.state.enable_requires_paused", "只有暂停任务可以启用");
         }
 
         validator.validate(task, workspaceId, schedule);
@@ -180,7 +180,7 @@ public class ScheduledTaskService {
         requireExpectedVersion(task, version);
         ScheduledTaskStatus source = statusOf(task.getStatus());
         if (source != ScheduledTaskStatus.PAUSED && source != ScheduledTaskStatus.EXHAUSTED) {
-            throw invalidState("只有暂停或已耗尽任务可以归档");
+            throw invalidState("scheduled_task.state.archive_requires_inactive", "只有暂停或已耗尽任务可以归档");
         }
         return transition(task, version, workspaceId, userId,
                 source, ScheduledTaskStatus.ARCHIVED, "ARCHIVE");
@@ -195,7 +195,7 @@ public class ScheduledTaskService {
         // QUEUED run would still be dispatched after the task row disappears.
         List<ScheduledTaskRunDO> active = runDao.findActiveByTask(workspaceId, id);
         if (active != null && !active.isEmpty()) {
-            throw invalidState("存在未结束的运行实例，请先取消后再删除");
+            throw invalidState("scheduled_task.state.delete_requires_finished_runs", "存在未结束的运行实例，请先取消后再删除");
         }
         String previousStatus = task.getStatus();
         if (taskDao.softDelete(workspaceId, id, version, userId) != 1) {
@@ -215,7 +215,7 @@ public class ScheduledTaskService {
         ScheduledTaskDO task = requireTask(workspaceId, id);
         requireExpectedVersion(task, version);
         if (!source.name().equals(task.getStatus())) {
-            throw invalidState("任务来源状态不允许该操作");
+            throw invalidState("scheduled_task.state.source_status_invalid", "任务来源状态不允许该操作");
         }
         return transition(task, version, workspaceId, userId, source, target, action);
     }
@@ -275,7 +275,7 @@ public class ScheduledTaskService {
         String status = defaulted(requested, ScheduledTaskStatus.ACTIVE.name());
         if (!ScheduledTaskStatus.ACTIVE.name().equals(status)
                 && !ScheduledTaskStatus.PAUSED.name().equals(status)) {
-            throw validation("initialStatus 仅支持 ACTIVE/PAUSED");
+            throw validation("scheduled_task.validation.initial_status_invalid", "initialStatus 仅支持 ACTIVE/PAUSED");
         }
         return status;
     }
@@ -312,7 +312,7 @@ public class ScheduledTaskService {
         try {
             return ScheduledTaskStatus.valueOf(status);
         } catch (IllegalArgumentException | NullPointerException exception) {
-            throw invalidState("任务状态不合法");
+            throw invalidState("scheduled_task.state.status_invalid", "任务状态不合法");
         }
     }
 
@@ -364,12 +364,12 @@ public class ScheduledTaskService {
         return vo;
     }
 
-    private BizException validation(String message) {
-        return new BizException(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED, message);
+    private BizException validation(String key, String message) {
+        return BizException.keyed(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED, key, new Object[0], message);
     }
 
-    private BizException invalidState(String message) {
-        return new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE, message);
+    private BizException invalidState(String key, String message) {
+        return BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE, key, new Object[0], message);
     }
 
     private BizException versionConflict() {
@@ -378,14 +378,14 @@ public class ScheduledTaskService {
 
     private void requireMutationContext(long workspaceId, long userId) {
         if (workspaceId <= 0 || userId <= 0) {
-            throw validation("workspaceId 和 userId 必须为正数");
+            throw validation("scheduled_task.validation.mutation_context_positive", "workspaceId 和 userId 必须为正数");
         }
     }
 
     private void requireMutationContext(long id, long workspaceId, long userId) {
         requireMutationContext(workspaceId, userId);
         if (id <= 0) {
-            throw validation("任务 ID 必须为正数");
+            throw validation("scheduled_task.validation.task_id_positive", "任务 ID 必须为正数");
         }
     }
 

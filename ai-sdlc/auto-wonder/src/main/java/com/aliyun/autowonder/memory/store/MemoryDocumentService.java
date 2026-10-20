@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import com.aliyun.autowonder.memory.store.dto.MemoryMutationRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -68,7 +70,7 @@ public class MemoryDocumentService {
         }
         MemoryStoreDO store = storeDao.findById(tenantId, storeId);
         if (store == null || !"ACTIVE".equals(store.getStatus()) && store.getStatus() != null) {
-            throw new IllegalArgumentException("active memory store not found");
+            throw new KeyedIllegalArgumentException("memory.validation.active_store_missing", null, "active memory store not found");
         }
 
         return switch (request.operation()) {
@@ -164,7 +166,7 @@ public class MemoryDocumentService {
     private MemoryDocumentDO requiredDocument(long tenantId, long storeId, String path) {
         MemoryDocumentDO document = documentDao.findByPath(tenantId, storeId, path, false);
         if (document == null) {
-            throw new IllegalArgumentException("memory document not found");
+            throw new KeyedIllegalArgumentException("memory.validation.document_missing", null, "memory document not found");
         }
         return document;
     }
@@ -174,7 +176,7 @@ public class MemoryDocumentService {
         MemoryDocumentDO index = documentDao.findByPath(tenantId, storeId, "MEMORY.md", false);
         if (index != null && index.getContentMd() != null
                 && index.getContentMd().contains("](" + path + ")")) {
-            throw new IllegalArgumentException("memory topic is still referenced by MEMORY.md");
+            throw new KeyedIllegalArgumentException("memory.validation.topic_referenced", null, "memory topic is still referenced by MEMORY.md");
         }
     }
 
@@ -231,16 +233,16 @@ public class MemoryDocumentService {
     private void requireRequest(MemoryMutationRequest request, Actor actor) {
         if (request == null || request.operation() == null || request.idempotencyKey() == null
                 || request.idempotencyKey().isBlank()) {
-            throw new IllegalArgumentException("operation and idempotency key are required");
+            throw new KeyedIllegalArgumentException("memory.validation.mutation_required", null, "operation and idempotency key are required");
         }
         if (actor == null || actor.type() == null || actor.ref() == null) {
-            throw new IllegalArgumentException("memory mutation actor is required");
+            throw new KeyedIllegalArgumentException("memory.validation.actor_required", null, "memory mutation actor is required");
         }
     }
 
     private void requireExpectedVersion(MemoryMutationRequest request) {
         if (request.expectedVersion() == null || request.expectedVersion() < 0) {
-            throw new IllegalArgumentException("expected document version is required");
+            throw new KeyedIllegalArgumentException("memory.validation.document_version_required", null, "expected document version is required");
         }
     }
 
@@ -262,20 +264,20 @@ public class MemoryDocumentService {
             var violations = MemoryIndexPolicy.validateIndex(content,
                     target -> !"MEMORY.md".equals(target) && livePaths.contains(target));
             if (!violations.isEmpty()) {
-                throw new IllegalArgumentException("invalid memory index: " + violations);
+                throw new KeyedIllegalArgumentException("memory.validation.index_invalid", new Object[]{violations.toString()}, "invalid memory index: " + violations);
             }
         } else {
             MemoryDocumentValidator.requireCanonicalTopic(path, content);
         }
         if (!"AGENT".equals(store.getScope()) && SHARED_SECRET.matcher(content).find()) {
-            throw new IllegalArgumentException("secret-like content is not allowed in shared memory");
+            throw new KeyedIllegalArgumentException("memory.validation.shared_secret", null, "secret-like content is not allowed in shared memory");
         }
         if (!content.startsWith("---\n")) {
             return content;
         }
         int closing = content.indexOf("\n---", 4);
         if (closing < 0) {
-            throw new IllegalArgumentException("memory frontmatter is not closed");
+            throw new KeyedIllegalArgumentException("memory.validation.frontmatter_not_closed", null, "memory frontmatter is not closed");
         }
         String frontmatter = content.substring(4, closing);
         String modified = "modified: " + Instant.now(clock);

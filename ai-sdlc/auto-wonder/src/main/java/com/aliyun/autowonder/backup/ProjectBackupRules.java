@@ -1,10 +1,11 @@
 package com.aliyun.autowonder.backup;
 
+
 import java.util.List;
 
 /** Versioned, explicit configuration allowlist. Never discover/export arbitrary tables or columns. */
 public final class ProjectBackupRules {
-    public static final int FORMAT_VERSION = 1;
+    public static final int FORMAT_VERSION = 2;
     public record Rule(String table, String columns, String predicate) {
         public String sql() {
             return "SELECT " + columns + " FROM `" + table + "` WHERE " + predicate + " ORDER BY id";
@@ -12,7 +13,8 @@ public final class ProjectBackupRules {
     }
     public static final List<Rule> RULES = List.of(
             new Rule("org", "`id`, `name`, `slug`, `description`, `background`, `owner_id`, `status`, `gmt_create`, `gmt_modified`, `creator_id`, `modifier_id`, `is_deleted`, `version`", "`id` = ? AND is_deleted = 0"),
-            new Rule("org_member", "`id`, `tenant_id`, `user_id`, `status`, `access_level`, `identity_tags`, `joined_at`, `gmt_create`, `gmt_modified`, `creator_id`, `modifier_id`, `is_deleted`", "`tenant_id` = ? AND is_deleted = 0"),
+            new Rule("workspace_role", "`id`, `tenant_id`, `code`, `name`, `access_level`, `read_only_domains`, `version`, `gmt_create`, `gmt_modified`, `creator_id`, `modifier_id`, `is_deleted`", "`tenant_id` = ? AND is_deleted = 0"),
+            new Rule("org_member", "`id`, `tenant_id`, `user_id`, `status`, `access_level`, `role_id`, `identity_tags`, `forbidden_domains`, `joined_at`, `gmt_create`, `gmt_modified`, `creator_id`, `modifier_id`, `is_deleted`", "`tenant_id` = ? AND is_deleted = 0"),
             new Rule("status_template", "`id`, `tenant_id`, `work_type`, `name`, `is_default`, `gmt_create`, `gmt_modified`, `creator_id`, `modifier_id`, `is_deleted`, `version`", "`tenant_id` = ? AND is_deleted = 0"),
             new Rule("status_node", "`id`, `tenant_id`, `template_id`, `code`, `name`, `category`, `sort`, `gmt_create`", "`tenant_id` = ?"),
             new Rule("status_transition", "`id`, `tenant_id`, `template_id`, `from_node_id`, `to_node_id`, `name`, `gmt_create`", "`tenant_id` = ?"),

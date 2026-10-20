@@ -24,6 +24,7 @@ export interface TimelineToolCall {
   callId: string;
   tool: string;
   status: string;
+  durationMs?: number;
   toolKind?: AcpToolKind;
   title?: string;
   input?: string;
@@ -147,6 +148,7 @@ export function buildTimeline(events: readonly TimelineInputEvent[]): TimelineNo
           callId,
           tool: payload?.tool ?? existing?.tool?.tool ?? 'unknown',
           status: payload?.status ?? 'completed',
+          durationMs: payload?.durationMs ?? existing?.tool?.durationMs,
           toolKind: data?.kind ?? existing?.tool?.toolKind,
           title: data?.title ?? existing?.tool?.title,
           input: existing?.tool?.input,

@@ -1,10 +1,16 @@
 import { http, HttpResponse } from 'msw';
 
 type StoredLaunchConfig = {
+  modelUpgradePolicy?: import('@/features/executor/api').ModelUpgradePolicy | null;
   model: string | null;
   reasoningEffort: string | null;
   contextWindow: string | null;
   memoryMode: string | null;
+  maxConcurrentDispatches?: number;
+  runtimeVersion?: string | null;
+  workspaceRoot?: string | null;
+  daemonName?: string | null;
+  debug?: boolean | null;
   version: number;
 };
 
@@ -51,6 +57,10 @@ export type SeededLaunchConfig = {
   reasoningEffort?: string | null;
   contextWindow?: string | null;
   memoryMode?: string | null;
+  runtimeVersion?: string | null;
+  workspaceRoot?: string | null;
+  daemonName?: string | null;
+  debug?: boolean | null;
   version?: number;
 };
 
@@ -58,6 +68,8 @@ export type SeededLaunchConfig = {
 export function setExecutorLaunchConfig(id: number, config: SeededLaunchConfig): void {
   const current = executorLaunchConfigStore.get(id) ?? emptyLaunchConfig();
   executorLaunchConfigStore.set(id, {
+    ...current,
+    ...config,
     model: config.model === undefined ? current.model : config.model,
     reasoningEffort: config.reasoningEffort === undefined ? current.reasoningEffort : config.reasoningEffort,
     contextWindow: config.contextWindow === undefined ? current.contextWindow : config.contextWindow,
@@ -71,7 +83,7 @@ function emptyLaunchConfig(): StoredLaunchConfig {
 }
 
 const MOCK_WS_URL = 'wss://community.example/ws/executor';
-const MOCK_RUNTIME_VERSION = '0.3.3';
+const MOCK_RUNTIME_VERSION = '0.3.22';
 const MOCK_POWERSHELL_UTF8_PREAMBLE = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ';
 const MOCK_PROVIDERS: Record<string, string> = {
   QODER_CN_CLI: 'qodercn',
@@ -126,7 +138,7 @@ function buildMockLaunchCommand(id: number, stored: StoredLaunchConfig, fixture:
   const provider = mockProviderFor(fixture.clientKind);
   const isQoder = isQoderProvider(provider);
   const argv = [
-    'npx', '-y', `autowonder@${MOCK_RUNTIME_VERSION}`, 'connect',
+    'npx', '-y', `autowonder@${stored.runtimeVersion ?? MOCK_RUNTIME_VERSION}`, 'connect',
     '--ws-url', MOCK_WS_URL,
     '--token', fixture.token,
     '--executor-id', String(id),
@@ -139,16 +151,12 @@ function buildMockLaunchCommand(id: number, stored: StoredLaunchConfig, fixture:
       '--context-window', stored.contextWindow as string,
       '--token-aware-enable');
   }
-  const logFileName = debug ? `aw-${provider}-${id}-260909-101112.log` : null;
-  let command: string;
-  if (debug) {
-    argv.push('--debug');
-    command = shell === 'powershell'
-      ? encodePowerShellCommand(`${argv.join(' ')} 2>&1 | Tee-Object -FilePath "$HOME/${logFileName}"`)
-      : `${argv.join(' ')} 2>&1 | tee ~/${logFileName}`;
-  } else {
-    command = os === 'windows' ? encodePowerShellCommand(argv.join(' ')) : argv.join(' ');
-  }
+  if (stored.workspaceRoot) argv.push('--workspace-root', `'${stored.workspaceRoot.replace(/'/g, "'\\''")}'`);
+  if (stored.daemonName) argv.push('--name', `'${stored.daemonName.replace(/'/g, "'\\''")}'`);
+  if (stored.maxConcurrentDispatches !== undefined) argv.push('--max-tasks', String(stored.maxConcurrentDispatches));
+  if (debug || stored.debug) argv.push('--debug');
+  const powershellOutput = debug ? shell === 'powershell' : os === 'windows';
+  const command = powershellOutput ? encodePowerShellCommand(argv.join(' ')) : argv.join(' ');
   return {
     executorId: id,
     clientKind: fixture.clientKind,
@@ -158,11 +166,12 @@ function buildMockLaunchCommand(id: number, stored: StoredLaunchConfig, fixture:
     reasoningEffort: isQoder ? stored.reasoningEffort : null,
     contextWindow: isQoder ? stored.contextWindow : null,
     wsUrl: MOCK_WS_URL,
-    runtimeVersion: MOCK_RUNTIME_VERSION,
+    runtimeVersion: stored.runtimeVersion ?? MOCK_RUNTIME_VERSION,
+    workspaceRoot: stored.workspaceRoot ?? null,
+    daemonName: stored.daemonName ?? null,
     os,
     debug,
     shell: debug ? shell : null,
-    logFileName,
     command,
   };
 }
@@ -295,6 +304,19 @@ export const handlers = [
       traceId: null,
     });
   }),
+  http.get('/api/executors/:id/model-upgrade-policy', ({ params }) => {
+    return HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
+      data: { ...(executorLaunchConfigStore.get(Number(params.id)) ?? emptyLaunchConfig()) } });
+  }),
+  http.put('/api/executors/:id/model-upgrade-policy', async ({ params, request }) => {
+    const id = Number(params.id);
+    const body = await request.json() as Pick<StoredLaunchConfig, 'version' | 'modelUpgradePolicy'>;
+    const current = executorLaunchConfigStore.get(id) ?? emptyLaunchConfig();
+    if (body.version !== current.version) return HttpResponse.json({ success: false, code: '17005', message: 'Version conflict', data: null });
+    const saved = { ...current, modelUpgradePolicy: body.modelUpgradePolicy, version: current.version + 1 };
+    executorLaunchConfigStore.set(id, saved);
+    return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: saved });
+  }),
   http.get('/api/executors/:id/launch-config', ({ params }) => {
     const id = Number(params.id);
     const stored = executorLaunchConfigStore.get(id) ?? emptyLaunchConfig();
@@ -351,6 +373,7 @@ export const handlers = [
       });
     }
     const next: StoredLaunchConfig = {
+      ...current,
       model: body.model ?? null,
       reasoningEffort: body.reasoningEffort ?? null,
       contextWindow: body.contextWindow ?? null,
@@ -371,6 +394,17 @@ export const handlers = [
   }),
   // 命令由服务端拼装：只接受输出格式选项，任何启动值覆盖都直接报错，不做静默替换
   http.post('/api/executors/:id/launch-command', resolveLaunchCommand),
+  http.post('/api/executors/:id/launch-command/preview', async ({ params, request }) => {
+    const id = Number(params.id);
+    const body = await request.json() as { os?: string; config: Partial<StoredLaunchConfig> };
+    const stored = executorLaunchConfigStore.get(id) ?? emptyLaunchConfig();
+    if (body.config.version !== stored.version) {
+      return HttpResponse.json({ success: false, code: '17005', message: 'conflict' });
+    }
+    return HttpResponse.json({ success: true, data: buildMockLaunchCommand(id, { ...stored, ...body.config },
+      executorFixtures.get(id) ?? { clientKind: 'QODER_CLI', token: `exec_token_${id}` },
+      body.os ?? 'posix', false, null) });
+  }),
   http.get('/api/executor-model-catalogs/qoder', () => HttpResponse.json({
     success: true,
     code: '0',
@@ -472,6 +506,28 @@ export const handlers = [
       traceId: 'trace-platform-admin-candidates',
     });
   }),
+  // 平台配置页的「用户管理」Tab 会拉取用户分页列表；全局兜底为空列表，
+  // 避免个别用例未 mock 时请求落入 unhandled → 拦截器 401 处理清空 auth store。
+  http.get('/api/platform/users', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: { totalAll: 0, total: 0, pageNum: 1, pageSize: 20, list: [] },
+      traceId: 'trace-platform-users',
+    });
+  }),
+  // 空间选择类接口（用户管理的空间权限选择、工作空间发现）全局兜底为空列表，
+  // 避免用例未 mock 时落入 unhandled → 拦截器 401 处理清空 auth store。
+  http.get('/api/workspaces/all', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: { list: [], total: 0, pageNum: 1, pageSize: 20 },
+      traceId: 'trace-workspaces-all',
+    });
+  }),
   http.post('/api/auth/login', () => {
     return HttpResponse.json({
       success: true,
@@ -489,6 +545,16 @@ export const handlers = [
         },
       },
       traceId: 'trace-1',
+    });
+  }),
+  // 登录页按已启用连接渲染企业身份入口；默认无启用连接，未 mock 的用例不会落入 unhandled。
+  http.get('/api/auth/sso/providers', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: [],
+      traceId: 'trace-sso-providers',
     });
   }),
   http.get('/api/workspaces/mine', () => {
@@ -592,6 +658,9 @@ export const handlers = [
       traceId: 'trace-debug-logs-list',
     });
   }),
+  http.get('/api/dispatches/:dispatchId/guidance', () => HttpResponse.json({
+    success: true, code: '0', message: '', data: [], traceId: 'trace-dispatch-guidance',
+  })),
   http.get('/api/dispatches/:dispatchId/live-activity', ({ params }) => {
     const dispatchId = Number(params.dispatchId);
     return HttpResponse.json({
@@ -634,6 +703,16 @@ export const handlers = [
       message: '',
       data: [...userSettingStore].map(([key, valueJson]) => ({ key, valueJson })),
       traceId: 'trace-user-settings-list',
+    });
+  }),
+  // 个人设置「企业身份」面板默认未绑定任何外部身份。
+  http.get('/api/users/me/federated-identities', () => {
+    return HttpResponse.json({
+      success: true,
+      code: '0',
+      message: '',
+      data: [],
+      traceId: 'trace-federated-identities',
     });
   }),
   http.get('/api/users/me/settings/:key', ({ params }) => {

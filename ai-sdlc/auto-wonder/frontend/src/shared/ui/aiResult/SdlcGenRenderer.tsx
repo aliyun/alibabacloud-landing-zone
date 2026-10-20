@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Input, Select, Button, Space, Typography, Tag, Switch, InputNumber } from 'antd';
 import { ArrowUpOutlined, ArrowDownOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import type { AiResultRendererProps } from './types';
@@ -6,15 +7,6 @@ import type { SdlcGenResult, SdlcGenStep, SdlcStepKind } from '@/shared/types/ai
 const { Text } = Typography;
 const { TextArea } = Input;
 
-const KIND_OPTIONS = [
-  { value: 'analysis', label: '分析' },
-  { value: 'implementation', label: '实现' },
-  { value: 'test', label: '测试' },
-  { value: 'review', label: '评审' },
-  { value: 'artifact', label: '产物' },
-  { value: 'handoff', label: '交接' },
-  { value: 'cleanup', label: '清理' },
-];
 
 function reindex(steps: SdlcGenStep[]): SdlcGenStep[] {
   return steps.map((s, i) => ({ ...s, order: i + 1 }));
@@ -57,6 +49,16 @@ function newStep(order: number): SdlcGenStep {
 }
 
 export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererProps<SdlcGenResult>) {
+  const { t } = useTranslation('shared');
+  const KIND_OPTIONS = [
+    { value: 'analysis', label: t('sdlc.analysis') },
+    { value: 'implementation', label: t('sdlc.implementation') },
+    { value: 'test', label: t('sdlc.test') },
+    { value: 'review', label: t('sdlc.review') },
+    { value: 'artifact', label: t('sdlc.artifact') },
+    { value: 'handoff', label: t('sdlc.handoff') },
+    { value: 'cleanup', label: t('sdlc.cleanup') },
+  ];
   const steps = value.steps ?? [];
 
   const setSteps = (next: SdlcGenStep[]) => onChange({ ...value, steps: reindex(next) });
@@ -79,7 +81,7 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
   return (
     <div>
       <div style={{ marginBottom: 12 }}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>流程名</Text>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('sdlc.name')}</Text>
         <Input
           value={value.name}
           disabled={disabled}
@@ -88,7 +90,7 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>流程说明</Text>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('sdlc.description')}</Text>
         <TextArea
           value={value.description ?? ''}
           disabled={disabled}
@@ -110,22 +112,22 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
               <Space wrap>
-                <Tag color="blue">步骤 {s.order}</Tag>
-                {s.kind && <Tag>{s.kind}</Tag>}
-                {s.required === false ? <Tag>可选</Tag> : <Tag color="green">必需</Tag>}
+                <Tag color="blue">{t('sdlc.step', { index: s.order })}</Tag>
+                {s.kind && <Tag>{KIND_OPTIONS.find(option => option.value === s.kind)?.label ?? s.kind}</Tag>}
+                {s.required === false ? <Tag>{t('sdlc.optional')}</Tag> : <Tag color="green">{t('sdlc.required')}</Tag>}
               </Space>
               {!disabled && (
                 <Space size={4}>
-                  <Button size="small" type="text" icon={<ArrowUpOutlined />} aria-label={`上移第${i + 1}步`} disabled={i === 0} onClick={() => move(i, -1)} />
-                  <Button size="small" type="text" icon={<ArrowDownOutlined />} aria-label={`下移第${i + 1}步`} disabled={i === steps.length - 1} onClick={() => move(i, 1)} />
-                  <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={`删除第${i + 1}步`} onClick={() => remove(i)} />
+                  <Button size="small" type="text" icon={<ArrowUpOutlined />} aria-label={t('sdlc.moveUp', { index: i + 1 })} disabled={i === 0} onClick={() => move(i, -1)} />
+                  <Button size="small" type="text" icon={<ArrowDownOutlined />} aria-label={t('sdlc.moveDown', { index: i + 1 })} disabled={i === steps.length - 1} onClick={() => move(i, 1)} />
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label={t('sdlc.delete', { index: i + 1 })} onClick={() => remove(i)} />
                 </Space>
               )}
             </div>
 
             <Space direction="vertical" size={8} style={{ width: '100%' }}>
               <Input
-                placeholder="步骤名称"
+                placeholder={t('sdlc.stepName')}
                 value={s.name}
                 disabled={disabled}
                 onChange={(e) => update(i, { name: e.target.value })}
@@ -137,44 +139,44 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
                   disabled={disabled}
                   options={KIND_OPTIONS}
                   onChange={(v) => update(i, { kind: v as SdlcStepKind })}
-                  aria-label={`步骤类型 ${i + 1}`}
+                  aria-label={t('sdlc.kindLabel', { index: i + 1 })}
                 />
                 <Space size={6}>
-                  <Text type="secondary">必需</Text>
+                  <Text type="secondary">{t('sdlc.required')}</Text>
                   <Switch
                     checked={s.required !== false}
                     disabled={disabled}
                     onChange={(checked) => update(i, { required: checked })}
-                    aria-label={`是否必需 ${i + 1}`}
+                    aria-label={t('sdlc.requiredLabel', { index: i + 1 })}
                   />
                 </Space>
                 <Space size={6}>
-                  <Text type="secondary">超时秒数</Text>
+                  <Text type="secondary">{t('sdlc.timeout')}</Text>
                   <InputNumber
                     min={1}
                     precision={0}
                     value={s.timeoutSeconds}
                     disabled={disabled}
                     onChange={(v) => update(i, { timeoutSeconds: v ?? undefined })}
-                    aria-label={`超时秒数 ${i + 1}`}
+                    aria-label={t('sdlc.timeoutLabel', { index: i + 1 })}
                   />
                 </Space>
                 <Space size={6}>
-                  <Text type="secondary">重试预算</Text>
+                  <Text type="secondary">{t('sdlc.retries')}</Text>
                   <InputNumber
                     min={0}
                     precision={0}
                     value={s.retryBudget}
                     disabled={disabled}
                     onChange={(v) => update(i, { retryBudget: v ?? undefined })}
-                    aria-label={`重试预算 ${i + 1}`}
+                    aria-label={t('sdlc.retriesLabel', { index: i + 1 })}
                   />
                 </Space>
               </Space>
               <div>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>执行说明</Text>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('sdlc.instruction')}</Text>
                 <TextArea
-                  aria-label={`执行说明 ${i + 1}`}
+                  aria-label={t('sdlc.instructionLabel', { index: i + 1 })}
                   value={s.instructionMd}
                   disabled={disabled}
                   autoSize={{ minRows: 4, maxRows: 10 }}
@@ -182,9 +184,9 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
                 />
               </div>
               <div>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>检查项（每行一条）</Text>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('sdlc.checklist')}</Text>
                 <TextArea
-                  aria-label={`检查项 ${i + 1}`}
+                  aria-label={t('sdlc.checklistLabel', { index: i + 1 })}
                   value={checklistText(s)}
                   disabled={disabled}
                   autoSize={{ minRows: 2, maxRows: 6 }}
@@ -192,9 +194,9 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
                 />
               </div>
               <div>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>准出条件</Text>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('sdlc.criteria')}</Text>
                 <TextArea
-                  aria-label={`准出条件 ${i + 1}`}
+                  aria-label={t('sdlc.criteriaLabel', { index: i + 1 })}
                   value={passCriteria(s)}
                   disabled={disabled}
                   autoSize={{ minRows: 2, maxRows: 5 }}
@@ -207,9 +209,7 @@ export function SdlcGenRenderer({ value, onChange, disabled }: AiResultRendererP
       </Space>
 
       {!disabled && (
-        <Button block type="dashed" icon={<PlusOutlined />} style={{ marginTop: 12 }} onClick={add}>
-          新增步骤
-        </Button>
+        <Button block type="dashed" icon={<PlusOutlined />} style={{ marginTop: 12 }} onClick={add}>{t('sdlc.add')}</Button>
       )}
     </div>
   );

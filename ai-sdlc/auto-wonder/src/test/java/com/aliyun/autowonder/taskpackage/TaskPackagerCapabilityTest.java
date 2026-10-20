@@ -94,7 +94,7 @@ class TaskPackagerCapabilityTest {
                 "capability/deleted-skill.zip", "missing", null)));
 
         TaskPackageResult result = new TaskPackager(
-                storage, "task-packages", "https://auto-wonder.alibaba.net").build(ctx);
+                storage, "task-packages", "https://community.example").build(ctx);
         Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
         JSONObject doc = JSON.parseObject(new String(entries.get("skills.json"), StandardCharsets.UTF_8));
 
@@ -120,7 +120,25 @@ class TaskPackagerCapabilityTest {
                 "capability/unreadable-skill.zip", "unreadable", null)));
 
         assertThrows(com.aliyun.autowonder.common.error.BizException.class,
-                () -> new TaskPackager(storage, "task-packages", "https://auto-wonder.alibaba.net").build(ctx));
+                () -> new TaskPackager(storage, "task-packages", "https://community.example").build(ctx));
+    }
+
+    @Test
+    void names_the_capability_when_skill_package_lacks_root_skill_md() throws Exception {
+        InMemoryObjectStorage storage = new InMemoryObjectStorage();
+        storage.put("capability", "bad-shape.zip", zip(Map.of("bad-shape/docs.md", "doc")));
+        PackageContext ctx = baseContext();
+        ctx.setSkills(List.of(capability(52L, "SKILL", "bad-shape-skill", 1,
+                "capability/bad-shape.zip", "bad", null)));
+
+        com.aliyun.autowonder.common.error.BizException ex = assertThrows(
+                com.aliyun.autowonder.common.error.BizException.class,
+                () -> new TaskPackager(storage, "task-packages", "https://community.example").build(ctx));
+
+        assertNotNull(ex.getCause());
+        String detail = ex.getCause().getMessage();
+        assertTrue(detail.contains("bad-shape-skill"), detail);
+        assertTrue(detail.contains("SKILL.md"), detail);
     }
 
     @Test
@@ -134,7 +152,7 @@ class TaskPackagerCapabilityTest {
                         "authType", "none"))));
 
         TaskPackageResult result = new TaskPackager(
-                storage, "task-packages", "https://auto-wonder.alibaba.net").build(ctx);
+                storage, "task-packages", "https://community.example").build(ctx);
         Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
         JSONObject doc = JSON.parseObject(new String(entries.get("skills.json"), StandardCharsets.UTF_8));
         JSONArray mcpServers = doc.getJSONArray("mcpServers");
@@ -143,7 +161,7 @@ class TaskPackagerCapabilityTest {
         JSONObject autowonder = mcpServers.getJSONObject(0);
         assertEquals("autowonder", autowonder.getString("name"));
         assertEquals("autowonder-dispatch", autowonder.getString("authType"));
-        assertEquals("https://auto-wonder.alibaba.net/api/mcp", autowonder.getString("url"));
+        assertEquals("https://community.example/api/mcp", autowonder.getString("url"));
     }
 
     @Test
@@ -151,7 +169,7 @@ class TaskPackagerCapabilityTest {
         InMemoryObjectStorage storage = new InMemoryObjectStorage();
         PackageContext ctx = baseContext();
         Map<String, Object> manual = capability(44L, "SKILL", "review-rules", 1, null, null,
-                Map.of("instructions", "Always run the focused tests."));
+                Map.of("instructions", "Always run the focused tests.", "tools", List.of("autowonder.get_workitem")));
         manual.put("description", "Team review rules");
         ctx.setSkills(List.of(manual));
 
@@ -160,6 +178,8 @@ class TaskPackagerCapabilityTest {
         Map<String, byte[]> entries = unzip(storage.get(result.getOssRef()));
 
         String markdown = new String(entries.get("capabilities/skills/review-rules/SKILL.md"), StandardCharsets.UTF_8);
+        assertTrue(markdown.contains("autowonder.get_workitem"));
+        assertTrue(markdown.contains("authenticated autowonder MCP"));
         assertTrue(markdown.contains("Team review rules"));
         assertTrue(markdown.contains("Always run the focused tests."));
     }
@@ -194,7 +214,7 @@ class TaskPackagerCapabilityTest {
                         "headers", Map.of("Authorization", Map.of("kind", "secretRef", "ref", "kc:v1:test"))));
 
         TaskPackageResult result = new TaskPackager(
-                storage, "task-packages", "https://auto-wonder.alibaba.net")
+                storage, "task-packages", "https://community.example")
                 .buildConversationCapabilities(100L, 7L, 42L, 5L, 55L, List.of(skill, mcp),
                         List.of(Map.of("repoId", 10L, "name", "auto-wonder")),
                         Map.of("boundRepoIds", List.of(10L), "relations", List.of(
@@ -224,7 +244,7 @@ class TaskPackagerCapabilityTest {
     void conversation_capability_hash_ignores_turn_metadata_but_changes_with_content() {
         InMemoryObjectStorage storage = new InMemoryObjectStorage();
         TaskPackager packager = new TaskPackager(
-                storage, "task-packages", "https://auto-wonder.alibaba.net");
+                storage, "task-packages", "https://community.example");
         Map<String, Object> skill = capability(46L, "SKILL", "conversation-review", 2,
                 null, null, Map.of("instructions", "Review the conversation request."));
 

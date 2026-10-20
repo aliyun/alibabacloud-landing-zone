@@ -219,7 +219,8 @@ public class ExecutorSelector {
 
     private boolean supportsFeature(long executorId, String requiredFeature) {
         return requiredFeature == null
-                || presenceManager.supportsProtocolFeature(executorId, requiredFeature);
+                || java.util.Arrays.stream(requiredFeature.split(","))
+                    .allMatch(feature -> presenceManager.supportsProtocolFeature(executorId, feature));
     }
 
     private void requireFeature(long executorId, String requiredFeature) {

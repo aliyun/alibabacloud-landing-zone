@@ -37,12 +37,17 @@
         ORDER BY o.gmt_create DESC
     </select>
     <select id="listMembershipsByUser" resultType="com.aliyun.autowonder.workspace.WorkspaceMembershipDO">
-        SELECT o.id, o.name, o.description, o.owner_id, m.access_level
+        SELECT o.id, o.name, o.description, o.owner_id, r.access_level, m.joined_at
         FROM `org` o
         INNER JOIN org_member m ON o.id = m.tenant_id
+        INNER JOIN workspace_role r ON r.id = m.role_id AND r.tenant_id = m.tenant_id AND r.is_deleted = 0
         WHERE m.user_id = #{userId} AND m.status = 0
           AND m.is_deleted = 0 AND o.is_deleted = 0
         ORDER BY o.gmt_create DESC
+    </select>
+    <select id="countOwnedByUser" resultType="long">
+        SELECT COUNT(*) FROM `org`
+        WHERE owner_id = #{userId} AND is_deleted = 0
     </select>
     <update id="updateOwner">
         UPDATE `org` SET owner_id = #{newOwnerId},
@@ -118,6 +123,39 @@
         <include refid="allWorkspacesFilter"/>
     </select>
     <!--
+      跨空间复制的目标候选（与 allWorkspacesFilter 有意区分）：
+        - 只按名称匹配：描述命中的空间不进入候选；
+        - 排除源空间、已删除或停用空间；
+        - 普通用户要求目标角色 READ_WRITE/ADMIN（鉴权读 workspace_role，不看迁移保留的 org_member.access_level）；
+        - 平台管理员不加成员过滤，已有只读成员身份也不阻止其选择。
+      列表与总数共用本 fragment，条件漂移会让翻页出现空页。
+    -->
+    <sql id="copyTargetFilter">
+        WHERE o.is_deleted = 0 AND o.status = 0 AND o.id != #{sourceWorkspaceId}
+        <if test="keyword != null and keyword != ''">
+            AND o.name LIKE CONCAT('%', #{keyword}, '%')
+        </if>
+        <if test="!systemAdmin">
+            AND EXISTS (SELECT 1 FROM org_member m
+                        JOIN workspace_role r ON r.id = m.role_id AND r.tenant_id = m.tenant_id AND r.is_deleted = 0
+                        WHERE m.tenant_id = o.id
+                          AND m.user_id = #{userId}
+                          AND m.status = 0
+                          AND m.is_deleted = 0
+                          AND r.access_level IN ('READ_WRITE', 'ADMIN'))
+        </if>
+    </sql>
+    <select id="listCopyTargets" resultType="com.aliyun.autowonder.workspace.WorkspaceDO">
+        SELECT o.* FROM `org` o
+        <include refid="copyTargetFilter"/>
+        ORDER BY o.gmt_create DESC, o.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+    <select id="countCopyTargets" resultType="long">
+        SELECT COUNT(*) FROM `org` o
+        <include refid="copyTargetFilter"/>
+    </select>
+    <!--
       Recycle bin visibility (F4), decided entirely in SQL:
         - original Owner  -> org.owner_id
         - original ADMIN  -> still-active ADMIN row in org_member (members are preserved on delete)
@@ -130,9 +168,10 @@
         <if test="!systemAdmin">
             AND ( o.owner_id = #{userId}
                   OR EXISTS (SELECT 1 FROM org_member m
+                             JOIN workspace_role r ON r.id = m.role_id AND r.tenant_id = m.tenant_id AND r.is_deleted = 0
                              WHERE m.tenant_id = o.id
                                AND m.user_id = #{userId}
-                               AND m.access_level = 'ADMIN'
+                               AND r.access_level = 'ADMIN'
                                AND m.status = 0
                                AND m.is_deleted = 0) )
         </if>

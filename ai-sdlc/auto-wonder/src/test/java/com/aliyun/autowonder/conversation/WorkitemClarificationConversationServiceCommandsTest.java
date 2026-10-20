@@ -34,7 +34,7 @@ class WorkitemClarificationConversationServiceCommandsTest {
     private final WorkitemClarificationConversationService service =
             new WorkitemClarificationConversationService(convDao, turnDao, conversationService,
                     agentDao, runtimePresence, elicitationService, commandsService,
-                    executorRouter);
+                    executorRouter, mock(ClarificationAttachmentService.class));
 
     private AgentConversationDO clarificationConversation(Long workitemId) {
         AgentConversationDO conv = new AgentConversationDO();

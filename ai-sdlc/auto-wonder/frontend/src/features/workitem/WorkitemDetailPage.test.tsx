@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -43,7 +43,7 @@ const mockParticipants = [
 const mockDeliveryProgress = {
   steps: [
     { stepId: '1', name: '需求分析', status: 'done', executorName: null, subSteps: null },
-    { stepId: '2', name: '编码实现', status: 'active', executorName: 'Coder-01', subSteps: [{ name: '编写代码', status: 'done' }, { name: '单元测试', status: 'active' }] },
+    { stepId: '2', name: '编码实现', status: 'active', agentName: 'Coder-01', executorName: null, subSteps: [{ name: '编写代码', status: 'done' }, { name: '单元测试', status: 'active' }] },
     { stepId: '3', name: '代码评审', status: 'pending', executorName: null, subSteps: null },
   ],
 };
@@ -82,6 +82,7 @@ function setupHandlers() {
         data: mockWorkitem,
       });
     }),
+    http.get('/api/workitems/1/dispatch-requests', () => HttpResponse.json({ success: true, code: '0', data: [] })),
     http.get('/api/workitems/1/unified-timeline', () => {
       return HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
@@ -221,7 +222,7 @@ describe('WorkitemDetailPage', () => {
     expect(screen.queryByRole('button', { name: '复制内容' })).not.toBeInTheDocument();
   });
 
-  it('shows the human intervention alert when assigned to a human', async () => {
+  it('shows human intervention and pending approval together', async () => {
     server.use(
       http.get('/api/workitems/1', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
@@ -231,12 +232,19 @@ describe('WorkitemDetailPage', () => {
           statusCategory: 'PENDING_DECISION',
         },
       })),
+      http.get('/api/workitems/1/dispatch-requests', () => HttpResponse.json({
+        success: true, code: '0', data: [{
+          id: '1', dispatchId: '10', kind: 'APPROVAL', status: 'PENDING',
+          body: { message: '请检查本步骤产物' },
+        }],
+      })),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1'),
     );
     renderPage();
 
     expect(await screen.findByText('需人工介入：蔡何')).toBeInTheDocument();
     expect(screen.getByText('当前工单已指派给真人，请人工处理、补充决策，或重新指派给数字员工继续交付。')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '批准继续' })).toBeInTheDocument();
   });
 
   it('does not show the human intervention alert for agent-assigned workitems', async () => {
@@ -342,7 +350,7 @@ describe('WorkitemDetailPage', () => {
     expect(result[0].name).toBe('requirements/plan.md');
   });
 
-  it('rejects unsupported requirement documents before upload', async () => {
+  it('uploads Excel requirement documents', async () => {
     let uploadRequested = false;
     server.use(
       http.post('/api/workitems/1/requirement-documents', () => {
@@ -356,10 +364,7 @@ describe('WorkitemDetailPage', () => {
     const input = await screen.findByLabelText('选择需求/设计上下文文件');
     fireEvent.change(input, { target: { files: [new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' })] } });
 
-    expect(await screen.findByText(
-      '仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp、.docx、.doc、.java、.py、.zip 文件',
-    )).toBeInTheDocument();
-    expect(uploadRequested).toBe(false);
+    await waitFor(() => expect(uploadRequested).toBe(true));
   });
 
   it('accepts docx, java, python and zip requirement documents and uploads them', async () => {
@@ -545,8 +550,9 @@ describe('WorkitemDetailPage', () => {
     );
     renderPage();
 
-    expect(await screen.findByText('创建者: 导入人')).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector('.aw-workitem-meta')).toHaveTextContent('创建者: 导入人'));
     expect(screen.getByRole('button', { name: /重新指派/ })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: '任务信息' }));
     expect(await screen.findByText('外部协作')).toBeInTheDocument();
     expect(screen.getByText('需求提出人（001）')).toBeInTheDocument();
     expect(screen.getByText('业务负责人（002）')).toBeInTheDocument();
@@ -565,6 +571,7 @@ describe('WorkitemDetailPage', () => {
     server.use(...setupHandlers());
     renderPage();
 
+    await userEvent.click(await screen.findByRole('button', { name: '任务信息' }));
     await waitFor(() => expect(screen.getAllByText('成员').length).toBeGreaterThan(0));
     await userEvent.click(screen.getByRole('tab', { name: '真人参与者' }));
     expect(await screen.findByText('张三')).toBeInTheDocument();
@@ -684,7 +691,7 @@ describe('WorkitemDetailPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('AW全栈开发 回复了这个问题')).toBeInTheDocument();
+    expect((await screen.findByTestId('comment-interaction-reply')).querySelector('header strong')).toHaveTextContent('AW全栈开发 回复了这个问题');
     expect(screen.getByText('因为当时正式流程已经交接给了评审。')).toBeInTheDocument();
     expect(screen.getByTestId('comment-interaction-reply')).toBeInTheDocument();
     expect(screen.queryByText('AW全栈开发 正在思考…')).not.toBeInTheDocument();
@@ -1596,7 +1603,31 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     return screen.getByTestId('location-search').textContent ?? '';
   }
 
+  /** URL 恢复用的历史澄清会话：正文命中即代表「恢复已落定」。 */
+  const restoredConversationFixture = {
+    id: 101, agentId: 2, agentName: 'Agent-B', channelConversationId: 'ch-101',
+    status: 'ACTIVE', executorOnline: true, streamingSupported: true, cancelSupported: true,
+    cliSessionRef: null, processingStatus: null, processingTurnId: null,
+    lastTurnAt: '2026-01-01T00:00:00', gmtCreate: '2026-01-01T00:00:00',
+    turns: [{
+      id: 1010, direction: 'IN', content: '刷新前的澄清结论',
+      status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00',
+    }],
+  };
+
+  /** 澄清输入区是 tiptap 编辑器：草稿要走编辑器 API 写入（镜像 textarea 只读，只承载断言语义）。 */
+  async function typeClarifyDraft(value: string) {
+    const root = await screen.findByTestId('clarification-composer-input');
+    const editor = (root as HTMLElement & { __composerEditor?: import('@tiptap/core').Editor }).__composerEditor;
+    if (!editor) throw new Error('composer editor not mounted');
+    await act(async () => {
+      editor.commands.setContent(value, true);
+    });
+  }
+
   beforeEach(() => {
+    // 选人会把预填记忆写进 localStorage，而本组用例共用工单 1：不清会串味
+    window.localStorage.clear();
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     if (!Element.prototype.setPointerCapture) {
@@ -1682,28 +1713,52 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     expect(screen.queryByTestId('clarify-resize-box')).toBeNull();
   });
 
-  it('records the picked agent and its conversation in the URL', async () => {
+  it('records the picked squad member in the URL, not the delivery history agents', async () => {
+    // 工单 56281 回归点：评论 @ 出来的执行历史决定交付进度里的 agents，
+    // 那份名单既不能限制澄清候选（Agent-A 不在其中也必须选得到），
+    // 也不该出现在选人屏上（Agent-History 并不是任何小队的可选成员）。
     server.use(
       http.get('/api/workitems/1/delivery-progress', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: {
           ...mockDeliveryProgress,
-          // steps/durationMs 是 AgentDeliveryProgress 的必填项：DeliveryProgress 会对 agent.steps 做 map，缺失会把整棵树渲染崩掉
           agents: [
-            { agentId: 1, agentName: 'Agent-A', status: 'active', durationMs: null, steps: [] },
-            { agentId: 2, agentName: 'Agent-B', status: 'active', durationMs: null, steps: [] },
+            { agentId: 8, agentName: 'Agent-History', status: 'active', durationMs: null, steps: [] },
           ],
+          // credits 徽标把「进度已落地」变成可观察信号：断言候选名单前先等它出现，
+          // 否则可能在进度到达之前就查过选人屏，回归断言会空转
+          totalUsage: { credits: 12.5 },
         },
+      })),
+      http.get('/api/squads', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          list: [{ id: 9, name: '交付小队', description: '', memberCount: 1, gmtCreate: '' }],
+          total: 1, pageNum: 1, pageSize: 100,
+        },
+      })),
+      http.get('/api/squads/:squadId/members', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: [{ agentId: 1, agentName: 'Agent-A', roleCode: 'AW_FS_DEV' }],
       })),
       ...mockClarifyEndpoints(),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1/delivery-progress'),
     );
     renderPageAt('/workitems/1');
     await screen.findByRole('heading', { name: '跨境支付重构' });
+    await screen.findByTestId('workitem-credits-badge');
 
     await userEvent.click(screen.getByRole('button', { name: /AI 需求澄清/ }));
     const selectionColumn = await screen.findByTestId('clarification-selection-column');
-    await userEvent.click(within(selectionColumn).getByText('Agent-A'));
+    expect(within(selectionColumn).queryByText('Agent-History')).toBeNull();
+
+    const comboboxes = within(selectionColumn).getAllByRole('combobox');
+    await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText('交付小队'));
+    await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText('Agent-A (AW_FS_DEV)'));
 
     // 选定数字人会自动全屏，两件事都得进 URL，否则刷新回来退化成窄面板 + 重新选人
     await waitFor(() => expect(currentSearch()).toContain('agent=1'));
@@ -1712,35 +1767,20 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     await waitFor(() => expect(currentSearch()).toContain('conversation=5'));
   });
 
-  it('restores the delivery agent conversation after a refresh without bouncing to the picker', async () => {
-    // CR53035-002：交付进度是轮询来的，挂载当帧 agents 必然为空。
-    // 这一帧把 agentId: null 写回 URL 就会抹掉自己的恢复源，刷新回来只能重新选人（CR53035-001）。
-    const restoredConversation = {
-      id: 101, agentId: 2, agentName: 'Agent-B', channelConversationId: 'ch-101',
-      status: 'ACTIVE', executorOnline: true, streamingSupported: true, cancelSupported: true,
-      cliSessionRef: null, processingStatus: null, processingTurnId: null,
-      lastTurnAt: '2026-01-01T00:00:00', gmtCreate: '2026-01-01T00:00:00',
-      turns: [{
-        id: 1010, direction: 'IN', content: '刷新前的澄清结论',
-        status: 'SUCCESS', error: null, gmtCreate: '2026-01-01T00:00:00',
-      }],
-    };
+  it('restores the clarify conversation after a refresh without bouncing to the picker', async () => {
+    // CR53035-002 / 工单 56281：交付进度是轮询来的，挂载当帧 agents 必然为空。
+    // 恢复只认 URL 上下文与会话自己的归属：既不依赖交付进度，也不能把 agentId: null 写回
+    // URL 抹掉自己的恢复源（否则刷新回来只能重新选人）。
     server.use(
       http.get('/api/workitems/1/delivery-progress', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
-        data: {
-          ...mockDeliveryProgress,
-          // steps/durationMs 是 AgentDeliveryProgress 的必填项，缺失会把整棵树渲染崩掉
-          agents: [
-            { agentId: 2, agentName: 'Agent-B', status: 'active', durationMs: null, steps: [] },
-          ],
-        },
+        data: { ...mockDeliveryProgress, agents: [] },
       })),
       http.get('/api/workitems/1/clarification-conversations', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: [restoredConversation],
+        success: true, code: '0', message: '', traceId: null, data: [restoredConversationFixture],
       })),
       http.get('/api/workitems/1/clarification-conversations/101', () => HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null, data: restoredConversation,
+        success: true, code: '0', message: '', traceId: null, data: restoredConversationFixture,
       })),
       ...mockClarifyEndpoints(),
       ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1/delivery-progress'),
@@ -1751,13 +1791,65 @@ describe('WorkitemDetailPage clarify URL persistence (工单 53035)', () => {
     // 会话正文只在恢复落定后才可能渲染（选人屏是早返回），所以它就是落定的信号
     expect(await screen.findByText('刷新前的澄清结论')).toBeInTheDocument();
     expect(screen.queryByTestId('clarification-selection-column')).toBeNull();
-    expect(screen.queryByText('选择数字员工')).toBeNull();
+    expect(screen.queryByText('选择小队和数字员工')).toBeNull();
 
     // 恢复源没被自己的写回抹掉：URL 仍是同一个工单的同一条澄清会话
     expect(currentSearch()).toContain('agent=2');
     expect(currentSearch()).toContain('conversation=101');
     expect(currentSearch()).toContain('fullscreen=1');
     expect(screen.getByTestId('location-pathname').textContent).toBe('/workitems/1');
+  });
+
+  it('keeps the restored conversation and a typed draft when progress lands afterwards', async () => {
+    // 交付进度是独立轮询的，它带着一份与澄清会话无关的 agents 迟早会落地：
+    // 落地的那一帧不能改写已恢复的会话/URL，也不能清掉用户写了一半的草稿。
+    let releaseProgress: (() => void) | null = null;
+    const progressGate = new Promise<void>((resolve) => { releaseProgress = resolve; });
+    server.use(
+      http.get('/api/workitems/1/delivery-progress', async () => {
+        await progressGate;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            ...mockDeliveryProgress,
+            agents: [
+              { agentId: 9, agentName: 'Agent-New', status: 'active', durationMs: null, steps: [] },
+            ],
+            totalUsage: { credits: 12.5 },
+          },
+        });
+      }),
+      http.get('/api/workitems/1/clarification-conversations', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [restoredConversationFixture],
+      })),
+      http.get('/api/workitems/1/clarification-conversations/101', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: restoredConversationFixture,
+      })),
+      ...mockClarifyEndpoints(),
+      ...setupHandlers().filter((h) => h.info.path !== '/api/workitems/1/delivery-progress'),
+    );
+
+    renderPageAt('/workitems/1?panel=clarify&fullscreen=1&agent=2&conversation=101');
+
+    // 恢复落定：会话正文可见、输入区可用，随即写入草稿
+    expect(await screen.findByText('刷新前的澄清结论')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('clarification-composer-mirror')).not.toBeDisabled());
+    await typeClarifyDraft('进度落地不该清掉这段草稿');
+    expect(screen.getByTestId('clarification-composer-mirror')).toHaveValue('进度落地不该清掉这段草稿');
+    expect(screen.queryByTestId('workitem-credits-badge')).toBeNull();
+
+    // 迟到的进度带着别的数字人与用量落地（credits 徽标出现即证明这一帧已到）
+    await waitFor(() => expect(releaseProgress).not.toBeNull());
+    releaseProgress!();
+    await screen.findByTestId('workitem-credits-badge');
+
+    expect(screen.getByText('刷新前的澄清结论')).toBeInTheDocument();
+    expect(screen.getByTestId('clarification-composer-mirror')).toHaveValue('进度落地不该清掉这段草稿');
+    expect(screen.queryByTestId('clarification-selection-column')).toBeNull();
+    expect(currentSearch()).toContain('agent=2');
+    expect(currentSearch()).toContain('conversation=101');
+    expect(currentSearch()).toContain('fullscreen=1');
+    expect(screen.getByTestId('clarify-resize-box')).toHaveStyle({ position: 'fixed', zIndex: 1000 });
   });
 
   it('still navigates back to the workitem list from the restored clarify page', async () => {
@@ -1976,20 +2068,27 @@ describe('WorkitemDetailPage start-delivery clarify reminder (工单 53315 / 548
   });
 
   it('persists the opt-out on skip and stops reminding within the same session', async () => {
-    renderReminderPage();
-    await openReminder();
+    const user = userEvent.setup();
+    const view = renderReminderPage();
+    const start = await screen.findByRole('button', { name: /启动交付/ });
+    await act(async () => { await user.click(start); });
+    const reminder = await screen.findByRole('dialog', { name: '建议先完成需求澄清' });
+    await act(async () => { await user.click(within(reminder).getByRole('checkbox', REMEMBER_CHECKBOX)); });
+    await act(async () => { await user.click(within(reminder).getByRole('button', { name: SKIP_BUTTON })); });
 
-    await userEvent.click(rememberCheckbox());
-    await userEvent.click(screen.getByRole('button', { name: SKIP_BUTTON }));
-
-    expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
+    const marker = await screen.findByText(DELIVERY_MODAL_MARKER);
     expect(window.localStorage.getItem(CLARIFY_REMINDER_KEY)).toBe('suppressed');
+    const delivery = marker.closest('[role="dialog"]') as HTMLElement;
+    await act(async () => { await user.click(within(delivery).getByRole('button', { name: CANCEL_BUTTON })); });
+    await waitFor(() => expect(screen.queryByText(DELIVERY_MODAL_MARKER)).toBeNull());
 
-    // 不必刷新页面：同一次会话内再点启动交付就该直接进原流程
-    await closeDeliveryModal();
-    await userEvent.click(screen.getByRole('button', { name: /启动交付/ }));
+    // Reuse the mounted page and its original start control; no reload reads the preference for us.
+    expect(start).toBeInTheDocument();
+    await act(async () => { await user.click(start); });
     expect(await screen.findByText(DELIVERY_MODAL_MARKER)).toBeInTheDocument();
     expect(screen.queryByText('建议先完成需求澄清')).toBeNull();
+    expect(window.localStorage.getItem(CLARIFY_REMINDER_KEY)).toBe('suppressed');
+    view.unmount();
   });
 
   it('persists the opt-out when going to clarification', async () => {

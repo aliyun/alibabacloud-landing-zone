@@ -55,24 +55,26 @@ public class DispatchPauseService {
             return dispatch;
         }
         if (DispatchStatus.PAUSING.equals(dispatch.getStatus())) {
-            transport.pause(dispatch);
+            if (!ResultCommitActions.defer("pause:" + dispatch.getId(), () -> transport.pause(dispatch)))
+                transport.pause(dispatch);
             return dispatch;
         }
         if (!DispatchStatus.isPauseable(dispatch.getStatus())
                 && !DispatchStatus.PAUSE_FAILED.equals(dispatch.getStatus())) {
-            throw new BizException(ErrorCode.CONFLICT, "当前执行状态不能暂停");
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.pause.invalid_state", new Object[0], "当前执行状态不能暂停");
         }
         String clearedError = DispatchStatus.PAUSE_FAILED.equals(dispatch.getStatus()) ? "" : null;
         int rows = dispatchDao.updateStatus(dispatch.getId(), tenantId, DispatchStatus.PAUSING,
                 null, null, null, null, clearedError, dispatch.getVersion(), userId);
         if (rows != 1) {
-            throw new BizException(ErrorCode.CONFLICT, "执行状态已变化，请刷新后重试");
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.state_changed", new Object[0], "执行状态已变化，请刷新后重试");
         }
         dispatch.setStatus(DispatchStatus.PAUSING);
         dispatch.setError(null);
         dispatch.setVersion(dispatch.getVersion() + 1);
         try {
-            transport.pause(dispatch);
+            if (!ResultCommitActions.defer("pause:" + dispatch.getId(), () -> transport.pause(dispatch)))
+                transport.pause(dispatch);
         } catch (RuntimeException sendFailed) {
             markPauseFailedAfterSendFailure(dispatch, tenantId, userId, sendFailed);
             throw sendFailed;

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Badge } from 'antd';
 import { AgentListPage } from './AgentListPage';
 import { AgentReviewPage } from './AgentReviewPage';
@@ -12,33 +13,31 @@ export function resolveAgentsHubTab(tabParam: string | null): string {
   return resolveHubTab(tabParam, AGENTS_HUB_TAB_KEYS, DEFAULT_AGENTS_HUB_TAB);
 }
 
-const TAB_DESCRIPTIONS: Record<string, string> = {
-  list: '按角色、启用状态和执行器在线状态快速扫描数字员工',
-  reviews: '审核数字员工版本提交，通过后进入上线流转',
-  squads: '按小队规模、角色构成和执行器状态查看交付阵容',
-};
-
 export function AgentsHubPage() {
+  const { t } = useTranslation('agent');
+  const descriptions = new Map([['list', t('display.hubListDescription')], ['reviews', t('display.hubReviewsDescription')], ['squads', t('display.hubSquadsDescription')]]);
   const { activeTab, setTab } = useHubTabParam(AGENTS_HUB_TAB_KEYS, DEFAULT_AGENTS_HUB_TAB);
   const { data: pendingReviewCount = 0 } = useAgentPendingReviewCount();
 
   const reviewsLabel = pendingReviewCount > 0 ? (
     <span className="hub-tab-label">
-      版本审核
+      {t('display.reviews')}
       <Badge count={pendingReviewCount} overflowCount={99} />
     </span>
-  ) : '版本审核';
+  ) : t('display.reviews');
 
   return (
     <HubPageShell
-      title="数字员工管理"
-      description={TAB_DESCRIPTIONS[activeTab]}
+      title={t('display.hubTitle')}
+      description={descriptions.get(activeTab)}
       activeTab={activeTab}
       onTabChange={setTab}
       items={[
-        { key: 'list', label: '数字员工', children: <AgentListPage /> },
-        { key: 'reviews', label: reviewsLabel, children: <AgentReviewPage /> },
-        { key: 'squads', label: '小队', children: <SquadListPage /> },
+        { key: 'list', label: t('display.agents'), children: <AgentListPage /> },
+        // 审核面板只在激活时挂载：Tabs 默认保留已挂载面板，重新激活不会重新挂载，
+        // 也就不会触发 usePendingReviews 的 refetchOnMount:'always'，切回 Tab 时会看到旧列表。
+        { key: 'reviews', label: reviewsLabel, children: activeTab === 'reviews' ? <AgentReviewPage /> : null },
+        { key: 'squads', label: t('display.squads'), children: <SquadListPage /> },
       ]}
     />
   );

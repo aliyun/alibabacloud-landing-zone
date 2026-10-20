@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { Modal, Radio, Space, Typography, message } from 'antd';
 import { ApiError } from '@/shared/types/common';
@@ -11,9 +13,9 @@ const LEVEL_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  { value: 'READ_ONLY', label: '只读', description: '仅查看工单、Agent 与执行记录，不能修改任何内容' },
-  { value: 'READ_WRITE', label: '读写', description: '可创建和编辑工单、Agent、技能等工作空间内容' },
-  { value: 'ADMIN', label: '管理员', description: '可管理成员、访问级别与工作空间配置' },
+  { value: 'READ_ONLY', get label() { return i18n.t('auth:access.readOnly'); }, get description() { return i18n.t('auth:access.readOnlyDescription'); } },
+  { value: 'READ_WRITE', get label() { return i18n.t('auth:access.readWrite'); }, get description() { return i18n.t('auth:access.readWriteDescription'); } },
+  { value: 'ADMIN', get label() { return i18n.t('auth:access.admin'); }, get description() { return i18n.t('auth:access.adminDescription'); } },
 ];
 
 interface AccessRequestModalProps {
@@ -22,6 +24,7 @@ interface AccessRequestModalProps {
 }
 
 export function AccessRequestModal({ workspace, onClose }: AccessRequestModalProps) {
+  const { t } = useTranslation('auth');
   const [requestedLevel, setRequestedLevel] = useState<WorkspaceAccessLevel>('READ_ONLY');
   const { mutateAsync, isPending } = useSubmitAccessRequest();
 
@@ -42,29 +45,27 @@ export function AccessRequestModal({ workspace, onClose }: AccessRequestModalPro
     if (!workspace) return;
     try {
       await mutateAsync({ workspaceId: workspace.id, requestedLevel });
-      message.success('申请已提交，请等待管理员审批');
+      message.success(i18n.t('auth:access.submitted'));
       onClose();
     } catch (e) {
       // The mutation hook deliberately carries no onError, so the specific business
       // message (already pending, already a member, invalid level) is surfaced here.
-      message.error(e instanceof ApiError ? e.message : '申请提交失败，请稍后重试');
+      message.error(e instanceof ApiError ? e.message : i18n.t('auth:access.failed'));
     }
   };
 
   return (
     <Modal
-      title={workspace ? `申请加入「${workspace.name}」` : ''}
+      title={workspace ? t('access.title', { name: workspace.name }) : ''}
       open={workspace !== null}
-      okText="提交申请"
-      cancelText="取消"
+      okText={t('access.submit')}
+      cancelText={t('action.cancel')}
       confirmLoading={isPending}
       onCancel={onClose}
       onOk={handleSubmit}
       destroyOnHidden
     >
-      <Text style={{ display: 'block', marginBottom: 12, color: 'var(--aw-muted)' }}>
-        选择需要的权限级别，提交后由工作空间管理员审批。
-      </Text>
+      <Text style={{ display: 'block', marginBottom: 12, color: 'var(--aw-muted)' }}>{t('access.description')}</Text>
       <Radio.Group
         value={requestedLevel}
         onChange={(event) => setRequestedLevel(event.target.value as WorkspaceAccessLevel)}

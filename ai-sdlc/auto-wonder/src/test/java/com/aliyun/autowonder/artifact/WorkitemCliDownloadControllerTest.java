@@ -278,6 +278,18 @@ class WorkitemCliDownloadControllerTest {
                 USER_ID, WORKITEM_ID).getToken();
     }
 
+    @Test
+    void issuedTokenStillDownloadsWhenArtifactDomainBecomesReadOnly() throws Exception {
+        String token = mintToken();
+        // Read-only role permissions continue to allow document downloads.
+        WorkspaceMemberDO forbidden = member(TENANT_ID, "READ_ONLY", 0, 0);
+        forbidden.setReadOnlyDomains("[\"ARTIFACT\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(forbidden);
+
+        mvc.perform(get(indexPath).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+    }
+
     private String key(long tenantId, long workitemId, String filename) {
         return "t/" + tenantId + "/workitem/" + workitemId + "/requirements/" + filename;
     }

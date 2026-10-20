@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { Alert, Modal, Select } from 'antd';
 import type { MemberVO } from './api';
@@ -17,6 +18,7 @@ export function OwnerTransferModal({
   onClose,
   onConfirm,
 }: OwnerTransferModalProps) {
+  const { t } = useTranslation('settings');
   const [targetUserId, setTargetUserId] = useState<number>();
 
   useEffect(() => {
@@ -27,11 +29,12 @@ export function OwnerTransferModal({
 
   return (
     <Modal
-      title="移交工作空间 Owner"
+      closable={{ 'aria-label': t('close') }}
+      title={t('transferOwnerTitle')}
       open={open}
-      okText="确认移交"
-      cancelText="取消"
-      okButtonProps={{ disabled: targetUserId === undefined }}
+      okText={t('confirmTransfer')}
+      cancelText={t('cancel')}
+      okButtonProps={{ 'aria-label': t('confirmTransfer'), disabled: targetUserId === undefined }}
       confirmLoading={loading}
       onCancel={onClose}
       onOk={() => targetUserId !== undefined && onConfirm(targetUserId)}
@@ -40,13 +43,13 @@ export function OwnerTransferModal({
       <Alert
         type="warning"
         showIcon
-        message="移交后，新 Owner 将获得管理员权限；当前 Owner 保留管理员权限。"
+        message={t('transferOwnerHint')}
         style={{ marginBottom: 16 }}
       />
       <Select
-        aria-label="目标成员"
+        aria-label={t('targetMember')}
         value={targetUserId}
-        placeholder="请选择目标成员"
+        placeholder={t('chooseTarget')}
         style={{ width: '100%' }}
         onChange={setTargetUserId}
         options={candidates.map((member) => ({

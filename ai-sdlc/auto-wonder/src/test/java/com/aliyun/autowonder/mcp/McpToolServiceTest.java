@@ -5,6 +5,7 @@ import com.aliyun.autowonder.dispatch.RuntimeTraceArtifactService;
 import com.aliyun.autowonder.dispatch.dto.RuntimeTraceVO;
 import com.aliyun.autowonder.dispatch.dto.RuntimeActivityTimelineVO;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.branding.PlatformBrandingDao;
@@ -50,7 +51,6 @@ import com.aliyun.autowonder.executor.dto.ProviderModelCatalogVO;
 import com.aliyun.autowonder.executor.dto.SelectOptionVO;
 import com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
-import com.aliyun.autowonder.memory.MemoryService;
 import com.aliyun.autowonder.memory.store.McpMemoryDocumentAdapter;
 import com.aliyun.autowonder.memory.dto.CreateMemoryRequest;
 import com.aliyun.autowonder.memory.dto.MemoryVO;
@@ -140,7 +140,6 @@ class McpToolServiceTest {
     RequirementDocumentService requirementDocumentService;
     WorkitemCliUploadTokenService workitemCliUploadTokenService;
     WorkitemCliDownloadTokenService workitemCliDownloadTokenService;
-    MemoryService memoryService;
     McpMemoryDocumentAdapter mcpMemoryDocumentAdapter;
     RepoService repoService;
     SquadService squadService;
@@ -181,7 +180,6 @@ class McpToolServiceTest {
         when(workitemCliDownloadTokenService.commandTemplate()).thenReturn(
                 "npx -y autowonder@0.2.130 workitem download --server-url https://daily.auto-wonder.example.com"
                         + " --workitem-id <workitem-id> --file <name-or-id> --output-dir <dir> --json");
-        memoryService = mock(MemoryService.class);
         mcpMemoryDocumentAdapter = mock(McpMemoryDocumentAdapter.class);
         repoService = mock(RepoService.class);
         squadService = mock(SquadService.class);
@@ -196,7 +194,7 @@ class McpToolServiceTest {
         service = new McpToolService(workspaceService, workitemService, guidanceService, skillService,
                 skillPackageService, sdlcService, agentService, statusTemplateService,
                 new PlatformSkillCatalog(), dispatchDao, requirementDocumentService,
-                workitemCliUploadTokenService, workitemCliDownloadTokenService, memoryService, repoService,
+                workitemCliUploadTokenService, workitemCliDownloadTokenService, repoService,
                 squadService, dispatchPauseService, categoryService);
         ReflectionTestUtils.setField(service, "capabilityGuard", capabilityGuard);
         ReflectionTestUtils.setField(service, "executorService", executorService);
@@ -213,7 +211,181 @@ class McpToolServiceTest {
         ReflectionTestUtils.setField(service, "runtimeTraceService", traceService);
         ReflectionTestUtils.setField(service, "runtimeTraceArtifactService", traceArtifacts);
         ReflectionTestUtils.setField(service, "mcpMemoryDocumentAdapter", mcpMemoryDocumentAdapter);
+        var transactionManager = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        when(transactionManager.getTransaction(any())).thenReturn(mock(org.springframework.transaction.TransactionStatus.class));
+        ReflectionTestUtils.setField(service, "transactionManager", transactionManager);
+        ReflectionTestUtils.setField(service, "auditLogService", mock(com.aliyun.autowonder.audit.AuditLogService.class));
         principal = principal(WorkspaceAccessLevel.READ_WRITE);
+    }
+
+    @Test
+    void personalWorkitemScopesUseAuthenticatedIdentityAndExposeWatchState() {
+        var watchers=mock(com.aliyun.autowonder.workitem.WorkitemWatcherService.class);
+        ReflectionTestUtils.setField(service,"workitemWatchers",watchers);
+        var tool=service.listTools().stream().filter(t->t.getName().equals("autowonder.list_workitems")).findFirst().orElseThrow();
+        assertTrue(((Map<?,?>)tool.getInputSchema().get("properties")).containsKey("mineScope"));
+        for(String scope:List.of("CREATED","ASSIGNED","WATCHED","COMMENTED")) {
+            var result=new com.aliyun.autowonder.common.result.PageResult<com.aliyun.autowonder.workitem.dto.WorkitemVO>(List.of(),0,1,20);
+            when(workitemService.list(null,null,null,null,null,false,scope,WORKSPACE_ID,USER_ID,null,null,null,null,null,1,20)).thenReturn(result);
+            service.call(principal,"autowonder.list_workitems",Map.of("mineScope",scope,"workspaceId",WORKSPACE_ID));
+            verify(workitemService).list(null,null,null,null,null,false,scope,WORKSPACE_ID,USER_ID,null,null,null,null,null,1,20);
+        }
+        verify(watchers,times(4)).applyWatchState(anyList(),eq(WORKSPACE_ID),eq(USER_ID));
+        assertThrows(BizException.class,()->service.call(principal,"autowonder.list_workitems",Map.of("mineScope","OTHER_USER","workspaceId",WORKSPACE_ID)));
+    }
+
+    @Test
+    void chiefPlansNeverGrantDirectWriteOrCrossWorkspaceAccess() {
+        var plans=mock(com.aliyun.autowonder.conversation.PlatformActionPlanService.class);
+        ReflectionTestUtils.setField(service,"platformPlans",plans);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID,USER_ID)).thenReturn(WorkspaceAccessLevel.ADMIN);
+        var principal=new McpAccessTokenService.Principal(WORKSPACE_ID,USER_ID,88L,
+                WorkspaceAccessLevel.READ_ONLY,McpAccessTokenService.CredentialType.CONVERSATION);
+        assertThrows(BizException.class,()->service.call(principal,"autowonder.update_workitem",Map.of("id",128L,"title","Change")));
+        assertThrows(BizException.class,()->service.call(principal,"autowonder.propose_platform_actions",Map.of("actions",List.of(
+                Map.of("tool","autowonder.update_workitem","arguments",Map.of("workspaceId",WORKSPACE_ID+1,"id",128L,"title","Change"))))));
+        verify(plans,never()).propose(anyLong(),anyLong(),anyLong(),any());
+        service.call(principal,"autowonder.propose_platform_actions",Map.of("actions",List.of(
+                Map.of("tool","autowonder.update_workitem","arguments",Map.of("id",128L,"title","Change")))));
+        verify(plans).propose(eq(WORKSPACE_ID),eq(USER_ID),eq(88L),any());
+        verify(workitemService,never()).updateContent(anyLong(),any(),any(),anyLong(),anyLong());
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID,USER_ID)).thenReturn(WorkspaceAccessLevel.READ_ONLY);
+        assertThrows(BizException.class,()->service.callConfirmedPlatformAction(WORKSPACE_ID,USER_ID,88L,
+                new com.aliyun.autowonder.conversation.PlatformActionPlanService.Action("autowonder.update_workitem",Map.of("id",128L,"title","Change"))));
+    }
+
+    @Test
+    void personalSdlcStepMutationAuditsOwnerAndParentWithoutPrivateContent() {
+        var auditService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        ReflectionTestUtils.setField(service, "auditLogService", auditService);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(WorkspaceAccessLevel.ADMIN);
+        var step = new StepVO();
+        step.setId(10115L);
+        when(sdlcService.updateStep(eq(10033L), eq(10115L), any(), eq(WORKSPACE_ID), eq(USER_ID)))
+                .thenReturn(step);
+        service.call(McpAccessTokenService.Principal.personal(USER_ID, 42L), "autowonder.update_sdlc_step",
+                Map.of("workspaceId", WORKSPACE_ID, "sdlcId", 10033L, "stepId", 10115L,
+                        "instructionMd", "private original content"));
+        var captor = ArgumentCaptor.forClass(com.aliyun.autowonder.audit.AuditLogRecord.class);
+        verify(auditService).recordRequired(captor.capture());
+        var audit = captor.getValue();
+        assertEquals(USER_ID, audit.getActorId());
+        assertEquals("HUMAN", audit.getActorType());
+        assertEquals("MCP", audit.getTriggerSource());
+        assertEquals("sdlcs", audit.getTargetType());
+        assertEquals(10033L, audit.getTargetId());
+        assertEquals(42L, audit.getDetail().get("tokenId"));
+        assertEquals(USER_ID, audit.getDetail().get("ownerUserId"));
+        assertEquals(10115L, audit.getDetail().get("stepId"));
+        assertEquals(true, audit.getDetail().get("success"));
+        assertFalse(audit.getDetail().toString().contains("private original content"));
+    }
+
+    @Test
+    void sdlcAuditFailureRollsBackAndDoesNotReturnSuccess() {
+        var auditService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        ReflectionTestUtils.setField(service, "auditLogService", auditService);
+        var manager = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        var status = mock(org.springframework.transaction.TransactionStatus.class);
+        when(manager.getTransaction(any())).thenReturn(status);
+        ReflectionTestUtils.setField(service, "transactionManager", manager);
+        var failure = new IllegalStateException("audit unavailable");
+        doThrow(failure).when(auditService).recordRequired(any());
+        assertSame(failure, assertThrows(IllegalStateException.class,
+                () -> service.call(principal, "autowonder.delete_sdlc", Map.of("workspaceId", WORKSPACE_ID, "id", 10033L))));
+        verify(sdlcService).delete(10033L, WORKSPACE_ID, USER_ID);
+        verify(manager).rollback(status);
+        verify(manager, never()).commit(any());
+        var captor = ArgumentCaptor.forClass(com.aliyun.autowonder.audit.AuditLogRecord.class);
+        verify(auditService).record(captor.capture());
+        assertEquals(false, captor.getValue().getDetail().get("success"));
+    }
+
+    @Test
+    void actualDatabaseMutationAndAuditShareCommitAndRollback() {
+        var source = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:mcp_audit_" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+        jdbc.execute("CREATE TABLE flow (id BIGINT PRIMARY KEY, version INT)");
+        jdbc.execute("CREATE TABLE audit (target_id BIGINT, owner_id BIGINT)");
+        jdbc.update("INSERT INTO flow VALUES (10033, 3)");
+        ReflectionTestUtils.setField(service, "transactionManager",
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(source));
+        var auditService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        ReflectionTestUtils.setField(service, "auditLogService", auditService);
+        var failAudit = new java.util.concurrent.atomic.AtomicBoolean(false);
+        doAnswer(invocation -> {
+            var record = invocation.getArgument(0, com.aliyun.autowonder.audit.AuditLogRecord.class);
+            jdbc.update("INSERT INTO audit VALUES (?, ?)", record.getTargetId(), record.getActorId());
+            if (failAudit.get()) throw new IllegalStateException("audit storage failed");
+            return null;
+        }).when(auditService).recordRequired(any());
+        doAnswer(invocation -> {
+            jdbc.update("UPDATE flow SET version = version + 1 WHERE id = 10033");
+            return null;
+        }).when(sdlcService).disable(10033L, WORKSPACE_ID, USER_ID);
+        service.call(principal, "autowonder.disable_sdlc", Map.of("workspaceId", WORKSPACE_ID, "id", 10033L));
+        assertEquals(4, jdbc.queryForObject("SELECT version FROM flow", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM audit", Integer.class));
+        failAudit.set(true);
+        assertThrows(IllegalStateException.class,
+                () -> service.call(principal, "autowonder.disable_sdlc", Map.of("workspaceId", WORKSPACE_ID, "id", 10033L)));
+        assertEquals(4, jdbc.queryForObject("SELECT version FROM flow", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM audit", Integer.class));
+    }
+
+    @Test
+    void conversationSdlcCreateAuditsReturnedIdAndReadDoesNotAudit() {
+        var auditService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        ReflectionTestUtils.setField(service, "auditLogService", auditService);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(WorkspaceAccessLevel.ADMIN);
+        var flow = new SdlcVO();
+        flow.setId(10033L);
+        flow.setVersion(3);
+        when(sdlcService.create(any(), eq(WORKSPACE_ID), eq(USER_ID))).thenReturn(flow);
+        var conversation = new McpAccessTokenService.Principal(WORKSPACE_ID, USER_ID, 88L,
+                WorkspaceAccessLevel.ADMIN, McpAccessTokenService.CredentialType.CONVERSATION);
+        service.call(conversation, "autowonder.create_sdlc", Map.of("name", "user authored name"));
+        var captor = ArgumentCaptor.forClass(com.aliyun.autowonder.audit.AuditLogRecord.class);
+        verify(auditService).recordRequired(captor.capture());
+        assertEquals(10033L, captor.getValue().getTargetId());
+        assertEquals(3, captor.getValue().getDetail().get("resultVersion"));
+        assertEquals("CONVERSATION", captor.getValue().getDetail().get("credentialType"));
+        clearInvocations(auditService);
+        service.call(conversation, "autowonder.get_sdlc", Map.of("workspaceId", WORKSPACE_ID, "id", 10033L));
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void nonSdlcMutationAlsoAuditsAndInvalidTargetDoesNotMaskFailure() {
+        var auditService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        ReflectionTestUtils.setField(service, "auditLogService", auditService);
+        service.call(principal, "autowonder.delete_workitem", Map.of("workspaceId", WORKSPACE_ID, "id", 123L));
+        var captor = ArgumentCaptor.forClass(com.aliyun.autowonder.audit.AuditLogRecord.class);
+        verify(auditService).record(captor.capture());
+        assertEquals("DELETE_WORKITEM", captor.getValue().getAction());
+        assertEquals(123L, captor.getValue().getTargetId());
+        clearInvocations(auditService);
+        assertThrows(BizException.class, () -> service.call(principal, "autowonder.delete_sdlc", Map.of("workspaceId", WORKSPACE_ID, "id", "bad")));
+        verify(auditService).record(captor.capture());
+        assertEquals(false, captor.getValue().getDetail().get("success"));
+        assertNull(captor.getValue().getTargetId());
+    }
+
+    @Test
+    void dispatchSdlcMutationKeepsAgentAndCredentialOwnerDistinct() {
+        var auditService = mock(com.aliyun.autowonder.audit.AuditLogService.class);
+        ReflectionTestUtils.setField(service, "auditLogService", auditService);
+        service.call(dispatchPrincipal(-321L), "autowonder.update_sdlc_step",
+                Map.of("sdlcId", 10033L, "stepId", 10115L));
+        var captor = ArgumentCaptor.forClass(com.aliyun.autowonder.audit.AuditLogRecord.class);
+        verify(auditService).recordRequired(captor.capture());
+        var audit = captor.getValue();
+        assertEquals("AGENT", audit.getActorType());
+        assertEquals(40014L, audit.getActorId());
+        assertEquals(USER_ID, audit.getDetail().get("ownerUserId"));
+        assertEquals(321L, audit.getDetail().get("dispatchId"));
+        assertEquals("DISPATCH", audit.getDetail().get("credentialType"));
     }
 
     @Test
@@ -306,6 +478,57 @@ class McpToolServiceTest {
     }
 
     @Test
+    void workspaceAdminScheduledRunCanReadWorkitemTraceButOrdinaryRunCannot() {
+        var caller = dispatchPrincipal(-321L);
+        var scheduled = dispatch(321L, WORKSPACE_ID, 77L, 40014L);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(321L)).thenReturn(scheduled);
+        when(dispatchDao.findById(10490L)).thenReturn(dispatch(10490L, WORKSPACE_ID, 99L, 40015L));
+        var args = Map.<String, Object>of("workspaceId", WORKSPACE_ID, "dispatchId", 10490L);
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), assertThrows(BizException.class,
+                () -> service.call(caller, "autowonder.get_dispatch_activities", args)).getCode());
+        var adminCaller = new McpAccessTokenService.Principal(
+                WORKSPACE_ID, USER_ID, -321L, WorkspaceAccessLevel.ADMIN,
+                McpAccessTokenService.CredentialType.DISPATCH);
+        service.call(adminCaller, "autowonder.get_dispatch_activities", args);
+        verify(traceService).getActivities(WORKSPACE_ID, 10490L);
+        var otherSource = dispatch(10490L, WORKSPACE_ID, 99L, 40015L);
+        otherSource.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.findById(10490L)).thenReturn(otherSource);
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), assertThrows(BizException.class,
+                () -> service.call(adminCaller, "autowonder.get_dispatch_activities", args)).getCode());
+    }
+
+    @Test
+    void workitemExecutionWindowUsesStableCursorAndIncludesRunningRows() {
+        var caller = principal(WorkspaceAccessLevel.ADMIN);
+        var args = Map.<String, Object>of("workspaceId", WORKSPACE_ID,
+                "createdFrom", "2026-10-11T16:00:00Z", "createdTo", "2026-10-12T16:00:00Z", "size", 1);
+        var first = dispatch(12L, WORKSPACE_ID, 10L, 40014L);
+        first.setGmtCreate(java.util.Date.from(java.time.Instant.parse("2026-10-12T01:00:00Z")));
+        first.setStatus("RUNNING");
+        var second = dispatch(11L, WORKSPACE_ID, 9L, 40014L);
+        second.setGmtCreate(first.getGmtCreate());
+        second.setStatus("SUCCEEDED");
+        when(dispatchDao.listWorkitemExecutionsCreatedBetween(eq(WORKSPACE_ID), any(), any(), isNull(), isNull(), eq(2)))
+                .thenReturn(List.of(first, second));
+        Map<?, ?> page = (Map<?, ?>) service.call(caller, "autowonder.list_workitem_executions", args);
+        assertEquals("RUNNING", ((Map<?, ?>) ((List<?>) page.get("items")).get(0)).get("status"));
+        assertEquals(first.getGmtCreate().getTime() + ":12", page.get("nextCursor"));
+        var nextArgs = new java.util.HashMap<String, Object>(args);
+        nextArgs.put("cursor", page.get("nextCursor"));
+        when(dispatchDao.listWorkitemExecutionsCreatedBetween(eq(WORKSPACE_ID), any(), any(),
+                eq(first.getGmtCreate()), eq(12L), eq(2))).thenReturn(List.of(second));
+        Map<?, ?> lastPage = (Map<?, ?>) service.call(caller, "autowonder.list_workitem_executions", nextArgs);
+        assertEquals(11L, ((Map<?, ?>) ((List<?>) lastPage.get("items")).get(0)).get("dispatchId"));
+        assertNull(lastPage.get("nextCursor"));
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), assertThrows(BizException.class,
+                () -> service.call(principal(WorkspaceAccessLevel.READ_WRITE),
+                        "autowonder.list_workitem_executions", args)).getCode());
+    }
+
+    @Test
     void traceReadsHonorScheduledTaskCapabilityGate() {
         var target = dispatch(10490L, WORKSPACE_ID, 99L, 40014L);
         target.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
@@ -379,7 +602,10 @@ class McpToolServiceTest {
                 "autowonder.get_executor",
                 "autowonder.list_executor_client_kinds",
                 "autowonder.get_executor_launch_options",
+                "autowonder.get_executor_launch_config",
                 "autowonder.get_delivery_recovery",
+                "autowonder.get_dispatch_diagnostics",
+                "autowonder.read_dispatch_diagnostic",
                 "autowonder.workitem_cli_download_token");
         Set<String> fullCatalog = service.listTools().stream()
                 .map(McpToolVO::getName)
@@ -399,21 +625,31 @@ class McpToolServiceTest {
                         .map(McpToolVO::getName)
                         .collect(java.util.stream.Collectors.toSet());
 
-        // 执行器及项目分类维护要求 ADMIN。
+        // 执行器运维工具随角色只读域治理（READ_WRITE）；令牌与启动命令携带凭证语义，仍要求 ADMIN；
+        // 项目分类维护要求 ADMIN。
         Set<String> adminOnlyTools = Set.of(
+                "autowonder.list_workitem_executions",
                 "autowonder.create_category", "autowonder.update_category", "autowonder.delete_category",
-                "autowonder.create_executor",
                 "autowonder.get_executor_token",
-                "autowonder.delete_executor",
-                "autowonder.build_executor_launch_command",
-                "autowonder.get_executor_launch_config",
-                "autowonder.update_executor_launch_config");
+                "autowonder.build_executor_launch_command");
         Set<String> hiddenFromReadWrite = new java.util.HashSet<>(fullCatalog);
         hiddenFromReadWrite.removeAll(readWriteCatalog);
         assertEquals(adminOnlyTools, hiddenFromReadWrite);
         assertEquals(fullCatalog, adminCatalog);
-        assertEquals(109, fullCatalog.size());
-        assertEquals(100, readWriteCatalog.size());
+        assertEquals(112, fullCatalog.size());
+        assertEquals(106, readWriteCatalog.size());
+    }
+
+    @Test
+    void externalWaitToolsAreNoLongerListedOrCallable() {
+        Set<String> fullCatalog = service.listTools().stream()
+                .map(McpToolVO::getName)
+                .collect(java.util.stream.Collectors.toSet());
+        for (String tool : List.of("autowonder.create_external_wait", "autowonder.suspend_external_wait",
+                "autowonder.cancel_external_wait")) {
+            assertFalse(fullCatalog.contains(tool));
+            assertThrows(BizException.class, () -> call(dispatchPrincipal(-321L), tool, Map.of("id", 19L)));
+        }
     }
 
     @Test
@@ -771,7 +1007,7 @@ class McpToolServiceTest {
         McpToolService privateService = new McpToolService(workspaceService, workitemService, guidanceService,
                 skillService, skillPackageService, sdlcService, agentService, statusTemplateService,
                 new PlatformSkillCatalog(), dispatchDao, requirementDocumentService,
-                realTokenService, realDownloadTokenService, memoryService, repoService, squadService,
+                realTokenService, realDownloadTokenService, repoService, squadService,
                 dispatchPauseService, categoryService);
 
         List<McpToolVO> tools = privateService.listTools();
@@ -786,7 +1022,7 @@ class McpToolServiceTest {
             assertTrue(description.contains("autowonder@0.9.9-rc.1"), description);
             assertTrue(description.contains("http://autowonder.internal.example.com:8080"), description);
             assertFalse(description.contains("autowonder@latest"), description);
-            assertFalse(description.contains("auto-wonder.alibaba.net"), description);
+            assertFalse(description.contains("community.example"), description);
         }
 
         WorkitemCliUploadTokenVO vo = (WorkitemCliUploadTokenVO) privateService.call(principal,
@@ -794,8 +1030,8 @@ class McpToolServiceTest {
         assertEquals("http://autowonder.internal.example.com:8080", vo.getServerUrl());
         assertEquals("0.9.9-rc.1", vo.getRuntimeVersion());
         assertFalse(vo.getCommand().contains("autowonder@latest"));
-        assertFalse(vo.getCommand().contains("auto-wonder.alibaba.net"));
-        assertFalse(vo.getPowershellCommand().contains("auto-wonder.alibaba.net"));
+        assertFalse(vo.getCommand().contains("community.example"));
+        assertFalse(vo.getPowershellCommand().contains("community.example"));
     }
 
     @Test
@@ -964,7 +1200,7 @@ class McpToolServiceTest {
     void listToolCallsReturnPlainLists() {
         WorkitemVO workitem = new WorkitemVO();
         workitem.setId(1L);
-        when(workitemService.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, 1, 20))
+        when(workitemService.list(null, null, null, null, null, false, null, 100L, 7L, null, null, null, null, null, 1, 20))
                 .thenReturn(new PageResult<>(List.of(workitem), 1, 1, 20));
 
         SdlcVO sdlc = new SdlcVO();
@@ -1418,8 +1654,9 @@ class McpToolServiceTest {
     void addWorkitemCommentCreatesDistinctTargetInteractions() {
         CommentVO comment = new CommentVO();
         comment.setId(55L);
-        when(workitemService.addComment(99L, "@workers please review",
-                java.util.Arrays.asList(9L, null, 9L), 100L, 7L)).thenReturn(comment);
+        when(guidanceService.addCommentWithInteraction(100L, 99L, "@workers please review",
+                java.util.Arrays.asList(9L, null, 9L), java.util.Arrays.asList(12L, null, 12L, 13L), 7L))
+                .thenReturn(comment);
 
         Object result = call(principal, "autowonder.add_workitem_comment",
                 Map.of("id", 99L, "contentMd", "@workers please review",
@@ -1427,11 +1664,28 @@ class McpToolServiceTest {
                         "targetHumanIds", java.util.Arrays.asList(9L, null, 9L)));
 
         assertSame(comment, result);
-        verify(workitemService).addComment(99L, "@workers please review",
-                java.util.Arrays.asList(9L, null, 9L), 100L, 7L);
-        verify(guidanceService).createForComment(100L, 99L, 55L, "@workers please review",
-                java.util.Arrays.asList(12L, null, 12L, 13L), 7L);
+        // 评论与其交互必须由同一个事务入口落库，散写会让关闭交付时的整笔回滚失效。
+        verify(guidanceService).addCommentWithInteraction(100L, 99L, "@workers please review",
+                java.util.Arrays.asList(9L, null, 9L), java.util.Arrays.asList(12L, null, 12L, 13L), 7L);
+        verify(workitemService, never()).addComment(anyLong(), anyString(), anyList(), anyLong(), anyLong());
         verifyNoMoreInteractions(guidanceService);
+    }
+
+    @Test
+    void addWorkitemCommentPropagatesClosedDeliveryFailureUntouched() {
+        BizException closed = BizException.keyed(ErrorCode.WORKITEM_DELIVERY_CLOSED,
+                "workitem.comment.delivery_closed", new Object[0], "交付已关闭，评论未发送，无法启动数字员工");
+        // targetHumanIds 未传时为 null，必须用 isNull() 匹配，anyList() 不匹配 null。
+        when(guidanceService.addCommentWithInteraction(eq(100L), eq(99L), anyString(), isNull(),
+                eq(List.of(40013L)), eq(7L))).thenThrow(closed);
+
+        BizException failure = assertThrows(BizException.class, () -> call(principal,
+                "autowonder.add_workitem_comment", Map.of("id", 99L, "contentMd", "@AW全栈开发 看下",
+                        "targetAgentIds", List.of(40013L))));
+
+        assertEquals("13024", failure.getCode());
+        assertEquals("workitem.comment.delivery_closed", failure.getMessageKey());
+        verify(workitemService, never()).addComment(anyLong(), anyString(), anyList(), anyLong(), anyLong());
     }
 
     @Test
@@ -1441,14 +1695,16 @@ class McpToolServiceTest {
         CommentVO comment = new CommentVO();
         comment.setId(56L);
         when(dispatchDao.findById(321L)).thenReturn(dispatch);
-        when(workitemService.addAgentComment(99L, "review finished", List.of(77L), 100L, 40014L, 7L))
-                .thenReturn(comment);
+        when(guidanceService.addAgentCommentWithInteraction(eq(100L), eq(99L), eq(40014L), eq(7L),
+                eq("review finished"), eq(List.of(77L)), isNull())).thenReturn(comment);
 
         Object result = call(dispatchPrincipal, "autowonder.add_workitem_comment",
                 Map.of("id", 99L, "contentMd", "review finished", "targetHumanIds", List.of(77L)));
 
         assertSame(comment, result);
-        verify(workitemService).addAgentComment(99L, "review finished", List.of(77L), 100L, 40014L, 7L);
+        verify(guidanceService).addAgentCommentWithInteraction(eq(100L), eq(99L), eq(40014L), eq(7L),
+                eq("review finished"), eq(List.of(77L)), isNull());
+        verify(workitemService, never()).addAgentComment(anyLong(), anyString(), anyList(), anyLong(), anyLong(), any());
         verify(workitemService, never()).addComment(anyLong(), anyString(), anyList(), anyLong(), anyLong());
         verifyNoInteractions(capabilityGuard);
     }
@@ -2322,9 +2578,9 @@ class McpToolServiceTest {
         McpToolVO upload = toolFor("autowonder.upload_workitem_document");
         assertTrue(upload.getDescription().contains("assign_workitem"));
         assertTrue(upload.getDescription().contains("first dispatch"));
-        assertTrue(upload.getDescription().contains("PNG"));
-        assertTrue(upload.getDescription().contains("JPEG"));
-        assertTrue(upload.getDescription().contains("WebP"));
+        assertTrue(upload.getDescription().contains("any file type"));
+        assertTrue(upload.getDescription().contains("spreadsheets"));
+        assertTrue(upload.getDescription().contains("without an extension"));
         assertTrue(upload.getDescription().contains("contentBase64"));
         assertTrue(upload.getDescription().contains("contentMd"));
 
@@ -2524,7 +2780,6 @@ class McpToolServiceTest {
                         && "MyBatis keyword 检索".equals(req.getTitle())),
                 eq(100L), eq(321L), eq(99L), eq(40014L), eq(7L),
                 argThat(key -> key.startsWith("dispatch:321:mcp:")));
-        verify(memoryService, never()).create(any(), anyLong(), anyLong());
     }
 
     @Test
@@ -2548,8 +2803,6 @@ class McpToolServiceTest {
                 "autowonder.create_memory", Map.of("title", "标题", "scope", "GLOBAL")));
 
         assertEquals("27003", ex.getCode());
-        verify(memoryService, never()).createFromMcp(any(), anyLong(), anyLong(), anyLong(),
-                anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -2563,8 +2816,6 @@ class McpToolServiceTest {
             assertEquals("27003", ex.getCode(), scope);
         }
 
-        verify(memoryService, never()).createFromMcp(any(), anyLong(), anyLong(), anyLong(),
-                anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -2598,11 +2849,10 @@ class McpToolServiceTest {
     }
 
     @Test
-    void longLivedTokenCannotUseDeprecatedMemoryAuthority() {
-        assertThrows(BizException.class, () -> call(principal,
+    void conversationTokenStillCannotUseDeprecatedMemoryAuthority() {
+        assertThrows(BizException.class, () -> call(scopedPrincipal(WorkspaceAccessLevel.READ_WRITE),
                 "autowonder.search_memories", Map.of("keyword", "MyBatis")));
 
-        verifyNoInteractions(memoryService);
         verifyNoInteractions(dispatchDao);
     }
 
@@ -2659,9 +2909,6 @@ class McpToolServiceTest {
                     dispatchPrincipal, tool, Map.of("id", 501L))).getCode(), tool);
         }
 
-        verify(memoryService, never()).update(anyLong(), any(), anyLong(), anyLong());
-        verify(memoryService, never()).deprecateFromMcp(anyLong(), any(), anyLong(), anyLong());
-        verify(memoryService, never()).delete(anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -2687,6 +2934,102 @@ class McpToolServiceTest {
     }
 
     @Test
+    void personalMemorySearchDoesNotRequireAnAgentTaskCredential() {
+        var reader = principal(WorkspaceAccessLevel.READ_ONLY);
+        var personalMemories = mock(com.aliyun.autowonder.memory.store.PersonalMcpMemoryService.class);
+        ReflectionTestUtils.setField(service, "personalMcpMemories", personalMemories);
+        when(personalMemories.search(WORKSPACE_ID, USER_ID, false, null, null, null, null, 1, 20))
+                .thenReturn(List.of());
+        assertEquals(List.of(), call(reader, "autowonder.search_memories", Map.of()));
+        verify(personalMemories).search(WORKSPACE_ID, USER_ID, false, null, null, null, null, 1, 20);
+        verifyNoInteractions(mcpMemoryDocumentAdapter, dispatchDao);
+    }
+
+    @Test
+    void personalAdminMemoryCreateUsesThePageUserPath() {
+        var admin = principal(WorkspaceAccessLevel.ADMIN);
+        var personalMemories = mock(com.aliyun.autowonder.memory.store.PersonalMcpMemoryService.class);
+        ReflectionTestUtils.setField(service, "personalMcpMemories", personalMemories);
+        assertDoesNotThrow(() -> call(admin, "autowonder.create_memory", Map.of(
+                "scope", "ORG", "ownerRef", 0L, "type", "reference", "title", "Manual topic",
+                "description", "Topic lookup", "contentMd", "User supplied text", "idempotencyKey", "human-mcp-1")));
+        verify(personalMemories).create(eq(WORKSPACE_ID), eq(USER_ID), eq(true), eq("ORG"), eq(0L),
+                argThat(req -> "human-mcp-1".equals(req.idempotencyKey()) && req.expectedVersion() == null));
+        verifyNoInteractions(mcpMemoryDocumentAdapter, dispatchDao);
+    }
+
+    @Test
+    void personalCatalogMatchesPageContractsWithoutChangingTaskSchemas() {
+        var personal = service.listPersonalTools().stream().filter(t -> t.getName().equals("autowonder.update_memory"))
+                .findFirst().orElseThrow();
+        assertTrue(((List<?>) personal.getInputSchema().get("required")).containsAll(
+                List.of("workspaceId", "id", "contentMd", "expectedVersion", "idempotencyKey")));
+        assertTrue(properties(personal.getOutputSchema()).containsKey("version"));
+        assertFalse(properties(personal.getOutputSchema()).containsKey("status"));
+        assertEquals(List.of("workspaceId", "id"), schemaFor("autowonder.update_memory").get("required"));
+        assertEquals(service.listPersonalTools().size(), service.listTools().size());
+        for (String name : List.of("autowonder.create_memory", "autowonder.search_memories", "autowonder.update_memory")) {
+            assertEquals(1L, service.listPersonalTools().stream().filter(tool -> name.equals(tool.getName())).count());
+        }
+    }
+
+    @Test
+    void personalMemberWriteReachesStoreAclCheckWithoutBecomingAdministrator() {
+        var member = principal(WorkspaceAccessLevel.READ_WRITE);
+        var personal = mock(com.aliyun.autowonder.memory.store.PersonalMcpMemoryService.class);
+        ReflectionTestUtils.setField(service, "personalMcpMemories", personal);
+        Map<String, Object> request = Map.of("id", 9L, "expectedVersion", 3, "idempotencyKey", "member-edit",
+                "type", "reference", "title", "Original title", "description", "Lookup", "contentMd", "Raw body");
+        call(member, "autowonder.update_memory", request);
+        verify(personal).update(eq(WORKSPACE_ID), eq(USER_ID), eq(false), eq(9L),
+                argThat(r -> r.expectedVersion() == 3 && "Raw body".equals(r.contentMd())));
+        when(personal.update(anyLong(), anyLong(), eq(false), anyLong(), any()))
+                .thenThrow(new com.aliyun.autowonder.memory.store.MemoryStoreApplicationService.MemoryAccessDeniedException());
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), assertThrows(BizException.class,
+                () -> call(member, "autowonder.update_memory", request)).getCode());
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(WorkspaceAccessLevel.READ_ONLY);
+        assertThrows(BizException.class, () -> call(member, "autowonder.update_memory", request));
+        verify(personal, times(2)).update(anyLong(), anyLong(), anyBoolean(), anyLong(), any());
+        verifyNoInteractions(mcpMemoryDocumentAdapter, dispatchDao);
+    }
+
+    @Test
+    void personalWritesRequireCallerVersionAndReportRefreshableConflicts() {
+        var admin = principal(WorkspaceAccessLevel.ADMIN);
+        var personal = mock(com.aliyun.autowonder.memory.store.PersonalMcpMemoryService.class);
+        ReflectionTestUtils.setField(service, "personalMcpMemories", personal);
+        for (String name : List.of("autowonder.update_memory", "autowonder.delete_memory", "autowonder.deprecate_memory")) {
+            assertThrows(BizException.class, () -> call(admin, name, Map.of("id", 9L, "idempotencyKey", "key")));
+            assertThrows(BizException.class, () -> call(admin, name, Map.of("id", 9L, "expectedVersion", 3)));
+        }
+        verifyNoInteractions(personal);
+        doThrow(new com.aliyun.autowonder.memory.store.MemoryDocumentService.MemoryConflictException("stale"))
+                .when(personal).delete(WORKSPACE_ID, USER_ID, true, 9L, 3, "key");
+        var failure = assertThrows(BizException.class, () -> call(admin, "autowonder.delete_memory",
+                Map.of("id", 9L, "expectedVersion", 3, "idempotencyKey", "key")));
+        assertEquals(ErrorCode.CONFLICT.getCode(), failure.getCode());
+        assertEquals("memory.topic.conflict_refresh", failure.getMessageKey());
+    }
+
+    @Test
+    void personalMemoryIdentifiersAndVersionsMustBeExactIntegers() {
+        var admin = principal(WorkspaceAccessLevel.ADMIN);
+        var personal = mock(com.aliyun.autowonder.memory.store.PersonalMcpMemoryService.class);
+        ReflectionTestUtils.setField(service, "personalMcpMemories", personal);
+        for (Object invalid : List.of(3.9, "invalid", "99999999999999999999999")) {
+            assertThrows(BizException.class, () -> call(admin, "autowonder.delete_memory",
+                    Map.of("id", invalid, "expectedVersion", 3, "idempotencyKey", "key")));
+            assertThrows(BizException.class, () -> call(admin, "autowonder.delete_memory",
+                    Map.of("id", 9L, "expectedVersion", invalid, "idempotencyKey", "key")));
+            assertThrows(BizException.class, () -> call(admin, "autowonder.create_memory",
+                    Map.of("scope", "AGENT", "ownerRef", invalid, "idempotencyKey", "key")));
+        }
+        assertThrows(BizException.class, () -> call(admin, "autowonder.delete_memory",
+                Map.of("id", 9L, "expectedVersion", 2147483648L, "idempotencyKey", "key")));
+        verifyNoInteractions(personal);
+    }
+
+    @Test
     void longLivedTokenCreateMemoryCannotUseDeprecatedManualPath() {
         BizException ex = assertThrows(BizException.class, () -> call(principal,
                 "autowonder.create_memory", Map.of("title", "标题")));
@@ -2694,9 +3037,6 @@ class McpToolServiceTest {
 
         assertThrows(BizException.class, () -> call(principal, "autowonder.create_memory",
                 Map.of("title", "标题", "scope", "org")));
-        verify(memoryService, never()).create(any(), anyLong(), anyLong());
-        verify(memoryService, never()).createFromMcp(any(), anyLong(), anyLong(), anyLong(),
-                anyLong(), anyLong(), anyString());
         verifyNoInteractions(dispatchDao);
     }
 
@@ -3375,6 +3715,11 @@ class McpToolServiceTest {
                 "agentId", "versionNo", "status", "sdlcId", "repoPerms", "skills", "memoryRefs")));
         assertEquals("array", output.get("repoPerms") instanceof Map<?, ?> repoPerms
                 ? repoPerms.get("type") : null);
+
+        Map<String, Object> skillItem = properties(itemSchema(property(
+                outputSchemaFor("autowonder.get_agent_version"), "skills")));
+        assertTrue(skillItem.keySet().containsAll(List.of("skillId", "skillName")));
+        assertNullableField(skillItem, "skillName", "string");
     }
 
     @Test
@@ -3780,6 +4125,177 @@ class McpToolServiceTest {
     }
 
     @Test
+    void personalTokenIsBlockedWhenRoleMarksReadOnlyTheToolDomain() {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(WorkspaceDomain.SDLC, WorkspaceDomain.MCP));
+        McpAccessTokenService.Principal personal =
+                McpAccessTokenService.Principal.personal(USER_ID, 1L);
+
+        BizException thrown = assertThrows(BizException.class,
+                () -> service.call(personal, "autowonder.delete_sdlc",
+                        Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
+        assertEquals("10403", thrown.getCode());
+        verify(sdlcService, never()).delete(anyLong(), anyLong(), anyLong());
+
+        WorkitemVO workitem = new WorkitemVO();
+        when(workitemService.get(11L)).thenReturn(workitem);
+        assertSame(workitem, service.call(personal, "autowonder.get_workitem",
+                Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
+    }
+
+    @Test
+    void executorWriteToolsFollowTheRoleExecutorReadOnlyDomain() {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(WorkspaceDomain.EXECUTOR));
+        McpAccessTokenService.Principal personal =
+                McpAccessTokenService.Principal.personal(USER_ID, 1L);
+
+        // 角色把 EXECUTOR 标为只读后，读写成员的个人令牌不能创建执行器；
+        // 拒绝发生在依赖解析前，不触达执行器服务。
+        BizException thrown = assertThrows(BizException.class,
+                () -> service.call(personal, "autowonder.create_executor",
+                        Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L, "name", "blocked",
+                                "clientKind", "QODER_CLI")));
+        assertEquals("10403", thrown.getCode());
+        verify(executorService, never()).create(anyLong(), any(), anyLong(), anyLong());
+
+        WorkitemVO workitem = new WorkitemVO();
+        when(workitemService.get(11L)).thenReturn(workitem);
+        assertSame(workitem, service.call(personal, "autowonder.get_workitem",
+                Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
+    }
+
+    @Test
+    void executorCreationDropsThePlaintextTokenForNonAdministratorCredentials() {
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID)).thenReturn(Set.of());
+        when(executorService.create(eq(5L), any(CreateExecutorRequest.class), eq(WORKSPACE_ID), eq(USER_ID)))
+                .thenReturn(issued(9L, 5L, "dev-machine-01", "awexec_plain"));
+        Map<String, Object> args = Map.of("workspaceId", WORKSPACE_ID, "agentId", 5L,
+                "name", "dev-machine-01", "clientKind", "QODER_CLI");
+        var caller = McpAccessTokenService.Principal.personal(USER_ID, 1L);
+
+        // 读写成员创建执行器只拿到记录，明文凭据由管理员经令牌工具单独获取。
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        CreatedExecutorVO memberCreated = (CreatedExecutorVO) service.call(
+                caller, "autowonder.create_executor", args);
+        assertNull(memberCreated.getToken());
+        assertEquals(9L, memberCreated.getId());
+
+        // 输出 schema 必须接受 token=null，否则严格客户端会把已落库的创建判为失败。
+        McpToolVO executorTool = toolByName("autowonder.create_executor");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> declaredToken = (Map<String, Object>) outputProperties(executorTool).get("token");
+        assertTrue(((List<?>) declaredToken.get("type")).contains("null"));
+        assertFalse(((List<?>) executorTool.getOutputSchema().get("required")).contains("token"));
+        JsonNode serialized = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(memberCreated);
+        assertTrue(serialized.get("token").isNull());
+
+        // 管理员仍可一次性取得明文令牌。
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.ADMIN);
+        CreatedExecutorVO adminCreated = (CreatedExecutorVO) service.call(
+                caller, "autowonder.create_executor", args);
+        assertEquals("awexec_plain", adminCreated.getToken());
+    }
+
+    @Test
+    void conversationCredentialIsBlockedWhenRoleMarksReadOnlyTheToolDomain() {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(WorkspaceDomain.WORKITEM));
+
+        BizException thrown = assertThrows(BizException.class,
+                () -> service.call(scopedPrincipal(WorkspaceAccessLevel.ADMIN),
+                        "autowonder.delete_workitem", Map.of("id", 11L)));
+
+        assertEquals("10403", thrown.getCode());
+        verify(workitemService, never()).delete(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void dispatchCredentialSkipsMemberForbiddenDomains() {
+        Object result = service.call(dispatchPrincipal(-321L),
+                "autowonder.delete_sdlc", Map.of("id", 11L));
+
+        assertEquals(Map.of("deleted", true), result);
+        verify(sdlcService).delete(11L, WORKSPACE_ID, USER_ID);
+        verify(workspaceService, never()).activeReadOnlyDomains(anyLong(), anyLong());
+    }
+
+    @Test
+    void documentToolsResolveDomainBySourceTypeLikeTheRestEntries() {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        McpAccessTokenService.Principal personal =
+                McpAccessTokenService.Principal.personal(USER_ID, 1L);
+
+        // 仅禁 ARTIFACT：工单文档（与 ArtifactController 同域）被拒绝，定时任务文档放行。
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(WorkspaceDomain.ARTIFACT));
+        BizException workitemDoc = assertThrows(BizException.class,
+                () -> service.call(personal, "autowonder.delete_workitem_document",
+                        Map.of("workspaceId", WORKSPACE_ID, "id", 11L, "artifactId", 5L)));
+        assertEquals("10403", workitemDoc.getCode());
+
+        Object taskDoc = service.call(personal, "autowonder.delete_workitem_document",
+                Map.of("workspaceId", WORKSPACE_ID, "id", 21L, "artifactId", 5L,
+                        "sourceType", "SCHEDULED_TASK"));
+        assertEquals(Map.of("deleted", true), taskDoc);
+
+        // 仅禁 SCHEDULEDTASK：定时任务文档（与 ScheduledTaskDocumentController 同域）被拒绝。
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(WorkspaceDomain.SCHEDULEDTASK));
+        BizException forbiddenTaskDoc = assertThrows(BizException.class,
+                () -> service.call(personal, "autowonder.delete_workitem_document",
+                        Map.of("workspaceId", WORKSPACE_ID, "id", 21L, "artifactId", 5L,
+                                "sourceType", "SCHEDULED_TASK")));
+        assertEquals("10403", forbiddenTaskDoc.getCode());
+
+        // 仅禁 WORKITEM 不再误伤文档工具（域已按实际资源修正为 ARTIFACT/SCHEDULEDTASK）。
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(WorkspaceDomain.WORKITEM));
+        Object result = service.call(personal, "autowonder.delete_workitem_document",
+                Map.of("workspaceId", WORKSPACE_ID, "id", 11L, "artifactId", 5L));
+        assertEquals(Map.of("deleted", true), result);
+    }
+
+    @Test
+    void readOnlyDomainDoesNotBlockPersonalTokenReads() {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID)).thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID)).thenReturn(Set.of(WorkspaceDomain.WORKITEM));
+        WorkitemVO workitem = new WorkitemVO();
+        when(workitemService.get(11L)).thenReturn(workitem);
+        var personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
+        assertSame(workitem, service.call(personal, "autowonder.get_workitem", Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
+        verify(workspaceService, never()).activeReadOnlyDomains(anyLong(), anyLong());
+        assertThrows(BizException.class, () -> service.call(personal, "autowonder.delete_workitem", Map.of("workspaceId", WORKSPACE_ID, "id", 11L)));
+        verify(workitemService, never()).delete(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void collaboratorDomainChangesApplyToTheSamePersonalCredentialOnEveryWrite() {
+        when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
+                .thenReturn(WorkspaceAccessLevel.READ_WRITE);
+        when(workspaceService.activeReadOnlyDomains(WORKSPACE_ID, USER_ID))
+                .thenReturn(Set.of(), Set.of(WorkspaceDomain.WORKITEM), Set.of());
+        var personal = McpAccessTokenService.Principal.personal(USER_ID, 1L);
+        var args = Map.<String, Object>of("workspaceId", WORKSPACE_ID, "id", 11L);
+
+        service.call(personal, "autowonder.delete_workitem", args);
+        assertThrows(BizException.class, () -> service.call(personal, "autowonder.delete_workitem", args));
+        service.call(personal, "autowonder.delete_workitem", args);
+
+        verify(workitemService, times(2)).delete(11L, WORKSPACE_ID, USER_ID);
+        verify(workspaceService, times(3)).activeReadOnlyDomains(WORKSPACE_ID, USER_ID);
+    }
+
+    @Test
     void membershipIsResolvedOnEveryCallSoDowngradesTakeEffectImmediately() {
         when(workspaceService.activeAccessLevel(WORKSPACE_ID, USER_ID))
                 .thenReturn(WorkspaceAccessLevel.READ_WRITE, WorkspaceAccessLevel.READ_ONLY);
@@ -4047,6 +4563,38 @@ class McpToolServiceTest {
     }
 
     @Test
+    void executorOwnedLaunchValidationsCarryMetadataWhileMcpDiagnosticsStayRaw() {
+        var admin = principal(WorkspaceAccessLevel.ADMIN);
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            BizException override = assertThrows(BizException.class, () -> call(admin,
+                    "autowonder.build_executor_launch_command", Map.of("id", 9L, "model", "<b>raw</b>")));
+            assertEquals("17008", override.getCode());
+            assertEquals("model 不支持在生成启动命令时临时覆盖，请先调用 autowonder.update_executor_launch_config 修改启动配置", override.getMessage());
+            assertEquals("model cannot be overridden when generating a startup command. Call autowonder.update_executor_launch_config to update startup configuration first.", com.aliyun.autowonder.common.result.Result.fail(override).getMessage());
+            BizException version = assertThrows(BizException.class, () -> call(admin,
+                    "autowonder.update_executor_launch_config", Map.of("id", 9L)));
+            assertEquals("27003", version.getCode());
+            assertEquals("version is required. Read it from autowonder.get_executor_launch_config.", com.aliyun.autowonder.common.result.Result.fail(version).getMessage());
+            BizException concurrency = assertThrows(BizException.class, () -> call(admin,
+                    "autowonder.create_executor", Map.of("agentId", 5L, "name", "raw", "clientKind", "QODER_CLI", "maxConcurrentDispatches", "1.5")));
+            assertEquals("27003", concurrency.getCode());
+            assertEquals("maxConcurrentDispatches 必须为 1 到 10 的整数", concurrency.getMessage());
+            assertEquals("maxConcurrentDispatches must be an integer from 1 to 10.", com.aliyun.autowonder.common.result.Result.fail(concurrency).getMessage());
+            ReflectionTestUtils.setField(service, "executorService", null);
+            BizException missing = assertThrows(BizException.class, () -> call(admin, "autowonder.get_executor", Map.of("id", 9L)));
+            assertEquals("10000", missing.getCode());
+            assertEquals("Executor capabilities are unavailable.", com.aliyun.autowonder.common.result.Result.fail(missing).getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+            for (var error : List.of(override, version, concurrency, missing)) {
+                assertEquals(BizException.class, error.getClass()); assertNull(error.getCause());
+                assertEquals(error.getMessage(), com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
+            }
+            verify(executorLaunchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); AutoWonderContext.destroy(); }
+    }
+
+    @Test
     void executorToolsAreRegisteredWithPageParityInputSchemas() {
         assertEquals(List.of("workspaceId"), schemaFor("autowonder.list_executors").get("required"));
         assertEquals(List.of("workspaceId"),
@@ -4184,6 +4732,7 @@ class McpToolServiceTest {
         // 历史执行器的 clientKind 可为 null，Schema 必须允许 null，否则严格校验客户端拒绝整个列表/详情响应
         assertNullableField(executorItem, "clientKind", "string");
         assertNullableField(executorItem, "lastConnectIp", "string");
+        assertNullableField(executorItem, "lastConnectHostname", "string");
         assertNullableField(executorItem, "lastHeartbeat", "string");
         assertNullableField(executorItem, "gmtCreate", "string");
         assertNullableField(properties(outputSchemaFor("autowonder.get_executor")), "clientKind", "string");
@@ -4227,7 +4776,6 @@ class McpToolServiceTest {
         assertNullableField(command, "reasoningEffort", "string");
         assertNullableField(command, "contextWindow", "string");
         assertNullableField(command, "shell", "string");
-        assertNullableField(command, "logFileName", "string");
     }
 
     @Test
@@ -4458,7 +5006,6 @@ class McpToolServiceTest {
         assertEquals("posix", command.getOs());
         assertFalse(command.isDebug());
         assertNull(command.getShell());
-        assertNull(command.getLogFileName());
         // 生成命令只读数据库：既不回写配置，也不读 Redis 模型目录
         verify(executorLaunchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
         verifyNoInteractions(providerModelCatalogService);
@@ -4509,8 +5056,12 @@ class McpToolServiceTest {
         assertTrue(command.isDebug());
         assertEquals("powershell", command.getShell());
         assertTrue(command.getCommand().startsWith("powershell -NoProfile -EncodedCommand "));
-        assertTrue(command.getLogFileName().matches("aw-qoder-9-\\d{6}-\\d{2}-\\d{2}-\\d{2}\\.log"),
-                command.getLogFileName());
+        // debug 只加 --debug：命令里不能再有第二条把控制台输出抄进文件的管道
+        String decoded = new String(java.util.Base64.getDecoder().decode(
+                command.getCommand().substring("powershell -NoProfile -EncodedCommand ".length())),
+                java.nio.charset.StandardCharsets.UTF_16LE);
+        assertTrue(decoded.endsWith("--debug"), decoded);
+        assertFalse(decoded.contains("Tee-Object"), decoded);
         // os/debug/shell 只决定输出格式，绝不能被写回启动配置
         verify(executorLaunchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
     }
@@ -4597,7 +5148,8 @@ class McpToolServiceTest {
 
         Object result = call(admin, "autowonder.update_executor_launch_config",
                 Map.of("id", 9L, "version", 3, "memoryMode", "provider-local", "model", "lite",
-                        "reasoningEffort", "low", "contextWindow", "400000", "maxConcurrentDispatches", 5));
+                        "reasoningEffort", "low", "contextWindow", "400000", "maxConcurrentDispatches", 5, "modelUpgradePolicy",
+                        Map.of("enabled", true, "levels", List.of(Map.of("entryCount", 3, "model", "best")))));
 
         assertSame(saved, result);
 
@@ -4610,6 +5162,9 @@ class McpToolServiceTest {
         assertEquals("lite", captor.getValue().getModel());
         assertEquals("low", captor.getValue().getReasoningEffort());
         assertEquals("400000", captor.getValue().getContextWindow());
+        assertTrue(captor.getValue().getModelUpgradePolicy().isEnabled());
+        assertEquals(3, captor.getValue().getModelUpgradePolicy().getLevels().get(0).getEntryCount());
+        assertEquals("best", captor.getValue().getModelUpgradePolicy().getLevels().get(0).getModel());
         verifyNoInteractions(providerModelCatalogService);
     }
 
@@ -4912,5 +5467,186 @@ class McpToolServiceTest {
                 mock(PlatformBrandingDao.class), new InMemoryObjectStorage(), new OssProperties(),
                 baseUrl, runtimeVersion, "x.x.x", false);
         return new WorkitemCliDownloadTokenService(new JwtService(props), workitemDao, memberDao, branding);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"zh-CN,scope",
+            "en-US,scope",
+            "zh-CN,workspace",
+            "en-US,workspace",
+            "zh-CN,positive",
+            "en-US,positive",
+            "zh-CN,pending",
+            "en-US,pending",
+            "zh-CN,lifecycleFields",
+            "en-US,lifecycleFields",
+            "zh-CN,lifecycleAction",
+            "en-US,lifecycleAction",
+            "zh-CN,recovery",
+            "en-US,recovery",
+            "zh-CN,iso",
+            "en-US,iso",
+            "zh-CN,version",
+            "en-US,version",
+            "zh-CN,range",
+            "en-US,range",
+            "zh-CN,source",
+            "en-US,source",
+            "zh-CN,status",
+            "en-US,status",
+            "zh-CN,page",
+            "en-US,page",
+            "zh-CN,runPage",
+            "en-US,runPage",
+            "zh-CN,action",
+            "en-US,action",
+            "zh-CN,memoryCreate",
+            "en-US,memoryCreate",
+            "zh-CN,memorySearch",
+            "en-US,memorySearch"})
+    void ownedToolValidatorsCarryExplicitIntentWithoutChangingRawContracts(String language,String problem) {
+        var args=new java.util.LinkedHashMap<String,Object>(); args.put("workspaceId",WORKSPACE_ID);args.put("id",99L);
+        String tool=switch(problem) {
+            case "scope", "workspace", "positive" -> "autowonder.get_workitem";
+            case "pending" -> "autowonder.expose_workitem_artifact";
+            case "lifecycleFields", "lifecycleAction" -> "autowonder.update_agent";
+            case "recovery" -> "autowonder.control_delivery";
+            case "iso" -> "autowonder.create_scheduled_task";
+            case "version" -> "autowonder.delete_scheduled_task";
+            case "range" -> "autowonder.update_scheduled_task";
+            case "source" -> "autowonder.list_workitem_documents";
+            case "status", "page" -> "autowonder.list_scheduled_tasks";
+            case "runPage" -> "autowonder.list_scheduled_task_runs";
+            case "action" -> "autowonder.transition_scheduled_task";
+            case "memoryCreate" -> "autowonder.create_memory";
+            default -> "autowonder.search_memories";
+        };
+        switch(problem) {
+            case "scope" -> args.put("workspaceId",WORKSPACE_ID+1);
+            case "workspace" -> args.remove("workspaceId");
+            case "positive" -> args.put("workspaceId",0);
+            case "pending" -> args.put("sha256","raw-digest");
+            case "lifecycleFields" -> {args.put("lifecycleAction","offline");args.put("name","raw用户名");}
+            case "lifecycleAction" -> args.put("lifecycleAction","unknown");
+            case "recovery" -> {args.put("workitemId",99L);args.put("action","unknown");}
+            case "iso" -> {args.put("name","rawname");args.put("instructionMd","raw AI instruction");args.put("squadId",1L);args.put("initialAgentId",1L);args.put("scheduleType","ONCE");args.put("timezone","UTC");args.put("runAt","<bad-date>");}
+            case "range" -> {args.put("version",0);args.put("startDeadlineSeconds",2147483648L);var taskService=mock(ScheduledTaskService.class);var task=new ScheduledTaskVO();task.setCreatorId(USER_ID);when(taskService.get(99L,WORKSPACE_ID)).thenReturn(task);ReflectionTestUtils.setField(service,"scheduledTaskService",taskService);}
+            case "source" -> args.put("sourceType","UNKNOWN");
+            case "status" -> args.put("status","UNKNOWN");
+            case "page", "runPage" -> args.put("size",101);
+            case "action" -> args.put("action","UNKNOWN");
+            default -> { }
+        }
+        String diagnostic=switch(problem) {
+            case "scope" -> "任务作用域令牌不能访问其他工作空间";
+            case "workspace" -> "工作空间域工具必须传入 workspaceId，可通过 autowonder.list_projects 获取";
+            case "positive" -> "workspaceId 必须是正整数";
+            case "pending" -> "pending 分享需要有效的 dispatchId";
+            case "lifecycleFields" -> "lifecycleAction 与字段更新参数互斥，请只传其中一类";
+            case "lifecycleAction" -> "lifecycleAction 仅支持 offline/online";
+            case "recovery" -> "不支持的恢复操作";
+            case "iso" -> "runAt 必须是 ISO-8601 时间";
+            case "version" -> "version 必须提供且不能为负数";
+            case "range" -> "startDeadlineSeconds 超出整数范围";
+            case "source" -> "sourceType 仅支持 WORKITEM/SCHEDULED_TASK";
+            case "status" -> "status 仅支持 ACTIVE/PAUSED/EXHAUSTED/ARCHIVED";
+            case "page", "runPage" -> "size 必须在 1-100 之间且 offset 不能为负数";
+            case "action" -> "action 仅支持 enable/pause/archive/run-now/pause-run/resume-run/cancel-run";
+            default -> "持久记忆只能由数字人任务维护；人工管理请使用 memory-stores API";
+        };
+        String english=switch(problem) {
+            case "scope" -> "A task-scoped token cannot access another workspace";
+            case "workspace" -> "Workspace-scoped tools require workspaceId. Obtain it with autowonder.list_projects";
+            case "positive" -> "workspaceId must be a positive integer";
+            case "pending" -> "A pending share requires a valid dispatchId";
+            case "lifecycleFields" -> "lifecycleAction and field updates are mutually exclusive. Provide only one of them";
+            case "lifecycleAction" -> "lifecycleAction supports only offline/online";
+            case "recovery" -> "Unsupported recovery action";
+            case "iso" -> "runAt must be an ISO-8601 timestamp";
+            case "version" -> "version is required and must not be negative";
+            case "range" -> "startDeadlineSeconds is outside the integer range";
+            case "source" -> "sourceType supports only WORKITEM/SCHEDULED_TASK";
+            case "status" -> "status supports only ACTIVE/PAUSED/EXHAUSTED/ARCHIVED";
+            case "page", "runPage" -> "size must be between 1 and 100 and offset must not be negative";
+            case "action" -> "action supports only enable/pause/archive/run-now/pause-run/resume-run/cancel-run";
+            default -> "Persistent memory can only be maintained by Agent tasks. Use the memory-stores API for manual management";
+        };
+        var caller=(problem.equals("scope") || problem.startsWith("memory")) ? scopedPrincipal(WorkspaceAccessLevel.READ_WRITE) : principal;
+        var error=assertThrows(BizException.class,()->service.call(caller,tool,args));
+        assertEquals(problem.equals("scope") ? ErrorCode.NO_PERMISSION.getCode() : java.util.Set.of("workspace","positive","pending").contains(problem) ? ErrorCode.PARAM_INVALID.getCode() : problem.equals("recovery") ? ErrorCode.CONFLICT.getCode() : ErrorCode.MCP_TOOL_ARGUMENT_INVALID.getCode(),error.getCode());
+        assertEquals(diagnostic,error.getMessage());assertEquals(diagnostic,error.getLocalizedMessage());assertNull(error.getCause());
+        assertEquals(99L,args.get("id"));
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try { assertEquals(language.equals("en-US") ? english : diagnostic,com.aliyun.autowonder.common.result.Result.fail(error).getMessage()); }
+        finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"zh","en"})
+    void actualCategoryBatchProducerReachesMcpWithoutEnvelopeOrRawIntentInference(String language) {
+        var skills=mock(com.aliyun.autowonder.skill.SkillDao.class);
+        var categories=mock(com.aliyun.autowonder.category.CategoryDao.class);
+        var refs=mock(com.aliyun.autowonder.category.SkillCategoryRefDao.class);
+        var actual=new CategoryService(categories,refs,skills);
+        var cause=new IllegalStateException("raw cause");
+        var raw=new BizException(ErrorCode.SKILL_NOT_FOUND,"技能不存在");
+        when(skills.findByIdForUpdate(5L)).thenThrow(raw);
+        var unknown=BizException.keyed(ErrorCode.SKILL_NOT_FOUND,"unknown.task23c",new Object[]{},"<b>raw</b>{0}",cause);
+        when(skills.findByIdForUpdate(6L)).thenThrow(unknown);
+        when(categoryService.batchSetSkillCategory(anyList(),any(),eq(100L),eq(7L))).thenAnswer(inv ->
+            actual.batchSetSkillCategory(inv.getArgument(0),inv.getArgument(1),100L,7L));
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(language.equals("en")?java.util.Locale.US:java.util.Locale.CHINA);
+        try {
+            var items=(List<BatchSkillCategoryResultVO>)call(principal,"autowonder.batch_set_skill_category",
+                Map.of("skillIds",List.of(5L,6L,7L,5L),"categoryId",9L));
+            assertEquals(List.of(5L,6L,7L),items.stream().map(BatchSkillCategoryResultVO::getSkillId).toList());
+            assertTrue(items.stream().noneMatch(BatchSkillCategoryResultVO::isSuccess));
+            assertEquals("技能不存在",items.get(0).getMessage());assertEquals("<b>raw</b>{0}",items.get(1).getMessage());
+            assertSame(cause,unknown.getCause());assertEquals("技能不存在",raw.getMessage());verifyNoInteractions(categories,refs);
+            assertEquals(language.equals("en")?"Skill not found":"技能不存在",items.get(2).getMessage());
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @org.junit.jupiter.params.provider.ValueSource(strings={"", "  "})
+    void missingDispatchAgentNameCarriesSourceIntentWithoutInferringAuthoredSameLookingName(String name) {
+        if(name!=null){var source=new AgentVO();source.setName(name);when(agentService.get(40014L,WORKSPACE_ID)).thenReturn(source);}
+        var d = dispatch(321L, 100L, 99L, 40014L);
+        when(dispatchDao.findById(321L)).thenReturn(d);
+        var assigned = new WorkitemVO(); assigned.setId(99L);
+        when(workitemService.assignAs(eq(99L), eq("HUMAN"), eq(77L), isNull(), isNull(), isNull(), eq(100L), eq(7L), any())).thenReturn(assigned);
+        var actor = ArgumentCaptor.forClass(AssignmentActor.class);
+        call(dispatchPrincipal(-321L), "autowonder.assign_workitem", Map.of("id", 99L, "assigneeType", "HUMAN", "assigneeRef", 77L));
+        verify(workitemService).assignAs(eq(99L), eq("HUMAN"), eq(77L), isNull(), isNull(), isNull(), eq(100L), eq(7L), actor.capture());
+        verify(agentService, times(1)).get(40014L, WORKSPACE_ID);
+        assertEquals("AGENT", actor.getValue().type()); assertEquals(40014L, actor.getValue().ref());
+        assertEquals("数字人", actor.getValue().displayName());
+        assertEquals("AGENT_NAME_FALLBACK", new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(actor.getValue()).path("actorNameKind").asText());
+    }
+
+    @Test void dispatchAgentNameEqualToFallbackStaysRawWithoutAnAdditionalLookup() {
+        var d=dispatch(321L,100L,99L,40014L);when(dispatchDao.findById(321L)).thenReturn(d);
+        var source=new AgentVO();source.setName("数字人");when(agentService.get(40014L,WORKSPACE_ID)).thenReturn(source);
+        var assigned=new WorkitemVO();assigned.setId(99L);
+        when(workitemService.assignAs(eq(99L),eq("HUMAN"),eq(77L),isNull(),isNull(),isNull(),eq(100L),eq(7L),any())).thenReturn(assigned);
+        call(dispatchPrincipal(-321L),"autowonder.assign_workitem",Map.of("id",99L,"assigneeType","HUMAN","assigneeRef",77L));
+        var actor=ArgumentCaptor.forClass(AssignmentActor.class);
+        verify(workitemService).assignAs(eq(99L),eq("HUMAN"),eq(77L),isNull(),isNull(),isNull(),eq(100L),eq(7L),actor.capture());
+        assertEquals("数字人",actor.getValue().displayName());assertNull(actor.getValue().actorNameKind());
+        verify(agentService,times(1)).get(40014L,WORKSPACE_ID);
+    }
+
+
+    @Test void policyOnlyMcpUpdatePreservesLaunchSettings() {
+        var admin = principal(WorkspaceAccessLevel.ADMIN);
+        var saved = storedConfig(4,"auto","platform","medium","260000");
+        when(executorLaunchConfigService.updateModelUpgradePolicy(eq(9L),eq(WORKSPACE_ID),any(),eq(USER_ID))).thenReturn(saved);
+        assertSame(saved, call(admin,"autowonder.update_executor_launch_config",Map.of("id",9L,"version",3,
+                "modelUpgradePolicy",Map.of("enabled",true,"levels",List.of(Map.of("entryCount",2,"model","best"))))));
+        ArgumentCaptor<UpdateExecutorLaunchConfigRequest> request = ArgumentCaptor.forClass(UpdateExecutorLaunchConfigRequest.class);
+        verify(executorLaunchConfigService).updateModelUpgradePolicy(eq(9L),eq(WORKSPACE_ID),request.capture(),eq(USER_ID));
+        assertEquals(2,request.getValue().getModelUpgradePolicy().getLevels().get(0).getEntryCount());
+        verify(executorLaunchConfigService,never()).updateConfig(anyLong(),anyLong(),any(),anyLong());
     }
 }

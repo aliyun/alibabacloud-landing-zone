@@ -24,7 +24,8 @@ public final class WorkitemHealthEvaluator {
 
     private WorkitemHealthEvaluator() {}
 
-    public record Result(String health, String reason) {
+    public record Result(String health, String reason, Long stalledMinutes) {
+        public Result(String health, String reason) { this(health, reason, null); }
         static Result ok() {
             return new Result(OK, null);
         }
@@ -53,7 +54,7 @@ public final class WorkitemHealthEvaluator {
             Date modified = latest.getGmtModified();
             if (modified != null && nowMs - modified.getTime() > stuckThresholdMs) {
                 long minutes = (nowMs - modified.getTime()) / 60_000L;
-                return Result.stuck("执行已卡住超过 " + minutes + " 分钟无进展，请人工介入");
+                return new Result(STUCK, "执行已卡住超过 " + minutes + " 分钟无进展，请人工介入", minutes);
             }
         }
         return Result.ok();

@@ -120,6 +120,23 @@ class WorkitemCommentMentionedListenerTest {
         verify(lookupFailure.queue, never()).enqueue(any());
     }
 
+    @Test
+    void scheduledMissingTitleIntentReachesTaskWithoutChangingRawTitleOrSource() throws Exception {
+        Fixture fixture = new Fixture();
+        when(fixture.identityService.find(99L, "DINGTALK")).thenReturn(identity());
+        when(fixture.channelConfigService.isReady("DINGTALK")).thenReturn(true);
+        fixture.listener.onWorkitemCommentMentioned(new WorkitemCommentMentionedEvent(
+                100, 500, "定时任务运行 #500", 7001, 99, "AGENT", 40014, "系统", "rid-1", "raw",
+                WorkitemCommentMentionedEvent.SOURCE_SCHEDULED_TASK_RUN,
+                WorkitemCommentMentionedEvent.SCHEDULED_RUN_ID_FALLBACK));
+        ArgumentCaptor<ImNotificationTask> task = ArgumentCaptor.forClass(ImNotificationTask.class);
+        verify(fixture.queue).enqueue(task.capture());
+        assertEquals("定时任务运行 #500", task.getValue().workitemTitle());
+        assertEquals("SCHEDULED_TASK_RUN", task.getValue().sourceType());
+        assertEquals("SCHEDULED_RUN_ID_FALLBACK", new com.fasterxml.jackson.databind.ObjectMapper()
+                .valueToTree(task.getValue()).path("workitemTitleKind").asText());
+    }
+
     private static WorkitemCommentMentionedEvent event() {
         return new WorkitemCommentMentionedEvent(
                 100L,

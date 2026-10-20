@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 
 vi.mock('../useLiveActivity', () => ({
   useLiveActivity: vi.fn(),
@@ -7,6 +7,7 @@ vi.mock('../useLiveActivity', () => ({
 
 import { useLiveActivity } from '../useLiveActivity';
 import { LiveActivityPanel } from './LiveActivityPanel';
+import { i18n } from '@/shared/i18n';
 import type { LiveActivityAction } from '@/shared/types/workitem';
 
 const mockUseLiveActivity = vi.mocked(useLiveActivity);
@@ -72,6 +73,38 @@ describe('LiveActivityPanel', () => {
     render(<LiveActivityPanel dispatchId={10} />);
     expect(screen.getByTestId('live-activity-panel')).toBeTruthy();
     expect(screen.getByTestId('live-activity-current').textContent).toContain('正在执行测试');
+  });
+
+  it.each([
+    ['RECOVERING', '执行器正在恢复任务'],
+    ['UNKNOWN', '执行器连接状态暂不可确认，等待恢复'],
+  ] as const)('shows %s health instead of a stale running action', (runtimeState, message) => {
+    const action = buildAction();
+    mockUseLiveActivity.mockReturnValue({
+      actions: [action], currentAction: action, lastUpdatedAt: null, lastSeq: 1,
+      truncated: false, awaitingRuntime: false, loading: false, error: null,
+      runtimeState,
+    });
+    render(<LiveActivityPanel dispatchId={10} />);
+    expect(screen.getByText(message)).toBeTruthy();
+    expect(screen.queryByTestId('live-activity-current')).toBeNull();
+    expect(screen.getByTestId('live-activity-timeline')).toBeTruthy();
+  });
+
+  it('shows English health without inventing a current action when history is empty', async () => {
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    try {
+      mockUseLiveActivity.mockReturnValue({
+        actions: [], currentAction: null, lastUpdatedAt: null, lastSeq: null,
+        truncated: false, awaitingRuntime: true, loading: false, error: null,
+        runtimeState: 'UNKNOWN',
+      });
+      render(<LiveActivityPanel dispatchId={10} />);
+      expect(screen.getByText('Executor connection status is unavailable; waiting for recovery')).toBeTruthy();
+      expect(screen.queryByText('Waiting for the agent to report live activity')).toBeNull();
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    }
   });
 
   it('renders last updated time', () => {

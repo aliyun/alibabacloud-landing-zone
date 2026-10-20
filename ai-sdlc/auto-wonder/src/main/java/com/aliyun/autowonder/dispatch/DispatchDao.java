@@ -88,6 +88,12 @@ public interface DispatchDao {
                                                 @Param("statuses") List<String> statuses,
                                                 @Param("limit") int limit);
 
+    /** Keyset scan so unrecoverable historical rows cannot hide newer executions. */
+    List<DispatchDO> listByExecutorAndStatusesAfterId(@Param("executorId") Long executorId,
+                                                     @Param("statuses") List<String> statuses,
+                                                     @Param("afterId") long afterId,
+                                                     @Param("limit") int limit);
+
     /** Pause predecessors whose durable state proves WAITING_FOR_PAUSE may be released. */
     List<DispatchDO> listReleasedPausePredecessors(@Param("executorId") Long executorId,
                                                    @Param("limit") int limit);
@@ -115,6 +121,15 @@ public interface DispatchDao {
                        @Param("agentId") Long agentId,
                        @Param("workitemId") Long workitemId,
                        @Param("since") Date since);
+
+    /** Workitem executions created in [from, to), newest first with a stable keyset. */
+    List<DispatchDO> listWorkitemExecutionsCreatedBetween(
+            @Param("tenantId") Long tenantId,
+            @Param("from") Date from,
+            @Param("to") Date to,
+            @Param("cursorCreatedAt") Date cursorCreatedAt,
+            @Param("cursorId") Long cursorId,
+            @Param("limit") int limit);
 
     long countActiveByExecutor(@Param("executorId") Long executorId);
 

@@ -272,7 +272,7 @@ describe('AiSessionPanel', () => {
     await user.click(screen.getByRole('button', { name: /发送/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('COMPLETED')).toBeInTheDocument();
+      expect(screen.getByText('已完成')).toBeInTheDocument();
     });
     expect(screen.queryByText('补充一下接口约束')).not.toBeInTheDocument();
   });

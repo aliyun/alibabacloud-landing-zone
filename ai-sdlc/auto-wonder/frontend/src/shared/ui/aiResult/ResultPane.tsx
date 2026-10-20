@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Alert, Typography, Input, message } from 'antd';
 import { apiClient } from '@/shared/api/client';
@@ -14,6 +16,7 @@ interface ResultPaneProps {
 }
 
 export function ResultPane({ session, onConfirmed }: ResultPaneProps) {
+  const { t } = useTranslation('shared');
   const runWithAccess = useAccessCommand();
   const parsed = useMemo(() => {
     if (!session?.resultJson) return null;
@@ -36,12 +39,12 @@ export function ResultPane({ session, onConfirmed }: ResultPaneProps) {
 
   if (!session || !session.resultJson || parsed === null) {
     if (session?.status === 'FAILED') {
-      return <Alert type="error" showIcon message="生成失败" description={session.error ?? '请重试'} />;
+      return <Alert type="error" showIcon message={t('result.failed')} description={session.error ?? t('result.retry')} />;
     }
     if (session?.status === 'CANCELED') {
-      return <Empty description="会话已取消" />;
+      return <Empty description={t('result.cancelled')} />;
     }
-    return <Empty description="发起对话后这里出现结构化结果" />;
+    return <Empty description={t('result.empty')} />;
   }
 
   const Renderer = rendererRegistry[session.scene];
@@ -54,17 +57,17 @@ export function ResultPane({ session, onConfirmed }: ResultPaneProps) {
     setConfirming(true);
     try {
       if (isAgentConfig) {
-        message.success('已应用到创建表单');
+        message.success(i18n.t('shared:result.applied'));
         onConfirmed?.(payload);
         return;
       }
-      await runWithAccess('READ_WRITE', '确认 AI 结果落库', async () => {
+      await runWithAccess('READ_WRITE', t('result.confirmAction'), async () => {
         await apiClient.post(`/api/ai/sessions/${session.id}/confirm`, { resultJson: payload });
-        message.success('已确认落库');
+        message.success(i18n.t('shared:result.saved'));
         onConfirmed?.(payload);
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '确认落库失败，请稍后重试';
+      const errorMessage = error instanceof Error ? error.message : i18n.t('shared:result.saveFailed');
       message.error(errorMessage);
     } finally {
       setConfirming(false);
@@ -74,7 +77,7 @@ export function ResultPane({ session, onConfirmed }: ResultPaneProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {isDone && (
-        <Alert type="success" showIcon message={isAgentConfig ? '已应用到创建表单' : '已生效'} style={{ marginBottom: 12 }} />
+        <Alert type="success" showIcon message={isAgentConfig ? t('result.applied') : t('result.effective')} style={{ marginBottom: 12 }} />
       )}
       <div style={{ flex: 1, overflow: 'auto' }}>
         {Renderer ? (
@@ -82,7 +85,7 @@ export function ResultPane({ session, onConfirmed }: ResultPaneProps) {
           <Renderer value={(draft ?? parsed) as any} onChange={setDraft} disabled={disabled} />
         ) : (
           <>
-            <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>结果 JSON</Text>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('result.json')}</Text>
             <TextArea
               value={rawDraft}
               disabled={disabled}
@@ -94,7 +97,7 @@ export function ResultPane({ session, onConfirmed }: ResultPaneProps) {
       </div>
       {session.status === 'WAIT_USER' && (
         <Button type="primary" block style={{ marginTop: 12 }} loading={confirming} onClick={confirm}>
-          {isAgentConfig ? '确认使用草稿' : '确认落库'}
+          {isAgentConfig ? t('result.useDraft') : t('result.save')}
         </Button>
       )}
     </div>

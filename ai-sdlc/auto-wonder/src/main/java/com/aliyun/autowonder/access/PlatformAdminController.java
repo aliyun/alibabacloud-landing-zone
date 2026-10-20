@@ -41,7 +41,7 @@ public class PlatformAdminController {
     @GetMapping("/candidates")
     public Result<List<PlatformAdminCandidateVO>> candidates(
             @RequestParam(name = "keyword", required = false) String keyword) {
-        systemAdminService.requireSystemAdmin(currentUserId(), "搜索平台管理员候选人");
+        systemAdminService.requireSystemAdmin(currentUserId(), "搜索平台管理员候选人", "access.admin.search_denied");
         return Result.ok(systemAdminService.searchPlatformAdminCandidates(keyword));
     }
 

@@ -5,6 +5,8 @@
 
     <resultMap id="checkpointMap" type="com.aliyun.autowonder.dispatch.DispatchCheckpointDO">
         <id column="id" property="id"/>
+        <result column="completion_result_id" property="completionResultId"/>
+        <result column="gc_pending" property="gcPending"/>
         <result column="tenant_id" property="tenantId"/>
         <result column="workitem_id" property="workitemId"/>
         <result column="dispatch_id" property="dispatchId"/>
@@ -24,7 +26,7 @@
     <sql id="cols">
         id, tenant_id, workitem_id, dispatch_id, agent_id, checkpoint_seq,
         provider, provider_session_id, runtime_id, executor_id, active_step_id,
-        oss_ref, sha256, size_bytes, gmt_create
+        oss_ref, sha256, size_bytes, completion_result_id, gc_pending, gmt_create
     </sql>
 
     <insert id="insert" parameterType="com.aliyun.autowonder.dispatch.DispatchCheckpointDO"
@@ -32,40 +34,91 @@
         INSERT INTO dispatch_recovery_checkpoint
             (tenant_id, workitem_id, dispatch_id, agent_id, checkpoint_seq,
              provider, provider_session_id, runtime_id, executor_id, active_step_id,
-             oss_ref, sha256, size_bytes)
+             oss_ref, sha256, size_bytes, completion_result_id)
         VALUES
             (#{tenantId}, #{workitemId}, #{dispatchId}, #{agentId}, #{checkpointSeq},
              #{provider}, #{providerSessionId}, #{runtimeId}, #{executorId}, #{activeStepId},
-             #{ossRef}, #{sha256}, #{sizeBytes})
+             #{ossRef}, #{sha256}, #{sizeBytes}, #{completionResultId})
     </insert>
 
     <select id="findByDispatchAndSeq" resultMap="checkpointMap">
         SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
-        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        WHERE gc_pending = 0 AND tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
           AND checkpoint_seq = #{checkpointSeq}
         LIMIT 1
     </select>
 
     <select id="findLatestByDispatch" resultMap="checkpointMap">
         SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
-        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        WHERE gc_pending = 0 AND tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
         ORDER BY checkpoint_seq DESC, id DESC
         LIMIT 1
     </select>
 
     <select id="listLatestByDispatch" resultMap="checkpointMap">
         SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
-        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+        WHERE gc_pending = 0 AND tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
         ORDER BY checkpoint_seq DESC, id DESC
         LIMIT #{limit}
     </select>
 
+    <!-- A pin is needed only while the originating execution can still submit that result.
+         Platform fencing/terminal state or an immutable decision makes late delivery decidable without A. -->
+    <sql id="unprotected">
+        (c.completion_result_id IS NULL OR EXISTS (
+            SELECT 1 FROM dispatch_result_decision r WHERE r.tenant_id=c.tenant_id
+              AND r.dispatch_id=c.dispatch_id AND r.result_id=c.completion_result_id)
+         OR EXISTS (SELECT 1 FROM dispatch d WHERE d.tenant_id=c.tenant_id AND d.id=c.dispatch_id
+            AND (d.status IN ('SUCCEEDED','FAILED','TIMEOUT','CANCELED')
+              OR NOT (d.executor_id &lt;=> c.executor_id)))
+         OR EXISTS (SELECT 1 FROM dispatch_recovery r WHERE r.tenant_id=c.tenant_id
+              AND r.dispatch_id=c.dispatch_id AND r.cancel_requested=1))
+    </sql>
+
     <select id="listObsolete" resultMap="checkpointMap">
-        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
-        WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
-        ORDER BY checkpoint_seq DESC, id DESC
-        LIMIT #{retain}, 18446744073709551615
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint c
+        WHERE c.gc_pending=0 AND c.tenant_id = #{tenantId} AND c.dispatch_id = #{dispatchId}
+          AND c.id NOT IN (SELECT id FROM (
+            SELECT id FROM dispatch_recovery_checkpoint
+            WHERE gc_pending=0 AND tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}
+            ORDER BY checkpoint_seq DESC, id DESC LIMIT #{retain}
+          ) latest_recovery)
+          AND <include refid="unprotected"/>
+        ORDER BY c.checkpoint_seq DESC, c.id DESC
     </select>
+
+    <select id="listRetentionSubjects" resultMap="checkpointMap">
+        SELECT c.tenant_id,c.dispatch_id FROM dispatch_recovery_checkpoint c
+        WHERE c.gc_pending=0 AND <include refid="unprotected"/>
+          AND (c.completion_result_id IS NOT NULL OR (SELECT COUNT(*) FROM dispatch_recovery_checkpoint n WHERE n.gc_pending=0
+            AND n.tenant_id=c.tenant_id AND n.dispatch_id=c.dispatch_id
+            AND (n.checkpoint_seq>c.checkpoint_seq OR (n.checkpoint_seq=c.checkpoint_seq AND n.id>c.id))) >= #{retain})
+        GROUP BY c.tenant_id,c.dispatch_id ORDER BY MIN(c.id) LIMIT #{limit}
+    </select>
+
+    <update id="releaseResolvedPins">
+        UPDATE dispatch_recovery_checkpoint c SET c.completion_result_id=NULL
+        WHERE c.tenant_id=#{tenantId} AND c.dispatch_id=#{dispatchId}
+          AND c.gc_pending=0 AND c.completion_result_id IS NOT NULL AND <include refid="unprotected"/>
+    </update>
+
+    <update id="markGarbage">
+        UPDATE dispatch_recovery_checkpoint SET gc_pending=1
+        WHERE tenant_id=#{tenantId} AND dispatch_id=#{dispatchId} AND id=#{id} AND gc_pending=0
+    </update>
+    <select id="listGarbage" resultMap="checkpointMap">
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint
+        WHERE gc_pending=1 ORDER BY id LIMIT #{limit}
+    </select>
+    <select id="findGarbageById" resultMap="checkpointMap">
+        SELECT <include refid="cols"/> FROM dispatch_recovery_checkpoint WHERE gc_pending=1 AND id=#{id}
+    </select>
+
+    <update id="pinCompletion">
+        UPDATE dispatch_recovery_checkpoint SET completion_result_id=#{resultId}
+        WHERE tenant_id=#{tenantId} AND dispatch_id=#{dispatchId} AND checkpoint_seq=#{checkpointSeq}
+          AND gc_pending=0 AND (completion_result_id IS NULL OR completion_result_id=#{resultId})
+    </update>
 
     <delete id="deleteById">
         DELETE FROM dispatch_recovery_checkpoint

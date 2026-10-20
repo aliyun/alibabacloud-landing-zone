@@ -32,7 +32,7 @@ describe('AuditLogPage', () => {
       }),
     );
     renderPage();
-    expect(await screen.findByText('auto-dev (AGENT)')).toBeInTheDocument();
+    expect(await screen.findByText('auto-dev (数字员工)')).toBeInTheDocument();
     expect(screen.getByText('运行事件')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '详情' }));
     expect(screen.getByText('EVENT / runtime.progress')).toBeInTheDocument();
@@ -92,9 +92,9 @@ describe('AuditLogPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('蔡何 (HUMAN)')).toBeInTheDocument();
+    expect(await screen.findByText('蔡何 (人工)')).toBeInTheDocument();
     expect(screen.getByText('CREATE_WORKSPACES_ID_SWITCH')).toBeInTheDocument();
-    expect(screen.getByText('lazy (HUMAN)')).toBeInTheDocument();
+    expect(screen.getByText('lazy (人工)')).toBeInTheDocument();
     expect(screen.getByText('CREATE_WORKITEMS_ID_TRANSITION')).toBeInTheDocument();
     expect(screen.queryByText('ACTIVE / USER_CLICK')).not.toBeInTheDocument();
     expect(screen.getByText('共 2 条')).toBeInTheDocument();
@@ -117,7 +117,7 @@ describe('AuditLogPage', () => {
       }),
     );
     renderPage();
-    expect(await screen.findByText('AW测试工程师 (AGENT)')).toBeInTheDocument();
+    expect(await screen.findByText('AW测试工程师 (数字员工)')).toBeInTheDocument();
     expect(screen.getByText('UPLOAD_CHECKPOINT')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '详情' }));
     expect(screen.getByText('EVENT / DAEMON_CALLBACK')).toBeInTheDocument();

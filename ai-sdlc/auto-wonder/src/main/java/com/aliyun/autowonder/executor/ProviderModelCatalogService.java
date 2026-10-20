@@ -440,7 +440,7 @@ public class ProviderModelCatalogService implements DisposableBean {
 
     private void requireSupportedProvider(String provider) {
         if (!isSupportedProvider(provider)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "仅支持 qoder 或 qodercn provider");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.catalog.provider_invalid", null, "仅支持 qoder 或 qodercn provider");
         }
     }
 

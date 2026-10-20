@@ -13,7 +13,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/integrations/feishu/bindings")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理飞书绑定")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理飞书绑定", actionKey = "access.action.manage_feishu_bindings")
 public class FeishuBindingController {
     public record View(Long id, String appId, Long agentId, String status, Integer version,
                        boolean encryptKeyConfigured, String callbackUrl, Date lastSuccessAt, String lastError) {}

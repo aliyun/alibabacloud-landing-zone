@@ -148,7 +148,7 @@ class ExecutorLaunchOptionsServiceTest {
         assertEquals(List.of("max", "xhigh", "high", "medium", "low", "none"), values(vo.getReasoningEfforts()));
         assertEquals("平台记忆（推荐）", vo.getMemoryModes().get(0).getLabel());
         assertEquals("1M", vo.getContextWindows().get(0).getLabel());
-        assertEquals("Extra High", vo.getReasoningEfforts().get(1).getLabel());
+        assertEquals("极高", vo.getReasoningEfforts().get(1).getLabel());
     }
 
     @Test

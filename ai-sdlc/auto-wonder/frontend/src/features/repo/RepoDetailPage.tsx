@@ -1,3 +1,7 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useState } from 'react';
@@ -5,7 +9,7 @@ import {
   Card, Descriptions, Button, Spin, Result, message, Tabs, Form, Input, Space,
   Tag, Modal, Select, Popconfirm, Drawer} from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
-import { ScanOutlined, EditOutlined, SaveOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { ScanOutlined, EditOutlined, SaveOutlined, DeleteOutlined, PlusOutlined, CloseCircleFilled } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -14,7 +18,7 @@ import {
 } from './api';
 import type { RepoRelation, CreateRelationRequest, UpdateRepoRequest } from './api';
 import type { ColumnsType } from 'antd/es/table';
-import { isValidRepoName, REPO_NAME_INVALID_MESSAGE } from './repoNameValidation';
+import { isValidRepoName, repoNameInvalidMessage } from './repoNameValidation';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { AiSessionPanel } from '@/shared/ui/AiSessionPanel';
@@ -26,6 +30,7 @@ const { TextArea } = Input;
 const REPO_SCAN_ENABLED: boolean = false;
 
 export function RepoDetailPage() {
+  const { t } = useTranslation('repo');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -69,39 +74,39 @@ export function RepoDetailPage() {
   const updateRepoMut = useMutation({
     mutationFn: (data: UpdateRepoRequest) => updateRepo(repoId, data),
     onSuccess: () => {
-      message.success('仓库信息已保存');
+      message.success(i18n.t('repo:feedback.repoSaved'));
       setEditingRepo(false);
       queryClient.invalidateQueries({ queryKey: ['repo', repoId] });
       queryClient.invalidateQueries({ queryKey: ['repos'] });
     },
-    onError: (e: Error) => message.error(e.message || '保存失败'),
+    onError: (e: Error) => message.error(e.message || i18n.t('repo:errors.save')),
   });
 
   const updateConclusionMut = useMutation({
     mutationFn: (data: Parameters<typeof updateConclusion>[1]) => updateConclusion(repoId, data),
     onSuccess: () => {
-      message.success('结论已保存');
+      message.success(i18n.t('repo:feedback.conclusionSaved'));
       setEditingConclusion(false);
       queryClient.invalidateQueries({ queryKey: ['repo-conclusion', repoId] });
     },
-    onError: (e: Error) => message.error(e.message || '保存失败'),
+    onError: (e: Error) => message.error(e.message || i18n.t('repo:errors.save')),
   });
 
   const createRelationMut = useMutation({
     mutationFn: (data: CreateRelationRequest) => createRelation(data),
     onSuccess: () => {
-      message.success('关系已创建');
+      message.success(i18n.t('repo:feedback.relationCreated'));
       setAddRelationOpen(false);
       relationForm.resetFields();
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
     },
-    onError: (e: Error) => message.error(e.message || '创建失败'),
+    onError: (e: Error) => message.error(e.message || i18n.t('repo:errors.create')),
   });
 
   const deleteRelationMut = useMutation({
     mutationFn: deleteRelation,
     onSuccess: () => {
-      message.success('关系已删除');
+      message.success(i18n.t('repo:feedback.relationDeleted'));
       setPendingRelationDeleteId(null);
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
     },
@@ -110,7 +115,7 @@ export function RepoDetailPage() {
   const deleteRepoMut = useMutation({
     mutationFn: () => deleteRepo(repoId),
     onSuccess: () => {
-      message.success('仓库已删除');
+      message.success(i18n.t('repo:feedback.deleted'));
       setDeleteRepoOpen(false);
       queryClient.invalidateQueries({ queryKey: ['repos'] });
       queryClient.invalidateQueries({ queryKey: ['repo-relations'] });
@@ -118,31 +123,36 @@ export function RepoDetailPage() {
     },
     onError: (e: Error) => {
       setDeleteRepoOpen(false);
-      message.error(e.message || '删除仓库失败');
+      message.error(e.message || i18n.t('repo:errors.deleteRepo'));
     },
   });
 
+  const formReady = hasValidRepoId && !isLoading && !isError && Boolean(repo);
+  useLocalizedValidation(repoForm, formReady && editingRepo);
+  useLocalizedValidation(conclusionForm, REPO_SCAN_ENABLED && formReady && editingConclusion);
+  useLocalizedValidation(relationForm, formReady && addRelationOpen);
+
   if (!hasValidRepoId) return (
-    <Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <Result status="404" title={t('errors.invalidId')} extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
   if (isError) return (
-    <Result status="error" title="加载失败" subTitle={error?.message || '请稍后重试'}
-      extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <Result status="error" title={t('errors.load')} subTitle={error?.message || t('errors.retry')}
+      extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
   if (!repo) return null;
 
   const repoNameMap = new Map(allRepos.map(r => [String(r.id), r.name]));
 
   const handleSaveConclusion = async () => {
-    await runWithAccess('READ_WRITE', '保存仓库扫描结论', async () => {
+    await runWithAccess('READ_WRITE', t('actions.saveConclusion'), async () => {
       const values = await conclusionForm.validateFields();
       updateConclusionMut.mutate(values);
     });
   };
 
   const handleStartRepoEdit = () => {
-    runWithAccess('READ_WRITE', '编辑仓库信息', () => {
+    runWithAccess('READ_WRITE', t('actions.editRepo'), () => {
       repoForm.setFieldsValue({
         name: repo?.name || '',
         url: repo?.url || '',
@@ -154,7 +164,7 @@ export function RepoDetailPage() {
   };
 
   const handleSaveRepo = async () => {
-    await runWithAccess('READ_WRITE', '保存仓库信息', async () => {
+    await runWithAccess('READ_WRITE', t('actions.saveRepo'), async () => {
       // 校验失败时 antd 已在表单项下方展示错误信息，这里吞掉拒绝避免未处理 Promise。
       const values = await repoForm.validateFields().catch(() => null);
       if (!values) {
@@ -170,7 +180,7 @@ export function RepoDetailPage() {
   };
 
   const handleStartEdit = () => {
-    runWithAccess('READ_WRITE', '编辑仓库扫描结论', () => {
+    runWithAccess('READ_WRITE', t('actions.editConclusion'), () => {
       conclusionForm.setFieldsValue({
         purpose: conclusion?.purpose || '',
         keyBusiness: conclusion?.keyBusiness || '',
@@ -183,19 +193,19 @@ export function RepoDetailPage() {
   };
 
   const handleAddRelation = async () => {
-    await runWithAccess('READ_WRITE', '添加仓库关系', async () => {
-      const values = await relationForm.validateFields();
-      createRelationMut.mutate(values);
+    await runWithAccess('READ_WRITE', t('actions.addRepoRelation'), async () => {
+      const values = await relationForm.validateFields().catch(() => null);
+      if (values) createRelationMut.mutate(values);
     });
   };
 
   const openAiScan = () => {
-    runWithAccess('READ_WRITE', '发起仓库扫描', () => setAiScanOpen(true));
+    runWithAccess('READ_WRITE', t('actions.startScan'), () => setAiScanOpen(true));
   };
 
   const relationColumns: ColumnsType<RepoRelation> = [
     {
-      title: '关联仓库', key: 'peer', ellipsis: { showTitle: false },
+      title: t('fields.peer'), key: 'peer', ellipsis: { showTitle: false },
       render: (_: unknown, r: RepoRelation) => {
         const fromRepoId = String(r.fromRepoId);
         const toRepoId = String(r.toRepoId);
@@ -207,7 +217,7 @@ export function RepoDetailPage() {
     },
     {
       // 不设固定 width：关系类型标签长短不一（如「客户端调用服务端」），固定 100px 会把长标签挤成省略号
-      title: '关系类型', dataIndex: 'relationType', width: 140, ellipsis: { showTitle: false },
+      title: t('fields.relationType'), dataIndex: 'relationType', width: 140, ellipsis: { showTitle: false },
       render: (t: string) => (
         <EllipsisText tooltip={RELATION_TYPES.find(rt => rt.value === t)?.label || t}>
           <Tag style={{ marginInlineEnd: 0 }}>{RELATION_TYPES.find(rt => rt.value === t)?.label || t}</Tag>
@@ -215,21 +225,21 @@ export function RepoDetailPage() {
       ),
     },
     {
-      title: '描述', dataIndex: 'description', align: 'left', ellipsis: { showTitle: false },
+      title: t('fields.description'), dataIndex: 'description', align: 'left', ellipsis: { showTitle: false },
       render: (v: string | null) => (v ? <EllipsisText>{v}</EllipsisText> : '-'),
     },
     {
-      title: '操作', width: 80,
+      title: t('fields.actions'), width: 80,
       render: (_: unknown, r: RepoRelation) => (
         <Popconfirm
-          title="确认删除此关系？"
+          title={t('confirm.deleteRelation')}
           open={pendingRelationDeleteId === r.id}
           onOpenChange={(open) => {
             if (!open) setPendingRelationDeleteId(null);
           }}
           onConfirm={() => runWithAccess(
             'READ_WRITE',
-            '删除仓库关系',
+            t('actions.deleteRepoRelation'),
             () => deleteRelationMut.mutate(r.id),
           )}
         >
@@ -237,10 +247,11 @@ export function RepoDetailPage() {
             type="link"
             size="small"
             danger
-            icon={<DeleteOutlined />}
+            aria-label={t('actions.deleteRepoRelation')}
+            icon={<DeleteOutlined aria-hidden="true" />}
             onClick={() => runWithAccess(
               'READ_WRITE',
-              '删除仓库关系',
+              t('actions.deleteRepoRelation'),
               () => setPendingRelationDeleteId(r.id),
             )}
           />
@@ -252,88 +263,88 @@ export function RepoDetailPage() {
   const tabItems = [
     {
       key: 'info',
-      label: '基础信息',
+      label: t('tabs.info'),
       children: editingRepo ? (
         <Form form={repoForm} layout="vertical">
-          <Form.Item label="仓库名称" name="name"
+          <Form.Item label={t('fields.repoName')} name="name"
             rules={[
-              { required: true, message: '请输入仓库名称' },
+              { required: true, message: t('validation.nameRequired') },
               {
                 validator: (_, value) => (
                   isValidRepoName(value)
                     ? Promise.resolve()
-                    : Promise.reject(new Error(REPO_NAME_INVALID_MESSAGE))
+                    : Promise.reject(new Error(repoNameInvalidMessage()))
                 ),
               },
             ]}>
-            <Input placeholder="仓库名称" />
+            <Input placeholder={t('fields.repoName')} />
           </Form.Item>
-          <Form.Item label="URL" name="url"
-            rules={[{ required: true, message: '请输入仓库地址' }]}>
-            <Input placeholder="Git 仓库地址" />
+          <Form.Item label={t('fields.url')} name="url"
+            rules={[{ required: true, message: t('validation.urlRequired') }]}>
+            <Input placeholder={t('placeholders.repoUrl')} />
           </Form.Item>
-          <Form.Item label="默认分支" name="defaultBranch">
-            <Input placeholder="留空表示清除默认分支" allowClear />
+          <Form.Item label={t('fields.branch')} name="defaultBranch">
+            <Input placeholder={t('placeholders.clearBranch')} allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('actions.clearBranch')} /> }} />
           </Form.Item>
-          <Form.Item label="描述" name="description">
-            <TextArea rows={3} placeholder="仓库的背景描述，留空表示清除" allowClear />
+          <Form.Item label={t('fields.description')} name="description">
+            <TextArea rows={3} placeholder={t('placeholders.clearDescription')} allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('actions.clearDescription')} /> }} />
           </Form.Item>
           <Space>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveRepo}
-              loading={updateRepoMut.isPending}>保存</Button>
-            <Button onClick={() => setEditingRepo(false)}>取消</Button>
+            <Button type="primary" icon={<SaveOutlined aria-hidden="true" />} onClick={handleSaveRepo}
+              loading={updateRepoMut.isPending}>{t('actions.save')}</Button>
+            <Button onClick={() => setEditingRepo(false)}>{t('actions.cancel')}</Button>
           </Space>
         </Form>
       ) : (
         <>
           <Descriptions column={2}>
-            <Descriptions.Item label="仓库名称">{repo.name}</Descriptions.Item>
-            <Descriptions.Item label="URL" span={2}>{repo.url}</Descriptions.Item>
-            <Descriptions.Item label="默认分支">{repo.defaultBranch || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.repoName')}>{repo.name}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.url')} span={2}>{repo.url}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.branch')}>{repo.defaultBranch || '-'}</Descriptions.Item>
             {REPO_SCAN_ENABLED && (
-              <Descriptions.Item label="扫描状态">
+              <Descriptions.Item label={t('scan.status')}>
                 {conclusion
-                  ? <Tag color="success">扫描完成</Tag>
-                  : <Tag>未扫描</Tag>}
+                  ? <Tag color="success">{t('scan.complete')}</Tag>
+                  : <Tag>{t('scan.notScanned')}</Tag>}
               </Descriptions.Item>
             )}
             {REPO_SCAN_ENABLED && conclusion && (
-              <Descriptions.Item label="上次扫描时间">
-                {new Date(conclusion.gmtCreate).toLocaleString()}
+              <Descriptions.Item label={t('scan.lastTime')}>
+                {formatDateTime(conclusion.gmtCreate)}
               </Descriptions.Item>
             )}
-            <Descriptions.Item label="描述" span={2}>{repo.description || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.description')} span={2}>{repo.description || '-'}</Descriptions.Item>
           </Descriptions>
-          <Button icon={<EditOutlined />} onClick={handleStartRepoEdit} style={{ marginTop: 16 }}>
-            编辑
+          <Button icon={<EditOutlined aria-hidden="true" />} onClick={handleStartRepoEdit} style={{ marginTop: 16 }}>
+            {t('actions.edit')}
           </Button>
         </>
       ),
     },
     ...(REPO_SCAN_ENABLED ? [{
       key: 'conclusion',
-      label: '扫描结论',
+      label: t('tabs.conclusion'),
       children: editingConclusion ? (
         <Form form={conclusionForm} layout="vertical">
-          <Form.Item label="用途" name="purpose">
-            <Input placeholder="该仓库的主要用途" />
+          <Form.Item label={t('scan.purpose')} name="purpose">
+            <Input placeholder={t('scan.purposePlaceholder')} />
           </Form.Item>
-          <Form.Item label="关键业务" name="keyBusiness">
-            <Input placeholder="核心业务领域" />
+          <Form.Item label={t('scan.business')} name="keyBusiness">
+            <Input placeholder={t('scan.businessPlaceholder')} />
           </Form.Item>
-          <Form.Item label="上游依赖" name="upstreams">
-            <TextArea rows={2} placeholder="上游仓库/服务 (逗号分隔)" />
+          <Form.Item label={t('scan.upstreams')} name="upstreams">
+            <TextArea rows={2} placeholder={t('scan.upstreamsPlaceholder')} />
           </Form.Item>
-          <Form.Item label="下游消费" name="downstreams">
-            <TextArea rows={2} placeholder="下游仓库/服务 (逗号分隔)" />
+          <Form.Item label={t('scan.downstreams')} name="downstreams">
+            <TextArea rows={2} placeholder={t('scan.downstreamsPlaceholder')} />
           </Form.Item>
-          <Form.Item label="总结 (Markdown)" name="summaryMd">
-            <TextArea rows={8} placeholder="仓库的详细总结..." />
+          <Form.Item label={t('scan.markdown')} name="summaryMd">
+            <TextArea rows={8} placeholder={t('scan.summaryPlaceholder')} />
           </Form.Item>
           <Space>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSaveConclusion}
-              loading={updateConclusionMut.isPending}>保存</Button>
-            <Button onClick={() => setEditingConclusion(false)}>取消</Button>
+            <Button type="primary" icon={<SaveOutlined aria-hidden="true" />} onClick={handleSaveConclusion}
+              loading={updateConclusionMut.isPending}>{t('actions.save')}</Button>
+            <Button onClick={() => setEditingConclusion(false)}>{t('actions.cancel')}</Button>
           </Space>
         </Form>
       ) : (
@@ -341,41 +352,41 @@ export function RepoDetailPage() {
           {conclusion ? (
             <>
               <Descriptions column={2} style={{ marginBottom: 16 }}>
-                <Descriptions.Item label="用途">{conclusion.purpose || '-'}</Descriptions.Item>
-                <Descriptions.Item label="关键业务">{conclusion.keyBusiness || '-'}</Descriptions.Item>
-                <Descriptions.Item label="上游依赖">{conclusion.upstreams || '-'}</Descriptions.Item>
-                <Descriptions.Item label="下游消费">{conclusion.downstreams || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('scan.purpose')}>{conclusion.purpose || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('scan.business')}>{conclusion.keyBusiness || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('scan.upstreams')}>{conclusion.upstreams || '-'}</Descriptions.Item>
+                <Descriptions.Item label={t('scan.downstreams')}>{conclusion.downstreams || '-'}</Descriptions.Item>
               </Descriptions>
               {conclusion.summaryMd && (
-                <Card size="small" title="总结">
+                <Card size="small" title={t('scan.summary')}>
                   <MarkdownView content={conclusion.summaryMd} />
                 </Card>
               )}
             </>
           ) : (
-            <Result status="info" title="暂无扫描结论" subTitle="发起扫描或手动编辑添加结论" />
+            <Result status="info" title={t('scan.empty')} subTitle={t('scan.emptyHint')} />
           )}
-          <Button icon={<EditOutlined />} onClick={handleStartEdit} style={{ marginTop: 16 }}>
-            编辑结论
+          <Button icon={<EditOutlined aria-hidden="true" />} onClick={handleStartEdit} style={{ marginTop: 16 }}>
+            {t('actions.editConclusionButton')}
           </Button>
         </div>
       ),
     }] : []),
     {
       key: 'relations',
-      label: '仓库关系',
+      label: t('tabs.relations'),
       children: (
         <div>
           <div style={{ marginBottom: 16, textAlign: 'right' }}>
             <Button
-              icon={<PlusOutlined />}
+              icon={<PlusOutlined aria-hidden="true" />}
               onClick={() => runWithAccess(
                 'READ_WRITE',
-                '添加仓库关系',
+                t('actions.addRepoRelation'),
                 () => setAddRelationOpen(true),
               )}
             >
-              添加关系
+              {t('actions.addRelation')}
             </Button>
           </div>
           <Table rowKey="id" columns={relationColumns} dataSource={repoRelations} pagination={false} size="small" />
@@ -388,38 +399,38 @@ export function RepoDetailPage() {
     <div>
 
       <Card
-        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/repos" label="返回列表" /><span>{repo.name}</span></span>} />}
+        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/repos" label={t('actions.backList')} /><span>{repo.name}</span></span>} />}
         extra={
           <Space>
             {REPO_SCAN_ENABLED && (
-              <Button icon={<ScanOutlined />} onClick={openAiScan}>
-                发起扫描
+              <Button icon={<ScanOutlined aria-hidden="true" />} onClick={openAiScan}>
+                {t('actions.scan')}
               </Button>
             )}
             <Popconfirm
-              title={`确认删除仓库「${repo.name}」？`}
-              description="删除后仓库及其所有关系将一并移除，此操作不可恢复。"
+              title={t('confirm.deleteRepo', { name: repo.name })}
+              description={t('confirm.deleteHint')}
               open={deleteRepoOpen}
               onOpenChange={(open) => setDeleteRepoOpen(open)}
               onConfirm={() => runWithAccess(
                 'READ_WRITE',
-                '删除仓库',
+                t('actions.deleteRepo'),
                 () => deleteRepoMut.mutate(),
               )}
-              okText="删除"
+              okText={t('actions.delete')}
               okButtonProps={{ danger: true, loading: deleteRepoMut.isPending }}
-              cancelText="取消"
+              cancelText={t('actions.cancel')}
             >
               <Button
                 danger
-                icon={<DeleteOutlined />}
+                icon={<DeleteOutlined aria-hidden="true" />}
                 onClick={() => runWithAccess(
                   'READ_WRITE',
-                  '删除仓库',
+                  t('actions.deleteRepo'),
                   () => setDeleteRepoOpen(true),
                 )}
               >
-                删除仓库
+                {t('actions.deleteRepo')}
               </Button>
             </Popconfirm>
           </Space>
@@ -428,31 +439,31 @@ export function RepoDetailPage() {
         <Tabs items={tabItems} />
       </Card>
 
-      <Modal title="添加仓库关系" open={addRelationOpen}
+      <Modal title={t('actions.addRepoRelation')} open={addRelationOpen}
         onOk={handleAddRelation} onCancel={() => setAddRelationOpen(false)}
         confirmLoading={createRelationMut.isPending}>
         <Form form={relationForm} layout="vertical">
-          <Form.Item label="来源仓库" name="fromRepoId" initialValue={repoId} rules={[{ required: true }]}>
+          <Form.Item label={t('fields.source')} name="fromRepoId" initialValue={repoId} rules={[{ required: true }]}>
             <Select showSearch optionFilterProp="label"
               options={allRepos.map(r => ({ value: r.id, label: r.name }))}
             />
           </Form.Item>
-          <Form.Item label="目标仓库" name="toRepoId" rules={[{ required: true, message: '请选择目标仓库' }]}>
-            <Select placeholder="选择目标仓库" showSearch optionFilterProp="label"
+          <Form.Item label={t('fields.target')} name="toRepoId" rules={[{ required: true, message: t('validation.targetRequired') }]}>
+            <Select placeholder={t('placeholders.target')} showSearch optionFilterProp="label"
               options={allRepos.filter(r => String(r.id) !== repoId).map(r => ({ value: r.id, label: r.name }))}
             />
           </Form.Item>
-          <Form.Item label="关系类型" name="relationType" rules={[{ required: true, message: '请选择关系类型' }]}>
-            <Select placeholder="选择关系类型" options={RELATION_TYPES.map(t => ({ value: t.value, label: t.label }))} />
+          <Form.Item label={t('fields.relationType')} name="relationType" rules={[{ required: true, message: t('validation.typeRequired') }]}>
+            <Select placeholder={t('placeholders.type')} options={RELATION_TYPES.map(t => ({ value: t.value, label: t.label }))} />
           </Form.Item>
-          <Form.Item label="描述" name="description">
-            <Input placeholder="可选描述" />
+          <Form.Item label={t('fields.description')} name="description">
+            <Input placeholder={t('placeholders.description')} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Drawer
-        title="AI 仓库扫描"
+        title={t('scan.drawer')}
         width={880}
         open={aiScanOpen}
         onClose={() => setAiScanOpen(false)}
@@ -467,7 +478,7 @@ export function RepoDetailPage() {
             queryClient.invalidateQueries({ queryKey: ['repo', repoId] });
             queryClient.invalidateQueries({ queryKey: ['repo-conclusion', repoId] });
             setAiScanOpen(false);
-            message.success('扫描结论已确认落库');
+            message.success(i18n.t('repo:feedback.scanConfirmed'));
           }}
         />
       </Drawer>

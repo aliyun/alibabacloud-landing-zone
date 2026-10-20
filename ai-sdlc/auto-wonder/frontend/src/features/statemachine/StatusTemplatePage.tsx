@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState, useEffect } from 'react';
 import { Card, Tabs, Spin, Empty, Button } from 'antd';
@@ -14,13 +15,13 @@ import {
 } from './hooks';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 
-const workTypes: { key: WorkType; label: string }[] = [
-  { key: 'REQ', label: '需求 (REQ)' },
-  { key: 'TASK', label: '任务 (TASK)' },
-  { key: 'BUG', label: '缺陷 (BUG)' },
-];
-
 export function StatusTemplatePage() {
+  const { t } = useTranslation('statemachine');
+  const workTypes: { key: WorkType; label: string }[] = [
+    { key: 'REQ', label: t('workTypes.REQ') },
+    { key: 'TASK', label: t('workTypes.TASK') },
+    { key: 'BUG', label: t('workTypes.BUG') },
+  ];
   const accessCommand = useAccessCommand();
   const [createOpen, setCreateOpen] = useState(false);
   const [activeType, setActiveType] = useState<WorkType>('REQ');
@@ -49,10 +50,10 @@ export function StatusTemplatePage() {
   const deleteTransitionMut = useDeleteTransition(selectedId || 0);
 
   return (
-    <Card className="aw-content-card" title={<PageHeading title="状态模版管理" />}
-      extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => accessCommand(
-        'READ_WRITE', '新建状态模版', () => setCreateOpen(true),
-      )}>新建模版</Button>}
+    <Card className="aw-content-card" title={<PageHeading title={t('page.title')} />}
+      extra={<Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={() => accessCommand(
+        'READ_WRITE', t('actions.createTemplate'), () => setCreateOpen(true),
+      )}>{t('page.create')}</Button>}
     >
       <Tabs
         activeKey={activeType}
@@ -70,15 +71,15 @@ export function StatusTemplatePage() {
             onSelect={setSelectedId}
             onCreate={(name) => accessCommand(
               'READ_WRITE',
-              '新建状态模版',
+              t('actions.createTemplate'),
               () => createTemplateMut.mutate({ workType: activeType, name }),
             )}
             onSetDefault={(id) => accessCommand(
               'READ_WRITE',
-              '设置默认状态模版',
+              t('actions.defaultTemplate'),
               () => updateTemplateMut.mutate({ id, data: { isDefault: true } }),
             )}
-            onDelete={(id) => accessCommand('READ_WRITE', '删除状态模版', () => {
+            onDelete={(id) => accessCommand('READ_WRITE', t('actions.deleteTemplate'), () => {
               deleteTemplateMut.mutate(id);
               setSelectedId(null);
             })}
@@ -91,17 +92,17 @@ export function StatusTemplatePage() {
                 nodes={detail.nodes}
                 onCreate={(data) => accessCommand(
                   'READ_WRITE',
-                  '添加状态节点',
+                  t('actions.createNode'),
                   () => createNodeMut.mutate(data),
                 )}
                 onUpdate={(nodeId, data) => accessCommand(
                   'READ_WRITE',
-                  '编辑状态节点',
+                  t('actions.editNode'),
                   () => updateNodeMut.mutate({ nodeId, data }),
                 )}
                 onDelete={(nodeId) => accessCommand(
                   'READ_WRITE',
-                  '删除状态节点',
+                  t('actions.deleteNode'),
                   () => deleteNodeMut.mutate(nodeId),
                 )}
                 createLoading={createNodeMut.isPending}
@@ -112,24 +113,24 @@ export function StatusTemplatePage() {
                 nodes={detail.nodes}
                 onCreate={(data) => accessCommand(
                   'READ_WRITE',
-                  '添加状态流转',
+                  t('actions.createTransition'),
                   () => createTransitionMut.mutate(data),
                 )}
                 onUpdate={(tid, data) => accessCommand(
                   'READ_WRITE',
-                  '编辑状态流转',
+                  t('actions.editTransition'),
                   () => updateTransitionMut.mutate({ tid, data }),
                 )}
                 onDelete={(tid) => accessCommand(
                   'READ_WRITE',
-                  '删除状态流转',
+                  t('actions.deleteTransition'),
                   () => deleteTransitionMut.mutate(tid),
                 )}
                 createLoading={createTransitionMut.isPending}
                 updateLoading={updateTransitionMut.isPending}
               />
             </div>
-          ) : <Empty description="暂无模版" style={{ marginTop: 24 }} />}
+          ) : <Empty description={t('page.empty')} style={{ marginTop: 24 }} />}
         </>
       )}
     </Card>

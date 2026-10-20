@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { message } from 'antd';
 import type { WorkType } from './types';
@@ -22,7 +23,7 @@ export function useCreateTemplate(workType: WorkType) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: api.createTemplate,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-templates', workType] }); message.success('模版创建成功'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-templates', workType] }); message.success(i18n.t('statemachine:messages.templateCreated')); },
   });
 }
 
@@ -30,7 +31,7 @@ export function useUpdateTemplate(workType: WorkType) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }: { id: number; data: Parameters<typeof api.updateTemplate>[1] }) => api.updateTemplate(id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-templates', workType] }); message.success('已保存'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-templates', workType] }); message.success(i18n.t('statemachine:messages.saved')); },
   });
 }
 
@@ -38,7 +39,7 @@ export function useDeleteTemplate(workType: WorkType) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: api.deleteTemplate,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-templates', workType] }); message.success('已删除'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-templates', workType] }); message.success(i18n.t('statemachine:messages.deleted')); },
   });
 }
 
@@ -46,7 +47,7 @@ export function useCreateNode(templateId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Parameters<typeof api.createNode>[1]) => api.createNode(templateId, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success('节点已添加'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success(i18n.t('statemachine:messages.nodeAdded')); },
   });
 }
 
@@ -54,7 +55,7 @@ export function useUpdateNode(templateId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ nodeId, data }: { nodeId: number; data: Parameters<typeof api.updateNode>[2] }) => api.updateNode(templateId, nodeId, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success('已保存'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success(i18n.t('statemachine:messages.saved')); },
   });
 }
 
@@ -62,7 +63,7 @@ export function useDeleteNode(templateId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (nodeId: number) => api.deleteNode(templateId, nodeId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success('节点已删除'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success(i18n.t('statemachine:messages.nodeDeleted')); },
   });
 }
 
@@ -70,7 +71,7 @@ export function useCreateTransition(templateId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Parameters<typeof api.createTransition>[1]) => api.createTransition(templateId, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success('流转已添加'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success(i18n.t('statemachine:messages.transitionAdded')); },
   });
 }
 
@@ -78,7 +79,7 @@ export function useUpdateTransition(templateId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ tid, data }: { tid: number; data: Parameters<typeof api.updateTransition>[2] }) => api.updateTransition(templateId, tid, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success('已保存'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success(i18n.t('statemachine:messages.saved')); },
   });
 }
 
@@ -86,6 +87,6 @@ export function useDeleteTransition(templateId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (tid: number) => api.deleteTransition(templateId, tid),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success('流转已删除'); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status-template-detail', templateId] }); message.success(i18n.t('statemachine:messages.transitionDeleted')); },
   });
 }

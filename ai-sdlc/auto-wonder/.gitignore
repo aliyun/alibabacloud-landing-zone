@@ -81,3 +81,5 @@ __pycache__/
 
 # Local planning and design notes
 docs/superpowers/
+# Sanitized E2E reports survive Maven clean; never commit runtime evidence.
+.e2e-results/

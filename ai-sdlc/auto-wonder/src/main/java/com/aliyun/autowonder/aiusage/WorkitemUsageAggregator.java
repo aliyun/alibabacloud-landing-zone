@@ -93,6 +93,7 @@ public final class WorkitemUsageAggregator {
         run.setAgentName(agentName);
         run.setRunIndex(runIndex);
         run.setLabel(displayName(agentId, agentName) + " run-" + runIndex);
+        run.setLabelKind("AGENT_RUN");
         run.setCredits(credits);
         runs.add(run);
     }

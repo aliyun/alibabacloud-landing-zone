@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import type { ReactNode } from 'react';
 import { Typography } from 'antd';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
@@ -29,7 +31,7 @@ export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> =
 
   thinking: (node) => (node.text ? (
     <details style={{ marginBottom: 8 }}>
-      <summary style={SUMMARY_STYLE}>思考过程</summary>
+      <summary style={SUMMARY_STYLE}>{i18n.t('workitem:clarification.thinkingProcess')}</summary>
       <div className="aw-clarify-thinking" style={{
         fontSize: 15, color: CLARIFICATION_THEME.textSecondary,
         lineHeight: 1.75, maxHeight: 280, overflow: 'auto', padding: '10px 12px',
@@ -60,7 +62,7 @@ export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> =
 
   log: (node) => (
     <details style={{ marginBottom: 4 }}>
-      <summary style={SUMMARY_STYLE}>日志</summary>
+      <summary style={SUMMARY_STYLE}>{i18n.t('workitem:clarification.logs')}</summary>
       <pre style={DETAIL_PRE_STYLE}>{node.text}</pre>
     </details>
   ),
@@ -83,6 +85,11 @@ export const timelineRenderers: Readonly<Record<string, TimelineNodeRenderer>> =
 };
 
 export function renderTimelineNode(node: TimelineNode): ReactNode {
+  return <TimelineNodeView node={node} />;
+}
+
+function TimelineNodeView({ node }: { node: TimelineNode }) {
+  useTranslation('workitem');
   const renderer = timelineRenderers[node.kind] ?? renderUnknownNode;
   return renderer(node);
 }
@@ -92,7 +99,7 @@ function renderUnknownNode(node: TimelineNode): ReactNode {
   return (
     <details style={{ marginBottom: 4 }}>
       <summary style={SUMMARY_STYLE}>
-        {`未识别事件：${eventType}`}
+        {i18n.t('workitem:clarification.unknownEvent', { eventType })}
       </summary>
       <pre data-testid="timeline-unknown-raw" style={DETAIL_PRE_STYLE}>
         {JSON.stringify(node.raw ?? { kind: node.kind, eventSeq: node.eventSeq }, null, 2)}

@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach as resetAfterEach } from 'vitest';
+import { useAuthStore } from '@/shared/auth/store';
+import { message } from 'antd';
+import { act } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createAppRoutes } from '@/app/router';
+import { i18n } from '@/shared/i18n';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,7 +14,7 @@ import { server } from '@/test/mocks/server';
 import { ScheduledTaskRunDetailPage } from './ScheduledTaskRunDetailPage';
 
 vi.mock('@/shared/realtime/useRealtime', () => ({ useRealtime: () => undefined }));
-vi.mock('@/shared/auth/useAccessCommand', () => ({ useAccessCommand: () => (_required: unknown, _action: string, command: () => unknown) => command() }));
+beforeEach(() => useAuthStore.setState({ accessLevel: 'READ_WRITE' }));
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -21,8 +28,8 @@ const mockParticipants = [
 
 const mockDeliveryProgress = {
   steps: [
-    { stepId: 1, name: '代码分析', status: 'done', executorName: '缺陷分析数字人', error: null, subSteps: null, durationMs: 12000, attempts: null },
-    { stepId: 2, name: '修复验证', status: 'active', executorName: '缺陷分析数字人', error: null, subSteps: null, durationMs: null, attempts: null },
+    { stepId: 1, name: '代码分析', status: 'done', agentName: '缺陷分析数字人', executorName: null, error: null, subSteps: null, durationMs: 12000, attempts: null },
+    { stepId: 2, name: '修复验证', status: 'active', agentName: '缺陷分析数字人', executorName: null, error: null, subSteps: null, durationMs: null, attempts: null },
   ],
   totalDurationMs: 12000,
 };
@@ -131,9 +138,9 @@ describe('ScheduledTaskRunDetailPage', () => {
           status: 'active',
           durationMs: 30000,
           steps: [{
-            stepId: 9, name: '修复验证', status: 'active', executorName: '缺陷分析数字人',
+            stepId: 9, name: '修复验证', status: 'active', agentName: '缺陷分析数字人', executorName: null,
             error: null, subSteps: null, durationMs: 30000,
-            attempts: [{ dispatchId: 555, executorName: '缺陷分析数字人', status: 'RUNNING', error: null, startedAt: null, durationMs: 30000 }],
+            attempts: [{ dispatchId: 555, agentName: '缺陷分析数字人', executorName: null, status: 'RUNNING', error: null, startedAt: null, durationMs: 30000 }],
           }],
         }],
       } })),
@@ -147,8 +154,61 @@ describe('ScheduledTaskRunDetailPage', () => {
       } })),
     );
     renderPage();
-    expect(await screen.findByTestId('agent-live-activity')).toBeInTheDocument();
+    expect(await screen.findByTestId('delivery-current-execution')).toBeInTheDocument();
+    expect(screen.getByTestId('current-agent-name')).toHaveTextContent('缺陷分析数字人');
     expect(await screen.findByText('正在运行测试')).toBeInTheDocument();
+  });
+
+  it('renders both stages of the selected dispatch snapshot in the details and timing views', async () => {
+    server.use(
+      http.get('/api/scheduled-task-runs/10482', () => HttpResponse.json({ success: true, code: '0', data: { id: 10482, scheduledTaskId: 901, status: 'FAILED', version: 2 } })),
+      ...['comments', 'artifacts', 'derived-workitems', 'participants'].map(resource => http.get(`/api/scheduled-task-runs/10482/${resource}`, () => HttpResponse.json({ success: true, code: '0', data: [] }))),
+      http.get('/api/scheduled-task-runs/10482/delivery-progress', () => HttpResponse.json({ success: true, code: '0', data: {
+        steps: [
+          { stepId: 10088, name: '收集工单执行日志', status: 'done', agentName: '任务蒸馏数字员工', executorName: null, error: null, subSteps: null, durationMs: 3000, attempts: null },
+          { stepId: 10131, name: '分析日志、总结报告并提交 CR', status: 'failed', agentName: '任务蒸馏数字员工', executorName: null, error: null, subSteps: null, durationMs: 4000, attempts: null },
+        ],
+        totalDurationMs: 7000,
+        agents: [{
+          agentId: 10033, agentName: '任务蒸馏数字员工', status: 'failed', durationMs: 7000,
+          steps: [{
+            stepId: 10088, name: '收集工单执行日志', status: 'done', agentName: '任务蒸馏数字员工', executorName: null, error: null, subSteps: null, durationMs: 3000,
+            attempts: [{ dispatchId: 12238, agentName: '任务蒸馏数字员工', executorName: null, status: 'FAILED', error: null, startedAt: null, durationMs: 7000 }],
+          }],
+        }],
+        executions: [{
+          dispatchId: 12238, agentId: 10033, agentName: '任务蒸馏数字员工', executorName: null, status: 'FAILED', startedAt: '2026-10-16T02:00:00Z', durationMs: 7000,
+          error: 'step "10131" gate: checklist not fully checked: "cl_2" remains pending',
+          stepTimings: [
+            { stepId: 10088, name: '收集工单执行日志', status: 'done', durationMs: 3000 },
+            { stepId: 10131, name: '分析日志、总结报告并提交 CR', status: 'failed', durationMs: 4000 },
+          ],
+        }],
+      } })),
+      http.get('/api/dispatches/12238/runtime-trace/activities', () => HttpResponse.json({ success: true, code: '0', data: { dispatchId: 12238, activities: [] } })),
+      http.get('/api/dispatches/12238/runtime-trace/events', () => HttpResponse.json({ success: true, code: '0', data: { dispatchId: 12238, events: [], changed: true } })),
+      http.get('/api/dispatches/12238/live-activity', () => HttpResponse.json({ success: true, code: '0', data: {
+        schemaVersion: '1', dispatchId: 12238, agentId: 10033, workitemId: null, sourceType: 'SCHEDULED_TASK_RUN',
+        attempt: 1, dispatchStatus: 'FAILED', changed: true, lastSeq: 0, lastUpdatedAt: '2026-10-16T02:00:00Z',
+        currentAction: null, actions: [], totalActions: 0, truncated: false, awaitingRuntime: false,
+      } })),
+      http.get('/api/dispatches/12238/guidance', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+    );
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: '打开终端' }));
+    const workbench = await screen.findByTestId('delivery-workbench');
+    fireEvent.click(within(workbench).getByRole('tab', { name: '执行详情' }));
+    expect(within(workbench).getByTestId('delivery-step-10088')).toHaveTextContent(/已完成/);
+    expect(within(workbench).getByTestId('delivery-step-10131')).toHaveTextContent('失败');
+    expect(within(workbench).getByText('检查项 cl_2 尚未完成。')).toBeInTheDocument();
+    expect(within(workbench).getByText(/checklist not fully checked/, { selector: 'pre' })).toBeInTheDocument();
+    fireEvent.click(within(workbench).getByRole('tab', { name: 'SDLC 阶段耗时' }));
+    const timing = await within(workbench).findByTestId('step-duration-chart');
+    expect(timing).toHaveTextContent('本次执行 #12238');
+    expect(timing).toHaveTextContent('步骤累计 7秒');
+    expect(timing).toHaveTextContent('收集工单执行日志');
+    expect(timing).toHaveTextContent('分析日志、总结报告并提交 CR');
+    expect(timing).toHaveTextContent('4秒');
   });
 
   it('mentions a frozen agent from the candidate menu and posts the agent target', async () => {
@@ -188,4 +248,104 @@ describe('ScheduledTaskRunDetailPage', () => {
       targetHumanIds: [],
     }));
   });
+});
+
+it('switches the cached run route while retaining raw result and millisecond duration', async () => {
+  server.use(
+    http.get('/api/scheduled-task-runs/10482', () => HttpResponse.json({ success: true, code: '0', data: { id: 10482, scheduledTaskId: 901, status: 'TIMED_OUT', triggerType: 'MANUAL', sessionMode: 'CONTINUOUS', scheduledAt: '2026-08-12T18:00:00Z', startedAt: '2026-08-12T18:00:00Z', finishedAt: '2026-08-12T19:00:00Z', version: 2, resultSummary: '## 原始AI结果', resumeFromRunId: 7 } })),
+    ...['comments', 'artifacts', 'derived-workitems', 'participants'].map(resource => http.get(`/api/scheduled-task-runs/10482/${resource}`, () => HttpResponse.json({ success: true, code: '0', data: [] }))),
+    http.get('/api/scheduled-task-runs/10482/delivery-progress', () => HttpResponse.json({ success: true, code: '0', data: { steps: [] } })),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const route = createAppRoutes().flatMap(route => route.children ?? []).find(route => route.path === '/scheduled-task-runs/:runId')!;
+  const router = createMemoryRouter([route], { initialEntries: ['/scheduled-task-runs/10482'] });
+  render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  await screen.findByRole('heading', { name: '原始AI结果' });
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByText('Timed out')).toBeInTheDocument();
+  expect(screen.getByText(/Trigger: Manual.*Duration: 1h/)).toBeInTheDocument();
+  expect(screen.getByText('Continuous session')).toBeInTheDocument();
+  expect(screen.getByText('Run #7')).toBeInTheDocument();
+  expect(screen.getByText('Derived work items')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: '原始AI结果' })).toBeInTheDocument();
+  await act(() => i18n.changeLanguage('zh-CN'));
+  expect(screen.getByText(/耗时：1时/)).toBeInTheDocument();
+});
+
+it('refuses run mutations for read-only members in the current language', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_ONLY' });
+  let mutations = 0;
+  const errors = vi.spyOn(message, 'error').mockImplementation(() => undefined as never);
+  server.use(http.get('/api/scheduled-task-runs/10482', () => HttpResponse.json({ success: true, code: '0', data: { id: 10482, scheduledTaskId: 901, status: 'RUNNING', version: 2 } })),
+    ...['comments', 'artifacts', 'derived-workitems', 'participants'].map(resource => http.get(`/api/scheduled-task-runs/10482/${resource}`, () => HttpResponse.json({ success: true, code: '0', data: [] }))),
+    http.get('/api/scheduled-task-runs/10482/delivery-progress', () => HttpResponse.json({ success: true, code: '0', data: { steps: [] } })),
+    http.post('/api/scheduled-task-runs/10482/pause', () => { mutations += 1; return HttpResponse.json({ success: true, code: '0', data: {} }); }),
+  );
+  renderPage();
+  await screen.findByRole('button', { name: /暂\s*停/ });
+  await act(() => i18n.changeLanguage('en-US'));
+  fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+  expect(mutations).toBe(0);
+  expect(errors).toHaveBeenCalledWith('Current access: Read-only access. Pause requires Read and write access.');
+  await act(() => i18n.changeLanguage('zh-CN'));
+  errors.mockRestore();
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });
+
+it.each([
+  [59_500, '1分', '1m'],
+  [60_000, '1分', '1m'],
+  [3_599_500, '1时', '1h'],
+  [3_600_000, '1时', '1h'],
+  [3_660_000, '1时1分', '1h 1m'],
+])('keeps millisecond duration rounding at %s ms in both locales', async (elapsed, chinese, english) => {
+  const start = Date.parse('2026-08-12T18:00:00Z');
+  server.use(http.get('/api/scheduled-task-runs/10482', () => HttpResponse.json({ success: true, code: '0', data: { id: 10482, scheduledTaskId: 901, status: 'SUCCEEDED', triggerType: 'SCHEDULED', startedAt: new Date(start).toISOString(), finishedAt: new Date(start + Number(elapsed)).toISOString(), version: 2 } })),
+    ...['comments', 'artifacts', 'derived-workitems', 'participants'].map(resource => http.get(`/api/scheduled-task-runs/10482/${resource}`, () => HttpResponse.json({ success: true, code: '0', data: [] }))),
+    http.get('/api/scheduled-task-runs/10482/delivery-progress', () => HttpResponse.json({ success: true, code: '0', data: { steps: [] } })),
+  );
+  renderPage();
+  expect(await screen.findByText(new RegExp(`耗时：${chinese}$`))).toBeInTheDocument();
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByText(new RegExp(`Duration: ${english}$`))).toBeInTheDocument();
+});
+
+
+it('projects only explicit frozen-origin reasons in the held cache with no locale query or draft reset', async () => {
+  let reads = 0;
+  const raw = '不在本次运行的冻结快照中，无法 @ 触发执行';
+  const candidates = [
+    { userId: 12, targetType: 'AGENT', name: 'Not in this run’s frozen snapshot', mentionable: true },
+    { userId: 21, targetType: 'AGENT', name: '系统', mentionable: false, mentionDisabledReason: raw, mentionDisabledReasonCode: 'NOT_FROZEN' },
+    { userId: 22, targetType: 'AGENT', name: 'legacy', mentionable: false, mentionDisabledReason: raw },
+    { userId: 23, targetType: 'AGENT', name: 'unknown', mentionable: false, mentionDisabledReason: '<b>raw {0}</b>', mentionDisabledReasonCode: 'FUTURE' },
+  ];
+  server.use(
+    http.get('/api/scheduled-task-runs/10482', () => { reads += 1; return HttpResponse.json({ success: true, code: '0', data: { id: 10482, status: 'RUNNING', version: 2, error: raw } }); }),
+    ...['comments', 'artifacts', 'derived-workitems', 'participants'].map(resource => http.get(`/api/scheduled-task-runs/10482/${resource}`, () => { reads += 1; return HttpResponse.json({ success: true, code: '0', data: [] }); })),
+    http.get('/api/scheduled-task-runs/10482/delivery-progress', () => { reads += 1; return HttpResponse.json({ success: true, code: '0', data: { steps: [] } }); }),
+    http.get('/api/scheduled-task-runs/10482/mention-candidates', () => { reads += 1; return HttpResponse.json({ success: true, code: '0', data: candidates }); }),
+  );
+  const { container } = renderPage();
+  const textarea = await screen.findByRole('textbox', { name: '评论本次运行' }) as HTMLTextAreaElement;
+  fireEvent.change(textarea, { target: { value: 'draft @', selectionStart: 7 } });
+  fireEvent.keyUp(textarea);
+  const systemItem = await screen.findByRole('menuitem', { name: /系统/ });
+  expect(systemItem).toBeDisabled();
+  expect(systemItem.textContent).toContain(raw);
+  const readCount = reads;
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByRole('textbox', { name: 'Comment on this run' })).toBe(textarea);
+  expect(textarea.value).toBe('draft @');
+  expect(systemItem.textContent).toContain('Not in this run’s frozen snapshot; cannot trigger execution with @');
+  expect(screen.getByRole('menuitem', { name: /legacy/ }).textContent).toContain(raw);
+  expect(screen.getByRole('menuitem', { name: /unknown/ }).textContent).toContain('<b>raw {0}</b>');
+  expect(screen.getByRole('menuitem', { name: /Not in this run’s frozen snapshot Agent/ })).toBeEnabled();
+  expect(container.querySelector('b')).toBeNull();
+  expect(reads).toBe(readCount);
+  expect(candidates[1].mentionDisabledReason).toBe(raw);
+  await act(() => i18n.changeLanguage('zh-CN'));
+  expect(systemItem.textContent).toContain(raw);
+  expect(reads).toBe(readCount);
 });

@@ -37,6 +37,7 @@ describe('CopyMessageButton', () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { container } = render(<CopyMessageButton text="内容" />);
 
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
     // 图标本身也要钉住，不能只看无障碍名称：✓ 是唯一的成功反馈（刻意不弹
     // message），而把 icon 写死成 <CopyOutlined /> 时全套用例仍会绿。
     expect(container.querySelector('.anticon-copy')).not.toBeNull();
@@ -47,6 +48,7 @@ describe('CopyMessageButton', () => {
     // 计时器），所以显式冲一次微任务队列把 await 的剪贴板 Promise 落地。
     await act(async () => {});
     expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
     expect(container.querySelector('.anticon-check')).not.toBeNull();
     expect(container.querySelector('.anticon-copy')).toBeNull();
 

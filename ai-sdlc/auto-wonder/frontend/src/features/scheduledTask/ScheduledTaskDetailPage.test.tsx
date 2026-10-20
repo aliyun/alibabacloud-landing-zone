@@ -1,3 +1,8 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { act } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createAppRoutes } from '@/app/router';
+import { i18n } from '@/shared/i18n';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -169,3 +174,34 @@ describe('ScheduledTaskDetailPage', () => {
     errorSpy.mockRestore();
   });
 });
+
+it('switches the cached detail policy, history and open confirmation while preserving authored content', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  server.use(
+    http.get('/api/scheduled-tasks/901', () => HttpResponse.json({ success: true, code: '0', data: { id: 901, name: '<b>任务名</b>', instructionMd: '## 原始任务指令', squadId: 2, initialAgentId: 5, status: 'ACTIVE', scheduleType: 'CRON', cronExpression: '0 0 2 * * *', timezone: 'Asia/Shanghai', sessionMode: 'ISOLATED', overlapPolicy: 'SKIP', misfirePolicy: 'FIRE_LATEST', nextFireAt: '2026-08-12T18:00:00Z', version: 1 } })),
+    http.get('/api/scheduled-tasks/901/runs', () => HttpResponse.json({ success: true, code: '0', data: [{ id: 7, status: 'TIMED_OUT', triggerType: 'MISFIRE' }, { id: 8, status: 'CUSTOM', triggerType: 'toString' }] })),
+    http.get('/api/scheduled-tasks/901/health', () => HttpResponse.json({ success: true, code: '0', data: { success30d: 1, completed30d: 2 } })),
+    http.get('/api/scheduled-tasks/901/documents', () => HttpResponse.json({ success: true, code: '0', data: [] })),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const route = createAppRoutes().flatMap(route => route.children ?? []).find(route => route.path === '/scheduled-tasks/:id')!;
+  const router = createMemoryRouter([route], { initialEntries: ['/scheduled-tasks/901'] });
+  const { container } = render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  await userEvent.setup().click(await screen.findByRole('button', { name: '立即运行' }));
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByRole('button', { name: 'Create run' })).toBeInTheDocument();
+  expect(screen.getByText('Active')).toBeInTheDocument();
+  expect(screen.getByText('Isolated session / Skip this run')).toBeInTheDocument();
+  expect(screen.getByText('Run the latest missed trigger')).toBeInTheDocument();
+  expect(screen.getByText('Timed out')).toBeInTheDocument();
+  expect(screen.getByText('Catch-up')).toBeInTheDocument();
+  expect(screen.getByText('CUSTOM')).toBeInTheDocument();
+  expect(screen.getByText('toString')).toBeInTheDocument();
+  expect(screen.getByText('Succeeded 1/2 (50%)')).toBeInTheDocument();
+  expect(screen.getByText('<b>任务名</b>')).toBeInTheDocument();
+  expect(container.querySelector('b')).toBeNull();
+  expect(screen.getByRole('heading', { name: '原始任务指令' })).toBeInTheDocument();
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });

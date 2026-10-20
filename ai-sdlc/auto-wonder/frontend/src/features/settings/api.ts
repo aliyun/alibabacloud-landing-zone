@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/client';
-import type { WorkspaceAccessLevel } from '@/shared/types/common';
+import type { WorkspaceAccessLevel, WorkspaceDomain } from '@/shared/types/common';
 
 // --- System Settings ---
 
@@ -97,6 +97,10 @@ export interface MemberVO {
   owner: boolean;
   accessLevel: WorkspaceAccessLevel;
   identityTags: string[];
+  roleId: number;
+  roleCode: string | null;
+  roleName: string | null;
+  readOnlyDomains: WorkspaceDomain[];
 }
 
 export type CurrentMembershipVO = MemberVO;
@@ -123,19 +127,19 @@ export async function searchMemberCandidates(keyword: string): Promise<MemberCan
   return resp.data;
 }
 
-export async function addMember(userId: number): Promise<void> {
-  await apiClient.post('/api/workspaces/current/members', { userId });
+export async function addMember(userId: number, roleId?: number): Promise<void> {
+  await apiClient.post('/api/workspaces/current/members', { userId, roleId });
 }
 
 export async function removeMember(userId: number): Promise<void> {
   await apiClient.delete(`/api/workspaces/current/members/${userId}`);
 }
 
-export async function updateMemberAccess(
+export async function updateMemberRole(
   userId: number,
-  accessLevel: WorkspaceAccessLevel,
+  roleId: number,
 ): Promise<void> {
-  await apiClient.put(`/api/workspaces/current/members/${userId}/access-level`, { accessLevel });
+  await apiClient.put(`/api/workspaces/current/members/${userId}/role`, { roleId });
 }
 
 export async function updateMemberIdentityTags(
@@ -177,4 +181,37 @@ export async function approveAccessRequest(requestId: number): Promise<void> {
 
 export async function rejectAccessRequest(requestId: number, reason?: string): Promise<void> {
   await apiClient.post(`/api/workspaces/current/access-requests/${requestId}/reject`, { reason });
+}
+
+export interface WorkspaceRoleVO {
+  id: number;
+  code: string | null;
+  name: string | null;
+  administrator: boolean;
+  builtIn: boolean;
+  readOnlyDomains: WorkspaceDomain[];
+  version: number;
+  memberCount: number;
+}
+
+export interface WorkspaceRoleRequest {
+  name?: string;
+  readOnlyDomains: WorkspaceDomain[];
+  version?: number;
+}
+
+export async function listWorkspaceRoles(): Promise<WorkspaceRoleVO[]> {
+  return (await apiClient.get<WorkspaceRoleVO[]>('/api/workspaces/current/roles')).data;
+}
+
+export async function createWorkspaceRole(request: WorkspaceRoleRequest): Promise<WorkspaceRoleVO> {
+  return (await apiClient.post<WorkspaceRoleVO>('/api/workspaces/current/roles', request)).data;
+}
+
+export async function updateWorkspaceRole(id: number, request: WorkspaceRoleRequest): Promise<WorkspaceRoleVO> {
+  return (await apiClient.put<WorkspaceRoleVO>(`/api/workspaces/current/roles/${id}`, request)).data;
+}
+
+export async function deleteWorkspaceRole(id: number, version: number): Promise<void> {
+  await apiClient.delete(`/api/workspaces/current/roles/${id}`, { params: { version } });
 }

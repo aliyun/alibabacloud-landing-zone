@@ -15,6 +15,8 @@ import com.aliyun.autowonder.workspace.WorkspaceDao;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.context.i18n.LocaleContextHolder;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
@@ -78,86 +80,100 @@ public class AuthFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String path = request.getRequestURI();
-        if (isWhitelisted(request)) {
-            chain.doFilter(request, response);
-            return;
-        }
-        String header = request.getHeader("Authorization");
-        if (header == null || !header.startsWith("Bearer ")) {
-            writeUnauthorized(response);
-            return;
-        }
-        String token = header.substring("Bearer ".length()).trim();
-        TokenPayload payload;
+        var previousLocaleContext = LocaleContextHolder.getLocaleContext();
+        LocaleContextHolder.setLocale(SystemMessages.resolveAcceptLanguage(request.getHeader("Accept-Language")), false);
         try {
-            payload = jwtService.parse(token);
-        } catch (Exception e) {
-            writeUnauthorized(response);
-            return;
-        }
-        if (payload.getJti() != null && sessionService.isBlacklisted(payload.getJti())) {
-            writeUnauthorized(response);
-            return;
-        }
-        if (!isDeactivationRevokeRequest(request)) {
+            String path = request.getRequestURI();
+            if (isWhitelisted(request)) {
+                chain.doFilter(request, response);
+                return;
+            }
+            String header = request.getHeader("Authorization");
+            if (header == null || !header.startsWith("Bearer ")) {
+                writeUnauthorized(response);
+                return;
+            }
+            String token = header.substring("Bearer ".length()).trim();
+            TokenPayload payload;
+            try {
+                payload = jwtService.parse(token);
+            } catch (Exception e) {
+                writeUnauthorized(response);
+                return;
+            }
+            if (payload.getJti() != null && sessionService.isBlacklisted(payload.getJti())) {
+                writeUnauthorized(response);
+                return;
+            }
+            // Read the live row on every request: findById filters is_deleted = 0, so a logically
+            // deleted user resolves to null and loses access immediately, without waiting for the
+            // stateless access token to expire.
             UserDO user = userDao.findById(payload.getUserId());
-            if (user != null && Integer.valueOf(1).equals(user.getStatus())
-                    && "DEACTIVATED".equals(user.getPasswordHash())) {
+            if (user == null) {
+                writeUnauthorized(response);
+                return;
+            }
+            // status=1 is the platform-wide disabled flag; pure SSO accounts have no password
+            // hash at all, so the DEACTIVATED sentinel alone would miss them.
+            if (Integer.valueOf(1).equals(user.getStatus())
+                    && (user.getPasswordHash() == null
+                        || "DEACTIVATED".equals(user.getPasswordHash()))) {
                 writeFailure(response, HttpServletResponse.SC_UNAUTHORIZED,
                         ErrorCode.DEACTIVATION_ACCOUNT_DISABLED);
                 return;
             }
-        }
-        try {
-            AutoWonderContext ctx = AutoWonderContext.get();
-            ctx.setUserId(payload.getUserId());
-            ctx.setCurrentWorkspaceId(payload.getCurrentWorkspaceId());
-            BizLog bizLog = ctx.getBizLog();
-            if (bizLog != null) {
-                bizLog.setUserId(payload.getUserId());
-                bizLog.setWorkspaceId(payload.getCurrentWorkspaceId());
-            }
-            ctx.setTraceId(UUID.randomUUID().toString());
-            if (payload.getCurrentWorkspaceId() != null
-                    && !isLoginOnlyRequest(request)) {
-                // Read from the database on every request instead of trusting the token: a workspace
-                // deleted after the token was issued must stop working immediately, and there is no
-                // revocation path that reaches already-issued access tokens.
-                if (workspaceDao.countUsable(payload.getCurrentWorkspaceId()) == 0) {
-                    writeFailure(response, HttpServletResponse.SC_FORBIDDEN,
-                            ErrorCode.ORG_DELETED_OR_DISABLED);
-                    return;
+            try {
+                AutoWonderContext ctx = AutoWonderContext.get();
+                ctx.setUserId(payload.getUserId());
+                ctx.setCurrentWorkspaceId(payload.getCurrentWorkspaceId());
+                BizLog bizLog = ctx.getBizLog();
+                if (bizLog != null) {
+                    bizLog.setUserId(payload.getUserId());
+                    bizLog.setWorkspaceId(payload.getCurrentWorkspaceId());
                 }
-                WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(
-                        payload.getCurrentWorkspaceId(), payload.getUserId());
-                boolean activeMember = member != null
-                        && Integer.valueOf(0).equals(member.getIsDeleted())
-                        && Integer.valueOf(0).equals(member.getStatus());
-                if (activeMember) {
-                    try {
-                        ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.valueOf(member.getAccessLevel()));
-                        ctx.setWorkspaceMember(member);
-                    } catch (IllegalArgumentException | NullPointerException e) {
-                        writeFailure(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-                                ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
+                ctx.setTraceId(UUID.randomUUID().toString());
+                if (payload.getCurrentWorkspaceId() != null
+                        && !isLoginOnlyRequest(request)) {
+                    // Read from the database on every request instead of trusting the token: a workspace
+                    // deleted after the token was issued must stop working immediately, and there is no
+                    // revocation path that reaches already-issued access tokens.
+                    if (workspaceDao.countUsable(payload.getCurrentWorkspaceId()) == 0) {
+                        writeFailure(response, HttpServletResponse.SC_FORBIDDEN,
+                                ErrorCode.ORG_DELETED_OR_DISABLED);
                         return;
                     }
-                } else if (isPlatformAdmin(payload.getUserId())) {
-                    // A platform admin does not have to be a member of the workspace: ADMIN is the
-                    // highest WorkspaceAccessLevel, so every @RequireWorkspaceAccess guard passes
-                    // through this single branch. The flag is read from the database on every
-                    // request, so a revoked admin loses cross-workspace access immediately.
-                    ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.ADMIN);
-                } else {
-                    writeFailure(response, HttpServletResponse.SC_FORBIDDEN,
-                            ErrorCode.WORKSPACE_NOT_MEMBER);
-                    return;
+                    WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(
+                            payload.getCurrentWorkspaceId(), payload.getUserId());
+                    boolean activeMember = member != null
+                            && Integer.valueOf(0).equals(member.getIsDeleted())
+                            && Integer.valueOf(0).equals(member.getStatus());
+                    if (activeMember) {
+                        try {
+                            ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.valueOf(member.getAccessLevel()));
+                            ctx.setWorkspaceMember(member);
+                        } catch (IllegalArgumentException | NullPointerException e) {
+                            writeFailure(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
+                                    ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
+                            return;
+                        }
+                    } else if (isPlatformAdmin(payload.getUserId())) {
+                        // A platform admin does not have to be a member of the workspace: ADMIN is the
+                        // highest WorkspaceAccessLevel, so every @RequireWorkspaceAccess guard passes
+                        // through this single branch. The flag is read from the database on every
+                        // request, so a revoked admin loses cross-workspace access immediately.
+                        ctx.setWorkspaceAccessLevel(WorkspaceAccessLevel.ADMIN);
+                    } else {
+                        writeFailure(response, HttpServletResponse.SC_FORBIDDEN,
+                                ErrorCode.WORKSPACE_NOT_MEMBER);
+                        return;
+                    }
                 }
+                chain.doFilter(request, response);
+            } finally {
+                AutoWonderContext.destroy();
             }
-            chain.doFilter(request, response);
         } finally {
-            AutoWonderContext.destroy();
+            LocaleContextHolder.setLocaleContext(previousLocaleContext, false);
         }
     }
 
@@ -225,12 +241,6 @@ public class AuthFilter extends OncePerRequestFilter {
         return ("POST".equalsIgnoreCase(method) && "/api/workspaces".equals(path))
                 || ("GET".equalsIgnoreCase(method) && "/api/workspaces/mine".equals(path))
                 || ("POST".equalsIgnoreCase(method) && WORKSPACE_SWITCH_PATH.matcher(path).matches());
-    }
-
-    private boolean isDeactivationRevokeRequest(HttpServletRequest request) {
-        String path = normalizeTrailingSlash(request.getRequestURI());
-        return "POST".equalsIgnoreCase(request.getMethod())
-                && path.equals("/api/users/me/deactivation/revoke");
     }
 
     private String normalizeTrailingSlash(String path) {

@@ -16,11 +16,7 @@ public class ConversationChannelSinkRegistry {
         }
     }
 
-    public ConversationChannelSink resolve(String channel) {
-        ConversationChannelSink sink = byChannel.get(channel);
-        if (sink == null) {
-            throw new IllegalStateException("no sink for channel: " + channel);
-        }
-        return sink;
+    public ConversationChannelSink find(String channel) {
+        return byChannel.get(channel);
     }
 }

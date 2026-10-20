@@ -10,6 +10,7 @@ import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.skill.dto.CreateSkillRequest;
 import com.aliyun.autowonder.skill.dto.SkillVO;
 import com.aliyun.autowonder.skill.dto.UpdateSkillRequest;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
@@ -134,7 +135,7 @@ public class SkillService {
         int sz = Math.min(Math.max(size, 1), 100);
         int offset = (p - 1) * sz;
         List<SkillVO> result = new ArrayList<>();
-        Map<Long, String> userNameCache = new HashMap<>();
+        Map<Long, UserDisplayName> userNameCache = new HashMap<>();
         for (SkillDO s : skillDao.list(tenantId, type, categoryIds, uncategorized, offset, sz)) {
             result.add(toVO(s, userNameCache));
         }
@@ -145,13 +146,13 @@ public class SkillService {
     private List<Long> resolveCategoryFilter(long tenantId, Long categoryId, boolean includeDescendants,
                                              boolean uncategorized) {
         if (categoryId != null && uncategorized) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "分类筛选与未分类筛选互斥，不能同时使用");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.category_filters_conflict", new Object[]{}, "分类筛选与未分类筛选互斥，不能同时使用");
         }
         if (categoryId == null) {
             return null;
         }
         if (categoryId <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "分类 ID 不合法");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.category_id_invalid", new Object[]{}, "分类 ID 不合法");
         }
         return includeDescendants
                 ? categoryService.categoryAndDescendantIds(tenantId, categoryId)
@@ -295,7 +296,7 @@ public class SkillService {
         return toVO(s, new HashMap<>());
     }
 
-    private SkillVO toVO(SkillDO s, Map<Long, String> userNameCache) {
+    private SkillVO toVO(SkillDO s, Map<Long, UserDisplayName> userNameCache) {
         SkillVO vo = new SkillVO();
         vo.setId(s.getId());
         vo.setType(s.getType());
@@ -312,30 +313,34 @@ public class SkillService {
         vo.setGmtModified(s.getGmtModified());
         Long modifierId = s.getModifierId() != null ? s.getModifierId() : s.getCreatorId();
         vo.setModifierId(modifierId);
-        vo.setModifierName(displayUserName(modifierId, userNameCache));
+        UserDisplayName modifier = displayUserName(modifierId, userNameCache);
+        vo.setModifierName(modifier == null ? null : modifier.name());
+        if (modifier != null && modifier.fallback()) vo.setModifierNameKind("USER_ID_FALLBACK");
         return vo;
     }
 
-    private String displayUserName(Long userId, Map<Long, String> userNameCache) {
+    private record UserDisplayName(String name, boolean fallback) {}
+
+    private UserDisplayName displayUserName(Long userId, Map<Long, UserDisplayName> userNameCache) {
         if (userId == null) {
             return null;
         }
         if (userNameCache.containsKey(userId)) {
             return userNameCache.get(userId);
         }
-        UserDO user = userDao.findById(userId);
+        UserDO user = userDao.findByIdIncludingDeleted(userId);
+        String resolved = user == null ? null : UserAccountStates.displayName(user);
         String displayName;
-        if (user == null) {
+        boolean fallback = false;
+        if (resolved == null || resolved.isBlank()) {
             displayName = "用户 #" + userId;
-        } else if (user.getNickname() != null && !user.getNickname().isBlank()) {
-            displayName = user.getNickname();
-        } else if (user.getUsername() != null && !user.getUsername().isBlank()) {
-            displayName = user.getUsername();
+            fallback = true;
         } else {
-            displayName = "用户 #" + userId;
+            displayName = resolved;
         }
-        userNameCache.put(userId, displayName);
-        return displayName;
+        UserDisplayName result = new UserDisplayName(displayName, fallback);
+        userNameCache.put(userId, result);
+        return result;
     }
 
     private String normalizeInstallSpecForStorage(String type, String installSpec, String previousInstallSpec) {
@@ -350,7 +355,7 @@ public class SkillService {
             Object parsed = JSON.parse(trimmed);
             if ("MCP".equalsIgnoreCase(type)) {
                 if (!(parsed instanceof JSONObject)) {
-                    throw new BizException(ErrorCode.PARAM_INVALID, "MCP 配置必须是 JSON 对象");
+                    throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.mcp_object_required", new Object[]{}, "MCP 配置必须是 JSON 对象");
                 }
                 return normalizeMcpConfig((JSONObject) parsed, parseMcpConfig(previousInstallSpec)).toJSONString();
             }
@@ -371,22 +376,22 @@ public class SkillService {
         }
         transport = transport.trim().toLowerCase();
         if (!Set.of("http", "sse", "stdio").contains(transport)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "MCP 连接方式仅支持 HTTP、SSE 或 stdio");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.mcp_transport_invalid", new Object[]{}, "MCP 连接方式仅支持 HTTP、SSE 或 stdio");
         }
         config.put("transport", transport);
         if ("stdio".equals(transport)) {
             if (config.getString("command") == null || config.getString("command").isBlank()) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "MCP 本地命令不能为空");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.mcp_command_required", new Object[]{}, "MCP 本地命令不能为空");
             }
             if (config.get("headers") != null || config.get("timeoutSeconds") != null) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "stdio MCP 不支持请求头或超时配置");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.mcp_stdio_options_unsupported", new Object[]{}, "stdio MCP 不支持请求头或超时配置");
             }
             config.put("env", normalizeEnv(config.get("env"), previous == null ? null : previous.get("env")));
             return config;
         }
         String url = config.getString("url");
         if (url == null || !url.matches("^https?://[^\\s]+$")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "MCP 地址必须是 HTTP/HTTPS URL");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.mcp_url_invalid", new Object[]{}, "MCP 地址必须是 HTTP/HTTPS URL");
         }
         config.put("url", url.trim());
         config.put("headers", normalizeHeaders(config.get("headers"), previous == null ? null : previous.get("headers")));
@@ -395,7 +400,7 @@ public class SkillService {
             timeout = 60;
         }
         if (timeout < 1 || timeout > 600) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "MCP 超时时间必须在 1 到 600 秒之间");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.mcp_timeout_invalid", new Object[]{}, "MCP 超时时间必须在 1 到 600 秒之间");
         }
         config.put("timeoutSeconds", timeout);
         return config;
@@ -417,11 +422,11 @@ public class SkillService {
             return headers;
         }
         if (!(source instanceof Map)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, label + " 必须是键值对象");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.values_object_required", new Object[]{label}, label + " 必须是键值对象");
         }
         Map<?, ?> raw = (Map<?, ?>) source;
         if (raw.size() > 32) {
-            throw new BizException(ErrorCode.PARAM_INVALID, label + " 最多支持 32 项");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.values_limit", new Object[]{label, 32}, label + " 最多支持 32 项");
         }
         Set<String> names = new java.util.HashSet<>();
         for (Map.Entry<?, ?> entry : raw.entrySet()) {
@@ -429,16 +434,16 @@ public class SkillService {
             Object rawValue = entry.getValue();
             String normalizedName = name.toLowerCase();
             if (!namePattern.matcher(name).matches() || (header && RESERVED_HEADER_NAMES.contains(normalizedName))) {
-                throw new BizException(ErrorCode.PARAM_INVALID, label + " 名称不合法: " + name);
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.values_name_invalid", new Object[]{label, name}, label + " 名称不合法: " + name);
             }
             if (!names.add(normalizedName)) {
-                throw new BizException(ErrorCode.PARAM_INVALID, label + " 名称不能重复: " + name);
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.values_name_duplicate", new Object[]{label, name}, label + " 名称不能重复: " + name);
             }
             Object value = normalizeSecretValue(rawValue, previousValue(previous, name));
             if (value instanceof JSONObject) { headers.put(name, value); continue; }
             String literal = String.valueOf(value);
             if (literal.indexOf('\r') >= 0 || literal.indexOf('\n') >= 0 || literal.length() > 4096) {
-                throw new BizException(ErrorCode.PARAM_INVALID, label + " 值不合法: " + name);
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.values_value_invalid", new Object[]{label, name}, label + " 值不合法: " + name);
             }
             headers.put(name, literal);
         }
@@ -457,7 +462,7 @@ public class SkillService {
             if (previous instanceof Map && "secretRef".equals(String.valueOf(((Map<?, ?>) previous).get("kind")))) {
                 return previous;
             }
-            throw new BizException(ErrorCode.PARAM_INVALID, "私密配置首次保存时必须填写值");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.secret_initial_value_required", new Object[]{}, "私密配置首次保存时必须填写值");
         }
         if (secretCrypto == null) throw new IllegalStateException("密文存储未配置，无法保存私密 MCP 配置");
         String ref = secretCrypto.encrypt(plain);
@@ -518,8 +523,7 @@ public class SkillService {
     private static void rejectGenericPackagedCapabilityWrite(String type) {
         String normalized = type == null ? "" : type.trim();
         if ("PLUGIN".equalsIgnoreCase(normalized) || "HOOK".equalsIgnoreCase(normalized)) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "插件和 Runtime Hook 必须通过安装包入口配置");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.package_install_required", new Object[]{}, "插件和 Runtime Hook 必须通过安装包入口配置");
         }
     }
 }

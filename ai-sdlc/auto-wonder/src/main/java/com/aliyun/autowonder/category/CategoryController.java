@@ -16,7 +16,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/categories")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看分类")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看分类", actionKey = "access.action.view_categories")
 public class CategoryController {
 
     private final CategoryService categoryService;
@@ -36,20 +36,20 @@ public class CategoryController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "创建分类")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "创建分类", actionKey = "access.action.create_a_category")
     public Result<CategoryVO> create(@RequestBody CreateCategoryRequest req) {
         return Result.ok(categoryService.create(req, currentWorkspaceId(), currentUserId()));
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新分类")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新分类", actionKey = "access.action.update_a_category")
     public Result<CategoryVO> update(@PathVariable("id") Long id, @RequestBody JsonNode body) {
         return Result.ok(categoryService.update(id, UpdateCategoryRequest.fromJson(body),
                 currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "删除分类")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "删除分类", actionKey = "access.action.delete_a_category")
     public Result<Void> delete(@PathVariable("id") Long id) {
         categoryService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
