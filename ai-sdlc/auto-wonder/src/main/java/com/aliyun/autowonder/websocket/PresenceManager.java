@@ -159,6 +159,16 @@ public class PresenceManager implements ConversationRuntimePresence {
         List<String> features = protocolFeatures == null ? List.of() : protocolFeatures.stream()
                 .filter(java.util.Objects::nonNull).filter(feature -> !feature.isBlank())
                 .distinct().sorted().toList();
+        // Existing runtimes emit turn events but advertise the conversation interaction and cancel
+        // features rather than the event frame name. Normalize before persisting the shared snapshot
+        // so readiness and executor routing use the same capability set.
+        if (features.contains(com.aliyun.autowonder.conversation.ConversationProtocolFeatures.ACP_INTERACTION)
+                && features.contains(com.aliyun.autowonder.conversation.ConversationProtocolFeatures.TURN_CANCEL)
+                && !features.contains(com.aliyun.autowonder.conversation.ConversationProtocolFeatures.TURN_EVENT)) {
+            var normalized = new java.util.TreeSet<>(features);
+            normalized.add(com.aliyun.autowonder.conversation.ConversationProtocolFeatures.TURN_EVENT);
+            features = List.copyOf(normalized);
+        }
         List<Long> conversations = snapshot.runningConversationTurnIds().stream()
                 .filter(id -> id != null && id > 0).sorted().toList();
         ExecutorDispatchSnapshot storedSnapshot = new ExecutorDispatchSnapshot(

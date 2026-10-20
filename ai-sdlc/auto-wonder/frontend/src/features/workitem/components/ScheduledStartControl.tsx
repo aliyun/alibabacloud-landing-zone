@@ -1,3 +1,5 @@
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { Button, DatePicker, Modal, Space, message } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -12,6 +14,7 @@ interface ScheduledStartControlProps {
 
 /** 详情页计划执行行：仅对已指派数字员工且存在计划时间的工单展示。 */
 export function ScheduledStartControl({ workitemId, assigneeType, scheduledStartAt }: ScheduledStartControlProps) {
+  const { t } = useTranslation('workitem');
   const [editOpen, setEditOpen] = useState(false);
   const [editValue, setEditValue] = useState<Dayjs | null>(null);
   const mutation = useUpdateScheduledStart(workitemId);
@@ -32,17 +35,17 @@ export function ScheduledStartControl({ workitemId, assigneeType, scheduledStart
 
   const handleEditOk = () => {
     if (!editValue || editValue.isBefore(dayjs(), 'minute')) {
-      message.warning('计划执行时间必须是将来的时间点');
+      message.warning(t('schedule.futureRequired'));
       return;
     }
-    run('调整工单计划执行时间', () =>
+    run(t('schedule.editCommand'), () =>
       mutation.mutateAsync({ scheduledStartAt: editValue.toISOString() }).then(() => setEditOpen(false)),
     );
   };
 
   return (
     <div style={{ marginTop: 8, fontSize: 12, color: 'var(--aw-muted)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-      <span>计划执行: {new Date(scheduledStartAt).toLocaleString('zh-CN')}</span>
+      <span>{t('schedule.plannedStart', { time: formatDateTime(scheduledStartAt) })}</span>
       <Space size={4}>
         <Button
           size="small"
@@ -51,23 +54,23 @@ export function ScheduledStartControl({ workitemId, assigneeType, scheduledStart
             setEditOpen(true);
           }}
         >
-          修改
+          {t('schedule.edit')}
         </Button>
-        <Button size="small" onClick={() => run('立即执行工单', () => mutation.mutateAsync({ executeNow: true }))}>
-          立即执行
+        <Button size="small" onClick={() => run(t('schedule.executeCommand'), () => mutation.mutateAsync({ executeNow: true }))}>
+          {t('schedule.executeNow')}
         </Button>
-        <Button size="small" danger onClick={() => run('取消工单定时执行', () => mutation.mutateAsync({ scheduledStartAt: null }))}>
-          取消定时
+        <Button size="small" danger onClick={() => run(t('schedule.cancelCommand'), () => mutation.mutateAsync({ scheduledStartAt: null }))}>
+          {t('schedule.cancel')}
         </Button>
       </Space>
       <Modal
-        title="修改计划执行时间"
+        title={t('schedule.editTitle')}
         open={editOpen}
         onOk={handleEditOk}
         onCancel={() => setEditOpen(false)}
         confirmLoading={mutation.isPending}
-        okText="保存"
-        cancelText="取消"
+        okText={t('schedule.save')}
+        cancelText={t('schedule.cancelEdit')}
         destroyOnHidden
       >
         <DatePicker

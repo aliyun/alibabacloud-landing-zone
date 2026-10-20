@@ -196,4 +196,63 @@ class ScheduledTaskScheduleTest {
         task.setAffinityTimeoutSeconds(1800);
         return task;
     }
+
+    @Test
+    void definitionReasonsAndPreviewBoundsRenderAtTheHumanBoundaryOnly() {
+
+        java.util.List<java.util.function.Consumer<ScheduledTaskDO>> mutations = java.util.List.of(
+                t -> t.setName(" "), t -> t.setInstructionMd(" "), t -> t.setSquadId(0L),
+                t -> t.setTimezone(" "), t -> { t.setScheduleType("ONCE"); t.setCronExpression(null); },
+                t -> t.setRunAt(new java.util.Date(0)), t -> t.setScheduleType("UNKNOWN"),
+                t -> t.setSessionMode("UNKNOWN"), t -> t.setOverlapPolicy("UNKNOWN"),
+                t -> { t.setSessionMode("CONTINUOUS"); t.setOverlapPolicy("ALLOW"); },
+                t -> t.setMisfirePolicy("UNKNOWN"), t -> t.setStartDeadlineSeconds(0),
+                t -> t.setAffinityTimeoutSeconds(null),
+                t -> { t.setSessionMode("CONTINUOUS"); t.setAffinityTimeoutSeconds(0); });
+        String[] diagnostics = {"任务名称不能为空且不能超过 256 个字符", "任务指令不能为空或过长", "小队和初始 Agent ID 必须为正数",
+                "timezone 不能为空", "ONCE 必须且只能设置 runAt", "CRON 必须且只能设置 cronExpression", "scheduleType 仅支持 ONCE/CRON",
+                "sessionMode 不合法", "overlapPolicy 不合法", "CONTINUOUS 模式不能并行执行", "misfirePolicy 不合法",
+                "startDeadlineSeconds 必须为正数", "affinityTimeoutSeconds 不能为空", "CONTINUOUS 模式的 affinityTimeoutSeconds 必须为正数"};
+        String[] english = {"Task name is required and must not exceed 256 characters", "Task instruction is required and must not exceed the size limit",
+                "Squad and initial Agent IDs must be positive", "timezone is required", "ONCE requires only runAt", "CRON requires only cronExpression",
+                "scheduleType supports only ONCE/CRON", "sessionMode is invalid", "overlapPolicy is invalid", "CONTINUOUS mode cannot run in parallel",
+                "misfirePolicy is invalid", "startDeadlineSeconds must be positive", "affinityTimeoutSeconds is required",
+                "affinityTimeoutSeconds must be positive in CONTINUOUS mode"};
+        org.junit.jupiter.api.Assertions.assertAll(java.util.stream.IntStream.range(0, mutations.size()).mapToObj(i ->
+                (org.junit.jupiter.api.function.Executable) () -> {
+                    ScheduledTaskDO task = validDefinition(); mutations.get(i).accept(task);
+                    assertBilingual(assertThrows(BizException.class, () -> ScheduledTaskValidator.validateDefinition(task, schedule)), diagnostics[i], english[i]);
+                }));
+    }
+
+    @Test
+    void nullDefinitionAndPreviewCountRenderSpecificBoundaryReasons() {
+        assertBilingual(assertThrows(BizException.class, () -> ScheduledTaskValidator.validateDefinition(null, schedule)),
+                "任务定义不能为空", "Task definition is required");
+    }
+
+    @Test
+    void previewCountKeepsItsSpecificBounds() {
+        assertBilingual(assertThrows(BizException.class, () -> schedule.preview("0 0 2 * * *", "UTC", Instant.EPOCH, 101)),
+                "预览次数必须在 1 到 100 之间", "Preview count must be between 1 and 100");
+    }
+
+    private void assertBilingual(BizException failure, String diagnostic, String english) {
+        assertEquals(diagnostic, failure.getMessage());
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var chinese = handler.handleBiz(failure);
+            assertEquals(200, chinese.getStatusCodeValue());
+            assertEquals(diagnostic, chinese.getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var translated = handler.handleBiz(failure);
+            assertEquals(200, translated.getStatusCodeValue());
+            assertEquals(failure.getCode(), translated.getBody().getCode());
+            assertEquals(english, translated.getBody().getMessage());
+            assertEquals(diagnostic, failure.getLocalizedMessage());
+            assertEquals(diagnostic, com.aliyun.autowonder.common.result.Result.fail(failure.getCode(), diagnostic).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

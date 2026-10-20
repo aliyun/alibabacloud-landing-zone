@@ -74,4 +74,18 @@ class RepoNameValidatorTest {
         assertTrue(problem.contains("单级目录名"), problem);
         assertTrue(problem.contains("namespace/repo-name"), problem);
     }
+
+    @Test
+    void finiteProblemIdentityPreservesExactRawStringsTrimAndDecisionOrder() {
+        assertEquals(RepoNameValidator.Problem.EMPTY,RepoNameValidator.inspect(null));
+        assertEquals("仓库名称不能为空",RepoNameValidator.validate(null));
+        assertEquals(RepoNameValidator.Problem.RESERVED_PREFIX,RepoNameValidator.inspect(" ~raw "));
+        assertEquals("仓库名称不能以 ~ 或 % 开头",RepoNameValidator.validate(" ~raw "));
+        assertEquals(RepoNameValidator.Problem.CONTROL_CHARACTER,RepoNameValidator.inspect("raw\u0000name"));
+        assertEquals("仓库名称不能包含控制字符",RepoNameValidator.validate("raw\u0000name"));
+        assertEquals(RepoNameValidator.Problem.INVALID_SEGMENT,RepoNameValidator.inspect(" ~raw/path "));
+        assertEquals("仓库名称「~raw/path」必须是单级目录名（不含 / 或 \\ 等路径分隔符、也不能是 . 或 ..、绝对路径）。如填写的是 namespace/repo-name 形式的标识，请将完整标识填在 Git 仓库地址中，仓库名称只填单级目录名。",RepoNameValidator.validate(" ~raw/path "));
+        assertNull(RepoNameValidator.inspect(" raw-name ")); assertNull(RepoNameValidator.validate(" raw-name "));
+    }
+
 }

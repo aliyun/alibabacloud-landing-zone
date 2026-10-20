@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/platform-intelligence")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看平台智能能力状态")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看平台智能能力状态", actionKey = "access.action.view_platform_intelligence_status")
 public class PlatformIntelligenceController {
     private final PlatformIntelligenceService service;
 

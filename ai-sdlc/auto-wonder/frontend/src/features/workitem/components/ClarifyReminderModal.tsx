@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { Button, Checkbox, Modal } from 'antd';
 
@@ -11,9 +12,6 @@ interface ClarifyReminderModalProps {
   onClose: () => void;
 }
 
-const REMINDER_TEXT = '建议先完成 AI 需求澄清，以提升后续交付质量。也可以选择跳过，直接启动交付。';
-const REMEMBER_TEXT = '记住我的选项，下次不再提醒';
-
 /**
  * 「启动交付」前的需求澄清引导（工单 53315），带「下次不再提醒」降噪选项（工单 54819）。
  *
@@ -22,6 +20,7 @@ const REMEMBER_TEXT = '记住我的选项，下次不再提醒';
  * 同理，勾选态只在跳过或去澄清时交给上层落盘，关闭图标不带走它。
  */
 export function ClarifyReminderModal({ open, onConfirm, onSkip, onClose }: ClarifyReminderModalProps) {
+  const { t } = useTranslation('workitem');
   const [rememberChoice, setRememberChoice] = useState(false);
 
   // 每次重新弹出都回到未勾选：上一次用关闭图标退出时偏好并没有落盘，
@@ -32,26 +31,26 @@ export function ClarifyReminderModal({ open, onConfirm, onSkip, onClose }: Clari
 
   return (
     <Modal
-      title="建议先完成需求澄清"
+      title={t('clarifyReminder.title')}
       open={open}
       onCancel={onClose}
       destroyOnHidden
       footer={[
         <Button key="skip" onClick={() => onSkip(rememberChoice)}>
-          跳过
+          {t('clarifyReminder.skip')}
         </Button>,
         <Button key="confirm" type="primary" onClick={() => onConfirm(rememberChoice)}>
-          确认，去澄清
+          {t('clarifyReminder.confirm')}
         </Button>,
       ]}
     >
-      {REMINDER_TEXT}
+      {t('clarifyReminder.description')}
       <Checkbox
         checked={rememberChoice}
         onChange={(event) => setRememberChoice(event.target.checked)}
         style={{ display: 'flex', alignItems: 'center', marginTop: 16 }}
       >
-        {REMEMBER_TEXT}
+        {t('clarifyReminder.remember')}
       </Checkbox>
     </Modal>
   );

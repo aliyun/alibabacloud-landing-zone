@@ -130,11 +130,25 @@ public class ExecutorService {
         return plaintext;
     }
 
-    public void recordLastConnectIp(long executorId, long tenantId, String ip) {
-        if (ip == null || ip.isBlank()) {
-            return;
+    public void recordLastConnectInfo(long executorId, long tenantId, String ip, String hostname) {
+        String cleanIp = ip == null || ip.isBlank() ? null : ip.trim();
+        // 每次成功接入都以本次值整体覆盖（含 null）：不早退——两个字段都缺失时也必须清掉
+        // 上一次连接留下的机器标识，否则列表会把旧 hostname 拼到新连接的机器上。
+        executorDao.updateLastConnectInfo(executorId, tenantId, cleanIp, sanitizeHostname(hostname), null);
+    }
+
+    private static final int MAX_HOSTNAME_LENGTH = 128;
+
+    /** 主机名是客户端自报值：去空白与控制字符（防日志伪造），截断到列宽，空结果按未上报处理。 */
+    public static String sanitizeHostname(String hostname) {
+        if (hostname == null) {
+            return null;
         }
-        executorDao.updateLastConnectIp(executorId, tenantId, ip, null);
+        String cleaned = hostname.strip().replaceAll("\\p{Cntrl}", "");
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        return cleaned.length() > MAX_HOSTNAME_LENGTH ? cleaned.substring(0, MAX_HOSTNAME_LENGTH) : cleaned;
     }
 
     public void persistHeartbeatIfNeeded(long executorId, long tenantId) {
@@ -275,6 +289,7 @@ public class ExecutorService {
         vo.setStatus(registry.isOnline(e.getId()) ? "ONLINE" : "OFFLINE");
         vo.setClientKind(e.getClientKind());
         vo.setLastConnectIp(e.getLastConnectIp());
+        vo.setLastConnectHostname(e.getLastConnectHostname());
         vo.setLastHeartbeat(e.getLastHeartbeat());
         vo.setVersion(presenceManager.currentVersion(e.getId()));
         vo.setModel(presenceManager.currentModel(e.getId()));
@@ -282,6 +297,8 @@ public class ExecutorService {
         vo.setLastStartedAt(e.getLastStartedAt());
         vo.setRestartSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_RESTART_V1"));
         vo.setUpdateRestartSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_UPDATE_RESTART_V1"));
+        vo.setRestartPolicySupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_RESTART_POLICY_V1"));
+        vo.setLaunchCommandSupported(presenceManager.supportsProtocolFeature(e.getId(), "EXECUTOR_LAUNCH_COMMAND_V1"));
         if (restartService != null) vo.setRestart(restartService.status(e.getId()));
         if (updateService != null) {
             String target = updateService.targetVersion();

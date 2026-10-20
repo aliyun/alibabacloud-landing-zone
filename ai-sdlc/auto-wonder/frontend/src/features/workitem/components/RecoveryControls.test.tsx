@@ -12,7 +12,7 @@ vi.mock('@/shared/auth/useAccessCommand', () => ({ useAccessCommand: () => (_lev
 function show(closed: boolean, status: string, recovery = {}, restarts: Array<Record<string, unknown>> = []) {
   vi.mocked(apiClient.get).mockResolvedValue({ data: { closed, executions: [{ dispatchId: 100, agentId: 20, attempt: 2, status, recovery }], restarts } });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><RecoveryControls workitemId="10" renderActions={(deliveryControl) => <WorkitemActionBar deliveryControl={deliveryControl} />} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><RecoveryControls workitemId="10" renderActions={(deliveryControl) => <WorkitemActionBar deliveryControl={deliveryControl} />} /><RecoveryControls workitemId="10" variant="execution" dispatchId={100} /><RecoveryControls workitemId="10" variant="history" /></QueryClientProvider>);
 }
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(apiClient.post).mockResolvedValue({ data: {} }); });
 describe('delivery recovery', () => {
@@ -30,29 +30,32 @@ describe('delivery recovery', () => {
   });
   it('offers cancellation while queued and dispatches the selected id', async () => {
     show(false, 'PENDING', { reason: 'NO_EXECUTOR_CAPACITY' });
-    await userEvent.click(await screen.findByText('执行恢复与取消（1）'));
+    await screen.findByText('Dispatch 100 · 第 2 次');
     expect(screen.getByText('等待可用执行器容量')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '取消本次执行' }));
+    await userEvent.click(screen.getByRole('button', { name: '执行操作' }));
+    await userEvent.click(await screen.findByText('取消本次执行'));
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/api/workitems/10/recovery', { action: 'cancel', dispatchId: 100, force: false }));
   });
   it('offers force end for a lost stop confirmation', async () => {
     show(false, 'PAUSING', { cancel_requested: 1, stop_pending: 1 });
-    await userEvent.click(await screen.findByText('执行恢复与取消（1）'));
+    await screen.findByText('Dispatch 100 · 第 2 次');
     expect(screen.getByText('正在取消')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '强制结束' }));
+    await userEvent.click(screen.getByRole('button', { name: '执行操作' }));
+    await userEvent.click(await screen.findByText('强制结束'));
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/api/workitems/10/recovery', { action: 'cancel', dispatchId: 100, force: true }));
   });
   it('does not claim the runtime stopped after forced platform cancellation', async () => {
     show(true, 'CANCELED', { cancel_requested: 1, stop_pending: 1, forced: 1 });
-    await userEvent.click(await screen.findByText('执行恢复与取消（1）'));
+    await screen.findByText('Dispatch 100 · 第 2 次');
     expect(screen.getByText(/平台已结束，执行器停止未确认/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /重\s*试/ })).not.toBeInTheDocument();
     expect(screen.getByRole('switch', { name: '允许数字员工执行' })).not.toBeChecked();
   });
   it('retries a failed attempt through the existing fenced recovery operation', async () => {
     show(false, 'FAILED');
-    await userEvent.click(await screen.findByText('执行恢复与取消（1）'));
-    await userEvent.click(screen.getByRole('button', { name: /重\s*试/ }));
+    await screen.findByText('Dispatch 100 · 第 2 次');
+    await userEvent.click(screen.getByRole('button', { name: '执行操作' }));
+    await userEvent.click(await screen.findByText('重试'));
     await waitFor(() => expect(continueDispatch).toHaveBeenCalledWith('10', 100));
   });
 });
@@ -69,13 +72,14 @@ describe('delivery restart rounds', () => {
     expect(screen.getAllByText(/正在停止旧执行 1 个/).length).toBeGreaterThan(0);
   });
 
-  it('confirms the new round with its dispatch id once started', async () => {
-    show(false, 'PENDING', {}, [
+  it.each(['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED'])('keeps started rounds in history without a success banner when dispatch is %s', async (status) => {
+    show(false, status, {}, [
       { restart_round: 3, status: 'STARTED', dispatch_id: 88, gmt_modified: '2026-09-18T08:00:00Z' },
     ]);
 
-    expect(await screen.findByText('已启动第 3 轮交付（Dispatch #88）')).toBeInTheDocument();
     await userEvent.click(await screen.findByText('交付重启轮次（1）'));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText('已启动第 3 轮交付（Dispatch #88）')).not.toBeInTheDocument();
     expect(screen.getByText('第 3 轮')).toBeInTheDocument();
     expect(screen.getByText('Dispatch #88')).toBeInTheDocument();
     expect(screen.getByText('已启动')).toBeInTheDocument();
@@ -116,7 +120,6 @@ describe('delivery restart rounds', () => {
       { restart_round: 1, status: 'SUPERSEDED', stop_reason: '已被第 2 轮重启取代' },
     ]);
 
-    expect(await screen.findByText('已启动第 2 轮交付（Dispatch #90）')).toBeInTheDocument();
     await userEvent.click(await screen.findByText('交付重启轮次（2）'));
     expect(screen.getByText('已被新轮次取代')).toBeInTheDocument();
   });
@@ -125,5 +128,35 @@ describe('delivery restart rounds', () => {
     show(false, 'PENDING');
     expect(await screen.findByRole('switch', { name: '允许数字员工执行' })).toBeChecked();
     expect(screen.queryByText(/交付重启轮次/)).not.toBeInTheDocument();
+  });
+});
+
+
+describe('recovery placement', () => {
+  it('keeps execution and restart history out of the page header', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { closed: false, executions: [{ dispatchId: 100, agentId: 20, attempt: 1, status: 'FAILED', recovery: {} }], restarts: [{ restart_round: 1, status: 'STARTED', dispatch_id: 100 }] } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RecoveryControls workitemId="10" /></QueryClientProvider>);
+    await screen.findByRole('switch');
+    expect(screen.queryByText(/执行恢复与取消|交付重启轮次|Dispatch/)).not.toBeInTheDocument();
+  });
+
+  it('shows only the selected dispatch and suppresses retry for an older attempt', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ data: { closed: false, executions: [
+      { dispatchId: 100, agentId: 20, attempt: 1, status: 'FAILED', error: 'old failure', recovery: {} },
+      { dispatchId: 101, agentId: 20, attempt: 2, status: 'RUNNING', error: 'current detail', recovery: {} },
+    ], restarts: [] } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (dispatchId: number) => <QueryClientProvider client={client}><RecoveryControls workitemId="10" variant="execution" dispatchId={dispatchId} /></QueryClientProvider>;
+    const { rerender } = render(view(100));
+    await screen.findByText('old failure');
+    expect(screen.queryByText('current detail')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '执行操作' })).not.toBeInTheDocument();
+    rerender(view(101));
+    await screen.findByText('current detail');
+    expect(screen.queryByText('old failure')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '执行操作' }));
+    await userEvent.click(await screen.findByText('取消本次执行'));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/api/workitems/10/recovery', { action: 'cancel', dispatchId: 101, force: false }));
   });
 });

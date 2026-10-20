@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,13 +20,14 @@ class WorkspaceMemberDaoSqlTest {
     void memberModelExposesAccessLevelAndIdentityTagsAsText() throws Exception {
         assertEquals(String.class, WorkspaceMemberDO.class.getDeclaredField("accessLevel").getType());
         assertEquals(String.class, WorkspaceMemberDO.class.getDeclaredField("identityTags").getType());
+        assertEquals(String.class, WorkspaceMemberDO.class.getDeclaredField("forbiddenDomains").getType());
     }
 
     @Test
     void daoExposesMemberAccessTagAndLockOperations() throws Exception {
-        assertParamNames("updateAccessLevel",
-                List.of("tenantId", "userId", "accessLevel", "modifierId"),
-                Long.class, Long.class, String.class, Long.class);
+        assertParamNames("updateRole",
+                List.of("tenantId", "userId", "roleId", "modifierId"),
+                Long.class, Long.class, Long.class, Long.class);
         assertParamNames("updateIdentityTags",
                 List.of("tenantId", "userId", "identityTags", "modifierId"),
                 Long.class, Long.class, String.class, Long.class);
@@ -55,14 +57,14 @@ class WorkspaceMemberDaoSqlTest {
         String insertOrActivate = statement(xml, "insertOrActivate", "insert");
 
         assertTrue(insert.contains(
-                "INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, identity_tags, creator_id, is_deleted)"));
+                "INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, role_id, identity_tags, creator_id, is_deleted)"));
         assertTrue(insert.contains(
-                "VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{identityTags}, #{creatorId}, 0)"));
+                "VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{roleId}, #{identityTags}, #{creatorId}, 0)"));
 
         assertTrue(insertOrActivate.contains(
-                "INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, identity_tags, creator_id, modifier_id, is_deleted)"));
+                "INSERT INTO org_member (tenant_id, user_id, status, joined_at, access_level, role_id, identity_tags, creator_id, modifier_id, is_deleted)"));
         assertTrue(insertOrActivate.contains(
-                "VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{identityTags}, #{creatorId}, #{modifierId}, 0)"));
+                "VALUES (#{tenantId}, #{userId}, #{status}, NOW(3), #{accessLevel}, #{roleId}, #{identityTags}, #{creatorId}, #{modifierId}, 0)"));
         assertTrue(insertOrActivate.contains("access_level = #{accessLevel}"));
         assertTrue(insertOrActivate.contains("identity_tags = #{identityTags}"));
         assertTrue(insertOrActivate.contains(
@@ -72,10 +74,10 @@ class WorkspaceMemberDaoSqlTest {
     @Test
     void accessAndTagUpdatesOnlyModifyActiveNondeletedMemberships() throws Exception {
         String xml = mapperXml();
-        String accessUpdate = statement(xml, "updateAccessLevel", "update");
+        String accessUpdate = statement(xml, "updateRole", "update");
         String tagsUpdate = statement(xml, "updateIdentityTags", "update");
 
-        assertActiveUpdateContract(accessUpdate, "access_level = #{accessLevel}");
+        assertActiveUpdateContract(accessUpdate, "role_id = #{roleId}");
         assertActiveUpdateContract(tagsUpdate, "identity_tags = #{identityTags}");
     }
 
@@ -119,7 +121,10 @@ class WorkspaceMemberDaoSqlTest {
     void membershipLockSelectsTheRequestedNondeletedRowForUpdate() throws Exception {
         String lockSelect = statement(mapperXml(), "findByWorkspaceAndUserForUpdate", "select");
 
-        assertTrue(lockSelect.contains("SELECT * FROM org_member"));
+        assertTrue(lockSelect.contains("<include refid=\"memberWithRole\"/>"));
+        String join = statement(mapperXml(), "memberWithRole", "sql");
+        assertTrue(join.contains("r.id = m.role_id AND r.tenant_id = m.tenant_id AND r.is_deleted = 0"));
+        assertTrue(join.contains("r.access_level, r.read_only_domains"));
         assertTrue(lockSelect.contains("tenant_id = #{tenantId}"));
         assertTrue(lockSelect.contains("user_id = #{userId}"));
         assertTrue(lockSelect.contains("is_deleted = 0"));
@@ -171,6 +176,65 @@ class WorkspaceMemberDaoSqlTest {
         assertTrue(countAll.contains("<include refid=\"allWorkspacesFilter\"/>"),
                 "countAll must include the shared allWorkspacesFilter fragment so its total "
                         + "matches the page query, got: " + countAll);
+    }
+
+    @Test
+    void bulkMembershipRemovalClearsEveryLiveMembershipOfTheUser() throws Exception {
+        String softDeleteAll = statement(mapperXml(), "softDeleteAllByUser", "update");
+
+        // Deleting a user must not leave them in any workspace, so this statement is
+        // deliberately not scoped to one tenant_id.
+        assertTrue(softDeleteAll.contains("UPDATE org_member SET is_deleted = 1"));
+        assertTrue(softDeleteAll.contains("modifier_id = #{modifierId}"));
+        assertTrue(softDeleteAll.contains("gmt_modified = NOW(3)"));
+        assertTrue(softDeleteAll.contains("user_id = #{userId}"));
+        assertTrue(softDeleteAll.contains("is_deleted = 0"));
+        assertFalse(softDeleteAll.contains("tenant_id"),
+                "the bulk cleanup must span every workspace, got: " + softDeleteAll);
+    }
+
+    @Test
+    void earliestActiveWorkspaceResolutionRequiresBothSidesToBeUsable() throws Exception {
+        String findEarliest = statement(mapperXml(), "findEarliestActiveWorkspaceId", "select");
+
+        assertTrue(findEarliest.contains("m.user_id = #{userId}"));
+        assertTrue(findEarliest.contains("m.is_deleted = 0 AND m.status = 0"),
+                "a removed or pending membership must not claim the user's workspace, got: "
+                        + findEarliest);
+        assertTrue(findEarliest.contains("o.is_deleted = 0 AND o.status = 0"),
+                "a deleted or disabled workspace must not claim the user's workspace, got: "
+                        + findEarliest);
+        assertTrue(findEarliest.contains("ORDER BY m.joined_at ASC, m.id ASC"),
+                "the earliest join must have a unique tiebreaker so the pick is deterministic, "
+                        + "got: " + findEarliest);
+        assertTrue(findEarliest.contains("LIMIT 1"),
+                "only one workspace id may be returned, got: " + findEarliest);
+    }
+
+    @Test
+    void ownedWorkspaceCountIgnoresDeletedWorkspacesOnly() throws Exception {
+        String countOwned = statement(orgMapperXml(), "countOwnedByUser", "select");
+
+        assertTrue(countOwned.contains("SELECT COUNT(*)"));
+        assertTrue(countOwned.contains("owner_id = #{userId}"));
+        assertTrue(countOwned.contains("is_deleted = 0"),
+                "the ownership guard must only exempt deleted workspaces, got: " + countOwned);
+        assertFalse(countOwned.contains("status"),
+                "the count backs the delete guard, not the usability check; adding a status "
+                        + "filter would silently weaken it, got: " + countOwned);
+    }
+
+    @Test
+    void bulkRemovalAndEarliestWorkspaceExposeTheirNamedParameters() throws Exception {
+        assertParamNames("softDeleteAllByUser",
+                List.of("userId", "modifierId"),
+                Long.class, Long.class);
+        assertParamNames("findEarliestActiveWorkspaceId",
+                List.of("userId"),
+                Long.class);
+        assertWorkspaceParamNames("countOwnedByUser",
+                List.of("userId"),
+                Long.class);
     }
 
     private static void assertActiveUpdateContract(String sql, String assignment) {

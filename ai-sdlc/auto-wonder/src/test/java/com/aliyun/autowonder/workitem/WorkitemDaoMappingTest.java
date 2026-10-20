@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkitemDaoMappingTest {
@@ -33,6 +34,46 @@ class WorkitemDaoMappingTest {
             params.remove("mineScope");
             org.junit.jupiter.api.Assertions.assertFalse(
                     mapped.getBoundSql(params).getSql().contains("workitem_watcher"));
+        }
+    }
+
+    @Test
+    void createdTimeBoundsApplyToBothListAndCountOnlyWhenProvided() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var base = new java.util.HashMap<String, Object>();
+        base.put("tenantId", 7L);
+        base.put("currentUserId", 42L);
+        base.put("pendingDecisionOnly", false);
+
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+
+            var bounded = new java.util.HashMap<String, Object>(base);
+            bounded.put("createdFrom", new java.util.Date(1_700_000_000_000L));
+            bounded.put("createdTo", new java.util.Date(1_700_086_400_000L));
+            String withBounds = mapped.getBoundSql(bounded).getSql().replaceAll("\\s+", " ");
+            assertTrue(withBounds.contains("w.gmt_create >= ?"),
+                    "createdFrom must bound gmt_create inclusively");
+            assertTrue(withBounds.contains("w.gmt_create < ?"),
+                    "createdTo must bound gmt_create exclusively so the end day stays fully included");
+
+            var singleSided = new java.util.HashMap<String, Object>(base);
+            singleSided.put("createdFrom", new java.util.Date(1_700_000_000_000L));
+            String withLowerOnly = mapped.getBoundSql(singleSided).getSql().replaceAll("\\s+", " ");
+            assertTrue(withLowerOnly.contains("w.gmt_create >= ?"));
+            assertFalse(withLowerOnly.contains("w.gmt_create < ?"),
+                    "a single-sided range must not add the missing bound");
+
+            String withoutBounds = mapped.getBoundSql(base).getSql().replaceAll("\\s+", " ");
+            assertFalse(withoutBounds.contains("w.gmt_create >= ?"),
+                    "an absent creation-time filter must not change existing queries");
+            assertFalse(withoutBounds.contains("w.gmt_create < ?"),
+                    "an absent creation-time filter must not change existing queries");
         }
     }
 
@@ -224,8 +265,10 @@ class WorkitemDaoMappingTest {
                 statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
                         + "status_node_id BIGINT, assignee_type VARCHAR(20), assignee_ref BIGINT, "
                         + "is_deleted INT DEFAULT 0, gmt_create TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-                statement.execute("CREATE TABLE dispatch (tenant_id BIGINT, workitem_id BIGINT, "
+                statement.execute("CREATE TABLE dispatch (id BIGINT AUTO_INCREMENT PRIMARY KEY, tenant_id BIGINT, workitem_id BIGINT, "
                         + "source_type VARCHAR(32) DEFAULT 'WORKITEM', status VARCHAR(20), is_deleted INT DEFAULT 0)");
+                statement.execute("CREATE TABLE dispatch_request (tenant_id BIGINT, dispatch_id BIGINT, "
+                        + "kind VARCHAR(16), status VARCHAR(16), expires_at TIMESTAMP)");
                 statement.execute("INSERT INTO status_node VALUES (1,'INIT'),(2,'IN_PROGRESS'),(3,'DONE'),(4,'CANCELED')");
                 statement.execute("""
                         INSERT INTO workitem (id,tenant_id,status_node_id,assignee_type,assignee_ref) VALUES
@@ -240,7 +283,7 @@ class WorkitemDaoMappingTest {
                         (7,4,'SUCCEEDED'),(7,6,'SUCCEEDED'),(7,7,'PAUSED'),(7,8,'SUCCEEDED'),
                         (8,9,'SUCCEEDED'),(7,10,'SUCCEEDED'),(7,11,'SUCCEEDED'),(8,12,'SUCCEEDED')
                         """);
-                statement.execute("INSERT INTO dispatch VALUES (7,11,'SCHEDULED_TASK_RUN','RUNNING',0)");
+                statement.execute("INSERT INTO dispatch (tenant_id,workitem_id,source_type,status,is_deleted) VALUES (7,11,'SCHEDULED_TASK_RUN','RUNNING',0)");
 
                 var configuration = new org.apache.ibatis.session.Configuration();
                 configuration.setDatabaseId(databaseId);
@@ -276,6 +319,32 @@ class WorkitemDaoMappingTest {
                     java.util.List<WorkitemDO> mine = session.selectList(WorkitemDao.class.getName() + ".list", params);
                     org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(1L),
                             mine.stream().map(WorkitemDO::getId).toList(), "external refs must not match a local user");
+
+                    // The same predicate must drive filtered pages, totals and detail/list classification facts.
+                    statement.execute("INSERT INTO dispatch_request SELECT 7,id,'APPROVAL','PENDING',NULL FROM dispatch WHERE workitem_id=4");
+                    params.put("pendingDecisionOnly", false);
+                    params.put("statusCategory", "PENDING_DECISION");
+                    params.put("ids", java.util.List.of(4L));
+                    record Case(String kind, String status, String expiry, String dispatchStatus, boolean pending) {}
+                    for (var scenario : java.util.List.of(
+                            new Case("APPROVAL", "PENDING", "NULL", "RUNNING", true),
+                            new Case("INPUT", "PENDING", "DATEADD('MINUTE',10,NOW())", "RUNNING", true),
+                            new Case("INPUT", "PENDING", "DATEADD('MINUTE',-1,NOW())", "RUNNING", false),
+                            new Case("EXTERNAL", "PENDING", "NULL", "RUNNING", false),
+                            new Case("APPROVAL", "RESOLVED", "NULL", "RUNNING", false),
+                            new Case("APPROVAL", "PENDING", "NULL", "PAUSED", false),
+                            new Case("APPROVAL", "PENDING", "NULL", "CANCELED", false))) {
+                        statement.execute("UPDATE dispatch_request SET kind='" + scenario.kind() + "',status='" + scenario.status()
+                                + "',expires_at=" + scenario.expiry());
+                        statement.execute("UPDATE dispatch SET status='" + scenario.dispatchStatus() + "' WHERE workitem_id=4");
+                        session.clearCache();
+                        java.util.List<WorkitemDO> rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+                        org.junit.jupiter.api.Assertions.assertEquals(scenario.pending(), rows.stream().anyMatch(w -> w.getId() == 4L), scenario.toString());
+                        org.junit.jupiter.api.Assertions.assertEquals((long) rows.size(),
+                                (long) session.selectOne(WorkitemDao.class.getName() + ".count", params));
+                        org.junit.jupiter.api.Assertions.assertEquals(scenario.pending() ? java.util.List.of(4L) : java.util.List.of(),
+                                session.selectList(WorkitemDao.class.getName() + ".listPendingHumanRequestWorkitemIds", params));
+                    }
                 }
             }
         }
@@ -440,5 +509,181 @@ class WorkitemDaoMappingTest {
                 "fire must be CAS-guarded so only one scanner node wins");
         assertTrue(fire.contains("AND scheduled_start_at IS NOT NULL"),
                 "fire must be a no-op once the schedule is already gone");
+    }
+
+    @Test
+    void commentedScopeAppliesToBothListAndCountOnlyWhenSelected() throws Exception {
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        var params = new java.util.HashMap<String, Object>();
+        params.put("tenantId", 7L);
+        params.put("currentUserId", 42L);
+        params.put("pendingDecisionOnly", false);
+        for (String statement : java.util.List.of("list", "count")) {
+            var mapped = configuration.getMappedStatement(WorkitemDao.class.getName() + "." + statement);
+            params.put("mineScope", "COMMENTED");
+            String sql = mapped.getBoundSql(params).getSql().replaceAll("\\s+", " ");
+            assertTrue(sql.contains("SELECT 1 FROM workitem_comment wc"),
+                    "COMMENTED scope should require a comment authored by me");
+            assertTrue(sql.contains("wc.tenant_id = w.tenant_id"));
+            assertTrue(sql.contains("wc.workitem_id = w.id"));
+            assertTrue(sql.contains("wc.source_type = 'WORKITEM'"),
+                    "source-aware comments must scope to workitem comments (scheduled-run comments reuse workitem_id)");
+            assertTrue(sql.contains("wc.author_type = 'HUMAN'"),
+                    "only comments a real person submitted count as participation");
+            assertTrue(sql.contains("wc.author_ref = ?"),
+                    "participation must match the current user's own principal");
+            assertTrue(sql.contains("w.is_deleted = 0"));
+            params.remove("mineScope");
+            String unfiltered = mapped.getBoundSql(params).getSql();
+            org.junit.jupiter.api.Assertions.assertFalse(unfiltered.contains("workitem_comment"),
+                    "other scopes must not pay for the participation subquery");
+        }
+
+        String listSql = configuration.getMappedStatement(WorkitemDao.class.getName() + ".list")
+                .getBoundSql(java.util.Map.of("tenantId", 7L, "currentUserId", 42L,
+                        "pendingDecisionOnly", false, "mineScope", "COMMENTED",
+                        "offset", 0, "limit", 20))
+                .getSql().replaceAll("\\s+", " ");
+        int participatedOrder = listSql.indexOf("ORDER BY (SELECT MAX(wc_ord.gmt_create)");
+        assertTrue(participatedOrder >= 0, "COMMENTED list sorts by my latest comment time first");
+        String otherSql = configuration.getMappedStatement(WorkitemDao.class.getName() + ".list")
+                .getBoundSql(java.util.Map.of("tenantId", 7L, "currentUserId", 42L,
+                        "pendingDecisionOnly", false, "offset", 0, "limit", 20))
+                .getSql().replaceAll("\\s+", " ");
+        assertTrue(otherSql.contains("ORDER BY w.gmt_create DESC, w.id DESC"),
+                "other scopes keep the create-time ordering unchanged");
+    }
+
+    @Test
+    void commentedScopeH2SelectsMyCommentedWorkitemsOrderedByMyLatestComment() throws Exception {
+        for (String databaseId : java.util.List.of("autowonder-legacy", "autowonder-source-aware")) {
+            boolean sourceAware = databaseId.equals("autowonder-source-aware");
+            var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                    "jdbc:h2:mem:commented-" + databaseId + ";MODE=MySQL", "sa", "");
+            try (var connection = ds.getConnection(); var statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                        + "is_deleted INT DEFAULT 0, gmt_create TIMESTAMP)");
+                statement.execute(sourceAware
+                        ? "CREATE TABLE workitem_comment (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                        + "source_type VARCHAR(32) DEFAULT 'WORKITEM', workitem_id BIGINT, "
+                        + "author_type VARCHAR(20), author_ref BIGINT, content_md VARCHAR(200), gmt_create TIMESTAMP)"
+                        : "CREATE TABLE workitem_comment (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                        + "workitem_id BIGINT, author_type VARCHAR(20), author_ref BIGINT, "
+                        + "content_md VARCHAR(200), gmt_create TIMESTAMP)");
+                statement.execute("""
+                        INSERT INTO workitem (id,tenant_id,is_deleted,gmt_create) VALUES
+                        (1,7,0,'2026-01-01 00:00:01'),(2,7,0,'2026-01-01 00:00:02'),(3,7,0,'2026-01-01 00:00:03'),
+                        (4,7,0,'2026-01-01 00:00:04'),(5,7,0,'2026-01-01 00:00:05'),(6,7,0,'2026-01-01 00:00:06'),
+                        (7,8,0,'2026-01-01 00:00:07'),(8,7,0,'2026-01-01 00:00:08'),(9,7,1,'2026-01-01 00:00:09'),
+                        (10,7,0,'2026-01-01 00:00:10')
+                        """);
+                if (sourceAware) {
+                    statement.execute("""
+                            INSERT INTO workitem_comment
+                            (id,tenant_id,source_type,workitem_id,author_type,author_ref,content_md,gmt_create) VALUES
+                            (101,7,'WORKITEM',1,'HUMAN',42,'mine old','2026-01-02 10:00:00'),
+                            (102,7,'WORKITEM',1,'HUMAN',42,'mine new','2026-01-05 09:00:00'),
+                            (103,7,'WORKITEM',2,'HUMAN',42,'mine','2026-01-04 08:00:00'),
+                            (104,7,'WORKITEM',2,'HUMAN',99,'someone else later','2026-01-07 00:00:00'),
+                            (105,7,'WORKITEM',3,'HUMAN',99,'not mine','2026-01-06 00:00:00'),
+                            (106,7,'WORKITEM',4,'AGENT',42,'agent echo with my id','2026-01-07 00:00:00'),
+                            (107,7,'WORKITEM',5,'EXTERNAL',77,'synced from Aone','2026-01-08 00:00:00'),
+                            (108,8,'WORKITEM',7,'HUMAN',42,'mine in another tenant','2026-01-09 00:00:00'),
+                            (109,7,'WORKITEM',9,'HUMAN',42,'mine on a deleted workitem','2026-01-11 00:00:00'),
+                            (110,7,'WORKITEM',10,'HUMAN',42,'mine, same time as workitem 2','2026-01-04 08:00:00'),
+                            (111,7,'SCHEDULED_TASK_RUN',8,'HUMAN',42,'run comment whose runId collides with workitem 8','2026-01-10 00:00:00')
+                            """);
+                } else {
+                    statement.execute("""
+                            INSERT INTO workitem_comment (id,tenant_id,workitem_id,author_type,author_ref,gmt_create) VALUES
+                            (101,7,1,'HUMAN',42,'2026-01-02 10:00:00'),(102,7,1,'HUMAN',42,'2026-01-05 09:00:00'),
+                            (103,7,2,'HUMAN',42,'2026-01-04 08:00:00'),(104,7,2,'HUMAN',99,'2026-01-07 00:00:00'),
+                            (105,7,3,'HUMAN',99,'2026-01-06 00:00:00'),(106,7,4,'AGENT',42,'2026-01-07 00:00:00'),
+                            (107,7,5,'EXTERNAL',77,'2026-01-08 00:00:00'),(108,8,7,'HUMAN',42,'2026-01-09 00:00:00'),
+                            (109,7,9,'HUMAN',42,'2026-01-11 00:00:00'),(110,7,10,'HUMAN',42,'2026-01-04 08:00:00')
+                            """);
+                }
+
+                var configuration = new org.apache.ibatis.session.Configuration();
+                configuration.setDatabaseId(databaseId);
+                configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                        new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), ds));
+                try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+                    new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                            "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+                }
+                try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder()
+                        .build(configuration).openSession()) {
+                    var params = new java.util.HashMap<String, Object>();
+                    params.put("tenantId", 7L);
+                    params.put("currentUserId", 42L);
+                    params.put("pendingDecisionOnly", false);
+                    params.put("offset", 0);
+                    params.put("limit", 100);
+                    params.put("mineScope", "COMMENTED");
+                    java.util.List<WorkitemDO> rows = session.selectList(WorkitemDao.class.getName() + ".list", params);
+                    org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(1L, 10L, 2L),
+                            rows.stream().map(WorkitemDO::getId).toList(),
+                            databaseId + " must return exactly my commented workitems, newest of my comments first");
+                    org.junit.jupiter.api.Assertions.assertEquals(3L,
+                            (long) session.selectOne(WorkitemDao.class.getName() + ".count", params),
+                            databaseId + " count must match the filtered list for a consistent total");
+
+                    params.remove("mineScope");
+                    java.util.List<WorkitemDO> all = session.selectList(WorkitemDao.class.getName() + ".list", params);
+                    org.junit.jupiter.api.Assertions.assertEquals(
+                            java.util.List.of(10L, 8L, 6L, 5L, 4L, 3L, 2L, 1L),
+                            all.stream().map(WorkitemDO::getId).toList(),
+                            databaseId + " other scopes keep the create-time descending ordering");
+                }
+            }
+        }
+    }
+
+    @Test
+    void findTenantIdByIdResolvesOwningTenantWithoutItsOwnTenantFilter() throws Exception {
+        String xml = xmlText();
+        int start = xml.indexOf("<select id=\"findTenantIdById\"");
+        assertTrue(start > 0, "cross-workspace ownership lookup must be a real mapped statement");
+        String block = xml.substring(start, xml.indexOf("</select>", start));
+        assertTrue(block.contains("SELECT tenant_id FROM workitem"),
+                "ownership lookup must expose the tenant id only, never titles or content");
+        assertTrue(block.contains("id = #{id}") && block.contains("is_deleted = 0"),
+                "ownership lookup matches one live workitem by id");
+        assertFalse(block.contains("tenant_id ="),
+                "ownership lookup must not carry its own tenant filter; TenantInterceptor exempts it explicitly");
+
+        // DB_CLOSE_DELAY=-1：MyBatis 会用新连接执行 select，内存库若在种子连接关闭时被回收就查不到数据
+        var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:tenant-lookup;MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
+        try (var connection = ds.getConnection(); var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE workitem (id BIGINT PRIMARY KEY, tenant_id BIGINT, "
+                    + "is_deleted INT DEFAULT 0)");
+            statement.execute("INSERT INTO workitem (id, tenant_id, is_deleted) VALUES "
+                    + "(55698, 200, 0), (55699, 100, 1)");
+        }
+        var configuration = new org.apache.ibatis.session.Configuration();
+        configuration.setDatabaseId("autowonder-source-aware");
+        configuration.setEnvironment(new org.apache.ibatis.mapping.Environment("test",
+                new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), ds));
+        try (var input = getClass().getResourceAsStream("/mapping/WorkitemDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, configuration,
+                    "mapping/WorkitemDao.xml", configuration.getSqlFragments()).parse();
+        }
+        try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder()
+                .build(configuration).openSession()) {
+            String statementId = WorkitemDao.class.getName() + ".findTenantIdById";
+            org.junit.jupiter.api.Assertions.assertEquals(200L, (long) session.selectOne(statementId, 55698L),
+                    "another workspace's live workitem must resolve to its owning tenant");
+            assertNull(session.selectOne(statementId, 55699L),
+                    "logically deleted workitems must not resolve");
+            assertNull(session.selectOne(statementId, 99999L),
+                    "unknown workitems must not resolve");
+        }
     }
 }

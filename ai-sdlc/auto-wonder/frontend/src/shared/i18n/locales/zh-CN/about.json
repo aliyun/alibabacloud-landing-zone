@@ -1,0 +1,17 @@
+{
+  "title": "关于平台",
+  "tagline": "AI Native SDLC Platform",
+  "intro": "软件产品自动交付平台",
+  "version": "平台版本",
+  "currentVersion": "当前平台版本",
+  "flow": "软件自动交付流程示意：需求澄清、启动、开发、验证、评审、部署、测试、交付，持续迭代",
+  "iteration": "持续迭代",
+  "clarification": "需求澄清",
+  "start": "启动",
+  "development": "开发",
+  "verification": "验证",
+  "review": "评审",
+  "deployment": "部署",
+  "testing": "测试",
+  "delivery": "交付"
+}

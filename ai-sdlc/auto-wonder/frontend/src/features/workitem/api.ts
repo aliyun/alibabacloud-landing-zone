@@ -17,10 +17,14 @@ export interface WorkitemQuery {
   assigneeType?: string;
   assigneeRef?: number;
   pendingDecisionOnly?: boolean;
-  mineScope?: 'CREATED' | 'ASSIGNED' | 'WATCHED';
+  mineScope?: 'CREATED' | 'ASSIGNED' | 'WATCHED' | 'COMMENTED';
   keyword?: string;
   tag?: string;
   scheduledStart?: WorkitemScheduledStartFilter;
+  /** 创建时间高级筛选下界（含），ISO-8601 瞬间；缺省表示不限。 */
+  createdFrom?: string;
+  /** 创建时间高级筛选上界（排他，取结束日次日 00:00），ISO-8601 瞬间；缺省表示不限。 */
+  createdTo?: string;
 }
 
 export interface CreateWorkitemParams {
@@ -97,6 +101,25 @@ export async function updateWorkitemContent(id: number | string, title: string, 
 
 export async function deleteWorkitem(id: number | string): Promise<void> {
   await apiClient.delete(`/api/workitems/${id}`);
+}
+
+export interface RecycledWorkitemQuery {
+  page: number;
+  size: number;
+  workType?: string;
+  assigneeType?: string;
+  assigneeRef?: number;
+  keyword?: string;
+}
+
+export async function listRecycledWorkitems(query: RecycledWorkitemQuery): Promise<PageResult<Workitem>> {
+  const resp = await apiClient.get<PageResult<Workitem>>('/api/workitems/recycled', { params: query });
+  return resp.data;
+}
+
+export async function restoreWorkitem(id: number | string): Promise<Workitem> {
+  const resp = await apiClient.post<Workitem>(`/api/workitems/${id}/restore`);
+  return resp.data;
 }
 
 export async function getTimeline(workitemId: number | string): Promise<TimelineEvent[]> {
@@ -361,4 +384,15 @@ export async function getRuntimeLog(dispatchId: number, afterSeq?: number | null
     params: afterSeq == null ? undefined : { afterSeq }, signal,
   });
   return resp.data;
+}
+
+export interface DispatchGuidance {
+  id: number; workitemId: number; dispatchId: number; actorId: number;
+  content: string; status: 'QUEUED' | 'APPLIED' | 'FAILED'; error?: string; createdAt: string;
+}
+export async function getDispatchGuidance(dispatchId: number): Promise<DispatchGuidance[]> {
+  return (await apiClient.get<DispatchGuidance[]>(`/api/dispatches/${dispatchId}/guidance`)).data;
+}
+export async function sendDispatchGuidance(dispatchId: number, content: string, requestKey: string): Promise<DispatchGuidance[]> {
+  return (await apiClient.post<DispatchGuidance[]>(`/api/dispatches/${dispatchId}/guidance`, { content, requestKey })).data;
 }

@@ -14,7 +14,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/settings")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理系统设置")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理系统设置", actionKey = "access.action.manage_system_settings")
 public class SystemSettingController {
 
     private final SystemSettingService settingService;

@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within, act } from '@testing-library/react';
 import { typeComposer, pressComposerKey, waitForComposerFocus } from './composerTestUtils';
@@ -81,15 +84,22 @@ function renderPanel(props: PanelProps = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const element = (override: PanelProps = {}) => (
     <QueryClientProvider client={queryClient}>
-      <WorkitemClarificationPanel workitemId="100" agents={[] as never} {...props} {...override} />
+      <WorkitemClarificationPanel workitemId="100" {...props} {...override} />
     </QueryClientProvider>
   );
-  const view = render(element());
+  let updatePanelProps!: (override: PanelProps) => void;
+  function PanelHarness() {
+    const [override, setOverride] = useState<PanelProps>({});
+    updatePanelProps = setOverride;
+    return element(override);
+  }
+  const router = createMemoryRouter([{ path: '/', element: <PanelHarness /> }]);
+  const view = render(<RouterProvider router={router} />);
   return {
     view,
     queryClient,
     // RightPanel 切全屏走的是同一个实例的 prop 变化，用 rerender 复现
-    rerenderWith: (override: PanelProps) => view.rerender(element(override)),
+    rerenderWith: (override: PanelProps) => act(() => updatePanelProps(override)),
   };
 }
 
@@ -146,13 +156,18 @@ describe('需求澄清面板自动聚焦（FR-001~FR-004）', () => {
 
   it('AC-02: 由非全屏切入全屏时重新聚焦（RightPanel 复用同一实例，不会重新挂载）', async () => {
     mockBackend();
-    const { rerenderWith } = await openPanel();
+    const { rerenderWith, textarea } = await openPanel();
     await waitForComposerFocus({ focused: true });
+    const editor = document.querySelector('.ProseMirror');
+    await typeComposer('全屏切换保留 **草稿**');
 
     await act(async () => { (document.activeElement as HTMLElement | null)?.blur(); });
     await waitForComposerFocus({ focused: false });
 
     rerenderWith({ fullscreen: true });
+    expect(document.querySelector('.ProseMirror')).toBe(editor);
+    expect(textarea).toHaveValue('全屏切换保留 **草稿**');
+    expect(screen.getByTestId('clarification-composer-mirror')).toBe(textarea);
     await waitForComposerFocus({ focused: true });
   });
 
@@ -503,9 +518,11 @@ describe('发送区底部操作行布局', () => {
   it('全屏和非全屏模式保持相同的底部操作行布局', async () => {
     mockBackend();
     const { rerenderWith } = await openPanel({ fullscreen: true });
+    const editor = document.querySelector('.ProseMirror');
     assertBottomActionsLayout();
 
     rerenderWith({ fullscreen: false });
+    expect(document.querySelector('.ProseMirror')).toBe(editor);
     assertBottomActionsLayout();
   });
 
@@ -530,4 +547,75 @@ describe('发送区底部操作行布局', () => {
     expect(within(actions).queryByRole('button', { name: '发送消息' })).not.toBeInTheDocument();
     expect(within(actions).getByTestId('clarification-send-mode-select')).toBeInTheDocument();
   });
+});
+
+
+describe('Clarification routed live locale changes', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh-CN');
+    resetUserSettingStore();
+    message.destroy();
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+  });
+  afterEach(async () => {
+    clearClarificationPrefill('100');
+    message.destroy();
+    await i18n.changeLanguage('zh-CN');
+  });
+
+  it('updates cached route and persisted send-mode labels while preserving conversation, editor and draft submission', async () => {
+    seedUserSetting(CLARIFICATION_SEND_MODE_KEY, '"enter"');
+    mockBackend();
+    const { textarea } = await openPanel();
+    await waitFor(() => expect(currentSendModeLabel()).toBe('回车发送'));
+    const editor = document.querySelector('.ProseMirror');
+    await typeComposer('我的 **draft**');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(currentSendModeLabel()).toBe('Enter to send');
+    expect(screen.getByRole('button', { name: 'Switch agent' })).toBeInTheDocument();
+    expect(screen.getByTestId('clarification-conversation-select')).toHaveTextContent('Conversation #1');
+    expect(screen.getByText('历史提问')).toBeInTheDocument();
+    expect(screen.getByText('Agent-X')).toBeInTheDocument();
+    expect(textarea).toHaveValue('我的 **draft**');
+    expect(document.querySelector('.ProseMirror')).toBe(editor);
+    await typeComposer('');
+    expect(editor?.querySelector('[data-placeholder="Enter a message..."]')).not.toBeNull();
+    await typeComposer('我的 **draft**');
+    pressComposerKey({ key: 'Enter' });
+    await waitFor(() => expect(submittedContents).toEqual(['我的 **draft**']));
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(currentSendModeLabel()).toBe('回车发送');
+  });
+
+  it('resolves a queued save failure notice in the locale at completion without losing the draft', async () => {
+    mockBackend();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    server.use(http.put('/api/users/me/settings/:key', async () => {
+      await held;
+      return HttpResponse.json({ success: false, code: '10000', message: 'boom', data: null }, { status: 500 });
+    }));
+    const { textarea } = await openPanel();
+    await typeComposer('保留草稿');
+    await chooseSendMode('回车发送');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    release();
+    expect(await screen.findByText('Could not save the send mode. Please try again.')).toBeInTheDocument();
+    expect(currentSendModeLabel()).toBe('Shift+Enter to send');
+    expect(textarea).toHaveValue('保留草稿');
+  });
+});
+
+
+it('renders malformed conversation dates harmlessly while preserving the conversation and message', async () => {
+  writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+  mockBackend([{ ...conversationPayload(), gmtCreate: '', lastTurnAt: 'malformed timestamp' }]);
+  try {
+    await openPanel();
+    expect(await screen.findByText('历史提问')).toBeInTheDocument();
+    expect(screen.getByTestId('clarification-conversation-select')).toHaveTextContent('最近 —');
+    expect(screen.getByTestId('clarification-conversation-select')).toHaveTextContent('创建 —');
+  } finally {
+    clearClarificationPrefill('100');
+  }
 });

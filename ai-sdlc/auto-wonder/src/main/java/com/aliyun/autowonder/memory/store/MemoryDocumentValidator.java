@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
 
@@ -12,19 +14,19 @@ public final class MemoryDocumentValidator {
     public static void requireValid(String path, String content) {
         MemoryPathValidator.requireSafe(path);
         if (content == null) {
-            throw new IllegalArgumentException("memory content is required");
+            throw new KeyedIllegalArgumentException("memory.validation.content_required", null, "memory content is required");
         }
         if (content.getBytes(StandardCharsets.UTF_8).length > MAX_DOCUMENT_BYTES) {
-            throw new IllegalArgumentException("memory document exceeds " + MAX_DOCUMENT_BYTES + " bytes");
+            throw new KeyedIllegalArgumentException("memory.validation.document_bytes", new Object[]{MAX_DOCUMENT_BYTES}, "memory document exceeds " + MAX_DOCUMENT_BYTES + " bytes");
         }
         for (int i = 0; i < content.length(); i++) {
             char value = content.charAt(i);
             if (Character.isHighSurrogate(value)) {
                 if (i + 1 >= content.length() || !Character.isLowSurrogate(content.charAt(++i))) {
-                    throw new IllegalArgumentException("memory content is not valid Unicode");
+                    throw new KeyedIllegalArgumentException("memory.validation.unicode", null, "memory content is not valid Unicode");
                 }
             } else if (Character.isLowSurrogate(value)) {
-                throw new IllegalArgumentException("memory content is not valid Unicode");
+                throw new KeyedIllegalArgumentException("memory.validation.unicode", null, "memory content is not valid Unicode");
             }
         }
     }
@@ -33,11 +35,11 @@ public final class MemoryDocumentValidator {
         requireValid(path, content);
         if ("MEMORY.md".equals(path)) return;
         if (!content.startsWith("---\n")) {
-            throw new IllegalArgumentException("memory topic requires YAML frontmatter");
+            throw new KeyedIllegalArgumentException("memory.validation.topic_frontmatter_required", null, "memory topic requires YAML frontmatter");
         }
         int closing = content.indexOf("\n---", 4);
         if (closing < 0) {
-            throw new IllegalArgumentException("memory topic frontmatter is not closed");
+            throw new KeyedIllegalArgumentException("memory.validation.topic_frontmatter_not_closed", null, "memory topic frontmatter is not closed");
         }
         String type = null;
         String legacyType = null;
@@ -59,10 +61,10 @@ public final class MemoryDocumentValidator {
         if (type == null) {
             type = legacyType;
         } else if (legacyType != null && !type.equals(legacyType)) {
-            throw new IllegalArgumentException("memory topic type declarations conflict");
+            throw new KeyedIllegalArgumentException("memory.validation.topic_type_conflict", null, "memory topic type declarations conflict");
         }
         if (!TYPES.contains(type)) {
-            throw new IllegalArgumentException("memory topic type is invalid");
+            throw new KeyedIllegalArgumentException("memory.validation.topic_type_invalid", null, "memory topic type is invalid");
         }
     }
 

@@ -1,7 +1,8 @@
+import { i18n } from '@/shared/i18n';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { message } from 'antd';
 import { http, HttpResponse } from 'msw';
@@ -16,7 +17,7 @@ import {
   isUpdateInProgress, updateStatusLabel, updateStatusColor, upgradeBlockReason, describeUpdateAllResult,
 } from './ExecutorListPage';
 import type { ExecutorUpdateAllResultVO, ExecutorUpdateVO, ExecutorVO } from './api';
-import { QODER_MODELS, qoderOptionsForModel } from './qoderOptions';
+import { resolveQoderModelOptions, qoderOptionsForModel, resolveQoderLaunchOptions } from './qoderOptions';
 import { ApiError } from '@/shared/types/common';
 import { useAuthStore } from '@/shared/auth/store';
 
@@ -79,10 +80,11 @@ describe('ExecutorListPage', () => {
     vi.restoreAllMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
     // antd message 渲染在 document 级 .ant-message 容器，RTL 的自动 cleanup 不会卸载它，
     // 否则「启动配置已保存」toast 会残留到后续用例，导致 findByText 命中多个元素
-    message.destroy();
+    await act(async () => { message.destroy(); });
     if (originalClipboard) {
       Object.defineProperty(navigator, 'clipboard', originalClipboard);
     } else {
@@ -93,6 +95,360 @@ describe('ExecutorListPage', () => {
     } else {
       Reflect.deleteProperty(document, 'execCommand');
     }
+  });
+
+  it('switches a routed create draft and its visible validation without changing values', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    let created: Record<string, unknown> | undefined;
+    server.use(
+      mockSameNameAgents(), ...mockSquadApis(), mockEmptyExecutors(),
+      http.get('/api/executor-model-catalogs/:provider', () => HttpResponse.json({ success: false, code: '10000', message: 'unavailable' })),
+      http.post('/api/agents/40170/executors', async ({ request }) => {
+        created = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ success: true, data: { id: 20000, agentId: 40170, ...created, token: 'unchanged-token', configVersion: 1 } });
+      }),
+    );
+    const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    const create = await screen.findByRole('button', { name: '新建执行器' });
+    await act(async () => { await user.click(create); });
+    const dialog = screen.getByRole('dialog');
+    await act(async () => { await user.type(within(dialog).getByLabelText('执行器名称'), '<b>我的机器</b>'); });
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: 'OK' })); });
+    expect(await within(dialog).findByText('请选择归属 Agent')).toBeInTheDocument();
+    const draft = within(dialog).getByLabelText('执行器名称');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(await within(dialog).findByText('Select an owning Agent')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Executor name')).toBe(draft);
+    expect(draft).toHaveValue('<b>我的机器</b>');
+    expect(within(dialog).queryByRole('button', { name: 'Increase Value' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Decrease Value' })).not.toBeInTheDocument();
+    expect(within(dialog).getByText('Platform memory (recommended)')).toBeInTheDocument();
+    expect(within(dialog).getByText('Auto (default)')).toBeInTheDocument();
+    expect(within(dialog).getByText('Medium')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create executor' })).toBeInTheDocument();
+    const concurrent = within(dialog).getByLabelText('Maximum concurrent tasks');
+    await act(async () => { await user.clear(concurrent); });
+    await act(async () => { await user.type(concurrent, '5'); });
+    await act(async () => { await user.click(within(dialog).getByRole('combobox', { name: 'Owning Agent' })); });
+    const agent = await screen.findByText('全栈开发 (开发+评审双人组)');
+    await act(async () => { await user.click(agent); });
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: 'Qoder CLI CN' })); });
+    expect(within(dialog).getByRole('button', { name: 'Qoder CLI CN' })).toHaveAttribute('aria-pressed', 'true');
+    await selectInForm(user, dialog, 'Reasoning effort', 'Low');
+    await selectInForm(user, dialog, 'Context window', '1M');
+    await selectInForm(user, dialog, 'Qoder model', 'Ultimate');
+    await selectInForm(user, dialog, 'Memory mode', 'Local Agent memory');
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: 'OK' })); });
+    await screen.findByText('Executor created');
+    expect(created).toEqual({ name: '<b>我的机器</b>', clientKind: 'QODER_CN_CLI', memoryMode: 'provider-local', maxConcurrentDispatches: 5, model: 'ultimate', reasoningEffort: 'low', contextWindow: '1000000' });
+  }, 15_000);
+
+  it('bounds create concurrency through keyboard arrows without spinner controls', async () => {
+    const user = userEvent.setup();
+    server.use(mockSameNameAgents(), ...mockSquadApis(), mockEmptyExecutors());
+    renderPage();
+    const create = await screen.findByRole('button', { name: '新建执行器' });
+    await act(async () => { await user.click(create); });
+    const dialog = screen.getByRole('dialog');
+    const concurrent = within(dialog).getByLabelText('最大并发任务数');
+    expect(within(dialog).queryByRole('button', { name: 'Increase Value' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Decrease Value' })).not.toBeInTheDocument();
+    await act(async () => { await user.clear(concurrent); });
+    await act(async () => { await user.type(concurrent, '9'); });
+    await act(async () => { await user.keyboard('{ArrowUp}'); });
+    await act(async () => { await user.keyboard('{ArrowUp}'); });
+    expect(concurrent).toHaveValue('10');
+    await act(async () => { await user.clear(concurrent); });
+    await act(async () => { await user.type(concurrent, '2'); });
+    await act(async () => { await user.keyboard('{ArrowDown}'); });
+    await act(async () => { await user.keyboard('{ArrowDown}'); });
+    expect(concurrent).toHaveValue('1');
+  });
+
+  it('keeps an issued token unchanged when toggling visibility by keyboard and switching locale', async () => {
+    await i18n.changeLanguage('en-US');
+    const user = userEvent.setup();
+    server.use(
+      mockSameNameAgents(), ...mockSquadApis(), mockEmptyExecutors(),
+      http.post('/api/agents/40170/executors', () => HttpResponse.json({
+        success: true, data: { id: 20000, agentId: 40170, name: 'token-test', token: 'unchanged-token', configVersion: 1 },
+      })),
+    );
+    renderPage();
+    const create = await screen.findByRole('button', { name: 'Create executor' });
+    await act(async () => { await user.click(create); });
+    const dialog = screen.getByRole('dialog');
+    await act(async () => { await user.type(within(dialog).getByLabelText('Executor name'), 'token-test'); });
+    await act(async () => { await user.click(within(dialog).getByRole('combobox', { name: 'Owning Agent' })); });
+    const agent = await screen.findByText('全栈开发 (开发+评审双人组)');
+    await act(async () => { await user.click(agent); });
+    await act(async () => { await user.click(within(dialog).getByRole('button', { name: 'OK' })); });
+    const issued = await findModalByTitle('Executor created');
+    const token = within(issued).getByDisplayValue('unchanged-token');
+    expect(token).toHaveAttribute('type', 'password');
+    await act(async () => {
+      within(issued).getByRole('button', { name: 'Show' }).focus();
+      await user.keyboard('{Enter}');
+    });
+    expect(token).toHaveAttribute('type', 'text');
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(within(issued).getByDisplayValue('unchanged-token')).toBe(token);
+    await act(async () => { await user.click(within(issued).getByRole('button', { name: '隐藏' })); });
+    expect(token).toHaveAttribute('type', 'password');
+    expect(token).toHaveValue('unchanged-token');
+  });
+
+  it('switches a routed startup draft while preserving the unsaved preview and form values', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', name: '<b>我的机器</b>', agentName: '<b>我的 Agent</b>' });
+    const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await expandAgentGroup(user, '<b>我的 Agent</b>（未编队）');
+    const header = screen.getByText('<b>我的 Agent</b>（未编队）');
+    const row = screen.getByRole('button', { name: '<b>我的机器</b>' });
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = screen.getByRole('dialog');
+    await within(dialog).findByText(/--model auto/);
+    const concurrency = within(dialog).getByLabelText('最大并发任务数');
+    await user.clear(concurrency);
+    await user.type(concurrency, '7');
+    await waitFor(() => expect(previewedCommand(dialog)).toContain('--max-tasks 7'));
+    const command = within(dialog).getByLabelText('命令预览').textContent;
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByText('<b>我的 Agent</b> (Unassigned)')).toBe(header);
+    expect(screen.getByRole('button', { name: '<b>我的机器</b>' })).toBe(row);
+    expect(screen.getByText('1 Executor')).toBeInTheDocument();
+    expect(screen.getByText('Online 0')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Select this option')).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Maximum concurrent tasks')).toBe(concurrency);
+    expect(concurrency).toHaveValue('7');
+    expect(within(dialog).getByLabelText('Command preview').textContent).toBe(command);
+    expect(within(dialog).getByRole('button', { name: 'Copy startup command' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Save configuration' }));
+    expect(await screen.findByText('Startup configuration saved. Restart the Executor with the new command to apply it.')).toBeInTheDocument();
+    expect(launchConfigUpdatesFor(10000).at(-1)).toMatchObject({ memoryMode: 'platform', model: 'auto', reasoningEffort: 'medium', contextWindow: '260000', maxConcurrentDispatches: 7, version: 1 });
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
+
+  it('relocalizes a cached launch failure and retains its raw backend reason for unknown errors', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI' });
+    server.use(http.get('/api/executors/10000/launch-config', () => HttpResponse.json({ success: false, code: '10000', message: 'Network Error' })));
+    const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: /启动命令$/ }));
+    const dialog = screen.getByRole('dialog');
+    expect((await within(dialog).findAllByText('启动配置读取失败，无法生成命令')).length).toBe(2);
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(dialog).getAllByText('Failed to read the startup configuration. A command cannot be generated.')).toHaveLength(2);
+    expect(within(dialog).getByRole('button', { name: 'Copy startup command' })).toBeDisabled();
+    expect(launchErrorMessage(new ApiError('__proto__', '<b>原始原因</b>', null), 'fallback')).toBe('<b>原始原因</b>');
+    expect(updateStatusLabel('__proto__')).toBe('__proto__');
+    expect(updateStatusColor('__proto__')).toBe('default');
+    expect(describeUpdateAllResult({ targetVersion: '1.2.3', total: 1, scheduled: 1, alreadyUpToDate: 0, skipped: [] })).toBe('Target version 1.2.3; Command sent to 1 Executor');
+  });
+
+  it('uses the completion locale for an in-flight startup save and keeps the English save payload canonical', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI' });
+    let complete!: (response: HttpResponse) => void;
+    const response = new Promise<HttpResponse>((resolve) => { complete = resolve; });
+    let saved: Record<string, unknown> | undefined;
+    server.use(http.put('/api/executors/10000/launch-config', async ({ request }) => {
+      saved = await request.json() as Record<string, unknown>;
+      return response;
+    }));
+    const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: /启动命令$/ }));
+    const dialog = screen.getByRole('dialog');
+    await within(dialog).findByText(/--model auto/);
+    const input = within(dialog).getByLabelText('最大并发任务数');
+    await user.clear(input);
+    await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
+    expect(await within(dialog).findByText('请输入 1 到 10 的整数')).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(await within(dialog).findByText('Enter an integer from 1 to 10')).toBeInTheDocument();
+    expect(input).toHaveValue('');
+    await user.clear(input);
+    await user.type(input, '6');
+    await user.click(within(dialog).getByRole('button', { name: 'Save configuration' }));
+    await waitFor(() => expect(saved).toMatchObject({ model: 'auto', reasoningEffort: 'medium', contextWindow: '260000', memoryMode: 'platform', maxConcurrentDispatches: 6, version: 1 }));
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    await act(async () => { complete(HttpResponse.json({ success: true, data: { ...saved, version: 2 } })); });
+    expect(await screen.findByText('启动配置已保存，请使用新启动命令重启执行器使配置生效')).toBeInTheDocument();
+  });
+
+  it('refreshes an open routed detail drawer and retained bulk results with raw server reasons intact', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    serveExecutor({ name: '<b>保留机器</b>', version: '1.0.0', modelName: '目录原名', status: 'ONLINE', lastStartedAt: 'invalid-date', upgradeAvailable: true, upgradeSupported: true, versionComparable: true });
+    server.use(
+      http.get('/api/platform/runtime-auto-update', () => HttpResponse.json({ success: true, data: { executorAutoUpdateEnabled: false, targetVersion: '1.2.3' } })),
+      http.post('/api/executors/update-all', () => HttpResponse.json({ success: true, data: { targetVersion: '1.2.3', total: 3, scheduled: 1, alreadyUpToDate: 1, skipped: [{ executorId: 77, executorName: '<em>保留名字</em>', reason: '<b>原始原因</b>' }] } })),
+    );
+    const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await expandAgentGroup(user, 'A（未编队）');
+    expect(screen.getByText('—')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '<b>保留机器</b>' }));
+    await screen.findByText('运行信息');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByText('Runtime information')).toBeInTheDocument();
+    expect(screen.getByText('Current version')).toBeInTheDocument();
+    expect(screen.getByText('Connection credentials')).toBeInTheDocument();
+    expect(screen.getAllByText('目录原名')).toHaveLength(2);
+    expect(screen.getByText('<b>保留机器</b> · Executor details')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: 'Update all' }));
+    const dialog = await findModalByTitle('Update all');
+    expect(within(dialog).getByText('Target version 1.2.3. 1 Executor in the current selection can be updated.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Automatic updates are disabled. Skipped Executors will not retry automatically; handle each one in the results.')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Send update commands' }));
+    await screen.findByText('Bulk update commands sent');
+    expect(screen.getByText('Target version 1.2.3; Command sent to 1 Executor; 1 Executor already up to date; 1 Executor skipped')).toBeInTheDocument();
+    expect(screen.getByText('<em>保留名字</em>')).toBeInTheDocument();
+    expect(screen.getByText('· <b>原始原因</b>')).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(screen.getByText('全量更新已下发')).toBeInTheDocument();
+    expect(screen.getByText('目标版本 1.2.3，已下发 1 个，1 个已是最新，1 个被跳过')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['REQUESTED', '已发送，等待客户端响应', 'Request sent. Waiting for the client response.'],
+    ['FAILED', '发送失败，请稍后重试', 'Send failed. Try again later.'],
+    ['TIMED_OUT', '未收到重启后的心跳，请检查客户端', 'No heartbeat was received after the restart. Check the client.'],
+    ['COMPLETED', '客户端已重新启动并上线', 'The client has restarted and is online.'],
+  ])('relocalizes a held SYSTEM restart %s without another query or rebuilding its drawer', async (status, chinese, english) => {
+    const user = userEvent.setup();
+    const executor = mockExecutor({ name: '<b>发送失败，请稍后重试</b>', restart: { requestId: 'r1', status, messageOrigin: 'SYSTEM', message: chinese, issuedAt: '2026-09-01T00:00:00Z', update: false } });
+    let requests = 0;
+    server.use(http.get('/api/executors', () => { requests += 1; return HttpResponse.json({ success: true, data: [executor] }); }));
+    const { queryClient } = renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: executor.name }));
+    const drawer = screen.getByRole('dialog');
+    const rawCache = queryClient.getQueryData(['executors', undefined, []]);
+    expect(within(drawer).getByText(chinese)).toBeInTheDocument();
+    const before = requests;
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(drawer).getByText(english)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBe(drawer);
+    expect(screen.getByRole('button', { name: executor.name })).toBeInTheDocument();
+    expect(queryClient.getQueryData(['executors', undefined, []])).toBe(rawCache);
+    expect(requests).toBe(before);
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(within(drawer).getByText(chinese)).toBeInTheDocument();
+    expect(requests).toBe(before);
+  });
+
+  it.each([
+    ['REQUESTED', '已发送，等待客户端响应', 'Request sent. Waiting for the client response.', 'info-circle'],
+    ['FAILED', '发送失败，请稍后重试', 'Send failed. Try again later.', 'close-circle'],
+    ['TIMED_OUT', '未收到重启后的心跳，请检查客户端', 'No heartbeat was received after the restart. Check the client.', 'close-circle'],
+    ['COMPLETED', '客户端已重新启动并上线', 'The client has restarted and is online.', 'check-circle'],
+  ].flatMap(([status, chinese, english, glyph]) => [
+    ['zh-CN', status, chinese, glyph], ['en-US', status, english, glyph],
+  ]))('hides the installed decorative restart Alert icon in %s for %s', async (locale, status, description, glyph) => {
+    await i18n.changeLanguage(locale);
+    const user = userEvent.setup();
+    serveExecutor({ restart: { requestId: 'r1', status, messageOrigin: 'SYSTEM', message: '原始状态消息', issuedAt: '2026-09-01T00:00:00Z', update: false } });
+    renderPage();
+    await expandAgentGroup(user, locale === 'zh-CN' ? 'A（未编队）' : 'A (Unassigned)');
+    await user.click(screen.getByRole('button', { name: 'dev-machine-01' }));
+    const drawer = screen.getByRole('dialog');
+    const alert = within(drawer).getAllByRole('alert').find((candidate) => within(candidate).queryByText(description));
+    expect(alert).toBeDefined();
+    const installedIcon = within(alert!).getByRole('img', { hidden: true });
+    expect(installedIcon).toHaveAttribute('aria-label', glyph);
+    expect(within(alert!).queryByRole('img')).not.toBeInTheDocument();
+    expect(installedIcon).toHaveAttribute('aria-hidden', 'true');
+    expect(within(alert!).getByText(description)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['CLIENT', 'FAILED', '发送失败，请稍后重试'],
+    [undefined, 'FAILED', '发送失败，请稍后重试'],
+    ['UNKNOWN', 'FAILED', '<b>客户端原文</b>'],
+    ['SYSTEM', '__proto__', '<b>未知状态</b>'],
+  ])('keeps cached raw restart origin %s/status %s intact across language switches', async (messageOrigin, status, raw) => {
+    const user = userEvent.setup();
+    serveExecutor({ restart: { requestId: 'r1', status, messageOrigin, message: raw, issuedAt: '2026-09-01T00:00:00Z', update: false } });
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: 'dev-machine-01' }));
+    const drawer = screen.getByRole('dialog');
+    for (const locale of ['en-US', 'zh-CN']) {
+      await act(async () => { await i18n.changeLanguage(locale); });
+      expect(within(drawer).getByText(raw)).toBeInTheDocument();
+      expect(within(drawer).queryByText('Send failed. Try again later.')).not.toBeInTheDocument();
+      expect(drawer.querySelector('b')).toBeNull();
+    }
+  });
+
+  it('uses the completion locale for an in-flight SYSTEM restart failure', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ status: 'ONLINE', restartSupported: true, updateRestartSupported: true });
+    let complete!: (response: HttpResponse) => void;
+    let posted = false;
+    const pending = new Promise<HttpResponse>((resolve) => { complete = resolve; });
+    server.use(http.post('/api/executors/10000/restart', () => { posted = true; return pending; }));
+    renderPage(); await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: 'dev-machine-01' }));
+    await user.click(screen.getByRole('button', { name: '重启客户端' }));
+    await waitFor(() => expect(posted).toBe(true));
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    await act(async () => { complete(HttpResponse.json({ success: true, data: { requestId: 'r1', status: 'FAILED', messageOrigin: 'SYSTEM', message: '发送失败，请稍后重试' } })); });
+    expect(await screen.findByText('Send failed. Try again later.')).toBeInTheDocument();
+  });
+
+  it('relocalizes a retained batch result using finite reason codes and keeps raw collisions and names', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ status: 'ONLINE', upgradeAvailable: true, upgradeSupported: true, versionComparable: true });
+    let batches = 0;
+    server.use(http.post('/api/executors/update-all', () => {
+      batches += 1;
+      return HttpResponse.json({ success: true, data: { targetVersion: '1.2.3', total: 5, scheduled: 1, alreadyUpToDate: 0, skipped: [
+        { executorId: 11, executorName: '<b>已有升级任务进行中</b>', reasonCode: 'ACTIVE_TASK', reason: '已有升级任务进行中' },
+        { executorId: 12, executorName: '客户端不支持远程升级', reasonCode: 'UNSUPPORTED_CLIENT', reason: '客户端不支持远程升级' },
+        { executorId: 13, executorName: '<i>旧记录</i>', reason: '已有升级任务进行中' },
+        { executorId: 14, executorName: '<i>未知代码</i>', reasonCode: '__proto__', reason: '<b>未知原文</b>' },
+      ] } });
+    }));
+    const { queryClient } = renderPage();
+    await screen.findByText('A（未编队）');
+    await user.click(screen.getByRole('button', { name: '一键全量更新' }));
+    const confirm = await findModalByTitle('一键全量更新');
+    await user.click(within(confirm).getByRole('button', { name: '下发升级指令' }));
+    const result = await findModalByTitle('全量更新已下发');
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    const beforeQueries = queryClient.getQueryCache().getAll().map((query) => [query.queryHash, query.state.dataUpdatedAt]);
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(result).getByText('· An update is already in progress.')).toBeInTheDocument();
+    expect(within(result).getByText('· The client does not support remote updates.')).toBeInTheDocument();
+    expect(within(result).getByText('· 已有升级任务进行中')).toBeInTheDocument();
+    expect(within(result).getByText('· <b>未知原文</b>')).toBeInTheDocument();
+    expect(within(result).getByText('<b>已有升级任务进行中</b>')).toBeInTheDocument();
+    expect(within(result).getByText('客户端不支持远程升级')).toBeInTheDocument();
+    expect(result.querySelector('b')).toBeNull();
+    expect(batches).toBe(1);
+    expect(queryClient.getQueryCache().getAll().map((query) => [query.queryHash, query.state.dataUpdatedAt])).toEqual(beforeQueries);
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(within(result).getAllByText('· 已有升级任务进行中')).toHaveLength(2);
+    expect(within(result).getByText('· 客户端不支持远程升级')).toBeInTheDocument();
+    expect(batches).toBe(1);
   });
 
   it('renders agent selector and create button', async () => {
@@ -132,7 +488,7 @@ describe('ExecutorListPage', () => {
     expect(screen.queryByText(/请在右上角选择一个 Agent/)).not.toBeInTheDocument();
   });
 
-  it('moves connection metadata into details without widening the list', async () => {
+  it('shows machine hostname and ip in the list so same-agent executors are distinguishable', async () => {
     const user = userEvent.setup();
     server.use(
       http.get('/api/agents', () => HttpResponse.json({
@@ -142,8 +498,9 @@ describe('ExecutorListPage', () => {
       http.get('/api/executors', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: [
-          { id: 10, agentId: 1, agentName: 'Alpha', name: 'runner-ip', status: 'ONLINE', clientKind: 'QODER_CLI', lastConnectIp: '203.0.113.50', lastHeartbeat: null, gmtCreate: '2026-07-01' },
-          { id: 11, agentId: 1, agentName: 'Alpha', name: 'runner-noip', status: 'OFFLINE', clientKind: 'CLAUDE_CODE', lastConnectIp: null, lastHeartbeat: null, gmtCreate: '2026-07-01' },
+          { id: 10, agentId: 1, agentName: 'Alpha', name: 'runner-mac', status: 'ONLINE', clientKind: 'QODER_CLI', lastConnectIp: '203.0.113.50', lastConnectHostname: 'build-mac-01', lastHeartbeat: null, gmtCreate: '2026-07-01' },
+          { id: 11, agentId: 1, agentName: 'Alpha', name: 'runner-legacy', status: 'OFFLINE', clientKind: 'CLAUDE_CODE', lastConnectIp: '203.0.113.51', lastConnectHostname: null, lastHeartbeat: null, gmtCreate: '2026-07-01' },
+          { id: 12, agentId: 1, agentName: 'Alpha', name: 'runner-never', status: 'OFFLINE', clientKind: 'CLAUDE_CODE', lastConnectIp: null, lastConnectHostname: null, lastHeartbeat: null, gmtCreate: '2026-07-01' },
         ],
       })),
     );
@@ -151,11 +508,15 @@ describe('ExecutorListPage', () => {
 
     await expandAgentGroup(user, 'Alpha（未编队）');
 
-    expect(screen.queryByText('203.0.113.50')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'runner-ip' }));
-    expect(await screen.findByText('203.0.113.50')).toBeInTheDocument();
+    expect(screen.getAllByText('机器').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('build-mac-01')).toBeInTheDocument();
+    expect(screen.getByText('203.0.113.50')).toBeInTheDocument();
+    // 老客户端未上报主机名时 IP 仍在次要行，两台机器依旧可区分
+    expect(screen.getByText('203.0.113.51')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'runner-mac' }));
+    expect((await screen.findAllByText('主机名')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('接入 IP').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('未上报').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders version column with reported version or dash fallback', async () => {
@@ -241,8 +602,8 @@ describe('ExecutorListPage', () => {
     const dialog = await findModalByTitle('启动命令 · qoder-runner');
 
     expect(within(dialog).getByText('Qoder 模型')).toBeInTheDocument();
-    expect(within(dialog).getByText('Reasoning Effort')).toBeInTheDocument();
-    expect(within(dialog).getByText('Context Window')).toBeInTheDocument();
+    expect(within(dialog).getByText('推理强度')).toBeInTheDocument();
+    expect(within(dialog).getByText('上下文窗口')).toBeInTheDocument();
     // 表单与预览都来自服务端：表单回填数据库里的值，命令由服务端按同一份配置拼装
     await expectContextWindowSelected(dialog, '260K', '260000');
     expect(unexpectedLocalStorageKeys()).toEqual([]);
@@ -295,8 +656,8 @@ describe('ExecutorListPage', () => {
     expect(screen.queryByText('Cursor CLI')).not.toBeInTheDocument();
     expect(screen.getByText('记忆模式')).toBeInTheDocument();
     expect(screen.getByText('Qoder 模型')).toBeInTheDocument();
-    expect(screen.getByText('Reasoning Effort')).toBeInTheDocument();
-    expect(screen.getByText('Context Window')).toBeInTheDocument();
+    expect(screen.getByText('推理强度')).toBeInTheDocument();
+    expect(screen.getByText('上下文窗口')).toBeInTheDocument();
   });
 
   function mockAgent(id: number, name: string) {
@@ -422,6 +783,37 @@ describe('ExecutorListPage', () => {
     expect(createBody).toMatchObject({ name: 'runner-01', clientKind: 'QODER_CLI' });
   });
 
+  it('shows creation success without driving read/write members into credential flows', async () => {
+    const user = userEvent.setup();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    let commandRequests = 0;
+    server.use(
+      mockSameNameAgents(),
+      ...mockSquadApis(),
+      mockEmptyExecutors(),
+      http.post('/api/agents/40170/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { id: 20, agentId: 40170, name: 'runner-01', token: null, clientKind: 'QODER_CLI' },
+      })),
+      http.post('/api/executors/:id/launch-command', () => {
+        commandRequests += 1;
+        return HttpResponse.json({ success: false, code: '10403', message: 'denied' });
+      }),
+    );
+    renderPage();
+
+    await openAgentDropdownInCreateModal(user);
+    await user.click(await screen.findByText('全栈开发（开发+评审双人组）'));
+    await user.type(screen.getByPlaceholderText('如: dev-machine-01'), 'runner-01');
+    await user.click(screen.getByRole('dialog', { name: '新建执行器' }).querySelector('.ant-modal-footer button.ant-btn-primary')!);
+
+    // 非管理员创建成功：展示成功与管理员取凭据指引，不显示令牌框、不请求命令接口。
+    expect(await screen.findByText('执行器已创建。明文令牌仅管理员可见，请由管理员在令牌接口获取后转交。')).toBeInTheDocument();
+    expect(screen.queryByText('请立即复制并保存 Token，关闭后将无法再次查看')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Token:')).not.toBeInTheDocument();
+    expect(commandRequests).toBe(0);
+  });
+
   it('keeps plain agent names when squad membership cannot be loaded', async () => {
     const user = userEvent.setup();
     server.use(
@@ -517,9 +909,30 @@ describe('ExecutorListPage', () => {
     expect(await screen.findByText('Qwen3.7-Plus')).toBeInTheDocument();
   });
 
-  it('keeps create visible but blocks non-admin users before opening the modal', async () => {
+  it('keeps create manageable for read/write roles unless the role marks executors read-only', async () => {
     const user = userEvent.setup();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    server.use(
+      http.get('/api/agents', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+      http.get('/api/executors', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null, data: [],
+      })),
+    );
+    renderPage();
+
+    // 新语义：执行器运维操作由读写级 + 角色 EXECUTOR 只读域治理，未勾选只读即可打开创建弹窗。
+    const createButton = await screen.findByRole('button', { name: /新建执行器/ });
+    expect(createButton).toBeEnabled();
+    await user.click(createButton);
+    expect(await screen.findByRole('dialog', { name: '新建执行器' })).toBeInTheDocument();
+  });
+
+  it('blocks executor creation before opening the modal when the role marks executors read-only', async () => {
+    const user = userEvent.setup();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setReadOnlyDomains(['EXECUTOR']);
     server.use(
       http.get('/api/agents', () => HttpResponse.json({
         success: true, code: '0', message: '', traceId: null, data: [],
@@ -535,22 +948,53 @@ describe('ExecutorListPage', () => {
     await user.click(createButton);
 
     expect(screen.queryByRole('dialog', { name: '新建执行器' })).not.toBeInTheDocument();
-    expect(await screen.findByText('当前为读写权限，新建执行器需要管理员权限')).toBeInTheDocument();
+    expect(await screen.findByText('「执行器」对当前角色为只读，无法新建执行器。')).toBeInTheDocument();
+  });
+
+  it('opens the startup configuration for read/write roles', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    serveExecutor();
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+
+    await user.click(await screen.findByRole('button', { name: '启动命令' }));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('最大并发任务数')).toBeInTheDocument();
+    // 命令预览属凭据面：读写成员看到管理员提示，不会请求 ADMIN 命令接口。
+    expect(await screen.findByText('启动命令包含执行器令牌，仅管理员可查看。')).toBeInTheDocument();
+  });
+
+  it('blocks the startup configuration when the role marks executors read-only', async () => {
+    await i18n.changeLanguage('zh-CN');
+    const user = userEvent.setup();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setReadOnlyDomains(['EXECUTOR']);
+    serveExecutor();
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+
+    await user.click(await screen.findByRole('button', { name: '启动命令' }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(await screen.findByText('「执行器」对当前角色为只读，无法查看执行器启动命令。')).toBeInTheDocument();
   });
 
   it('uses provider model IDs and fixed Qoder runtime choices', () => {
-    expect(QODER_MODELS.map((model) => model.value)).toEqual([
+    expect(resolveQoderModelOptions([]).map((model) => model.value)).toEqual([
       'auto', 'ultimate', 'performance', 'efficient', 'lite',
       'qmodel_38max', 'qfmodel', 'qmodel_latest', 'qmodel',
       'kmodel_latest', 'kmodel', 'gmodel', 'gfmodel',
       'dmodel', 'dfmodel', 'mmodel',
     ]);
-    expect(QODER_MODELS).toContainEqual({ value: 'qmodel_38max', label: 'Qwen3.8-Max' });
-    expect(QODER_MODELS).toContainEqual({ value: 'auto', label: 'Auto (default)' });
-    expect(QODER_MODELS).toContainEqual({ value: 'qfmodel', label: 'Qwen3.8-Flash' });
-    expect(QODER_MODELS).toContainEqual({ value: 'gmodel', label: 'GLM-5.3' });
-    expect(QODER_MODELS).toContainEqual({ value: 'gfmodel', label: 'GLM-5.3-Flash' });
-    expect(QODER_MODELS.some((model) => model.value === 'cmodel' || model.value === 'gm51model')).toBe(false);
+    expect(resolveQoderModelOptions([])).toContainEqual({ value: 'qmodel_38max', label: 'Qwen3.8-Max' });
+    expect(resolveQoderModelOptions([])).toContainEqual({ value: 'auto', label: '自动（默认）' });
+    expect(resolveQoderModelOptions([])).toContainEqual({ value: 'qfmodel', label: 'Qwen3.8-Flash' });
+    expect(resolveQoderModelOptions([])).toContainEqual({ value: 'gmodel', label: 'GLM-5.3' });
+    expect(resolveQoderModelOptions([])).toContainEqual({ value: 'gfmodel', label: 'GLM-5.3-Flash' });
+    expect(resolveQoderModelOptions([]).some((model) => model.value === 'cmodel' || model.value === 'gm51model')).toBe(false);
     expect(qoderOptionsForModel('ultimate').contextWindows).toEqual([
       { value: '1000000', label: '1M' },
       { value: '400000', label: '400K' },
@@ -561,6 +1005,21 @@ describe('ExecutorListPage', () => {
     ]);
     expect(qoderOptionsForModel('qfmodel').defaultReasoningEffort).toBe('medium');
     expect(qoderOptionsForModel('gmodel').defaultContextWindow).toBe('260000');
+  });
+
+  it('defaults only missing or unsupported Qoder options when changing models', () => {
+    expect(resolveQoderLaunchOptions('ultimate', { reasoningEffort: 'none', contextWindow: '400000' })).toEqual({
+      model: 'ultimate', reasoningEffort: 'none', contextWindow: '400000',
+    });
+    expect(resolveQoderLaunchOptions('ultimate', { reasoningEffort: 'unsupported', contextWindow: '1000000' })).toEqual({
+      model: 'ultimate', reasoningEffort: 'high', contextWindow: '1000000',
+    });
+    expect(resolveQoderLaunchOptions('auto', { reasoningEffort: 'max', contextWindow: 'invalid' })).toEqual({
+      model: 'auto', reasoningEffort: 'max', contextWindow: '260000',
+    });
+    expect(resolveQoderLaunchOptions('auto', {})).toEqual({
+      model: 'auto', reasoningEffort: 'medium', contextWindow: '260000',
+    });
   });
 
   it('treats both Qoder client kinds as Qoder without normalizing them', () => {
@@ -637,7 +1096,7 @@ describe('ExecutorListPage', () => {
   function mockExecutor(overrides: Record<string, unknown> = {}) {
     return {
       id: 10000, agentId: 1, name: 'dev-machine-01', agentName: 'A', clientKind: 'CLAUDE_CODE',
-      status: 'OFFLINE', lastConnectIp: null, lastHeartbeat: null,
+      status: 'OFFLINE', restartPolicySupported: true, lastConnectIp: null, lastHeartbeat: null,
       gmtCreate: '2026-08-24T10:00:00Z', ...overrides,
     };
   }
@@ -686,9 +1145,68 @@ describe('ExecutorListPage', () => {
     label: string,
     optionText: string,
   ) {
-    await user.click(formItemSelect(dialog, label));
-    await user.click(await screen.findByText(optionText, { selector: '.ant-select-item-option-content' }));
+    await act(async () => { await user.click(formItemSelect(dialog, label)); });
+    const option = await screen.findByText(optionText, { selector: '.ant-select-item-option-content' });
+    await act(async () => { await user.click(option); });
   }
+
+  it.each(['QODER_CLI', 'QODER_CN_CLI'])('preserves edited options across model changes in %s previews without saving and discards them on cancel', async (clientKind) => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind }, { runtimeVersion: '0.3.9', workspaceRoot: '/data/saved tasks' });
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await within(dialog).findByText(/--model auto/);
+    await selectInForm(user, dialog, '推理强度', '低');
+    await selectInForm(user, dialog, '上下文窗口', '1M');
+    for (const [label, model] of [['旗舰', 'ultimate'], ['自动（默认）', 'auto'], ['旗舰', 'ultimate']]) {
+      await selectInForm(user, dialog, 'Qoder 模型', label);
+      await waitFor(() => {
+        expect(previewedCommand(dialog)).toContain(`--model ${model}`);
+        expect(previewedCommand(dialog)).toContain('--reasoning-effort low');
+        expect(previewedCommand(dialog)).toContain('--context-window 1000000');
+      });
+      expect(within(dialog).getByText('低', { selector: '.ant-select-selection-item' })).toBeInTheDocument();
+      expect(within(dialog).getByText('1M', { selector: '.ant-select-selection-item' })).toBeInTheDocument();
+    }
+    await selectInForm(user, dialog, '记忆模式', '本机 Agent 记忆');
+    fireEvent.change(within(dialog).getByRole('spinbutton', { name: /最大并发任务数/ }), { target: { value: '7' } });
+    await waitFor(() => {
+      const preview = previewedCommand(dialog);
+      for (const arg of ['--model ultimate', '--reasoning-effort low', '--context-window 1000000',
+        '--memory-mode provider-local', '--max-tasks 7', 'autowonder@0.3.9', "--workspace-root '/data/saved tasks'"]) {
+        expect(preview).toContain(arg);
+      }
+    });
+    expect(within(dialog).getByText('未保存')).toBeInTheDocument();
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const reopened = await findModalByTitle('启动命令 · dev-machine-01');
+    await waitFor(() => expect(previewedCommand(reopened)).toContain('--model auto'));
+    expect(previewedCommand(reopened)).toContain('--context-window 260000');
+    expect(within(reopened).queryByText('未保存')).not.toBeInTheDocument();
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+  }, 15_000);
+
+  it('uses unsaved values for Windows previews and full command editing without a config write', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI' });
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await within(dialog).findByText(/--context-window 260000/);
+    await selectInForm(user, dialog, '上下文窗口', '1M');
+    await user.click(within(dialog).getByText('Windows'));
+    await waitFor(() => expect(previewedCommand(dialog)).toContain('--context-window 1000000'));
+    expect(previewedCommand(dialog)).toContain('[Console]::OutputEncoding');
+    await user.click(within(dialog).getByRole('button', { name: '编辑完整命令' }));
+    const input = await within(dialog).findByRole('textbox', { name: '完整启动命令' });
+    expect((input as HTMLTextAreaElement).value).toContain('--context-window 1000000');
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+  });
 
   it('opens a startup command modal with a server-built preview for non-Qoder executors', async () => {
     const user = userEvent.setup();
@@ -704,6 +1222,266 @@ describe('ExecutorListPage', () => {
     expect(screen.getByRole('button', { name: '复制启动命令' })).toBeEnabled();
   });
 
+  it('lets read/write roles apply the saved startup configuration online', async () => {
+    const user = userEvent.setup();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    let appliedVersion: number | undefined;
+    server.use(http.post('/api/executors/10000/launch-command/apply', async ({ request }) => {
+      const body = await request.json() as { version: number };
+      appliedVersion = body.version;
+      return HttpResponse.json({ success: true, data: {
+        requestId: 'command-request', status: 'REQUESTED', message: '已发送，等待客户端响应',
+        messageOrigin: 'SYSTEM', issuedAt: '2026-10-16T00:00:00Z', update: false,
+      } });
+    }));
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    fireEvent.click(within(dialog).getByRole('button', { name: '在线应用（重启）' }));
+    fireEvent.click(await screen.findByRole('button', { name: '空闲时重启' }));
+    // 应用前会先保存外层配置（版本 +1），随后按该版本在线应用。
+    await waitFor(() => expect(appliedVersion).toBe(2));
+  });
+
+  it('returns to the refreshed command preview after saving and applies the latest outer form separately', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    let savedBody: { command: string; version: number } | undefined;
+    let appliedVersion: number | undefined;
+    let appliedMode: string | undefined;
+    const restart = { requestId: 'command-request', status: 'REQUESTED', message: '已发送，等待客户端响应', messageOrigin: 'SYSTEM', issuedAt: '2026-10-16T00:00:00Z', update: false };
+    server.use(
+      http.put('/api/executors/10000/launch-command', async ({ request }) => {
+        savedBody = await request.json() as typeof savedBody;
+        const config = { ...defaultLaunchConfig('QODER_CLI'), model: 'ultimate', runtimeVersion: '0.3.9', workspaceRoot: '/data/new tasks', version: savedBody!.version + 1 };
+        setExecutorLaunchConfig(10000, config);
+        return HttpResponse.json({ success: true, data: config });
+      }),
+      http.post('/api/executors/10000/launch-command/apply', async ({ request }) => {
+        const body = await request.json() as { version: number; restartMode: string };
+        appliedVersion = body.version;
+        appliedMode = body.restartMode;
+        return HttpResponse.json({ success: true, data: restart });
+      }),
+    );
+    const { queryClient } = renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    const buttons = within(dialog).getAllByRole('button');
+    expect(buttons.indexOf(within(dialog).getByRole('button', { name: '在线应用（重启）' })))
+      .toBeGreaterThan(buttons.indexOf(within(dialog).getByRole('button', { name: /复制 debug 模式命令/ })));
+    fireEvent.click(await within(dialog).findByRole('button', { name: '编辑完整命令' }));
+    expect(within(dialog).queryByRole('button', { name: '在线应用（重启）' })).not.toBeInTheDocument();
+    const input = await within(dialog).findByRole('textbox', { name: '完整启动命令' });
+    const draft = (input as HTMLTextAreaElement).value.replace(/autowonder@[0-9.]+/, 'autowonder@0.3.9').replace('--model auto', '--model ultimate') + " --workspace-root '/data/new tasks'";
+    fireEvent.change(input, { target: { value: draft } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存命令' }));
+    expect(await within(dialog).findByRole('button', { name: '编辑完整命令' })).toBeEnabled();
+    expect(within(dialog).queryByRole('textbox', { name: '完整启动命令' })).not.toBeInTheDocument();
+    const preview = within(dialog).getByRole('region', { name: '命令预览' });
+    expect(preview).toHaveTextContent('autowonder@0.3.9');
+    expect(preview).toHaveTextContent("--workspace-root '/data/new tasks'");
+    expect(within(dialog).getByText('旗舰')).toBeInTheDocument();
+    expect(savedBody).toEqual({ command: draft, version: 1 });
+    expect(appliedVersion).toBeUndefined();
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+    fireEvent.change(within(dialog).getByRole('spinbutton', { name: /最大并发任务数/ }), { target: { value: '7' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '在线应用（重启）' }));
+    fireEvent.click(await screen.findByRole('button', { name: '空闲时重启' }));
+    await waitFor(() => expect(appliedVersion).toBe(3));
+    expect(appliedMode).toBe('WHEN_IDLE');
+    expect(launchConfigUpdatesFor(10000)).toEqual([expect.objectContaining({ version: 2, model: 'ultimate', maxConcurrentDispatches: 7 })]);
+    expect(preview).toHaveTextContent('autowonder@0.3.9');
+    expect(preview).toHaveTextContent("--workspace-root '/data/new tasks'");
+    expect(await within(dialog).findByText('等待响应')).toBeInTheDocument();
+    expect(within(dialog).queryByText('重启成功')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '在线应用（重启）' })).toBeDisabled();
+    server.use(http.get('/api/executors', () => HttpResponse.json({ success: true, data: [mockExecutor({
+      clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true, version: '0.3.9', restart: { ...restart, status: 'COMPLETED' },
+    })] })));
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['executors'] }); });
+    expect(await within(dialog).findByText('重启成功')).toBeInTheDocument();
+  });
+
+  it('blocks online application in Windows command mode and restores it for macOS / Linux', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    let applications = 0;
+    server.use(http.post('/api/executors/10000/launch-command/apply', () => {
+      applications += 1;
+      return HttpResponse.json({ success: true, data: { requestId: 'posix-only', status: 'REQUESTED' } });
+    }));
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    const apply = await within(dialog).findByRole('button', { name: '在线应用（重启）' });
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(within(dialog).getByText('Windows'));
+    expect(apply).toBeDisabled();
+    expect(within(dialog).getByText('在线应用仅支持 macOS / Linux。Windows 命令请复制后在本机启动。')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '复制启动命令' })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: '保存配置' })).toBeEnabled();
+    await user.click(apply);
+    expect(applications).toBe(0);
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(dialog).getByText('Online application only supports macOS / Linux. Copy the Windows command and run it locally.')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Apply online (restart)' })).toBeDisabled();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    await user.click(within(dialog).getByText('macOS / Linux'));
+    expect(apply).toBeEnabled();
+    expect(within(dialog).queryByText('在线应用仅支持 macOS / Linux。Windows 命令请复制后在本机启动。')).not.toBeInTheDocument();
+    await user.click(apply);
+    await user.click(await screen.findByRole('button', { name: '空闲时重启' }));
+    await waitFor(() => expect(applications).toBe(1));
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(1);
+  });
+
+  it('requires an explicit restart choice, supports cancel and force, and translates the choice dialog', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    let appliedMode: string | undefined;
+    server.use(http.post('/api/executors/10000/launch-command/apply', async ({ request }) => {
+      appliedMode = (await request.json() as { restartMode: string }).restartMode;
+      return HttpResponse.json({ success: true, data: { requestId: 'force-request', status: 'RESTARTING' } });
+    }));
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await user.click(await within(dialog).findByRole('button', { name: '在线应用（重启）' }));
+    let choice = await findModalByTitle('选择在线应用方式');
+    expect(within(choice).getByRole('button', { name: '强制重启' })).toBeEnabled();
+    expect(within(choice).getByRole('button', { name: '空闲时重启' })).toBeEnabled();
+    expect(appliedMode).toBeUndefined();
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(0);
+    await user.click(within(choice).getByRole('button', { name: /取\s*消/ }));
+    expect(appliedMode).toBeUndefined();
+    await user.click(within(dialog).getByRole('button', { name: '在线应用（重启）' }));
+    choice = await findModalByTitle('选择在线应用方式');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(choice).getByRole('button', { name: 'Restart when idle' })).toBeEnabled();
+    expect(within(choice).getByText(/Conversations may not resume/)).toBeInTheDocument();
+    await user.click(within(choice).getByRole('button', { name: 'Force restart' }));
+    await waitFor(() => expect(appliedMode).toBe('FORCE'));
+    expect(launchConfigUpdatesFor(10000)).toHaveLength(1);
+  });
+
+  it('disables online application for a legacy client without restart policies', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true, restartPolicySupported: false });
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    expect(await within(dialog).findByRole('button', { name: '在线应用（重启）' })).toBeDisabled();
+    expect(within(dialog).getByText('当前客户端不支持选择重启方式，请先升级客户端。')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '保存配置' })).toBeEnabled();
+  });
+
+  it('keeps an idle restart pending and renders its status across languages', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true,
+      restart: { requestId: 'queued', status: 'WAITING_IDLE', message: 'client diagnostic' } });
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    expect(await within(dialog).findByRole('button', { name: '在线应用（重启）' })).toBeDisabled();
+    expect(within(dialog).getByText('等待空闲')).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(dialog).getByText('Waiting for idle')).toBeInTheDocument();
+    expect(within(dialog).getByText('client diagnostic')).toBeInTheDocument();
+  });
+
+  it('retains an edited command after a conflict and never sends it to the executor', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    let applied = false;
+    server.use(
+      http.put('/api/executors/10000/launch-command', () => HttpResponse.json({ success: false, code: '17005', message: 'conflict' })),
+      http.post('/api/executors/10000/launch-command/apply', () => { applied = true; return HttpResponse.json({ success: true }); }),
+    );
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await user.click(await within(dialog).findByRole('button', { name: '编辑完整命令' }));
+    const input = await within(dialog).findByRole('textbox', { name: '完整启动命令' });
+    fireEvent.change(input, { target: { value: (input as HTMLTextAreaElement).value + " --workspace-root '/data/retain draft'" } });
+    const draft = (input as HTMLTextAreaElement).value;
+    await user.click(within(dialog).getByRole('button', { name: '保存命令' }));
+    expect(await screen.findByText('配置已被修改，请刷新后重试')).toBeInTheDocument();
+    expect(input).toHaveValue(draft);
+    expect(applied).toBe(false);
+  });
+
+  it.each(['OFFLINE', 'ONLINE'])('keeps command saving available for a %s executor without online command capability', async (status) => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status, launchCommandSupported: false });
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    expect(await within(dialog).findByRole('button', { name: '在线应用（重启）' })).toBeDisabled();
+    await user.click(await within(dialog).findByRole('button', { name: '编辑完整命令' }));
+    expect(await within(dialog).findByRole('button', { name: '保存命令' })).toBeEnabled();
+    expect(within(dialog).queryByRole('button', { name: '在线应用（重启）' })).not.toBeInTheDocument();
+  });
+
+  it('reports a saved command separately from an online application failure and preserves it across locale changes', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    server.use(
+      http.put('/api/executors/10000/launch-command', async ({ request }) => {
+        const body = await request.json() as { version: number };
+        const config = { ...defaultLaunchConfig('QODER_CLI'), version: body.version + 1 };
+        setExecutorLaunchConfig(10000, config);
+        return HttpResponse.json({ success: true, data: config });
+      }),
+      http.post('/api/executors/10000/launch-command/apply', () => HttpResponse.json({ success: false, code: '10001', message: 'runtime is busy' })),
+    );
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await user.click(await within(dialog).findByRole('button', { name: '编辑完整命令' }));
+    const input = await within(dialog).findByRole('textbox', { name: '完整启动命令' });
+    const draft = (input as HTMLTextAreaElement).value;
+    await user.click(within(dialog).getByRole('button', { name: '保存命令' }));
+    const preview = await within(dialog).findByRole('region', { name: '命令预览' });
+    expect(preview).toHaveTextContent(draft);
+    await user.click(within(dialog).getByRole('button', { name: '在线应用（重启）' }));
+    await user.click(await screen.findByRole('button', { name: '空闲时重启' }));
+    expect(await screen.findByText('命令已保存，但在线应用失败：runtime is busy')).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(dialog).getByRole('region', { name: 'Command preview' })).toHaveTextContent(draft);
+    expect(within(dialog).getByRole('button', { name: 'Apply online (restart)' })).toBeEnabled();
+  });
+
+  it('does not apply an outer form when saving its configuration conflicts', async () => {
+    const user = userEvent.setup();
+    serveExecutor({ clientKind: 'QODER_CLI', status: 'ONLINE', launchCommandSupported: true });
+    let applied = false;
+    server.use(
+      http.put('/api/executors/10000/launch-config', () => HttpResponse.json({ success: false, code: '17005', message: 'conflict' })),
+      http.post('/api/executors/10000/launch-command/apply', () => { applied = true; return HttpResponse.json({ success: true }); }),
+    );
+    renderPage();
+    await expandAgentGroup(user, 'A（未编队）');
+    await user.click(screen.getByRole('button', { name: '启动命令' }));
+    const dialog = await findModalByTitle('启动命令 · dev-machine-01');
+    await user.click(await within(dialog).findByRole('button', { name: '在线应用（重启）' }));
+    await user.click(await screen.findByRole('button', { name: '空闲时重启' }));
+    expect(await screen.findByText('配置已被修改，请刷新后重试')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: '编辑完整命令' })).toBeEnabled();
+    expect(applied).toBe(false);
+  });
+
   it('opens the same modal with Qoder fields for Qoder executors', async () => {
     const user = userEvent.setup();
     serveExecutor({ clientKind: 'QODER_CLI' });
@@ -714,7 +1492,7 @@ describe('ExecutorListPage', () => {
 
     const dialog = await findModalByTitle('启动命令 · dev-machine-01');
     expect(within(dialog).getByText('Qoder 模型')).toBeInTheDocument();
-    expect(within(dialog).getByText('Context Window')).toBeInTheDocument();
+    expect(within(dialog).getByText('上下文窗口')).toBeInTheDocument();
     await expectContextWindowSelected(dialog, '260K', '260000');
   });
 
@@ -816,7 +1594,7 @@ describe('ExecutorListPage', () => {
     // 补选后模型参数按所选类型展示，并带出默认值
     expect(within(dialog).getByText('Qoder 模型')).toBeInTheDocument();
     await waitFor(() => {
-      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('Auto (default)');
+      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('自动（默认）');
     });
 
     await user.click(within(dialog).getByRole('button', { name: '复制启动命令' }));
@@ -845,7 +1623,7 @@ describe('ExecutorListPage', () => {
 
     await selectInForm(user, dialog, '客户端类型', 'Qoder CLI');
     await waitFor(() => {
-      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('Auto (default)');
+      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('自动（默认）');
     });
     await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
     expect(await screen.findByText(/启动配置已保存/)).toBeInTheDocument();
@@ -856,7 +1634,7 @@ describe('ExecutorListPage', () => {
     });
 
     // 关闭弹窗，等列表刷新出补齐后的类型（「类型缺失」标记消失），再重开弹窗走正常链路
-    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await user.click(within(dialog).getByRole('button', { name: '关闭' }));
     await waitFor(() => {
       expect(screen.queryByText('类型缺失')).not.toBeInTheDocument();
     });
@@ -865,7 +1643,7 @@ describe('ExecutorListPage', () => {
     expect(within(dialog).queryByText(KIND_MISSING_ALERT)).not.toBeInTheDocument();
     expect(within(dialog).queryByText('客户端类型', { selector: 'label' })).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('Auto (default)');
+      expect(selectedValue(formItemSelect(dialog, 'Qoder 模型'))).toBe('自动（默认）');
     });
   });
 
@@ -936,6 +1714,7 @@ describe('ExecutorListPage', () => {
   }
 
   it('copies a bash debug command from the startup modal and warns about disk usage', async () => {
+    const warning = vi.spyOn(console, 'error');
     const user = userEvent.setup();
     const writeText = mockClipboardWrite();
     serveExecutor({ clientKind: 'CLAUDE_CODE' });
@@ -943,14 +1722,18 @@ describe('ExecutorListPage', () => {
 
     await expandAgentGroup(user, 'A（未编队）');
     await user.click(await screen.findByRole('button', { name: /启动命令/ }));
-    await user.click(await screen.findByRole('button', { name: /复制 debug 模式命令/ }));
+    const debug = await screen.findByRole('button', { name: /复制 debug 模式命令/ });
+    await user.hover(debug);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(i18n.t('executor:debugWarning'));
+    debug.focus(); await user.keyboard('{Enter}');
     await user.click(await screen.findByText('Mac / Linux (bash)'));
 
     expect(writeText).toHaveBeenCalledTimes(1);
     const cmd = writeText.mock.calls[0][0];
-    expect(cmd).toContain('--debug 2>&1 | tee ~/aw-claude-10000-');
-    expect(cmd).toMatch(/\.log$/);
+    expect(cmd).toMatch(/--debug$/);
+    expect(cmd).not.toContain('tee');
     expect(await screen.findByText(/避免日志写满磁盘/)).toBeInTheDocument();
+    expect(warning.mock.calls.filter(args => args.some(value => String(value).includes('findDOMNode')))).toEqual([]);
   });
 
   it('copies a PowerShell debug command from the startup modal', async () => {
@@ -968,8 +1751,8 @@ describe('ExecutorListPage', () => {
     const cmd = writeText.mock.calls[0][0];
     expect(cmd).toMatch(/^powershell -NoProfile -EncodedCommand [A-Za-z0-9+/=]+$/);
     const decoded = decodePowerShellCommand(cmd);
-    expect(decoded).toContain('--debug 2>&1 | Tee-Object -FilePath "$HOME/aw-claude-10000-');
-    expect(decoded).toMatch(/\.log"$/);
+    expect(decoded).toMatch(/--debug$/);
+    expect(decoded).not.toContain('Tee-Object');
   });
 
   it('copies a plain startup command without the debug suffix', async () => {
@@ -1102,7 +1885,7 @@ describe('ExecutorListPage', () => {
     // 归属 Agent 选项带小队后缀（默认 /api/squads 返回空数组即「未编队」）；创建成功后分组面板头
     // 会出现同样文本，故必须限定到下拉选项节点，否则连续创建第二个执行器时会多元素匹配。
     await user.click(await screen.findByText('Alpha（未编队）', { selector: '.ant-select-item-option-content' }));
-    await user.click(formItemSelect(dialog, 'Context Window'));
+    await user.click(formItemSelect(dialog, '上下文窗口'));
     await user.click(await screen.findByText(options.contextWindowLabel));
     await user.type(within(dialog).getByRole('textbox', { name: '执行器名称' }), options.name);
     await user.click(within(dialog).getByRole('button', { name: 'OK' }));
@@ -1122,7 +1905,7 @@ describe('ExecutorListPage', () => {
   }
 
   async function expectContextWindowSelected(dialog: HTMLElement, label: string, value: string) {
-    const selector = formItemSelect(dialog, 'Context Window');
+    const selector = formItemSelect(dialog, '上下文窗口');
     await waitFor(() => {
       expect(selectedValue(selector)).toBe(label);
     });
@@ -1258,7 +2041,7 @@ describe('ExecutorListPage', () => {
     await expandAgentGroup(user, 'A（未编队）');
     await user.click(await screen.findByRole('button', { name: /启动命令/ }));
     const dialog = await findModalByTitle('启动命令 · dev-machine-01');
-    await user.click(formItemSelect(dialog, 'Context Window'));
+    await user.click(formItemSelect(dialog, '上下文窗口'));
     await user.click(await screen.findByText('1M', { selector: '.ant-select-item-option-content' }));
     await user.click(within(dialog).getByRole('button', { name: '复制启动命令' }));
 
@@ -1293,7 +2076,7 @@ describe('ExecutorListPage', () => {
     await expandAgentGroup(user, 'A（未编队）');
     await user.click(await screen.findByRole('button', { name: /启动命令/ }));
     const dialog = await findModalByTitle('启动命令 · dev-machine-01');
-    await user.click(formItemSelect(dialog, 'Context Window'));
+    await user.click(formItemSelect(dialog, '上下文窗口'));
     await user.click(await screen.findByText('1M', { selector: '.ant-select-item-option-content' }));
     const concurrency = within(dialog).getByRole('spinbutton', { name: '最大并发任务数' });
     expect(concurrency).toHaveValue('5');
@@ -1327,6 +2110,7 @@ describe('ExecutorListPage', () => {
     const dialog = await findModalByTitle('启动命令 · dev-machine-01');
     await user.click(formItemSelect(dialog, '记忆模式'));
     await user.click(await screen.findByText('关闭记忆', { selector: '.ant-select-item-option-content' }));
+    expect(within(dialog).queryByRole('switch', { name: '任务模型自动升级' })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
 
     expect(await screen.findByText('启动配置已保存，请使用新启动命令重启执行器使配置生效')).toBeInTheDocument();
@@ -1500,8 +2284,8 @@ describe('ExecutorListPage', () => {
     expect(commandCalls).toBe(0);
 
     await selectInForm(user, dialog, '记忆模式', '平台记忆（推荐）');
-    await selectInForm(user, dialog, 'Qoder 模型', 'Auto (default)');
-    await selectInForm(user, dialog, 'Context Window', '1M');
+    await selectInForm(user, dialog, 'Qoder 模型', '自动（默认）');
+    await selectInForm(user, dialog, '上下文窗口', '1M');
     await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
 
     expect(await screen.findByText('启动配置已保存，请使用新启动命令重启执行器使配置生效')).toBeInTheDocument();
@@ -1613,7 +2397,7 @@ describe('ExecutorListPage', () => {
     expect(previewedCommand(dialog)).not.toContain('--provider');
   });
 
-  it('saves the launch config without copying a command', async () => {
+  it('preserves edited options when saving after a model switch without copying a command', async () => {
     const user = userEvent.setup();
     const writeText = mockClipboardWrite();
     let putBody: Record<string, unknown> | null = null;
@@ -1622,13 +2406,13 @@ describe('ExecutorListPage', () => {
       putBody = await request.json() as Record<string, unknown>;
       // 后端保存即落库：保存后重新生成的预览必须读到 ultimate，而不是原来的 auto
       setExecutorLaunchConfig(10000, {
-        model: 'ultimate', reasoningEffort: 'high', contextWindow: '260000',
+        model: 'ultimate', reasoningEffort: 'low', contextWindow: '1000000',
         memoryMode: 'platform', version: 2,
       });
       return HttpResponse.json({
         success: true, code: '0', message: '', traceId: null,
         data: {
-          model: 'ultimate', reasoningEffort: 'high', contextWindow: '260000',
+          model: 'ultimate', reasoningEffort: 'low', contextWindow: '1000000',
           memoryMode: 'platform', version: 2,
         },
       });
@@ -1638,19 +2422,22 @@ describe('ExecutorListPage', () => {
     await expandAgentGroup(user, 'A（未编队）');
     await user.click(await screen.findByRole('button', { name: /启动命令/ }));
     const dialog = await findModalByTitle('启动命令 · dev-machine-01');
-    await selectInForm(user, dialog, 'Qoder 模型', 'Ultimate');
+    await selectInForm(user, dialog, '推理强度', '低');
+    await selectInForm(user, dialog, '上下文窗口', '1M');
+    await selectInForm(user, dialog, 'Qoder 模型', '旗舰');
     await user.click(within(dialog).getByRole('button', { name: '保存配置' }));
 
     expect(await screen.findByText('启动配置已保存，请使用新启动命令重启执行器使配置生效')).toBeInTheDocument();
     expect(putBody).toMatchObject({
-      model: 'ultimate', reasoningEffort: 'high', contextWindow: '260000',
+      model: 'ultimate', reasoningEffort: 'low', contextWindow: '1000000',
       memoryMode: 'platform', version: 1,
     });
     expect(writeText).not.toHaveBeenCalled();
     // 保存后预览重新向服务端索取，展示的就是数据库里刚落下的值
     await waitFor(() => {
       expect(previewedCommand(dialog)).toContain('--model ultimate');
-      expect(previewedCommand(dialog)).toContain('--reasoning-effort high');
+      expect(previewedCommand(dialog)).toContain('--reasoning-effort low');
+      expect(previewedCommand(dialog)).toContain('--context-window 1000000');
     });
   });
 
@@ -1719,8 +2506,8 @@ describe('ExecutorListPage', () => {
     // memoryMode 回填为服务端值；非 Qoder 不渲染 model/reasoningEffort/Context Window 三项
     await waitFor(() => expect(previewedCommand(dialog)).toContain('--memory-mode provider-local'));
     expect(within(dialog).queryByText('Qoder 模型')).not.toBeInTheDocument();
-    expect(within(dialog).queryByText('Reasoning Effort')).not.toBeInTheDocument();
-    expect(within(dialog).queryByText('Context Window')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('推理强度')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('上下文窗口')).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: '复制启动命令' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
@@ -2393,7 +3180,7 @@ describe('ExecutorListPage', () => {
     function upgradable(overrides: Partial<ExecutorVO> = {}): ExecutorVO {
       return {
         id: 10, agentId: 1, agentName: 'Alpha', name: 'runner-01', status: 'ONLINE',
-        clientKind: 'QODER_CLI', lastConnectIp: null, lastHeartbeat: null,
+        clientKind: 'QODER_CLI', lastConnectIp: null, lastConnectHostname: null, lastHeartbeat: null,
         gmtCreate: '2026-07-01T00:00:00Z', version: '0.2.155', targetVersion: '0.2.160',
         upgradeSupported: true, upgradeAvailable: true, versionComparable: true, ...overrides,
       };
@@ -2653,9 +3440,10 @@ describe('ExecutorListPage', () => {
       expect(await screen.findByText('已有升级任务进行中，请等待结果')).toBeInTheDocument();
     });
 
-    it('blocks the upgrade for an operator without workspace admin access', async () => {
+    it('blocks the upgrade for an operator whose role marks executors read-only', async () => {
       const user = userEvent.setup();
       useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+      useAuthStore.getState().setReadOnlyDomains(['EXECUTOR']);
       mockGroupedExecutorApis([behindTarget()]);
       let posted = false;
       serveUpdateOne(() => { posted = true; });
@@ -2663,7 +3451,7 @@ describe('ExecutorListPage', () => {
       await expandAgentGroup(user, 'Alpha（未编队）');
 
       await user.click(await screen.findByRole('button', { name: /一键更新/ }));
-      expect(await screen.findByText('当前为读写权限，升级执行器需要管理员权限')).toBeInTheDocument();
+      expect(await screen.findByText('「执行器」对当前角色为只读，无法升级执行器。')).toBeInTheDocument();
       expect(posted).toBe(false);
     });
 
@@ -2833,4 +3621,36 @@ describe('ExecutorListPage', () => {
     });
   });
 
+});
+
+
+describe('routed squad grouping localization', () => {
+  it('refreshes group fallbacks and preserves authored labels without rebuilding group identity', async () => {
+    await i18n.changeLanguage('zh-CN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    localStorage.removeItem('autowonder.executors.view');
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({ success: true, data: [{ id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] }] })),
+      http.get('/api/squads/7', () => HttpResponse.json({ success: true, data: { id: 7, name: '<b>自定义小队</b>', memberAgentIds: [] } })),
+      http.get('/api/executors', () => HttpResponse.json({ success: true, data: [{ id: 1, agentId: 1, agentName: '<b>自定义资源</b>', name: '<b>自定义资源</b>', status: 'ONLINE', squadIds: [], squadNames: [] }, { id: 2, agentId: 1, name: 'Known', status: 'ONLINE', squadIds: [7], squadNames: ['<b>自定义小队</b>'] }, { id: 3, agentId: 1, name: 'Missing', status: 'ONLINE', squadIds: [42] }] })),
+    );
+    const router = createMemoryRouter([{ path: '/', element: <ExecutorListPage /> }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await screen.findByRole('combobox', { name: '按小队筛选' });
+    await userEvent.click(screen.getByText('按小队分组'));
+    await screen.findAllByText('未分组');
+    const groupHeader = screen.getAllByText('未分组')[0];
+    await userEvent.click(groupHeader);
+    const rawExecutor = await screen.findByRole('button', { name: '<b>自定义资源</b>' });
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    await screen.findAllByText('Ungrouped');
+    expect(screen.getAllByText('Ungrouped')[0]).toBe(groupHeader);
+    expect(screen.getByRole('button', { name: '<b>自定义资源</b>' })).toBe(rawExecutor);
+    expect(screen.getAllByText('Squad #42').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('<b>自定义小队</b>').length).toBeGreaterThan(0);
+
+    expect(screen.getByRole('combobox', { name: 'Filter by squad' })).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
 });

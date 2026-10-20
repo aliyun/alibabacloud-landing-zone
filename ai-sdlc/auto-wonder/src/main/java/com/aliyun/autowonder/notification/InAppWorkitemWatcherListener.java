@@ -8,6 +8,7 @@ import com.aliyun.autowonder.integration.event.WorkitemCommentCreatedEvent;
 import com.aliyun.autowonder.integration.event.WorkitemStatusChangedEvent;
 import com.aliyun.autowonder.statemachine.StatusNodeDO;
 import com.aliyun.autowonder.statemachine.StatusNodeDao;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.workitem.WorkitemCommentMentionDO;
@@ -26,6 +27,9 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Locale;
+import java.util.function.Function;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 
 /**
  * 关注人（watcher）站内通知。关注只是新增的一类收件来源，不改变负责人/@/钉钉的既有通知规则。
@@ -77,10 +81,13 @@ public class InAppWorkitemWatcherListener {
                 excluded.add(event.actorRef());
             }
             excluded.addAll(mentionedHumanIds(event.tenantId(), event.workitemId(), event.commentId()));
+            String actor = actorName(event.actorType(), event.actorRef());
+            String summary = InAppCommentMentionedListener.truncate(event.contentMd(), MAX_CONTENT_LENGTH);
+            String workitemTitle = workitem.getTitle();
             notifyWatchers(event.tenantId(), event.workitemId(), TYPE_COMMENT, "你关注的工单有新评论",
-                    actorName(event.actorType(), event.actorRef()) + " 在「" + workitem.getTitle() + "」发表了新评论："
-                            + InAppCommentMentionedListener.truncate(event.contentMd(), MAX_CONTENT_LENGTH),
-                    excluded);
+                    actor + " 在「" + workitemTitle + "」发表了新评论："
+                            + summary,
+                    excluded, "notification.watcher.comment", new Object[]{actor, workitemTitle, summary}, null);
         } catch (Exception e) {
             log.error("failed to send watcher notification for comment tenantId={} workitemId={} commentId={}",
                     event.tenantId(), event.workitemId(), event.commentId(), e);
@@ -95,10 +102,14 @@ public class InAppWorkitemWatcherListener {
             if (isHuman(event.actorType())) {
                 excluded.add(event.actorRef());
             }
+            String assignee = humanName(event.recipientUserId());
             notifyWatchers(event.tenantId(), event.workitemId(), TYPE_ASSIGNED, "你关注的工单变更了负责人",
                     event.actorDisplayName() + " 将「" + event.workitemTitle() + "」指派给了 "
-                            + humanName(event.recipientUserId()),
-                    excluded);
+                            + assignee,
+                    excluded, "notification.watcher.human_assigned",
+                    new Object[]{event.actorDisplayName(), event.workitemTitle(), assignee},
+                    event.actorNameKind() == null ? null : locale -> new Object[]{com.aliyun.autowonder.workitem.AssignmentActor.recipientDisplayName(
+                            event.actorDisplayName(), event.actorNameKind(), locale), event.workitemTitle(), assignee});
         } catch (Exception e) {
             log.error("failed to send watcher notification for human assignment tenantId={} workitemId={}",
                     event.tenantId(), event.workitemId(), e);
@@ -114,9 +125,14 @@ public class InAppWorkitemWatcherListener {
             }
             Set<Long> excluded = new HashSet<>();
             excluded.add(event.getUserId());
+            String agent = agentName(event.getAgentId());
+            boolean missingAgentId = event.getAgentId() == null;
+            String workitemTitle = workitem.getTitle();
             notifyWatchers(event.getTenantId(), event.getWorkitemId(), TYPE_ASSIGNED, "你关注的工单变更了负责人",
-                    "「" + workitem.getTitle() + "」已指派给数字员工 " + agentName(event.getAgentId()),
-                    excluded);
+                    "「" + workitemTitle + "」已指派给数字员工 " + agent,
+                    excluded, "notification.watcher.agent_assigned", new Object[]{workitemTitle, agent},
+                    missingAgentId ? locale -> new Object[]{workitemTitle,
+                            SystemMessages.render("notification.agent_fallback", null, agent, locale)} : null);
         } catch (Exception e) {
             log.error("failed to send watcher notification for agent assignment tenantId={} workitemId={}",
                     event.getTenantId(), event.getWorkitemId(), e);
@@ -136,11 +152,16 @@ public class InAppWorkitemWatcherListener {
             if (event.isHumanActor()) {
                 excluded.add(event.userId());
             }
+            String status = statusName(node);
+            boolean missingStatus = node == null || ((node.getName() == null || node.getName().isBlank()) && node.getCode() == null);
+            String workitemTitle = workitem.getTitle();
             notifyWatchers(event.tenantId(), event.workitemId(),
                     completed ? TYPE_COMPLETED : TYPE_STATUS_CHANGED,
                     completed ? "你关注的工单已完成/关闭" : "你关注的工单状态有更新",
-                    "「" + workitem.getTitle() + "」状态变更为 " + statusName(node),
-                    excluded);
+                    "「" + workitemTitle + "」状态变更为 " + status,
+                    excluded, "notification.watcher.status", new Object[]{workitemTitle, status},
+                    missingStatus ? locale -> new Object[]{workitemTitle,
+                            SystemMessages.render("notification.status_fallback", null, status, locale)} : null);
         } catch (Exception e) {
             log.error("failed to send watcher notification for status change tenantId={} workitemId={} toNodeId={}",
                     event.tenantId(), event.workitemId(), event.toNodeId(), e);
@@ -148,7 +169,7 @@ public class InAppWorkitemWatcherListener {
     }
 
     private void notifyWatchers(long tenantId, long workitemId, String type, String title, String content,
-            Set<Long> excludedRecipients) {
+            Set<Long> excludedRecipients, String contentKey, Object[] contentArgs, Function<Locale, Object[]> contentArgsResolver) {
         List<Long> recipients = new ArrayList<>();
         for (Long userId : watcherService.watcherUserIds(tenantId, workitemId)) {
             if (userId != null && !excludedRecipients.contains(userId)) {
@@ -163,6 +184,10 @@ public class InAppWorkitemWatcherListener {
         notifyEvent.setType(type);
         notifyEvent.setTitle(title);
         notifyEvent.setContent(content);
+        notifyEvent.setTitleKey("notification.watcher.title." + type.toLowerCase(Locale.ROOT));
+        notifyEvent.setContentKey(contentKey);
+        notifyEvent.setContentArgs(contentArgs);
+        notifyEvent.setContentArgsResolver(contentArgsResolver);
         notifyEvent.setLink("/workitems/" + workitemId);
         notifyEvent.setRefType("WORKITEM");
         notifyEvent.setRefId(workitemId);
@@ -227,8 +252,8 @@ public class InAppWorkitemWatcherListener {
     }
 
     private String humanName(long userId) {
-        UserDO user = userDao.findById(userId);
-        String name = WorkitemWatcherService.userName(user);
+        UserDO user = userDao.findByIdIncludingDeleted(userId);
+        String name = UserAccountStates.displayName(user);
         return name == null || name.isBlank() ? String.valueOf(userId) : name;
     }
 

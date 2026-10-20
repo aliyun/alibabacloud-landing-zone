@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Badge } from 'antd';
 import { BellOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
@@ -5,6 +6,7 @@ import { apiClient } from '@/shared/api/client';
 import { useNavigate } from 'react-router-dom';
 
 export function NotificationBell({ fetchUnread = true }: { fetchUnread?: boolean }) {
+  const { t } = useTranslation('shared');
   const navigate = useNavigate();
 
   const { data: unreadCount = 0 } = useQuery({
@@ -22,7 +24,7 @@ export function NotificationBell({ fetchUnread = true }: { fetchUnread?: boolean
       {/* role=img 的图标 span 不可聚焦，包一层原生 button 才能让键盘用户进入通知中心 */}
       <button
         type="button"
-        aria-label="通知中心"
+        aria-label={t('notifications')}
         onClick={() => navigate('/notifications')}
         style={{
           display: 'inline-flex',
@@ -33,7 +35,7 @@ export function NotificationBell({ fetchUnread = true }: { fetchUnread?: boolean
           cursor: 'pointer',
         }}
       >
-        <BellOutlined style={{ fontSize: 18 }} aria-label="bell" />
+        <BellOutlined style={{ fontSize: 18 }} aria-hidden />
       </button>
     </Badge>
   );

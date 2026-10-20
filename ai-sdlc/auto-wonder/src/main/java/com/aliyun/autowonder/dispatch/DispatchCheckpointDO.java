@@ -9,6 +9,8 @@ import java.util.Date;
 @Setter
 public class DispatchCheckpointDO {
     private Long id;
+    private String completionResultId;
+    private boolean gcPending;
     private Long tenantId;
     private Long workitemId;
     private Long dispatchId;

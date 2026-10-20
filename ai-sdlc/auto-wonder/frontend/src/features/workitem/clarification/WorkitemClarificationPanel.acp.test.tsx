@@ -101,7 +101,7 @@ async function renderPanel(conv: PanelConversation) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <WorkitemClarificationPanel workitemId="100" agents={[] as never} />
+      <WorkitemClarificationPanel workitemId="100" />
     </QueryClientProvider>,
   );
   await waitFor(() => expect(realtime.callback).not.toBeNull());
@@ -744,5 +744,204 @@ describe('WorkitemClarificationPanel ACP 交互接线', () => {
 
     await screen.findByPlaceholderText('输入消息...');
     await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
+  });
+});
+
+// 工单 55851：卡片被系统取消 / 轮次异常结束后的输入恢复与滚动无关性。
+describe('WorkitemClarificationPanel 卡片异常结束与输入恢复（工单 55851）', () => {
+  beforeEach(() => {
+    detailCalls = 0;
+    refreshCalls = 0;
+  });
+
+  afterEach(() => {
+    clearClarificationPrefill('100');
+    realtime.callback = null;
+    vi.restoreAllMocks();
+  });
+
+  // 验收：仅上下滚动不会发 reply/cancel/decline 请求，问题卡片不被滚动结束。
+  it('滚动不触发任何卡片提交，卡片保持可作答', async () => {
+    const cardPosts: string[] = [];
+    await renderPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      cancelSupported: true,
+      pendingElicitations: [{
+        requestId: 'req-scroll', turnId: 3, mode: 'form', message: '滚动无关的卡片',
+        requestedSchema: SELECT_SCHEMA, status: 'PENDING', gmtCreate: '',
+      }],
+      turns: [{ id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING' }],
+    });
+    expect(await screen.findByTestId('elicitation-wizard-req-scroll')).toBeInTheDocument();
+    server.use(
+      http.post(
+        '/api/workitems/:workitemId/clarification-conversations/:conversationId/turns',
+        ({ request }) => { cardPosts.push(new URL(request.url).pathname); return ok(null); },
+      ),
+      http.post(
+        '/api/workitems/:workitemId/clarification-conversations/:conversationId/turns/:turnId/cancel',
+        ({ request }) => { cardPosts.push(new URL(request.url).pathname); return ok(null); },
+      ),
+      http.post(
+        '/api/workitems/:workitemId/clarification-conversations/:conversationId/elicitations/:requestId/reply',
+        ({ request }) => { cardPosts.push(new URL(request.url).pathname); return ok(null); },
+      ),
+    );
+
+    const scrollEl = screen.getByTestId('clarification-message-scroll');
+    Object.defineProperty(scrollEl, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(scrollEl, 'clientHeight', { configurable: true, value: 300 });
+    Object.defineProperty(scrollEl, 'scrollTop', { configurable: true, value: 100 });
+    fireEvent.scroll(scrollEl);
+    fireEvent.wheel(scrollEl, { deltaY: -240 });
+    fireEvent.scroll(scrollEl);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(cardPosts).toHaveLength(0);
+    expect(screen.getByTestId('elicitation-wizard-req-scroll')).toBeInTheDocument();
+    expect(screen.getByText('滚动无关的卡片')).toBeInTheDocument();
+  });
+
+  // 现场形态：系统取消卡片、AI 改文字澄清并结束本轮（流终态已到），详情滞后仍报
+  // PROCESSING。输入不再是无提示禁用：给出「结算中」状态与重试入口；后端结算后
+  // 无需退出重进，输入即可用。
+  it('卡片被取消且详情滞后时给出结算中状态，结算后输入恢复', async () => {
+    const { queryClient } = await renderPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      pendingElicitations: [{
+        requestId: 'req-canceled', turnId: 3, mode: 'form', message: '选一个',
+        requestedSchema: SELECT_SCHEMA, status: 'PENDING', gmtCreate: '',
+      }],
+      turns: [{ id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING' }],
+    });
+    expect(await screen.findByTestId('elicitation-wizard-req-canceled')).toBeInTheDocument();
+
+    // 系统取消卡片 → AI 改用文字澄清并结束本轮
+    emit(1, 'acp_elicitation_resolved', {
+      type: 'acp_elicitation_resolved',
+      data: { requestId: 'req-canceled', action: 'cancel' },
+    });
+    emit(2, 'text', { type: 'text', content: '既然问题卡片被取消，我用文字汇总' });
+    emit(3, 'status', { type: 'status', status: 'completed' });
+
+    // 卡片撤下、回复指示隐藏（流终态），详情未结算：输入必须有明确状态，不能静默禁用
+    await waitFor(() =>
+      expect(screen.queryByTestId('elicitation-wizard-req-canceled')).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull());
+    expect(await screen.findByTestId('clarification-settling-notice')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('输入消息...')).toBeDisabled();
+
+    // 后端结算：提示消失、输入可用（无需退出澄清再进入）
+    mockPanel({
+      processingStatus: null,
+      processingTurnId: null,
+      turns: [
+        { id: 3, direction: 'INBOUND', content: '请给方案', status: 'SUCCESS' },
+        { id: 4, direction: 'OUTBOUND', content: '既然问题卡片被取消，我用文字汇总', status: 'COMPLETED' },
+      ],
+    });
+    refetchConversation(queryClient);
+
+    await waitFor(() => expect(screen.queryByTestId('clarification-settling-notice')).toBeNull());
+    await waitFor(() => expect(screen.getByPlaceholderText('输入消息...')).toBeEnabled());
+  });
+});
+
+// 工单 56330：澄清面板的问题卡片支持一键收起/展开，结算后先淡出再卸载。
+describe('WorkitemClarificationPanel 问题卡片收起/展开（工单 56330）', () => {
+  beforeEach(() => {
+    detailCalls = 0;
+    refreshCalls = 0;
+  });
+
+  afterEach(() => {
+    clearClarificationPrefill('100');
+    realtime.callback = null;
+    vi.restoreAllMocks();
+  });
+
+  it('澄清面板的卡片带收起入口，收起后仅保留标题行且不恢复自由输入', async () => {
+    await renderPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      pendingElicitations: [{
+        requestId: 'req-collapse', turnId: 3, mode: 'form', message: '选一个',
+        requestedSchema: SELECT_SCHEMA, status: 'PENDING', gmtCreate: '',
+      }],
+      turns: [{ id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING' }],
+    });
+    await screen.findByTestId('elicitation-wizard-req-collapse');
+
+    fireEvent.click(screen.getByTestId('elicitation-toggle-req-collapse'));
+    expect(screen.getByTestId('elicitation-collapsed-req-collapse')).toBeInTheDocument();
+    expect(screen.getByTestId('elicitation-count-req-collapse')).toHaveTextContent('第 1/1 题');
+    expect(screen.queryByTestId('elicitation-skip-req-collapse')).toBeNull();
+    expect(screen.queryByTestId('elicitation-submit-req-collapse')).toBeNull();
+    expect(screen.queryByPlaceholderText('输入消息...')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('elicitation-toggle-req-collapse'));
+    expect(screen.getByTestId('elicitation-skip-req-collapse')).toBeInTheDocument();
+    expect(screen.queryByTestId('elicitation-collapsed-req-collapse')).toBeNull();
+  });
+
+  it('结算后卡片先淡出再卸载，期间输入框不提前出现', async () => {
+    await renderPanel({ acpInteractionSupported: true });
+    await screen.findByPlaceholderText('输入消息...');
+    emit(1, 'acp_elicitation', {
+      type: 'acp_elicitation',
+      data: {
+        requestId: 'req-fade', mode: 'form', message: '选一个',
+        requestedSchema: JSON.parse(SELECT_SCHEMA),
+      },
+    });
+    const wizard = await screen.findByTestId('elicitation-wizard-req-fade');
+    expect(wizard).not.toHaveClass('is-dismissing');
+
+    emit(2, 'acp_elicitation_resolved', {
+      type: 'acp_elicitation_resolved',
+      data: { requestId: 'req-fade', action: 'accept', content: { q0: 'nextjs' } },
+    });
+
+    // 淡出窗口内：卡片仍在原位并标记 is-dismissing，输入框不得同时出现
+    expect(screen.getByTestId('elicitation-wizard-req-fade')).toHaveClass('is-dismissing');
+    expect(screen.queryByPlaceholderText('输入消息...')).toBeNull();
+
+    // 窗口结束：卡片卸载、输入框恢复
+    await screen.findByPlaceholderText('输入消息...');
+    await waitFor(() => expect(screen.queryByTestId('elicitation-wizard-req-fade')).toBeNull());
+  });
+
+  it('下一组问题（新 requestId）默认展开，不继承上一组的收起状态', async () => {
+    await renderPanel({
+      acpInteractionSupported: true,
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      turns: [{ id: 3, direction: 'INBOUND', content: '请给方案', status: 'PROCESSING' }],
+    });
+    await screen.findByText('请给方案');
+    const oneQ = {
+      type: 'object',
+      properties: { z0: { type: 'string', title: '单问题', oneOf: [{ const: 'X', title: 'X' }] } },
+      required: ['z0'],
+    };
+
+    emit(1, 'acp_elicitation', { type: 'acp_elicitation', data: { requestId: 'req-A', mode: 'form', message: '第一组', requestedSchema: oneQ } });
+    emit(2, 'acp_elicitation', { type: 'acp_elicitation', data: { requestId: 'req-B', mode: 'form', message: '第二组', requestedSchema: oneQ } });
+    await screen.findByTestId('elicitation-wizard-req-A');
+
+    fireEvent.click(screen.getByTestId('elicitation-toggle-req-A'));
+    expect(screen.getByTestId('elicitation-collapsed-req-A')).toBeInTheDocument();
+
+    emit(3, 'acp_elicitation_resolved', { type: 'acp_elicitation_resolved', data: { requestId: 'req-A', action: 'accept', content: { z0: 'X' } } });
+
+    const nextToggle = await screen.findByTestId('elicitation-toggle-req-B');
+    expect(nextToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByTestId('elicitation-collapsed-req-B')).toBeNull();
   });
 });

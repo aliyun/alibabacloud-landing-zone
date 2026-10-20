@@ -36,6 +36,16 @@ describe('StartDeliveryModal', () => {
     mutateAsync.mockReset();
   });
 
+  it('keeps invalid delivery confirmation inline without assignment or closing', async () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    const close = vi.fn();
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><StartDeliveryModal open workitemId={10000} onClose={close} /></QueryClientProvider>);
+    await userEvent.click(screen.getByRole('button', { name: /启\s*动\s*交\s*付/ }));
+    expect(await screen.findByText('请选择小队')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
+  });
+
   it('loads squads instead of online agents and hides SDLC selection', async () => {
     const requestedAgentUrls: string[] = [];
     let squadsRequested = false;

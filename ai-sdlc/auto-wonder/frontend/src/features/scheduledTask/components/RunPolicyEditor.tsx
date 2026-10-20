@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Form, InputNumber, Select } from 'antd';
 import type { OverlapPolicy, SessionMode } from '../types';
 
@@ -12,6 +13,7 @@ export function normalizeRunPolicy(value: { sessionMode: SessionMode; overlapPol
 }
 
 export function RunPolicyEditor() {
+  const { t } = useTranslation('scheduledTask');
   const form = Form.useFormInstance();
   const sessionMode = Form.useWatch('sessionMode', form) as SessionMode | undefined;
   const continuous = sessionMode === 'CONTINUOUS';
@@ -25,16 +27,16 @@ export function RunPolicyEditor() {
     form.setFieldsValue(normalized);
   };
   return <>
-    <Form.Item name="sessionMode" label="会话模式" rules={[{ required: true }]}>
-      <Select onChange={onSessionChange} options={[{ value: 'ISOLATED', label: '单次隔离会话（推荐）' }, { value: 'CONTINUOUS', label: '连续会话' }]} />
+    <Form.Item name="sessionMode" label={t('form.sessionMode')} rules={[{ required: true, message: t('validation.required', { field: t('form.sessionMode') }) }]}>
+      <Select onChange={onSessionChange} options={[{ value: 'ISOLATED', label: t('session.isolatedRecommended') }, { value: 'CONTINUOUS', label: t('session.continuous') }]} />
     </Form.Item>
-    <Form.Item name="overlapPolicy" label="重叠执行策略" rules={[{ required: true }]}>
-      <Select options={[{ value: 'SKIP', label: '跳过本次' }, { value: 'QUEUE', label: '排队等待' }, ...(continuous ? [] : [{ value: 'ALLOW', label: '允许并行' }])]} />
+    <Form.Item name="overlapPolicy" label={t('form.overlapExecution')} rules={[{ required: true, message: t('validation.required', { field: t('form.overlapExecution') }) }]}>
+      <Select options={[{ value: 'SKIP', label: t('overlap.skip') }, { value: 'QUEUE', label: t('overlap.queue') }, ...(continuous ? [] : [{ value: 'ALLOW', label: t('overlap.allow') }])]} />
     </Form.Item>
-    <Form.Item name="misfirePolicy" label="错过触发策略" rules={[{ required: true }]}>
-      <Select options={[{ value: 'SKIP_ALL', label: '全部跳过' }, { value: 'FIRE_LATEST', label: '补跑最近一次' }, { value: 'FIRE_ALL', label: '全部补跑' }]} />
+    <Form.Item name="misfirePolicy" label={t('form.missedTrigger')} rules={[{ required: true, message: t('validation.required', { field: t('form.missedTrigger') }) }]}>
+      <Select options={[{ value: 'SKIP_ALL', label: t('misfire.skipAll') }, { value: 'FIRE_LATEST', label: t('misfire.fireLatest') }, { value: 'FIRE_ALL', label: t('misfire.fireAll') }]} />
     </Form.Item>
-    <Form.Item name="startDeadlineSeconds" label="启动超时（秒）" rules={[{ required: true }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-    <Form.Item name="affinityTimeoutSeconds" label="连续会话亲和超时（秒）" rules={[{ required: true }]}><InputNumber min={continuous ? 1 : 0} style={{ width: '100%' }} /></Form.Item>
+    <Form.Item name="startDeadlineSeconds" label={t('form.startDeadline')} rules={[{ required: true, message: t('validation.numberRequired', { field: t('form.startDeadline') }) }]}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
+    <Form.Item name="affinityTimeoutSeconds" label={t('form.affinityTimeout')} rules={[{ required: true, message: t('validation.numberRequired', { field: t('form.affinityTimeout') }) }]}><InputNumber min={continuous ? 1 : 0} style={{ width: '100%' }} /></Form.Item>
   </>;
 }

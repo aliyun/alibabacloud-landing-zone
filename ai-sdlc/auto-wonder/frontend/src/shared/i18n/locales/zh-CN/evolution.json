@@ -1,0 +1,116 @@
+{
+  "pageTitle": "自进化",
+  "actions": {
+    "refresh": "刷新",
+    "submitDelta": "提交 Delta",
+    "validate": "验证",
+    "replay": "回放",
+    "trialPass": "试验通过",
+    "trialFail": "试验失败",
+    "decide": "决策",
+    "approve": "批准",
+    "agentRelease": "发布数字员工",
+    "release": "发布",
+    "rollback": "回滚",
+    "reject": "拒绝",
+    "submit": "提交",
+    "record": "记录",
+    "cancel": "取消",
+    "close": "关闭",
+    "confirm": "确认"
+  },
+  "commands": {
+    "validate": "验证进化候选",
+    "replay": "记录进化 Replay",
+    "trialPass": "记录进化试验通过",
+    "trialFail": "记录进化试验失败",
+    "decide": "决策进化试验",
+    "approve": "批准进化候选",
+    "agentRelease": "发布数字员工进化",
+    "release": "发布进化候选",
+    "rollback": "回滚进化发布",
+    "reject": "拒绝进化候选",
+    "submitDelta": "提交进化 Delta"
+  },
+  "columns": {
+    "id": "ID",
+    "asset": "资产",
+    "status": "状态",
+    "trigger": "触发",
+    "action": "动作",
+    "policy": "策略",
+    "trial": "试验",
+    "candidateSummary": "候选摘要",
+    "createdAt": "创建时间",
+    "actions": "操作",
+    "posterior": "后验类型",
+    "context": "上下文",
+    "source": "来源",
+    "sourceRef": "来源引用",
+    "outcome": "结果",
+    "mean": "均值",
+    "sampleSize": "样本数",
+    "time": "时间",
+    "name": "名称",
+    "category": "分类",
+    "triggerHint": "触发提示",
+    "lazyLoadRef": "延迟加载引用"
+  },
+  "proposalStatus": {
+    "proposed": "已提出",
+    "validated": "已验证",
+    "trial": "试验中",
+    "replayPassed": "回放通过",
+    "replayFail": "回放失败",
+    "replayInconclusive": "回放无结论",
+    "approved": "已批准",
+    "released": "已发布",
+    "rejected": "已拒绝"
+  },
+  "assetType": {
+    "memory": "记忆",
+    "repoRelation": "仓库关系",
+    "skill": "技能"
+  },
+  "verdict": {
+    "pass": "通过",
+    "fail": "失败",
+    "inconclusive": "无结论",
+    "positive": "正向",
+    "negative": "负向"
+  },
+  "decision": {
+    "continueTrial": "继续试验",
+    "adopt": "采纳",
+    "reject": "拒绝"
+  },
+  "trial": {
+    "posterior": "基线 {{baseline}} / 候选 {{candidate}} · N={{samples}}",
+    "probability": "胜出概率 {{win}} / 落败概率 {{lose}} · 提升 {{lift}}"
+  },
+  "confirm": {
+    "rollback": "确认回滚该发布？",
+    "reject": "确认拒绝该候选？"
+  },
+  "messages": {
+    "actionSubmitted": "操作已提交",
+    "replayRecorded": "Replay 已记录",
+    "enteredTrial": "已进入试验 #{{id}}",
+    "submitted": "已提交：{{action}}",
+    "invalidDelta": "Delta JSON 不是合法 JSON",
+    "invalidReplay": "Replay JSON 不是合法 JSON"
+  },
+  "forms": {
+    "deltaTitle": "提交 Worker Delta",
+    "replayTitle": "记录 Replay #{{id}}",
+    "deltaJson": "Delta JSON",
+    "replayJson": "Replay JSON",
+    "deltaRequired": "请输入 Delta JSON",
+    "replayRequired": "请输入 Replay JSON"
+  },
+  "tabs": {
+    "proposals_other": "候选收件箱 ({{count}})",
+    "evidence_other": "审计证据 ({{count}})",
+    "manifest_other": "资产清单 ({{count}})"
+  }
+}

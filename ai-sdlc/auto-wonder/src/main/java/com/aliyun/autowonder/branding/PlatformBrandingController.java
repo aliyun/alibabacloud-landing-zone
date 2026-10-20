@@ -53,14 +53,14 @@ public class PlatformBrandingController {
     @PutMapping
     public Result<PlatformBrandingVO> update(@RequestBody UpdatePlatformBrandingRequest request) {
         systemAdminService.requireSystemAdmin(
-                AutoWonderContext.get().getUserId(), "修改平台配置");
+                AutoWonderContext.get().getUserId(), "修改平台配置", "access.admin.branding_denied");
         return Result.ok(brandingService.update(AutoWonderContext.get().getUserId(), request));
     }
 
     @PostMapping(value = "/logo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<LogoUploadVO> uploadLogo(@RequestParam("file") MultipartFile file) {
         systemAdminService.requireSystemAdmin(
-                AutoWonderContext.get().getUserId(), "上传平台 Logo");
+                AutoWonderContext.get().getUserId(), "上传平台 Logo", "access.admin.logo_denied");
         return Result.ok(brandingService.uploadLogo(AutoWonderContext.get().getUserId(), file));
     }
 

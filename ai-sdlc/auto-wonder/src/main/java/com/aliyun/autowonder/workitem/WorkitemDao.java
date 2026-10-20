@@ -10,8 +10,15 @@ import java.util.List;
 @Mapper
 public interface WorkitemDao {
     List<WorkitemDO> listByIds(@Param("tenantId") Long tenantId, @Param("ids") Collection<Long> ids);
+    List<Long> listPendingHumanRequestWorkitemIds(@Param("tenantId") Long tenantId, @Param("ids") Collection<Long> ids);
+    List<Long> listHumanRequestActors(@Param("tenantId") Long tenantId, @Param("workitemId") Long workitemId);
     void insert(WorkitemDO w);
     WorkitemDO findById(@Param("id") Long id);
+    /**
+     * 跨项目归属解析专用：只回传 tenant_id，并已在
+     * {@code TenantInterceptor.CROSS_TENANT_STATEMENTS} 显式登记、不做租户改写。
+     */
+    Long findTenantIdById(@Param("id") Long id);
     WorkitemDO findByIdForUpdate(@Param("id") Long id, @Param("tenantId") Long tenantId);
     List<WorkitemDO> listByOrigin(@Param("tenantId") Long tenantId,
                                   @Param("originType") String originType,
@@ -28,6 +35,7 @@ public interface WorkitemDao {
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
             @Param("tag") String tag,
             @Param("scheduledStart") String scheduledStart,
+            @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo,
             @Param("offset") int offset, @Param("limit") int limit);
     long count(@Param("tenantId") Long tenantId,
             @Param("workType") String workType,
@@ -40,7 +48,8 @@ public interface WorkitemDao {
             @Param("currentUserId") Long currentUserId,
             @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
             @Param("tag") String tag,
-            @Param("scheduledStart") String scheduledStart);
+            @Param("scheduledStart") String scheduledStart,
+            @Param("createdFrom") Date createdFrom, @Param("createdTo") Date createdTo);
     int updateContent(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("title") String title, @Param("contentMd") String contentMd,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
@@ -49,6 +58,20 @@ public interface WorkitemDao {
             @Param("priority") Integer priority,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int softDelete(@Param("id") Long id, @Param("tenantId") Long tenantId,
+            @Param("version") Integer version, @Param("modifierId") Long modifierId);
+    WorkitemDO findByIdIncludingDeleted(@Param("id") Long id);
+    List<WorkitemDO> listRecycled(@Param("tenantId") Long tenantId,
+            @Param("workType") String workType,
+            @Param("assigneeType") String assigneeType,
+            @Param("assigneeRef") Long assigneeRef,
+            @Param("keyword") String keyword, @Param("keywordId") Long keywordId,
+            @Param("offset") int offset, @Param("limit") int limit);
+    long countRecycled(@Param("tenantId") Long tenantId,
+            @Param("workType") String workType,
+            @Param("assigneeType") String assigneeType,
+            @Param("assigneeRef") Long assigneeRef,
+            @Param("keyword") String keyword, @Param("keywordId") Long keywordId);
+    int restore(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int updateStatus(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("statusNodeId") Long statusNodeId,

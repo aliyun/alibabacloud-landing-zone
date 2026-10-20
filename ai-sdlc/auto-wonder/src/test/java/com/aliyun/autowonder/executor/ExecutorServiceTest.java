@@ -303,6 +303,17 @@ class ExecutorServiceTest {
     }
 
     @Test
+    void list_maps_lastConnectHostname() {
+        ExecutorDO e = exec(1L, 5L);
+        e.setLastConnectHostname("build-mac-01");
+        when(executorDao.listByAgent(100L, 5L)).thenReturn(List.of(e));
+
+        List<ExecutorVO> vos = service.listByAgent(5L, 100L);
+
+        assertEquals("build-mac-01", vos.get(0).getLastConnectHostname());
+    }
+
+    @Test
     void getToken_returns_resolved_plaintext() {
         ExecutorDO e = exec(9L, 5L);
         e.setTokenRef("b64:dGVzdA==");
@@ -420,21 +431,55 @@ class ExecutorServiceTest {
     }
 
     @Test
-    void recordLastConnectIp_validIp_callsDao() {
-        service.recordLastConnectIp(1L, 100L, "203.0.113.50");
-        verify(executorDao).updateLastConnectIp(1L, 100L, "203.0.113.50", null);
+    void recordLastConnectInfo_validIp_callsDao() {
+        service.recordLastConnectInfo(1L, 100L, "203.0.113.50", null);
+        verify(executorDao).updateLastConnectInfo(1L, 100L, "203.0.113.50", null, null);
     }
 
     @Test
-    void recordLastConnectIp_blankIp_skipsDao() {
-        service.recordLastConnectIp(1L, 100L, "  ");
-        verify(executorDao, never()).updateLastConnectIp(anyLong(), anyLong(), anyString(), any());
+    void recordLastConnectInfo_validHostname_callsDao() {
+        service.recordLastConnectInfo(1L, 100L, "203.0.113.50", "build-mac-01");
+        verify(executorDao).updateLastConnectInfo(1L, 100L, "203.0.113.50", "build-mac-01", null);
     }
 
     @Test
-    void recordLastConnectIp_nullIp_skipsDao() {
-        service.recordLastConnectIp(1L, 100L, null);
-        verify(executorDao, never()).updateLastConnectIp(anyLong(), anyLong(), anyString(), any());
+    void recordLastConnectInfo_hostnameOnly_writesNullIpAlongside() {
+        service.recordLastConnectInfo(1L, 100L, null, "build-mac-01");
+        verify(executorDao).updateLastConnectInfo(1L, 100L, null, "build-mac-01", null);
+    }
+
+    @Test
+    void recordLastConnectInfo_hostnameStripsControlCharacters() {
+        service.recordLastConnectInfo(1L, 100L, null, "build-\nmac-01\t");
+        verify(executorDao).updateLastConnectInfo(1L, 100L, null, "build-mac-01", null);
+    }
+
+    @Test
+    void recordLastConnectInfo_hostnameTruncatesToColumnWidth() {
+        String longHostname = "a".repeat(200);
+        service.recordLastConnectInfo(1L, 100L, null, longHostname);
+        verify(executorDao).updateLastConnectInfo(1L, 100L, null, "a".repeat(128), null);
+    }
+
+    @Test
+    void recordLastConnectInfo_legacyReconnectClearsPreviousHostname() {
+        // 新版 host-A 接入后旧客户端从 host-B 重连：本次未上报就必须清空，不能留下 host-A 的标识
+        service.recordLastConnectInfo(1L, 100L, "203.0.113.50", "host-a");
+        service.recordLastConnectInfo(1L, 100L, "203.0.113.60", null);
+        verify(executorDao).updateLastConnectInfo(1L, 100L, "203.0.113.50", "host-a", null);
+        verify(executorDao).updateLastConnectInfo(1L, 100L, "203.0.113.60", null, null);
+    }
+
+    @Test
+    void recordLastConnectInfo_blankValuesStillClearPreviousConnection() {
+        service.recordLastConnectInfo(1L, 100L, "  ", "  ");
+        verify(executorDao).updateLastConnectInfo(1L, 100L, null, null, null);
+    }
+
+    @Test
+    void recordLastConnectInfo_nullValuesStillClearPreviousConnection() {
+        service.recordLastConnectInfo(1L, 100L, null, null);
+        verify(executorDao).updateLastConnectInfo(1L, 100L, null, null, null);
     }
 
     @Test

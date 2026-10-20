@@ -22,7 +22,7 @@ import java.util.Date;
 
 @RestController
 @RequestMapping("/api/scheduled-tasks")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务", actionKey = "access.action.view_scheduled_tasks")
 @RequiresScheduledTaskCapability(entry = "http")
 public class ScheduledTaskController {
     private final ScheduledTaskService taskService;
@@ -59,7 +59,7 @@ public class ScheduledTaskController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建定时任务", actionKey = "access.action.create_a_scheduled_task")
     public Result<ScheduledTaskVO> create(@RequestBody CreateScheduledTaskRequest request) {
         return Result.ok(taskService.create(request, workspaceId(), userId()));
     }
@@ -68,35 +68,35 @@ public class ScheduledTaskController {
     public Result<ScheduledTaskVO> get(@PathVariable long id) { return Result.ok(taskService.get(id, workspaceId())); }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新定时任务", actionKey = "access.action.update_a_scheduled_task")
     public Result<ScheduledTaskVO> update(@PathVariable long id, @RequestBody UpdateScheduledTaskRequest request) {
         requireOwnerOrAdmin(taskService.get(id, workspaceId()).getCreatorId());
         return Result.ok(taskService.update(id, request, workspaceId(), userId()));
     }
 
     @PostMapping("/{id}/enable")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "启用定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "启用定时任务", actionKey = "access.action.enable_a_scheduled_task")
     public Result<ScheduledTaskVO> enable(@PathVariable long id, @RequestParam Integer version) {
         requireOwnerOrAdmin(taskService.get(id, workspaceId()).getCreatorId());
         return Result.ok(taskService.enable(id, version, workspaceId(), userId()));
     }
 
     @PostMapping("/{id}/pause")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "暂停定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "暂停定时任务", actionKey = "access.action.pause_a_scheduled_task")
     public Result<ScheduledTaskVO> pause(@PathVariable long id, @RequestParam Integer version) {
         requireOwnerOrAdmin(taskService.get(id, workspaceId()).getCreatorId());
         return Result.ok(taskService.pause(id, version, workspaceId(), userId()));
     }
 
     @PostMapping("/{id}/archive")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "归档定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "归档定时任务", actionKey = "access.action.archive_a_scheduled_task")
     public Result<ScheduledTaskVO> archive(@PathVariable long id, @RequestParam Integer version) {
         requireOwnerOrAdmin(taskService.get(id, workspaceId()).getCreatorId());
         return Result.ok(taskService.archive(id, version, workspaceId(), userId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除定时任务", actionKey = "access.action.delete_a_scheduled_task")
     public Result<Void> delete(@PathVariable long id, @RequestParam Integer version) {
         requireOwnerOrAdmin(taskService.get(id, workspaceId()).getCreatorId());
         taskService.delete(id, version, workspaceId(), userId());
@@ -104,10 +104,10 @@ public class ScheduledTaskController {
     }
 
     @PostMapping("/{id}/run-now")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "立即运行定时任务")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "立即运行定时任务", actionKey = "access.action.run_a_scheduled_task_now")
     public Result<ScheduledTaskRunVO> runNow(@PathVariable long id, @RequestBody RunNowRequest request) {
         if (request == null || request.getRequestId() == null || request.getRequestId().isBlank()) {
-            throw new BizException(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED, "requestId 必须提供");
+            throw BizException.keyed(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED, "scheduled_task.validation.request_id_required", new Object[0], "requestId 必须提供");
         }
         ScheduledTaskVO task = taskService.get(id, workspaceId());
         requireOwnerOrAdmin(task.getCreatorId());

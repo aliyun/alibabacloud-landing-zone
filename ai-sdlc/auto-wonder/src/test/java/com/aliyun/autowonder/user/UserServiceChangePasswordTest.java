@@ -3,6 +3,7 @@ package com.aliyun.autowonder.user;
 import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
+import com.aliyun.autowonder.auth.session.SessionIssuanceService;
 import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.common.crypto.PasswordEncoderUtil;
 import com.aliyun.autowonder.common.error.BizException;
@@ -30,7 +31,8 @@ class UserServiceChangePasswordTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         JwtService jwtService = new JwtService(props);
         service = new UserService(userDao, jwtService, sessionService, props,
-                mock(WorkspaceMemberDao.class), mock(SystemAdminService.class));
+                mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
+                new SessionIssuanceService(jwtService, sessionService, props));
     }
 
     private UserDO userWithPassword(Long id, String password) {

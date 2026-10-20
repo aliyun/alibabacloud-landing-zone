@@ -18,6 +18,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WorkitemClassificationEvaluatorTest {
 
     @Test
+    void liveHumanRequestOverridesRunningAgentUntilAnsweredButNeverTerminalWorkitem() {
+        var running = new DispatchDO();
+        running.setStatus(DispatchStatus.RUNNING);
+        assertEquals("PENDING_DECISION", WorkitemClassificationEvaluator.classify(
+                "IN_PROGRESS", "AGENT", 7L, List.of(running), true));
+        assertEquals("IN_PROGRESS", WorkitemClassificationEvaluator.classify(
+                "IN_PROGRESS", "AGENT", 7L, List.of(running), false));
+        for (String terminal : List.of("DONE", "CANCELED")) {
+            assertEquals(terminal, WorkitemClassificationEvaluator.classify(
+                    terminal, "AGENT", 7L, List.of(running), true));
+        }
+    }
+
+    @Test
     void classifiesCanceledAsHiddenCanceledCategory() {
         assertEquals(WorkitemClassificationEvaluator.CATEGORY_CANCELED,
                 WorkitemClassificationEvaluator.classify("CANCELED", true, true, false));

@@ -38,4 +38,17 @@ class DispatchRecoveryControllerTest {
         verifyNoInteractions(presence);
         verify(dispatchService, never()).continueDispatch(anyLong(), anyLong(), anyLong(), anyLong());
     }
+
+    @Test
+    void ownedRecoveryValidationKeepsConflictDiagnosticAndCodeInEnglish() {
+        var controller = new DispatchRecoveryController(mock(DispatchService.class), mock(PresenceManager.class), mock(DispatchPauseService.class));
+        var ex = assertThrows(BizException.class, () -> controller.control(1L, new DispatchRecoveryController.ControlRequest(null, 0L, false)));
+        org.junit.jupiter.api.Assertions.assertEquals("action required", ex.getMessage());
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            org.junit.jupiter.api.Assertions.assertEquals("Choose a recovery action.", com.aliyun.autowonder.common.result.Result.fail(ex).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
 }

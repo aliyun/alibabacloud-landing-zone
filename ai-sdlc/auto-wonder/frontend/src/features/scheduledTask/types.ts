@@ -122,6 +122,7 @@ export interface ScheduledRunMentionCandidate {
   executorStatus?: string | null;
   mentionable?: boolean;
   mentionDisabledReason?: string | null;
+  mentionDisabledReasonCode?: string | null;
 }
 
 export interface ScheduledRunCommentBody {

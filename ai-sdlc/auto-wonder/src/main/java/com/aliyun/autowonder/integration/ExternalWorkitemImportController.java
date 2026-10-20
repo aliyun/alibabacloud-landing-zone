@@ -29,13 +29,13 @@ public class ExternalWorkitemImportController {
     }
 
     @PostMapping("/import")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "导入外部工单")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "导入外部工单", actionKey = "access.action.import_an_external_work_item")
     public Result<ExternalWorkitemImportResult> importWorkitem(@RequestBody ExternalWorkitemImportRequest req) {
         return Result.ok(importService.importWorkitem(req, currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/import-records")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看外部工单导入记录")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看外部工单导入记录", actionKey = "access.action.view_external_work_item_import_records")
     public Result<List<ExternalWorkitemImportRecordVO>> listRecords(
             @RequestParam(value = "sourceSystem", required = false) String sourceSystem,
             @RequestParam(value = "externalWorkitemId", required = false) String externalWorkitemId,

@@ -52,6 +52,36 @@ describe('useAccessCommand', () => {
     expect(commandResult).toBe('done');
   });
 
+  it('blocks writes to a read-only domain', () => {
+    const error = vi.spyOn(message, 'error').mockImplementation(
+      () => undefined as unknown as ReturnType<typeof message.error>,
+    );
+    const command = vi.fn();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setReadOnlyDomains(['SDLC']);
+    const { result } = renderHook(() => useAccessCommand());
+
+    act(() => result.current('READ_WRITE', '更新SDLC流程', command, 'SDLC'));
+
+    expect(error).toHaveBeenCalledWith('「SDLC 流程」对当前角色为只读，无法更新SDLC流程。');
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('allows writes to other domains', () => {
+    const command = vi.fn(() => 'done');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    useAuthStore.getState().setReadOnlyDomains(['SDLC']);
+    const { result } = renderHook(() => useAccessCommand());
+    let commandResult: string | undefined;
+
+    act(() => {
+      commandResult = result.current('READ_WRITE', '编辑工单', command, 'WORKITEM');
+    });
+
+    expect(command).toHaveBeenCalledTimes(1);
+    expect(commandResult).toBe('done');
+  });
+
   it('rechecks the latest store level when an existing callback is invoked', () => {
     const error = vi.spyOn(message, 'error').mockImplementation(
       () => undefined as unknown as ReturnType<typeof message.error>,
@@ -72,4 +102,22 @@ describe('useAccessCommand', () => {
     expect(error).toHaveBeenCalledWith('当前为只读权限，编辑成员需要管理员权限');
     expect(command).not.toHaveBeenCalled();
   });
+  it.each(['READ_ONLY', 'READ_WRITE', 'ADMIN'] as const)('allows domain reads for %s', (level) => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, level);
+    useAuthStore.getState().setReadOnlyDomains(['SDLC']);
+    const command = vi.fn();
+    const { result } = renderHook(() => useAccessCommand());
+    act(() => result.current('READ_ONLY', '查看流程', command, 'SDLC'));
+    expect(command).toHaveBeenCalledOnce();
+  });
+
+  it('grants administrators all domain writes even with a stale snapshot', () => {
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'ADMIN');
+    useAuthStore.getState().setReadOnlyDomains(['SDLC']);
+    const command = vi.fn();
+    const { result } = renderHook(() => useAccessCommand());
+    act(() => result.current('ADMIN', '删除流程', command, 'SDLC'));
+    expect(command).toHaveBeenCalledOnce();
+  });
+
 });

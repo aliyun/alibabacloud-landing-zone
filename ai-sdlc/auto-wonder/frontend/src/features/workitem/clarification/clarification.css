@@ -108,3 +108,57 @@
 .aw-clarification-panel.is-fullscreen > :first-child { background: var(--aw-raised); }
 
 .aw-clarification-panel .aw-clarify-thinking .aw-clarify-md { font-size: 15px; }
+
+/* 问题卡片动效（工单 56330）：出现 / 消失 / 收起 / 展开用同一套轻量风格。
+   这些类只由澄清面板（collapsible）渲染出的卡片挂上，其他两处复用不受影响。 */
+.aw-elicitation-card {
+  animation: aw-elicitation-card-in 180ms ease-out;
+}
+
+/* 答完/跳过后的淡出：父级在 CLARIFICATION_CARD_DISMISS_MS 内保留卡片，期间不可交互。 */
+.aw-elicitation-card.is-dismissing {
+  animation: aw-elicitation-card-out 160ms ease-out forwards;
+  pointer-events: none;
+}
+
+/* 展开时题目区随高度展开一起淡入，与收起的高度折叠方向对称。 */
+.aw-elicitation-body {
+  animation: aw-elicitation-body-in 180ms ease-out;
+}
+
+/* 箭头轻量旋转反馈：展开态朝上（可收起），收起态朝下（可展开）。 */
+.aw-elicitation-toggle .aw-elicitation-chevron {
+  transition: transform 180ms ease-out;
+}
+
+.aw-elicitation-toggle[aria-expanded='true'] .aw-elicitation-chevron {
+  transform: rotate(180deg);
+}
+
+@keyframes aw-elicitation-card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes aw-elicitation-card-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes aw-elicitation-body-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 平台设计要求：系统开启「减少动画」偏好时全部动画与过渡禁用，瞬时呈现。 */
+@media (prefers-reduced-motion: reduce) {
+  .aw-elicitation-card,
+  .aw-elicitation-card.is-dismissing,
+  .aw-elicitation-body {
+    animation: none;
+  }
+
+  .aw-elicitation-toggle .aw-elicitation-chevron {
+    transition: none;
+  }
+}

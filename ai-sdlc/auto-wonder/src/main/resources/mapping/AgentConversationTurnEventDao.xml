@@ -59,6 +59,10 @@
     <delete id="deleteExpiredBatch">
         DELETE FROM agent_conversation_turn_event
         WHERE gmt_create &lt; #{cutoff}
+          AND NOT EXISTS (SELECT 1 FROM agent_conversation c
+              WHERE c.id = agent_conversation_turn_event.conversation_id
+                AND c.tenant_id = agent_conversation_turn_event.tenant_id
+                AND c.channel = 'PLATFORM_ASSISTANT')
         LIMIT #{limit}
     </delete>
 

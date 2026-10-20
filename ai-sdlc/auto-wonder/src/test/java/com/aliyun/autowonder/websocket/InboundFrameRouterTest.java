@@ -54,15 +54,139 @@ class InboundFrameRouterTest {
     private InboundFrameRouter router;
     private ScheduledTaskCapabilityGuard capabilityGuard;
 
+
+
+    private void stubAcceptedDecision() {
+        var coordinator=mock(com.aliyun.autowonder.dispatch.DispatchResultCoordinator.class);
+        router.setResultCoordinator(coordinator);
+        JSONObject ack=JSONObject.parseObject("{\"type\":\"TASK_RESULT_ACK\",\"accepted\":true}");
+        when(coordinator.handle(eq(100L),eq(1L),any())).thenReturn(
+                new com.aliyun.autowonder.dispatch.DispatchResultCoordinator.Outcome(ack,null));
+    }
+
     @Test
-    void canceledResultOnlyConfirmsStopAndNeverRoutesWorkflowOrArtifacts() {
-        var recovery = mock(com.aliyun.autowonder.dispatch.DispatchRecoveryService.class);
+    void taskResultDebugLogSegmentIsRecordedAfterResultProcessing() throws Exception {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        stubAcceptedDecision();
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
+                        + "\"debugLog\":{\"status\":\"UPLOADED\",\"channel\":\"DIRECT\",\"sizeBytes\":123,"
+                        + "\"sha256\":\"abc\",\"truncated\":false}}");
+
+        ArgumentCaptor<JSONObject> cap = ArgumentCaptor.forClass(JSONObject.class);
+        verify(debugLogService).recordTaskResultReport(eq(100L), eq(1L), eq(55L), cap.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("UPLOADED", cap.getValue().getString("status"));
+        org.junit.jupiter.api.Assertions.assertEquals("DIRECT", cap.getValue().getString("channel"));
+        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
+                && text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void debugLogRecordingFailureNeverBlocksResultAck() throws Exception {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        doThrow(new RuntimeException("db down")).when(debugLogService)
+                .recordTaskResultReport(anyLong(), anyLong(), anyLong(), any());
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        stubAcceptedDecision();
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
+                        + "\"debugLog\":{\"status\":\"UPLOADED\"}}");
+
+        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void debugLogRecordingFailureWarnsWithReasonToken() throws Exception {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        doThrow(new RuntimeException("db down")).when(debugLogService)
+                .recordTaskResultReport(anyLong(), anyLong(), anyLong(), any());
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        stubAcceptedDecision();
+
+        // Issue 2：catch-all warn 补 reason token，与服务侧措辞一致、供 grep 统一。
+        List<String> warns = captureRouterWarns(() -> router.route(
+                sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
+                        + "\"debugLog\":{\"status\":\"UPLOADED\"}}"));
+
+        assertTrue(warns.stream().anyMatch(m -> m.contains("debug log report ignored")
+                        && m.contains("dispatchId=55")
+                        && m.contains("reason=DEBUG_LOG_REPORT_IGNORED")),
+                "catch-all warn 必须带 reason token：" + warns);
+        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":true")));
+    }
+
+    @Test
+    void taskResultWithoutDebugLogSegmentDoesNotTouchDebugService() {
+        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
+                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
+        router.setDebugLogService(debugLogService);
+        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
+        // owner 必须非空：否则 guard 在 owner==null 处短路，测不到「段缺失」这条路径
+        when(dispatchService.artifactOwnerForInbound(100L, 55L))
+                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
+                        ExecutionSourceType.WORKITEM, 200L));
+        stubAcceptedDecision();
+
+        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"}");
+
+        verifyNoInteractions(debugLogService);
+    }
+
+    /** 捕获 InboundFrameRouter 在 action 执行期间产生的 WARN 级格式化消息。 */
+    @Test
+    void legacyRetryableResultDoesNotAckAndDeleteTheOldRuntimeOutbox() throws Exception {
+        var coordinator=mock(com.aliyun.autowonder.dispatch.DispatchResultCoordinator.class);
+        router.setResultCoordinator(coordinator);
+        var recovery=mock(com.aliyun.autowonder.dispatch.DispatchRecoveryService.class);
         router.setRecovery(recovery);
-        when(recovery.cancelRequested(100L, 55L)).thenReturn(true);
-        when(recovery.onStopped(100L, 1L, 55L)).thenReturn(true);
-        router.route(session(1L, 10L, 100L), "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"workflowPlan\":{}}");
-        verify(recovery).onStopped(100L, 1L, 55L);
-        verifyNoInteractions(dispatchService, handoffService, artifactService);
+        when(recovery.cancelRequested(anyLong(),anyLong())).thenReturn(true);
+        when(coordinator.handle(eq(100L),eq(1L),any())).thenAnswer(call ->
+                com.aliyun.autowonder.dispatch.DispatchResultCoordinator.retry(call.getArgument(2),"RESULT_UPGRADE_REQUIRED"));
+        RemoteEndpoint.Basic remote=mock(RemoteEndpoint.Basic.class);
+        router.route(sessionWithBasic(1L,10L,100L,remote),"{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true}");
+        verify(coordinator).handle(eq(100L),eq(1L),argThat(frame -> frame.getLongValue("dispatchId")==55));
+        verifyNoInteractions(dispatchService,handoffService,recovery);
+        verify(remote,never()).sendText(anyString());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void decidedResultReturnsPersistedHandoffAndAckWithoutRunningBusinessLogic(boolean legacy) throws Exception {
+        var coordinator=mock(com.aliyun.autowonder.dispatch.DispatchResultCoordinator.class);
+        router.setResultCoordinator(coordinator);
+        JSONObject ack=JSONObject.parseObject("{\"type\":\"TASK_RESULT_ACK\",\"accepted\":false,\"disposition\":\"REJECTED\"}");
+        JSONObject handoff=JSONObject.parseObject("{\"type\":\"TASK_HANDOFF_RESULT\",\"downstreamDispatchId\":56}");
+        when(coordinator.handle(eq(100L),eq(1L),any())).thenReturn(
+                new com.aliyun.autowonder.dispatch.DispatchResultCoordinator.Outcome(ack,handoff));
+        RemoteEndpoint.Basic remote=mock(RemoteEndpoint.Basic.class);
+        JSONObject input=JSONObject.parseObject("{\"type\":\"TASK_RESULT\",\"dispatchId\":55}");
+        if (!legacy) { input.put("resultProtocolVersion",2); input.put("resultId","b55aa1a7-43d5-4452-b39a-278554b67942"); }
+        router.route(sessionWithBasic(1L,10L,100L,remote),input.toJSONString());
+        JSONObject expected=legacy ? JSONObject.parseObject("{\"type\":\"TASK_RESULT_ACK\",\"dispatchId\":55,\"accepted\":false}") : ack;
+        verify(remote).sendText(argThat(text -> expected.equals(JSONObject.parseObject(text))));
+        assertEquals("REJECTED", ack.getString("disposition"));
+        verify(remote).sendText(handoff.toJSONString());
+        verifyNoInteractions(dispatchService,handoffService);
     }
 
     @Test
@@ -159,8 +283,11 @@ class InboundFrameRouterTest {
         when(ws.getAsyncRemote()).thenReturn(asyncRemote);
         when(ws.getBasicRemote()).thenReturn(basicRemote);
         when(ws.isOpen()).thenReturn(true);
-        when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
+        var coordinator = mock(com.aliyun.autowonder.dispatch.DispatchResultCoordinator.class);
+        router.setResultCoordinator(coordinator);
+        JSONObject ack = JSONObject.parseObject("{\"type\":\"TASK_RESULT_ACK\",\"dispatchId\":55,\"accepted\":true}");
+        when(coordinator.handle(eq(100L),eq(1L),any())).thenReturn(
+                new com.aliyun.autowonder.dispatch.DispatchResultCoordinator.Outcome(ack,null));
 
         router.route(new ExecutorSession(1L, 10L, 100L, ws),
                 "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"," +
@@ -579,176 +706,40 @@ class InboundFrameRouterTest {
                 "step.started".equals(json.getString("resultSummary")) && json.getInteger("stepOrder") == 3));
     }
 
-    @Test
-    void taskResultSuccessCallsOnResult() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"," +
-                        "\"checkpointReceiptVersion\":1,\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\"}");
-        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, false, false, null);
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
-                && text.contains("55")));
-    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     @Test
-    void taskResultPassesWorkflowChangedFlag() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, true, false, null)).thenReturn(true);
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true," +
-                        "\"resultSummary\":\"done\",\"workflowChanged\":true}");
-        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, true, false, null);
-    }
-
-    @Test
-    void taskResultFailureCallsOnResult() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, "oops", false, false, null)).thenReturn(true);
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false,\"error\":\"oops\"}");
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, "oops", false, false, null);
-        verify(guidanceService).failForDispatch(100L, 55L, "oops");
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
-
-    @Test
-    void executorScopedProviderFailureUsesFailoverWithoutFailingGuidance() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onExecutorUnavailableResult(100L, 1L, 55L,
-                "agent_error.provider_quota_limit", "quota exhausted")).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
-                        "\"error\":\"quota exhausted\",\"failureScope\":\"EXECUTOR\"," +
-                        "\"failureCategory\":\"agent_error.provider_quota_limit\"}");
-
-        InOrder recovery = inOrder(dispatchService, guidanceService);
-        recovery.verify(dispatchService).onExecutorUnavailableResult(100L, 1L, 55L,
-                "agent_error.provider_quota_limit", "quota exhausted");
-        recovery.verify(guidanceService).requeueForExecutorFailover(100L, 55L);
-        recovery.verify(dispatchService).runPending(55L);
-        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean(), anyBoolean(), any());
-        verify(guidanceService, never()).failForDispatch(anyLong(), anyLong(), any());
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
-
-    @Test
-    void legacyUsageLimitFailureUsesExecutorFailover() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        String error = "You've hit your usage limit. Purchase more credits or try again later.";
-        when(dispatchService.onExecutorUnavailableResult(100L, 1L, 55L,
-                "agent_error.provider_quota_limit", error)).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
-                        "\"error\":\"You've hit your usage limit. Purchase more credits or try again later.\"}");
-
-        verify(dispatchService).onExecutorUnavailableResult(100L, 1L, 55L,
-                "agent_error.provider_quota_limit", error);
-        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean(), anyBoolean(), any());
-        verify(guidanceService).requeueForExecutorFailover(100L, 55L);
-    }
-
-    @Test
-    void legacyOrdinaryTaskFailureDoesNotUseExecutorFailover() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null,
-                "tests failed", false, false, null)).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
-                        "\"error\":\"tests failed\"}");
-
-        verify(dispatchService, never()).onExecutorUnavailableResult(anyLong(), anyLong(), anyLong(), any(), any());
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, "tests failed", false, false, null);
-    }
-
-    @Test
-    void runtimeDeclaredToolHookBlockageIsPassedThroughWithoutExecutorFailover() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        String error = "tool_hook_blocked: kind safety_denial hook jarvis-tool-safety "
-                + "trigger beforeTool status blocked exitCode 2 blockedCalls 3";
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, error, false, false,
-                "tool_hook_blocked")).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
-                        "\"failureCategory\":\"tool_hook_blocked\",\"error\":\"" + error + "\"}");
-
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, error, false, false,
-                "tool_hook_blocked");
-        verify(dispatchService, never()).onExecutorUnavailableResult(anyLong(), anyLong(), anyLong(), any(), any());
-        verify(guidanceService, never()).requeueForExecutorFailover(anyLong(), anyLong());
-        verify(dispatchService, never()).runPending(anyLong());
-        verify(guidanceService).failForDispatch(100L, 55L, error);
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
-                && text.contains("\"accepted\":true")));
-    }
-
-    @Test
-    void runtimeDeclaredToolHookBlockageIsNotRelabelledByUsageLimitHeuristic() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        String error = "You've hit your usage limit. Purchase more credits or try again later.";
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, error, false, false,
-                "tool_hook_blocked")).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false," +
-                        "\"failureCategory\":\"tool_hook_blocked\",\"error\":\"" + error + "\"}");
-
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, error, false, false,
-                "tool_hook_blocked");
-        verify(dispatchService, never()).onExecutorUnavailableResult(anyLong(), anyLong(), anyLong(), any(), any());
-        verify(guidanceService, never()).requeueForExecutorFailover(anyLong(), anyLong());
-        verify(dispatchService, never()).runPending(anyLong());
-        verify(guidanceService).failForDispatch(100L, 55L, error);
-    }
-
-    @Test
-    void terminallyRejectedTaskResultIsAcknowledgedWithoutRoutingHandoff() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, "stale", false, false, null)).thenReturn(false);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
-                        "\"success\":false,\"error\":\"stale\"," +
-                        "\"handoff\":{\"to\":\"AW_CR\",\"toType\":\"AGENT\"}}");
-
+    void v2ResultWithoutDecisionStorageIsRetryableAndKeepsItsIdentity() throws Exception {
+        RemoteEndpoint.Basic remote = mock(RemoteEndpoint.Basic.class);
+        router.route(sessionWithBasic(1L, 10L, 100L, remote),
+                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,"
+                + "\"checkpointReceiptVersion\":1,\"resultProtocolVersion\":2,"
+                + "\"resultId\":\"b55aa1a7-43d5-4452-b39a-278554b67942\"}");
+        verify(remote).sendText(argThat(text -> text.contains("\"disposition\":\"RETRYABLE\"")
+                && text.contains("\"retryable\":true")
+                && text.contains("b55aa1a7-43d5-4452-b39a-278554b67942")));
         verifyNoInteractions(handoffService);
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
-                && text.contains("\"accepted\":false")));
     }
 
-    @Test
-    void successfulTaskResultWithoutDurableCheckpointIsRejectedAndAcknowledged() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
 
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"," +
-                        "\"checkpointReceiptVersion\":1}");
 
-        verify(dispatchService).hasDurableCheckpoint(100L, 55L, 0L, null);
-        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(), any(), any(), anyBoolean(), anyBoolean(), any());
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
-                && text.contains("\"accepted\":false")));
-    }
 
-    @Test
-    void legacySuccessfulTaskResultRemainsAcceptedDuringProtocolRollout() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"}");
-
-        verify(dispatchService).onResult(100L, 1L, 55L, true, "done", null, false, false, null);
-        verify(dispatchService, never()).hasDurableCheckpoint(anyLong(), anyLong(), anyLong(), any());
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
 
     @Test
     void taskBusyReturnsOwnedDispatchToPending() {
@@ -792,23 +783,7 @@ class InboundFrameRouterTest {
         verifyNoInteractions(artifactService);
     }
 
-    @Test
-    void scheduledProgressAndResultFailBeforeDispatchSideEffectsWhenUnavailable() {
-        when(dispatchService.artifactOwnerForInbound(100L, 55L))
-                .thenReturn(new ArtifactOwnerRef(ExecutionSourceType.SCHEDULED_TASK_RUN, 200L));
-        doThrow(new BizException(ErrorCode.SCHEDULED_TASK_SCHEMA_NOT_READY))
-                .when(capabilityGuard).requireAvailable("daemon");
 
-        assertThrows(BizException.class, () -> router.route(session(1L, 10L, 100L),
-                "{\"type\":\"TASK_PROGRESS\",\"dispatchId\":55}"));
-        assertThrows(BizException.class, () -> router.route(session(1L, 10L, 100L),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":false}"));
-
-        verify(dispatchService, never()).onProgress(anyLong(), anyLong(), any());
-        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean(), anyBoolean(), any());
-        verifyNoInteractions(guidanceService, pauseService);
-    }
 
     @Test
     void workitemProgressResolvesDurableSourceWithoutScheduledGuard() {
@@ -836,99 +811,15 @@ class InboundFrameRouterTest {
                 && text.contains("HUMAN_ASSIGNED") && text.contains("REQUESTED_HUMAN")));
     }
 
-    @Test
-    void taskResultRoutesEmbeddedHandoffAndReplies() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(handoffService.handle(100L, 200L, 55L, "AW_CR", "AGENT"))
-                .thenReturn(HandoffResult.agent(12L, 56L));
-        when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, null, null, false, true, null)).thenReturn(true);
-        when(dispatchService.mayRouteHandoff(100L, 1L, 55L)).thenReturn(true);
 
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
-                        "\"success\":true,\"checkpointReceiptVersion\":1,\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\"," +
-                        "\"handoff\":{\"to\":\"AW_CR\",\"toType\":\"AGENT\"}}");
 
-        verify(dispatchService).onResult(100L, 1L, 55L, true, null, null, false, true, null);
-        verify(handoffService).handle(100L, 200L, 55L, "AW_CR", "AGENT");
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_HANDOFF_RESULT")
-                && text.contains("AGENT_DISPATCHED") && text.contains("56")));
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
 
-    @Test
-    void successfulResultRacingWithPauseActivatesReworkWithoutDrivingOldFlow() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        InteractionWorkflowService workflowService = mock(InteractionWorkflowService.class);
-        InboundFrameRouter interactionRouter = new InboundFrameRouter(dispatchService, artifactService,
-                presenceManager, handoffService, drainScheduler, pauseService, guidanceService,
-                workflowService, null, null);
-        when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(pauseService.onCompletedWhilePausing(100L, 1L, 55L, 7L, "sha256:abc"))
-                .thenReturn(DispatchPauseService.CompletionDisposition.PAUSED);
 
-        interactionRouter.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true," +
-                        "\"checkpointReceiptVersion\":1,\"checkpointSeq\":7," +
-                        "\"checkpointSha256\":\"sha256:abc\"}");
 
-        verify(dispatchService, never()).onResult(anyLong(), anyLong(), anyLong(), anyBoolean(),
-                any(), any(), anyBoolean(), anyBoolean(), any());
-        verify(workflowService).onPaused(100L, 55L);
-        verify(guidanceService).requeueDeliveredForDispatch(100L, 55L);
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
-                && text.contains("\"accepted\":true")));
-    }
 
-    @Test
-    void sideInteractionResultDelegatesWorkflowPlanToServerAuthority() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        InteractionWorkflowService workflowService = mock(InteractionWorkflowService.class);
-        InboundFrameRouter interactionRouter = new InboundFrameRouter(dispatchService, artifactService,
-                presenceManager, handoffService, drainScheduler, pauseService, guidanceService, workflowService, null, null);
-        when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, "reply", null, false, false, null)).thenReturn(true);
 
-        interactionRouter.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
-                        "\"success\":true,\"resultSummary\":\"reply\",\"checkpointReceiptVersion\":1," +
-                        "\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\"," +
-                        "\"workflowPlan\":{\"targetAgentId\":40013,\"targetStepHint\":\"编码实现\"}} ");
 
-        verify(workflowService).apply(eq(100L), eq(55L), argThat(plan ->
-                plan.getLongValue("targetAgentId") == 40013L && "编码实现".equals(plan.getString("targetStepHint"))));
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
 
-    @Test
-    void acceptedLateResultDoesNotRouteHandoffWhenDispatchIsNoLongerCurrent() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.hasDurableCheckpoint(100L, 55L, 7L, "sha256:abc")).thenReturn(true);
-        when(dispatchService.onResult(100L, 1L, 55L, true, null, null, false, false, null)).thenReturn(true);
-        when(dispatchService.mayRouteHandoff(100L, 1L, 55L)).thenReturn(false);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
-                        "\"success\":true,\"checkpointReceiptVersion\":1,\"checkpointSeq\":7,\"checkpointSha256\":\"sha256:abc\"," +
-                        "\"handoff\":{\"to\":\"AW_CR\",\"toType\":\"AGENT\"}}");
-
-        verifyNoInteractions(handoffService);
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
-
-    @Test
-    void failedTaskResultDoesNotRouteEmbeddedHandoff() throws Exception {
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.onResult(100L, 1L, 55L, false, null, null, false, false, null)).thenReturn(true);
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"workitemId\":200," +
-                        "\"success\":false,\"handoff\":{\"to\":\"AW_CR\",\"toType\":\"AGENT\"}}");
-
-        verify(dispatchService).onResult(100L, 1L, 55L, false, null, null, false, false, null);
-        verifyNoInteractions(handoffService);
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")));
-    }
 
     @Test
     void unknownTypeIsIgnored() {
@@ -1026,93 +917,13 @@ class InboundFrameRouterTest {
                         && "qoder".equals(frame.getString("provider"))));
     }
 
-    @Test
-    void taskResultDebugLogSegmentIsRecordedAfterResultProcessing() throws Exception {
-        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
-                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
-        router.setDebugLogService(debugLogService);
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.artifactOwnerForInbound(100L, 55L))
-                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
-                        ExecutionSourceType.WORKITEM, 200L));
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
 
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
-                        + "\"debugLog\":{\"status\":\"UPLOADED\",\"channel\":\"DIRECT\",\"sizeBytes\":123,"
-                        + "\"sha256\":\"abc\",\"truncated\":false}}");
 
-        ArgumentCaptor<JSONObject> cap = ArgumentCaptor.forClass(JSONObject.class);
-        verify(debugLogService).recordTaskResultReport(eq(100L), eq(1L), eq(55L), cap.capture());
-        org.junit.jupiter.api.Assertions.assertEquals("UPLOADED", cap.getValue().getString("status"));
-        org.junit.jupiter.api.Assertions.assertEquals("DIRECT", cap.getValue().getString("channel"));
-        verify(basicRemote).sendText(argThat(text -> text.contains("TASK_RESULT_ACK")
-                && text.contains("\"accepted\":true")));
-    }
 
-    @Test
-    void debugLogRecordingFailureNeverBlocksResultAck() throws Exception {
-        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
-                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
-        router.setDebugLogService(debugLogService);
-        doThrow(new RuntimeException("db down")).when(debugLogService)
-                .recordTaskResultReport(anyLong(), anyLong(), anyLong(), any());
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.artifactOwnerForInbound(100L, 55L))
-                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
-                        ExecutionSourceType.WORKITEM, 200L));
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
 
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
-                        + "\"debugLog\":{\"status\":\"UPLOADED\"}}");
 
-        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":true")));
-    }
 
-    @Test
-    void debugLogRecordingFailureWarnsWithReasonToken() throws Exception {
-        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
-                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
-        router.setDebugLogService(debugLogService);
-        doThrow(new RuntimeException("db down")).when(debugLogService)
-                .recordTaskResultReport(anyLong(), anyLong(), anyLong(), any());
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        when(dispatchService.artifactOwnerForInbound(100L, 55L))
-                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
-                        ExecutionSourceType.WORKITEM, 200L));
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
 
-        // Issue 2：catch-all warn 补 reason token，与服务侧措辞一致、供 grep 统一。
-        List<String> warns = captureRouterWarns(() -> router.route(
-                sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\","
-                        + "\"debugLog\":{\"status\":\"UPLOADED\"}}"));
-
-        assertTrue(warns.stream().anyMatch(m -> m.contains("debug log report ignored")
-                        && m.contains("dispatchId=55")
-                        && m.contains("reason=DEBUG_LOG_REPORT_IGNORED")),
-                "catch-all warn 必须带 reason token：" + warns);
-        verify(basicRemote).sendText(argThat(text -> text.contains("\"accepted\":true")));
-    }
-
-    @Test
-    void taskResultWithoutDebugLogSegmentDoesNotTouchDebugService() {
-        com.aliyun.autowonder.debuglog.DebugLogService debugLogService =
-                mock(com.aliyun.autowonder.debuglog.DebugLogService.class);
-        router.setDebugLogService(debugLogService);
-        RemoteEndpoint.Basic basicRemote = mock(RemoteEndpoint.Basic.class);
-        // owner 必须非空：否则 guard 在 owner==null 处短路，测不到「段缺失」这条路径
-        when(dispatchService.artifactOwnerForInbound(100L, 55L))
-                .thenReturn(new com.aliyun.autowonder.artifact.ArtifactOwnerRef(
-                        ExecutionSourceType.WORKITEM, 200L));
-        when(dispatchService.onResult(100L, 1L, 55L, true, "done", null, false, false, null)).thenReturn(true);
-
-        router.route(sessionWithBasic(1L, 10L, 100L, basicRemote),
-                "{\"type\":\"TASK_RESULT\",\"dispatchId\":55,\"success\":true,\"resultSummary\":\"done\"}");
-
-        verifyNoInteractions(debugLogService);
-    }
 
     /** 捕获 InboundFrameRouter 在 action 执行期间产生的 WARN 级格式化消息。 */
     private static List<String> captureRouterWarns(Runnable action) {

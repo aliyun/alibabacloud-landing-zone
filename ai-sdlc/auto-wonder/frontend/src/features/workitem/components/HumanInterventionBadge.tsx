@@ -1,12 +1,10 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { Alert, Tag, Tooltip } from 'antd';
-import { WarningFilled } from '@ant-design/icons';
+import { ExclamationCircleFilled, WarningFilled } from '@ant-design/icons';
 import type { Workitem } from '@/shared/types/workitem';
 import { statusCategoryOf } from '../constants';
 import { stripAssigneeIdSuffix } from '../nameDisplay';
-
-const TOOLTIP_TEXT = '当前工单已指派给真人，需要人工介入处理。';
-const ALERT_DESCRIPTION = '当前工单已指派给真人，请人工处理、补充决策，或重新指派给数字员工继续交付。';
-const EXTERNAL_DESCRIPTION = '当前工单尚未指派本地负责人，请指派真人接手，或指派数字员工继续交付。';
 
 export type HumanInterventionInput = Pick<
   Workitem,
@@ -26,24 +24,28 @@ export function getHumanInterventionName(input: HumanInterventionInput): string 
   if (!isHumanInterventionRequired(input)) {
     return null;
   }
-  if (input.assigneeType === 'EXTERNAL') return '待认领';
+  if (input.assigneeType === 'EXTERNAL') return i18n.t('workitem:intervention.unclaimed');
+  if (input.assigneeType === 'AGENT') return i18n.t('workitem:intervention.awaitingAnswer');
   if (input.assigneeType !== 'HUMAN' || input.assigneeRef == null) {
     return null;
   }
   const raw = input.assigneeDisplayName || input.assigneeName;
-  return raw ? stripAssigneeIdSuffix(raw) : `用户 ${input.assigneeRef}`;
+  return raw ? stripAssigneeIdSuffix(raw) : i18n.t('workitem:intervention.user', { id: input.assigneeRef });
 }
 
 /** Red warning tag for a human decision or an external workitem awaiting an owner. */
 export function HumanInterventionBadge({ item }: { item: HumanInterventionInput }) {
+  const { t } = useTranslation('workitem');
   const name = getHumanInterventionName(item);
   if (!name) {
     return null;
   }
+  const description = item.assigneeType === 'AGENT' ? t('intervention.agentDescription')
+    : item.assigneeType === 'EXTERNAL' ? t('intervention.externalDescription') : t('intervention.tooltip');
   return (
-    <Tooltip title={item.assigneeType === 'EXTERNAL' ? EXTERNAL_DESCRIPTION : TOOLTIP_TEXT}>
-      <Tag color="error" icon={<WarningFilled />} style={{ margin: 0 }}>
-        需人工（{name}）
+    <Tooltip title={description}>
+      <Tag color="error" icon={<WarningFilled aria-hidden="true" />} style={{ margin: 0 }}>
+        {t('intervention.badge')}
       </Tag>
     </Tooltip>
   );
@@ -51,17 +53,21 @@ export function HumanInterventionBadge({ item }: { item: HumanInterventionInput 
 
 /** Prominent alert for the workitem detail page, rendered below the detail action bar. */
 export function HumanInterventionAlert({ item }: { item: HumanInterventionInput }) {
+  const { t } = useTranslation('workitem');
   const name = getHumanInterventionName(item);
   if (!name) {
     return null;
   }
+  const description = item.assigneeType === 'AGENT' ? t('intervention.agentDescription')
+    : item.assigneeType === 'EXTERNAL' ? t('intervention.externalDescription') : t('intervention.description');
   return (
     <Alert
       className="aw-workitem-intervention"
       type="warning"
       showIcon
-      message={`需人工介入：${name}`}
-      description={item.assigneeType === 'EXTERNAL' ? EXTERNAL_DESCRIPTION : ALERT_DESCRIPTION}
+      icon={<ExclamationCircleFilled aria-hidden="true" />}
+      message={t('intervention.alert', { name })}
+      description={description}
       style={{ marginBottom: 16 }}
     />
   );

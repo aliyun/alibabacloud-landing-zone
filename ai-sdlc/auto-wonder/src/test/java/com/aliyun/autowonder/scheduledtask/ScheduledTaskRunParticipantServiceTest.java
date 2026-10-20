@@ -58,7 +58,7 @@ class ScheduledTaskRunParticipantServiceTest {
         user.setId(10L);
         user.setNickname("Alice");
         user.setUsername("alice");
-        when(userDao.findById(10L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(user);
 
         // Mock agent
         AgentDO agent = new AgentDO();
@@ -114,7 +114,7 @@ class ScheduledTaskRunParticipantServiceTest {
         user.setId(10L);
         user.setNickname("Bob");
         user.setUsername("bob");
-        when(userDao.findById(10L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(user);
 
         AgentDO agent1 = new AgentDO();
         agent1.setId(50L);
@@ -166,7 +166,7 @@ class ScheduledTaskRunParticipantServiceTest {
         user.setId(10L);
         user.setNickname("Carol");
         user.setUsername("carol");
-        when(userDao.findById(10L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(user);
 
         AgentDO agent = new AgentDO();
         agent.setId(50L);
@@ -200,7 +200,7 @@ class ScheduledTaskRunParticipantServiceTest {
         UserDO user = new UserDO();
         user.setId(10L);
         user.setUsername("dave");
-        when(userDao.findById(10L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(user);
 
         when(dispatchDao.listBySource(1L, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 400L))
                 .thenReturn(null);
@@ -212,7 +212,7 @@ class ScheduledTaskRunParticipantServiceTest {
     }
 
     @Test
-    void mentionCandidatesExposeFrozenAgentsAndDisableNonFrozenParticipants() {
+    void mentionCandidatesExposeFrozenAgentsAndDisableNonFrozenParticipants() throws Exception {
         ScheduledTaskRunDO run = new ScheduledTaskRunDO();
         run.setId(600L);
         run.setWorkspaceId(1L);
@@ -224,7 +224,7 @@ class ScheduledTaskRunParticipantServiceTest {
         owner.setId(10L);
         owner.setUsername("alice");
         owner.setNickname("Alice");
-        when(userDao.findById(10L)).thenReturn(owner);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(owner);
 
         AgentDO frozen = new AgentDO();
         frozen.setId(50L);
@@ -252,7 +252,13 @@ class ScheduledTaskRunParticipantServiceTest {
         assertNull(frozenCandidate.getMentionDisabledReason());
         ScheduledRunMentionCandidateVO lateCandidate = findCandidate(result, "AGENT", 60L);
         assertFalse(lateCandidate.isMentionable());
-        assertNotNull(lateCandidate.getMentionDisabledReason());
+        assertEquals("不在本次运行的冻结快照中，无法 @ 触发执行", lateCandidate.getMentionDisabledReason());
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        assertEquals("NOT_FROZEN", mapper.valueToTree(lateCandidate).path("mentionDisabledReasonCode").asText());
+        assertTrue(mapper.valueToTree(frozenCandidate).path("mentionDisabledReasonCode").isNull());
+        var legacy = mapper.readValue("{\"mentionable\":false,\"mentionDisabledReason\":\"不在本次运行的冻结快照中，无法 @ 触发执行\"}", ScheduledRunMentionCandidateVO.class);
+        assertEquals(lateCandidate.getMentionDisabledReason(), legacy.getMentionDisabledReason());
+        assertTrue(mapper.valueToTree(legacy).path("mentionDisabledReasonCode").isNull());
     }
 
     @Test
@@ -291,6 +297,7 @@ class ScheduledTaskRunParticipantServiceTest {
         owner.setUsername("alice");
         owner.setNickname("Alice");
         when(userDao.findById(10L)).thenReturn(owner);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(owner);
         UserDO bob = new UserDO();
         bob.setId(20L);
         bob.setUsername("bob");
@@ -549,7 +556,7 @@ class ScheduledTaskRunParticipantServiceTest {
         owner.setId(10L);
         owner.setUsername("alice");
         owner.setNickname("Alice");
-        when(userDao.findById(10L)).thenReturn(owner);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(owner);
         when(dispatchDao.listBySource(1L, ExecutionSourceType.SCHEDULED_TASK_RUN.name(), 995L)).thenReturn(List.of());
 
         ScheduledTaskRunParticipantService withoutMembers = new ScheduledTaskRunParticipantService(
@@ -573,7 +580,7 @@ class ScheduledTaskRunParticipantServiceTest {
         owner.setId(10L);
         owner.setUsername("alice");
         owner.setNickname("Alice");
-        when(userDao.findById(10L)).thenReturn(owner);
+        when(userDao.findByIdIncludingDeleted(10L)).thenReturn(owner);
 
         WorkspaceMemberDO danaMember = new WorkspaceMemberDO();
         danaMember.setUserId(30L);

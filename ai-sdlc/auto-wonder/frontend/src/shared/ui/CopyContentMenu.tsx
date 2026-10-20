@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { Button, Dropdown, Tooltip, message } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
@@ -8,7 +10,9 @@ interface CopyContentMenuProps {
   tooltip?: string;
 }
 
-export function CopyContentMenu({ contentMd, tooltip = '复制内容' }: CopyContentMenuProps) {
+export function CopyContentMenu({ contentMd, tooltip }: CopyContentMenuProps) {
+  const { t } = useTranslation('shared');
+  tooltip ??= t('copy.title');
   // Workitem bodies may arrive as null from the server; trimming null crashes the whole route.
   const content = contentMd ?? '';
   if (!content.trim()) return null;
@@ -17,10 +21,10 @@ export function CopyContentMenu({ contentMd, tooltip = '复制内容' }: CopyCon
     const plain = key === 'plaintext';
     const copied = await copyTextToClipboard(plain ? markdownToPlainText(content) : content);
     if (!copied) {
-      message.error('复制失败，请检查浏览器剪贴板权限');
+      message.error(i18n.t('shared:copy.failed'));
       return;
     }
-    message.success(plain ? '已复制纯文本' : '已复制原始 Markdown');
+    message.success(plain ? i18n.t('shared:copy.plainCopied') : i18n.t('shared:copy.markdownCopied'));
   };
 
   return (
@@ -28,8 +32,8 @@ export function CopyContentMenu({ contentMd, tooltip = '复制内容' }: CopyCon
       trigger={['click']}
       menu={{
         items: [
-          { key: 'markdown', label: '复制原始 Markdown' },
-          { key: 'plaintext', label: '复制纯文本' },
+          { key: 'markdown', label: t('copy.markdown') },
+          { key: 'plaintext', label: t('copy.plain') },
         ],
         onClick: handleMenuClick,
       }}
@@ -38,7 +42,7 @@ export function CopyContentMenu({ contentMd, tooltip = '复制内容' }: CopyCon
         <Button
           type="text"
           size="small"
-          icon={<CopyOutlined />}
+          icon={<CopyOutlined aria-hidden="true" />}
           aria-label={tooltip}
           data-testid="copy-content-menu"
         />

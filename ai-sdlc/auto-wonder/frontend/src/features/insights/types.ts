@@ -141,3 +141,54 @@ export interface HumanAgentSlowTailPage {
   pageSize: number;
   items: P90Workitem[];
 }
+
+export interface RequirementDeliveryDurationStats {
+  averageDurationSeconds: number | null;
+  medianDurationSeconds: number | null;
+  validSampleCount: number;
+  missingSampleCount: number;
+  metTargetCount: number | null;
+  goalRatio: number | null;
+}
+
+export interface RequirementDeliverySample {
+  workitemId: number;
+  title: string;
+  deliveredAt: string;
+  deliveryStartedAt: string | null;
+  durationSeconds: number | null;
+  metTarget: boolean | null;
+  missingReason: string | null;
+}
+
+export interface RequirementDeliveryWeek extends RequirementDeliveryDurationStats {
+  weekStart: string;
+  weekEnd: string;
+  coveredFrom: string;
+  coveredTo: string;
+  partial: boolean;
+  deliveredCount: number;
+}
+
+export interface RequirementDeliveryPeriod {
+  startDate: string;
+  endDate: string;
+  deliveredCount: number;
+}
+
+export interface RequirementDeliverySummary extends RequirementDeliveryDurationStats {
+  deliveredCount: number;
+  previous: RequirementDeliveryPeriod;
+  changePercent: number | null;
+}
+
+export interface RequirementDeliveryReport {
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  dataThrough: string;
+  targetHours: number | null;
+  summary: RequirementDeliverySummary;
+  weeks: RequirementDeliveryWeek[];
+  samples: RequirementDeliverySample[];
+}

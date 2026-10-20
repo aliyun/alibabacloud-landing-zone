@@ -330,4 +330,47 @@ class EnvironmentVariableServiceTest {
         row.setGmtModified(new Date(1234));
         return row;
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"choice,updateValue 参数必须显式提供,The updateValue parameter must be provided explicitly",
+        "description,环境变量说明不能超过512个字符,Environment variable descriptions cannot exceed 512 characters"})
+    void ownedMetadataValidationPreservesOrderRawAndHttp400(String branch,String raw,String en) {
+        when(dao.findActiveById(41L,9L)).thenReturn(row(9L,41L,"TOKEN","kc:raw",3));
+        var error=assertThrows(BizException.class,()->service.update(41L,7L,9L,
+            new UpdateEnvironmentVariableRequest("TOKEN",branch.equals("description")?"x".repeat(513):null,branch.equals("choice")?null:false,null)));
+        assertEquals(raw,error.getMessage()); assertEquals(raw,error.getLocalizedMessage()); assertEquals("10001",error.getCode());
+        assertEquals(BizException.class,error.getClass()); assertNull(error.getCause()); verifyNoInteractions(keyCenter,audit);
+        verify(dao,never()).updateMetadata(anyLong(),anyLong(),any(),any(),anyLong(),any());
+        try {for(var locale:List.of(java.util.Locale.CHINA,java.util.Locale.US)) {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+            var response=new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals(400,response.getStatusCodeValue());assertEquals(locale.equals(java.util.Locale.US)?en:raw,response.getBody().getMessage());
+        }} finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"zh","en"})
+    void deletionReferencesRenderSourceKindsAndFallbackOnlyWithOpaqueIdsAndRawNames(String language) {
+        when(dao.findActiveByIdForUpdate(41L,9L)).thenReturn(row(9L,41L,"TOKEN","kc:sensitive",3));
+        var refs=List.of(new EnvironmentVariableReference(1234567890123L,"数字员工",22L,1234,"ONLINE"),
+                new EnvironmentVariableReference(1234L,"<b>O'Brien {0}</b>",23L,null,"EDITING"),
+                new EnvironmentVariableReference(null," ",24L,null,"unknown"),
+                new EnvironmentVariableReference(99L,null,25L,4,null));
+        when(dao.listActiveReferences(41L,9L)).thenReturn(refs);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(language.equals("en")?java.util.Locale.US:java.util.Locale.CHINA);
+        var error=assertThrows(BizException.class,()->service.delete(41L,7L,9L));
+        String detail="数字员工(#1234567890123) 在线版本 v1234；<b>O'Brien {0}</b>(#1234) 编辑草稿；数字员工(#null) 编辑草稿；数字员工(#99) 编辑草稿 v4";
+        String raw="环境变量仍被数字员工引用,无法删除:"+detail+"。请先在对应草稿解除挂载并发布后再删除。";
+        assertEquals(raw,error.getMessage());assertEquals(raw,error.getLocalizedMessage());assertEquals("33005",error.getCode());
+        assertEquals(BizException.class,error.getClass());assertNull(error.getCause());verifyNoInteractions(keyCenter,audit);
+        verify(dao,never()).softDelete(anyLong(),anyLong(),anyInt(),anyLong());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(language.equals("en")?java.util.Locale.US:java.util.Locale.CHINA);
+        try {
+            var response=new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals(200,response.getStatusCodeValue());assertEquals("33005",response.getBody().getCode());
+            assertEquals(language.equals("en")?"The environment variable is still referenced by Agents and cannot be deleted: 数字员工(#1234567890123) online version v1234; <b>O'Brien {0}</b>(#1234) editing draft; Agent(#null) editing draft; Agent(#99) editing draft v4. Unmount it from the corresponding drafts and publish them before deleting it.":raw,response.getBody().getMessage());
+            assertEquals(" ",refs.get(2).getAgentName());assertNull(refs.get(3).getRefType());
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

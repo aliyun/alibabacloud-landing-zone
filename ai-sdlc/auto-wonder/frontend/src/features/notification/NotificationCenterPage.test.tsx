@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,8 @@ import { server } from '@/test/mocks/server';
 import type { Notification } from '@/shared/types/notification';
 import { NotificationCenterPage } from './NotificationCenterPage';
 import { NotificationBell } from '@/shared/ui/NotificationBell';
+import { i18n } from '@/shared/i18n';
+import { message } from 'antd';
 
 function ok(data: unknown) {
   return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
@@ -156,7 +158,7 @@ describe('NotificationCenterPage', () => {
     expect(within(unreadRow).getByText(`${'A'.repeat(60)}...`)).toBeInTheDocument();
     expect(within(unreadRow).queryByText(longContent)).not.toBeInTheDocument();
     expect(within(readRow).getByText('短内容')).toBeInTheDocument();
-    expect(unreadRow.textContent).toContain(new Date('2026-09-01T10:00:00.000Z').toLocaleString('zh-CN'));
+    expect(unreadRow.textContent).toContain(new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-09-01T10:00:00.000Z')));
   });
 
   it('filters by status when switching tabs and jumps back to the first page', async () => {
@@ -207,7 +209,7 @@ describe('NotificationCenterPage', () => {
     expect(await screen.findByText('通知详情')).toBeInTheDocument();
     expect(screen.getByText(longContent)).toBeInTheDocument();
     expect(screen.getByText('DISPATCH_ALERT')).toBeInTheDocument();
-    expect(screen.getByText('WORKITEM #42')).toBeInTheDocument();
+    expect(screen.getByText('工单 #42')).toBeInTheDocument();
   });
 
   it('shows a dash for the related object when the notification has none', async () => {
@@ -593,4 +595,76 @@ describe('NotificationCenterPage', () => {
     await waitFor(() => expect(within(rows(container)[0]).queryByText('未读')).not.toBeInTheDocument());
     expect(readCalls).toEqual([1]);
   });
+});
+
+const switchLanguage = (locale: string) => act(async () => { await i18n.changeLanguage(locale); });
+afterEach(async () => { vi.restoreAllMocks(); message.destroy(); await i18n.changeLanguage('zh-CN'); });
+it('keeps both history languages, current page and drawer while translating known codes without rereading', async () => {
+  store = manyNotifications(11, 'READ');
+  store[0] = notification({ title: '历史中文<img src=x>', content: '历史正文<img src=x>', status: 'READ', type: 'WORKITEM_ASSIGNED' });
+  store[10] = notification({ id: 11, title: 'Past English title', content: 'Past English body <b>raw</b>', status: 'READ', type: 'SCHEDULED_TASK_RUN_FAILED' });
+  const { container } = renderPage(); await screen.findByText('历史中文<img src=x>');
+  await switchLanguage('en-US'); expect(screen.getByRole('heading', { name: 'Notification center' })).toBeInTheDocument();
+  expect(screen.getByText('历史正文<img src=x>')).toBeInTheDocument(); expect(screen.getByText('11 notifications')).toBeInTheDocument();
+  expect(within(rows(container)[0]).getByText(new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date('2026-09-01T10:00:00.000Z')))).toBeInTheDocument();
+  await userEvent.click(screen.getByTitle('2')); await screen.findByText('Past English title');
+  await userEvent.click(rows(container)[0]); await screen.findByText('Notification details');
+  expect(screen.getByText('Scheduled task run failed')).toBeInTheDocument(); expect(screen.getByText('Work item #42')).toBeInTheDocument();
+  const body = within(screen.getByRole('dialog')).getByText('Past English body <b>raw</b>'); const calls = listRequests.length;
+  expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  await switchLanguage('zh-CN'); expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
+  expect(screen.getByText('定时任务运行失败')).toBeInTheDocument(); expect(screen.getByText('工单 #42')).toBeInTheDocument();
+  expect(within(screen.getByRole('dialog')).getByText('Past English body <b>raw</b>')).toBe(body); expect(within(container).getByTitle('2')).toHaveClass('ant-pagination-item-active');
+  expect(listRequests).toHaveLength(calls); expect(readCalls).toEqual([]); expect(document.querySelector('b')).toBeNull();
+});
+it('retains an unread snapshot and pending delete while completion feedback uses the latest locale', async () => {
+  store = [notification({ title: 'raw held', content: null, type: 'future.type', refType: 'future.ref' })];
+  let release!: () => void;
+  server.use(http.delete('/api/notifications/:id', async () => { await new Promise<void>(resolve => { release = resolve; }); return HttpResponse.json({ success: false, code: '10500', message: '', data: null }); }));
+  const error = vi.spyOn(message, 'error').mockImplementation(() => undefined as unknown as ReturnType<typeof message.error>);
+  const { container } = renderPage(); await screen.findByText('raw held'); await userEvent.click(screen.getByRole('tab', { name: '未读' }));
+  await waitFor(() => expect(lastListRequest().status).toBe('UNREAD')); await userEvent.click(rows(container)[0]); await waitFor(() => expect(readCalls).toEqual([1]));
+  await waitFor(() => expect(rows(container)).toHaveLength(0)); await switchLanguage('en-US');
+  expect(screen.getByRole('tab', { name: 'Unread' })).toHaveAttribute('aria-selected', 'true'); expect(screen.getByText('No body')).toBeInTheDocument();
+  expect(screen.getByText('future.type')).toBeInTheDocument(); expect(screen.getByText('future.ref #42')).toBeInTheDocument(); expect(readCalls).toEqual([1]);
+  await userEvent.click(screen.getByRole('button', { name: 'Close' })); await userEvent.click(screen.getByRole('tab', { name: 'All' })); await waitFor(() => expect(rows(container)).toHaveLength(1));
+  await userEvent.click(within(rows(container)[0]).getByRole('button', { name: 'Delete' })); await userEvent.click(screen.getByRole('button', { name: 'Confirm deletion' })); await waitFor(() => expect(release).toBeDefined());
+  await switchLanguage('zh-CN'); expect(screen.getByRole('button', { name: '确认删除' })).toBeDisabled(); await act(async () => { release(); }); await waitFor(() => expect(error).toHaveBeenCalledWith('删除失败'));
+});
+it('resolves zero count during pending loading and singular totals in English', async () => {
+  let release!: () => void; server.use(http.get('/api/notifications', async () => { await new Promise<void>(resolve => { release = resolve; }); return ok({ items: [notification({ status: 'READ' })], total: 1 }); }));
+  renderPage(); await waitFor(() => expect(release).toBeDefined()); await switchLanguage('en-US'); expect(screen.getByText('0 notifications')).toBeInTheDocument();
+  await act(async () => { release(); }); expect(await screen.findByText('1 notification')).toBeInTheDocument();
+});
+
+it('keeps notification error details raw and its icon decorative in both languages', async () => {
+  const rawError = 'raw failure <b>保留</b>';
+  server.use(http.get('/api/notifications', () => HttpResponse.json({ success: false, code: '10500', message: rawError, data: null })));
+  renderPage();
+  await screen.findByText(rawError);
+  for (const locale of ['zh-CN', 'en-US']) {
+    await switchLanguage(locale);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(rawError);
+    expect(alert).toHaveTextContent(locale === 'zh-CN' ? '通知列表加载失败' : 'Failed to load notifications');
+    expect(within(alert).getByRole('button', { name: locale === 'zh-CN' ? /^重\s*试$/ : 'Retry' })).toBeEnabled();
+    expect.soft(within(alert).queryByRole('img')).not.toBeInTheDocument();
+  }
+});
+it('keeps the open deletion confirmation decorative and cancellable in both languages', async () => {
+  store = [notification({ title: 'raw history', status: 'READ' })];
+  const { container } = renderPage();
+  await screen.findByText('raw history');
+  await userEvent.click(within(rows(container)[0]).getByRole('button', { name: '删除' }));
+  const popup = await screen.findByRole('tooltip');
+  for (const locale of ['zh-CN', 'en-US']) {
+    await switchLanguage(locale);
+    expect(popup).toHaveTextContent(locale === 'zh-CN' ? '确认删除这条通知？' : 'Delete this notification?');
+    expect(popup).toHaveTextContent(locale === 'zh-CN' ? '删除后不可恢复' : 'Deletion cannot be undone');
+    expect(within(popup).getByRole('button', { name: locale === 'zh-CN' ? '确认删除' : 'Confirm deletion' })).toBeEnabled();
+    expect.soft(within(popup).queryByRole('img')).not.toBeInTheDocument();
+  }
+  await userEvent.click(within(popup).getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByText('raw history')).toBeInTheDocument();
+  expect(deleteCalls).toEqual([]); expect(readCalls).toEqual([]); expect(listRequests).toHaveLength(1);
 });

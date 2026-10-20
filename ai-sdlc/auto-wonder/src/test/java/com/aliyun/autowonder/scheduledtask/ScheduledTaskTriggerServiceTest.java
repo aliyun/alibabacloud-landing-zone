@@ -291,4 +291,85 @@ class ScheduledTaskTriggerServiceTest {
         t.setSquadId(2L); t.setInitialAgentId(11L); t.setCreatorId(3L); t.setStatus("ACTIVE"); t.setSessionMode("ISOLATED"); t.setOverlapPolicy("SKIP");
         return t;
     }
+
+    @Test
+    void manualAndDocumentValidationKeepRawIdsAndSnapshotTrustChecks() {
+        assertBilingual(assertThrows(BizException.class, () -> ScheduledTaskTriggerService.manualKey(9L, " ")),
+                "requestId is required", "requestId 必须提供", "requestId is required");
+
+        ArtifactDO artifact = new ArtifactDO(); artifact.setId(81L); artifact.setTenantId(2L);
+        when(artifactDao.listBySource(anyLong(), anyString(), anyLong(), anyString())).thenReturn(List.of(artifact));
+        assertBilingual(assertThrows(BizException.class, () -> trigger.fireManual(task(), "raw-request")),
+                "requirement document does not belong to scheduled task: 81", "需求文档不属于定时任务：81", "Requirement document does not belong to scheduled task: 81");
+        verify(runDao, never()).insert(any());
+    }
+
+    private void assertBilingual(BizException failure, String diagnostic, String chineseText, String english) {
+        assertEquals(diagnostic, failure.getMessage());
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var chinese = handler.handleBiz(failure);
+            assertEquals(200, chinese.getStatusCodeValue());
+            assertEquals(chineseText, chinese.getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var translated = handler.handleBiz(failure);
+            assertEquals(200, translated.getStatusCodeValue());
+            assertEquals(failure.getCode(), translated.getBody().getCode());
+            assertEquals(english, translated.getBody().getMessage());
+            assertEquals(diagnostic, failure.getLocalizedMessage());
+            assertEquals(diagnostic, com.aliyun.autowonder.common.result.Result.fail(failure.getCode(), diagnostic).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("documentErrorIdentifierCases")
+    void documentErrorsPreserveRawIdentifierTextAtHumanBoundary(
+            java.util.Locale locale, boolean unavailable, Long id, boolean nullArtifact) {
+        ArtifactDO artifact = null;
+        if (!nullArtifact) {
+            artifact = new ArtifactDO(); artifact.setId(id);
+            artifact.setTenantId(unavailable ? 1L : 2L);
+            artifact.setSourceType(ExecutionSourceType.SCHEDULED_TASK.name());
+            artifact.setWorkitemId(9L); artifact.setType(RequirementDocumentService.TYPE);
+            artifact.setName("raw-document"); artifact.setOssRef("raw/opaque {0}");
+        }
+        when(artifactDao.listBySource(1L, ExecutionSourceType.SCHEDULED_TASK.name(),
+                9L, RequirementDocumentService.TYPE)).thenReturn(java.util.Collections.singletonList(artifact));
+        BizException failure = assertThrows(BizException.class,
+                () -> trigger.fireManual(task(), "raw-request-id"));
+        String identifier = String.valueOf(id);
+        String diagnostic = (unavailable ? "requirement document is unavailable: "
+                : "requirement document does not belong to scheduled task: ") + identifier;
+        assertEquals("30005", failure.getCode());
+        assertEquals(BizException.class, failure.getClass());
+        assertEquals(diagnostic, failure.getMessage());
+        assertEquals(diagnostic, failure.getLocalizedMessage());
+        org.junit.jupiter.api.Assertions.assertNull(failure.getCause());
+        verify(runDao, never()).insert(any());
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+            var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(failure);
+            assertEquals(200, response.getStatusCodeValue());
+            assertEquals("30005", response.getBody().getCode());
+            String prefix = "zh".equals(locale.getLanguage())
+                    ? (unavailable ? "需求文档不可用：" : "需求文档不属于定时任务：")
+                    : (unavailable ? "Requirement document is unavailable: " : "Requirement document does not belong to scheduled task: ");
+            assertEquals(prefix + identifier, response.getBody().getMessage());
+            assertEquals(diagnostic, com.aliyun.autowonder.common.result.Result.fail(failure.getCode(), diagnostic).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> documentErrorIdentifierCases() {
+        return java.util.stream.Stream.of(java.util.Locale.SIMPLIFIED_CHINESE, java.util.Locale.US).flatMap(locale ->
+                java.util.stream.Stream.of(
+                        org.junit.jupiter.params.provider.Arguments.of(locale, false, 1001L, false),
+                        org.junit.jupiter.params.provider.Arguments.of(locale, false, Long.MAX_VALUE, false),
+                        org.junit.jupiter.params.provider.Arguments.of(locale, false, null, false),
+                        org.junit.jupiter.params.provider.Arguments.of(locale, false, null, true),
+                        org.junit.jupiter.params.provider.Arguments.of(locale, true, 1001L, false),
+                        org.junit.jupiter.params.provider.Arguments.of(locale, true, Long.MAX_VALUE, false),
+                        org.junit.jupiter.params.provider.Arguments.of(locale, true, null, false)));
+    }
+
 }

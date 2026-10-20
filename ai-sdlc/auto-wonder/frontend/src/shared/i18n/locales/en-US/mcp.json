@@ -1,0 +1,94 @@
+{
+  "permissionHint": "MCP token permissions follow your access in the target Workspace. Pass workspaceId when calling Workspace tools.",
+  "revokedNotice": "Token revoked",
+  "copied": "Copied",
+  "copyFailed": "Automatic copy failed. Please copy manually",
+  "endpointUnavailable": "MCP endpoint is unavailable. Refresh and try again",
+  "name": "Name",
+  "prefix": "Prefix",
+  "created": "Created",
+  "lastUsed": "Last used",
+  "status": "Status",
+  "revoked": "Revoked",
+  "active": "Active",
+  "actions": "Actions",
+  "field": "Field",
+  "type": "Type",
+  "required": "Required",
+  "yes": "Yes",
+  "no": "No",
+  "description": "Description",
+  "input": "Input",
+  "output": "Output",
+  "noInput": "No input parameters",
+  "result": "Returns the tool execution result",
+  "tools": "Tools",
+  "endpointLoading": "Loading MCP endpoint",
+  "endpointFailed": "Failed to load MCP endpoint",
+  "copy": "Copy",
+  "refresh": "Refresh",
+  "newToken": "New token",
+  "overview": "Overview",
+  "activeTokens": "Active tokens",
+  "openTools": "Available tools",
+  "capabilityGroups": "Capability groups",
+  "endpoint": "MCP endpoint",
+  "copyEndpoint": "Copy MCP endpoint",
+  "oneTimeUrl": "The full URL is shown only once after creating a token. Existing tokens show only their prefix; the secret cannot be recovered.",
+  "tokens": "Access tokens",
+  "install": "Installation",
+  "installHint": "Create an MCP token, then copy the MCP URL containing the token into your client configuration. Existing tokens show only their prefix; the full secret cannot be recovered.",
+  "newTitle": "New MCP token",
+  "done": "Done",
+  "create": "Create",
+  "oneTimeToken": "This token is shown only once. Copy it now and add it to your client configuration.",
+  "copyToken": "Copy new token",
+  "copyUrl": "Copy MCP URL",
+  "moreClients": "More clients",
+  "nameRequired": "Enter a name",
+  "cancel": "Cancel",
+  "close": "Close",
+  "tokenLabel": "New token",
+  "urlLabel": "MCP URL",
+  "revokeNamed": "Revoke {{name}}",
+  "clientConfig": "{{client}} configuration",
+  "toolCount_other": "{{count}} tools",
+  "codexComment": "# ~/.codex/config.toml or project .codex/config.toml",
+  "capabilities": {
+    "workitem": {
+      "title": "Work item management",
+      "description": "CRUDL, assignment, comments, pause, resume and status transitions."
+    },
+    "sdlc": {
+      "title": "SDLC management",
+      "description": "Workflows, steps, ordering, activation and status templates."
+    },
+    "agent": {
+      "title": "Agent management",
+      "description": "Create, search and read Agent details."
+    },
+    "executor": {
+      "title": "Executor management",
+      "description": "Create, delete and search Executors, view tokens, list options and generate launch commands."
+    },
+    "skill": {
+      "title": "Skills and plugins",
+      "description": "Manage Skill, MCP server and plugin records."
+    },
+    "memory": {
+      "title": "Memory management",
+      "description": "Write, search, correct and retire memories instead of reporting learning delta files."
+    },
+    "project": {
+      "title": "Workspace discovery",
+      "description": "List accessible Workspaces and access levels to obtain workspaceId."
+    },
+    "other": {
+      "title": "Other capabilities",
+      "description": "Uncategorized helper tools."
+    }
+  },
+  "toolCount_one": "{{count}} tool",
+  "expandRow": "Expand row",
+  "collapseRow": "Collapse row"
+}

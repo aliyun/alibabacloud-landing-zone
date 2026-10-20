@@ -17,10 +17,10 @@ describe('computeElicitationContent', () => {
     expect(computeElicitationContent(fields, { q0: 'A' }, {})).toEqual({ q0: 'A' });
   });
 
-  it('multiselect: 追加 补充想法 到数组末尾', () => {
+  it('multiselect: 自定义值原样追加到数组末尾，不添加会改变含义的前缀', () => {
     const fields = [f({ control: 'multiselect', options: [{ value: 'A', label: 'A' }] })];
-    expect(computeElicitationContent(fields, { q0: ['A', OTHER_SENTINEL] }, { q0: '要离线' }))
-      .toEqual({ q0: ['A', '补充想法：要离线'] });
+    expect(computeElicitationContent(fields, { q0: ['A', OTHER_SENTINEL] }, { q0: 'cn-beijing' }))
+      .toEqual({ q0: ['A', 'cn-beijing'] });
   });
 
   it('multiselect: 未勾其他想法则只回传已选', () => {

@@ -145,4 +145,22 @@ class DaemonCommentControllerTest {
         verify(runComments).addAgentComment(100L, 200L, 300L, "分析完成 @蔡何", List.of(), List.of(10000L));
         verifyNoInteractions(workitemService, guidanceService);
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void statusWireOmitsOnlyHumanFallbackMarkerAndPreservesNullableBody(boolean nullBody) throws Exception {
+        when(authenticator.authenticate(500L, "tok")).thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));
+        var vo = new com.aliyun.autowonder.workitem.dto.WorkitemVO(); vo.setId(200L); vo.setAssigneeName("Aone 用户（staffId: <b>raw</b>）");
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        String original = json.writeValueAsString(vo);
+        var principal = new com.aliyun.autowonder.workitem.dto.ExternalPrincipalVO(); principal.setProvider("AONE"); principal.setSubjectId("<b>raw</b>");
+        vo.setAssigneeNameFallback(principal);
+        when(workitemService.agentTransition(200L, "done", 100L, 300L)).thenReturn(nullBody ? null : vo);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(controller).build();
+        var response = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/daemon/dispatches/500/workitem-status")
+                .param("token", "tok").contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"status\":\"done\"}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        verify(auditLogService).record(argThat(record -> "done".equals(record.getDetail().get("status"))));
+        assertEquals(nullBody ? "" : original, response.getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
 }

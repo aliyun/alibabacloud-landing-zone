@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
@@ -15,6 +16,28 @@ const readyCapability: ScheduledTaskCapability = {
   clusterReady: true,
   reason: null,
 };
+
+afterEach(async () => { cleanup(); await act(async () => { await i18n.changeLanguage('zh-CN'); }); });
+
+it('uses translated menu names without decorative glyph names on a cached sidebar', async () => {
+  render(<TestWrapper><Sidebar /></TestWrapper>);
+  const workitems = screen.getByRole('menuitem', { name: '工单' });
+  expect(screen.queryAllByRole('img')).toHaveLength(0);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByRole('menuitem', { name: 'Work items' })).toBe(workitems);
+  expect(screen.queryAllByRole('img')).toHaveLength(0);
+});
+
+it('keeps complete English navigation names and the pending review count together', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient.setQueryData(['agents', 'reviews', 'count'], 125);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  render(<TestWrapper queryClient={queryClient}><Sidebar /></TestWrapper>);
+  expect(await screen.findByText('99+')).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Manage 99+' })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Project configuration backups' })).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: 'Environment variables' })).toBeInTheDocument();
+});
 
 function TestWrapper({
   children,
@@ -46,18 +69,32 @@ describe('Sidebar helpers', () => {
     const workersGroup = NAV_GROUPS.find((item) => item.key === 'workers-group');
     const scheduledTaskItem = deliveryGroup?.items.find((item) => item.key === '/scheduled-tasks');
 
-    expect(deliveryGroup?.items.map((item) => item.key)).toEqual(['/workitems', '/scheduled-tasks', '/executions']);
+    expect(deliveryGroup?.items.map((item) => item.key))
+      .toEqual(['/overview', '/workitems', '/scheduled-tasks', '/executions', '/workitems/recycled']);
+    expect(deliveryGroup?.items[0]?.label).toBe('总览');
     expect(scheduledTaskItem?.label).toBe('定时任务');
     expect(workersGroup?.items.map((item) => item.key)).not.toContain('/scheduled-tasks');
     expect(resolveSelectedNavKey('/scheduled-tasks')).toBe('/scheduled-tasks');
+    expect(resolveSelectedNavKey('/overview')).toBe('/overview');
+  });
+
+  it('places 回收站 after 执行记录 in the delivery group and selects its route', () => {
+    const deliveryGroup = NAV_GROUPS.find((item) => item.key === 'delivery');
+    const keys = deliveryGroup?.items.map((item) => item.key) ?? [];
+    const recycledItem = deliveryGroup?.items.find((item) => item.key === '/workitems/recycled');
+
+    expect(keys.indexOf('/workitems/recycled')).toBe(keys.indexOf('/executions') + 1);
+    expect(recycledItem?.label).toBe('回收站');
+    expect(resolveSelectedNavKey('/workitems/recycled')).toBe('/workitems/recycled');
   });
 
   it('gates the 定时任务 delivery entry behind the scheduled task capability', () => {
     const unavailableGroup = buildMenuItems(undefined, false, false).find((item) => item?.key === 'delivery');
     const availableGroup = buildMenuItems(undefined, false, true).find((item) => item?.key === 'delivery');
 
-    expect(childKeys(unavailableGroup)).toEqual(['/workitems', '/executions']);
-    expect(childKeys(availableGroup)).toEqual(['/workitems', '/scheduled-tasks', '/executions']);
+    expect(childKeys(unavailableGroup)).toEqual(['/overview', '/workitems', '/executions', '/workitems/recycled']);
+    expect(childKeys(availableGroup))
+      .toEqual(['/overview', '/workitems', '/scheduled-tasks', '/executions', '/workitems/recycled']);
   });
 
   it('places insights and audit logs in a dedicated group instead of config', () => {
@@ -259,7 +296,7 @@ describe('Sidebar helpers', () => {
     const knowledgeGroup = NAV_GROUPS.find((item) => item.key === 'knowledge-group');
 
     expect(workersGroup?.items.map((item) => item.key)).toEqual(['/agents', '/executors']);
-    expect(workersGroup?.items.find((item) => item.key === '/agents')?.label).toBe('数字员工管理');
+    expect(workersGroup?.items.find((item) => item.key === '/agents')?.label).toBe('管理');
     expect(knowledgeGroup?.items.map((item) => item.key)).toEqual(['/repos', '/memories', '/skills']);
     expect(knowledgeGroup?.items.find((item) => item.key === '/repos')?.label).toBe('仓库');
     expect(childKeys(items.find((item) => item?.key === 'config-group'))).toContain('/integrations');
@@ -277,7 +314,7 @@ describe('Sidebar helpers', () => {
       ? (workersGroup.children ?? []).find((child) => child?.key === '/agents')
       : undefined;
 
-    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).not.toBe('数字员工管理');
+    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).not.toBe('管理');
   });
 
   it('keeps plain label when badge count is 0 or absent', () => {
@@ -287,7 +324,7 @@ describe('Sidebar helpers', () => {
       ? (workersGroup.children ?? []).find((child) => child?.key === '/agents')
       : undefined;
 
-    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).toBe('数字员工管理');
+    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).toBe('管理');
   });
 
   it('renders badge dot on icon in collapsed mode when count > 0', () => {
@@ -297,6 +334,6 @@ describe('Sidebar helpers', () => {
       ? (workersGroup.children ?? []).find((child) => child?.key === '/agents')
       : undefined;
 
-    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).toBe('数字员工管理');
+    expect(agentsItem && 'label' in agentsItem ? agentsItem.label : undefined).toBe('管理');
   });
 });

@@ -1,3 +1,8 @@
+import { EyeOutlined, EyeInvisibleOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
+import { getAgentRoleLabel } from '@/features/agent/constants';
 import { useEffect, useState } from 'react';
 import {
   Alert,
@@ -45,7 +50,9 @@ interface Props {
 }
 
 export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: Props) {
+  const { t } = useTranslation(['integration', 'agent']);
   const [form] = Form.useForm<DrawerFormValues>();
+  useLocalizedValidation(form, open);
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null);
@@ -95,16 +102,16 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
       return createDingTalkBinding(body);
     },
     onSuccess: (binding) => {
-      message.success('绑定已保存');
+      message.success(i18n.t('integration:bindingSaved'));
       queryClient.invalidateQueries({ queryKey: ['dingtalk-bindings'] });
       setCallbackUrl(binding.callbackUrl);
       onSaved();
     },
-    onError: (error: Error) => message.error(error.message || '保存失败'),
+    onError: (error: Error) => message.error(error.message || i18n.t('integration:saveFailed')),
   });
 
   async function handleSubmit() {
-    runAccessCommand('ADMIN', mode === 'edit' ? '保存钉钉绑定修改' : '保存钉钉绑定', async () => {
+    runAccessCommand('ADMIN', mode === 'edit' ? t('saveDingEdit') : t('saveDing'), async () => {
       let values: DrawerFormValues;
       try {
         values = await form.validateFields();
@@ -116,53 +123,53 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
   }
 
   const agentOptions = agents.map((agent) => ({
-    label: agent.roleName ? `${agent.name}（${agent.roleName}）` : agent.name,
+    label: getAgentRoleLabel(agent.roleCode, agent.roleName) ? t('display.bindingLabel', { ns: 'agent', name: agent.name, label: getAgentRoleLabel(agent.roleCode, agent.roleName) }) : agent.name,
     value: agent.id,
   }));
 
   return (
-    <Drawer
-      title={mode === 'edit' ? '编辑绑定' : '新建绑定'}
+    <Drawer closable={{ 'aria-label': t('close') }}
+      title={mode === 'edit' ? t('editBinding') : t('newBinding')}
       width={480}
       open={open}
       onClose={onClose}
       destroyOnClose
       extra={
         <Space>
-          <Button onClick={onClose}>取消</Button>
-          <Button type="primary" loading={saveMutation.isPending} onClick={handleSubmit}>
-            保存
-          </Button>
+          <Button onClick={onClose}>{t('cancel')}</Button>
+          <Button type="primary" aria-label={t('save')} loading={saveMutation.isPending} onClick={handleSubmit}>{t('save')}</Button>
         </Space>
       }
     >
       <Form form={form} layout="vertical">
         <Form.Item
-          label="关联数字员工"
+          label={t('linkedAgent')}
           name="agentId"
-          rules={[{ required: true, message: '请选择关联数字员工' }]}
+          rules={[{ required: true, message: t('requiredAgent') }]}
         >
           <Select
             showSearch
             optionFilterProp="label"
-            placeholder="选择本租户数字员工"
+            placeholder={t('agentPlaceholder')}
             options={agentOptions}
           />
         </Form.Item>
-        <Form.Item label="appKey" name="appKey" rules={[{ required: true, message: '请填写 appKey' }]}>
+        <Form.Item label={t('appKey')} name="appKey" rules={[{ required: true, message: t('requiredAppKey') }]}>
           <Input placeholder="dingxxxxxx" />
         </Form.Item>
         <Form.Item
-          label={mode === 'edit' ? 'appSecret（留空=不修改）' : 'appSecret'}
+          label={mode === 'edit' ? t('appSecretEdit') : t('appSecret')}
           name="appSecret"
-          rules={mode === 'create' ? [{ required: true, message: '请填写 appSecret' }] : []}
+          rules={mode === 'create' ? [{ required: true, message: t('requiredAppSecret') }] : []}
         >
-          <Input.Password placeholder={mode === 'edit' ? '••••••••' : '应用密钥'} />
+          <Input.Password iconRender={(visible) => <Button type="text" htmlType="button" aria-label={visible ? t('hideSecret') : t('showSecret')}
+                icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />}
+                style={{ padding: 0, width: 16, height: 16 }} />} placeholder={mode === 'edit' ? '••••••••' : t('secretPlaceholder')} />
         </Form.Item>
         <Form.Item
-          label="robotCode"
+          label={t('robotCode')}
           name="robotCode"
-          rules={[{ required: true, message: '请填写 robotCode' }]}
+          rules={[{ required: true, message: t('requiredRobotCode') }]}
         >
           <Input placeholder="robot_xxxxxx" />
         </Form.Item>
@@ -172,25 +179,25 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
           items={[
             {
               key: 'advanced',
-              label: '高级设置（传输方式 / 网关地址 / regionId）',
+              label: t('advanced'),
               children: (
                 <>
-                  <Form.Item label="传输方式" name="transportMode">
+                  <Form.Item label={t('transportMode')} name="transportMode">
                     <Select
                       options={[
-                        { label: 'HTTP 回调', value: 'HTTP_CALLBACK' },
-                        { label: 'Stream', value: 'STREAM' },
+                        { label: t('httpCallback'), value: 'HTTP_CALLBACK' },
+                        { label: t('stream'), value: 'STREAM' },
                       ]}
                     />
                   </Form.Item>
-                  <Form.Item label="网关地址 baseUrl" name="baseUrl">
+                  <Form.Item label={t('gateway')} name="baseUrl">
                     <Input placeholder={DINGTALK_DEFAULT_BASE_URL} />
                   </Form.Item>
-                  <Form.Item label="regionId" name="regionId">
-                    <Input placeholder="留空使用默认" />
+                  <Form.Item label={t('dingRegion')} name="regionId">
+                    <Input placeholder={t('defaultPlaceholder')} />
                   </Form.Item>
-                  <Form.Item label="回调 token callbackToken" name="callbackToken">
-                    <Input placeholder="留空自动生成" />
+                  <Form.Item label={t('callbackToken')} name="callbackToken">
+                    <Input placeholder={t('generatedPlaceholder')} />
                   </Form.Item>
                 </>
               ),
@@ -204,10 +211,10 @@ export function DingTalkBindingDrawer({ open, mode, record, onClose, onSaved }: 
           style={{ marginTop: 16 }}
           type="success"
           showIcon
-          message="回调地址（复制到钉钉机器人后台）"
+          message={t('dingCallback')}
           description={
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
-              <Paragraph copyable={{ text: callbackUrl }} style={{ marginBottom: 0 }}>
+              <Paragraph copyable={{ text: callbackUrl, tooltips: [t('copyCallback'), t('copied')], icon: [<CopyOutlined aria-hidden="true" />, <CheckOutlined aria-hidden="true" />] }} style={{ marginBottom: 0 }}>
                 <Text code>{callbackUrl}</Text>
               </Paragraph>
             </Space>

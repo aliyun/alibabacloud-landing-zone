@@ -206,4 +206,18 @@ class DispatchPauseServiceTest {
         dispatch.setVersion(version);
         return dispatch;
     }
+
+    @Test
+    void pauseConflictIsBilingualAtBoundaryWithoutChangingDiagnosticOrStatus() {
+        DispatchDO source = dispatch(55L, DispatchStatus.SUCCEEDED, 0); when(dispatchDao.findById(55L)).thenReturn(source);
+        var ex = assertThrows(com.aliyun.autowonder.common.error.BizException.class, () -> service.requestPause(100L,200L,55L,9L));
+        assertEquals("当前执行状态不能暂停", ex.getMessage());
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("The current execution cannot be paused in this state.", com.aliyun.autowonder.common.result.Result.fail(ex).getMessage());
+            assertEquals("SUCCEEDED", source.getStatus()); verifyNoInteractions(transport);
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
 }

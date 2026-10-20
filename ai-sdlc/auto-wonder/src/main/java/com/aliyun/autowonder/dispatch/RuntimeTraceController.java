@@ -19,7 +19,7 @@ import org.springframework.http.ResponseEntity;
 
 @RestController
 @RequestMapping("/api/dispatches")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看调度运行轨迹")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看调度运行轨迹", actionKey = "access.action.view_dispatch_runtime_traces")
 public class RuntimeTraceController {
 
     private final RuntimeTraceService traceService;

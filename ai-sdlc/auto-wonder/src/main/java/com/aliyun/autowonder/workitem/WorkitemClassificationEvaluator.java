@@ -21,7 +21,7 @@ public final class WorkitemClassificationEvaluator {
     public static final String CATEGORY_CANCELED = "CANCELED";
     /** 已完成：节点类别 DONE。 */
     public static final String CATEGORY_DONE = "DONE";
-    /** 待决策：未结束且已启动过派发，已交给真人，或外部负责人下已无活跃派发。 */
+    /** 待决策：未结束且已启动过派发，等待人工回答、已交给真人，或外部负责人下已无活跃派发。 */
     public static final String CATEGORY_PENDING_DECISION = "PENDING_DECISION";
     /** 执行中：当前存在活跃派发，或节点类别 IN_PROGRESS。 */
     public static final String CATEGORY_IN_PROGRESS = "IN_PROGRESS";
@@ -69,10 +69,15 @@ public final class WorkitemClassificationEvaluator {
 
     /**
      * 统一分类。{@code dispatches} 为该工单的全部历史派发（可为 null，视作从未派发）。
-     * 真人指派优先于历史活跃记录；外部负责人仅在无活跃派发时等待人工认领。
+     * 人工请求和真人指派优先于历史活跃记录；外部负责人仅在无活跃派发时等待人工认领。
      */
     public static String classify(String nodeCategory, String assigneeType, Long assigneeRef,
                                   List<DispatchDO> dispatches) {
+        return classify(nodeCategory, assigneeType, assigneeRef, dispatches, false);
+    }
+
+    public static String classify(String nodeCategory, String assigneeType, Long assigneeRef,
+                                  List<DispatchDO> dispatches, boolean pendingHumanRequest) {
         boolean started = false;
         boolean active = false;
         if (dispatches != null) {
@@ -84,7 +89,7 @@ public final class WorkitemClassificationEvaluator {
                 active |= dispatchActive(d.getStatus());
             }
         }
-        boolean decisionAssignee = isHumanAssignee(assigneeType, assigneeRef)
+        boolean decisionAssignee = pendingHumanRequest || isHumanAssignee(assigneeType, assigneeRef)
                 || ("EXTERNAL".equals(assigneeType) && !active);
         return classify(nodeCategory, decisionAssignee, started, active);
     }
@@ -98,7 +103,7 @@ public final class WorkitemClassificationEvaluator {
      * 统一分类的布尔入参形态，便于单测与 SQL 语义对照。
      *
      * @param nodeCategory     当前状态节点类别（INIT/IN_PROGRESS/DONE/CANCELED，大小写不敏感）
-     * @param decisionAssignee 已指派真人，或外部负责人下已无活跃派发
+     * @param decisionAssignee 等待人工回答、已指派真人，或外部负责人下已无活跃派发
      * @param dispatchStarted  历史上成功启动过派发
      * @param activeDispatch   当前存在活跃派发
      */

@@ -4,6 +4,7 @@ import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.auth.jwt.TokenPayload;
+import com.aliyun.autowonder.auth.session.SessionIssuanceService;
 import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.common.crypto.PasswordEncoderUtil;
 import com.aliyun.autowonder.common.error.BizException;
@@ -35,7 +36,8 @@ class UserServiceLoginTest {
         props.setSecret("test-secret-key-that-is-long-enough-32bytes!");
         jwtService = new JwtService(props);
         service = new UserService(userDao, jwtService, sessionService, props,
-                mock(WorkspaceMemberDao.class), mock(SystemAdminService.class));
+                mock(WorkspaceMemberDao.class), mock(SystemAdminService.class),
+                new SessionIssuanceService(jwtService, sessionService, props));
     }
 
     @Test
@@ -99,4 +101,40 @@ class UserServiceLoginTest {
         BizException ex = assertThrows(BizException.class, () -> service.login(req));
         assertEquals("10401", ex.getCode());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void wrongCredentialsKeepSpecificLogin401WithoutCreatingSession(String language) throws Exception {
+        var request = new LoginRequest();
+        request.setUsername("ghost");
+        request.setPassword("raw-password");
+        BizException error = assertThrows(BizException.class, () -> service.login(request));
+        assertEquals(BizException.class, error.getClass());
+        assertEquals("10401", error.getCode());
+        assertEquals("用户名或密码错误", error.getMessage());
+        assertNull(error.getCause());
+        verifyNoInteractions(sessionService);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+                .standaloneSetup(new AuthController(service))
+                .setControllerAdvice(new com.aliyun.autowonder.common.web.GlobalExceptionHandler())
+                .setLocaleResolver(new com.aliyun.autowonder.auth.filter.AuthFilterConfig().localeResolver()).build();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/auth/login")
+                        .header("Accept-Language", language).contentType("application/json")
+                        .content("{\"username\":\"ghost\",\"password\":\"raw-password\"}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("10401"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.success").value(false))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value(
+                        language.equals("en-US") ? "Incorrect username or password." : "用户名或密码错误"));
+        verifyNoInteractions(sessionService);
+    }
+
+    @Test
+    void rawSameLookingCredentialDiagnosticHasNoTranslationIntent() {
+        var raw = new BizException(com.aliyun.autowonder.common.error.ErrorCode.UNAUTHORIZED, "用户名或密码错误");
+        assertNull(raw.getMessageKey());
+        assertEquals("用户名或密码错误", com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                raw.getMessageKey(), raw.getMessageArgs(), raw.getMessage(), java.util.Locale.US));
+    }
+
 }

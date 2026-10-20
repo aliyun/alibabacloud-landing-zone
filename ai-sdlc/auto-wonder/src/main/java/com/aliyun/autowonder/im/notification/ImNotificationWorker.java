@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.im.notification;
 
 import com.aliyun.autowonder.common.error.AlreadyLoggedException;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.im.ImDeliveryException;
 import com.aliyun.autowonder.im.ImProviderRegistry;
 import com.aliyun.autowonder.im.ImSendCommand;
@@ -312,16 +313,19 @@ public class ImNotificationWorker implements DisposableBean {
 
     private static String messageTitle(ImNotificationTask task) {
         String notificationType = task == null ? null : task.notificationType();
+        if (ImNotificationTask.TYPE_APPROVAL_REQUIRED.equals(notificationType)
+                || ImNotificationTask.TYPE_INPUT_REQUIRED.equals(notificationType)) return task.workitemTitle();
         if (ImNotificationTask.TYPE_COMMENT_MENTION.equals(notificationType)) {
-            return "工单评论提醒";
+            return SystemMessages.render("im.push.comment", null, "工单评论提醒", task.deliveryLocale());
         }
         if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST.equals(notificationType)) {
-            return "权限申请通知";
+            return SystemMessages.render("im.push.access_request", null, "权限申请通知", task.deliveryLocale());
         }
         if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED.equals(notificationType)) {
-            return "权限申请审批结果";
+            return SystemMessages.render("im.push.access_review", null, "权限申请审批结果", task.deliveryLocale());
         }
-        return "工单指派通知";
+        return SystemMessages.render("im.push.assigned", null, "工单指派通知",
+                task == null ? java.util.Locale.CHINA : task.deliveryLocale());
     }
 
     private static boolean hasText(String value) {

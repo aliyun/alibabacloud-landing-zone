@@ -37,7 +37,7 @@ describe('SdlcGenRenderer', () => {
     expect(screen.getByDisplayValue('默认流程')).toBeInTheDocument();
     expect(screen.getByDisplayValue('单个数字员工内部研发流程')).toBeInTheDocument();
     expect(screen.getByDisplayValue('需求满足性分析')).toBeInTheDocument();
-    expect(screen.getByText('analysis')).toBeInTheDocument();
+    expect(screen.getAllByText('分析').length).toBeGreaterThan(0);
     expect(screen.getByDisplayValue(/判断当前上下文是否足够/)).toBeInTheDocument();
     expect(screen.queryByText('角色码')).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/角色码/)).not.toBeInTheDocument();

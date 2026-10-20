@@ -1,7 +1,8 @@
+import { i18n } from '@/shared/i18n';
 import { describe, expect, it } from 'vitest';
 import {
-  QODER_MODELS,
   chooseQoderModel,
+  qoderOptionsForModel,
   qoderProviderForClientKind,
   resolveQoderModelOptions,
 } from './qoderOptions';
@@ -29,8 +30,14 @@ describe('qoder model catalog helpers', () => {
   });
 
   it('returns every static fallback option for an empty catalog', () => {
-    expect(resolveQoderModelOptions([])).toEqual(QODER_MODELS);
-    expect(resolveQoderModelOptions(undefined)).toEqual(QODER_MODELS);
+    for (const catalog of [[], undefined]) {
+      expect(resolveQoderModelOptions(catalog).map(({ value }) => value)).toEqual([
+        'auto', 'ultimate', 'performance', 'efficient', 'lite',
+        'qmodel_38max', 'qfmodel', 'qmodel_latest', 'qmodel',
+        'kmodel_latest', 'kmodel', 'gmodel', 'gfmodel',
+        'dmodel', 'dfmodel', 'mmodel',
+      ]);
+    }
   });
 
   it('keeps a saved model when it remains in the resolved options', () => {
@@ -47,4 +54,16 @@ describe('qoder model catalog helpers', () => {
     ], 'removed-model')).toBe('qoder-model-id');
     expect(chooseQoderModel([], 'removed-model')).toBe('');
   });
+});
+
+it('resolves current-locale fallback options without changing defaults or catalog names', async () => {
+  await i18n.changeLanguage('zh-CN');
+  expect(resolveQoderModelOptions([])[0]).toEqual({ value: 'auto', label: '自动（默认）' });
+  expect(qoderOptionsForModel('ultimate').reasoningEfforts[2]).toEqual({ value: 'high', label: '高' });
+  await i18n.changeLanguage('en-US');
+  expect(resolveQoderModelOptions([])[0]).toEqual({ value: 'auto', label: 'Auto (default)' });
+  expect(qoderOptionsForModel('ultimate').defaultReasoningEffort).toBe('high');
+  expect(qoderOptionsForModel('__proto__').defaultReasoningEffort).toBe('medium');
+  expect(resolveQoderModelOptions([{ id: 'auto', name: '用户模型名称' }])[0].label).toBe('用户模型名称');
+  await i18n.changeLanguage('zh-CN');
 });

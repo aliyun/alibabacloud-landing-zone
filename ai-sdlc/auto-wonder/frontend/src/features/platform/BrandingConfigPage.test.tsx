@@ -1,5 +1,6 @@
+import { i18n } from '@/shared/i18n';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -84,6 +85,14 @@ async function openNotificationTab() {
 
 async function openPlatformAdminTab() {
   await userEvent.click(await screen.findByRole('tab', { name: '平台管理员' }));
+}
+
+async function openEnterpriseSsoTab() {
+  await userEvent.click(await screen.findByRole('tab', { name: '企业 SSO' }));
+}
+
+async function openUserManagementTab() {
+  await userEvent.click(await screen.findByRole('tab', { name: '用户管理' }));
 }
 
 describe('BrandingConfigPage', () => {
@@ -473,17 +482,105 @@ describe('BrandingConfigPage', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('groups branding, collaboration notice and platform admins into tabs', async () => {
+  it('groups branding, collaboration notice, enterprise SSO and platform admins into tabs', async () => {
     renderPage();
 
     expect(await screen.findByRole('tab', { name: '品牌与主题' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '协作通知' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: '企业 SSO' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '平台管理员' })).toBeInTheDocument();
 
     // Branding stays the landing pane so an operator who only came to rename the platform does not
     // have to hunt for the form.
     const saveButton = await screen.findByRole('button', { name: /保存配置/ });
     await waitFor(() => expect(saveButton).toBeEnabled());
+  });
+
+  it('hides the enterprise SSO tab from non-admins and falls back to branding', async () => {
+    let ssoRequests = 0;
+    window.localStorage.setItem('autowonder.platform-config.tab', 'enterprise-sso');
+    server.use(
+      http.get('/api/platform/branding', () => HttpResponse.json({
+        ...brandingPayload(),
+        data: { ...brandingPayload().data, canManage: false },
+      })),
+      http.get('/api/platform/federation/overview', () => {
+        ssoRequests += 1;
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          traceId: null,
+          data: { idps: [], connections: [] },
+        });
+      }),
+      http.get('/api/platform/federation/idps', () => {
+        ssoRequests += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
+      }),
+      http.get('/api/platform/federation/connections', () => {
+        ssoRequests += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
+      }),
+    );
+
+    renderPage();
+
+    // 企业 SSO 与用户管理同为管理员专属页签；历史存储的 SSO 页签落回品牌配置，且不触发任何 SSO 请求。
+    expect(await screen.findByRole('tab', { name: '品牌与主题' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab', { name: '企业 SSO' })).not.toBeInTheDocument();
+    expect(ssoRequests).toBe(0);
+  });
+
+  it('hides the enterprise SSO tab when platform admin rights are revoked', async () => {
+    let canManage = true;
+    const empty = { success: true, code: '0', message: '', traceId: null, data: [] };
+    window.localStorage.setItem('autowonder.platform-config.tab', 'enterprise-sso');
+    server.use(
+      http.get('/api/platform/branding', () => HttpResponse.json({
+        ...brandingPayload(),
+        data: { ...brandingPayload().data, canManage },
+      })),
+      http.get('/api/platform/federation/idps', () => HttpResponse.json(empty)),
+      http.get('/api/platform/federation/connections', () => HttpResponse.json(empty)),
+    );
+
+    const adminRender = renderPage();
+    expect(await screen.findByRole('button', { name: '新增 IdP' })).toBeInTheDocument();
+    adminRender.unmount();
+
+    canManage = false;
+    renderPage();
+
+    // 权限收回后企业 SSO 页签不再渲染，历史存储值落回品牌配置，避免空白页。
+    expect(await screen.findByRole('tab', { name: '品牌与主题' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab', { name: '企业 SSO' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '新增 IdP' })).toBeNull();
+  });
+
+  it('loads enterprise SSO configuration only after its tab is opened', async () => {
+    let federationRequests = 0;
+    const empty = { success: true, code: '0', message: '', traceId: null, data: [] };
+    server.use(
+      http.get('/api/platform/federation/idps', () => {
+        federationRequests += 1;
+        return HttpResponse.json(empty);
+      }),
+      http.get('/api/platform/federation/connections', () => {
+        federationRequests += 1;
+        return HttpResponse.json(empty);
+      }),
+    );
+
+    renderPage();
+
+    await screen.findByRole('tab', { name: '企业 SSO' });
+    expect(federationRequests).toBe(0);
+
+    await openEnterpriseSsoTab();
+
+    await waitFor(() => expect(federationRequests).toBe(2));
+    expect(await screen.findByText('尚未配置身份提供方')).toBeInTheDocument();
   });
 
   it('restores the last selected platform configuration tab after remounting', async () => {
@@ -596,6 +693,106 @@ describe('BrandingConfigPage', () => {
     expect(within(otherRow!).getByRole('button', { name: '移除' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '添加管理员' })).toBeDisabled();
   });
+
+  it('switches platform configuration language from the shared header', async () => {
+    renderPage();
+    await screen.findByText('上传 Logo');
+    try {
+      await userEvent.click(screen.getByRole('button', { name: '切换语言' }));
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'English' }));
+      expect(await screen.findByRole('heading', { name: 'Platform configuration' })).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Switch language' })).toHaveLength(1);
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    }
+  });
+
+  it('exposes the user management tab to platform admins and loads its roster lazily', async () => {
+    let requests = 0;
+    server.use(http.get('/api/platform/users', () => {
+      requests += 1;
+      return HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: { totalAll: 0, total: 0, pageNum: 1, pageSize: 20, list: [] },
+      });
+    }));
+
+    renderPage();
+
+    await screen.findByRole('tab', { name: '用户管理' });
+    expect(requests).toBe(0);
+
+    await openUserManagementTab();
+
+    await waitFor(() => expect(requests).toBe(1));
+    expect(await screen.findByText('全部用户 0 人')).toBeInTheDocument();
+    expect(window.localStorage.getItem('autowonder.platform-config.tab')).toBe('user-management');
+  });
+
+  it('hides the user management tab from non-admin operators and never fetches the roster', async () => {
+    let requests = 0;
+    server.use(
+      http.get('/api/platform/branding', () => HttpResponse.json({
+        ...brandingPayload(),
+        data: { ...brandingPayload().data, canManage: false },
+      })),
+      http.get('/api/platform/users', () => {
+        requests += 1;
+        return HttpResponse.json({
+          success: true,
+          code: '0',
+          message: '',
+          traceId: null,
+          data: { totalAll: 0, total: 0, pageNum: 1, pageSize: 20, list: [] },
+        });
+      }),
+    );
+
+    renderPage();
+
+    await screen.findByRole('tab', { name: '品牌与主题' });
+    expect(screen.queryByRole('tab', { name: '用户管理' })).not.toBeInTheDocument();
+    expect(requests).toBe(0);
+  });
+
+  it('restores a persisted user management tab for platform admins', async () => {
+    let requests = 0;
+    window.localStorage.setItem('autowonder.platform-config.tab', 'user-management');
+    server.use(http.get('/api/platform/users', () => {
+      requests += 1;
+      return HttpResponse.json({
+        success: true,
+        code: '0',
+        message: '',
+        traceId: null,
+        data: { totalAll: 0, total: 0, pageNum: 1, pageSize: 20, list: [] },
+      });
+    }));
+
+    renderPage();
+
+    expect(await screen.findByRole('tab', { name: '用户管理' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(requests).toBe(1));
+  });
+
+  it('falls back to branding when a persisted user management tab is opened by a non-admin', async () => {
+    window.localStorage.setItem('autowonder.platform-config.tab', 'user-management');
+    server.use(
+      http.get('/api/platform/branding', () => HttpResponse.json({
+        ...brandingPayload(),
+        data: { ...brandingPayload().data, canManage: false },
+      })),
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole('tab', { name: '品牌与主题' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab', { name: '用户管理' })).not.toBeInTheDocument();
+  });
+
 });
 
 it('switches to Feishu without reusing DingTalk credentials or requiring RobotCode', async () => {

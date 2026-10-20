@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Spin, Typography } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
 import type { ReactNode } from 'react';
@@ -14,6 +15,8 @@ const PRIORITY_COLOR: Record<AcpPlanPriority, string> = {
   medium: 'var(--aw-warning)',
   low: CLARIFICATION_THEME.textMuted,
 };
+
+const PRIORITY_LABEL = { high: 'clarification.priorityHigh', medium: 'clarification.priorityMedium', low: 'clarification.priorityLow' } as const;
 
 const STATUS_AFFORDANCE: Record<AcpPlanStatus, ReactNode> = {
   completed: (
@@ -38,6 +41,7 @@ const STATUS_AFFORDANCE: Record<AcpPlanStatus, ReactNode> = {
 };
 
 export function PlanCard({ entries }: PlanCardProps) {
+  const { t } = useTranslation('workitem');
   if (entries.length === 0) return null;
 
   return (
@@ -51,7 +55,7 @@ export function PlanCard({ entries }: PlanCardProps) {
       }}
     >
       <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 6 }}>
-        执行计划
+        {t('clarification.executionPlan')}
       </Typography.Text>
       {entries.map((entry, index) => (
         <div
@@ -73,7 +77,7 @@ export function PlanCard({ entries }: PlanCardProps) {
             {entry.content}
           </span>
           <span style={{ fontSize: 13, color: PRIORITY_COLOR[entry.priority] }}>
-            {entry.priority}
+            {Object.prototype.hasOwnProperty.call(PRIORITY_LABEL, entry.priority) ? t(PRIORITY_LABEL[entry.priority]) : entry.priority}
           </span>
         </div>
       ))}

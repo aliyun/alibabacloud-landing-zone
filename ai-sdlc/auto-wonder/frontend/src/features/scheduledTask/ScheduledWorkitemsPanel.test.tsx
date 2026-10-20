@@ -1,3 +1,7 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { act } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { i18n } from '@/shared/i18n';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -233,4 +237,59 @@ describe('ScheduledWorkitemsPanel', () => {
     expect(calls).toHaveLength(0);
     errorSpy.mockRestore();
   });
+});
+
+it('switches an open workitem schedule modal and saves the same ISO value', async () => {
+  const calls: { id: string; body: unknown }[] = [];
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  useWorkitemHandler([PENDING_ITEM, DONE_ITEM], []);
+  useScheduledStartHandler(calls);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createMemoryRouter([{ path: '/', element: <ScheduledWorkitemsPanel /> }]);
+  render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: '修改时间 #1' }));
+  const input = within(screen.getByRole('dialog')).getByRole('textbox');
+  const value = (input as HTMLInputElement).value;
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit scheduled start time');
+  expect(within(screen.getByRole('dialog')).getByRole('textbox')).toBe(input);
+  expect(input).toHaveValue(value);
+  expect(screen.getByText('Pending trigger')).toBeInTheDocument();
+  expect(screen.getByText('已发布')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'View #2' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(calls[0]?.body).toEqual({ scheduledStartAt: FUTURE }));
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });
+
+it('reports a past scheduled time in the switched language without submitting it', async () => {
+  useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+  const calls: { id: string; body: unknown }[] = [];
+  useWorkitemHandler([{ ...PENDING_ITEM, scheduledStartAt: PAST }], []);
+  useScheduledStartHandler(calls);
+  const warning = vi.spyOn(message, 'warning').mockImplementation(() => undefined as never);
+  renderPanel();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: '修改时间 #1' }));
+  await act(() => i18n.changeLanguage('en-US'));
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  expect(warning).toHaveBeenCalledWith('The scheduled start time must be in the future.');
+  expect(calls).toHaveLength(0);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  warning.mockRestore();
+});
+
+it.each(['zh-CN', 'en-US'])('final widget scheduled workitem clear preserves keyboard search and resets page in %s', async locale => {
+ const requests: string[] = []; useWorkitemHandler([], requests);
+ await i18n.changeLanguage(locale); renderPanel();
+ const input = screen.getByLabelText(locale === 'en-US' ? 'Work item title filter' : '工单标题筛选');
+ expect(screen.getByRole('button', { name: locale === 'en-US' ? 'Search' : '搜索' })).toBeEnabled();
+ await userEvent.type(input, '<raw>中文{Enter}');
+ await waitFor(() => expect(new URLSearchParams(requests.at(-1)).get('keyword')).toBe('<raw>中文'));
+ await userEvent.click(screen.getByRole('button', { name: locale === 'en-US' ? 'Clear scheduled work item search' : '清空定时工单搜索' }));
+ expect(input).toHaveValue(''); await waitFor(() => expect(new URLSearchParams(requests.at(-1)).has('keyword')).toBe(false));
+ expect(new URLSearchParams(requests.at(-1)).get('page')).toBe('1');
 });

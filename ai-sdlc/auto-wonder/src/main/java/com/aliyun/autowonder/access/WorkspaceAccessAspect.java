@@ -39,7 +39,17 @@ public class WorkspaceAccessAspect {
         WorkspaceAccessLevel current = context.getWorkspaceAccessLevel();
         if (!current.allows(requirement.value())) {
             throw new WorkspaceAccessDeniedException(
-                    current, requirement.value(), requirement.action());
+                    current, requirement.value(), requirement.action(), requirement.actionKey());
+        }
+        if (requirement.value() != WorkspaceAccessLevel.READ_ONLY
+                && current != WorkspaceAccessLevel.ADMIN && context.getWorkspaceMember() != null) {
+            Class<?> targetClass = AopUtils.getTargetClass(joinPoint.getTarget());
+            WorkspaceDomain readOnly = WorkspaceDomain.firstReadOnly(
+                    context.getWorkspaceMember().getReadOnlyDomains(), targetClass);
+            if (readOnly != null) {
+                throw new WorkspaceDomainReadOnlyException(
+                        readOnly, requirement.action(), requirement.actionKey());
+            }
         }
         return joinPoint.proceed();
     }

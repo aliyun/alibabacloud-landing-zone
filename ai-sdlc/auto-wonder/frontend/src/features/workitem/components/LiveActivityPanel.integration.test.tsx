@@ -1,5 +1,6 @@
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 
 // CR-4③: integration coverage that exercises the REAL useLiveActivity hook (only the REST api and
 // the realtime transport are mocked), so the enabled=false first-screen backfill path is verified
@@ -69,3 +70,21 @@ describe('LiveActivityPanel integration (real hook)', () => {
     expect(screen.getByText(/正在等待 Agent 上报实时动作/)).toBeTruthy();
   });
 });
+
+ it('updates held server fallback metadata in the current locale without another request, preserving raw same-name and unknown origins', async () => {
+   vi.clearAllMocks();
+   const system = action({ eventId: 'system', summary: '开始 SDLC 步骤', eventType: 'step.started', ...{ summaryOrigin: 'SYSTEM_FALLBACK', summaryTarget: '<b>raw</b>' } });
+   const raw = action({ eventId: 'raw', summary: '开始 SDLC 步骤', eventType: 'step.started' });
+   const unknown = action({ eventId: 'unknown', summary: '未知 <b>raw</b>', ...{ summaryOrigin: 'NEW_ORIGIN' } });
+   mockGetActivity.mockResolvedValue(history({ actions: [system, raw, unknown], totalActions: 3 }));
+   await act(async () => { await i18n.changeLanguage('zh-CN'); });
+   render(<LiveActivityPanel dispatchId={10} enabled={false} />);
+   await screen.findByTestId('live-activity-panel');
+   await act(async () => { await i18n.changeLanguage('en-US'); });
+   expect(screen.getByText('Start SDLC step · <b>raw</b>')).toBeInTheDocument();
+   expect(screen.getByText('开始 SDLC 步骤')).toBeInTheDocument();
+   expect(screen.getByText('未知 <b>raw</b>')).toBeInTheDocument();
+   expect(document.querySelector('b')).toBeNull();
+   expect(mockGetActivity).toHaveBeenCalledTimes(1);
+   await act(async () => { await i18n.changeLanguage('zh-CN'); });
+ });

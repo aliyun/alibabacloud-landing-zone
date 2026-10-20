@@ -1,3 +1,7 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { formatNumber } from '@/shared/i18n/format';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useMemo, useState } from 'react';
 import { Card, Tag, Button, Space, Popconfirm, message, Modal, Form, Input, Select, Tabs, Pagination, Spin, Empty } from 'antd';
@@ -22,16 +26,21 @@ const SDLCS_VIEW_STORAGE_KEY = 'autowonder.sdlcs.view';
 const SDLCS_VIEW_OPTIONS = ['list', 'grouped'] as const;
 const SDLCS_PAGE_SIZE_STORAGE_KEY = 'autowonder.sdlcs.pageSize';
 
-const statusMap: Record<string, { color: string; label: string }> = {
-  DRAFT: { color: 'default', label: '草稿' },
-  ENABLED: { color: 'success', label: '已启用' },
-  DISABLED: { color: 'warning', label: '已禁用' },
+const statusMap: Record<string, { color: string; key: 'status.draft' | 'status.enabled' | 'status.disabled' }> = {
+  DRAFT: { color: 'default', key: 'status.draft' as const },
+  ENABLED: { color: 'success', key: 'status.enabled' as const },
+  DISABLED: { color: 'warning', key: 'status.disabled' as const },
 };
 
 export function SdlcListPage() {
+  const { t } = useTranslation('sdlc');
+  const { t: squadT } = useTranslation('squad');
+  const workTypes = new Map<string, string>([['REQUIREMENT', t('workType.requirement')], ['REQ', t('workType.requirement')], ['TASK', t('workType.task')], ['BUG', t('workType.bug')]]);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const accessCommand = useAccessCommand();
+  const rawAccessCommand = useAccessCommand();
+  const accessCommand: typeof rawAccessCommand = (required, action, command) =>
+    rawAccessCommand(required, action, command, 'SDLC');
   const [page, setPage] = useState(1);
   const [size, setSize] = usePageSizePreference(SDLCS_PAGE_SIZE_STORAGE_KEY, [10, 20, 50, 100], 10);
   const [createOpen, setCreateOpen] = useState(false);
@@ -41,6 +50,7 @@ export function SdlcListPage() {
     () => readViewPreference(SDLCS_VIEW_STORAGE_KEY, SDLCS_VIEW_OPTIONS, 'grouped') === 'grouped',
   );
   const [form] = Form.useForm();
+  useLocalizedValidation(form, createOpen);
   const { options: squadOptions, nameById: squadNameById, isLoading: squadsLoading } = useSquadOptions();
 
   const { data: result, isLoading } = useQuery({
@@ -66,7 +76,7 @@ export function SdlcListPage() {
 
   const squadGroups = useMemo(
     () => groupBySquad(data, (sdlc) => sdlc.squadIds, squadNameById),
-    [data, squadNameById],
+    [data, squadNameById, squadT],
   );
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sdlcs'] });
@@ -77,77 +87,77 @@ export function SdlcListPage() {
       invalidate();
       setCreateOpen(false);
       form.resetFields();
-      message.success('创建成功');
+      message.success(i18n.t('sdlc:messages.created'));
       navigate(`/sdlcs/${newSdlc.id}`);
     },
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteSdlcTemplate,
-    onSuccess: () => { invalidate(); message.success('已删除'); },
-    onError: (error: Error) => { message.error(error.message || '删除失败'); },
+    onSuccess: () => { invalidate(); message.success(i18n.t('sdlc:messages.deleted')); },
+    onError: (error: Error) => { message.error(error.message || i18n.t('sdlc:messages.deleteFailed')); },
   });
 
   const enableMut = useMutation({
     mutationFn: enableSdlcTemplate,
-    onSuccess: () => { invalidate(); message.success('已启用'); },
+    onSuccess: () => { invalidate(); message.success(i18n.t('sdlc:status.enabled')); },
   });
 
   const disableMut = useMutation({
     mutationFn: disableSdlcTemplate,
-    onSuccess: () => { invalidate(); message.success('已禁用'); },
+    onSuccess: () => { invalidate(); message.success(i18n.t('sdlc:status.disabled')); },
   });
 
   const columns: ColumnsType<SdlcTemplate> = [
-    { title: 'ID', dataIndex: 'id', width: 70 },
+    { title: t('fields.id'), dataIndex: 'id', width: 70 },
     {
-      title: '名称', dataIndex: 'name', align: 'left', ellipsis: { showTitle: false },
+      title: t('fields.name'), dataIndex: 'name', align: 'left', ellipsis: { showTitle: false },
       render: (name: string, record) => (
         <EllipsisText tooltip={name}>
           <a onClick={() => navigate(`/sdlcs/${record.id}`)}>{name}</a>
         </EllipsisText>
       ),
     },
-    { title: '描述', dataIndex: 'description', align: 'left', ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText> },
-    { title: '工单类型', dataIndex: 'workType', width: 90, render: (v: string | null) => v || '通用' },
-    { title: '步骤数', width: 80, render: (_, record) => record.stepCount ?? record.steps?.length ?? 0 },
+    { title: t('fields.description'), dataIndex: 'description', align: 'left', ellipsis: { showTitle: false }, render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText> },
+    { title: t('fields.workType'), dataIndex: 'workType', width: 90, render: (v: string | null) => v ? workTypes.get(v) ?? v : t('workType.general') },
+    { title: t('fields.stepCount'), width: 80, render: (_, record) => formatNumber(record.stepCount ?? record.steps?.length ?? 0) },
     {
-      title: '所属小队', width: 180,
+      title: t('fields.squad'), width: 180,
       render: (_, record) => <SquadTags squadIds={record.squadIds} squadNames={record.squadNames} />,
     },
     {
-      title: '状态', dataIndex: 'status', width: 100,
-      render: (s: string) => <Tag color={statusMap[s]?.color}>{statusMap[s]?.label || s}</Tag>,
+      title: t('fields.status'), dataIndex: 'status', width: 100,
+      render: (s: string) => <Tag color={Object.prototype.hasOwnProperty.call(statusMap, s) ? statusMap[s].color : undefined}>{Object.prototype.hasOwnProperty.call(statusMap, s) ? t(statusMap[s].key) : s}</Tag>,
     },
     {
-      title: '操作', width: 180,
+      title: t('fields.actions'), width: 180,
       render: (_, record) => (
         <Space>
-          <Button type="link" size="small" onClick={() => navigate(`/sdlcs/${record.id}`)}>详情</Button>
+          <Button type="link" size="small" onClick={() => navigate(`/sdlcs/${record.id}`)}>{t('actions.details')}</Button>
           {record.status === 'DRAFT' || record.status === 'DISABLED' ? (
-            <Popconfirm title="确定启用？" onConfirm={() => accessCommand(
+            <Popconfirm title={t('confirm.enable')} onConfirm={() => accessCommand(
               'READ_WRITE',
-              '启用 SDLC 模版',
+              t('commands.enable'),
               () => enableMut.mutate(record.id),
             )}>
-              <Button type="link" size="small">启用</Button>
+              <Button type="link" size="small">{t('actions.enable')}</Button>
             </Popconfirm>
           ) : (
-            <Popconfirm title="确定禁用？" onConfirm={() => accessCommand(
+            <Popconfirm title={t('confirm.disable')} onConfirm={() => accessCommand(
               'READ_WRITE',
-              '禁用 SDLC 模版',
+              t('commands.disable'),
               () => disableMut.mutate(record.id),
             )}>
-              <Button type="link" size="small" danger>禁用</Button>
+              <Button type="link" size="small" danger>{t('actions.disable')}</Button>
             </Popconfirm>
           )}
           {record.status !== 'ENABLED' && (
-            <Popconfirm title="确定删除该模版？" onConfirm={() => accessCommand(
+            <Popconfirm title={t('confirm.delete')} onConfirm={() => accessCommand(
               'READ_WRITE',
-              '删除 SDLC 模版',
+              t('commands.delete'),
               () => deleteMut.mutate(record.id),
             )}>
-              <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+              <Button type="link" size="small" danger aria-label={t('commands.delete')} icon={<DeleteOutlined aria-hidden="true" />} />
             </Popconfirm>
           )}
         </Space>
@@ -158,21 +168,21 @@ export function SdlcListPage() {
   return (
     <div>
       <PageHeading
-        title="SDLC 流程模版"
+        title={t('list.title')}
         extra={activeTab === 'templates' && (
           <Space>
             {SDLC_AI_ENABLED && (
               <Button onClick={() => accessCommand(
                 'READ_WRITE',
-                'AI 生成 SDLC',
+                t('commands.aiGenerate'),
                 () => navigate('/sdlcs/generate'),
-              )}>AI 生成</Button>
+              )}>{t('actions.aiGenerate')}</Button>
             )}
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => accessCommand(
+            <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={() => accessCommand(
               'READ_WRITE',
-              '新建 SDLC 模版',
+              t('commands.create'),
               () => setCreateOpen(true),
-            )}>新建</Button>
+            )}>{t('actions.new')}</Button>
           </Space>
         )}
       />
@@ -182,7 +192,7 @@ export function SdlcListPage() {
       items={[
         {
           key: 'templates',
-          label: '流程模版',
+          label: t('list.templates'),
           children: (
             <>
               <div style={{ marginBottom: 12 }}>
@@ -202,7 +212,7 @@ export function SdlcListPage() {
                 {grouped ? (
                   <Spin spinning={isLoading}>
                     {!isLoading && data.length === 0 ? (
-                      <Empty description="暂无 SDLC 模版" />
+                      <Empty description={t('list.empty')} />
                     ) : (
                       <>
                         {squadGroups.map((group) => (
@@ -215,7 +225,7 @@ export function SdlcListPage() {
                                   <Link to={`/agents?tab=squads&squadId=${group.squadId}`}>{group.label}</Link>
                                 )}
                               </strong>
-                              <span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{group.items.length} 个</span>
+                              <span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{t('list.groupCount', { count: group.items.length })}</span>
                             </Space>
                             <Table
                               rowKey="id"
@@ -233,7 +243,7 @@ export function SdlcListPage() {
                       pageSize={size}
                       total={total}
                       showSizeChanger
-                      showTotal={(t) => `共 ${t} 条`}
+                      showTotal={(count) => t('list.total', { count })}
                       onChange={(p, ps) => { setPage(ps !== size ? 1 : p); setSize(ps); }}
                       style={{ marginTop: 8, textAlign: 'right' }}
                     />
@@ -248,36 +258,37 @@ export function SdlcListPage() {
                       current: page, pageSize: size, total,
                       onChange: (p, ps) => { setPage(ps !== size ? 1 : p); setSize(ps); },
                       showSizeChanger: true,
-                      showTotal: (t) => `共 ${t} 条`,
+                      showTotal: (count) => t('list.total', { count }),
                     }}
                   />
                 )}
               </Card>
 
               <Modal
-                title="新建 SDLC 模版"
+                title={t('commands.create')}
                 open={createOpen}
+                closable={{ 'aria-label': t('gallery.close') }}
                 onOk={() => form.validateFields().then(v => accessCommand(
                   'READ_WRITE',
-                  '新建 SDLC 模版',
+                  t('commands.create'),
                   () => createMut.mutate(v),
-                ))}
+                ), () => {})}
                 onCancel={() => setCreateOpen(false)}
                 confirmLoading={createMut.isPending}
               >
                 <Form form={form} layout="vertical">
-                  <Form.Item name="name" label="模版名称" rules={[{ required: true, message: '请输入名称' }]}>
-                    <Input placeholder="如: 标准需求开发流程" />
+                  <Form.Item name="name" label={t('fields.templateName')} rules={[{ required: true, message: t('validation.name') }]}>
+                    <Input placeholder={t('placeholder.name')} />
                   </Form.Item>
-                  <Form.Item name="description" label="描述">
-                    <Input.TextArea rows={2} placeholder="描述该流程模版的用途" />
+                  <Form.Item name="description" label={t('fields.description')}>
+                    <Input.TextArea rows={2} placeholder={t('placeholder.description')} />
                   </Form.Item>
-                  <Form.Item name="workType" label="工单类型">
-                    <Select allowClear placeholder="可选绑定工单类型"
+                  <Form.Item name="workType" label={t('fields.workType')}>
+                    <Select allowClear placeholder={t('placeholder.workType')}
                       options={[
-                        { value: 'REQUIREMENT', label: '需求' },
-                        { value: 'TASK', label: '任务' },
-                        { value: 'BUG', label: 'Bug' },
+                        { value: 'REQUIREMENT', label: t('workType.requirement') },
+                        { value: 'TASK', label: t('workType.task') },
+                        { value: 'BUG', label: t('workType.bug') },
                       ]} />
                   </Form.Item>
                 </Form>
@@ -287,7 +298,7 @@ export function SdlcListPage() {
         },
         {
           key: 'gallery',
-          label: '模版间',
+          label: t('list.gallery'),
           children: <SquadTemplateGallery />,
         },
       ]}

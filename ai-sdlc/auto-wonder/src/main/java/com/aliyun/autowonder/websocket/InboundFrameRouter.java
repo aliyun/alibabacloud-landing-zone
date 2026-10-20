@@ -80,6 +80,10 @@ public class InboundFrameRouter {
         this.debugLogService = service;
     }
 
+    private com.aliyun.autowonder.dispatch.DispatchGuidanceService terminalGuidance;
+    @Autowired
+    public void setTerminalGuidance(com.aliyun.autowonder.dispatch.DispatchGuidanceService service) { this.terminalGuidance=service; }
+
     @Autowired
     public InboundFrameRouter(DispatchService dispatchService, ArtifactService artifactService,
             PresenceManager presenceManager, HandoffService handoffService,
@@ -162,6 +166,12 @@ public class InboundFrameRouter {
         runtimeReconciler = value;
     }
 
+    private com.aliyun.autowonder.dispatch.DispatchResultCoordinator resultCoordinator;
+    @Autowired
+    public void setResultCoordinator(com.aliyun.autowonder.dispatch.DispatchResultCoordinator coordinator) {
+        this.resultCoordinator = coordinator;
+    }
+
     public void route(ExecutorSession es, String message) {
         JSONObject json;
         try {
@@ -178,6 +188,37 @@ public class InboundFrameRouter {
             return;
         }
         long incomingDispatchId = json.getLongValue("dispatchId");
+        if ("TASK_RESULT".equals(type)) {
+            var result = resultCoordinator == null
+                    ? com.aliyun.autowonder.dispatch.DispatchResultCoordinator.retry(json, "RESULT_SCHEMA_NOT_READY")
+                    : resultCoordinator.handle(es.getTenantId(), es.getExecutorId(), json);
+            if (result.handoff() != null) sendFrame(es, result.handoff(), "handoff result", incomingDispatchId);
+            boolean deferLegacyResult = com.aliyun.autowonder.dispatch.DispatchResultCoordinator.isLegacyResult(json)
+                    && Boolean.TRUE.equals(result.ack().getBoolean("retryable"));
+            if (deferLegacyResult) {
+                // Runtime releases before the v2 result outbox delete on any ACK, even a retryable one.
+                // Leave the frame unacknowledged so their existing retry loop resends it.
+                log.info("legacy TASK_RESULT deferred without ACK dispatchId={} reasonCode={}", incomingDispatchId,
+                        result.ack().getString("reasonCode"));
+            } else {
+                JSONObject wireAck = result.ack();
+                if (com.aliyun.autowonder.dispatch.DispatchResultCoordinator.isLegacyResult(json)) {
+                    // Adapt only the wire representation; persist the complete V2 decision.
+                    wireAck = new JSONObject();
+                    wireAck.put("type", "TASK_RESULT_ACK");
+                    wireAck.put("dispatchId", incomingDispatchId);
+                    wireAck.put("accepted", result.ack().getBoolean("accepted"));
+                }
+                sendFrame(es, wireAck, "result ack", incomingDispatchId);
+            }
+            // Auxiliary debug-log recording cannot change the durable decision.
+            if (Boolean.TRUE.equals(result.ack().getBoolean("accepted"))) {
+                try { recordDebugLogReport(es, json, resolveDispatchBoundary(es, json, type).owner()); }
+                catch (RuntimeException ignored) { log.warn("result debug-log boundary unavailable dispatchId={}", incomingDispatchId); }
+            }
+            return;
+        }
+
         if (recovery != null && incomingDispatchId > 0 && recovery.cancelRequested(es.getTenantId(), incomingDispatchId)) {
             boolean stopped = ("TASK_PAUSED".equals(type) || "TASK_RESULT".equals(type))
                     && recovery.onStopped(es.getTenantId(), es.getExecutorId(), incomingDispatchId);
@@ -296,118 +337,6 @@ public class InboundFrameRouter {
                 // second, idempotent delivery edge once the committed guidance row is visible.
                 guidanceService.deliverQueuedForDispatch(es.getTenantId(), json.getLongValue("dispatchId"));
                 break;
-            case "TASK_RESULT":
-                boolean success = Boolean.TRUE.equals(json.getBoolean("success"));
-                String failureCategory = json.getString("failureCategory");
-                String failureScope = json.getString("failureScope");
-                if (!success && DispatchService.isExecutorFailureCategory(failureCategory)) {
-                    failureScope = "EXECUTOR";
-                } else if (!success && (failureCategory == null || failureCategory.isBlank())) {
-                    // Heuristic fallback for runtimes predating structured failure metadata. A
-                    // runtime-declared category such as tool_hook_blocked is the first causal
-                    // failure and must never be relabelled as executor infrastructure failover.
-                    String classified = ExecutorFailureClassifier.classify(json.getString("error"));
-                    if (classified != null) {
-                        failureCategory = classified;
-                        failureScope = "EXECUTOR";
-                    }
-                }
-                log.info("inbound TASK_RESULT dispatchId={} success={} executorId={} failureCategory={} failureScope={}",
-                        json.getLongValue("dispatchId"), success, es.getExecutorId(),
-                        failureCategory, failureScope);
-                boolean durableReceiptProtocol = json.getIntValue("checkpointReceiptVersion") >= 1;
-                if (success && durableReceiptProtocol
-                        && !dispatchService.hasDurableCheckpoint(es.getTenantId(),
-                        json.getLongValue("dispatchId"),
-                        json.getLongValue("checkpointSeq"),
-                        json.getString("checkpointSha256"))) {
-                    log.warn("TASK_RESULT checkpoint is not durable dispatchId={} executorId={} checkpointSeq={}",
-                            json.getLongValue("dispatchId"), es.getExecutorId(),
-                            json.getLongValue("checkpointSeq"));
-                    sendResultAck(es, json.getLongValue("dispatchId"), false);
-                    break;
-                }
-                if (success && !durableReceiptProtocol) {
-                    log.warn("accepting legacy TASK_RESULT without durable checkpoint receipt dispatchId={} executorId={}",
-                            json.getLongValue("dispatchId"), es.getExecutorId());
-                }
-                JSONObject embeddedHandoff = json.getJSONObject("handoff");
-                boolean explicitHandoff = success && embeddedHandoff != null;
-                if (success && durableReceiptProtocol) {
-                    DispatchPauseService.CompletionDisposition pauseCompletion =
-                            pauseService.onCompletedWhilePausing(es.getTenantId(), es.getExecutorId(),
-                                    json.getLongValue("dispatchId"), json.getLongValue("checkpointSeq"),
-                                    json.getString("checkpointSha256"));
-                    if (DispatchPauseService.CompletionDisposition.PAUSED.equals(pauseCompletion)) {
-                        guidanceService.requeueDeliveredForDispatch(es.getTenantId(),
-                                json.getLongValue("dispatchId"));
-                        if (interactionWorkflowService != null) {
-                            interactionWorkflowService.onPaused(es.getTenantId(),
-                                    json.getLongValue("dispatchId"));
-                        }
-                        sendResultAck(es, json.getLongValue("dispatchId"), true);
-                        break;
-                    }
-                    if (DispatchPauseService.CompletionDisposition.REJECTED.equals(pauseCompletion)) {
-                        sendResultAck(es, json.getLongValue("dispatchId"), false);
-                        break;
-                    }
-                }
-                boolean executorFailover = !success
-                        && "EXECUTOR".equals(failureScope)
-                        && DispatchService.isExecutorFailureCategory(failureCategory);
-                boolean accepted = executorFailover
-                        ? dispatchService.onExecutorUnavailableResult(es.getTenantId(), es.getExecutorId(),
-                                json.getLongValue("dispatchId"), failureCategory,
-                                json.getString("error"))
-                        : explicitHandoff
-                        ? dispatchService.onResult(es.getTenantId(), es.getExecutorId(),
-                                json.getLongValue("dispatchId"),
-                                true,
-                                json.getString("resultSummary"),
-                                json.getString("error"),
-                                Boolean.TRUE.equals(json.getBoolean("workflowChanged")),
-                                true,
-                                failureCategory)
-                        : dispatchService.onResult(es.getTenantId(), es.getExecutorId(),
-                                json.getLongValue("dispatchId"),
-                                success,
-                                json.getString("resultSummary"),
-                                json.getString("error"),
-                                Boolean.TRUE.equals(json.getBoolean("workflowChanged")),
-                                false,
-                                failureCategory);
-                // debugLog 段收尾放在 accepted 判定之前：重复投递（accepted=false，行已终态）
-                // 同样能收敛 debug_log 行（outbox 重发场景，S9）。
-                recordDebugLogReport(es, json, durableOwner);
-                if (!accepted) {
-                    // The authenticated runtime cannot make a stale/foreign result valid by retrying.
-                    // ACK the terminal disposition so it can delete the durable outbox record.
-                    sendResultAck(es, json.getLongValue("dispatchId"), false);
-                    break;
-                }
-                if (executorFailover) {
-                    guidanceService.requeueForExecutorFailover(es.getTenantId(),
-                            json.getLongValue("dispatchId"));
-                    dispatchService.runPending(json.getLongValue("dispatchId"));
-                }
-                if (!success && !executorFailover) {
-                    guidanceService.failForDispatch(es.getTenantId(), json.getLongValue("dispatchId"),
-                            json.getString("error"));
-                }
-                if (success && json.getJSONObject("workflowPlan") != null
-                        && interactionWorkflowService != null) {
-                    interactionWorkflowService.apply(es.getTenantId(), json.getLongValue("dispatchId"),
-                            json.getJSONObject("workflowPlan"));
-                }
-                if (success && embeddedHandoff != null
-                        && dispatchService.mayRouteHandoff(es.getTenantId(), es.getExecutorId(),
-                                json.getLongValue("dispatchId"))) {
-                    routeHandoff(es, json.getLongValue("workitemId"),
-                            json.getLongValue("dispatchId"), embeddedHandoff);
-                }
-                sendResultAck(es, json.getLongValue("dispatchId"), true);
-                break;
             case "TASK_BUSY":
                 log.info("inbound TASK_BUSY dispatchId={} executorId={} reason={}",
                         json.getLongValue("dispatchId"), es.getExecutorId(), json.getString("reason"));
@@ -435,6 +364,10 @@ public class InboundFrameRouter {
                 boolean pauseFailed = pauseService.onPauseFailed(es.getTenantId(), es.getExecutorId(),
                         json.getLongValue("dispatchId"), json.getString("error"));
                 sendResultAck(es, json.getLongValue("dispatchId"), pauseFailed);
+                break;
+            case "TASK_STEER_ACK":
+                terminalGuidance.acknowledge(es.getTenantId(), es.getExecutorId(), json.getLongValue("dispatchId"),
+                        json.getLongValue("guidanceId"), json.getString("status"), json.getString("error"));
                 break;
             case "TASK_GUIDANCE_ACK":
                 log.info("inbound TASK_GUIDANCE_ACK guidanceId={} status={} executorId={}",

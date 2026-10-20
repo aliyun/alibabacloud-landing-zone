@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useState, useMemo } from 'react';
 import { Input, Tag, Space, Typography, Tabs } from 'antd';
 import { MarkdownView } from '../MarkdownView';
@@ -34,9 +36,9 @@ function normalizeResult(raw: unknown): RepoScanResult {
 }
 
 const TAG_LABELS: Record<TagField, string> = {
-  keyBusiness: '关键业务',
-  upstreams: '上游',
-  downstreams: '下游',
+  get keyBusiness() { return i18n.t('shared:repo.business'); },
+  get upstreams() { return i18n.t('shared:repo.upstreams'); },
+  get downstreams() { return i18n.t('shared:repo.downstreams'); },
 };
 
 function TagListEdit({
@@ -50,6 +52,7 @@ function TagListEdit({
   disabled?: boolean;
   onChange: (next: string[]) => void;
 }) {
+  const { t } = useTranslation('shared');
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState('');
 
@@ -79,14 +82,14 @@ function TagListEdit({
             autoFocus
             style={{ width: 120 }}
             value={draft}
-            aria-label={`新增${label}`}
+            aria-label={t('repo.addTag', { label })}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={commit}
             onPressEnter={commit}
           />
         ) : (
           <Tag onClick={() => setAdding(true)} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
-            {`+ ${label}`}
+            {t('repo.addTagLabel', { label })}
           </Tag>
         ))}
       </Space>
@@ -95,6 +98,7 @@ function TagListEdit({
 }
 
 export function RepoScanRenderer({ value: rawValue, onChange, disabled }: AiResultRendererProps<RepoScanResult>) {
+  const { t } = useTranslation('shared');
   const value = useMemo(() => normalizeResult(rawValue), [rawValue]);
   const set = <K extends keyof RepoScanResult>(k: K, v: RepoScanResult[K]) =>
     onChange({ ...value, [k]: v });
@@ -102,11 +106,11 @@ export function RepoScanRenderer({ value: rawValue, onChange, disabled }: AiResu
   return (
     <div>
       <div style={{ marginBottom: 12 }}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>作用（必填）</Text>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('repo.purpose')}</Text>
         <Input
           value={value.purpose}
           disabled={disabled}
-          placeholder="这个仓库的职责"
+          placeholder={t('repo.purposePlaceholder')}
           onChange={(e) => set('purpose', e.target.value)}
         />
       </div>
@@ -121,13 +125,13 @@ export function RepoScanRenderer({ value: rawValue, onChange, disabled }: AiResu
         />
       ))}
 
-      <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>结论正文（Markdown）</Text>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('repo.summary')}</Text>
       <Tabs
         size="small"
         items={[
           {
             key: 'edit',
-            label: '编辑',
+            label: t('repo.edit'),
             children: (
               <TextArea
                 value={value.summaryMd}
@@ -139,7 +143,7 @@ export function RepoScanRenderer({ value: rawValue, onChange, disabled }: AiResu
           },
           {
             key: 'preview',
-            label: '预览',
+            label: t('repo.preview'),
             children: <MarkdownView content={value.summaryMd} />,
           },
         ]}

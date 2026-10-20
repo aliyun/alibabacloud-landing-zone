@@ -53,7 +53,7 @@ public class PlatformBrandingService {
                                    ObjectStorage objectStorage,
                                    OssProperties ossProperties,
                                    @Value("${autowonder.public-base-url:}") String publicBaseUrl,
-                                   @Value("${autowonder.runtime.recommended-version:0.3.3}") String recommendedRuntimeVersion,
+                                   @Value("${autowonder.runtime.recommended-version:0.3.22}") String recommendedRuntimeVersion,
                                    @Value("${autowonder.version:x.x.x}") String deploymentVersion,
                                    @Value("${autowonder.community-edition:false}") boolean communityEdition) {
         this.brandingDao = brandingDao;
@@ -102,10 +102,10 @@ public class PlatformBrandingService {
 
     public PlatformBrandingVO update(Long userId, UpdatePlatformBrandingRequest request) {
         PlatformBrandingDO next = new PlatformBrandingDO();
-        next.setPlatformName(nonBlank(request.getPlatformName(), "平台名称不能为空", 128));
+        next.setPlatformName(nonBlank(request.getPlatformName(), "branding.platform_name_required", "平台名称不能为空", 128));
         next.setThemeKey(validateThemeKey(request.getThemeKey()));
         next.setPrimaryColor(validatePrimaryColor(request.getPrimaryColor()));
-        next.setDomain(normalizeOptionalUrl(request.getDomain(), "域名格式不合法"));
+        next.setDomain(normalizeOptionalUrl(request.getDomain(), "branding.domain_invalid", "域名格式不合法"));
         next.setModifierId(userId);
         int updated = brandingDao.update(next);
         if (updated == 0) {
@@ -116,15 +116,15 @@ public class PlatformBrandingService {
 
     public LogoUploadVO uploadLogo(Long userId, MultipartFile file) {
         if (file == null || file.isEmpty()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 文件不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "branding.logo_required", null, "Logo 文件不能为空");
         }
         if (file.getSize() > MAX_LOGO_SIZE) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 文件不能超过 512 KB");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "branding.logo_size_limit", null, "Logo 文件不能超过 512 KB");
         }
         String contentType = normalizeContentType(file.getContentType());
         String ext = LOGO_EXTENSIONS.get(contentType);
         if (ext == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Logo 仅支持 PNG、JPG/JPEG、WebP、SVG、GIF、ICO、AVIF");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "branding.logo_format", null, "Logo 仅支持 PNG、JPG/JPEG、WebP、SVG、GIF、ICO、AVIF");
         }
         try {
             String key = "platform/branding/logo-" + System.currentTimeMillis() + ext;
@@ -143,7 +143,7 @@ public class PlatformBrandingService {
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            throw new BizException(ErrorCode.STORAGE_ERROR, "Logo 上传失败");
+            throw BizException.keyed(ErrorCode.STORAGE_ERROR, "branding.logo_upload_failed", null, "Logo 上传失败");
         }
     }
 
@@ -238,10 +238,10 @@ public class PlatformBrandingService {
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    private static String nonBlank(String value, String message, int maxLength) {
+    private static String nonBlank(String value, String messageKey, String message, int maxLength) {
         String trimmed = value == null ? "" : value.trim();
         if (trimmed.isEmpty() || trimmed.length() > maxLength) {
-            throw new BizException(ErrorCode.PARAM_INVALID, message);
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, messageKey, null, message);
         }
         return trimmed;
     }
@@ -249,7 +249,7 @@ public class PlatformBrandingService {
     private static String validateThemeKey(String value) {
         String trimmed = value == null ? "" : value.trim();
         if (!THEME_KEYS.contains(trimmed)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "主题配色不合法");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "branding.theme_invalid", null, "主题配色不合法");
         }
         return trimmed;
     }
@@ -257,7 +257,7 @@ public class PlatformBrandingService {
     private static String validatePrimaryColor(String value) {
         String trimmed = value == null ? "" : value.trim();
         if (!trimmed.matches("^#[0-9a-fA-F]{6}$")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "主题颜色格式不合法");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "branding.color_invalid", null, "主题颜色格式不合法");
         }
         return trimmed.toLowerCase();
     }
@@ -301,7 +301,7 @@ public class PlatformBrandingService {
         }
     }
 
-    private static String normalizeOptionalUrl(String value, String message) {
+    private static String normalizeOptionalUrl(String value, String messageKey, String message) {
         String trimmed = value == null ? "" : value.trim();
         if (trimmed.isEmpty()) {
             return null;
@@ -314,7 +314,7 @@ public class PlatformBrandingService {
             }
             return trimmed.replaceAll("/+$", "");
         } catch (Exception e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, message);
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, messageKey, null, message);
         }
     }
 

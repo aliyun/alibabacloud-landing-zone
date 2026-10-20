@@ -34,6 +34,10 @@ public class ConversationRealtimeAuthorizationService implements RealtimeChannel
                     workspaceId, conversationId);
             return false;
         }
+        if (com.aliyun.autowonder.conversation.PlatformConversationChannel.CHANNEL.equals(conv.getChannel())) {
+            return conv.getDeletedAt() == null && conv.getOwnerUserId() != null
+                    && conv.getOwnerUserId() == userId;
+        }
         return true;
     }
 

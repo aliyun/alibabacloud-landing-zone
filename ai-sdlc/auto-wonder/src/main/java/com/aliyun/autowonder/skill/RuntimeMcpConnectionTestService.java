@@ -55,6 +55,16 @@ public class RuntimeMcpConnectionTestService {
 	public SkillConnectionTestResult test(long tenantId, long executorId, String transport,
 										  String command, List<String> args, String url,
 										  Map<String, String> headers, Map<String, String> env, int timeoutSeconds) {
+        return test(tenantId, executorId, transport, command, args, url, headers, env, timeoutSeconds, null);
+    }
+
+    // Per-invocation source identity, never accepted from or serialized into Runtime/Redis payloads.
+    static final class FailureOrigin { String code; }
+
+    SkillConnectionTestResult test(long tenantId, long executorId, String transport,
+                                   String command, List<String> args, String url,
+                                   Map<String, String> headers, Map<String, String> env, int timeoutSeconds,
+                                   FailureOrigin origin) {
         ExecutorDO executor = executorDao.findById(executorId);
         if (executor == null || executor.getTenantId() == null || executor.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.EXECUTOR_NOT_FOUND);
@@ -62,6 +72,7 @@ public class RuntimeMcpConnectionTestService {
         String testId = UUID.randomUUID().toString();
         Ticket ticket = new Ticket(tenantId, executorId);
         if (!redisManager.set(ticketKey(testId), ticket, RESULT_TTL_SECONDS)) {
+            if (origin != null) origin.code = "REQUEST_CREATE_FAILED";
             throw new IllegalStateException("无法创建 Runtime 测试请求");
         }
         JSONObject frame = new JSONObject(true);
@@ -75,7 +86,7 @@ public class RuntimeMcpConnectionTestService {
         frame.put("headers", headers == null ? Map.of() : headers);
 		frame.put("env", env == null ? Map.of() : env);
         frame.put("timeoutSeconds", timeoutSeconds);
-        send(executorId, frame.toJSONString());
+        send(executorId, frame.toJSONString(), origin);
         long waitMillis = Math.min(MAX_WAIT_MILLIS, Math.max(MIN_WAIT_MILLIS, timeoutSeconds * 1_000L + 15_000L));
         long deadline = System.nanoTime() + waitMillis * 1_000_000L;
         while (System.nanoTime() < deadline) {
@@ -96,7 +107,7 @@ public class RuntimeMcpConnectionTestService {
             } catch (RuntimeException e) {
                 LOGGER.error("MCP connection test legacy result is incompatible testId={} redisKey={} tenantId={} executorId={}",
                         testId, resultKey(testId), tenantId, executorId, e);
-                return new SkillConnectionTestResult(false, "测试结果与灰度版本不兼容，请稍后重新测试", null, List.of());
+                return new SkillConnectionTestResult(false, "测试结果与灰度版本不兼容，请稍后重新测试", null, List.of(), "LEGACY_RESULT_INCOMPATIBLE", null);
             }
             if (legacyResult != null) {
                 List<Map<String, Object>> tools = redisManager.get(toolsKey(testId));
@@ -106,10 +117,10 @@ public class RuntimeMcpConnectionTestService {
                 Thread.sleep(50L);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return new SkillConnectionTestResult(false, "连接测试被中断", null, List.of());
+                return new SkillConnectionTestResult(false, "连接测试被中断", null, List.of(), "TEST_INTERRUPTED", null);
             }
         }
-        return new SkillConnectionTestResult(false, "Runtime 未在 " + (waitMillis / 1000) + " 秒内返回；请确认该 Runtime 在线且已更新", null, List.of());
+        return new SkillConnectionTestResult(false, "Runtime 未在 " + (waitMillis / 1000) + " 秒内返回；请确认该 Runtime 在线且已更新", null, List.of(), "RUNTIME_WAIT_TIMEOUT", Map.of("seconds", waitMillis / 1000));
     }
 
     public void complete(long tenantId, long executorId, String testId, boolean success, String message,
@@ -131,7 +142,7 @@ public class RuntimeMcpConnectionTestService {
         redisManager.set(resultKey(testId), new Result(success, message, durationMs), RESULT_TTL_SECONDS);
     }
 
-    private void send(long executorId, String payload) {
+    private void send(long executorId, String payload, FailureOrigin origin) {
         try {
             ExecutorSession session = sessionRegistry.findByExecutorId(executorId);
             if (session != null && session.getSession().isOpen()) {
@@ -140,6 +151,7 @@ public class RuntimeMcpConnectionTestService {
                 redisManager.publish(WsDispatchTransport.BROADCAST_CHANNEL, payload);
             }
         } catch (Exception e) {
+            if (origin != null) origin.code = "DISPATCH_FAILED";
             throw new IllegalStateException("Runtime MCP 测试下发失败", e);
         }
     }
@@ -168,7 +180,7 @@ public class RuntimeMcpConnectionTestService {
         } catch (RuntimeException e) {
             LOGGER.error("MCP connection test V2 result is invalid testId={} redisKey={}",
                     testId, resultV2Key(testId), e);
-            return new SkillConnectionTestResult(false, "测试结果格式无效，请重新测试", null, List.of());
+            return new SkillConnectionTestResult(false, "测试结果格式无效，请重新测试", null, List.of(), "INVALID_RESULT", null);
         }
     }
 
@@ -177,9 +189,17 @@ public class RuntimeMcpConnectionTestService {
         public final String message;
         public final Long durationMs;
         public final List<Map<String, Object>> tools;
+        public final String ownedFailureCode;
+        public final Map<String, Long> ownedFailureArgs;
         SkillConnectionTestResult(boolean success, String message, Long durationMs, List<Map<String, Object>> tools) {
+            this(success, message, durationMs, tools, null, null);
+        }
+        private SkillConnectionTestResult(boolean success, String message, Long durationMs, List<Map<String, Object>> tools,
+                                          String ownedFailureCode, Map<String, Long> ownedFailureArgs) {
             this.success = success; this.message = message; this.durationMs = durationMs;
             this.tools = tools == null ? List.of() : List.copyOf(tools);
+            this.ownedFailureCode = ownedFailureCode;
+            this.ownedFailureArgs = ownedFailureArgs;
         }
     }
     private static class Ticket implements java.io.Serializable {

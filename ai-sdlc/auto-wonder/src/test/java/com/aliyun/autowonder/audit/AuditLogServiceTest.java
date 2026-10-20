@@ -133,7 +133,7 @@ class AuditLogServiceTest {
         AgentDO agent = new AgentDO();
         agent.setId(7L);
         agent.setName("Auto Dev");
-        when(userDao.findById(7L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
         when(agentDao.findById(7L)).thenReturn(agent);
         when(auditLogDao.search(1L, null, null, null, null, "workitem", null, null, null, null, 0, 20))
                 .thenReturn(List.of(humanLog, agentLog));

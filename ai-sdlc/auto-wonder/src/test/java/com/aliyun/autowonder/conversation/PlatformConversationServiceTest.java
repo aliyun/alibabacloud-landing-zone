@@ -85,7 +85,7 @@ class PlatformConversationServiceTest {
         executorSelector = mock(ExecutorSelector.class);
         workspaceService = mock(WorkspaceService.class);
         executorRouter = mock(ConversationExecutorRouter.class);
-        when(executorRouter.select(anyLong(), anyLong(), anyLong(), nullable(Long.class)))
+        when(executorRouter.selectPlatform(anyLong(), anyLong(), anyLong(), nullable(Long.class)))
                 .thenAnswer(invocation -> executorSelector.select(invocation.getArgument(1),
                         invocation.getArgument(3)));
         when(agentDao.findById(AGENT_ID)).thenReturn(onlineChief());
@@ -295,8 +295,7 @@ class PlatformConversationServiceTest {
         assertEquals(1, vo.getPendingElicitations().size());
         assertEquals("req-1", vo.getPendingElicitations().get(0).getRequestId());
         assertEquals("要发布到哪个环境？", vo.getPendingElicitations().get(0).getMessage());
-        assertEquals(List.of(GRANTEE_ID), vo.getShares().stream()
-                .map(PlatformShareVO::getGranteeUserId).toList());
+        assertTrue(vo.getShares().isEmpty());
         verify(commandsService).snapshot(TENANT_ID, CONVERSATION_ID);
     }
 
@@ -306,10 +305,7 @@ class PlatformConversationServiceTest {
         when(shareDao.findActive(TENANT_ID, CONVERSATION_ID, GRANTEE_ID))
                 .thenReturn(activeShare(GRANTEE_ID));
 
-        PlatformConversationVO vo = service.get(TENANT_ID, CONVERSATION_ID, GRANTEE_ID);
-
-        assertFalse(vo.isOwner());
-        assertNull(vo.getShares(), "分享名单本身就是隐私，被分享人不能看到还有谁被分享了");
+        assertThrowsOpaque(() -> service.get(TENANT_ID, CONVERSATION_ID, GRANTEE_ID));
         verify(shareDao, never()).listActive(TENANT_ID, CONVERSATION_ID);
     }
 
@@ -578,70 +574,13 @@ class PlatformConversationServiceTest {
     // ---------- share ----------
 
     @Test
-    void shareGrantsReadOnlyAccessToAFellowWorkspaceMember() {
+    void sharingIsDisabledEvenForTheOwner() {
         stubConversation(ownedConversation());
-        when(workspaceService.activeAccessLevel(TENANT_ID, GRANTEE_ID))
-                .thenReturn(WorkspaceAccessLevel.READ_ONLY);
-        when(shareDao.listActive(TENANT_ID, CONVERSATION_ID))
-                .thenReturn(List.of(activeShare(GRANTEE_ID)));
-
-        List<PlatformShareVO> shares = service.share(TENANT_ID, CONVERSATION_ID, OWNER_ID, GRANTEE_ID);
-
-        // 被分享人必须是同工作空间的在职成员，否则等于把会话内容泄露到工作空间外。
-        verify(workspaceService).activeAccessLevel(TENANT_ID, GRANTEE_ID);
-        verify(shareDao).upsertReadShare(TENANT_ID, CONVERSATION_ID, GRANTEE_ID, OWNER_ID);
-        assertEquals(List.of(GRANTEE_ID), shares.stream()
-                .map(PlatformShareVO::getGranteeUserId).toList());
-    }
-
-    @Test
-    void shareRejectsSharingWithYourselfOrAnInvalidGrantee() {
-        stubConversation(ownedConversation());
-
-        for (Long grantee : Arrays.asList(null, 0L, -1L, OWNER_ID)) {
-            BizException exception = assertThrows(BizException.class,
-                    () -> service.share(TENANT_ID, CONVERSATION_ID, OWNER_ID, grantee),
-                    "grantee=" + grantee);
-            assertEquals(ErrorCode.PLATFORM_CONVERSATION_SHARE_INVALID.getCode(), exception.getCode());
-        }
-        verifyNoInteractions(workspaceService);
-        verify(shareDao, never()).upsertReadShare(anyLong(), anyLong(), anyLong(), anyLong());
-    }
-
-    @Test
-    void shareRefusesAGranteeWhoIsNotInThisWorkspace() {
-        stubConversation(ownedConversation());
-        when(workspaceService.activeAccessLevel(TENANT_ID, GRANTEE_ID))
-                .thenThrow(new BizException(ErrorCode.WORKSPACE_NOT_MEMBER));
-
-        BizException exception = assertThrows(BizException.class,
+        var error = assertThrows(BizException.class,
                 () -> service.share(TENANT_ID, CONVERSATION_ID, OWNER_ID, GRANTEE_ID));
-        assertEquals(ErrorCode.WORKSPACE_NOT_MEMBER.getCode(), exception.getCode());
-        verify(shareDao, never()).upsertReadShare(anyLong(), anyLong(), anyLong(), anyLong());
-    }
-
-    @Test
-    void revokeShareRecordsTheOwnerAsTheOperator() {
-        stubConversation(ownedConversation());
-
-        service.revokeShare(TENANT_ID, CONVERSATION_ID, OWNER_ID, GRANTEE_ID);
-
-        verify(shareDao).revoke(eq(TENANT_ID), eq(CONVERSATION_ID), eq(GRANTEE_ID), eq(OWNER_ID),
-                any(Date.class));
-    }
-
-    @Test
-    void listingSharesIsOwnerOnly() {
-        stubConversation(ownedConversation());
-        when(shareDao.listActive(TENANT_ID, CONVERSATION_ID))
-                .thenReturn(List.of(activeShare(GRANTEE_ID)));
-        // 被分享人确实持有生效中的只读分享，所以拿到的是「Owner 专属」而不是「不存在」。
-        when(shareDao.findActive(TENANT_ID, CONVERSATION_ID, GRANTEE_ID))
-                .thenReturn(activeShare(GRANTEE_ID));
-
-        assertEquals(List.of(GRANTEE_ID), service.listShares(TENANT_ID, CONVERSATION_ID, OWNER_ID)
-                .stream().map(PlatformShareVO::getGranteeUserId).toList());
-        assertOwnerOnly(() -> service.listShares(TENANT_ID, CONVERSATION_ID, GRANTEE_ID));
+        assertEquals(ErrorCode.NO_PERMISSION.getCode(), error.getCode());
+        verifyNoInteractions(shareDao);
+        assertTrue(service.listShares(TENANT_ID, CONVERSATION_ID, OWNER_ID).isEmpty());
     }
 
     // ---------- submitTurn ----------
@@ -758,7 +697,7 @@ class PlatformConversationServiceTest {
 
         service.submitTurn(TENANT_ID, CONVERSATION_ID, OWNER_ID, "在吗", null);
 
-        verify(executorRouter).select(TENANT_ID, AGENT_ID, 88L, EXECUTOR_ID);
+        verify(executorRouter).selectPlatform(TENANT_ID, AGENT_ID, 88L, EXECUTOR_ID);
         verify(conversationDao).updateExecutor(TENANT_ID, CONVERSATION_ID, NEXT_EXECUTOR_ID);
     }
 
@@ -956,6 +895,7 @@ class PlatformConversationServiceTest {
         stubConversation(conversation);
         AgentDO chief = onlineChief();
         chief.setName("平台管家");
+        chief.setKind("PLATFORM");
         when(agentDao.findById(AGENT_ID)).thenReturn(chief);
 
         PlatformConversationVO vo = service.get(TENANT_ID, CONVERSATION_ID, OWNER_ID);
@@ -978,6 +918,7 @@ class PlatformConversationServiceTest {
         chief.setOnlineVersionId(88L);
         chief.setIsDeleted(0);
         chief.setName("平台管家");
+        chief.setKind("PLATFORM");
         return chief;
     }
 
@@ -1034,7 +975,7 @@ class PlatformConversationServiceTest {
 
     private static void assertOwnerOnly(Executable executable) {
         BizException exception = assertThrows(BizException.class, executable);
-        assertEquals(ErrorCode.PLATFORM_CONVERSATION_OWNER_ONLY.getCode(), exception.getCode());
+        assertEquals(ErrorCode.PLATFORM_CONVERSATION_NOT_FOUND_OR_NO_PERMISSION.getCode(), exception.getCode());
     }
 
     private static void assertThrowsOpaque(Executable executable) {
@@ -1042,4 +983,42 @@ class PlatformConversationServiceTest {
         assertEquals(ErrorCode.PLATFORM_CONVERSATION_NOT_FOUND_OR_NO_PERMISSION.getCode(),
                 exception.getCode());
     }
+    @Test
+    void projectsBrowserFallbackWithoutLeakingContext() {
+        when(conversationDao.findById(TENANT_ID, CONVERSATION_ID)).thenReturn(ownedConversation());
+        AgentConversationTurnDO turn = new AgentConversationTurnDO();
+        turn.setId(TURN_ID); turn.setDirection("OUT"); turn.setStatus("SUCCESS");
+        turn.setContent("（数字人未返回内容）");
+        turn.setSourceContext("{\"private\":\"secret\",\"conversationDisplay\":{\"content\":{\"code\":\"EMPTY_OUTPUT\",\"args\":{}}}}");
+        when(turnDao.listTurnsByConversation(TENANT_ID, CONVERSATION_ID)).thenReturn(List.of(turn));
+        var json = com.aliyun.autowonder.json.JSON.parseObject(com.aliyun.autowonder.json.JSON.toJSONString(
+                service.get(TENANT_ID, CONVERSATION_ID, OWNER_ID).getTurns().get(0)));
+        assertEquals(turn.getContent(), json.getString("content"));
+        assertFalse(json.toJSONString().contains("secret"));
+        assertNotNull(json.getJSONObject("display"));
+        assertEquals("EMPTY_OUTPUT", json.getJSONObject("display").getJSONObject("content").getString("code"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"blank", "turn"})
+    void humanCustomGuardKeepsChineseDiagnosticAndStatus(String branch) {
+        when(conversationDao.findById(TENANT_ID, CONVERSATION_ID)).thenReturn(ownedConversation());
+        BizException error = assertThrows(BizException.class, () -> {
+            if ("blank".equals(branch)) service.submitTurn(TENANT_ID, CONVERSATION_ID, OWNER_ID, " ", "client-id");
+            else service.cancelTurn(TENANT_ID, CONVERSATION_ID, OWNER_ID, TURN_ID);
+        });
+        assertEquals("blank".equals(branch) ? "消息内容不能为空" : "轮次不存在", error.getMessage());
+        assertNull(error.getCause());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {
+            var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals("blank".equals(branch) ? 400 : 200, response.getStatusCodeValue());
+            assertEquals("blank".equals(branch) ? "Message content must not be blank." : "Conversation turn not found.", response.getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            assertEquals(error.getMessage(), new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getBody().getMessage());
+
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+        verifyNoInteractions(conversationService);
+    }
+
 }

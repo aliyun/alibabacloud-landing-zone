@@ -13,7 +13,7 @@ import lombok.Setter;
 public class ExecutorLaunchCommandRequest {
     /** Target OS used for shell quoting: posix or windows; defaults to posix. */
     private String os;
-    /** Appends --debug and tees the full log; defaults to false. */
+    /** Appends --debug, which turns on the runtime's own diagnostic log; defaults to false. */
     private Boolean debug;
     /** Debug shell, bash or powershell; only used when debug is true. */
     private String shell;

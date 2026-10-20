@@ -25,8 +25,8 @@ describe('WorkitemMeta', () => {
 
   it('labels the assignee as 当前处理人 and strips id suffixes from names', () => {
     render(<WorkitemMeta {...base} />);
-    expect(screen.getByText('当前处理人: 蔡何')).toBeInTheDocument();
-    expect(screen.getByText('创建者: 淘飞')).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent === '当前处理人: 蔡何')).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent === '创建者: 淘飞')).toBeInTheDocument();
     expect(screen.queryByText(/10000/)).not.toBeInTheDocument();
     expect(screen.queryByText(/10018/)).not.toBeInTheDocument();
     expect(screen.queryByText(/指派:/)).not.toBeInTheDocument();
@@ -48,12 +48,12 @@ describe('WorkitemMeta', () => {
 
   it('shows 未指派 when nobody is assigned', () => {
     render(<WorkitemMeta {...base} assigneeName={null} assigneeDisplayName={null} />);
-    expect(screen.getByText('当前处理人: 未指派')).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent === '当前处理人: 未指派')).toBeInTheDocument();
   });
 
   it('falls back to the login name when no display name exists', () => {
     render(<WorkitemMeta {...base} assigneeDisplayName={null} />);
-    expect(screen.getByText('当前处理人: caihe')).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent === '当前处理人: caihe')).toBeInTheDocument();
   });
 
   it('renders the Chinese priority label from the shared mapping', () => {
@@ -80,6 +80,21 @@ describe('WorkitemMeta', () => {
     );
     expect(screen.queryByText(/SDLC/)).not.toBeInTheDocument();
     expect(screen.queryByText(/创建者/)).not.toBeInTheDocument();
-    expect(screen.getByText('当前处理人: 未指派')).toBeInTheDocument();
+    expect(screen.getByText((_, node) => node?.textContent === '当前处理人: 未指派')).toBeInTheDocument();
   });
+});
+
+it('updates only a source-owned external assignee fallback while cached raw fields stay unchanged', async () => {
+  const { i18n } = await import('@/shared/i18n');
+  const { act } = await import('@testing-library/react');
+  const raw = 'JIRA 用户（ID: null）';
+  const props = { ...base, assigneeType: 'EXTERNAL', assigneeName: raw, assigneeDisplayName: raw, assigneeNameFallback: { provider: 'JIRA', subjectId: null, displayName: null } };
+  const view = render(<WorkitemMeta {...props} />);
+  expect(screen.getByText(raw)).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByText('JIRA user (ID: null)')).toBeInTheDocument();
+  expect(props.assigneeName).toBe(raw);
+  view.rerender(<WorkitemMeta {...props} assigneeNameFallback={undefined} />);
+  expect(screen.getByText(raw)).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
 });

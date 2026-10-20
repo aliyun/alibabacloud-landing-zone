@@ -8,9 +8,22 @@ import com.aliyun.autowonder.user.UserDao;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.LocaleResolver;
+import org.springframework.web.servlet.i18n.AcceptHeaderLocaleResolver;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 
 @Configuration
 public class AuthFilterConfig {
+
+    @Bean(name = "localeResolver")
+    public LocaleResolver localeResolver() {
+        return new AcceptHeaderLocaleResolver() {
+            @Override
+            public java.util.Locale resolveLocale(javax.servlet.http.HttpServletRequest request) {
+                return SystemMessages.resolveAcceptLanguage(request.getHeader("Accept-Language"));
+            }
+        };
+    }
 
     @Bean
     public FilterRegistrationBean<AuthFilter> authFilterRegistration(

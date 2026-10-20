@@ -7,5 +7,7 @@ import lombok.Setter;
 @Setter
 public class SubStepVO {
     private String name;
+    /** Present only for an owned fallback, not runtime-reported text. */
+    private String fallbackCode;
     private String status;
 }

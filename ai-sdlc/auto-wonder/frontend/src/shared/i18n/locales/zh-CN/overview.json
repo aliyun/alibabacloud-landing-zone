@@ -1,0 +1,66 @@
+{
+  "title": "交付总览",
+  "description": "近期任务新增与交付吞吐，以及当前需要你处理的工单。",
+  "toolbar": {
+    "rangeAria": "近期统计范围",
+    "lastWeek": "近一周",
+    "lastMonth": "近一个月",
+    "rangeSummary": "统计范围 {{start}} 至 {{end}}",
+    "timezone": "时区 {{timezone}}",
+    "dataThrough": "数据截至 {{date}}",
+    "refresh": "刷新",
+    "refreshAria": "刷新交付总览",
+    "loadFailure": "近期统计加载失败",
+    "retry": "重试"
+  },
+  "created": {
+    "title": "新增工单",
+    "caption": "近 {{days}} 天，按日展示新增工单数。",
+    "trendAria": "近 {{days}} 天每日新增工单趋势"
+  },
+  "delivered": {
+    "title": "已完成工单",
+    "dailyAverage": "日均 {{value}} 单/天",
+    "change": "环比上期 {{value}}",
+    "noBase": "无可比基数",
+    "previous_other": "上期 {{start}} 至 {{end}}：已完成 {{count}} 个",
+    "caption": "日均 = 区间内完成工单数 ÷ 区间天数（含首尾）。",
+    "method": "口径：按平台统一 DONE 分类统计所选范围内进入完成状态的工单，取消不计入，同一工单重复进入完成状态不重复计数；环比对比上一等长周期。",
+    "methodAria": "已完成工单统计口径"
+  },
+  "pending": {
+    "title": "当前用户待处理工单",
+    "caption": "全部待处理",
+    "hint": "不受上方统计范围限制，包含所有未完成且分配给你的工单。",
+    "workitem": "工单",
+    "name": "标题",
+    "status": "状态",
+    "priority": "优先级",
+    "reason": "需处理原因",
+    "updatedAt": "最近更新",
+    "reasonAWAITING_DECISION": "待你决策",
+    "reasonAWAITING_HANDLING": "待你处理",
+    "reasonIN_PROGRESS": "进行中",
+    "reasonUnknown": "待处理",
+    "total_other": "共 {{count}} 条",
+    "loading": "加载中…",
+    "empty": "暂无待处理工单",
+    "loadFailure": "待处理工单加载失败",
+    "retry": "重试"
+  },
+  "createdList": {
+    "title": "{{range}}新增工单",
+    "caption": "所选统计范围",
+    "hint": "与上方「新增工单」同口径：所选统计范围内创建的工单（含已取消），列表条数等于统计卡数值。",
+    "workitem": "工单",
+    "name": "标题",
+    "status": "状态",
+    "priority": "优先级",
+    "createdAt": "创建时间",
+    "total_other": "共 {{count}} 条",
+    "loading": "加载中…",
+    "empty": "所选范围内暂无新增工单",
+    "loadFailure": "新增工单列表加载失败",
+    "retry": "重试"
+  }
+}

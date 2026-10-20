@@ -1,3 +1,6 @@
+import { i18n } from '@/shared/i18n';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
 import { useState, type CSSProperties } from 'react';
 import { Button, Card, Form, Input, Typography, message, Spin, Tabs } from 'antd';
 import {
@@ -30,6 +33,7 @@ const BORDER_COLOR = 'var(--aw-border)';
 const WORKSPACE_CARD_SHADOW = '0 0 0 1px var(--aw-accent-text)';
 
 export function WorkspaceSelectPage() {
+  const { t } = useTranslation('auth');
   const [creating, setCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editTarget, setEditTarget] = useState<WorkspaceInfo | null>(null);
@@ -42,6 +46,7 @@ export function WorkspaceSelectPage() {
   const currentWorkspace = useAuthStore((s) => s.currentWorkspace);
   const user = useAuthStore((s) => s.user);
   const [form] = Form.useForm();
+  useLocalizedValidation(form, showCreateForm);
   const { data: workspaces, isLoading, refetch } = useQuery({
     queryKey: myWorkspacesQueryKey(user?.id ?? null),
     queryFn: async () => {
@@ -94,8 +99,8 @@ export function WorkspaceSelectPage() {
       <PageHeader brandTo="/workspaces" />
       <div style={{ padding: 24 }}>
         <div style={headerStyle}>
-          <Title level={2} style={{ margin: 0, color: 'var(--aw-text)', letterSpacing: 0 }}>选择工作空间</Title>
-          <Button icon={<BgColorsOutlined />} onClick={() => navigate('/workspaces/branding')}>平台配置</Button>
+          <Title level={2} style={{ margin: 0, color: 'var(--aw-text)', letterSpacing: 0 }}>{t('workspace.select')}</Title>
+          <Button icon={<BgColorsOutlined />} onClick={() => navigate('/workspaces/branding')}>{t('workspace.platformSettings')}</Button>
         </div>
 
         <Tabs
@@ -105,16 +110,15 @@ export function WorkspaceSelectPage() {
             type="button"
             className="aw-recycle-bin-entry"
             data-testid="workspace-recycle-bin-entry"
-            aria-label="打开工作空间回收站"
+            aria-label={t('workspace.openRecycleBin')}
             onClick={() => navigate('/workspaces/recycle-bin')}
           >
-            <RestOutlined /> 工作空间回收站
-          </button>
+            <RestOutlined />{t('workspace.recycleBin')}</button>
           }
           items={[
             {
               key: 'mine',
-              label: '我的工作空间',
+              label: t('workspace.mine'),
               children: (
                 <>
                   {isLoading ? (
@@ -149,17 +153,17 @@ export function WorkspaceSelectPage() {
                               event.currentTarget.style.boxShadow = String(nextStyle.boxShadow);
                             }}
                           >
-                            {active && <span style={currentBadgeStyle}>当前</span>}
+                            {active && <span style={currentBadgeStyle}>{t('workspace.current')}</span>}
                             <button
                               type="button"
                               data-testid={`workspace-card-${workspace.id}`}
                               style={cardEnterStyle}
-                              aria-label={`进入工作空间 ${workspace.name}`}
+                              aria-label={t('workspace.enterName', { name: workspace.name })}
                               onClick={() => handleSwitch(workspace)}
                             >
                               <span style={orgMarkStyle}>{getOrgInitial(workspace.name)}</span>
                               <EllipsisText tooltip={workspace.name} style={orgNameStyle}>{workspace.name}</EllipsisText>
-                              <EllipsisText tooltip={workspace.description || '暂无描述'} lines={2} style={orgDescStyle}>{workspace.description || '暂无描述'}</EllipsisText>
+                              <EllipsisText tooltip={workspace.description || t('workspace.noDescription')} lines={2} style={orgDescStyle}>{workspace.description || t('workspace.noDescription')}</EllipsisText>
                             </button>
                             {/* F1.2: siblings of the enter button rather than children of it. A
                                 control nested inside a <button> is invalid HTML and its click
@@ -174,7 +178,7 @@ export function WorkspaceSelectPage() {
                                   type="button"
                                   className="aw-card-manage-button"
                                   data-testid={`edit-workspace-${workspace.id}`}
-                                  aria-label={`编辑工作空间 ${workspace.name}`}
+                                  aria-label={t('workspace.editName', { name: workspace.name })}
                                   onClick={() => setEditTarget(workspace)}
                                 >
                                   <EditOutlined />
@@ -183,7 +187,7 @@ export function WorkspaceSelectPage() {
                                   type="button"
                                   className="aw-card-manage-button aw-card-manage-button--danger"
                                   data-testid={`delete-workspace-${workspace.id}`}
-                                  aria-label={`删除工作空间 ${workspace.name}`}
+                                  aria-label={t('workspace.deleteName', { name: workspace.name })}
                                   onClick={() => setDeleteTarget(workspace)}
                                 >
                                   <DeleteOutlined />
@@ -202,21 +206,21 @@ export function WorkspaceSelectPage() {
                           onClick={() => setShowCreateForm(true)}
                         >
                           <span style={plusMarkStyle}><PlusOutlined /></span>
-                          <span style={orgNameStyle}>创建新工作空间</span>
-                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>初始化新的工作空间</span>
+                          <span style={orgNameStyle}>{t('workspace.create')}</span>
+                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>{t('workspace.initialize')}</span>
                         </button>
                       )}
                     </div>
                   ) : (
                     <div data-testid="workspace-select-grid" style={orgGridStyle}>
                       <div style={emptyStateStyle}>
-                        <Text type="secondary">暂无已加入的工作空间，请创建一个</Text>
+                        <Text type="secondary">{t('workspace.emptyMine')}</Text>
                       </div>
                       {!showCreateForm && (
                         <button type="button" data-testid="workspace-create-card" style={createCardStyle} onClick={() => setShowCreateForm(true)}>
                           <span style={plusMarkStyle}><PlusOutlined /></span>
-                          <span style={orgNameStyle}>创建新工作空间</span>
-                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>初始化新的工作空间</span>
+                          <span style={orgNameStyle}>{t('workspace.create')}</span>
+                          <span style={{ ...orgDescStyle, textAlign: 'center' }}>{t('workspace.initialize')}</span>
                         </button>
                       )}
                     </div>
@@ -227,16 +231,16 @@ export function WorkspaceSelectPage() {
                       <Form form={form} onFinish={handleCreate} layout="vertical">
                         <Form.Item
                           name="name"
-                          label="工作空间名称"
-                          rules={[{ required: true, message: '工作空间名称不能为空' }]}
+                          label={t('workspace.name')}
+                          rules={[{ required: true, message: t('workspace.nameRequired') }]}
                         >
-                          <Input placeholder="输入工作空间名称" maxLength={128} />
+                          <Input placeholder={t('workspace.namePlaceholder')} maxLength={128} />
                         </Form.Item>
-                        <Form.Item name="description" label="工作空间描述">
-                          <Input placeholder="简要描述工作空间用途" maxLength={512} />
+                        <Form.Item name="description" label={t('workspace.description')}>
+                          <Input placeholder={t('workspace.descriptionPlaceholder')} maxLength={512} />
                         </Form.Item>
-                        <Form.Item name="background" label="工作空间背景">
-                          <TextArea placeholder="工作空间的行业背景、技术栈、团队规模等信息" rows={3} />
+                        <Form.Item name="background" label={t('workspace.background')}>
+                          <TextArea placeholder={t('workspace.backgroundPlaceholder')} rows={3} />
                         </Form.Item>
                         <Form.Item>
                           <Button
@@ -244,12 +248,8 @@ export function WorkspaceSelectPage() {
                             htmlType="submit"
                             loading={creating}
                             style={{ marginRight: 8 }}
-                          >
-                            创建
-                          </Button>
-                          <Button onClick={() => { setShowCreateForm(false); form.resetFields(); }}>
-                            取消
-                          </Button>
+                          >{t('action.create')}</Button>
+                          <Button onClick={() => { setShowCreateForm(false); form.resetFields(); }}>{t('action.cancel')}</Button>
                         </Form.Item>
                       </Form>
                     </Card>
@@ -259,7 +259,7 @@ export function WorkspaceSelectPage() {
             },
             {
               key: 'all',
-              label: '所有工作空间',
+              label: t('workspace.all'),
               children: <AllWorkspacesTab />,
             },
           ]}
@@ -277,7 +277,7 @@ export function WorkspaceSelectPage() {
 }
 
 function getOrgInitial(name: string) {
-  return name.trim().slice(0, 2).toUpperCase() || 'WORKSPACE';
+  return name.trim().slice(0, 2).toUpperCase() || i18n.t('auth:workspace.emptyName');
 }
 
 function getOrgCardStyle(active: boolean): CSSProperties {

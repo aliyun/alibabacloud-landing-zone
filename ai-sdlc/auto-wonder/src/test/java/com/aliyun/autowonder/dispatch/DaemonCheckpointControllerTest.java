@@ -29,6 +29,24 @@ class DaemonCheckpointControllerTest {
     }
 
     @Test
+    void completionReceiptEchoesOnlyPersistedIdentity() throws Exception {
+        when(authenticator.authenticate(500L,"tok"))
+                .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L,200L,300L));
+        DispatchDO dispatch=new DispatchDO(); dispatch.setId(500L);
+        when(dispatchDao.findById(500L)).thenReturn(dispatch);
+        String resultId="b55aa1a7-43d5-4452-b39a-278554b67942";
+        DispatchCheckpointDO stored=new DispatchCheckpointDO(); stored.setCheckpointSeq(7L);
+        stored.setSha256("abc"); stored.setSizeBytes(3L); stored.setCompletionResultId(resultId);
+        when(checkpointService.store(eq(dispatch),eq(7L),isNull(),isNull(),isNull(),isNull(),any(byte[].class),eq(resultId)))
+                .thenReturn(stored);
+        ResponseEntity<?> response=controller.upload(500,"tok",7,null,null,null,null,
+                new MockMultipartFile("checkpoint","abc".getBytes()),"COMPLETION",resultId);
+        assertEquals(200,response.getStatusCode().value());
+        assertEquals(resultId,((java.util.Map<?,?>)response.getBody()).get("resultId"));
+        assertEquals("COMPLETION",((java.util.Map<?,?>)response.getBody()).get("purpose"));
+    }
+
+    @Test
     void uploadRecordsAgentAuditLog() throws Exception {
         when(authenticator.authenticate(500L, "tok"))
                 .thenReturn(DaemonUploadAuthenticator.AuthResult.success(100L, 200L, 300L));

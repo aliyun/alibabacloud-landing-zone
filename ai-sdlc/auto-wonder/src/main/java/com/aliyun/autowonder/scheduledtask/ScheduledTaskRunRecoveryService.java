@@ -173,13 +173,15 @@ public class ScheduledTaskRunRecoveryService {
     }
     private void notifyDegraded(ScheduledTaskRunDO run) {
         if (scheduledTaskNotificationService != null) {
-            scheduledTaskNotificationService.status(run, SOURCE_EXECUTOR_TIMEOUT);
+            scheduledTaskNotificationService.statusSystemReason(run, SOURCE_EXECUTOR_TIMEOUT);
             return;
         }
         if (notifyService == null || run.getOwnerId() == null) return;
         NotifyEvent event = new NotifyEvent();
         event.setTenantId(run.getWorkspaceId()); event.setType("SCHEDULED_TASK_RESUME_DEGRADED");
         event.setTitle("定时任务会话已降级恢复"); event.setContent(SOURCE_EXECUTOR_TIMEOUT);
+        event.setTitleKey("notification.scheduled_run.degraded.title");
+        event.setContentKey("notification.scheduled_run.executor_timeout");
         event.setRefType("SCHEDULED_TASK_RUN"); event.setRefId(run.getId());
         event.setRecipientIds(List.of(run.getOwnerId())); notifyService.notify(event);
     }

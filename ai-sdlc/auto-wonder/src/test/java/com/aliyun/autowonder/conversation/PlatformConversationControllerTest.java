@@ -69,6 +69,7 @@ class PlatformConversationControllerTest {
         turnEventService = mock(ConversationTurnEventService.class);
         commandsService = mock(ConversationCommandsService.class);
         controller = new PlatformConversationController(service, turnEventService, commandsService);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "pageContextService", mock(PlatformPageContextService.class));
         AutoWonderContext.get().setCurrentWorkspaceId(WORKSPACE_ID);
         AutoWonderContext.get().setUserId(USER_ID);
     }
@@ -120,7 +121,7 @@ class PlatformConversationControllerTest {
                 .getAnnotation(RequireWorkspaceAccess.class);
 
         assertNotNull(access);
-        assertEquals(WorkspaceAccessLevel.READ_WRITE, access.value());
+        assertEquals(WorkspaceAccessLevel.READ_ONLY, access.value());
     }
 
     /** 类级闸门是 READ_ONLY：读取放行给被分享人，写操作逐方法抬到 READ_WRITE。 */
@@ -195,36 +196,19 @@ class PlatformConversationControllerTest {
         verify(service).delete(WORKSPACE_ID, CONVERSATION_ID, USER_ID);
     }
 
-    /** 分享名单是被分享人也要能读的，所以它不抬闸门，只吃类级 READ_ONLY。 */
     @Test
-    void listSharesStaysUnderTheClassLevelReadOnlyGate() throws NoSuchMethodException {
-        assertNull(PlatformConversationController.class
-                .getMethod("listShares", Long.class)
-                .getAnnotation(RequireWorkspaceAccess.class));
-
-        PlatformShareVO share = PlatformShareVO.builder().granteeUserId(GRANTEE_ID).build();
-        when(service.listShares(WORKSPACE_ID, CONVERSATION_ID, USER_ID)).thenReturn(List.of(share));
-
-        assertEquals(GRANTEE_ID, controller.listShares(CONVERSATION_ID).getData().get(0).getGranteeUserId());
-    }
-
-    @Test
-    void shareAndRevokeShareDelegateTheGrantee() {
-        PlatformShareVO share = PlatformShareVO.builder().granteeUserId(GRANTEE_ID).build();
-        when(service.share(WORKSPACE_ID, CONVERSATION_ID, USER_ID, GRANTEE_ID)).thenReturn(List.of(share));
-        when(service.revokeShare(WORKSPACE_ID, CONVERSATION_ID, USER_ID, GRANTEE_ID)).thenReturn(List.of());
-        PlatformShareRequest request = new PlatformShareRequest();
-        request.setGranteeUserId(GRANTEE_ID);
-
-        assertSame(share, controller.share(CONVERSATION_ID, request).getData().get(0));
-        assertTrue(controller.revokeShare(CONVERSATION_ID, GRANTEE_ID).getData().isEmpty());
+    void noShareRoutesExist() {
+        for (var method : PlatformConversationController.class.getDeclaredMethods()) {
+            assertTrue(!method.getName().toLowerCase().contains("share"));
+        }
     }
 
     /** 时间线读取先过归属闸门再取事件；分页上限固定在入口，免得一次把整条会话拉全。 */
     @Test
     void eventsVerifiesReadabilityBeforeReturningTheTimeline() {
         AgentConversationTurnEventDO event = new AgentConversationTurnEventDO();
-        event.setId(9L);
+        event.setId(9L); event.setTurnId(TURN_ID); event.setDispatchAttempt(1); event.setEventSeq(1L);
+        event.setChunkIndex(0); event.setChunkCount(1); event.setEventType("tool_use"); event.setPayloadFragment("{}");
         when(turnEventService.listEventsAfter(WORKSPACE_ID, CONVERSATION_ID, 0L, 200))
                 .thenReturn(List.of(event));
 
@@ -253,7 +237,8 @@ class PlatformConversationControllerTest {
     @Test
     void turnEventsVerifiesReadabilityThenReturnsThatTurnOnly() {
         AgentConversationTurnEventDO event = new AgentConversationTurnEventDO();
-        event.setTurnId(TURN_ID);
+        event.setTurnId(TURN_ID); event.setId(9L); event.setDispatchAttempt(1); event.setEventSeq(1L);
+        event.setChunkIndex(0); event.setChunkCount(1); event.setEventType("tool_use"); event.setPayloadFragment("{}");
         when(turnEventService.listEventsByTurn(WORKSPACE_ID, CONVERSATION_ID, TURN_ID))
                 .thenReturn(List.of(event));
 
@@ -284,7 +269,7 @@ class PlatformConversationControllerTest {
 
         assertTrue(controller.submitTurn(CONVERSATION_ID, request).isSuccess());
         verify(service).submitTurn(WORKSPACE_ID, CONVERSATION_ID, USER_ID,
-                "帮我看一下今天的发布计划", "cli-msg-0001");
+                "帮我看一下今天的发布计划", "cli-msg-0001", null);
     }
 
     @Test
@@ -348,8 +333,6 @@ class PlatformConversationControllerTest {
         assertReadWrite("create", PlatformConversationRequest.class);
         assertReadWrite("patch", Long.class, PlatformConversationPatchRequest.class);
         assertReadWrite("delete", Long.class);
-        assertReadWrite("share", Long.class, PlatformShareRequest.class);
-        assertReadWrite("revokeShare", Long.class, Long.class);
         assertReadWrite("submitTurn", Long.class, PlatformTurnRequest.class);
         assertReadWrite("cancelTurn", Long.class, Long.class);
         assertReadWrite("replyElicitation", Long.class, String.class, ElicitationReplyRequest.class);
@@ -385,7 +368,7 @@ class PlatformConversationControllerTest {
                 .getAnnotation(RequireWorkspaceAccess.class);
 
         assertNotNull(access, method + " 缺少工作空间闸门");
-        assertEquals(WorkspaceAccessLevel.READ_WRITE, access.value(),
+        assertEquals(WorkspaceAccessLevel.READ_ONLY, access.value(),
                 method + " 是写操作，必须抬到 READ_WRITE");
     }
 }

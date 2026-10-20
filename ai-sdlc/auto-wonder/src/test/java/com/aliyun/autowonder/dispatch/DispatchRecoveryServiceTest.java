@@ -1,6 +1,11 @@
 package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
+import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.redis.RedisManager;
+import com.aliyun.autowonder.websocket.PresenceManager;
+import com.aliyun.autowonder.workitem.WorkitemClassificationEvaluator;
 import com.aliyun.autowonder.workitem.WorkitemDO;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,21 +30,26 @@ class DispatchRecoveryServiceTest {
     WorkitemDao workitems;
     DispatchControlTransport transport;
     DispatchRecoveryService service;
+    DispatchRuntimeEventDao runtimeEvents;
+    DispatchCheckpointDao checkpoints;
 
     @BeforeEach void setup() throws Exception {
         var ds = new DriverManagerDataSource("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1", "sa", "");
         jdbc = new JdbcTemplate(ds);
-        jdbc.execute("CREATE TABLE dispatch (id BIGINT PRIMARY KEY, tenant_id BIGINT, workitem_id BIGINT, executor_id BIGINT, status VARCHAR(32),source_type VARCHAR(32),error VARCHAR(512),version INT DEFAULT 0,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+        jdbc.execute("CREATE TABLE dispatch (id BIGINT PRIMARY KEY, tenant_id BIGINT, workitem_id BIGINT, executor_id BIGINT, status VARCHAR(32),source_type VARCHAR(32),resume_mode VARCHAR(32),error VARCHAR(512),version INT DEFAULT 0,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
         jdbc.execute("CREATE TABLE workitem_comment_delivery (id BIGINT AUTO_INCREMENT PRIMARY KEY,tenant_id BIGINT,workitem_id BIGINT,comment_id BIGINT,target_agent_id BIGINT,dispatch_id BIGINT,executor_id BIGINT,status VARCHAR(16),error VARCHAR(1024),reply_comment_id BIGINT,delivered_at TIMESTAMP,applied_at TIMESTAMP,gmt_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP,retry_dispatch_id BIGINT DEFAULT 0)");
         String schema = Files.readString(Path.of("docs/migration/V059__dispatch_recovery.sql")).split("ALTER TABLE")[0].replaceAll("(?m)^--.*$", "");
         for (String sql : schema.split(";")) if (!sql.isBlank()) jdbc.execute(sql);
         dao = mock(DispatchDao.class); workitems = mock(WorkitemDao.class); transport = mock(DispatchControlTransport.class);
         service = new DispatchRecoveryService(jdbc, new DataSourceTransactionManager(ds), dao, workitems, transport);
-        var w = new WorkitemDO(); w.setTenantId(1L); w.setId(10L); when(workitems.findById(10L)).thenReturn(w);
+        runtimeEvents = mock(DispatchRuntimeEventDao.class); checkpoints = mock(DispatchCheckpointDao.class);
+        service.setCompletionEvidence(runtimeEvents, checkpoints);
+        var w = new WorkitemDO(); w.setTenantId(1L); w.setId(10L); when(workitems.findById(10L)).thenReturn(w); when(workitems.findByIdForUpdate(10L, 1L)).thenReturn(w);
         when(dao.findById(anyLong())).thenAnswer(i -> jdbc.query("SELECT * FROM dispatch WHERE id=?", (rs,n) -> {
             var d = new DispatchDO(); d.setId(rs.getLong("id")); d.setTenantId(rs.getLong("tenant_id"));
             d.setWorkitemId(rs.getLong("workitem_id")); d.setSourceType(rs.getString("source_type")); d.setStatus(rs.getString("status")); d.setVersion(rs.getInt("version"));
-            d.setExecutorId((Long) rs.getObject("executor_id")); d.setError(rs.getString("error")); d.setAgentId(20L); d.setAttempt(1);
+            d.setExecutorId((Long) rs.getObject("executor_id")); d.setError(rs.getString("error")); d.setAgentId(20L); d.setAttempt(1); d.setSdlcStepId(77L);
+            d.setResumeMode(rs.getString("resume_mode"));
             return d;
         }, (Object) i.getArgument(0)).stream().findFirst().orElse(null));
         when(dao.listByWorkitem(1L,10L)).thenAnswer(i -> jdbc.queryForList("SELECT id FROM dispatch WHERE tenant_id=1 AND workitem_id=10", Long.class).stream().map(dao::findById).toList());
@@ -54,6 +64,279 @@ class DispatchRecoveryServiceTest {
     String guidanceStatus() { return jdbc.queryForObject("SELECT status FROM workitem_comment_delivery WHERE id=1",String.class); }
     boolean stopPending() { return !jdbc.queryForList(
             "SELECT 1 FROM dispatch_recovery WHERE dispatch_id=100 AND stop_pending=1").isEmpty(); }
+
+    @Test void missingRunningExecutionCreatesFencedRecoveryAtSameStep() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        var next = service.recoverAbandonedExecution(dao.findById(100L), "session");
+        assertNotNull(next);
+        assertEquals("CANCELED", dao.findById(100L).getStatus());
+        assertEquals(100L, next.getResumeFromDispatchId());
+        assertEquals(77L, next.getSdlcStepId());
+        assertEquals("RECOVERY", next.getResumeMode());
+        assertEquals("continue:100", next.getIdempotencyKey());
+        assertEquals("PENDING", next.getStatus());
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+    }
+
+    @Test void handoffFenceReadsCurrentStatusInsteadOfStaleSourceObject() {
+        dispatch("RUNNING", 50L);
+        var stale = dao.findById(100L);
+        jdbc.update("UPDATE dispatch SET status='CANCELED' WHERE id=100");
+        assertTrue(service.isHandoffSourceFenced(stale));
+        jdbc.update("UPDATE dispatch SET status='SUCCEEDED' WHERE id=100");
+        assertFalse(service.isHandoffSourceFenced(stale));
+    }
+
+    @Test void deliveredHandoffToAnotherWorkerPreventsDuplicateSourceRecovery() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        var downstream = new DispatchDO(); downstream.setId(102L); downstream.setAgentId(21L);
+        downstream.setStatus(DispatchStatus.RUNNING); downstream.setIdempotencyKey("handoff:100");
+        var source = dao.findById(100L);
+        doReturn(List.of(source, downstream)).when(dao).listByWorkitem(1L, 10L);
+        when(dao.findByIdempotencyKey(1L, "handoff:100")).thenReturn(downstream);
+        assertNull(service.recoverAbandonedExecution(source, "session"));
+        verify(dao, never()).insert(any());
+        assertEquals(DispatchStatus.PAUSED, dao.findById(100L).getStatus());
+        assertFalse(service.cancelRequested(1, 100));
+        assertFalse(stopPending());
+    }
+
+    @Test void durableHumanOwnershipPreventsAutomaticFormalExecutionRecovery() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        WorkitemDO subject = workitems.findById(10L);
+        subject.setAssigneeType("HUMAN"); subject.setAssigneeRef(7L);
+        when(workitems.findByIdForUpdate(10L, 1L)).thenReturn(subject);
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        verify(dao, never()).insert(any());
+        assertEquals(DispatchStatus.PAUSED, dao.findById(100L).getStatus());
+        assertEquals("HUMAN", subject.getAssigneeType());
+        assertEquals(7L, subject.getAssigneeRef());
+        assertFalse(service.cancelRequested(1, 100));
+        assertFalse(stopPending());
+        verifyNoInteractions(transport);
+    }
+
+    @Test void supersededWorkerExecutionDoesNotCreateAnotherRecovery() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        var newer = new DispatchDO(); newer.setId(102L); newer.setAgentId(20L);
+        newer.setStatus("RUNNING"); newer.setSdlcStepId(78L);
+        var source = dao.findById(100L);
+        doReturn(List.of(source, newer)).when(dao).listByWorkitem(1L, 10L);
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        verify(dao, never()).insert(any());
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+        assertFalse(service.cancelRequested(1, 100));
+        assertFalse(stopPending());
+    }
+
+    @Test void completedHumanHandoffReleasesCapacityWithoutChangingHumanWaitOrRestarting() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        WorkitemDO subject = workitems.findById(10L);
+        subject.setAssigneeType("HUMAN"); subject.setAssigneeRef(7L); subject.setStatusNodeId(88L);
+        completionEvidence();
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("SUCCEEDED", dao.findById(100L).getStatus());
+        assertEquals("HUMAN", subject.getAssigneeType());
+        assertEquals(7L, subject.getAssigneeRef());
+        assertEquals(88L, subject.getStatusNodeId());
+        assertEquals(WorkitemClassificationEvaluator.CATEGORY_PENDING_DECISION,
+                WorkitemClassificationEvaluator.classify("IN_PROGRESS", subject.getAssigneeType(),
+                        subject.getAssigneeRef(), dao.listByWorkitem(1L, 10L)));
+        verify(workitems, never()).updateAssignee(anyLong(), anyLong(), anyString(), anyLong(), anyInt(), anyLong());
+        verify(dao, never()).insert(any());
+        assertFalse(service.closed(1, 10));
+        assertFalse(service.cancelRequested(1, 100));
+        assertFalse(stopPending());
+        verifyNoInteractions(transport);
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+    }
+
+    @Test void completedSideInteractionWithSuccessorIsSucceededAndKeepsItsReply() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        jdbc.update("UPDATE dispatch SET resume_mode='SIDE_INTERACTION' WHERE id=100");
+        guidance("APPLIED"); jdbc.update("UPDATE workitem_comment_delivery SET reply_comment_id=44");
+        jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status) VALUES (102,1,10,'RUNNING')");
+        completionEvidence();
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("SUCCEEDED", dao.findById(100L).getStatus());
+        assertEquals("RUNNING", dao.findById(102L).getStatus());
+        assertEquals("APPLIED", guidanceStatus());
+        assertEquals(44L, jdbc.queryForObject("SELECT reply_comment_id FROM workitem_comment_delivery WHERE id=1", Long.class));
+        verify(dao, never()).insert(any());
+        verifyNoInteractions(transport);
+        assertFalse(service.cancelRequested(1, 100));
+        assertFalse(stopPending());
+    }
+
+    @Test void repliedInteractionWithoutSuccessorDoesNotRepeatTheUsersRequest() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        jdbc.update("UPDATE dispatch SET resume_mode='CANONICAL_INTERACTION' WHERE id=100");
+        guidance("APPLIED"); jdbc.update("UPDATE workitem_comment_delivery SET reply_comment_id=44");
+        // The reply is durable, but no completion receipt: keep a resumable record, not false success.
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+        assertEquals("APPLIED", guidanceStatus());
+        verify(dao, never()).insert(any());
+        assertFalse(stopPending());
+    }
+
+    @Test void completionEvidenceNeverReleasesARuntimeOwnedOrFreshlyClaimedExecution() {
+        orphanInventory("RUNNING", true, java.util.Set.of(100L));
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        completionEvidence();
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+        jdbc.update("DELETE FROM dispatch");
+        orphanInventory("ACKED", true, java.util.Set.of());
+        jdbc.update("UPDATE dispatch SET gmt_modified=NOW() WHERE id=100");
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("ACKED", dao.findById(100L).getStatus());
+        verifyNoInteractions(runtimeEvents, checkpoints, transport);
+    }
+
+    @Test void invalidCheckpointCannotTurnHumanWaitIntoSuccessfulDelivery() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        DispatchCheckpointDO checkpoint = completionEvidence();
+        checkpoint.setExecutorId(999L);
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+        verify(dao, never()).insert(any());
+        assertFalse(service.cancelRequested(1, 100));
+    }
+
+    @Test void runningInventoryPreventsReleaseEvenWhenOwnedInventoryOmitsExecution() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        var registry = mock(ExecutorRegistry.class);
+        when(registry.currentDispatchSnapshot(50L)).thenReturn(java.util.Optional.of(
+                new ExecutorDispatchSnapshot("session", 2, true, true, java.util.Set.of(100L),
+                        java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), null, System.currentTimeMillis())));
+        service.setExecutorRegistry(registry);
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+        verifyNoInteractions(runtimeEvents, checkpoints, transport);
+        verify(dao, never()).insert(any());
+    }
+
+    DispatchCheckpointDO completionEvidence() {
+        var completed = new DispatchRuntimeEventDO(); completed.setSeq(30L);
+        completed.setDetailJson("{\"state\":\"completed\"}");
+        var terminal = new DispatchRuntimeEventDO(); terminal.setSeq(27L);
+        terminal.setDetailJson("{\"reason\":\"terminal\",\"checkpointSeq\":70,\"sha256\":\"sha256:abc\"}");
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "dispatch.completed")).thenReturn(completed);
+        when(runtimeEvents.findLatestByDispatchAndType(1L, 100L, "runtime.checkpoint_saved")).thenReturn(terminal);
+        var checkpoint = new DispatchCheckpointDO(); checkpoint.setExecutorId(50L);
+        checkpoint.setSha256("abc"); checkpoint.setOssRef("bucket/terminal-checkpoint");
+        when(checkpoints.findByDispatchAndSeq(1L, 100L, 70L)).thenReturn(checkpoint);
+        return checkpoint;
+    }
+
+    @Test void releasedHumanWaitAllowsQueuedWorkToSelectExecutorWithProductionCapacityQuery() throws Exception {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        workitems.findById(10L).setAssigneeRef(7L);
+        jdbc.execute("ALTER TABLE dispatch ADD is_deleted INT DEFAULT 0");
+        var config = new org.apache.ibatis.session.Configuration(new org.apache.ibatis.mapping.Environment(
+                "capacity", new org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory(), jdbc.getDataSource()));
+        config.setDatabaseId("autowonder-source-aware");
+        try (var stream = getClass().getResourceAsStream("/mapping/DispatchDao.xml")) {
+            new org.apache.ibatis.builder.xml.XMLMapperBuilder(stream, config, "capacity.xml", config.getSqlFragments()).parse();
+        }
+        try (var session = new org.apache.ibatis.session.SqlSessionFactoryBuilder().build(config).openSession(true)) {
+            DispatchDao realDao = session.getMapper(DispatchDao.class);
+            var registry = mock(ExecutorRegistry.class);
+            when(registry.isAvailable(50L)).thenReturn(true);
+            // Capacity 2 reserves one slot for interactions, leaving one normal-work slot.
+            when(registry.currentDispatchSnapshot(50L)).thenReturn(java.util.Optional.of(
+                    new ExecutorDispatchSnapshot("session", 2, true, true, java.util.Set.of(),
+                            java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), null, System.currentTimeMillis())));
+            var redis = mock(RedisManager.class);
+            when(redis.smembers(ExecutorSelector.execsKey(20L))).thenReturn(java.util.Set.of("50"));
+            var selector = new ExecutorSelector(redis, registry, mock(PresenceManager.class), realDao);
+            assertEquals(List.of(100L), realDao.listCapacityOccupyingIds(50L));
+            assertNull(selector.select(20L));
+            assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+            session.clearCache();
+            assertTrue(realDao.listCapacityOccupyingIds(50L).isEmpty());
+            assertEquals(50L, selector.select(20L));
+            assertEquals("PAUSED", dao.findById(100L).getStatus());
+            assertEquals(WorkitemClassificationEvaluator.CATEGORY_PENDING_DECISION,
+                    WorkitemClassificationEvaluator.classify("IN_PROGRESS", "HUMAN", 7L,
+                            dao.listByWorkitem(1L, 10L)));
+            assertFalse(service.cancelRequested(1, 100));
+        }
+    }
+
+    @Test void malformedCompletionProofPreservesHumanWaitWithoutClaimingSuccess() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        workitems.findById(10L).setAssigneeType("HUMAN");
+        completionEvidence();
+        runtimeEvents.findLatestByDispatchAndType(1L, 100L, "dispatch.completed").setDetailJson("invalid");
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("PAUSED", dao.findById(100L).getStatus());
+        verify(dao, never()).insert(any());
+        assertFalse(service.cancelRequested(1, 100));
+    }
+
+    @Test void recoveryInsertFailureRollsBackOldExecutionFence() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        doThrow(new IllegalStateException("insert unavailable")).when(dao).insert(any());
+        assertThrows(IllegalStateException.class,
+                () -> service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        assertEquals("RUNNING", dao.findById(100L).getStatus());
+    }
+
+    @Test void recoveryDoesNotReviveTimeoutOrCanceledOrOwnedExecution() {
+        for (String status : List.of("TIMEOUT", "CANCELED", "PAUSED", "PAUSING")) {
+            jdbc.update("DELETE FROM dispatch");
+            orphanInventory(status, true, java.util.Set.of());
+            assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+            assertEquals(status, dao.findById(100L).getStatus());
+        }
+        jdbc.update("DELETE FROM dispatch");
+        orphanInventory("RUNNING", true, java.util.Set.of(100L));
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        verify(dao, never()).insert(any());
+    }
+
+    @Test void recentClaimAndUnknownOrReplacedInventoryPreventRecovery() {
+        orphanInventory("ACKED", true, java.util.Set.of());
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "old-session"));
+        jdbc.update("UPDATE dispatch SET gmt_modified=NOW() WHERE id=100");
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        jdbc.update("DELETE FROM dispatch");
+        orphanInventory("RUNNING", false, java.util.Set.of());
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        verify(dao, never()).insert(any());
+    }
+
+    @Test void durableCancelOrClosedWorkitemPreventsAutomaticRecovery() {
+        orphanInventory("RUNNING", true, java.util.Set.of());
+        jdbc.update("INSERT INTO dispatch_recovery (tenant_id,dispatch_id,cancel_requested) VALUES (1,100,1)");
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        jdbc.update("DELETE FROM dispatch_recovery");
+        jdbc.update("INSERT INTO workitem_execution_control (tenant_id,workitem_id,closed) VALUES (1,10,1) ON DUPLICATE KEY UPDATE closed=1");
+        assertNull(service.recoverAbandonedExecution(dao.findById(100L), "session"));
+        verify(dao, never()).insert(any());
+    }
+
+    void orphanInventory(String status, boolean authoritative, java.util.Set<Long> owned) {
+        dispatch(status, 50L);
+        jdbc.update("UPDATE dispatch SET gmt_modified=? WHERE id=100", new Timestamp(System.currentTimeMillis()-180_000));
+        var registry = mock(com.aliyun.autowonder.executor.ExecutorRegistry.class);
+        when(registry.currentDispatchSnapshot(50L)).thenReturn(java.util.Optional.of(
+                new com.aliyun.autowonder.executor.ExecutorDispatchSnapshot("session", 10,
+                        authoritative, true, java.util.Set.of(), owned, java.util.Set.of(),
+                        java.util.Set.of(), null, System.currentTimeMillis())));
+        service.setExecutorRegistry(registry);
+        doAnswer(i -> {
+            DispatchDO d = i.getArgument(0); d.setId(101L);
+            jdbc.update("INSERT INTO dispatch (id,tenant_id,workitem_id,status) VALUES (?,?,?,?)",
+                    d.getId(),d.getTenantId(),d.getWorkitemId(),d.getStatus());
+            return null;
+        }).when(dao).insert(any());
+    }
 
     @Test void scheduledForceCancelPersistsStopAndRetriesOfflineExecutor() {
         dispatch("RUNNING", 50L);

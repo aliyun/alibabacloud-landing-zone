@@ -55,12 +55,48 @@ public class DispatchCheckpointService {
         this.checkpointBucket = ossProperties.resolveArtifactBucket();
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private DispatchResultStore resultStore;
+
     public DispatchCheckpointDO store(DispatchDO dispatch, long checkpointSeq,
             String provider, String providerSessionId, String runtimeId,
             String activeStepId, byte[] archive) {
+        return store(dispatch, checkpointSeq, provider, providerSessionId, runtimeId, activeStepId, archive, null);
+    }
+
+    public DispatchCheckpointDO store(DispatchDO dispatch, long checkpointSeq,
+            String provider, String providerSessionId, String runtimeId,
+            String activeStepId, byte[] archive, String resultId) {
+        if (resultStore == null) {
+            if (resultId != null) throw new IllegalStateException("RESULT_SCHEMA_NOT_READY");
+            return storeLocked(dispatch, checkpointSeq, provider, providerSessionId, runtimeId, activeStepId, archive, null);
+        }
+        resultStore.requireReady();
+        return resultStore.transaction(() -> {
+            resultStore.lockDispatch(dispatch.getTenantId(), dispatch.getId());
+            return storeLocked(dispatch, checkpointSeq, provider, providerSessionId, runtimeId, activeStepId, archive, resultId);
+        });
+    }
+
+    private DispatchCheckpointDO storeLocked(DispatchDO dispatch, long checkpointSeq,
+            String provider, String providerSessionId, String runtimeId,
+            String activeStepId, byte[] archive, String resultId) {
         DispatchCheckpointDO existing = checkpointDao.findByDispatchAndSeq(
                 dispatch.getTenantId(), dispatch.getId(), checkpointSeq);
         if (existing != null) {
+            if (!sha256(archive).equalsIgnoreCase(existing.getSha256()))
+                throw new CheckpointConflictException();
+            if (resultId != null) {
+                if (existing.getCompletionResultId() != null && !resultId.equals(existing.getCompletionResultId()))
+                    throw new CheckpointConflictException();
+                try {
+                    if (checkpointDao.pinCompletion(dispatch.getTenantId(), dispatch.getId(), checkpointSeq, resultId) != 1)
+                        throw new CheckpointConflictException();
+                } catch (DuplicateKeyException conflict) {
+                    throw new CheckpointConflictException();
+                }
+                existing.setCompletionResultId(resultId);
+            }
             ensureRepoRevisionSidecar(existing, archive);
             pruneBestEffort(dispatch);
             return existing;
@@ -68,7 +104,7 @@ public class DispatchCheckpointService {
         String sha256 = sha256(archive);
         String key = "t/" + dispatch.getTenantId() + "/workitem/" + dispatch.getWorkitemId()
                 + "/recovery/dispatch/" + dispatch.getId() + "/checkpoint-"
-                + checkpointSeq + ".tar.gz";
+                + checkpointSeq + "-" + sha256 + ".tar.gz";
         StoredObject stored = storage.put(checkpointBucket, key, archive);
         DispatchCheckpointDO checkpoint = new DispatchCheckpointDO();
         checkpoint.setTenantId(dispatch.getTenantId());
@@ -76,6 +112,7 @@ public class DispatchCheckpointService {
         checkpoint.setDispatchId(dispatch.getId());
         checkpoint.setAgentId(dispatch.getAgentId());
         checkpoint.setCheckpointSeq(checkpointSeq);
+        checkpoint.setCompletionResultId(resultId);
         checkpoint.setProvider(trim(provider, 32));
         checkpoint.setProviderSessionId(trim(providerSessionId, 256));
         checkpoint.setRuntimeId(trim(runtimeId, 128));
@@ -90,6 +127,7 @@ public class DispatchCheckpointService {
             pruneBestEffort(dispatch);
             return checkpoint;
         } catch (DuplicateKeyException race) {
+            if (resultId != null) throw new CheckpointConflictException();
             DispatchCheckpointDO winner = checkpointDao.findByDispatchAndSeq(
                     dispatch.getTenantId(), dispatch.getId(), checkpointSeq);
             if (winner != null) {
@@ -111,12 +149,46 @@ public class DispatchCheckpointService {
     }
 
     private void prune(DispatchDO dispatch) {
+        checkpointDao.releaseResolvedPins(dispatch.getTenantId(), dispatch.getId());
         for (DispatchCheckpointDO obsolete : checkpointDao.listObsolete(
                 dispatch.getTenantId(), dispatch.getId(), RETAIN_CHECKPOINTS)) {
-            storage.delete(obsolete.getOssRef());
-            storage.delete(repoStateRef(obsolete.getOssRef()));
-            storage.delete(LegacyCheckpointNormalizer.compatibilityRef(obsolete.getOssRef()));
-            checkpointDao.deleteById(dispatch.getTenantId(), dispatch.getId(), obsolete.getId());
+            // A committed tombstone removes the checkpoint from all materializable receipt queries.
+            // Object deletion belongs to a later transaction; rollback never damages a live object.
+            checkpointDao.markGarbage(dispatch.getTenantId(), dispatch.getId(), obsolete.getId());
+        }
+    }
+
+    /** Invoked by the existing compensation sweep; no separate scheduler or in-memory retry queue. */
+    public void reconcileRetention() {
+        resultStore.requireReady();
+        for (DispatchCheckpointDO subject : checkpointDao.listRetentionSubjects(RETAIN_CHECKPOINTS, 200)) {
+            try {
+                resultStore.transaction(() -> {
+                    resultStore.lockDispatch(subject.getTenantId(), subject.getDispatchId());
+                    DispatchDO dispatch = dispatchDao.findById(subject.getDispatchId());
+                    if (dispatch != null) prune(dispatch);
+                    return null;
+                });
+            } catch (RuntimeException failure) {
+                log.warn("checkpoint retention marking deferred dispatchId={}", subject.getDispatchId(), failure);
+            }
+        }
+        for (DispatchCheckpointDO pending : checkpointDao.listGarbage(200)) {
+            try {
+                resultStore.transaction(() -> {
+                    resultStore.lockDispatch(pending.getTenantId(), pending.getDispatchId());
+                    DispatchCheckpointDO garbage = checkpointDao.findGarbageById(pending.getId());
+                    if (garbage == null) return null;
+                    storage.delete(garbage.getOssRef());
+                    storage.delete(repoStateRef(garbage.getOssRef()));
+                    storage.delete(LegacyCheckpointNormalizer.compatibilityRef(garbage.getOssRef()));
+                    checkpointDao.deleteById(garbage.getTenantId(), garbage.getDispatchId(), garbage.getId());
+                    return null;
+                });
+            } catch (RuntimeException failure) {
+                // Retain the committed tombstone so partial object deletion is idempotently retried.
+                log.warn("checkpoint object collection deferred checkpointId={}", pending.getId(), failure);
+            }
         }
     }
 
@@ -362,6 +434,15 @@ public class DispatchCheckpointService {
         }
         return stored.getSha256().equalsIgnoreCase(normalized);
     }
+
+    public boolean matchesCompletionReceipt(long tenantId, long dispatchId, String resultId,
+            long checkpointSeq, String hash) {
+        DispatchCheckpointDO checkpoint = checkpointDao.findByDispatchAndSeq(tenantId, dispatchId, checkpointSeq);
+        return checkpoint != null && resultId.equals(checkpoint.getCompletionResultId())
+                && matchesDurableReceipt(tenantId, dispatchId, checkpointSeq, hash);
+    }
+
+    public static class CheckpointConflictException extends RuntimeException { }
 
     public boolean hasResumableSession(long tenantId, long dispatchId) {
         return resolveResumeSource(tenantId, dispatchId, true).providerSession() != null;

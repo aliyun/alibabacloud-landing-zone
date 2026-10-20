@@ -4,6 +4,7 @@ import com.aliyun.autowonder.agent.AgentRepoPermDao;
 import com.aliyun.autowonder.agent.AgentRepoRefDO;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.repo.dto.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -114,7 +115,9 @@ public class RepoService {
     private void rejectInvalidName(String name) {
         String problem = RepoNameValidator.validate(name);
         if (problem != null) {
-            throw new BizException(ErrorCode.REPO_NAME_INVALID, problem);
+            throw BizException.keyed(ErrorCode.REPO_NAME_INVALID,
+                    "repo.name." + RepoNameValidator.inspect(name).name().toLowerCase(java.util.Locale.ROOT),
+                    new Object[]{name == null ? null : name.trim()}, problem);
         }
     }
 
@@ -130,7 +133,8 @@ public class RepoService {
         }
         List<AgentRepoRefDO> activeRefs = agentRepoPermDao.listActiveRefsByRepoId(id, tenantId);
         if (!activeRefs.isEmpty()) {
-            throw new BizException(ErrorCode.REPO_DELETE_IN_USE, describeActiveRefs(activeRefs));
+            throw BizException.keyed(ErrorCode.REPO_DELETE_IN_USE, "repo.delete_in_use",
+                    new Object[]{displayActiveRefs(activeRefs)}, describeActiveRefs(activeRefs));
         }
         int rows = repoDao.softDelete(id, tenantId, repo.getVersion(), userId);
         if (rows == 0) {
@@ -138,6 +142,20 @@ public class RepoService {
         }
         conclusionDao.deleteByRepoId(id, tenantId);
         relationDao.deleteByRepoId(id, tenantId);
+    }
+
+    // ponytail: These display arguments use the synchronous request locale; a future deferred consumer needs its own structured response projection.
+    private String displayActiveRefs(List<AgentRepoRefDO> refs) {
+        List<String> rows = new ArrayList<>();
+        for (AgentRepoRefDO ref : refs) {
+            String name = ref.getAgentName() == null || ref.getAgentName().isBlank()
+                    ? SystemMessages.render("repo.ref.agent_fallback", null, "数字员工") : ref.getAgentName();
+            String type = AgentRepoRefDO.TYPE_ONLINE.equals(ref.getRefType()) ? "online" : "editing";
+            String key = "repo.ref." + type + (ref.getVersionNo() == null ? "" : "_version");
+            rows.add(SystemMessages.render(key,
+                    new Object[]{name, String.valueOf(ref.getAgentId()), String.valueOf(ref.getVersionNo())}, name));
+        }
+        return String.join(SystemMessages.render("repo.ref.separator", null, "；"), rows);
     }
 
     private String describeActiveRefs(List<AgentRepoRefDO> refs) {

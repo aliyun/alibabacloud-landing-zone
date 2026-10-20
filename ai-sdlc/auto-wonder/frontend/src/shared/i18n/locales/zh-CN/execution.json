@@ -1,0 +1,51 @@
+{
+  "list": {
+    "title": "执行记录",
+    "refresh": "刷新",
+    "time": "时间",
+    "workitem": "工单",
+    "agent": "Agent",
+    "executor": "执行器",
+    "status": "状态",
+    "attempt": "尝试",
+    "actions": "操作",
+    "details": "详情",
+    "allAgents": "全部 Agent",
+    "allStatuses": "全部状态",
+    "workitemId": "工单 ID",
+    "last7Days": "近 7 天",
+    "last30Days": "近 30 天",
+    "last90Days": "近 90 天",
+    "total_other": "共 {{total}} 条",
+    "empty": "暂无执行记录"
+  },
+  "detail": {
+    "title": "执行详情",
+    "titleWithId": "执行详情 · #{{id}}",
+    "error": "错误",
+    "workitem": "工单",
+    "step": "SDLC 步骤",
+    "agent": "Agent",
+    "executor": "执行器",
+    "attempt": "尝试次数",
+    "status": "状态",
+    "summary": "结果摘要",
+    "artifacts_other": "产物 ({{total}})",
+    "noArtifacts": "无产物",
+    "openWorkitem": "跳转工单",
+    "viewAgent": "查看 Agent",
+    "close": "关闭",
+    "loading": "加载中"
+  },
+  "status": {
+    "PENDING": "待处理",
+    "PACKAGING": "打包中",
+    "DISPATCHED": "已派发",
+    "ACKED": "已确认",
+    "RUNNING": "运行中",
+    "SUCCEEDED": "成功",
+    "FAILED": "失败",
+    "TIMEOUT": "已超时",
+    "CANCELED": "已取消"
+  }
+}

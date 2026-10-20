@@ -341,25 +341,55 @@ class RequirementDocumentServiceTest {
     }
 
     @Test
-    void uploadRejectsUnsafeOrUnsupportedFilenames() {
-        assertThrows(BizException.class, () -> service.uploadMcp(3L, "../spec.md",
-                "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null));
-        for (String filename : new String[]{"app.exe", "run.sh", "lib.jar", "data.csv",
-                "sheet.xlsx", "slide.pptx", "archive.tar.gz", "no-extension"}) {
-            BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
-                    "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null), filename);
-            assertEquals("10001", ex.getCode());
-            assertTrue(ex.getMessage().contains(".docx") && ex.getMessage().contains(".zip"),
-                    "rejection message should list the supported whitelist, got: " + ex.getMessage());
+    void uploadRejectsUnsafeFilenamesRegardlessOfExtension() {
+        for (String filename : List.of("../sheet.xlsx", "folder/file.custom", "folder\\file", "..", "bad\nname")) {
+            assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
+                    new byte[]{1, 2}, 100L, 7L, null));
         }
         verify(artifactDao, never()).insert(any());
     }
 
     @Test
-    void supportedExtensionsKeepExistingFormatsAndAppendNewOnesInOrder() {
-        assertEquals(List.of(".md", ".markdown", ".txt", ".html", ".pdf", ".png", ".jpg", ".jpeg",
-                        ".webp", ".docx", ".doc", ".java", ".py", ".zip"),
-                RequirementDocumentService.SUPPORTED_EXTENSIONS);
+    void uploadStoresArbitraryExtensionsAndExtensionlessFilesWithoutChangingBytes() {
+        byte[] bytes = {(byte) 0xff, 0, 1, 2};
+        for (String filename : List.of("sheet.xlsx", "legacy.xls", "data.csv", "slide.pptx",
+                "archive.tar.gz", "app.exe", "run.sh", "custom.backup", "README")) {
+            var result = service.uploadMcp(3L, filename, bytes, 100L, 7L, null);
+            assertEquals("requirements/" + filename, result.getName());
+            assertArrayEquals(bytes, storage.get("artifact-bucket/t/100/workitem/3/requirements/" + filename));
+        }
+        verify(artifactDao, times(9)).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contentType\":\"application/octet-stream\"")
+                        && artifact.getMetaJson().contains("\"contextKind\":\"BINARY\"")));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void uploadWebAndCliAcceptSpreadsheetAndUnknownFormatsWithoutTrustingClientMime(String language) throws Exception {
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try {
+            byte[] workbook = TestArchives.zipOf("xl/workbook.xml", "<workbook/>".getBytes(StandardCharsets.UTF_8));
+            service.uploadWeb(3L, new MultipartFile[]{new MockMultipartFile("files", "统计.XLSX", "text/html", workbook)}, 100L, 7L);
+            service.uploadCli(3L, new MultipartFile[]{new MockMultipartFile("files", "custom.data", "text/html", new byte[]{0, 1})}, 100L, 7L);
+            assertArrayEquals(workbook, storage.get("artifact-bucket/t/100/workitem/3/requirements/统计.XLSX"));
+            verify(artifactDao, times(2)).insert(argThat(artifact -> artifact.getMetaJson().contains("application/octet-stream")));
+        } finally {
+            org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();
+        }
+    }
+
+    @Test
+    void arbitraryExtensionsStillEnforceArchiveGuards() {
+        for (String filename : List.of("sheet.xlsx", "library.jar", "custom.backup", "README")) {
+            assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
+                    TestArchives.zipOf("../escape.txt", new byte[]{1}), 100L, 7L, null));
+        }
+        verify(artifactDao, never()).insert(any());
+    }
+
+    @Test
+    void supportedExtensionsAdvertiseAnyFileType() {
+        assertEquals(List.of("*"), RequirementDocumentService.SUPPORTED_EXTENSIONS);
     }
 
     @Test
@@ -509,11 +539,10 @@ class RequirementDocumentServiceTest {
     }
 
     @Test
-    void uploadRejectsUnsupportedVisualExtensions() {
-        assertThrows(BizException.class, () -> service.uploadMcp(3L, "anim.gif", PNG, 100L, 7L, null));
-        assertThrows(BizException.class, () -> service.uploadMcp(3L, "vector.svg", PNG, 100L, 7L, null));
-
-        verify(artifactDao, never()).insert(any());
+    void uploadStoresOtherImageFormatsAsOpaqueAttachments() {
+        service.uploadMcp(3L, "anim.gif", PNG, 100L, 7L, null);
+        service.uploadMcp(3L, "vector.svg", PNG, 100L, 7L, null);
+        verify(artifactDao, times(2)).insert(argThat(artifact -> artifact.getMetaJson().contains("application/octet-stream")));
     }
 
     @Test
@@ -863,17 +892,11 @@ class RequirementDocumentServiceTest {
 
     @Test
     void uploadResolvesTheExtensionFromTheLastDotOnly() {
-        // "spec." ends in a dot and ".hidden" has no suffix after its leading dot, so both resolve
-        // to an extension the whitelist does not know.
         for (String filename : new String[]{"spec.", ".hidden"}) {
-            BizException ex = assertThrows(BizException.class, () -> service.uploadMcp(3L, filename,
-                    "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null), filename);
-
-            assertEquals("10001", ex.getCode());
-            assertTrue(ex.getMessage().contains(".docx") && ex.getMessage().contains(".zip"),
-                    "rejection message should list the supported whitelist, got: " + ex.getMessage());
+            service.uploadMcp(3L, filename, "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
         }
-        verify(artifactDao, never()).insert(any());
+        verify(artifactDao, times(2)).insert(argThat(artifact ->
+                artifact.getMetaJson().contains("\"contextKind\":\"BINARY\"")));
 
         clearInvocations(artifactDao);
         service.uploadMcp(3L, "SPEC.MD", "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
@@ -893,7 +916,7 @@ class RequirementDocumentServiceTest {
     }
 
     @Test
-    void existingFormatsAreUnaffectedByTheExtendedWhitelist() {
+    void existingFormatsRetainContentTypesWhenOtherFormatsAreAllowed() {
         service.uploadMcp(3L, "spec.md", "# Spec".getBytes(StandardCharsets.UTF_8), 100L, 7L, null);
         verify(artifactDao).insert(argThat(artifact ->
                 artifact.getMetaJson().contains("\"contentType\":\"text/markdown\"")
@@ -917,4 +940,78 @@ class RequirementDocumentServiceTest {
         System.arraycopy(PNG, 0, bytes, 0, PNG.length);
         return bytes;
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"zh-CN,pdf",
+            "en-US,pdf",
+            "zh-CN,image",
+            "en-US,image",
+            "zh-CN,doc",
+            "en-US,doc",
+            "zh-CN,zip",
+            "en-US,zip",
+            "zh-CN,docx",
+            "en-US,docx",
+            "zh-CN,entries",
+            "en-US,entries",
+            "zh-CN,inflated",
+            "en-US,inflated",
+            "zh-CN,corrupt",
+            "en-US,corrupt",
+            "zh-CN,path",
+            "en-US,path",
+            "zh-CN,depth",
+            "en-US,depth"})
+    void ownedDocumentValidationRendersWithoutChangingSecurityDiagnostics(String language, String problem) {
+        String extension=switch(problem) {
+            case "pdf" -> ".pdf";
+            case "image" -> ".png";
+            case "doc" -> ".doc";
+            case "docx" -> ".docx";
+            default -> ".zip";
+        };
+        byte[] bytes=switch(problem) {
+            case "docx" -> TestArchives.zipOf("no-document.txt",new byte[]{1});
+            case "entries" -> TestArchives.zipWithManyEntries(501);
+            case "inflated" -> TestArchives.zipBomb(2,26*1024*1024);
+            case "corrupt" -> TestArchives.truncatedZip();
+            case "path" -> TestArchives.zipOf("../opaque-secret",new byte[]{1});
+            case "depth" -> TestArchives.zipWithNestedPath(21);
+            default -> new byte[]{1};
+        };
+        String diagnostic=switch(problem) {
+            case "pdf" -> "文件内容与 PDF 格式不符";
+            case "image" -> "文件内容与图片格式不符";
+            case "doc" -> "文件内容与 .doc 格式不符";
+            case "zip" -> "文件内容与 ZIP 格式不符";
+            case "docx" -> "文件内容与 .docx 格式不符";
+            case "entries" -> "压缩包条目数超过上限 500";
+            case "inflated" -> "压缩包解压后大小超过上限 50MB";
+            case "corrupt" -> "压缩包无法解析";
+            case "path" -> "压缩包条目名非法，疑似路径穿越";
+            default -> "压缩包目录层级超过上限 20";
+        };
+        String english=switch(problem) {
+            case "pdf" -> "File content does not match the PDF format";
+            case "image" -> "File content does not match the image format";
+            case "doc" -> "File content does not match the .doc format";
+            case "zip" -> "File content does not match the ZIP format";
+            case "docx" -> "File content does not match the .docx format";
+            case "entries" -> "Archive entry count exceeds the limit of 500";
+            case "inflated" -> "Archive uncompressed size exceeds the limit of 50MB";
+            case "corrupt" -> "The archive cannot be parsed";
+            case "path" -> "Invalid archive entry name; possible path traversal";
+            default -> "Archive directory depth exceeds the limit of 20";
+        };
+        var error=assertThrows(BizException.class,()->service.uploadMcp(3L,"raw"+extension,bytes,100L,7L,null));
+        assertEquals(com.aliyun.autowonder.common.error.ErrorCode.PARAM_INVALID.getCode(),error.getCode());
+        assertEquals(diagnostic,error.getMessage());
+        org.junit.jupiter.api.Assertions.assertNull(error.getCause());
+        verify(artifactDao,never()).insert(any());
+        verify(storage,never()).put(org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.anyString(),any(byte[].class));
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        try { assertEquals(language.equals("en-US") ? english : diagnostic,com.aliyun.autowonder.common.result.Result.fail(error).getMessage()); }
+        finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

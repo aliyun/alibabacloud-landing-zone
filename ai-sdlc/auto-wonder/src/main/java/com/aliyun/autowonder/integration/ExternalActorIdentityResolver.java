@@ -2,6 +2,7 @@ package com.aliyun.autowonder.integration;
 
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.springframework.stereotype.Component;
@@ -24,8 +25,8 @@ public class ExternalActorIdentityResolver {
             return new Identity(firstNonBlank(name, "数字员工"), "Agent: " + firstNonBlank(name, "数字员工") + "（ID: " + actorRef + "）");
         }
         if ("HUMAN".equals(actorType) && actorRef != null) {
-            UserDO user = userDao.findById(actorRef);
-            String name = user == null ? null : firstNonBlank(user.getNickname(), user.getUsername());
+            UserDO user = userDao.findByIdIncludingDeleted(actorRef);
+            String name = user == null ? null : UserAccountStates.displayName(user);
             return new Identity(firstNonBlank(name, "用户"), "用户: " + firstNonBlank(name, "用户") + "（ID: " + actorRef + "）");
         }
         return new Identity("系统", "AutoWonder 系统");

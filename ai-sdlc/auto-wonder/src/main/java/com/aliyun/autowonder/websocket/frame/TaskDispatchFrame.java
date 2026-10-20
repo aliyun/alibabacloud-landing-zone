@@ -10,6 +10,7 @@ import java.util.Map;
 @Getter
 @Setter
 public class TaskDispatchFrame extends OutboundFrame {
+    private com.aliyun.autowonder.dispatch.DispatchModelSelection modelSelection;
     private Long dispatchId;
     private Long executorId;
     private Long tenantId;

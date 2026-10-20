@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Input, Space, Typography } from 'antd';
 import { CloseOutlined, EditOutlined, SaveOutlined } from '@ant-design/icons';
@@ -17,6 +18,7 @@ interface WorkitemContentProps {
 }
 
 export function WorkitemContent({ title, contentMd, saving = false, readOnly = false, onSave }: WorkitemContentProps) {
+  const { t } = useTranslation('workitem');
   const safeContentMd = contentMd ?? '';
   const accessCommand = useAccessCommand();
   const [editing, setEditing] = useState(false);
@@ -45,7 +47,7 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
     if (!canSave || !onSave) {
       return;
     }
-    accessCommand('READ_WRITE', '编辑工单内容', async () => {
+    accessCommand('READ_WRITE', t('detail.editCommand'), async () => {
       await onSave({ title: draftTitle.trim(), contentMd: draftContent });
       setEditing(false);
     });
@@ -64,15 +66,15 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <Text strong style={{ display: 'block', fontSize: 14 }}>
-          需求/设计文档
+          {t('detail.document')}
         </Text>
         {readOnly ? (
-          <Text type="secondary">由外部工单维护</Text>
+          <Text type="secondary">{t('detail.externallyMaintained')}</Text>
         ) : editing ? (
           <Space>
             <CopyContentMenu contentMd={safeContentMd} />
             <Button icon={<CloseOutlined />} onClick={handleCancel} disabled={saving}>
-              取消
+              {t('detail.cancel')}
             </Button>
             <Button
               type="primary"
@@ -81,15 +83,15 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
               disabled={!canSave}
               onClick={handleSave}
             >
-              保存
+              {t('detail.save')}
             </Button>
           </Space>
         ) : (
           <Space size={4}>
             <CopyContentMenu contentMd={safeContentMd} />
             <Button icon={<EditOutlined />}
-              onClick={() => accessCommand('READ_WRITE', '编辑工单内容', () => setEditing(true))}>
-              编辑
+              onClick={() => accessCommand('READ_WRITE', t('detail.editCommand'), () => setEditing(true))}>
+              {t('detail.edit')}
             </Button>
           </Space>
         )}
@@ -97,14 +99,14 @@ export function WorkitemContent({ title, contentMd, saving = false, readOnly = f
       {editing ? (
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Input
-            aria-label="工单标题"
+            aria-label={t('detail.titleField')}
             value={draftTitle}
             maxLength={200}
             showCount
             onChange={(event) => setDraftTitle(event.target.value)}
           />
           <TextArea
-            aria-label="工单正文"
+            aria-label={t('detail.bodyField')}
             value={draftContent}
             rows={12}
             autoSize={{ minRows: 10, maxRows: 24 }}

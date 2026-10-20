@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Artifact, DispatchAttempt } from '@/shared/types/workitem';
 import { artifactCategories, artifactCategory, artifactReadingCategory, artifactsForReadingCategory, groupArtifactsByExecution } from './artifactGrouping';
 
-const attempt = (dispatchId: number): DispatchAttempt => ({ dispatchId, executorName: 'RD', status: 'FAILED', error: null, startedAt: null, durationMs: null });
+const attempt = (dispatchId: number): DispatchAttempt => ({ dispatchId, agentName: 'RD', executorName: null, status: 'FAILED', error: null, startedAt: null, durationMs: null });
 const artifact = (id: number, dispatchId: number): Artifact => ({ id, dispatchId, workitemId: 1, name: 'artifacts/output/deliverables/report.md', type: 'MARKDOWN', size: null, gmtCreate: '' });
 
 describe('artifact grouping', () => {
@@ -10,7 +10,7 @@ describe('artifact grouping', () => {
     const groups = groupArtifactsByExecution([{ name: '开发', attempts: [attempt(10), attempt(20), attempt(30)] }], [artifact(1, 10), artifact(2, 20)]);
     expect(groups.map(group => group.dispatchId)).toEqual([30, 20, 10]);
     expect(groups.map(group => group.artifacts.map(file => file.id))).toEqual([[], [2], [1]]);
-    expect(groups[0].label).toBe('第 3 次执行 · FAILED');
+    expect(groups[0].label).toBe('第 3 次执行 · 失败');
   });
 
   it('does not duplicate files when multiple steps reference one dispatch', () => {
@@ -27,10 +27,20 @@ describe('artifact grouping', () => {
     const groups = groupArtifactsByExecution(steps, [artifact(1, 30)]);
     expect(groups.map(group => group.dispatchId)).toEqual([50, 40, 30, 10]);
     expect(groups.map(group => group.label)).toEqual([
-      '第 4 次执行 · FAILED', '第 3 次执行 · FAILED', '第 2 次执行 · FAILED', '第 1 次执行 · FAILED',
+      '第 4 次执行 · 失败', '第 3 次执行 · 失败', '第 2 次执行 · 失败', '第 1 次执行 · 失败',
     ]);
     expect(groupArtifactsByExecution([...steps].reverse(), [artifact(1, 30)])).toEqual(groups);
     expect(groups.flatMap(group => group.artifacts)).toHaveLength(1);
+  });
+
+  it('uses execution records after a flow change and retains orphaned artifacts', () => {
+    const files = [artifact(1, 16953), artifact(2, 16950), artifact(3, 99), { ...artifact(4, 1), dispatchId: null }];
+    const groups = groupArtifactsByExecution([], files, [attempt(16950), { ...attempt(16953), status: 'SUCCEEDED' }]);
+    expect(groups.map(group => group.dispatchId)).toEqual([16953, 16950, 99, null]);
+    expect(groups[0].status).toBe('SUCCEEDED');
+    expect(groups[0].label).toBe('第 3 次执行 · 成功');
+    expect(groups.flatMap(group => group.artifacts).map(file => file.id)).toEqual([1, 2, 3, 4]);
+    expect(groups[3].label).toBe('未关联执行的产物');
   });
 
   it('prioritizes conclusions and reports while folding metadata and preserving snapshots', () => {

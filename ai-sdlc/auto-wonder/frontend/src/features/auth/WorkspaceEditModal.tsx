@@ -1,3 +1,6 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useEffect } from 'react';
 import { Form, Input, Modal, message } from 'antd';
 import { ApiError, ErrorCodes } from '@/shared/types/common';
@@ -18,7 +21,9 @@ interface WorkspaceEditModalProps {
 }
 
 export function WorkspaceEditModal({ workspace, onClose }: WorkspaceEditModalProps) {
+  const { t } = useTranslation('auth');
   const [form] = Form.useForm<WorkspaceEditFormValues>();
+  useLocalizedValidation(form, workspace !== null);
   const { mutateAsync, isPending } = useUpdateWorkspace();
 
   // F1.3 回显: keyed on the id, not on `workspace` identity — a list refetch hands back a new
@@ -50,25 +55,25 @@ export function WorkspaceEditModal({ workspace, onClose }: WorkspaceEditModalPro
         background: values.background ?? null,
         version: workspace.version ?? 0,
       });
-      message.success('工作空间已更新');
+      message.success(i18n.t('auth:workspace.updated'));
       onClose();
     } catch (e) {
       if (e instanceof ApiError && e.code === ErrorCodes.ORG_VERSION_CONFLICT) {
         // The list refetch triggered by the failed save is what makes a retry possible with a
         // fresh version, so the hint tells the user to reload rather than to click again.
-        message.error('工作空间已被其他人修改，请关闭弹窗后重新编辑');
+        message.error(i18n.t('auth:workspace.versionConflict'));
         return;
       }
-      message.error(e instanceof ApiError ? e.message : '保存失败，请稍后重试');
+      message.error(e instanceof ApiError ? e.message : i18n.t('auth:workspace.saveFailed'));
     }
   };
 
   return (
     <Modal
-      title={workspace ? `编辑「${workspace.name}」` : ''}
+      title={workspace ? t('workspace.editTitle', { name: workspace.name }) : ''}
       open={workspace !== null}
-      okText="保存"
-      cancelText="取消"
+      okText={t('action.save')}
+      cancelText={t('action.cancel')}
       confirmLoading={isPending}
       onCancel={onClose}
       onOk={handleSubmit}
@@ -77,23 +82,23 @@ export function WorkspaceEditModal({ workspace, onClose }: WorkspaceEditModalPro
       <Form form={form} layout="vertical">
         <Form.Item
           name="name"
-          label="工作空间名称"
+          label={t('workspace.name')}
           rules={[
-            { required: true, whitespace: true, message: '工作空间名称不能为空' },
-            { max: 128, message: '工作空间名称不能超过 128 个字符' },
+            { required: true, whitespace: true, message: t('workspace.nameRequired') },
+            { max: 128, message: t('workspace.nameLength') },
           ]}
         >
-          <Input placeholder="输入工作空间名称" maxLength={128} />
+          <Input placeholder={t('workspace.namePlaceholder')} maxLength={128} />
         </Form.Item>
         <Form.Item
           name="description"
-          label="工作空间描述"
-          rules={[{ max: 512, message: '工作空间描述不能超过 512 个字符' }]}
+          label={t('workspace.description')}
+          rules={[{ max: 512, message: t('workspace.descriptionLength') }]}
         >
-          <Input placeholder="简要描述工作空间用途" maxLength={512} />
+          <Input placeholder={t('workspace.descriptionPlaceholder')} maxLength={512} />
         </Form.Item>
-        <Form.Item name="background" label="工作空间背景">
-          <TextArea placeholder="工作空间的行业背景、技术栈、团队规模等信息" rows={4} />
+        <Form.Item name="background" label={t('workspace.background')}>
+          <TextArea placeholder={t('workspace.backgroundPlaceholder')} rows={4} />
         </Form.Item>
       </Form>
     </Modal>

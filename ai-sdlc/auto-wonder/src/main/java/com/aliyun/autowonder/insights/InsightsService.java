@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.insights;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import com.aliyun.autowonder.aiusage.DispatchAiUsageService;
 import com.aliyun.autowonder.aiusage.dto.DispatchAiUsageBackfillResult;
 import com.aliyun.autowonder.insights.dto.HumanAgentParticipationVO;
@@ -207,7 +209,7 @@ public class InsightsService {
         HumanAgentParticipationVO vo = new HumanAgentParticipationVO();
         LocalDate dataThrough = LocalDate.parse(snapshot.dataThrough());
         if (startDate.isAfter(endDate) || endDate.isAfter(dataThrough)) {
-            throw new IllegalArgumentException("Invalid date range: start_date must be <= end_date and end_date <= dataThrough");
+            throw new KeyedIllegalArgumentException("insights.invalid_date_range", null, "Invalid date range: start_date must be <= end_date and end_date <= dataThrough");
         }
 
         Granularity g = Granularity.valueOf(granularity.toUpperCase());
@@ -297,7 +299,7 @@ public class InsightsService {
         HumanAgentSlowTailPageVO vo = new HumanAgentSlowTailPageVO();
         LocalDate dataThrough = LocalDate.parse(snapshot.dataThrough());
         if (startDate.isAfter(endDate) || endDate.isAfter(dataThrough)) {
-            throw new IllegalArgumentException("Invalid date range: start_date must be <= end_date and end_date <= dataThrough");
+            throw new KeyedIllegalArgumentException("insights.invalid_date_range", null, "Invalid date range: start_date must be <= end_date and end_date <= dataThrough");
         }
 
         Granularity g = Granularity.DAY;

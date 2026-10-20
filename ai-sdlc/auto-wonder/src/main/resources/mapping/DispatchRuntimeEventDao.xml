@@ -81,6 +81,39 @@
         ORDER BY id ASC
     </select>
 
+    <select id="listForProgress" databaseId="autowonder-source-aware" resultMap="runtimeEventMap">
+        SELECT id, tenant_id, workitem_id, dispatch_id, agent_id, event_id, seq, event_type,
+            step_id, step_key, step_order, step_name, message, error,
+            CASE WHEN event_type = 'workflow.plan_applied' THEN detail_json ELSE NULL END AS detail_json,
+            event_time, gmt_create FROM dispatch_runtime_event e
+        WHERE e.tenant_id = #{tenantId} AND e.workitem_id = #{workitemId}
+          AND EXISTS (
+              SELECT 1 FROM dispatch d
+              WHERE d.id = e.dispatch_id
+                AND d.tenant_id = #{tenantId}
+                AND d.source_type = 'WORKITEM'
+                AND d.workitem_id = #{workitemId}
+                AND d.is_deleted = 0
+          )
+        ORDER BY id ASC
+    </select>
+
+    <select id="listForProgress" databaseId="autowonder-legacy" resultMap="runtimeEventMap">
+        SELECT id, tenant_id, workitem_id, dispatch_id, agent_id, event_id, seq, event_type,
+            step_id, step_key, step_order, step_name, message, error,
+            CASE WHEN event_type = 'workflow.plan_applied' THEN detail_json ELSE NULL END AS detail_json,
+            event_time, gmt_create FROM dispatch_runtime_event e
+        WHERE e.tenant_id = #{tenantId} AND e.workitem_id = #{workitemId}
+          AND EXISTS (
+              SELECT 1 FROM dispatch d
+              WHERE d.id = e.dispatch_id
+                AND d.tenant_id = #{tenantId}
+                AND d.workitem_id = #{workitemId}
+                AND d.is_deleted = 0
+          )
+        ORDER BY id ASC
+    </select>
+
     <select id="listByDispatch" resultMap="runtimeEventMap">
         SELECT <include refid="cols"/> FROM dispatch_runtime_event
         WHERE tenant_id = #{tenantId} AND dispatch_id = #{dispatchId}

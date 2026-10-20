@@ -1,5 +1,10 @@
 # Community Upstream Sync Guide
 
+For an accepted Community → GitHub mirror, the
+[mirror verification contract](github-mirror-verification.md) is authoritative:
+execute the repository verifier and reuse acceptance for identical trees.
+Do not repeat product acceptance merely because the repository or commit ID changes.
+
 ## Goal
 
 Keep `community` aligned with `origin/master` while preserving only the changes

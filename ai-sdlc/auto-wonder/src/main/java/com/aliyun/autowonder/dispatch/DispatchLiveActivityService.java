@@ -1,10 +1,13 @@
 package com.aliyun.autowonder.dispatch;
 
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.dto.DispatchLiveActivityVO;
+import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
 import com.aliyun.autowonder.util.MojibakeDetector;
 import com.aliyun.autowonder.util.RuntimeActionSanitizer;
 import org.springframework.stereotype.Service;
@@ -58,12 +61,14 @@ public class DispatchLiveActivityService {
     private final DispatchDao dispatchDao;
     private final DispatchRuntimeEventDao eventDao;
     private final DispatchLiveActivityMetrics metrics;
+    private final ExecutorRegistry executorRegistry;
 
     public DispatchLiveActivityService(DispatchDao dispatchDao, DispatchRuntimeEventDao eventDao,
-            DispatchLiveActivityMetrics metrics) {
+            DispatchLiveActivityMetrics metrics, ExecutorRegistry executorRegistry) {
         this.dispatchDao = dispatchDao;
         this.eventDao = eventDao;
         this.metrics = metrics;
+        this.executorRegistry = executorRegistry;
     }
 
     public DispatchLiveActivityVO get(long tenantId, long dispatchId) {
@@ -100,6 +105,7 @@ public class DispatchLiveActivityService {
         vo.setSourceType(dispatch.executionSourceType().name());
         vo.setAttempt(dispatch.getAttempt());
         vo.setDispatchStatus(dispatch.getStatus());
+        vo.setRuntimeState(runtimeState(dispatch));
         vo.setLastSeq(lastSeq);
         if (afterSeq != null && lastSeq <= afterSeq) {
             vo.setChanged(false);
@@ -143,6 +149,28 @@ public class DispatchLiveActivityService {
         return vo;
     }
 
+    private String runtimeState(DispatchDO dispatch) {
+        if (!Set.of("DISPATCHED", "ACKED", "RUNNING").contains(Objects.toString(dispatch.getStatus(), ""))) {
+            return null;
+        }
+        if (dispatch.getExecutorId() == null) {
+            return "UNKNOWN";
+        }
+        ExecutorDispatchSnapshot snapshot = executorRegistry.currentDispatchSnapshot(dispatch.getExecutorId()).orElse(null);
+        // Missing snapshots also cover Redis failures and legacy executors. Do not
+        // misreport an unavailable health signal as proof that execution stopped.
+        if (snapshot == null || snapshot.inventoryError() != null) {
+            return "UNKNOWN";
+        }
+        if (snapshot.runningDispatchIds().contains(dispatch.getId())) {
+            return "RUNNING";
+        }
+        if (snapshot.ownedDispatchIds().contains(dispatch.getId())) {
+            return "RECOVERING";
+        }
+        return "UNKNOWN";
+    }
+
     /** Maps one persisted event to a browser visible action, or null when it must not be displayed. */
     public DispatchLiveActivityVO.Action toAction(DispatchDO dispatch, DispatchRuntimeEventDO event) {
         if (dispatch == null || event == null) {
@@ -167,11 +195,11 @@ public class DispatchLiveActivityService {
         action.setAgentId(event.getAgentId() != null ? event.getAgentId() : dispatch.getAgentId());
         action.setDispatchId(dispatch.getId());
         action.setAttempt(dispatch.getAttempt());
-        action.setSummary(summary(event, detail, actionType, eventType));
+        action.setSummary(summary(event, detail, actionType, eventType, action));
         return action;
     }
 
-    private String summary(DispatchRuntimeEventDO event, JSONObject detail, String actionType, String eventType) {
+    private String summary(DispatchRuntimeEventDO event, JSONObject detail, String actionType, String eventType, DispatchLiveActivityVO.Action action) {
         String reported = firstText(detail, SUMMARY_KEYS);
         if (reported == null && event.getMessage() != null && !event.getMessage().isBlank()
                 && !MojibakeDetector.looksLikeMojibake(event.getMessage())) {
@@ -187,6 +215,8 @@ public class DispatchLiveActivityService {
         }
         // A summary that still carries a secret shape falls back to the generic label.
         String target = sanitize(firstText(detail, TARGET_KEYS), 48);
+        action.setSummaryOrigin("SYSTEM_FALLBACK");
+        action.setSummaryTarget(target);
         String label = label(actionType, eventType);
         return target == null ? label : label + " · " + target;
     }
@@ -338,58 +368,58 @@ public class DispatchLiveActivityService {
     static String label(String actionType, String eventType) {
         String type = eventType == null ? "" : eventType.toLowerCase(Locale.ROOT);
         return switch (actionType) {
-            case "CONTEXT_PREPARE" -> "准备任务包与上下文";
-            case "REPO_PREPARE" -> "准备工作仓库";
+            case "CONTEXT_PREPARE" -> SystemMessages.render("dispatch.activity.context", new Object[0], "准备任务包与上下文");
+            case "REPO_PREPARE" -> SystemMessages.render("dispatch.activity.repo", new Object[0], "准备工作仓库");
             case "SDLC_STEP" -> switch (type) {
-                case "step.gate_started" -> "开始校验";
-                case "step.gate_finished" -> "校验完成";
-                case "step.fix_required" -> "需要修复";
-                case "step.failed" -> "步骤执行失败";
-                case "completion_requested" -> "请求完成校验";
-                default -> type.endsWith(".started") ? "开始 SDLC 步骤" : "SDLC 步骤更新";
+                case "step.gate_started" -> SystemMessages.render("dispatch.activity.gate_start", new Object[0], "开始校验");
+                case "step.gate_finished" -> SystemMessages.render("dispatch.activity.gate_end", new Object[0], "校验完成");
+                case "step.fix_required" -> SystemMessages.render("dispatch.activity.fix", new Object[0], "需要修复");
+                case "step.failed" -> SystemMessages.render("dispatch.activity.step_failed", new Object[0], "步骤执行失败");
+                case "completion_requested" -> SystemMessages.render("dispatch.activity.completion", new Object[0], "请求完成校验");
+                default -> type.endsWith(".started") ? SystemMessages.render("dispatch.activity.step_start", new Object[0], "开始 SDLC 步骤") : SystemMessages.render("dispatch.activity.step_update", new Object[0], "SDLC 步骤更新");
             };
             case "DISPATCH" -> switch (type) {
-                case "dispatch.started" -> "开始执行";
-                case "dispatch.completed" -> "执行完成";
-                case "dispatch.failed" -> "执行失败";
-                case "dispatch.paused" -> "执行已暂停";
-                case "dispatch.resumed" -> "执行已恢复";
-                default -> "调度状态更新";
+                case "dispatch.started" -> SystemMessages.render("dispatch.activity.dispatch_start", new Object[0], "开始执行");
+                case "dispatch.completed" -> SystemMessages.render("dispatch.activity.dispatch_end", new Object[0], "执行完成");
+                case "dispatch.failed" -> SystemMessages.render("dispatch.activity.dispatch_failed", new Object[0], "执行失败");
+                case "dispatch.paused" -> SystemMessages.render("dispatch.activity.dispatch_paused", new Object[0], "执行已暂停");
+                case "dispatch.resumed" -> SystemMessages.render("dispatch.activity.dispatch_resumed", new Object[0], "执行已恢复");
+                default -> SystemMessages.render("dispatch.activity.dispatch_update", new Object[0], "调度状态更新");
             };
             case "HANDOFF" -> switch (type) {
-                case "handoff.submitted" -> "已提交交接";
-                case "handoff.accepted" -> "交接已接收";
-                default -> "交接处理";
+                case "handoff.submitted" -> SystemMessages.render("dispatch.activity.handoff_submitted", new Object[0], "已提交交接");
+                case "handoff.accepted" -> SystemMessages.render("dispatch.activity.handoff_accepted", new Object[0], "交接已接收");
+                default -> SystemMessages.render("dispatch.activity.handoff", new Object[0], "交接处理");
             };
-            case "ARTIFACT" -> "生成并上传产物";
-            case "COMMAND" -> "执行命令";
-            case "SKILL_LOAD" -> "已加载 Skill";
-            case "PLUGIN_LOAD" -> "已加载 Plugin";
-            case "MCP_LOAD" -> "已加载 MCP 服务";
-            case "MCP_CALL" -> "调用 MCP 工具";
-            case "SKILL" -> "调用 Skill";
+            case "ARTIFACT" -> SystemMessages.render("dispatch.activity.artifact", new Object[0], "生成并上传产物");
+            case "COMMAND" -> SystemMessages.render("dispatch.activity.command", new Object[0], "执行命令");
+            case "SKILL_LOAD" -> SystemMessages.render("dispatch.activity.skill_load", new Object[0], "已加载 Skill");
+            case "PLUGIN_LOAD" -> SystemMessages.render("dispatch.activity.plugin_load", new Object[0], "已加载 Plugin");
+            case "MCP_LOAD" -> SystemMessages.render("dispatch.activity.mcp_load", new Object[0], "已加载 MCP 服务");
+            case "MCP_CALL" -> SystemMessages.render("dispatch.activity.mcp_call", new Object[0], "调用 MCP 工具");
+            case "SKILL" -> SystemMessages.render("dispatch.activity.skill", new Object[0], "调用 Skill");
             case "SESSION" -> switch (type) {
-                case "session.started" -> "会话开始";
-                case "session.resumed" -> "会话恢复";
-                case "session.forked" -> "会话分叉";
-                case "session.interrupted" -> "会话中断";
-                case "session.completed" -> "会话结束";
-                case "session.failed" -> "会话失败";
-                case "session.cancelled" -> "会话取消";
-                default -> "会话状态更新";
+                case "session.started" -> SystemMessages.render("dispatch.activity.session_start", new Object[0], "会话开始");
+                case "session.resumed" -> SystemMessages.render("dispatch.activity.session_resumed", new Object[0], "会话恢复");
+                case "session.forked" -> SystemMessages.render("dispatch.activity.session_forked", new Object[0], "会话分叉");
+                case "session.interrupted" -> SystemMessages.render("dispatch.activity.session_interrupted", new Object[0], "会话中断");
+                case "session.completed" -> SystemMessages.render("dispatch.activity.session_end", new Object[0], "会话结束");
+                case "session.failed" -> SystemMessages.render("dispatch.activity.session_failed", new Object[0], "会话失败");
+                case "session.cancelled" -> SystemMessages.render("dispatch.activity.session_canceled", new Object[0], "会话取消");
+                default -> SystemMessages.render("dispatch.activity.session_update", new Object[0], "会话状态更新");
             };
             case "MODEL_TURN" -> switch (type) {
-                case "turn.started" -> "开始新一轮推理";
-                case "turn.completed" -> "本轮推理完成";
-                case "turn.failed" -> "本轮推理失败";
-                case "turn.interrupted" -> "本轮推理中断";
-                default -> "推理轮次更新";
+                case "turn.started" -> SystemMessages.render("dispatch.activity.turn_start", new Object[0], "开始新一轮推理");
+                case "turn.completed" -> SystemMessages.render("dispatch.activity.turn_end", new Object[0], "本轮推理完成");
+                case "turn.failed" -> SystemMessages.render("dispatch.activity.turn_failed", new Object[0], "本轮推理失败");
+                case "turn.interrupted" -> SystemMessages.render("dispatch.activity.turn_interrupted", new Object[0], "本轮推理中断");
+                default -> SystemMessages.render("dispatch.activity.turn_update", new Object[0], "推理轮次更新");
             };
-            case "SUBAGENT" -> "调度子代理";
-            case "SEARCH_READ" -> "检索或读取代码";
-            case "FILE_EDIT" -> "修改文件";
-            case "TOOL" -> "调用工具";
-            default -> "Agent 进度更新";
+            case "SUBAGENT" -> SystemMessages.render("dispatch.activity.subagent", new Object[0], "调度子代理");
+            case "SEARCH_READ" -> SystemMessages.render("dispatch.activity.search", new Object[0], "检索或读取代码");
+            case "FILE_EDIT" -> SystemMessages.render("dispatch.activity.edit", new Object[0], "修改文件");
+            case "TOOL" -> SystemMessages.render("dispatch.activity.tool", new Object[0], "调用工具");
+            default -> SystemMessages.render("dispatch.activity.agent", new Object[0], "Agent 进度更新");
         };
     }
 

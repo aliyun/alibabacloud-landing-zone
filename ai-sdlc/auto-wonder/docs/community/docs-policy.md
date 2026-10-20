@@ -72,3 +72,11 @@ excluded documentation merely because it exists on master.
 Any proposed exception must be necessary for community deployment, operations,
 verification, synchronization, or supported extension, and must not expose
 Alibaba-internal implementation details.
+
+## Operational additions retained in 1.0.0
+
+- `docs/dispatch-requests.md`: durable dispatch interaction operation.
+- `docs/executor-model-upgrade-policy.md`: executor model and upgrade behavior.
+- `docs/operations/artifact-upload-diagnostics.md`: safe upload troubleshooting.
+- `docs/personal-mcp-memory.md`: supported personal MCP memory usage.
+- `docs/sdlc_step_timing.md`: delivery timing interpretation and API contract.

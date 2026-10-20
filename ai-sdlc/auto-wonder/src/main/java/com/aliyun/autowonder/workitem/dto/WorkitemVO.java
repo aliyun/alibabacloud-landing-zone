@@ -28,6 +28,7 @@ public class WorkitemVO {
      * 「该流转不在模板推荐范围内」，页面据此提示；正常流转为 null。
      */
     private String transitionWarning;
+    private String transitionWarningCode;
     private Long sdlcId;
     private String sdlcName;
     private String assigneeType;
@@ -41,10 +42,14 @@ public class WorkitemVO {
     private Integer version;
     private Date gmtCreate;
     private Date gmtModified;
+    /** Soft-deletion time; only populated in recycle-bin listings. */
+    private Date deletedAt;
     /** Delivery health: "OK" or "STUCK" (in-progress workitem whose latest dispatch failed or stalled). */
     private String health;
     /** Human-readable reason when health is STUCK; null otherwise. */
     private String healthReason;
+    /** Present only for a server-evaluated stalled execution. */
+    private Long healthStalledMinutes;
     /**
      * True when the workitem is waiting for a human decision: in-flight (INIT/IN_PROGRESS), assigned
      * to a human, a dispatch has actually started before, and none is currently active. Identical to
@@ -80,4 +85,11 @@ public class WorkitemVO {
     private List<String> tags;
     /** Whether the current user watches this workitem's progress. */
     private Boolean watched;
+    /**
+     * 当前用户在该工单下最近一次成功提交评论的时间（工单 #55705「我评论过的」参与口径）；
+     * 仅当列表以 mineScope=COMMENTED 查询时回填，其余口径为 null。
+     */
+    private Date myLastCommentAt;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private ExternalPrincipalVO assigneeNameFallback;
 }

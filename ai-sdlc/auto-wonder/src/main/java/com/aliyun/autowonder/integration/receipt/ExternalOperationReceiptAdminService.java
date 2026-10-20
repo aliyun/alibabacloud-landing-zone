@@ -32,7 +32,7 @@ public class ExternalOperationReceiptAdminService {
 
     @Transactional
     public void manualRetry(long receiptId, long tenantId, long operatorId, String reason) {
-        String normalizedReason = requiredText(reason, "人工重试原因", MAX_REASON_LENGTH);
+        String normalizedReason = requiredText(reason, "人工重试原因", "integration.receipt_retry_reason", MAX_REASON_LENGTH);
         IntegrationOutboxDO receipt = requireManualActionable(receiptId, tenantId);
         if (outboxDao.manualRetry(receiptId, tenantId, lockVersion(receipt)) != 1) {
             throw stateChanged();
@@ -46,7 +46,7 @@ public class ExternalOperationReceiptAdminService {
     @Transactional
     public void manualConfirmSucceeded(long receiptId, long tenantId, long operatorId,
                                        String reason) {
-        String normalizedReason = requiredText(reason, "人工确认原因", MAX_REASON_LENGTH);
+        String normalizedReason = requiredText(reason, "人工确认原因", "integration.receipt_confirm_reason", MAX_REASON_LENGTH);
         IntegrationOutboxDO receipt = requireManualActionable(receiptId, tenantId);
         if (outboxDao.manualConfirmSucceeded(receiptId, tenantId, lockVersion(receipt)) != 1) {
             throw stateChanged();
@@ -57,33 +57,34 @@ public class ExternalOperationReceiptAdminService {
 
     private IntegrationOutboxDO requireManualActionable(long receiptId, long tenantId) {
         if (receiptId <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Receipt ID 必须为正整数");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "integration.receipt_id_positive", new Object[0], "Receipt ID 必须为正整数");
         }
         IntegrationOutboxDO receipt = outboxDao.findById(receiptId);
         if (receipt == null || !Objects.equals(receipt.getTenantId(), tenantId)) {
-            throw new BizException(ErrorCode.NOT_FOUND, "外部操作回执不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "integration.receipt_missing", new Object[0], "外部操作回执不存在");
         }
         boolean terminalFailure = "FAILED".equals(receipt.getStatus()) && receipt.getNextRetryAt() == null;
         if (!terminalFailure && !"UNKNOWN".equals(receipt.getStatus())) {
-            throw new BizException(ErrorCode.CONFLICT, "仅可处理结果不明或已终止且不再自动重试的回执");
+            throw BizException.keyed(ErrorCode.CONFLICT, "integration.receipt_manual_action_required", new Object[0], "仅可处理结果不明或已终止且不再自动重试的回执");
         }
         return receipt;
     }
 
-    private String requiredText(String value, String field, int maxLength) {
+    private String requiredText(String value, String field, String fieldKey, int maxLength) {
         if (value == null || value.isBlank()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, field + "不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, fieldKey + ".required", new Object[0], field + "不能为空");
         }
         String normalized = ExternalOperationSanitizer.sanitizeText(value.trim());
         if (normalized.length() > maxLength) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, fieldKey + ".too_long",
+                    new Object[]{maxLength},
                     field + "长度不能超过 " + maxLength + " 个字符");
         }
         return normalized;
     }
 
     private BizException stateChanged() {
-        return new BizException(ErrorCode.CONFLICT, "回执状态已变化，请刷新后重试");
+        return BizException.keyed(ErrorCode.CONFLICT, "integration.receipt_changed", new Object[0], "回执状态已变化，请刷新后重试");
     }
 
     private long lockVersion(IntegrationOutboxDO receipt) {

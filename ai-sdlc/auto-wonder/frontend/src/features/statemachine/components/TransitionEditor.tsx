@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { Button, Popconfirm, Alert, Space } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
@@ -24,17 +25,18 @@ interface Props {
 }
 
 export function TransitionEditor({ transitions, nodes, onCreate, onUpdate, onDelete, createLoading, updateLoading }: Props) {
+  const { t } = useTranslation('statemachine');
   const accessCommand = useAccessCommand();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<StatusTransition | null>(null);
 
   const nodeMap = Object.fromEntries(nodes.map((n) => [n.id, n]));
 
-  const openCreate = () => accessCommand('READ_WRITE', '添加状态流转', () => {
+  const openCreate = () => accessCommand('READ_WRITE', t('actions.createTransition'), () => {
     setEditing(null);
     setModalOpen(true);
   });
-  const openEdit = (tr: StatusTransition) => accessCommand('READ_WRITE', '编辑状态流转', () => {
+  const openEdit = (tr: StatusTransition) => accessCommand('READ_WRITE', t('actions.editTransition'), () => {
     setEditing(tr);
     setModalOpen(true);
   });
@@ -62,9 +64,9 @@ export function TransitionEditor({ transitions, nodes, onCreate, onUpdate, onDel
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>推荐流转 (快捷操作)</span>
-        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--aw-muted)' }}>定义工单页面的快捷状态变更按钮</span>
-        <Button icon={<PlusOutlined />} onClick={openCreate} style={{ marginLeft: 'auto' }}>添加推荐流转</Button>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{t('transitions.title')}</span>
+        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--aw-muted)' }}>{t('transitions.help')}</span>
+        <Button icon={<PlusOutlined aria-hidden="true" />} onClick={openCreate} style={{ marginLeft: 'auto' }}>{t('transitions.add')}</Button>
       </div>
       <Table<StatusTransition>
         rowKey="id"
@@ -72,14 +74,14 @@ export function TransitionEditor({ transitions, nodes, onCreate, onUpdate, onDel
         pagination={false}
         scroll={{ x: 'max-content' }}
         columns={[
-          { title: '起始状态', dataIndex: 'fromNodeId', render: renderNodeTag },
-          { title: '目标状态', dataIndex: 'toNodeId', render: renderNodeTag },
-          { title: '操作名称', dataIndex: 'name', align: 'left' },
-          { title: '操作', width: 180, render: (_, tr) => (
+          { title: t('transitions.fromColumn'), dataIndex: 'fromNodeId', render: renderNodeTag },
+          { title: t('transitions.toColumn'), dataIndex: 'toNodeId', render: renderNodeTag },
+          { title: t('transitions.name'), dataIndex: 'name', align: 'left' },
+          { title: t('transitions.actions'), width: 180, render: (_, tr) => (
             <Space>
-              <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(tr)}>编辑</Button>
-              <Popconfirm title="确认删除该流转？" onConfirm={() => onDelete(tr.id)} okText="删除" cancelText="取消">
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+              <Button type="link" size="small" icon={<EditOutlined aria-hidden="true" />} onClick={() => openEdit(tr)}>{t('common.edit')}</Button>
+              <Popconfirm title={t('transitions.confirmDelete')} onConfirm={() => onDelete(tr.id)} okText={t('common.delete')} cancelText={t('common.cancel')}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined aria-hidden="true" />}>{t('common.delete')}</Button>
               </Popconfirm>
             </Space>
           ) },
@@ -89,7 +91,7 @@ export function TransitionEditor({ transitions, nodes, onCreate, onUpdate, onDel
         type="warning"
         showIcon
         style={{ marginTop: 12 }}
-        message="推荐流转仅定义工单页面的快捷按钮。用户始终可以手动将工单切换到任意状态。"
+        message={t('transitions.warning')}
       />
       <TransitionFormModal
         open={modalOpen}

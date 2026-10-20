@@ -1,4 +1,5 @@
-import type { WorkspaceAccessLevel } from '@/shared/types/common';
+import { i18n } from '@/shared/i18n';
+import type { WorkspaceAccessLevel, WorkspaceDomain } from '@/shared/types/common';
 
 const ACCESS_LEVEL_RANK: Record<WorkspaceAccessLevel, number> = {
   READ_ONLY: 0,
@@ -7,13 +8,32 @@ const ACCESS_LEVEL_RANK: Record<WorkspaceAccessLevel, number> = {
 };
 
 export const ACCESS_LEVEL_LABEL: Record<WorkspaceAccessLevel, string> = {
-  READ_ONLY: '只读权限',
-  READ_WRITE: '读写权限',
-  ADMIN: '管理员权限',
+  get READ_ONLY() { return i18n.t('shared:access.readOnly'); },
+  get READ_WRITE() { return i18n.t('shared:access.readWrite'); },
+  get ADMIN() { return i18n.t('shared:access.admin'); },
 };
+
+export const WORKSPACE_DOMAINS: WorkspaceDomain[] = [
+  'AGENT', 'AI', 'AIUSAGE', 'ARTIFACT', 'AUDIT', 'AUTH', 'BACKUP',
+  'CATEGORY', 'CLARIFICATION', 'CONVERSATION', 'DASHBOARD', 'DEBUGLOG',
+  'DISPATCH', 'ENVIRONMENT', 'EVOLUTION', 'EXECUTOR', 'INSIGHTS',
+  'INTEGRATION', 'MCP', 'MEMORY', 'REPO', 'SCHEDULEDTASK', 'SDLC',
+  'SETTING', 'SKILL', 'SQUAD', 'STATEMACHINE', 'TEMPLATE', 'USER',
+  'WORKITEM', 'WORKSPACE',
+];
+
+const DOMAIN_SET = new Set<string>(WORKSPACE_DOMAINS);
 
 export function isWorkspaceAccessLevel(value: unknown): value is WorkspaceAccessLevel {
   return value === 'READ_ONLY' || value === 'READ_WRITE' || value === 'ADMIN';
+}
+
+export function isWorkspaceDomain(value: unknown): value is WorkspaceDomain {
+  return typeof value === 'string' && DOMAIN_SET.has(value);
+}
+
+export function workspaceDomainLabel(domain: WorkspaceDomain): string {
+  return i18n.t(`shared:access.domain.${domain}`);
 }
 
 export function allows(current: WorkspaceAccessLevel | null, required: WorkspaceAccessLevel): boolean {

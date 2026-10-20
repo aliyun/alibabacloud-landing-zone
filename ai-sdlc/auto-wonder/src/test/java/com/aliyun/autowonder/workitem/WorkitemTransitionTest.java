@@ -426,4 +426,21 @@ class WorkitemTransitionTest {
                 WorkitemService.transitionDetailJson("HUMAN", "r", true));
         assertNull(WorkitemService.transitionDetailJson(null, null, false));
     }
+
+    @Test
+    void freshOutOfTemplateWarningIsEnglishWhileAuditRemainsRaw() {
+        WorkitemDO w = workitem(5L, 10L, 20L, 0);
+        when(workitemDao.findById(5L)).thenReturn(w);
+        when(nodeDao.findById(20L)).thenReturn(node(20L,"new"));
+        when(nodeDao.findById(99L)).thenReturn(node(99L,"released"));
+        when(workitemDao.updateStatus(5L,100L,99L,0,9L)).thenReturn(1);
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("This transition is outside the template recommendations.", service.transition(5L,99L,100L,9L).getTransitionWarning());
+            verify(eventDao).insert(argThat((WorkitemEventDO e) -> e.getDetailJson().contains("outOfTemplate")));
+            assertEquals("该流转不在模板推荐范围内", WorkitemService.OUT_OF_TEMPLATE_TRANSITION_WARNING);
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
 }

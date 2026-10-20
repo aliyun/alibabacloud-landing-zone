@@ -67,6 +67,8 @@ public class BizLoggerFilter implements Filter {
         Timer.Context timeContext = null;
         long arrivedAt = -1L;
         String apiRequestPath = null;
+        UploadResponseProbe uploadProbe = null;
+        String uploadFailureType = "none";
         try {
             String requestURI = request.getRequestURI();
 
@@ -118,13 +120,27 @@ public class BizLoggerFilter implements Filter {
             timeContext = metricRegistry.timer(MetricUtils.name("invoke", "operation", operation), () -> new Timer(new SlidingTimeWindowArrayReservoir(60, TimeUnit.SECONDS))).time();
 
             LOGGER.info(handleStartLogMessage(requestURI));
-            filterChain.doFilter(request, servletResponse);
+            if (UploadResponseProbe.matches(httpMethod, requestURI)) {
+                uploadProbe = new UploadResponseProbe(response);
+                LOGGER.info("artifact upload http entered requestPath={} requestId={} requestBytes={} dispatcherType={}",
+                        requestURI, requestId, request.getContentLengthLong(), request.getDispatcherType());
+            }
+            filterChain.doFilter(request, uploadProbe == null ? servletResponse : uploadProbe);
         } catch (IOException | ServletException | RuntimeException e) {
+            uploadFailureType = e.getClass().getName();
             if (bizLog != null) {
                 bizLog.setSuccess(false);
             }
             throw e;
         } finally {
+            if (uploadProbe != null) {
+                LOGGER.info("artifact upload http completed requestPath={} requestId={} status={} contentType={} contentEncoding={} streamBytes={} firstNonWhitespaceByte={} writerUsed={} containerResponse={} committed={} asyncStarted={} exceptionType={} elapsedMs={}",
+                        apiRequestPath, MDC.get(REQUEST_ID_KEY), uploadProbe.getStatus(),
+                        uploadProbe.getContentType(), uploadProbe.getHeader("Content-Encoding"),
+                        uploadProbe.bytesWritten(), uploadProbe.firstNonWhitespaceByte(),
+                        uploadProbe.writerUsed(), uploadProbe.containerResponse(), uploadProbe.isCommitted(), request.isAsyncStarted(),
+                        uploadFailureType, elapsedMillis(startedNanos, System.nanoTime()));
+            }
             if (timeContext != null) {
                 timeContext.stop();
             }

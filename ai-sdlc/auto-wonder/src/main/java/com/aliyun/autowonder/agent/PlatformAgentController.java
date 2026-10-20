@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/platform-agent")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看平台智能体状态")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看平台智能体状态", actionKey = "access.action.view_platform_agent_status")
 public class PlatformAgentController {
 
     private final PlatformAgentStatusService statusService;

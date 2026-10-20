@@ -2,6 +2,7 @@ package com.aliyun.autowonder.workspace;
 
 import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.audit.AuditLogRecord;
 import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.auth.jwt.JwtService;
@@ -22,6 +23,7 @@ import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
 import com.aliyun.autowonder.agent.PlatformAgentSeeder;
 import com.aliyun.autowonder.workspace.event.WorkspaceDeletedEvent;
 import com.aliyun.autowonder.statemachine.StatusTemplateSeeder;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import org.springframework.context.ApplicationEventPublisher;
@@ -52,6 +54,7 @@ public class WorkspaceService {
 
     private final WorkspaceDao workspaceDao;
     private final WorkspaceMemberDao workspaceMemberDao;
+    private final WorkspaceRoleService roleService;
     private final StatusTemplateSeeder statusTemplateSeeder;
     private final PlatformAgentSeeder platformAgentSeeder;
     private final JwtService jwtService;
@@ -67,7 +70,8 @@ public class WorkspaceService {
                       UserDao userDao, AuditLogService auditLogService,
                       SystemAdminService systemAdminService,
                       WorkspaceDeletionLinkage deletionLinkage,
-                      ApplicationEventPublisher eventPublisher) {
+                      ApplicationEventPublisher eventPublisher, WorkspaceRoleService roleService) {
+        this.roleService = roleService;
         this.workspaceDao = workspaceDao;
         this.workspaceMemberDao = workspaceMemberDao;
         this.statusTemplateSeeder = statusTemplateSeeder;
@@ -109,11 +113,13 @@ public class WorkspaceService {
             throw new BizException(ErrorCode.WORKSPACE_NAME_DUPLICATE);
         }
 
+        roleService.seed(workspace.getId(), ownerUserId);
         WorkspaceMemberDO owner = new WorkspaceMemberDO();
         owner.setTenantId(workspace.getId());
         owner.setUserId(ownerUserId);
         owner.setStatus(0);
         owner.setAccessLevel(WorkspaceAccessLevel.ADMIN.name());
+        owner.setRoleId(roleService.builtIn(workspace.getId(), WorkspaceAccessLevel.ADMIN).getId());
         owner.setIdentityTags(IdentityTags.toJson(List.of()));
         owner.setCreatorId(ownerUserId);
         workspaceMemberDao.insert(owner);
@@ -184,6 +190,29 @@ public class WorkspaceService {
         throw new BizException(ErrorCode.WORKSPACE_NOT_MEMBER);
     }
 
+    /**
+     * 跨空间复制小队的目标授权：普通用户需要目标空间的有效成员身份且角色为 READ_WRITE/ADMIN；
+     * 平台管理员不受成员身份限制（已有只读成员身份也不阻止复制）。本判定只服务复制功能，
+     * 不改变其他接口的授权语义。
+     */
+    public boolean allowsCopyTarget(long workspaceId, long userId) {
+        if (systemAdminService.isSystemAdmin(userId)) {
+            return true;
+        }
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId);
+        if (!isActiveMember(member)) {
+            return false;
+        }
+        return isExactLevel(member, WorkspaceAccessLevel.READ_WRITE)
+                || isExactLevel(member, WorkspaceAccessLevel.ADMIN);
+    }
+
+    /** 个人令牌和对话每次调用都读取当前角色，角色变更不等待令牌失效。 */
+    public Set<WorkspaceDomain> activeReadOnlyDomains(long workspaceId, long userId) {
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(workspaceId, userId);
+        return isActiveMember(member) ? Set.copyOf(readOnlyDomainsOf(member)) : Set.of();
+    }
+
     public WorkspaceVO scopedWorkspace(long workspaceId, WorkspaceAccessLevel accessLevel) {
         WorkspaceVO result = getCurrent(workspaceId);
         result.setAccessLevel(accessLevel);
@@ -193,7 +222,8 @@ public class WorkspaceService {
     public WorkspaceVO getCurrent(long workspaceId) {
         WorkspaceDO workspace = workspaceDao.findById(workspaceId);
         if (workspace == null) {
-            throw new BizException(ErrorCode.NOT_FOUND, "工作空间不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "workspace.not_found", null,
+                    "工作空间不存在");
         }
         return toVO(workspace);
     }
@@ -248,7 +278,11 @@ public class WorkspaceService {
             value.setOwner(workspace != null && Objects.equals(workspace.getOwnerId(), member.getUserId()));
             value.setAccessLevel(exactAccessLevel(member.getAccessLevel()));
             value.setIdentityTags(IdentityTags.fromJson(member.getIdentityTags()));
-            applyUserIdentity(value, userDao.findById(member.getUserId()));
+            value.setReadOnlyDomains(readOnlyDomainsOf(member));
+            value.setRoleId(member.getRoleId());
+            value.setRoleCode(member.getRoleCode());
+            value.setRoleName(member.getRoleName());
+            applyUserIdentity(value, userDao.findByIdIncludingDeleted(member.getUserId()));
             result.add(value);
         }
         return result;
@@ -266,7 +300,9 @@ public class WorkspaceService {
             result.setOwner(workspace != null && Objects.equals(workspace.getOwnerId(), userId));
             result.setAccessLevel(WorkspaceAccessLevel.ADMIN);
             result.setIdentityTags(IdentityTags.fromJson(null));
-            applyUserIdentity(result, userDao.findById(userId));
+            result.setReadOnlyDomains(List.of());
+            result.setRoleCode("ADMIN");
+            applyUserIdentity(result, userDao.findByIdIncludingDeleted(userId));
             return result;
         }
         member = requireActiveMember(member);
@@ -277,7 +313,11 @@ public class WorkspaceService {
         result.setOwner(workspace != null && Objects.equals(workspace.getOwnerId(), member.getUserId()));
         result.setAccessLevel(exactAccessLevel(member.getAccessLevel()));
         result.setIdentityTags(IdentityTags.fromJson(member.getIdentityTags()));
-        applyUserIdentity(result, userDao.findById(member.getUserId()));
+        result.setReadOnlyDomains(readOnlyDomainsOf(member));
+        result.setRoleId(member.getRoleId());
+        result.setRoleCode(member.getRoleCode());
+        result.setRoleName(member.getRoleName());
+        applyUserIdentity(result, userDao.findByIdIncludingDeleted(member.getUserId()));
         return result;
     }
 
@@ -316,27 +356,34 @@ public class WorkspaceService {
     }
 
     @Transactional
-    public void addMember(long workspaceId, Long targetUserId, long operatorId) {
+    public void addMember(long workspaceId, Long targetUserId, Long roleId, long operatorId) {
         if (targetUserId == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "用户不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.user_required", null,
+                    "用户不能为空");
         }
+        if (workspaceDao.findByIdForUpdate(workspaceId) == null) throw new BizException(ErrorCode.NOT_FOUND);
         UserDO targetUser = userDao.findById(targetUserId);
         if (targetUser == null) {
-            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "user.not_found", null,
+                    "用户不存在");
         }
         WorkspaceMemberDO existing = workspaceMemberDao.findByWorkspaceAndUser(workspaceId, targetUserId);
         if (isActiveMember(existing)) {
             return;
         }
         if (!Integer.valueOf(0).equals(targetUser.getStatus())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "用户不可添加");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.user_inactive", null,
+                    "用户不可添加");
         }
 
         WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setTenantId(workspaceId);
         member.setUserId(targetUserId);
         member.setStatus(0);
-        member.setAccessLevel(WorkspaceAccessLevel.READ_ONLY.name());
+        WorkspaceRoleDO role = roleId == null ? roleService.builtIn(workspaceId, WorkspaceAccessLevel.READ_ONLY)
+                : roleService.requireRole(workspaceId, roleId);
+        member.setRoleId(role.getId());
+        member.setAccessLevel(role.getAccessLevel());
         member.setIdentityTags(IdentityTags.toJson(List.of()));
         member.setCreatorId(operatorId);
         member.setModifierId(operatorId);
@@ -344,32 +391,24 @@ public class WorkspaceService {
     }
 
     @Transactional
-    public void updateMemberAccess(long workspaceId, long targetUserId,
-                                   WorkspaceAccessLevel requestedLevel, long operatorId) {
-        if (requestedLevel == null) {
-            throw new BizException(ErrorCode.WORKSPACE_ACCESS_LEVEL_INVALID);
-        }
+    public void updateMemberRole(long workspaceId, long targetUserId, Long roleId, long operatorId) {
         if (targetUserId == operatorId) {
-            throw new BizException(ErrorCode.WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN);
+            throw BizException.keyed(ErrorCode.WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN,
+                    "workspace.member.self_role_mutation_forbidden", null,
+                    ErrorCode.WORKSPACE_SELF_LEVEL_MUTATION_FORBIDDEN.getMessage());
         }
         WorkspaceDO workspace = workspaceDao.findByIdForUpdate(workspaceId);
-        if (workspace != null && Objects.equals(workspace.getOwnerId(), targetUserId)) {
+        if (workspace == null) throw new BizException(ErrorCode.NOT_FOUND);
+        if (Objects.equals(workspace.getOwnerId(), targetUserId)) {
             throw new BizException(ErrorCode.WORKSPACE_OWNER_MUTATION_PROTECTED);
         }
-
         WorkspaceMemberDO target = requireActiveMember(
                 workspaceMemberDao.findByWorkspaceAndUserForUpdate(workspaceId, targetUserId));
-        WorkspaceAccessLevel oldLevel = exactAccessLevel(target.getAccessLevel());
-        int updated = workspaceMemberDao.updateAccessLevel(
-                workspaceId, targetUserId, requestedLevel.name(), operatorId);
-        requireSingleUpdate(updated);
-
-        AuditLogRecord audit = memberAudit(
-                workspaceId, operatorId, targetUserId, "MEMBER_ACCESS_CHANGED");
-        audit.detail("oldAccessLevel", oldLevel.name())
-                .detail("newAccessLevel", requestedLevel.name())
-                .detail("operatorId", operatorId)
-                .detail("targetUserId", targetUserId);
+        WorkspaceRoleDO role = roleService.requireRole(workspaceId, roleId);
+        requireSingleUpdate(workspaceMemberDao.updateRole(workspaceId, targetUserId, role.getId(), operatorId));
+        AuditLogRecord audit = memberAudit(workspaceId, operatorId, targetUserId, "MEMBER_ROLE_CHANGED");
+        audit.detail("oldRoleId", target.getRoleId()).detail("newRoleId", role.getId())
+                .detail("operatorId", operatorId).detail("targetUserId", targetUserId);
         auditLogService.recordRequired(audit);
     }
 
@@ -427,11 +466,9 @@ public class WorkspaceService {
             throw ownerTransferInvalid();
         }
         if (targetLevel != WorkspaceAccessLevel.ADMIN) {
-            int promoted = workspaceMemberDao.updateAccessLevel(
-                    workspaceId, targetUserId, WorkspaceAccessLevel.ADMIN.name(), operatorId);
-            if (promoted != 1) {
-                throw ownerTransferInvalid();
-            }
+            int promoted = workspaceMemberDao.updateRole(workspaceId, targetUserId,
+                    roleService.builtIn(workspaceId, WorkspaceAccessLevel.ADMIN).getId(), operatorId);
+            if (promoted != 1) throw ownerTransferInvalid();
         }
 
         int ownerUpdated = workspaceDao.updateOwner(
@@ -453,10 +490,12 @@ public class WorkspaceService {
     @Transactional
     public WorkspaceVO updateWorkspace(long workspaceId, WorkspaceUpdateRequest req, long operatorId) {
         if (req == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "请求体不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.request_body_required", null,
+                    "请求体不能为空");
         }
         if (req.getVersion() == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "version 不能为空");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.version_required", null,
+                    "version 不能为空");
         }
         WorkspaceDO workspace = requireManageableWorkspace(workspaceId, operatorId);
         String name = requireName(req.getName());
@@ -500,7 +539,8 @@ public class WorkspaceService {
         WorkspaceDO workspace = requireManageableWorkspace(workspaceId, operatorId);
         int deleted = workspaceDao.softDelete(workspaceId, operatorId);
         if (deleted != 1) {
-            throw new BizException(ErrorCode.CONFLICT, "工作空间已被删除");
+            throw BizException.keyed(ErrorCode.CONFLICT, "workspace.already_deleted", null,
+                    "工作空间已被删除");
         }
         int pausedTasks = deletionLinkage.pauseScheduledTasks(workspaceId, operatorId);
 
@@ -623,10 +663,18 @@ public class WorkspaceService {
 
     private boolean canManage(WorkspaceDO workspace, long operatorId) {
         // D8: ownership is org.owner_id — there is no OWNER access level to compare against.
-        // A platform admin manages every workspace without being a member of it.
-        return Objects.equals(workspace.getOwnerId(), operatorId)
-                || isAdminMember(workspace.getId(), operatorId)
-                || systemAdminService.isSystemAdmin(operatorId);
+        // A platform admin manages every workspace without being a member of it, and also
+        // bypasses member feature-domain restrictions as the cross-workspace recovery path.
+        if (systemAdminService.isSystemAdmin(operatorId)) {
+            return true;
+        }
+        WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(workspace.getId(), operatorId);
+        if (!Objects.equals(workspace.getOwnerId(), operatorId)
+                && !(isActiveMember(member) && isExactLevel(member, WorkspaceAccessLevel.ADMIN))) {
+            return false;
+        }
+        return member == null
+                || !readOnlyDomainsOf(member).contains(WorkspaceDomain.WORKSPACE);
     }
 
     private boolean canManageDeleted(WorkspaceDO workspace, long operatorId) {
@@ -679,15 +727,10 @@ public class WorkspaceService {
             return Map.of();
         }
         Map<Long, String> names = new HashMap<>();
-        for (UserDO user : userDao.listByIds(userIds)) {
-            names.put(user.getId(), displayName(user));
+        for (UserDO user : userDao.listByIdsIncludingDeleted(userIds)) {
+            names.put(user.getId(), UserAccountStates.displayName(user));
         }
         return names;
-    }
-
-    private String displayName(UserDO user) {
-        String nickname = user.getNickname();
-        return nickname == null || nickname.isBlank() ? user.getUsername() : nickname;
     }
 
     private String requireName(String rawName) {
@@ -696,8 +739,8 @@ public class WorkspaceService {
         }
         String trimmed = rawName.trim();
         if (trimmed.length() > NAME_MAX_LENGTH) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "工作空间名称不能超过 " + NAME_MAX_LENGTH + " 个字符");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.name_too_long",
+                    new Object[]{NAME_MAX_LENGTH}, "工作空间名称不能超过 " + NAME_MAX_LENGTH + " 个字符");
         }
         return trimmed;
     }
@@ -708,8 +751,8 @@ public class WorkspaceService {
         }
         String trimmed = description.trim();
         if (trimmed.length() > DESCRIPTION_MAX_LENGTH) {
-            throw new BizException(ErrorCode.PARAM_INVALID,
-                    "工作空间描述不能超过 " + DESCRIPTION_MAX_LENGTH + " 个字符");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.description_too_long",
+                    new Object[]{DESCRIPTION_MAX_LENGTH}, "工作空间描述不能超过 " + DESCRIPTION_MAX_LENGTH + " 个字符");
         }
         return trimmed;
     }
@@ -729,6 +772,13 @@ public class WorkspaceService {
         return member != null
                 && Integer.valueOf(0).equals(member.getStatus())
                 && Integer.valueOf(0).equals(member.getIsDeleted());
+    }
+
+    private List<WorkspaceDomain> readOnlyDomainsOf(WorkspaceMemberDO member) {
+        WorkspaceAccessLevel level = exactAccessLevel(member.getAccessLevel());
+        if (level == WorkspaceAccessLevel.ADMIN) return List.of();
+        if (level == WorkspaceAccessLevel.READ_ONLY) return List.of(WorkspaceDomain.values());
+        return List.copyOf(WorkspaceDomain.fromJson(member.getReadOnlyDomains()));
     }
 
     private WorkspaceAccessLevel exactAccessLevel(String persistedLevel) {
@@ -780,17 +830,27 @@ public class WorkspaceService {
         if (user == null) {
             return;
         }
+        target.setNickname(user.getNickname());
+        if (UserAccountStates.isDeleted(user)) {
+            target.setUsername(user.getDeletedUsername());
+            target.setEmail(user.getDeletedEmail());
+            return;
+        }
         target.setUsername(user.getUsername());
         target.setEmail(user.getEmail());
-        target.setNickname(user.getNickname());
     }
 
     private void applyUserIdentity(CurrentMembershipVO target, UserDO user) {
         if (user == null) {
             return;
         }
+        target.setNickname(user.getNickname());
+        if (UserAccountStates.isDeleted(user)) {
+            target.setUsername(user.getDeletedUsername());
+            target.setEmail(user.getDeletedEmail());
+            return;
+        }
         target.setUsername(user.getUsername());
         target.setEmail(user.getEmail());
-        target.setNickname(user.getNickname());
     }
 }

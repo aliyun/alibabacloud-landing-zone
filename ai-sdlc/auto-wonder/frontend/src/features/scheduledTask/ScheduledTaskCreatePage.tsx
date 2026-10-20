@@ -1,3 +1,6 @@
+import { i18n } from '@/shared/i18n';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useEffect, useRef, useState } from 'react';
@@ -55,8 +58,10 @@ export function asUploadFile(file: File): UploadFile {
 }
 
 export function ScheduledTaskCreatePage() {
+  const { t } = useTranslation('scheduledTask');
   const navigate = useNavigate(); const accessCommand = useAccessCommand();
   const [form] = Form.useForm<CreateFormValues & { schedulePreset: string }>();
+  useLocalizedValidation(form);
   const [files, setFiles] = useState<UploadFile[]>([]); const [selectedAgentId, setSelectedAgentId] = useState<number>();
   // rc-upload hands the whole selection to every beforeUpload call, so caching by batch identity
   // validates a multi-file drop once (all-or-nothing, like the workitem card) and reports one message.
@@ -114,7 +119,7 @@ export function ScheduledTaskCreatePage() {
       window.removeEventListener('drop', preventDefault);
     };
   }, []);
-  const submit = (values: CreateFormValues) => accessCommand('READ_WRITE', '创建定时任务', async () => {
+  const submit = (values: CreateFormValues) => accessCommand('READ_WRITE', t('commands.createTask'), async () => {
     const runAt = values.runAtDate && values.runAtTime ? dayjs(values.runAtDate).hour(values.runAtTime.hour()).minute(values.runAtTime.minute()).second(0).millisecond(0).toISOString() : undefined;
     const requestedStatus = values.initialStatus ?? 'ACTIVE';
     // A task must not become scanner-eligible before its selected requirement documents are attached.
@@ -128,7 +133,7 @@ export function ScheduledTaskCreatePage() {
         if (rawFiles.length) await uploadDocuments.mutateAsync({ id: task.id, files: rawFiles });
       } catch (error) {
         const reason = backendErrorMessage(error);
-        message.error(`任务已保存为暂停，需求文档上传失败${reason ? `：${reason}` : ''}；请在任务详情重试上传后再启用。`);
+        message.error(reason ? i18n.t('scheduledTask:create.uploadFailedReason', { reason }) : i18n.t('scheduledTask:create.uploadFailed'));
         navigate(`/scheduled-tasks/${task.id}`);
         return;
       }
@@ -136,24 +141,24 @@ export function ScheduledTaskCreatePage() {
         try { await transitionScheduledTask(task.id, 'enable', task.version); }
         catch (error) {
           const reason = backendErrorMessage(error);
-          message.error(`需求文档已上传，但启用失败${reason ? `：${reason}` : ''}；任务仍为暂停状态，请在任务详情重试启用。`);
+          message.error(reason ? i18n.t('scheduledTask:create.enableFailedReason', { reason }) : i18n.t('scheduledTask:create.enableFailed'));
           navigate(`/scheduled-tasks/${task.id}`);
           return;
         }
       }
-      message.success(requestedStatus === 'ACTIVE' ? '定时任务已创建并启用' : '定时任务已保存为暂停');
+      message.success(requestedStatus === 'ACTIVE' ? i18n.t('scheduledTask:create.enabled') : i18n.t('scheduledTask:create.paused'));
       navigate(`/scheduled-tasks/${task.id}`);
     } catch { /* shared interceptor preserves the form for retry */ }
   });
-  return <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/scheduled-tasks" label="返回定时任务列表" /><span>新建定时任务</span></span>} />}><Form form={form} layout="vertical" onFinish={submit} initialValues={{ scheduleType: 'CRON', schedulePreset: 'daily', cronExpression: '0 0 2 * * *', sessionMode: 'ISOLATED', overlapPolicy: 'SKIP', misfirePolicy: 'SKIP_ALL', startDeadlineSeconds: 300, affinityTimeoutSeconds: 0, initialStatus: 'ACTIVE' }}>
-    <Form.Item name="name" label="任务名称" rules={[{ required: true, message: '任务名称不能为空' }]}><Input maxLength={200} placeholder="例如：主干夜间回归" /></Form.Item>
-    <Form.Item name="instructionMd" label="任务指令" rules={[{ required: true, message: '请描述希望数字员工周期完成的工作' }]}><TextArea rows={6} placeholder="支持 Markdown。说明任务目标、输入、完成标准与注意事项。" /></Form.Item>
-    <Form.Item name="squadId" label="小队" rules={[{ required: true, message: '请选择小队' }]}><Select showSearch optionFilterProp="label" options={(squadsPage?.list ?? []).map((squad) => ({ value: squad.id, label: squad.name }))} onChange={() => form.setFieldValue('initialAgentId', undefined)} placeholder="选择执行小队" /></Form.Item>
-    <Form.Item name="initialAgentId" label="首个数字员工" rules={[{ required: true, message: '请选择首个数字员工' }]}><Select loading={membersLoading} disabled={!squadId} onChange={setSelectedAgentId} options={members.map((member) => ({ value: member.agentId, label: member.agentName }))} placeholder="选择该小队中的首个数字员工" /></Form.Item>
-    {(() => { const selectedMember = members.find((member) => member.agentId === Number(selectedAgentId)); return selectedMember ? <Alert type="info" showIcon message={`${selectedMember.agentName} 将按 ${selectedMember.sdlcName || '未绑定 SDLC（直接接受调度指令）'} 执行`} description={selectedMember.sdlcSteps?.length ? selectedMember.sdlcSteps.map((step) => `${step.stepOrder}. ${step.name}`).join(' → ') : undefined} style={{ marginBottom: 16 }} /> : null; })()}
-    <Form.Item label="时区"><Input value="Asia/Shanghai" disabled /></Form.Item><ScheduleEditor timezone="Asia/Shanghai" />
-    <Collapse items={[{ key: 'policy', label: '运行策略与连续会话设置', children: <RunPolicyEditor /> }]} />
-    <Form.Item label="需求文档" style={{ marginTop: 24 }} extra="任务创建成功后自动上传，并随每次运行冻结。"><div data-testid="scheduled-task-document-dropzone" aria-label="需求文档上传区（支持点击、拖拽或粘贴）" tabIndex={0} onPaste={handlePaste} onDropCapture={handleDropGuard} style={{ outline: 'none' }}><Upload.Dragger multiple accept={DOCUMENT_ACCEPT_ATTRIBUTE} beforeUpload={beforeUpload} fileList={files} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><InboxOutlined /></p><p className="ant-upload-text">点击或拖拽上传需求文档，也可 Ctrl/Cmd+V 粘贴截图</p></Upload.Dragger></div></Form.Item>
-    <Space><Button type="primary" htmlType="submit" loading={createTask.isPending} onClick={() => form.setFieldValue('initialStatus', 'ACTIVE')}>创建并启用</Button><Button htmlType="submit" loading={createTask.isPending} onClick={() => form.setFieldValue('initialStatus', 'PAUSED')}>保存为暂停</Button><Button onClick={() => navigate('/scheduled-tasks')}>取消</Button></Space>
+  return <Card className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/scheduled-tasks" label={t('actions.backToList')} /><span>{t('create.title')}</span></span>} />}><Form form={form} layout="vertical" onFinish={submit} initialValues={{ scheduleType: 'CRON', schedulePreset: 'daily', cronExpression: '0 0 2 * * *', sessionMode: 'ISOLATED', overlapPolicy: 'SKIP', misfirePolicy: 'SKIP_ALL', startDeadlineSeconds: 300, affinityTimeoutSeconds: 0, initialStatus: 'ACTIVE' }}>
+    <Form.Item name="name" label={t('form.name')} rules={[{ required: true, message: t('validation.nameRequired') }]}><Input maxLength={200} placeholder={t('form.namePlaceholder')} /></Form.Item>
+    <Form.Item name="instructionMd" label={t('form.instruction')} rules={[{ required: true, message: t('validation.instructionRequired') }]}><TextArea rows={6} placeholder={t('form.instructionPlaceholder')} /></Form.Item>
+    <Form.Item name="squadId" label={t('form.squad')} rules={[{ required: true, message: t('validation.squadRequired') }]}><Select showSearch optionFilterProp="label" options={(squadsPage?.list ?? []).map((squad) => ({ value: squad.id, label: squad.name }))} onChange={() => form.setFieldValue('initialAgentId', undefined)} placeholder={t('form.squadPlaceholder')} /></Form.Item>
+    <Form.Item name="initialAgentId" label={t('form.initialAgent')} rules={[{ required: true, message: t('validation.agentRequired') }]}><Select loading={membersLoading} disabled={!squadId} onChange={setSelectedAgentId} options={members.map((member) => ({ value: member.agentId, label: member.agentName }))} placeholder={t('form.agentPlaceholder')} /></Form.Item>
+    {(() => { const selectedMember = members.find((member) => member.agentId === Number(selectedAgentId)); return selectedMember ? <Alert type="info" showIcon message={t('create.agentWorkflow', { agent: selectedMember.agentName, workflow: selectedMember.sdlcName || t('create.noWorkflow') })} description={selectedMember.sdlcSteps?.length ? selectedMember.sdlcSteps.map((step) => `${step.stepOrder}. ${step.name}`).join(' → ') : undefined} style={{ marginBottom: 16 }} /> : null; })()}
+    <Form.Item label={t('form.timezone')}><Input value="Asia/Shanghai" disabled /></Form.Item><ScheduleEditor timezone="Asia/Shanghai" />
+    <Collapse items={[{ key: 'policy', label: t('form.policySection'), children: <RunPolicyEditor /> }]} />
+    <Form.Item label={t('form.documents')} style={{ marginTop: 24 }} extra={t('form.documentsHelp')}><div data-testid="scheduled-task-document-dropzone" aria-label={t('form.documentsAria')} tabIndex={0} onPaste={handlePaste} onDropCapture={handleDropGuard} style={{ outline: 'none' }}><Upload.Dragger multiple accept={DOCUMENT_ACCEPT_ATTRIBUTE} beforeUpload={beforeUpload} fileList={files} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><InboxOutlined aria-hidden="true" /></p><p className="ant-upload-text">{t('form.documentsPrompt')}</p></Upload.Dragger></div></Form.Item>
+    <Space><Button type="primary" htmlType="submit" loading={createTask.isPending} onClick={() => form.setFieldValue('initialStatus', 'ACTIVE')}>{t('actions.createEnable')}</Button><Button htmlType="submit" loading={createTask.isPending} onClick={() => form.setFieldValue('initialStatus', 'PAUSED')}>{t('actions.savePaused')}</Button><Button onClick={() => navigate('/scheduled-tasks')}>{t('actions.cancel')}</Button></Space>
   </Form></Card>;
 }

@@ -1,6 +1,5 @@
+import { i18n } from '@/shared/i18n';
 import type { Squad } from '@/features/squad/api';
-
-const UNSQUADED = '未编队';
 
 export function buildAgentSquadNameMap(
   squads: readonly Pick<Squad, 'name' | 'memberAgentIds'>[],
@@ -23,6 +22,6 @@ export function formatAgentSquadLabel(
   agentName: string,
   squadNames: readonly string[] | undefined,
 ): string {
-  const suffix = squadNames?.length ? squadNames.join('，') : UNSQUADED;
-  return `${agentName}（${suffix}）`;
+  const suffix = squadNames?.length ? squadNames.join(i18n.t('executor:squadSeparator')) : i18n.t('executor:unassigned');
+  return i18n.t('executor:groupLabel', { name: agentName, squads: suffix });
 }

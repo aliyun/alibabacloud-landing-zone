@@ -45,7 +45,7 @@ class ScheduledTaskWorkspaceVocabularyTest {
     }
 
     @Test
-    void newCrossDomainApisAndPrimaryDesignUseWorkspaceVocabulary() throws Exception {
+    void newCrossDomainApisUseWorkspaceVocabulary() throws Exception {
         List<Path> apiSources = List.of(
                 Path.of("src/main/java/com/aliyun/autowonder/dispatch/subject/ExecutionSubject.java"),
                 Path.of("src/main/java/com/aliyun/autowonder/dispatch/subject/ExecutionSubjectProvider.java"),
@@ -64,9 +64,12 @@ class ScheduledTaskWorkspaceVocabularyTest {
             assertFalse(content.contains("tenant-validated"), source + " must describe workspace ownership");
         }
 
-        // The upstream design and plan documents under docs/superpowers/ are
-        // development working notes that the community documentation policy
-        // excludes, so only the production-source vocabulary is asserted here.
+        // Temporary design/plan documents are not shipped contracts. Check the real API;
+        // ScheduledTaskSchemaContractTest covers workspace columns and trigger uniqueness.
+        assertTrue(Files.readString(Path.of(
+                "src/main/java/com/aliyun/autowonder/dispatch/subject/ExecutionSubjectProvider.java"))
+                .contains("ExecutionSubject load(long workspaceId, long sourceId)"));
+
         String workitemService = Files.readString(Path.of(
                 "src/main/java/com/aliyun/autowonder/workitem/WorkitemService.java"));
         assertTrue(workitemService.contains("createWithOrigin(CreateWorkitemRequest req, long workspaceId"));

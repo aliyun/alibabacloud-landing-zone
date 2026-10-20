@@ -623,7 +623,18 @@ public class AoneInboundSyncService {
         event.setTitle("外部工单有新回复");
         String author = comment.getAuthorName() == null || comment.getAuthorName().isBlank()
                 ? "外部用户" : comment.getAuthorName();
-        event.setContent(author + "：" + commentPreview(comment.getContentMd()));
+        String preview = commentPreview(comment.getContentMd());
+        boolean missingAuthor = comment.getAuthorName() == null || comment.getAuthorName().isBlank();
+        boolean missingComment = comment.getContentMd() == null || comment.getContentMd().isBlank();
+        event.setContent(author + "：" + preview);
+        event.setTitleKey("notification.external_reply.title");
+        event.setContentKey("notification.external_reply.content");
+        event.setContentArgs(new Object[]{author, preview});
+        if (missingAuthor || missingComment) event.setContentArgsResolver(locale -> new Object[]{
+                missingAuthor ? com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                        "notification.external_reply.author_fallback", null, author, locale) : author,
+                missingComment ? com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                        "notification.external_reply.comment_fallback", null, preview, locale) : preview});
         event.setLink("/workitems/" + workitemId);
         event.setRefType("WORKITEM");
         event.setRefId(workitemId);

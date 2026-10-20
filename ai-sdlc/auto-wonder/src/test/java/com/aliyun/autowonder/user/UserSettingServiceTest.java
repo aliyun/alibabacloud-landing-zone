@@ -281,4 +281,20 @@ class UserSettingServiceTest {
         row.setIsDeleted(isDeleted);
         return row;
     }
+    @org.junit.jupiter.api.Test
+    void recipientLocaleRequiresSupportedJsonStringAndDoesNotHideDatabaseFailure() {
+        var dao=org.mockito.Mockito.mock(UserSettingDao.class);var service=new UserSettingService(dao);
+        String[] values={null,""," ","not-json","null","{}","[]","42","true","\"fr-FR\"","\"en\"","\" en-US \"","\"zh-CN\"","\"en-US\""};
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            for(String value:values){var row=new UserSettingDO();row.setValueJson(value);org.mockito.Mockito.when(dao.findLive(77L,"ui.locale")).thenReturn(row);
+                org.junit.jupiter.api.Assertions.assertEquals("\"en-US\"".equals(value)?java.util.Locale.US:java.util.Locale.CHINA,service.recipientLocale(77),String.valueOf(value));}
+            org.mockito.Mockito.when(dao.findLive(77L,"ui.locale")).thenReturn(null);
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.Locale.CHINA,service.recipientLocale(77));
+            var failure=new IllegalStateException("database failure");org.mockito.Mockito.when(dao.findLive(77L,"ui.locale")).thenThrow(failure);
+            org.junit.jupiter.api.Assertions.assertSame(failure,org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->service.recipientLocale(77)));
+            org.mockito.Mockito.verify(dao,org.mockito.Mockito.never()).findByUk(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.any());
+        }finally{org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

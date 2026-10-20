@@ -88,16 +88,53 @@ export function useCreateClarificationConversation(workitemId: number | string) 
   });
 }
 
+export interface SubmitClarificationTurnVariables {
+  content: string;
+  attachmentIds?: number[];
+  clientMessageId?: string;
+}
+
 export function useSubmitClarificationTurn(workitemId: number | string, conversationId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (content: string) =>
-      api.submitClarificationTurn(workitemId, conversationId!, content),
+    mutationFn: (variables: SubmitClarificationTurnVariables) =>
+      api.submitClarificationTurn(workitemId, conversationId!, variables.content, {
+        attachmentIds: variables.attachmentIds,
+        clientMessageId: variables.clientMessageId,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ['workitem', workitemId, 'clarification-conversation', conversationId],
       });
     },
+  });
+}
+
+export interface UploadClarificationAttachmentVariables {
+  file: File;
+  signal?: AbortSignal;
+}
+
+/** 上传即落服务端（尚未绑定轮次）；发送失败重试不需要重新上传。 */
+export function useUploadClarificationAttachment(
+  workitemId: number | string,
+  conversationId: number | null,
+) {
+  return useMutation({
+    mutationFn: (variables: UploadClarificationAttachmentVariables) =>
+      api.uploadClarificationAttachment(
+        workitemId, conversationId!, variables.file, { signal: variables.signal },
+      ),
+  });
+}
+
+export function useDeleteClarificationAttachment(
+  workitemId: number | string,
+  conversationId: number | null,
+) {
+  return useMutation({
+    mutationFn: (attachmentId: number) =>
+      api.deleteClarificationAttachment(workitemId, conversationId!, attachmentId),
   });
 }
 

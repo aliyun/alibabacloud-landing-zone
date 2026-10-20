@@ -162,6 +162,68 @@ class UpgradePlanTest(unittest.TestCase):
             plan["upgrade"]["environmentPlanSha256"],
         )
 
+    def publish_runtime_defaults_target(self):
+        defaults = {
+            "AUTOWONDER_FEDERATION_SP_ENTITY_ID": "autowonder",
+            "AUTOWONDER_FEDERATION_LOGIN_STATE_TTL_SECONDS": "600",
+            "AUTOWONDER_FEDERATION_TICKET_TTL_SECONDS": "300",
+            "AUTOWONDER_FEDERATION_CLOCK_SKEW_SECONDS": "120",
+            "AUTOWONDER_FEDERATION_JWKS_CACHE_TTL_SECONDS": "3600",
+            "AUTOWONDER_FEDERATION_HTTP_TIMEOUT_SECONDS": "15",
+        }
+        required = ["NEW_REQUIRED", "EMPTY_DEFAULT", "MIXED_REQUIRED", "TEMPLATE_REQUIRED"]
+        self.write(
+            "src/main/resources/application.yml",
+            "service:\n  value: ${OLD_ENV:old}\n"
+            + "".join(f"  setting{index}: ${{{key}:{value}}}\n"
+                      for index, (key, value) in enumerate(defaults.items()))
+            + "  required: ${NEW_REQUIRED}\n  empty: ${EMPTY_DEFAULT:}\n"
+            + "  mixed: ${MIXED_REQUIRED:fallback}\n"
+            + "  template: ${TEMPLATE_REQUIRED:fallback}\n",
+        )
+        self.write("src/main/resources/application-local.yml", "mixed: ${MIXED_REQUIRED}\n")
+        self.write(
+            "skills/deploying-autowonder-on-alibaba-cloud/assets/templates/runtime.env",
+            "TEMPLATE_REQUIRED=${TEMPLATE_REQUIRED}\n",
+        )
+        # Documentation placeholders must not negate explicit runtime defaults.
+        self.write("docs/community/application.env.example",
+                   "OLD_ENV=\n" + "".join(f"{key}=\n" for key in [*defaults, *required]))
+        self.git("add", ".")
+        self.git("commit", "-m", "add federation defaults and required settings")
+        self.git("push", "origin", "community")
+        self.git("reset", "--hard", self.old_commit)
+        return defaults, required
+
+    def test_federation_runtime_defaults_allow_existing_environment(self):
+        defaults, required = self.publish_runtime_defaults_target()
+        env_file = self.root / "candidate.env"
+        env_file.write_text("OLD_ENV=configured\n" + "".join(f"{key}=configured\n" for key in required))
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+
+        result = self.run_plan(manifest, "--env-file", str(env_file))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        upgrade = json.loads(manifest.read_text())["upgrade"]
+        self.assertEqual(sorted([*defaults, *required]), upgrade["environment"]["added"])
+        self.assertEqual([], upgrade["blockedReasons"])
+        self.assertTrue(upgrade["environmentContractChecked"])
+
+    def test_runtime_defaults_preserve_required_and_conflicting_declarations(self):
+        _, required = self.publish_runtime_defaults_target()
+        env_file = self.root / "candidate.env"
+        env_file.write_text("OLD_ENV=configured\n")
+        env_file.chmod(0o600)
+        manifest = self.manifest()
+
+        result = self.run_plan(manifest, "--env-file", str(env_file))
+
+        self.assertNotEqual(0, result.returncode)
+        upgrade = json.loads(manifest.read_text())["upgrade"]
+        self.assertEqual([f"required environment value missing: {key}" for key in sorted(required)],
+                         upgrade["blockedReasons"])
+
     def test_runtime_managed_environment_does_not_block_upgrade_plan(self):
         self.write(
             "src/main/resources/application.yml",

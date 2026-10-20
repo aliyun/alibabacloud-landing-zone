@@ -36,9 +36,19 @@ import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import com.aliyun.autowonder.json.JSON;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
+import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.apache.commons.compress.utils.SeekableInMemoryByteChannel;
+
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -144,9 +154,9 @@ public class SkillPackageService {
         String normalizedType = normalizePackageType(type);
         ParsedPackage parsed = parseByType(normalizedType, fileName, bytes, name, description);
         verifyDigest(bytes, expectedMd5);
-        String sha256 = digest(bytes, "SHA-256");
+        String sha256 = digest(parsed.bytes, "SHA-256");
         StoredObject stored = storage.put(bucket,
-                "t/" + tenantId + "/skills/packages/" + sha256 + "/" + parsed.fileName, bytes);
+                "t/" + tenantId + "/skills/packages/" + sha256 + "/" + parsed.fileName, parsed.bytes);
         return new UploadedPackage(stored.getOssRef(), parsed.fileName, stored.getSize(), stored.getMd5(),
                 sha256, normalizedType, parsed.name, parsed.description);
     }
@@ -224,10 +234,10 @@ public class SkillPackageService {
                 ? readTarGzEntry(ref.bytes(), target)
                 : readZipEntry(ref.bytes(), target);
         if (content == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "包内不存在该文件: " + target);
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.package_file_missing", new Object[]{target}, "包内不存在该文件: " + target);
         }
         if (!KIND_TEXT.equals(resolveKind(target, sniffWindow(content)))) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "该文件不支持在线预览");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.package_preview_unsupported", new Object[]{}, "该文件不支持在线预览");
         }
         return new SkillPackageFileContentVO(target, entryName(target), decodeUtf8(content));
     }
@@ -241,7 +251,7 @@ public class SkillPackageService {
     private PackageRef packageRef(SkillVO skill) {
         if (skill == null || !SOURCE_TYPE_OSS_ZIP.equals(skill.getSourceType())
                 || skill.getPackageOssRef() == null || skill.getPackageOssRef().isBlank()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "该技能无上传包");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "skill.package_missing", new Object[]{}, "该技能无上传包");
         }
         String ossRef = skill.getPackageOssRef().trim();
         byte[] bytes = storage.get(ossRef);
@@ -301,52 +311,32 @@ public class SkillPackageService {
     private List<SkillPackageFileVO> listTarGzEntries(byte[] bytes) {
         List<SkillPackageFileVO> files = new ArrayList<>();
         Set<String> listed = new LinkedHashSet<>();
-        int entries = 0;
-        long inflatedSize = 0;
-        try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
-            byte[] header = new byte[512];
-            while (readFully(gis, header) == 512) {
-                if (isZeroBlock(header)) {
-                    break;
-                }
-                if (++entries > MAX_ENTRIES) {
-                    throw tooManyEntries();
-                }
-                String raw = tarString(header, 0, 100);
-                long size = tarSize(header);
-                char type = (char) header[156];
-                validateEntryName(raw);
-                if (type == '2') {
-                    throw invalid();
-                }
-                String path = normalizeEntryPath(raw);
+        try (TarArchiveInputStream tin = tarInputStream(bytes)) {
+            TarScan scan = new TarScan(tin);
+            TarArchiveEntry entry;
+            while ((entry = tin.getNextTarEntry()) != null) {
+                scan.countEntry();
+                String path = normalizeEntryPath(safeTarName(entry));
                 byte[] head = null;
-                if (type != '5') {
-                    if (size < 0) {
-                        throw invalid();
-                    }
-                    inflatedSize += size;
-                    if (inflatedSize > MAX_PACKAGE_SIZE) {
-                        throw tooLarge();
-                    }
+                if (!entry.isDirectory()) {
+                    byte[] content = scan.payload(entry.getSize());
                     if (!path.isEmpty() && kindByExtension(path) == null) {
-                        head = gis.readNBytes((int) Math.min(size, SNIFF_LIMIT));
-                        skipFully(gis, size - head.length);
-                    } else {
-                        skipFully(gis, size);
+                        head = java.util.Arrays.copyOf(content, (int) Math.min(content.length, SNIFF_LIMIT));
                     }
-                    skipFully(gis, tarPadding(size));
+                } else if (entry.getSize() > 0) {
+                    // 畸形目录条目声明了 payload：消费掉，否则后续头会错位
+                    scan.payload(entry.getSize());
                 }
-                // 名字规范化后为空的条目仍须先消费完 payload 再丢弃，否则 512 字节头会错位
+                // 名字规范化后为空的条目已消费完 payload，直接丢弃
                 if (path.isEmpty()) {
                     continue;
                 }
-                if (type == '5') {
+                if (entry.isDirectory()) {
                     addDirectory(files, listed, path);
                     continue;
                 }
                 addDirectory(files, listed, parentPath(path));
-                files.add(new SkillPackageFileVO(path, entryName(path), false, size, resolveKind(path, head)));
+                files.add(new SkillPackageFileVO(path, entryName(path), false, entry.getSize(), resolveKind(path, head)));
                 listed.add(path);
             }
         } catch (IOException | ArithmeticException e) {
@@ -354,7 +344,6 @@ public class SkillPackageService {
         }
         return files;
     }
-
     private byte[] readZipEntry(byte[] bytes, String targetPath) {
         int entries = 0;
         long inflatedSize = 0;
@@ -392,51 +381,25 @@ public class SkillPackageService {
     }
 
     private byte[] readTarGzEntry(byte[] bytes, String targetPath) {
-        int entries = 0;
-        long inflatedSize = 0;
-        try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
-            byte[] header = new byte[512];
-            while (readFully(gis, header) == 512) {
-                if (isZeroBlock(header)) {
-                    break;
-                }
-                if (++entries > MAX_ENTRIES) {
-                    throw tooManyEntries();
-                }
-                String raw = tarString(header, 0, 100);
-                long size = tarSize(header);
-                char type = (char) header[156];
-                validateEntryName(raw);
-                if (type == '2') {
-                    throw invalid();
-                }
-                if (type == '5') {
+        try (TarArchiveInputStream tin = tarInputStream(bytes)) {
+            TarScan scan = new TarScan(tin);
+            TarArchiveEntry entry;
+            while ((entry = tin.getNextTarEntry()) != null) {
+                scan.countEntry();
+                String name = safeTarName(entry);
+                if (entry.isDirectory()) {
                     continue;
                 }
-                if (size < 0 || size > MAX_PACKAGE_SIZE) {
-                    throw invalid();
+                if (normalizeEntryPath(name).equals(targetPath)) {
+                    return scan.payload(entry.getSize());
                 }
-                // tar 头已声明 size，跳过的条目同样计入全局解压总量
-                inflatedSize += size;
-                if (inflatedSize > MAX_PACKAGE_SIZE) {
-                    throw tooLarge();
-                }
-                if (normalizeEntryPath(raw).equals(targetPath)) {
-                    byte[] content = gis.readNBytes(Math.toIntExact(size));
-                    if (content.length != size) {
-                        throw invalid();
-                    }
-                    return content;
-                }
-                skipFully(gis, size);
-                skipFully(gis, tarPadding(size));
+                scan.payload(entry.getSize());
             }
         } catch (IOException | ArithmeticException e) {
             throw invalid();
         }
         return null;
     }
-
     static void addDirectory(List<SkillPackageFileVO> files, Set<String> listed, String dirPath) {
         if (dirPath == null || dirPath.isEmpty()) {
             return;
@@ -579,11 +542,11 @@ public class SkillPackageService {
     }
 
     private static BizException tooManyEntries() {
-        return new BizException(ErrorCode.PARAM_INVALID, "技能包条目数超过上限 " + MAX_ENTRIES);
+        return BizException.keyed(ErrorCode.PARAM_INVALID, "skill.package_entries_limit", new Object[]{MAX_ENTRIES}, "技能包条目数超过上限 " + MAX_ENTRIES);
     }
 
     private static BizException tooLarge() {
-        return new BizException(ErrorCode.PARAM_INVALID, "技能包解压后大小超过上限 100MB");
+        return BizException.keyed(ErrorCode.PARAM_INVALID, "skill.package_size_limit", new Object[]{}, "技能包解压后大小超过上限 100MB");
     }
 
     private SkillVO createFromPackageBytes(String fileName, byte[] bytes, String type, String name, String description,
@@ -595,7 +558,7 @@ public class SkillPackageService {
         if (duplicate != null) {
             if (idempotencyKey != null && !idempotencyKey.isBlank()
                     && duplicate.getPackageMd5() != null
-                    && duplicate.getPackageMd5().equalsIgnoreCase(digest(bytes, "MD5"))) {
+                    && duplicate.getPackageMd5().equalsIgnoreCase(digest(parsed.bytes, "MD5"))) {
                 return skillService.get(duplicate.getId());
             }
             throw new BizException(ErrorCode.SKILL_DUPLICATE_NAME);
@@ -674,6 +637,8 @@ public class SkillPackageService {
                 || name == null || name.isBlank()) {
             throw invalid();
         }
+        // PLUGIN 不做包裹目录剥壳：清单位置（如 .claude-plugin/plugin.json）有语义，
+        // 且没有根文件锚点可判定真实外壳，剥壳只会破坏合法布局。
         String suffix = packageSuffix(fileName);
         int files = ".tar.gz".equals(suffix) ? validateTarGz(bytes) : validateZip(bytes);
         if (files == 0) {
@@ -750,6 +715,7 @@ public class SkillPackageService {
         if (bytes == null || bytes.length == 0 || bytes.length > MAX_PACKAGE_SIZE) {
             throw invalid();
         }
+        bytes = normalizeWrappedArchive(fileName, bytes);
         String suffix = packageSuffix(fileName);
         String skillMd = ".tar.gz".equals(suffix) ? readRootSkillMdFromTarGz(bytes) : readRootSkillMd(bytes);
         SkillMetadata metadata = parseFrontmatter(skillMd);
@@ -775,6 +741,7 @@ public class SkillPackageService {
         if (!".zip".equals(suffix)) {
             throw invalid();
         }
+        bytes = normalizeWrappedArchive(fileName, bytes);
         String hookYaml = readRootTextFromZip(bytes, "hook.yaml");
         HookMetadata metadata = parseHookMetadata(hookYaml);
         if (requestedName != null && !requestedName.isBlank()
@@ -795,8 +762,6 @@ public class SkillPackageService {
         int count = 0;
         long inflatedSize = 0;
         String rootText = null;
-        List<String> names = new ArrayList<>();
-        Map<String, byte[]> wrappedRoots = new HashMap<>();
         byte[] buffer = new byte[8192];
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             ZipEntry entry;
@@ -807,10 +772,8 @@ public class SkillPackageService {
                 }
                 String name = entry.getName();
                 validateEntryName(name);
-                names.add(name);
                 if (!entry.isDirectory()) {
-                    String wrapper = wrappedRootSegment(name, rootFileName);
-                    ByteArrayOutputStreamWithLimit rootBytes = wrapper != null || rootFileName.equals(name)
+                    ByteArrayOutputStreamWithLimit rootBytes = rootFileName.equals(name)
                             ? new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE) : null;
                     int read;
                     while ((read = zis.read(buffer)) >= 0) {
@@ -823,19 +786,12 @@ public class SkillPackageService {
                         }
                     }
                     if (rootBytes != null) {
-                        if (wrapper != null) {
-                            wrappedRoots.put(wrapper, rootBytes.toByteArray());
-                        } else {
-                            rootText = new String(rootBytes.toByteArray(), StandardCharsets.UTF_8);
-                        }
+                        rootText = new String(rootBytes.toByteArray(), StandardCharsets.UTF_8);
                     }
                 }
             }
         } catch (IOException e) {
             throw invalid();
-        }
-        if (rootText == null) {
-            rootText = wrappedRootText(names, wrappedRoots);
         }
         if (rootText == null) {
             throw invalid();
@@ -844,35 +800,198 @@ public class SkillPackageService {
     }
 
     /**
-     * macOS 右键压缩 / zip -r folder.zip dir/ 会把全部内容包进单一首层目录。
-     * 与前端目录上传（skillPackage.ts 剥掉 webkitRelativePath 首段）对齐：
-     * 全部条目共享同一首层目录时，剥掉该目录再定位根文件。
+     * macOS 右键压缩 / zip -r pkg.zip dir/ 会把全部条目包进单一首层目录。
+     * 上传时剥掉该目录重打为规范包再存储：下发校验（TaskPackager）、包内容预览等
+     * 全部下游消费同一形态，无需各自兼容；非包裹形态原样返回。
      */
-    private static String wrappedRootText(List<String> names, Map<String, byte[]> wrappedRoots) {
-        String wrapper = null;
-        for (String name : names) {
-            int slash = name.indexOf('/');
-            if (slash < 0) {
-                return null;
-            }
-            String segment = name.substring(0, slash);
-            if (wrapper == null) {
-                wrapper = segment;
-            } else if (!wrapper.equals(segment)) {
-                return null;
-            }
-        }
-        byte[] content = wrapper == null ? null : wrappedRoots.get(wrapper);
-        return content == null ? null : new String(content, StandardCharsets.UTF_8);
+    private static byte[] normalizeWrappedArchive(String fileName, byte[] bytes) {
+        String suffix = packageSuffix(fileName);
+        return ".tar.gz".equals(suffix) ? normalizeWrappedTarGz(bytes) : normalizeWrappedZip(bytes);
     }
 
-    /** name 形如 <dir>/rootFileName 且 dir 内不再嵌套时返回 dir，否则 null。 */
-    private static String wrappedRootSegment(String name, String rootFileName) {
-        int slash = name.indexOf('/');
-        if (slash < 0 || name.indexOf('/', slash + 1) >= 0) {
-            return null;
+    private static byte[] normalizeWrappedZip(byte[] bytes) {
+        Map<String, RepackEntry> files = new TreeMap<>();
+        String wrapper = null;
+        int entries = 0;
+        long inflatedSize = 0;
+        byte[] buffer = new byte[8192];
+        // Unix 文件权限（external attrs）只存在于中央目录，本地头流式读取拿不到，
+        // 须用 ZipFile 定位读取；非包裹形态在首个条目处原样返回。
+        try (ZipFile zip = new ZipFile(new SeekableInMemoryByteChannel(bytes))) {
+            java.util.Enumeration<ZipArchiveEntry> cursor = zip.getEntries();
+            while (cursor.hasMoreElements()) {
+                ZipArchiveEntry entry = cursor.nextElement();
+                if (++entries > MAX_ENTRIES) {
+                    throw invalid();
+                }
+                String name = entry.getName();
+                validateEntryName(name);
+                String segment = firstSegment(name);
+                if (segment == null || (wrapper != null && !wrapper.equals(segment))) {
+                    return bytes;
+                }
+                wrapper = wrapper == null ? segment : wrapper;
+                String stripped = name.substring(segment.length() + 1);
+                boolean unix = entry.getPlatform() == ZipArchiveEntry.PLATFORM_UNIX && entry.getUnixMode() != 0;
+                if (entry.isDirectory()) {
+                    // 显式目录条目（含空目录）保留；wrapper 自身条目（"demo/"）剥壳后为空，跳过。
+                    if (!stripped.isEmpty()
+                            && files.put(stripped, RepackEntry.dir(unix ? entry.getUnixMode() : 0755, unix)) != null) {
+                        throw invalid();
+                    }
+                    continue;
+                }
+                ByteArrayOutputStreamWithLimit out = new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE);
+                // commons-compress ZipFile.getInputStream 读完不校验 CRC（java.util.zip 的
+                // ZipInputStream 会），须自行计算并与中央目录声明值核对，否则损坏内容
+                // 会被重打包并生成新的"正确"校验值。
+                java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+                try (java.io.InputStream in = zip.getInputStream(entry)) {
+                    int read;
+                    while ((read = in.read(buffer)) >= 0) {
+                        inflatedSize += read;
+                        if (inflatedSize > MAX_PACKAGE_SIZE) {
+                            throw invalid();
+                        }
+                        out.write(buffer, 0, read);
+                        crc.update(buffer, 0, read);
+                    }
+                }
+                // 声明 CRC 一律比较：0 也是合法校验值（空文件，或内容恰使 CRC32 为 0 的非空文件）
+                if (entry.getCrc() != crc.getValue()) {
+                    throw invalid();
+                }
+                if (files.put(stripped,
+                        RepackEntry.file(out.toByteArray(), unix ? entry.getUnixMode() : 0644, unix)) != null) {
+                    throw invalid();
+                }
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            throw invalid();
         }
-        return rootFileName.equals(name.substring(slash + 1)) ? name.substring(0, slash) : null;
+        if (wrapper == null || files.isEmpty()) {
+            return bytes;
+        }
+        return repackZip(files);
+    }
+
+    private static byte[] repackZip(Map<String, RepackEntry> files) {
+        ByteArrayOutputStreamWithLimit output = new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE);
+        try (ZipArchiveOutputStream zip = new ZipArchiveOutputStream(output)) {
+            zip.setEncoding(StandardCharsets.UTF_8.name());
+            for (Map.Entry<String, RepackEntry> entry : files.entrySet()) {
+                RepackEntry value = entry.getValue();
+                ZipArchiveEntry out = new ZipArchiveEntry(entry.getKey());
+                out.setTime(0);
+                out.setSize(value.directory() ? 0 : value.content().length);
+                if (value.unixMode()) {
+                    out.setUnixMode(value.mode());
+                }
+                zip.putArchiveEntry(out);
+                if (!value.directory()) {
+                    zip.write(value.content());
+                }
+                zip.closeArchiveEntry();
+            }
+            zip.finish();
+        } catch (IOException | IllegalArgumentException e) {
+            throw invalid();
+        }
+        return output.toByteArray();
+    }
+
+    private static byte[] normalizeWrappedTarGz(byte[] bytes) {
+        Map<String, RepackEntry> files = new TreeMap<>();
+        String wrapper = null;
+        try (TarArchiveInputStream tin = tarInputStream(bytes)) {
+            TarScan scan = new TarScan(tin);
+            TarArchiveEntry entry;
+            while ((entry = tin.getNextTarEntry()) != null) {
+                scan.countEntry();
+                String name = safeTarName(entry);
+                String segment = firstSegment(name);
+                if (segment == null || (wrapper != null && !wrapper.equals(segment))) {
+                    return bytes;
+                }
+                wrapper = wrapper == null ? segment : wrapper;
+                String stripped = name.substring(segment.length() + 1);
+                if (stripped.isEmpty()) {
+                    continue;
+                }
+                if (entry.isDirectory()) {
+                    // 显式目录条目（含空目录）保留，目录权限原样传递；仅去掉 wrapper 自身
+                    if (files.put(stripped, RepackEntry.dir(entry.getMode(), true)) != null) {
+                        throw invalid();
+                    }
+                } else if (files.put(stripped,
+                        RepackEntry.file(scan.payload(entry.getSize()), entry.getMode(), true)) != null) {
+                    throw invalid();
+                }
+            }
+        } catch (IOException | ArithmeticException e) {
+            throw invalid();
+        }
+        if (wrapper == null || files.isEmpty()) {
+            return bytes;
+        }
+        return repackTarGz(files);
+    }
+    /**
+     * 重打包条目：文件携带内容与原 mode，目录（含空目录）无内容；
+     * unixMode 标记 mode 是否来自 ZIP 的 Unix external attrs，非 Unix ZIP 不写权限位。
+     */
+    private record RepackEntry(byte[] content, int mode, boolean directory, boolean unixMode) {
+        static RepackEntry file(byte[] content, int mode, boolean unixMode) {
+            return new RepackEntry(content, mode, false, unixMode);
+        }
+
+        static RepackEntry dir(int mode, boolean unixMode) {
+            return new RepackEntry(new byte[0], mode, true, unixMode);
+        }
+    }
+
+    private static byte[] repackTarGz(Map<String, RepackEntry> files) {
+        ByteArrayOutputStreamWithLimit output = new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE);
+        try (GZIPOutputStream gzip = new GZIPOutputStream(new NonClosingStream(output));
+             TarArchiveOutputStream tout = new TarArchiveOutputStream(gzip)) {
+            tout.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_POSIX);
+            tout.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX);
+            for (Map.Entry<String, RepackEntry> entry : files.entrySet()) {
+                RepackEntry value = entry.getValue();
+                TarArchiveEntry out = new TarArchiveEntry(entry.getKey());
+                out.setModTime(0);
+                out.setMode(value.mode());
+                if (!value.directory()) {
+                    out.setSize(value.content().length);
+                }
+                tout.putArchiveEntry(out);
+                if (!value.directory()) {
+                    tout.write(value.content());
+                }
+                tout.closeArchiveEntry();
+            }
+            tout.finish();
+        } catch (IOException | IllegalArgumentException e) {
+            throw invalid();
+        }
+        return output.toByteArray();
+    }
+
+    /** TarArchiveOutputStream 的 close 会关底层流，这里由方法返回时统一关闭。 */
+    private static final class NonClosingStream extends java.io.FilterOutputStream {
+        private NonClosingStream(java.io.OutputStream out) {
+            super(out);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            out.write(b, off, len);
+        }
+    }
+
+    private static String firstSegment(String name) {
+        int slash = name.indexOf('/');
+        return slash < 0 ? null : name.substring(0, slash);
     }
 
     private String readRootSkillMdFromTarGz(byte[] bytes) {
@@ -892,63 +1011,193 @@ public class SkillPackageService {
     }
 
     private TarGzReadResult readTarGz(byte[] bytes, String rootFileName) {
-        int entries = 0;
         int files = 0;
-        long inflatedSize = 0;
         String rootText = null;
-        List<String> names = new ArrayList<>();
-        Map<String, byte[]> wrappedRoots = new HashMap<>();
-        try (GZIPInputStream gis = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
-            byte[] header = new byte[512];
-            while (readFully(gis, header) == 512) {
-                if (isZeroBlock(header)) {
-                    break;
+        try (TarArchiveInputStream tin = tarInputStream(bytes)) {
+            TarScan scan = new TarScan(tin);
+            TarArchiveEntry entry;
+            while ((entry = tin.getNextTarEntry()) != null) {
+                scan.countEntry();
+                String name = safeTarName(entry);
+                if (entry.isDirectory()) {
+                    continue;
                 }
-                if (++entries > MAX_ENTRIES) {
-                    throw invalid();
-                }
-                String name = tarString(header, 0, 100);
-                long size = tarSize(header);
-                char type = (char) header[156];
-                validateEntryName(name);
-                if (type == '2') {
-                    throw invalid();
-                }
-                names.add(name);
-                if (type != '5') {
-                    files++;
-                    inflatedSize += size;
-                    if (inflatedSize > MAX_PACKAGE_SIZE) {
-                        throw invalid();
-                    }
-                    if (rootFileName != null && rootFileName.equals(name)) {
-                        byte[] content = gis.readNBytes(Math.toIntExact(size));
-                        if (content.length != size) {
-                            throw invalid();
-                        }
-                        rootText = new String(content, StandardCharsets.UTF_8);
-                    } else {
-                        String wrapper = rootFileName == null ? null : wrappedRootSegment(name, rootFileName);
-                        if (wrapper != null) {
-                            byte[] content = gis.readNBytes(Math.toIntExact(size));
-                            if (content.length != size) {
-                                throw invalid();
-                            }
-                            wrappedRoots.put(wrapper, content);
-                        } else {
-                            skipFully(gis, size);
-                        }
-                    }
-                    skipFully(gis, tarPadding(size));
+                files++;
+                if (name.equals(rootFileName)) {
+                    rootText = new String(scan.payload(entry.getSize()), StandardCharsets.UTF_8);
+                } else {
+                    scan.payload(entry.getSize());
                 }
             }
         } catch (IOException | ArithmeticException e) {
             throw invalid();
         }
-        if (rootText == null) {
-            rootText = wrappedRootText(names, wrappedRoots);
-        }
         return new TarGzReadResult(files, rootText);
+    }
+
+    /**
+     * tar 读取流：三个安全边界都在这里，因为只有这一层能看到物理记录边界。
+     * 1) GZIP 解压总量上限含库内部消费的 PAX/GNU 扩展元数据（防"压缩输入小、
+     *    声明超 100MB"的膨胀）；
+     * 2) 头记录计数（readRecord 只在头读取路径被调用，payload 走 read()）：
+     *    每个物理头记录——含 PAX/GNU 扩展头——都算一个条目，防小体积元数据链
+     *    触发库的深递归 StackOverflow；
+     * 3) PAX x 头的 path/linkpath 记录按原始值校验：库应用 PAX path 时 setName
+     *    会去掉前导斜杠，校验 getName() 看不到原始绝对路径，须截获 payload 检查。
+     */
+    /**
+     * tar 读取流：三个安全边界都在这层，因为只有它看得到物理记录边界。
+     * 1) GZIP 解压总量上限含库内部消费的扩展元数据（防"压缩输入小、声明超 100MB"的膨胀）；
+     * 2) 头记录计数：readRecord 只在头读取路径被调用（payload 走 read()），每个物理
+     *    头记录——含 PAX/GNU 扩展头——都算一个条目，防小体积元数据链触发库的深递归
+     *    StackOverflow（commons-compress 对连续 PAX 头逐层递归 getNextEntry）；
+     * 3) PAX x 头的 path/linkpath 按原始值校验：库应用 PAX path 时 setName 会去掉
+     *    前导斜杠，校验 getName() 看不到原始绝对路径。这里截获 payload 校验后缓存，
+     *    库再来 read() 时先吐缓存，字节流保持一致。
+     */
+    private static TarArchiveInputStream tarInputStream(byte[] bytes) throws IOException {
+        return new TarArchiveInputStream(new GZIPInputStream(new ByteArrayInputStream(bytes)) {
+            private long inflated;
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws IOException {
+                int read = super.read(buffer, offset, length);
+                if (read > 0) {
+                    inflated += read;
+                    if (inflated > MAX_PACKAGE_SIZE) {
+                        throw tooLarge();
+                    }
+                }
+                return read;
+            }
+        }) {
+            private int headerRecords;
+            private java.io.ByteArrayOutputStream paxSeen;
+
+            @Override
+            protected byte[] readRecord() throws IOException {
+                byte[] record = super.readRecord();
+                // readRecord 只在头读取路径被调用（payload 走 read()）。两个防护分开：
+                // 1) 全零结束块不是条目，不计——否则 500 上限实际只剩 498；
+                // 2) 扩展元数据头（PAX x/X/g、GNU L/K）计入独立预算，不与逻辑条目
+                //    共享——正常重打包含为长路径生成大量 PAX 头（251 个逻辑文件
+                //    可配 250 个 PAX 头），共享配额会让包"能否读回"取决于布局；
+                //    独立上限防的是小体积元数据链触发库对连续 PAX 头的逐层递归
+                //    （getNextEntry 内部递归消费）造成 StackOverflow。
+                if (isEOFRecord(record)) {
+                    return record;
+                }
+                // X（SunOS tar -E 的 LF_PAX_EXTENDED_HEADER_UC）与 x 同被库的
+                // isPaxHeader() 识别并递归消费，漏掉即重新开放深递归路径
+                if (record[156] == 'x' || record[156] == 'X' || record[156] == 'g'
+                        || record[156] == 'L' || record[156] == 'K') {
+                    if (++headerRecords > MAX_ENTRIES) {
+                        throw tooManyEntries();
+                    }
+                }
+                return record;
+            }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) throws IOException {
+                TarArchiveEntry current = getCurrentEntry();
+                if (current != null && (current.isPaxHeader() || current.isGNULongNameEntry())) {
+                    // 库正在读扩展元数据 payload：旁路记录原始字节按原始值校验——
+                    // 库应用 PAX path / GNU LongName 时 setName 会去掉前导斜杠，
+                    // 校验 getName() 看不到原始绝对路径
+                    if (paxSeen == null) {
+                        paxSeen = new java.io.ByteArrayOutputStream();
+                    }
+                    int read = super.read(buffer, offset, length);
+                    if (read > 0) {
+                        paxSeen.write(buffer, offset, read);
+                        if (paxSeen.size() >= current.getSize()) {
+                            byte[] payload = paxSeen.toByteArray();
+                            if (current.isGNULongNameEntry()) {
+                                // GNU LongName payload 即名字文本（  结尾）
+                                String longName = new String(payload, StandardCharsets.UTF_8)
+                                        .replaceFirst("\0+$", "").replaceFirst("\n+$", "");
+                                validateEntryName(longName);
+                            } else {
+                                for (Map.Entry<String, String> rec : parsePaxRecords(payload).entrySet()) {
+                                    if ("path".equals(rec.getKey()) || "linkpath".equals(rec.getKey())) {
+                                        validateEntryName(rec.getValue());
+                                    }
+                                }
+                            }
+                            paxSeen = null;
+                        }
+                    }
+                    return read;
+                }
+                paxSeen = null;
+                return super.read(buffer, offset, length);
+            }
+        };
+    }
+    /** PAX 扩展头内容为 "%d key=value\n" 记录序列；畸形头按参数不合法拒绝。 */
+    private static Map<String, String> parsePaxRecords(byte[] content) {
+        Map<String, String> records = new HashMap<>();
+        int offset = 0;
+        while (offset < content.length) {
+            int space = -1;
+            for (int i = offset; i < content.length && i - offset < 20; i++) {
+                if (content[i] == ' ') {
+                    space = i;
+                    break;
+                }
+            }
+            if (space < 0) {
+                throw invalid();
+            }
+            int length;
+            try {
+                length = Integer.parseInt(new String(content, offset, space - offset, StandardCharsets.US_ASCII).trim());
+            } catch (NumberFormatException e) {
+                throw invalid();
+            }
+            if (length <= 0 || offset + length > content.length) {
+                throw invalid();
+            }
+            int eq = -1;
+            for (int i = space + 1; i < offset + length; i++) {
+                if (content[i] == '=') {
+                    eq = i;
+                    break;
+                }
+            }
+            if (eq < 0 || content[offset + length - 1] != '\n') {
+                throw invalid();
+            }
+            records.put(new String(content, space + 1, eq - space - 1, StandardCharsets.UTF_8),
+                    new String(content, eq + 1, offset + length - 1 - (eq + 1), StandardCharsets.UTF_8));
+            offset += length;
+        }
+        return records;
+    }
+    /**
+     * 每个逻辑条目的无条件安全校验：路径还原（PAX path / GNU LongLink / USTAR prefix
+     * 由 commons-compress 处理）+ 路径规则 + 类型白名单。
+     * 只接受普通文件与目录；符号链接、硬链接、FIFO、字符/块设备、sparse 等
+     * "数据不在自身"或不可移植的类型一律拒绝，静默当普通文件重打包会丢失语义。
+     * 必须在目录跳过、根文件匹配或 payload 读取之前对全部条目执行。
+     */
+    private static String safeTarName(TarArchiveEntry entry) {
+        // TarArchiveEntry.isFile() 是"非目录即文件"的宽容定义（链接/FIFO/设备也算），
+        // 且 getLinkFlag 无公开 getter，白名单须显式排除全部特殊类型
+        // isDirectory()/isFile() 均为宽容判定（尾斜杠即目录、非目录即文件），
+        // 必须先无条件排除特殊类型，再落入文件/目录白名单——
+        // 否则"名称带尾斜杠的符号/硬链接"会借 isDirectory() 绕过全部排除条件
+        boolean unsupported = entry.isSymbolicLink() || entry.isLink() || entry.isFIFO()
+                || entry.isCharacterDevice() || entry.isBlockDevice() || entry.isSparse()
+                || entry.isPaxHeader() || entry.isGlobalPaxHeader();
+        boolean supported = !unsupported && (entry.isDirectory() || entry.isFile());
+        if (!supported) {
+            throw invalid();
+        }
+        String name = entry.getName();
+        validateEntryName(name);
+        return name;
     }
 
     private HookMetadata parseHookMetadata(String hookYaml) {
@@ -978,63 +1227,47 @@ public class SkillPackageService {
         }
     }
 
-    private static int readFully(GZIPInputStream in, byte[] buffer) throws IOException {
-        int offset = 0;
-        while (offset < buffer.length) {
-            int read = in.read(buffer, offset, buffer.length - offset);
-            if (read < 0) {
-                break;
-            }
-            offset += read;
-        }
-        return offset;
-    }
+    /** 单次 tar 遍历的计数与解压总量上限上下文。 */
+    private static final class TarScan {
+        private final TarArchiveInputStream in;
+        private int entries;
+        private long inflatedSize;
 
-    private static boolean isZeroBlock(byte[] header) {
-        for (byte value : header) {
-            if (value != 0) {
-                return false;
+        private TarScan(TarArchiveInputStream in) {
+            this.in = in;
+        }
+
+        private void countEntry() {
+            if (++entries > MAX_ENTRIES) {
+                throw tooManyEntries();
             }
         }
-        return true;
-    }
 
-    private static String tarString(byte[] header, int offset, int length) {
-        int end = offset;
-        while (end < offset + length && header[end] != 0) {
-            end++;
-        }
-        return new String(header, offset, end - offset, StandardCharsets.UTF_8).trim();
-    }
-
-    private static long tarSize(byte[] header) {
-        String value = tarString(header, 124, 12).trim();
-        if (value.isEmpty()) {
-            return 0;
-        }
-        try {
-            return Long.parseLong(value, 8);
-        } catch (NumberFormatException e) {
-            throw invalid();
-        }
-    }
-
-    private static long tarPadding(long size) {
-        long remainder = size % 512;
-        return remainder == 0 ? 0 : 512 - remainder;
-    }
-
-    private static void skipFully(GZIPInputStream in, long bytes) throws IOException {
-        long remaining = bytes;
-        while (remaining > 0) {
-            long skipped = in.skip(remaining);
-            if (skipped <= 0) {
-                if (in.read() < 0) {
-                    throw invalid();
-                }
-                skipped = 1;
+        /**
+         * 读 payload 并计解压总量；跳过时同样消费字节以保持流位置。
+         * 声明 size 一律计入总量（跳过的条目同样受 100MB 约束），实际读取到流尾或声明值为止。
+         */
+        private byte[] payload(long size) throws IOException {
+            if (size < 0 || size > MAX_PACKAGE_SIZE) {
+                throw tooLarge();
             }
-            remaining -= skipped;
+            inflatedSize += size;
+            if (inflatedSize > MAX_PACKAGE_SIZE) {
+                throw tooLarge();
+            }
+            ByteArrayOutputStreamWithLimit out = new ByteArrayOutputStreamWithLimit(MAX_PACKAGE_SIZE);
+            byte[] buffer = new byte[8192];
+            long remaining = size;
+            int read;
+            while (remaining > 0
+                    && (read = in.read(buffer, 0, (int) Math.min(buffer.length, remaining))) >= 0) {
+                out.write(buffer, 0, read);
+                remaining -= read;
+            }
+            if (remaining > 0) {
+                throw invalid();
+            }
+            return out.toByteArray();
         }
     }
 

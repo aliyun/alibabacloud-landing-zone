@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -8,6 +10,7 @@ import { McpTokenSettingsPanel } from '@/features/open-platform/McpTokenSettings
 import { BasicProfilePanel } from './BasicProfilePanel';
 import { ChangePasswordPanel } from './ChangePasswordPanel';
 import { DeactivationPanel } from './DeactivationPanel';
+import { FederatedIdentitiesPanel } from './FederatedIdentitiesPanel';
 import {
   USER_IM_IDENTITIES_QUERY_KEY,
   listMyImIdentities,
@@ -40,18 +43,19 @@ function getApiMessage(error: unknown, fallback: string) {
 
 function getImTestStatusText(hasIdentityRow: boolean, hasSavedIdentity: boolean, identity: UserImIdentity) {
   if (!hasIdentityRow || !hasSavedIdentity) {
-    return '请先保存工号';
+    return i18n.t('profile:im.saveFirst');
   }
   if (!identity.platformReady) {
-    return '统一机器人未配置';
+    return i18n.t('profile:im.robotUnavailable');
   }
-  return identity.testAvailable ? '可测试' : '请先保存工号';
+  return i18n.t(identity.testAvailable ? 'profile:im.testAvailable' : 'profile:im.saveFirst');
 }
 
 export function ProfileSettingsPage() {
+  const { t } = useTranslation('profile');
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const activeTab = requestedTab === 'im' || requestedTab === 'mcp' || requestedTab === 'password' || requestedTab === 'deactivate'
+  const activeTab = requestedTab === 'federated' || requestedTab === 'im' || requestedTab === 'mcp' || requestedTab === 'password' || requestedTab === 'deactivate'
     ? requestedTab
     : DEFAULT_TAB;
   const [form] = Form.useForm<ImIdentityFormValues>();
@@ -65,7 +69,7 @@ export function ProfileSettingsPage() {
 
   const identityRow = identityQuery.data?.[0];
   const provider = identityRow?.provider ?? 'DINGTALK';
-  const providerLabel = provider === 'FEISHU' ? '飞书' : '钉钉';
+  const providerLabel = provider === 'FEISHU' ? t('im.feishu') : provider === 'DINGTALK' ? t('im.dingtalk') : provider;
   const hydratedProviderRef = useRef(provider);
   const hasIdentityRow = Boolean(identityRow);
   const identity = identityRow || EMPTY_IM_IDENTITY;
@@ -97,21 +101,21 @@ export function ProfileSettingsPage() {
       return (provider === 'FEISHU' ? updateMyFeishuIdentity : updateMyDingTalkIdentity)({ externalUserId: values.externalUserId?.trim() || '' });
     },
     onSuccess: async () => {
-      message.success('IM 工号已保存');
+      message.success(i18n.t('profile:im.saved'));
       await queryClient.invalidateQueries({ queryKey: USER_IM_IDENTITIES_QUERY_KEY });
     },
     onError: (error) => {
-      message.error(getApiMessage(error, 'IM 工号保存失败'));
+      message.error(getApiMessage(error, i18n.t('profile:im.saveFailed')));
     },
   });
 
   const testMutation = useMutation({
     mutationFn: () => (provider === 'FEISHU' ? sendMyFeishuIdentityTest() : sendMyDingTalkIdentityTest()),
     onSuccess: () => {
-      message.success('测试消息已发送');
+      message.success(i18n.t('profile:im.testSent'));
     },
     onError: (error) => {
-      message.error(getApiMessage(error, '测试消息发送失败'));
+      message.error(getApiMessage(error, i18n.t('profile:im.testFailed')));
     },
   });
 
@@ -122,20 +126,20 @@ export function ProfileSettingsPage() {
     testBlockedByRobot ||
     testBlockedByIdentity;
   const testDisabledReason = testBlockedByRobot
-    ? `系统统一${providerLabel}机器人未配置`
+    ? t('im.robotBlocked', { provider: providerLabel })
     : testBlockedByIdentity
-      ? `请先保存${providerLabel}工号后再测试`
+      ? t('im.identityBlocked', { provider: providerLabel })
       : '';
   const testStatusText = getImTestStatusText(hasIdentityRow, hasSavedIdentity, identity);
 
   const imSettings = (
-    <Card title="IM 工号" styles={{ body: { padding: 18 } }}>
+    <Card title={t('im.title')} styles={{ body: { padding: 18 } }}>
         {identityQuery.error ? (
           <Alert
             type="error"
             showIcon
-            message="IM 工号加载失败"
-            description={getApiMessage(identityQuery.error, '请稍后重试')}
+            message={t('im.loadFailed')}
+            description={getApiMessage(identityQuery.error, t('retryLater'))}
           />
         ) : (
           <Form
@@ -150,11 +154,11 @@ export function ProfileSettingsPage() {
                 <div>
                   <Text strong>{providerLabel}</Text>
                   <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>保存{providerLabel}工号后可接收指派和测试通知，渠道由平台统一配置。</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('im.hint', { provider: providerLabel })}</Text>
                   </div>
                 </div>
                 <Space size={[8, 8]} wrap>
-                  <Tag color={hasSavedIdentity ? 'green' : 'default'}>{hasSavedIdentity ? '已开通' : '未开通'}</Tag>
+                  <Tag color={hasSavedIdentity ? 'green' : 'default'}>{hasSavedIdentity ? t('im.enabled') : t('im.disabled')}</Tag>
                   <Tag color={identity.testAvailable ? 'green' : 'orange'}>
                     {testStatusText}
                   </Tag>
@@ -162,11 +166,11 @@ export function ProfileSettingsPage() {
               </div>
 
               <Form.Item
-                label={`${providerLabel}工号`}
+                label={t('im.label', { provider: providerLabel })}
                 name="externalUserId"
-                extra={provider === 'FEISHU' ? '填写飞书用户 ID（user_id），不是员工编号或 open_id；清空保存可关闭身份。' : '保存非空工号即开通；清空后保存会关闭钉钉身份。'}
+                extra={provider === 'FEISHU' ? t('im.feishuHint') : t('im.dingtalkHint')}
               >
-                <Input maxLength={256} placeholder="例如 staff-001" autoComplete="off" />
+                <Input maxLength={256} placeholder={t('im.placeholder')} autoComplete="off" />
               </Form.Item>
 
               {testDisabledReason ? (
@@ -175,18 +179,14 @@ export function ProfileSettingsPage() {
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
                 <Tooltip title={testDisabledReason || undefined}>
-                  <Button
-                    icon={<SendOutlined />}
+                  <Button aria-label={t('im.test')}
+                    icon={<SendOutlined aria-hidden="true" />}
                     disabled={testDisabled}
                     loading={testMutation.isPending}
                     onClick={() => testMutation.mutate()}
-                  >
-                    发送测试
-                  </Button>
+                  >{t('im.test')}</Button>
                 </Tooltip>
-                <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saveMutation.isPending}>
-                  保存
-                </Button>
+                <Button aria-label={t('save')} type="primary" htmlType="submit" icon={<SaveOutlined aria-hidden="true" />} loading={saveMutation.isPending}>{t('save')}</Button>
               </div>
             </div>
           </Form>
@@ -196,7 +196,7 @@ export function ProfileSettingsPage() {
 
   return (
     <div data-testid="profile-settings-shell">
-      <PageHeading title="个人设置" description="管理只属于当前账号的全局个人配置。" />
+      <PageHeading title={t('title')} description={t('description')} />
 
       <Tabs
         activeKey={activeTab}
@@ -210,11 +210,12 @@ export function ProfileSettingsPage() {
           setSearchParams(next, { replace: true });
         }}
         items={[
-          { key: 'basic', label: '基本信息', children: <BasicProfilePanel /> },
-          { key: 'im', label: 'IM 工号', children: imSettings },
-          { key: 'mcp', label: 'MCP 令牌', children: <McpTokenSettingsPanel /> },
-          { key: 'password', label: '修改密码', children: <ChangePasswordPanel /> },
-          { key: 'deactivate', label: '账号注销', children: <DeactivationPanel /> },
+          { key: 'basic', label: t('basic.title'), children: <BasicProfilePanel /> },
+          { key: 'im', label: t('im.title'), children: imSettings },
+          { key: 'federated', label: t('federated.title'), children: <FederatedIdentitiesPanel /> },
+          { key: 'mcp', label: t('tabs.mcp'), children: <McpTokenSettingsPanel /> },
+          { key: 'password', label: t('password.submit'), children: <ChangePasswordPanel /> },
+          { key: 'deactivate', label: t('deactivation.title'), children: <DeactivationPanel /> },
         ]}
       />
     </div>

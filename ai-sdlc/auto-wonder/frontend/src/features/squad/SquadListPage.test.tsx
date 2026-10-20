@@ -1,9 +1,10 @@
+import { i18n } from '@/shared/i18n';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfigProvider, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
@@ -40,7 +41,8 @@ function LocationProbe() {
 }
 
 describe('SquadListPage', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh-CN');
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
     vi.restoreAllMocks();
@@ -208,7 +210,7 @@ describe('SquadListPage', () => {
         data: {
           list: [{
             id: 1, name: 'Team Alpha', description: 'Frontend squad', memberCount: 0,
-            debugLogEnabled: true, gmtCreate: '2026-07-01',
+            ownerId: 44, debugLogEnabled: true, gmtCreate: '2026-07-01',
           }],
           total: 1, pageNum: 1, pageSize: 20,
         },
@@ -222,7 +224,7 @@ describe('SquadListPage', () => {
       }),
     );
 
-    renderPage();
+    renderSquadRoute();
     await screen.findByText('Team Alpha');
     // 卡片上出现 Debug 标记
     expect(screen.getByText('Debug')).toBeInTheDocument();
@@ -232,10 +234,14 @@ describe('SquadListPage', () => {
     expect(debugSwitch).toHaveAttribute('aria-checked', 'true');
 
     await user.click(debugSwitch);
-    await user.click(screen.getByRole('button', { name: /确\s?定/ }));
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByRole('switch', { name: 'Debug log collection' })).toBe(debugSwitch);
+    expect(screen.getByLabelText('Squad name')).toHaveValue('Team Alpha');
+    await user.click(screen.getByRole('button', { name: 'OK' }));
 
     await waitFor(() => expect(putBody).not.toBeNull());
-    expect(putBody).toMatchObject({ name: 'Team Alpha', debugLogEnabled: false });
+    expect(putBody).toEqual({ name: 'Team Alpha', description: 'Frontend squad', ownerId: 44, debugLogEnabled: false });
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
   });
 
   it('does not render the debug switch in the create modal', async () => {
@@ -433,5 +439,202 @@ describe('SquadListPage', () => {
 
     expect(await screen.findByText('关联执行器')).toBeInTheDocument();
     expect(screen.getByText('暂无执行器')).toBeInTheDocument();
+  });
+
+  it('opens the copy modal from the squad card for a write member', async () => {
+    const user = userEvent.setup();
+    let checkCalls = 0;
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          list: [{ id: 1, name: 'Team Alpha', description: '', memberCount: 1, gmtCreate: '2026-07-01' }],
+          total: 1, pageNum: 1, pageSize: 20,
+        },
+      })),
+      http.get('/api/squads/1/copy-check', () => {
+        checkCalls += 1;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { eligible: true, missingOnlineVersions: [] },
+        });
+      }),
+      http.get('/api/squads/1/copy-targets', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: { list: [{ id: 2, name: '目标空间A', description: '' }], total: 1, pageNum: 1, pageSize: 10 },
+      })),
+    );
+
+    renderPage();
+    await screen.findByText('Team Alpha');
+    await user.click(screen.getByRole('button', { name: /复制到工作空间/ }));
+
+    expect(await screen.findByText('复制到工作空间', { selector: '.ant-modal-title' })).toBeInTheDocument();
+    expect(await screen.findByText('目标空间A')).toBeInTheDocument();
+    expect(checkCalls).toBe(1);
+  });
+
+  it('keeps copy visible but does not run the pre-check for a read-only member', async () => {
+    const error = vi.spyOn(message, 'error').mockImplementation(
+      () => undefined as unknown as ReturnType<typeof message.error>,
+    );
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_ONLY');
+    let checkCalls = 0;
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: {
+          list: [{ id: 1, name: 'Team Alpha', description: '', memberCount: 1, gmtCreate: '2026-07-01' }],
+          total: 1, pageNum: 1, pageSize: 20,
+        },
+      })),
+      http.get('/api/squads/1/copy-check', () => {
+        checkCalls += 1;
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: { eligible: true, missingOnlineVersions: [] },
+        });
+      }),
+    );
+
+    renderPage();
+    await screen.findByText('Team Alpha');
+    await userEvent.click(screen.getByRole('button', { name: /复制到工作空间/ }));
+
+    expect(error).toHaveBeenCalledWith('当前为只读权限，复制到工作空间需要读写权限');
+    expect(screen.queryByText('复制到工作空间', { selector: '.ant-modal-title' })).not.toBeInTheDocument();
+    expect(checkCalls).toBe(0);
+  });
+});
+
+
+describe('routed squad localization', () => {
+  beforeEach(async () => {
+    message.destroy();
+    await i18n.changeLanguage('zh-CN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    vi.restoreAllMocks();
+  });
+  it('switches existing validation errors while keeping drafts and canonical create payloads', async () => {
+    await i18n.changeLanguage('zh-CN');
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    let payload: unknown;
+    let finish!: () => void;
+    const responseReady = new Promise<void>(resolve => { finish = resolve; });
+    server.use(http.post('/api/squads', async ({ request }) => {
+      payload = await request.json();
+      await responseReady;
+      return HttpResponse.json({ success: true, data: { id: 9, ...payload as object } });
+    }));
+    const router = createMemoryRouter([{ path: '/agents', element: <SquadListPage /> }], { initialEntries: ['/agents?tab=squads'] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+    await userEvent.click(await screen.findByRole('button', { name: /新建小队$/ }));
+    const pristineName = screen.getByLabelText('小队名称');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.queryByText('Enter a squad name')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Squad name')).toBe(pristineName);
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    await userEvent.type(screen.getByLabelText('描述'), '<b>保留描述</b>');
+    await userEvent.click(screen.getByRole('button', { name: /确\s?定/ }));
+    expect(await screen.findByText('请输入小队名称')).toBeInTheDocument();
+    const nameInput = screen.getByLabelText('小队名称');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(await screen.findByText('Enter a squad name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Squad name')).toBe(nameInput);
+    expect(screen.getByLabelText('Description')).toHaveValue('<b>保留描述</b>');
+    await userEvent.type(nameInput, '<img>自定义小队');
+    await userEvent.click(screen.getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(payload).toEqual({ name: '<img>自定义小队', description: '<b>保留描述</b>' }));
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    finish();
+    expect(await screen.findByText('创建成功')).toBeInTheDocument();
+  });
+});
+
+
+function renderSquadRoute() {
+  const router = createMemoryRouter([{ path: '/agents', element: <SquadListPage /> }], { initialEntries: ['/agents?tab=squads'] });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+}
+
+describe('routed squad detail and member localization', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('zh-CN');
+    message.destroy();
+    useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+    vi.restoreAllMocks();
+  });
+
+  it('keeps distinct role and SDLC rows when a custom role matches a translated preset label', async () => {
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({ success: true, data: [{ id: 1, name: '<b>自定义小队</b>', memberCount: 3 }] })),
+      http.get('/api/squads/1', () => HttpResponse.json({ success: true, data: {
+        id: 1, name: '<b>自定义小队</b>', sdlcs: [], executors: [
+          { id: 7, name: '原始执行器', agentName: null, status: 'ONLINE' },
+          { id: 8, name: '未来执行器', agentName: '原始名字', status: 'FUTURE_STATE' },
+        ],
+      } })),
+      http.get('/api/squads/1/members', () => HttpResponse.json({ success: true, data: [
+        { agentId: 10, agentName: '<img>原始员工', roleCode: 'FRONTEND_DEV', roleName: '前端开发工程师', responsibilities: '<b>原始职责</b>', sdlcId: 20, sdlcName: '<b>原始流程</b>', sdlcSteps: [{ id: 30, name: '<i>原始步骤</i>', handlerType: 'AGENT', handlerRoleRef: null }] },
+        { agentId: 11, agentName: '自定义员工', roleCode: 'CUSTOM', roleName: 'Frontend developer', sdlcId: 20, sdlcName: '<b>原始流程</b>', sdlcSteps: [] },
+        { agentId: 12, agentName: '未配置员工', roleCode: '', roleName: '', sdlcId: null, sdlcSteps: [] },
+      ] })),
+    );
+    renderSquadRoute();
+    await userEvent.click(await screen.findByRole('button', { name: /详情$/ }));
+    const dialog = await screen.findByRole('dialog');
+    const zhRole = within(dialog).getAllByText('前端开发工程师', { selector: 'span' })[0];
+    const customRole = within(dialog).getAllByText('Frontend developer', { selector: 'span' })[0];
+    const rawFlow = within(dialog).getByText('<b>原始流程</b>');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(within(dialog).getAllByText('Frontend developer', { selector: 'span' })).toEqual([zhRole, customRole]);
+    expect(zhRole.parentElement).toHaveTextContent('1');
+    expect(customRole.parentElement).toHaveTextContent('1');
+    expect(within(dialog).getByText('<b>原始流程</b>')).toBe(rawFlow);
+    expect(within(dialog).getByText('Frontend developer / Frontend developer')).toBeInTheDocument();
+    expect(within(dialog).getByText('<img>原始员工')).toBeInTheDocument();
+    expect(within(dialog).getByText('<b>原始职责</b>')).toBeInTheDocument();
+    expect(within(dialog).getByText('<i>原始步骤</i>')).toBeInTheDocument();
+    expect(within(dialog).getByText('Agent', { exact: true })).toBeInTheDocument();
+    expect(within(dialog).getByText('Unknown Agent')).toBeInTheDocument();
+    expect(within(dialog).getByText('Online')).toBeInTheDocument();
+    expect(within(dialog).getByText('FUTURE_STATE')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(within(dialog).getByText('前端开发工程师', { selector: 'span' })).toBe(zhRole);
+    await userEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    await userEvent.click(screen.getByRole('button', { name: /删除$/ }));
+    await screen.findByText('确认删除该小队？');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByText('Delete this squad?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
+
+  it('preserves the selected Agent id and membership request across language switches', async () => {
+    let payload: unknown;
+    server.use(
+      http.get('/api/squads', () => HttpResponse.json({ success: true, data: [{ id: 1, name: '原始小队', memberCount: 0 }] })),
+      http.get('/api/squads/1/members', () => HttpResponse.json({ success: true, data: [] })),
+      http.get('/api/agents', () => HttpResponse.json({ success: true, data: [{ id: 10, name: '<img>原始员工', roleCode: 'CUSTOM', roleName: '原始角色' }] })),
+      http.post('/api/squads/1/members', async ({ request }) => {
+        payload = await request.json();
+        return HttpResponse.json({ success: true, data: null });
+      }),
+    );
+    renderSquadRoute();
+    await userEvent.click(await screen.findByRole('button', { name: /成员$/ }));
+    const combo = await screen.findByRole('combobox', { name: '选择数字员工添加到小队' });
+    await userEvent.click(combo);
+    await userEvent.click(await screen.findByText('<img>原始员工', { selector: '.ant-select-item-option-content' }));
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByRole('combobox', { name: 'Select an Agent to add to the squad' })).toBe(combo);
+    expect(combo.closest('.ant-select')).toHaveTextContent('<img>原始员工');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() => expect(payload).toEqual({ agentIds: [10] }));
+    expect(await screen.findByText('Member added')).toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
   });
 });

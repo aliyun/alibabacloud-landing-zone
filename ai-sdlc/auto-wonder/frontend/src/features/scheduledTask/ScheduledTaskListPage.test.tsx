@@ -1,3 +1,8 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { act } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createAppRoutes } from '@/app/router';
+import { i18n } from '@/shared/i18n';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -188,7 +193,61 @@ describe('ScheduledTaskListPage', () => {
     renderList('READ_WRITE');
 
     expect(await screen.findByText('定时需求A')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '定时工单' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: /定时工单$/ })).toHaveAttribute('aria-selected', 'true');
     expect(requests[0]).toContain('scheduledStart=ALL');
   });
+});
+
+it('switches cached list and both tabs without resetting filters, page or queries', async () => {
+  window.localStorage.removeItem(TAB_STORAGE_KEY);
+  useAuthStore.setState({ accessLevel: 'READ_WRITE', user: { id: 42, username: 'tester', nickname: 'Tester', email: 'tester@example.com' } });
+  const requests: string[] = [];
+  server.use(http.get('/api/scheduled-tasks', ({ request }) => { requests.push(new URL(request.url).search); return HttpResponse.json({ success: true, code: '0', data: { list: [TASK], total: 41 } }); }), ...readHandlers(), workitemHandler([]));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const route = createAppRoutes().flatMap(route => route.children ?? []).find(route => route.path === '/scheduled-tasks')!;
+  const router = createMemoryRouter([route], { initialEntries: ['/scheduled-tasks'] });
+  render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
+  const user = userEvent.setup();
+  await screen.findByText('凌晨回归');
+  await user.click(screen.getByText('我创建的'));
+  await waitFor(() => expect(requests.at(-1)).toContain('creatorId=42'));
+  await user.click(screen.getByTitle('2'));
+  await waitFor(() => expect(requests.at(-1)).toContain('offset=10'));
+  const beforeSwitch = [...requests];
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByRole('tab', { name: 'Scheduled tasks' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: 'Run now' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Search' })).toBeInTheDocument();
+  expect(screen.getByText('Agent #11')).toBeInTheDocument();
+  expect(screen.getByLabelText('Scheduled task scope')).toHaveTextContent('Created by me');
+  expect(requests).toEqual(beforeSwitch);
+  await user.click(screen.getByRole('tab', { name: 'Scheduled work items' }));
+  await screen.findByText('定时需求A');
+  await act(() => i18n.changeLanguage('zh-CN'));
+  expect(await screen.findByRole('tab', { name: /定时工单$/ })).toHaveAttribute('aria-selected', 'true');
+  expect(window.localStorage.getItem(TAB_STORAGE_KEY)).toBe('workitems');
+});
+
+it.each([[0, '0 tasks'], [1, '1 task'], [2, '2 tasks']])('renders numeric English totals for %s tasks', async (count, label) => {
+  window.localStorage.removeItem(TAB_STORAGE_KEY);
+  server.use(http.get('/api/scheduled-tasks', () => HttpResponse.json({ success: true, code: '0', data: { list: [], total: count } })), ...readHandlers());
+  await act(() => i18n.changeLanguage('en-US'));
+  renderList('READ_WRITE');
+  expect(await screen.findByText((_, element) => element?.textContent === label && !Array.from(element.children).some(child => child.textContent === label))).toBeInTheDocument();
+  expect(screen.getByLabelText('Task summary')).not.toHaveTextContent('scheduledTask:');
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });
+
+it.each(['zh-CN', 'en-US'])('final widget scheduled task clear preserves search button and server filter in %s', async locale => {
+ window.localStorage.removeItem(TAB_STORAGE_KEY); const requests: URLSearchParams[] = [];
+ server.use(http.get('/api/scheduled-tasks', ({ request }) => { requests.push(new URL(request.url).searchParams); return HttpResponse.json({ success: true, data: { list: [], total: 0 } }); }), ...readHandlers());
+ await i18n.changeLanguage(locale); renderList('READ_WRITE');
+ const input = screen.getByLabelText(locale === 'en-US' ? 'Keyword filter' : '关键词筛选');
+ const search = screen.getByRole('button', { name: locale === 'en-US' ? 'Search' : '搜索' });
+ await userEvent.type(input, '<raw>中文'); await userEvent.click(search);
+ await waitFor(() => expect(requests.at(-1)?.get('keyword')).toBe('<raw>中文'));
+ await userEvent.click(screen.getByRole('button', { name: locale === 'en-US' ? 'Clear task search' : '清空任务搜索' }));
+ await waitFor(() => expect(requests.at(-1)?.has('keyword')).toBe(false)); expect(input).toHaveValue(''); expect(requests.at(-1)?.get('offset')).toBe('0');
 });

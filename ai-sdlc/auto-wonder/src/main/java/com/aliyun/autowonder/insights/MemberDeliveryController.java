@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/insights/member-delivery")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看项目成员交付统计")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看项目成员交付统计", actionKey = "access.action.view_project_member_delivery_statistics")
 public class MemberDeliveryController {
     private final MemberDeliveryService service;
     public MemberDeliveryController(MemberDeliveryService service) { this.service = service; }

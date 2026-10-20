@@ -59,6 +59,7 @@ class WorkspaceAccessLevelTest {
         assertEquals(RetentionPolicy.RUNTIME, retention.value());
         assertEquals(WorkspaceAccessLevel.READ_ONLY,
                 RequireWorkspaceAccess.class.getDeclaredMethod("value").getDefaultValue());
+        assertEquals("", RequireWorkspaceAccess.class.getDeclaredMethod("actionKey").getDefaultValue());
         assertEquals("访问工作空间资源",
                 RequireWorkspaceAccess.class.getDeclaredMethod("action").getDefaultValue());
     }

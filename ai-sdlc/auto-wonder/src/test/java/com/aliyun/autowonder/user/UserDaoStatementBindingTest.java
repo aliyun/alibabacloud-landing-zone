@@ -6,7 +6,9 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -118,6 +120,140 @@ class UserDaoStatementBindingTest {
                         || statement.contains("is_admin")
                         || statement.contains("status ="),
                 "updateProfile must not touch identity/role/status columns, got: " + statement);
+    }
+
+    @Test
+    void platformUserManagementStatementsAreRegistered() {
+        Configuration configuration = MybatisXmlConfigurationSupport.loadConfigurationFromMapperXml();
+        String prefix = "com.aliyun.autowonder.user.UserDao.";
+
+        for (String id : List.of("findActiveByEmail", "countAllUsers", "searchUsersForAdmin",
+                "countUsersForAdmin", "findByIdIncludingDeleted", "listByIdsIncludingDeleted",
+                "logicalDeleteUser", "restoreUser")) {
+            assertTrue(configuration.hasStatement(prefix + id),
+                    "missing MyBatis statement: " + prefix + id
+                            + " (UserDao.xml statement id must match the Java method name)");
+        }
+    }
+
+    @Test
+    void logicalDeleteTakesTheSnapshotAndReleasesBothUniqueKeysInOneUpdate() throws IOException {
+        String statement = statement("logicalDeleteUser", "update");
+
+        // The row must stay readable as an audit trail while username/email stop occupying
+        // their unique indexes; a two-step delete would leave a window where a recreate
+        // collides, so everything has to happen in this single UPDATE.
+        assertTrue(statement.contains("deleted_username = username"),
+                "the original username must be snapshotted, got: " + statement);
+        assertTrue(statement.contains("deleted_email = email"),
+                "the original email must be snapshotted, got: " + statement);
+        assertTrue(statement.contains("username = CONCAT('#deleted-', id)"),
+                "the username must be rewritten so uk_username is released, got: " + statement);
+        assertTrue(statement.contains("email = NULL"),
+                "the email must be nulled so uk_email is released (MySQL allows repeated NULL), got: "
+                        + statement);
+        assertTrue(statement.contains("deleted_at = #{deletedAt}")
+                        && statement.contains("deleted_by = #{deletedBy}"),
+                "the deletion trail must record when and by whom, got: " + statement);
+        assertTrue(statement.contains("is_deleted = 1"),
+                "the row must be marked deleted, got: " + statement);
+        assertTrue(statement.contains("WHERE id = #{id} AND is_deleted = 0"),
+                "the is_deleted = 0 guard makes a repeat delete a no-op, got: " + statement);
+        assertFalse(statement.contains("password_hash") || statement.contains("nickname =")
+                        || statement.contains("status ="),
+                "logical delete must preserve credentials, profile and status for the snapshot "
+                        + "display, got: " + statement);
+    }
+
+    @Test
+    void restoreRebuildsIdentityFromTheSnapshotAndClearsEveryDeletionTrail() throws IOException {
+        String statement = statement("restoreUser", "update");
+
+        assertTrue(statement.contains("username = deleted_username"),
+                "restore must bring the original username back, got: " + statement);
+        assertTrue(statement.contains("email = deleted_email"),
+                "restore must bring the original email back, got: " + statement);
+        assertTrue(statement.contains("deleted_username = NULL")
+                        && statement.contains("deleted_email = NULL")
+                        && statement.contains("deleted_at = NULL")
+                        && statement.contains("deleted_by = NULL"),
+                "restore must clear the deletion snapshot, got: " + statement);
+        assertTrue(statement.contains("deactivated_at = NULL")
+                        && statement.contains("cooling_off_expires_at = NULL")
+                        && statement.contains("deactivation_revoked_at = NULL"),
+                "restore must also clear the legacy cooling-off trail so the account does not "
+                        + "resurface as mid-deactivation, got: " + statement);
+        assertTrue(statement.contains("is_deleted = 0"),
+                "restore must lift the deletion flag, got: " + statement);
+        assertTrue(statement.contains("WHERE id = #{id} AND is_deleted = 1"),
+                "the is_deleted = 1 guard keeps restore from clobbering a live account, got: "
+                        + statement);
+    }
+
+    @Test
+    void adminListAndItsTotalShareOnePredicate() throws IOException {
+        String list = statement("searchUsersForAdmin", "select");
+        String count = statement("countUsersForAdmin", "select");
+
+        assertFalse(whereClause(list).isEmpty(), "searchUsersForAdmin must carry a <where> block");
+        assertEquals(whereClause(count), whereClause(list),
+                "the count predicate drifted from the page predicate; the UI would then paginate "
+                        + "into empty pages. Keep both <where> blocks byte-identical.");
+
+        for (String column : List.of("username", "nickname", "email", "phone",
+                "deleted_username", "deleted_email")) {
+            assertTrue(list.contains(column + " LIKE CONCAT('%', #{keyword}, '%')"),
+                    "keyword search must also match " + column + ", otherwise deleted users are "
+                            + "unsearchable by their pre-deletion name, got: " + list);
+        }
+        assertTrue(list.contains("is_deleted = 0 AND (status &lt;&gt; 1 OR password_hash &lt;&gt; 'DEACTIVATED')"),
+                "the NORMAL filter must exclude both deleted and legacy-deactivated rows, got: "
+                        + list);
+        assertTrue(list.contains("is_deleted = 1"),
+                "the DELETED filter must select logically deleted rows, got: " + list);
+        assertTrue(list.contains("ORDER BY id DESC"),
+                "the admin list must stay in registration-descending order, got: " + list);
+        assertTrue(list.contains("LIMIT #{limit} OFFSET #{offset}"),
+                "the page query must stay bounded, got: " + list);
+        assertFalse(count.contains("LIMIT"),
+                "the total query must not paginate, got: " + count);
+    }
+
+    @Test
+    void adminLookupsAndCountsScopeExactlyAsDocumented() throws IOException {
+        String findByIdIncludingDeleted = statement("findByIdIncludingDeleted", "select");
+        assertFalse(findByIdIncludingDeleted.contains("is_deleted"),
+                "display resolution must see deleted rows too, got: " + findByIdIncludingDeleted);
+        assertTrue(findByIdIncludingDeleted.contains("WHERE id = #{id}"),
+                "display resolution must look the row up by id, got: " + findByIdIncludingDeleted);
+
+        String listByIdsIncludingDeleted = statement("listByIdsIncludingDeleted", "select");
+        assertFalse(listByIdsIncludingDeleted.contains("is_deleted"),
+                "batch display resolution must see deleted rows too, got: "
+                        + listByIdsIncludingDeleted);
+        assertTrue(listByIdsIncludingDeleted.contains("<foreach collection=\"ids\""),
+                "batch resolution must support the id collection, got: "
+                        + listByIdsIncludingDeleted);
+
+        String findActiveByEmail = statement("findActiveByEmail", "select");
+        assertTrue(findActiveByEmail.contains("WHERE email = #{email} AND is_deleted = 0"),
+                "email uniqueness checks must ignore rows whose email was released by a delete, "
+                        + "got: " + findActiveByEmail);
+        assertTrue(findActiveByEmail.contains("LIMIT 1"),
+                "the email lookup must stay a single-row read, got: " + findActiveByEmail);
+
+        String countAllUsers = statement("countAllUsers", "select");
+        assertTrue(countAllUsers.contains("COUNT(*) FROM `user`"),
+                "the header total must count the whole table, got: " + countAllUsers);
+        assertFalse(countAllUsers.contains("WHERE"),
+                "the header total must include deleted users, got: " + countAllUsers);
+    }
+
+    private static String whereClause(String statement) {
+        int start = statement.indexOf("<where>");
+        int end = statement.indexOf("</where>", start);
+        assertTrue(start >= 0 && end > start, "statement has no <where> block: " + statement);
+        return statement.substring(start, end).replaceAll("\\s+", " ").trim();
     }
 
     private String statement(String id, String tag) throws IOException {

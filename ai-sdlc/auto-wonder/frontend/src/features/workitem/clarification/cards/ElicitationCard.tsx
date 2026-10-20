@@ -1,8 +1,9 @@
+import { useTranslation } from 'react-i18next';
 import { Tag, Typography } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 import type { AcpElicitationAction } from '../types';
 import { CLARIFICATION_THEME } from '../theme';
-import { parseElicitationSchema, type ElicitationField } from './schemaForm';
+import { elicitationMessage, parseElicitationSchema, type ElicitationField } from './schemaForm';
 
 export interface ElicitationReply {
   action: 'accept' | 'decline';
@@ -18,11 +19,11 @@ interface ElicitationCardProps {
   answers?: Record<string, unknown>;
 }
 
-const RESOLVED_LABEL: Record<AcpElicitationAction, string> = {
-  accept: '已回答',
-  decline: '已跳过',
-  cancel: '已取消',
-};
+const RESOLVED_LABEL = {
+  accept: 'clarification.answered',
+  decline: 'clarification.skipped',
+  cancel: 'clarification.canceled',
+} as const satisfies Record<AcpElicitationAction, string>;
 
 /**
  * 已回答问题的内联历史展示。进行中的问题由 ElicitationWizard 停靠卡片承担，
@@ -31,6 +32,7 @@ const RESOLVED_LABEL: Record<AcpElicitationAction, string> = {
 export function ElicitationCard({
   requestId, message, schema, resolved = false, action, answers,
 }: ElicitationCardProps) {
+  const { t } = useTranslation('workitem');
   const form = parseElicitationSchema(schema);
 
   return (
@@ -46,11 +48,11 @@ export function ElicitationCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: resolved ? 8 : 0 }}>
         <QuestionCircleOutlined style={{ color: 'var(--aw-accent-text)' }} />
         <Typography.Text strong style={{ fontSize: 16, flex: 1 }}>
-          {message || form.title || '需要你的确认'}
+          {elicitationMessage(message, schema) || form.title || t('clarification.confirmation')}
         </Typography.Text>
         {resolved ? (
           <Tag color={action === 'accept' ? 'green' : 'default'} style={{ marginInlineEnd: 0 }}>
-            {(action && RESOLVED_LABEL[action]) || '已处理'}
+            {(action && RESOLVED_LABEL[action] && t(RESOLVED_LABEL[action])) || t('clarification.resolved')}
           </Tag>
         ) : null}
       </div>
@@ -66,6 +68,7 @@ function ResolvedAnswers({
   fields: ElicitationField[];
   answers?: Record<string, unknown>;
 }) {
+  const { t } = useTranslation('workitem');
   const entries = Object.entries(answers ?? {});
   if (entries.length === 0) return null;
 
@@ -91,7 +94,7 @@ function ResolvedAnswers({
               </div>
             ) : null}
             <div style={{ marginTop: 4, fontSize: 14, whiteSpace: 'pre-wrap' }}>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>答：</Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>{t('clarification.answerPrefix')}</Typography.Text>
               <span data-testid={`elicitation-answer-${key}`}>
                 {typeof value === 'string' ? value : JSON.stringify(value)}
               </span>

@@ -1,13 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ParticipationChart from './ParticipationChart';
 import { init } from 'echarts/core';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { i18n } from '@/shared/i18n';
 vi.mock('echarts/core', () => ({ use: vi.fn(), init: vi.fn() }));
 const chart = { setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn(), dispatchAction: vi.fn(), on: vi.fn(), getDataURL: vi.fn() };
 const data = [{ label: '2026-09-24', averageTotalSeconds: 120, averageHumanSeconds: 30, averageAgentSeconds: 90 },
   { label: '2026-09-25', averageTotalSeconds: 240, averageHumanSeconds: 60, averageAgentSeconds: 180 }];
-beforeEach(() => {
+beforeEach(async () => {
+  await i18n.changeLanguage('zh-CN');
   vi.clearAllMocks();
   vi.mocked(init).mockImplementation(node => {
     if (!node) throw new Error('Chart host is required');
@@ -15,6 +18,48 @@ beforeEach(() => {
     return { ...chart, dispose: () => { node.replaceChildren(); chart.dispose(); } } as unknown as ReturnType<typeof init>;
   });
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+});
+
+afterEach(async () => { cleanup(); await i18n.changeLanguage('zh-CN'); });
+
+it('updates a cached routed chart without losing hidden series or zoom, or disposing its renderer', async () => {
+  const router = createMemoryRouter([{ path: '/', element: <ParticipationChart kind="duration" data={data} average={null} /> }]);
+  const { container } = render(<RouterProvider router={router} />);
+  const host = container.querySelector('.participation-chart-canvas');
+  await userEvent.click(screen.getByRole('button', { name: '人工' }));
+  await userEvent.click(screen.getByRole('button', { name: '平均完成时长趋势放大区间' }));
+  const actions = chart.dispatchAction.mock.calls.length;
+  const initializations = vi.mocked(init).mock.calls.length;
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByRole('button', { name: 'Human' })).toHaveAttribute('aria-pressed', 'false');
+  expect(screen.getByRole('heading', { name: 'Average completion duration trend' })).toBeInTheDocument();
+  expect(container.querySelector('.participation-chart-canvas')).toBe(host);
+  expect(chart.dispose).not.toHaveBeenCalled();
+  expect(init).toHaveBeenCalledTimes(initializations);
+  expect(chart.dispatchAction).toHaveBeenCalledTimes(actions);
+  expect(chart.setOption.mock.calls.slice(-1)[0]?.[0].series).toEqual([
+    expect.objectContaining({ id: 'total', name: 'Total duration', data: [120, 240] }),
+    expect.objectContaining({ id: 'agent', name: 'Agent', data: [90, 180] }),
+  ]);
+  await userEvent.click(screen.getByRole('button', { name: 'Average completion duration trend data table' }));
+  const table = screen.getByRole('table');
+  expect(within(table).getAllByText('2 minutes')[0]).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(screen.getByRole('table')).toBe(table);
+  expect(screen.getByRole('button', { name: '人工' })).toHaveAttribute('aria-pressed', 'false');
+  expect(within(table).getAllByText('2分钟')[0]).toBeInTheDocument();
+});
+
+it('updates the independently mounted expanded chart and modal title in place', async () => {
+  const router = createMemoryRouter([{ path: '/', element: <ParticipationChart kind="ratio" data={data} average={null} /> }]);
+  render(<RouterProvider router={router} />);
+  await userEvent.click(screen.getByRole('button', { name: '人机占比趋势放大查看' }));
+  const dialog = screen.getByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: '人工' }));
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByRole('dialog', { name: 'Human–Agent share trend' })).toBe(dialog);
+  expect(within(dialog).getByRole('button', { name: 'Human' })).toHaveAttribute('aria-pressed', 'false');
+  expect(chart.setOption.mock.calls.slice(-1)[0]?.[0].series).toEqual([expect.objectContaining({ id: 'agent', name: 'Agent', data: [75, 75] })]);
 });
 describe('participation chart controls', () => {
   it.each(['ratio', 'duration'] as const)('lets ordinary wheels scroll the page while reserving Ctrl-wheel for %s zoom', kind => {

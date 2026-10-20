@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type KeyboardEvent } from 'react';
 import { Button, Input, Space } from 'antd';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
@@ -9,8 +10,6 @@ interface RunCommentInputProps {
   onSubmit: (payload: ScheduledRunCommentBody) => void;
   loading?: boolean;
 }
-
-const DEFAULT_DISABLED_REASON = '不在本次运行的冻结快照中，无法 @ 触发执行';
 
 const mentionOptionHighlightStyle: CSSProperties = {
   color: 'var(--aw-accent-text)',
@@ -85,6 +84,7 @@ function targetTypeOf(candidate: ScheduledRunMentionCandidate): 'AGENT' | 'HUMAN
 }
 
 export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputProps) {
+  const { t } = useTranslation('scheduledTask');
   const [content, setContent] = useState('');
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
@@ -119,7 +119,9 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
         const targetId = Number(candidate.userId);
         const disabled = candidate.mentionable === false;
         const disabledReason = disabled
-          ? (candidate.mentionDisabledReason || DEFAULT_DISABLED_REASON)
+          ? (candidate.mentionDisabledReasonCode === 'NOT_FROZEN'
+              ? t('comment.notFrozen')
+              : (candidate.mentionDisabledReason || t('comment.notFrozen')))
           : null;
         return {
           key: `${targetType}:${targetId}`,
@@ -131,22 +133,22 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
           label: disabled ? (
             <span style={{ color: 'var(--aw-muted)' }}>
               <span>@{candidate.name}</span>
-              <span style={{ marginLeft: 6 }}>{targetType === 'AGENT' ? '数字员工' : '真人'}</span>
-              <span style={{ marginLeft: 6 }}>（{disabledReason}）</span>
+              <span style={{ marginLeft: 6 }}>{targetType === 'AGENT' ? t('labels.agent') : t('comment.human')}</span>
+              <span style={{ marginLeft: 6 }}>{t('comment.disabledReason', { reason: disabledReason })}</span>
             </span>
           ) : (
             <span>
               <span style={mentionOptionHighlightStyle}>@{candidate.name}</span>
               <span style={{ marginLeft: 6, color: targetType === 'AGENT' ? 'var(--aw-warning)' : 'var(--aw-accent-text)' }}>
-                {targetType === 'AGENT' ? '数字员工' : '真人'}
+                {targetType === 'AGENT' ? t('labels.agent') : t('comment.human')}
               </span>
               {candidate.displayId ? <span style={{ marginLeft: 6, color: 'var(--aw-muted)' }}>{candidate.displayId}</span> : null}
-              {targetType === 'AGENT' && candidate.online === false ? '（离线，稍后送达）' : ''}
+              {targetType === 'AGENT' && candidate.online === false ? t('comment.offline') : ''}
             </span>
           ),
         };
       });
-  }, [candidates, mentionQuery]);
+  }, [candidates, mentionQuery, t]);
 
   const enabledOptions = useMemo(() => mentionOptions.filter((option) => !option.disabled), [mentionOptions]);
   const activeOption = enabledOptions[activeMentionIndex];
@@ -309,26 +311,26 @@ export function RunCommentInput({ runId, onSubmit, loading }: RunCommentInputPro
         )}
         <Input.TextArea
           ref={textAreaRef}
-          aria-label="评论本次运行"
+          aria-label={t('comment.label')}
           value={content}
           onChange={handleChange}
           onClick={(event) => setMentionQuery(findActiveMentionQuery(content, event.currentTarget.selectionStart ?? content.length))}
           onKeyDown={handleKeyDown}
           onKeyUp={handleKeyUp}
           autoSize={{ minRows: 1, maxRows: 6 }}
-          placeholder="评论本次运行，键入 @ 选择成员..."
+          placeholder={t('comment.placeholder')}
           disabled={loading}
           style={{ width: '100%', ...composerTextStyle }}
         />
       </div>
       <Button
-        aria-label="发送"
+        aria-label={t('comment.send')}
         type="primary"
         style={{ alignSelf: 'stretch', height: 'auto' }}
         loading={loading}
         onClick={handleSend}
       >
-        发送
+        {t('comment.send')}
       </Button>
     </Space.Compact>
   );

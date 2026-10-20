@@ -64,6 +64,30 @@ class AiWorkerPoolTest {
     }
 
     @Test
+    void executeSessionMarksFailedWhenReadBoundaryDeniesForbiddenDomain() {
+        AiSessionDO session = new AiSessionDO();
+        session.setId(1L);
+        session.setTenantId(100L);
+        session.setScene(AiConstants.Scene.CLARIFICATION);
+        session.setCreatorId(7L);
+        session.setVersion(0);
+
+        SceneAdapter adapter = mock(SceneAdapter.class);
+        when(sceneRegistry.get(AiConstants.Scene.CLARIFICATION)).thenReturn(adapter);
+        when(adapter.buildSystemPrompt(session)).thenThrow(
+                new com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException(
+                        com.aliyun.autowonder.access.WorkspaceDomain.REPO, "创建AI会话", null));
+
+        workerPool.executeSession(session, null);
+
+        // 终态失败而不是卡在 QUEUED；不准备仓库、不执行 CLI。
+        verify(sessionDao).updateFailed(eq(1L), eq(100L), contains("创建AI会话"), eq(0));
+        verify(streamPublisher).publishStatus(1L, 100L, AiConstants.Status.FAILED);
+        verifyNoInteractions(repoWorkspacePreparer);
+        verifyNoInteractions(cliExecutor);
+    }
+
+    @Test
     void executeSessionRunsCliAndUpdatesResult() throws Exception {
         AiSessionDO session = new AiSessionDO();
         session.setId(1L);

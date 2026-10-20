@@ -33,6 +33,13 @@ public class DaemonCheckpointController {
         this.auditLogService = auditLogService;
     }
 
+    public ResponseEntity<?> upload(long dispatchId, String token, long checkpointSeq,
+            String provider, String providerSessionId, String runtimeId, String activeStepId,
+            MultipartFile checkpoint) throws Exception {
+        return upload(dispatchId, token, checkpointSeq, provider, providerSessionId, runtimeId,
+                activeStepId, checkpoint, null, null);
+    }
+
     @PostMapping("/{dispatchId}/checkpoint")
     public ResponseEntity<?> upload(@PathVariable long dispatchId,
             @RequestParam("token") String token,
@@ -41,7 +48,9 @@ public class DaemonCheckpointController {
             @RequestParam(value = "providerSessionId", required = false) String providerSessionId,
             @RequestParam(value = "runtimeId", required = false) String runtimeId,
             @RequestParam(value = "activeStepId", required = false) String activeStepId,
-            @RequestParam("checkpoint") MultipartFile checkpoint) throws Exception {
+            @RequestParam("checkpoint") MultipartFile checkpoint,
+            @RequestParam(value = "purpose", required = false) String purpose,
+            @RequestParam(value = "resultId", required = false) String resultId) throws Exception {
         DaemonUploadAuthenticator.AuthResult auth = authenticator.authenticate(dispatchId, token);
         if (!auth.isSuccess()) {
             return ResponseEntity.status(401).build();
@@ -49,16 +58,32 @@ public class DaemonCheckpointController {
         if (checkpointSeq <= 0 || checkpoint.isEmpty() || checkpoint.getSize() > MAX_CHECKPOINT_BYTES) {
             return ResponseEntity.badRequest().body(Map.of("error", "invalid checkpoint"));
         }
+        boolean completion = "COMPLETION".equals(purpose);
+        if ((purpose != null && !completion && !"RECOVERY".equals(purpose))
+                || (completion && !DispatchResultCoordinator.validResultId(resultId))
+                || (!completion && resultId != null)) {
+            return ResponseEntity.badRequest().body(Map.of("error", com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                    "dispatch.result.invalid_identity", new Object[0], "invalid completion identity")));
+        }
         DispatchDO dispatch = dispatchDao.findById(dispatchId);
         DispatchCheckpointDO stored;
         try {
-            stored = checkpointService.store(dispatch, checkpointSeq,
-                    provider, providerSessionId, runtimeId, activeStepId, checkpoint.getBytes());
+            stored = completion
+                    ? checkpointService.store(dispatch, checkpointSeq, provider, providerSessionId,
+                            runtimeId, activeStepId, checkpoint.getBytes(), resultId)
+                    : checkpointService.store(dispatch, checkpointSeq,
+                            provider, providerSessionId, runtimeId, activeStepId, checkpoint.getBytes());
+        } catch (DispatchCheckpointService.CheckpointConflictException conflict) {
+            return ResponseEntity.status(409).body(Map.of("error", com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                    "dispatch.result.checkpoint_conflict", new Object[0], "checkpoint identity conflict")));
         } catch (RuntimeException uploadFailure) {
             return ResponseEntity.status(503).body(Map.of("error", "checkpoint upload temporarily unavailable"));
         }
         recordCheckpointAudit(auth, dispatchId, checkpointSeq, provider, providerSessionId, runtimeId, activeStepId,
                 stored.getSizeBytes());
+        if (completion) return ResponseEntity.ok(Map.of(
+                "checkpointSeq", stored.getCheckpointSeq(), "sha256", "sha256:" + stored.getSha256(),
+                "sizeBytes", stored.getSizeBytes(), "purpose", "COMPLETION", "resultId", stored.getCompletionResultId()));
         return ResponseEntity.ok(Map.of(
                 "checkpointSeq", stored.getCheckpointSeq(),
                 "sha256", "sha256:" + stored.getSha256(),

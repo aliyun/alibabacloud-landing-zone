@@ -1,6 +1,7 @@
+import { i18n } from '@/shared/i18n';
 /**
  * Front-end single source of truth for requirement/design document uploads, mirroring
- * RequirementDocumentService: extension whitelist, per-file/total/count limits, same-name
+ * RequirementDocumentService: per-file/total/count limits, same-name
  * conflicts and the user-facing copy. Both the workitem card and the scheduled task create
  * page share these rules so picker, drag and paste behave identically.
  */
@@ -9,27 +10,24 @@ export const DOCUMENT_MAX_DOCUMENTS = 10;
 export const DOCUMENT_MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const DOCUMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
-export const DOCUMENT_ALLOWED_EXTENSIONS = [
-  '.md', '.markdown', '.txt', '.html', '.pdf', '.png', '.jpg', '.jpeg', '.webp',
-  '.docx', '.doc', '.java', '.py', '.zip',
-];
-
-export const DOCUMENT_ACCEPT_ATTRIBUTE = DOCUMENT_ALLOWED_EXTENSIONS.join(',');
+// Omit accept so file pickers allow every format, including files without an extension.
+export const DOCUMENT_ACCEPT_ATTRIBUTE = undefined;
 
 export const DOCUMENT_UPLOAD_MESSAGES = {
-  unsupportedType: `仅支持上传 ${DOCUMENT_ALLOWED_EXTENSIONS.join('、')} 文件`,
-  fileTooLarge: '单个附件大小不能超过 5 MB',
-  tooMany: `最多上传 ${DOCUMENT_MAX_DOCUMENTS} 个需求/设计上下文附件`,
-  duplicate: (name: string) => `附件已存在：${name}`,
-  totalTooLarge: '需求/设计上下文总大小不能超过 20 MB',
-  directory: '不支持上传文件夹，请拖入文件',
-  noLocalFile: '未识别到可上传的文件，请拖入本地文件',
+  get fileTooLarge() { return i18n.t('shared:upload.fileTooLarge'); },
+  get tooMany() { return i18n.t('shared:upload.tooMany', { max: DOCUMENT_MAX_DOCUMENTS }); },
+  duplicate: (name: string) => i18n.t('shared:upload.duplicate', { name }),
+  get totalTooLarge() { return i18n.t('shared:upload.totalTooLarge'); },
+  get directory() { return i18n.t('shared:upload.directory'); },
+  get noLocalFile() { return i18n.t('shared:upload.noLocalFile'); },
 };
 
 const EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/svg+xml': '.svg',
   'application/pdf': '.pdf',
   'text/markdown': '.md',
   'text/plain': '.txt',
@@ -37,15 +35,12 @@ const EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   'application/zip': '.zip',
   'application/x-zip-compressed': '.zip',
   'application/msword': '.doc',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
   'text/x-java-source': '.java',
   'text/x-python': '.py',
 };
-
-export function isSupportedDocumentName(name: string): boolean {
-  const lower = (name ?? '').toLowerCase();
-  return DOCUMENT_ALLOWED_EXTENSIONS.some((extension) => lower.endsWith(extension));
-}
 
 export interface DocumentSelectionContext {
   existingCount: number;
@@ -60,9 +55,6 @@ export function validateDocumentSelection(
   context: DocumentSelectionContext,
 ): DocumentSelectionVerdict {
   if (files.length === 0) return { ok: true };
-  if (files.some((file) => !isSupportedDocumentName(file.name))) {
-    return { ok: false, message: DOCUMENT_UPLOAD_MESSAGES.unsupportedType };
-  }
   if (files.some((file) => file.size > DOCUMENT_MAX_FILE_BYTES)) {
     return { ok: false, message: DOCUMENT_UPLOAD_MESSAGES.fileTooLarge };
   }
@@ -103,16 +95,16 @@ function extensionOfName(name: string): string | undefined {
  * Chrome names every pasted screenshot `image.png` and Safari may omit the name entirely, so
  * clipboard images always get a timestamped, sequence-suffixed name; otherwise repeated pastes
  * would collide on the backend's same-name CONFLICT rule. Named non-image clipboard files keep
- * their name, and an unmappable type keeps the original file so validation reports it.
+ * their name; unnamed files with an unrecognized MIME type use a generic binary extension.
  */
 export function pastedFileForUpload(file: File, now: number = Date.now()): File {
   const mimeType = (file.type ?? '').toLowerCase();
   const name = (file.name ?? '').trim();
   const clipboardImage = mimeType.startsWith('image/');
-  if (!clipboardImage && name !== '' && isSupportedDocumentName(name)) return file;
-  const extension = EXTENSION_BY_MIME_TYPE[mimeType] ?? extensionOfName(name);
-  if (!extension || !isSupportedDocumentName(`x${extension}`)) return file;
+  if (!clipboardImage && name !== '') return file;
+  const extension = EXTENSION_BY_MIME_TYPE[mimeType] ?? extensionOfName(name) ?? '.bin';
   pastedNameSequence += 1;
+  // Keep the established filename prefix: this becomes a persisted attachment name, not UI copy.
   const generated = `粘贴-${timestampLabel(now)}-${pastedNameSequence}${extension}`;
   return new File([file], generated, { type: file.type, lastModified: file.lastModified });
 }

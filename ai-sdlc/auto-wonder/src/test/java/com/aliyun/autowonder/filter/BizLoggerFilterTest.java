@@ -36,6 +36,48 @@ import org.mockito.ArgumentCaptor;
 
 class BizLoggerFilterTest {
 
+    @Test
+    void artifactUploadObservesSerializedResponseWithoutConsumingRequestOrChangingBytes() throws Exception {
+        BizLoggerFilter filter = new BizLoggerFilter();
+        ReflectionTestUtils.setField(filter, "metricRegistry", new MetricRegistry());
+        ReflectionTestUtils.setField(filter, "bizLogProducer", mock(BizLogProducer.class));
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/daemon/dispatches/13616/artifacts");
+        request.setQueryString("token=secret-must-not-be-logged");
+        request.setContent("multipart-content".getBytes(StandardCharsets.UTF_8));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicReference<UploadResponseProbe> observed = new AtomicReference<>();
+        filter.doFilter(request, response, (req, resp) -> {
+            assertEquals("multipart-content", StreamUtils.copyToString(req.getInputStream(), StandardCharsets.UTF_8));
+            assertTrue(resp instanceof UploadResponseProbe);
+            observed.set((UploadResponseProbe) resp);
+            resp.setContentType("application/json");
+            new com.fasterxml.jackson.databind.ObjectMapper().writeValue(resp.getOutputStream(),
+                    java.util.Map.of("remoteRef", "test/", "files", java.util.List.of()));
+        });
+        assertEquals(200, response.getStatus());
+        assertEquals("test/", new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(response.getContentAsByteArray()).get("remoteRef").asText());
+        assertEquals(123, observed.get().firstNonWhitespaceByte());
+        assertEquals(response.getContentAsByteArray().length, observed.get().bytesWritten());
+    }
+
+    @Test
+    void uploadProbeDoesNotSwallowPartialResponseFailure() throws Exception {
+        BizLoggerFilter filter = new BizLoggerFilter();
+        ReflectionTestUtils.setField(filter, "metricRegistry", new MetricRegistry());
+        ReflectionTestUtils.setField(filter, "bizLogProducer", mock(BizLogProducer.class));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        IOException failure = new IOException("simulated write failure");
+        IOException actual = assertThrows(IOException.class, () -> filter.doFilter(
+                new MockHttpServletRequest("POST", "/api/daemon/dispatches/13616/artifacts"), response,
+                (req, resp) -> {
+                    resp.getOutputStream().write('{');
+                    throw failure;
+                }));
+        assertTrue(actual == failure);
+        assertEquals("{", response.getContentAsString());
+    }
+
     @AfterEach
     void tearDown() {
         AutoWonderContext.destroy();

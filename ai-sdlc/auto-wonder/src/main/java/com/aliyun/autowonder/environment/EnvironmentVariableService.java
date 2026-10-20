@@ -5,6 +5,7 @@ import com.aliyun.autowonder.audit.AuditLogService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -67,7 +68,7 @@ public class EnvironmentVariableService {
             throw new BizException(ErrorCode.PARAM_INVALID);
         }
         if (request.isUpdateValue() == null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "updateValue 参数必须显式提供");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "environment.update_value_required", new Object[0], "updateValue 参数必须显式提供");
         }
         String name = validateName(request.getName());
         ensureNameAvailable(tenantId, name, id);
@@ -110,7 +111,8 @@ public class EnvironmentVariableService {
         }
         List<EnvironmentVariableReference> references = dao.listActiveReferences(tenantId, id);
         if (references != null && !references.isEmpty()) {
-            throw new BizException(ErrorCode.ENVIRONMENT_VARIABLE_DELETE_IN_USE,
+            throw BizException.keyed(ErrorCode.ENVIRONMENT_VARIABLE_DELETE_IN_USE,
+                    "environment.references_in_use", new Object[]{displayReferences(references)},
                     describeReferences(references));
         }
         if (dao.softDelete(tenantId, id, variable.getVersion(), userId) == 0) {
@@ -151,7 +153,7 @@ public class EnvironmentVariableService {
         }
         String trimmed = description.trim();
         if (trimmed.length() > 512) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "环境变量说明不能超过512个字符");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "environment.description_too_long", new Object[]{512}, "环境变量说明不能超过512个字符");
         }
         return trimmed.isEmpty() ? null : trimmed;
     }
@@ -176,6 +178,21 @@ public class EnvironmentVariableService {
         record.setEventType("ENVIRONMENT_VARIABLE_LIBRARY");
         record.detail("name", variable.getName());
         auditLogService.recordRequired(record);
+    }
+
+    private String displayReferences(List<EnvironmentVariableReference> references) {
+        // ponytail: Current-operation text; a future cached client needs explicit source projection to change languages.
+        return references.stream().map(ref -> {
+            String name = ref.getAgentName() == null || ref.getAgentName().isBlank()
+                    ? SystemMessages.render("environment.agent_fallback", null, "数字员工") : ref.getAgentName();
+            boolean online = "ONLINE".equals(ref.getRefType());
+            String key = ref.getVersionNo() == null
+                    ? (online ? "environment.reference_online" : "environment.reference_editing")
+                    : (online ? "environment.reference_online_version" : "environment.reference_editing_version");
+            return SystemMessages.render(key,
+                    new Object[]{name, String.valueOf(ref.getAgentId()), String.valueOf(ref.getVersionNo())}, null);
+        }).collect(java.util.stream.Collectors.joining(
+                SystemMessages.render("environment.reference_separator", null, "；")));
     }
 
     private String describeReferences(List<EnvironmentVariableReference> references) {

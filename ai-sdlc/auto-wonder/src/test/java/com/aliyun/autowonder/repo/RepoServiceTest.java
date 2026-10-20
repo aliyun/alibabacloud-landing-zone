@@ -520,4 +520,48 @@ class RepoServiceTest {
         assertEquals("连接成功", result.getMessage());
         verify(connectionTester).test(req);
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"'a/b','仓库名称「a/b」必须是单级目录名（不含 / 或 \\ 等路径分隔符、也不能是 . 或 ..、绝对路径）。如填写的是 namespace/repo-name 形式的标识，请将完整标识填在 Git 仓库地址中，仓库名称只填单级目录名。','The repository name “a/b” must be a single directory segment, without path separators, ., .., or an absolute path. If it is a namespace/repo-name identifier, put the full identifier in the Git repository URL and use only one directory segment as the name.'", "'~raw','仓库名称不能以 ~ 或 % 开头','The repository name cannot start with ~ or %'", "'a\u0001b','仓库名称不能包含控制字符','The repository name cannot contain control characters'"})
+    void nameIdentityProjectsWithoutChangingValidator(String name, String raw, String en) {
+        var request = new CreateRepoRequest(); request.setName(name); request.setUrl("https://raw");
+        var error = assertThrows(BizException.class, () -> service.create(request, 1L, 2L));
+        assertEquals(raw, RepoNameValidator.validate(name)); assertEquals(raw, error.getMessage());
+        assertEquals(BizException.class, error.getClass()); assertNull(error.getCause());
+        assertEquals(ErrorCode.REPO_NAME_INVALID.getCode(), error.getCode());
+        verify(repoDao, never()).insert(any());
+        assertEquals(en, com.aliyun.autowonder.common.i18n.SystemMessages.render(error.getMessageKey(), error.getMessageArgs(), raw, java.util.Locale.US));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"zh-CN", "en-US"})
+    void deleteRefusalKeepsRawDiagnosticsAndProjectsKnownRowsOnBothHumanWires(String language) throws Exception {
+        RepoDO repo = new RepoDO(); repo.setId(1L); repo.setTenantId(1L); repo.setVersion(0);
+        when(repoDao.findById(1L)).thenReturn(repo);
+        when(agentRepoPermDao.listActiveRefsByRepoId(1L, 1L)).thenReturn(List.of(
+            activeRef(9007199254740993L, " ", 11L, null, "ONLINE"),
+            activeRef(7L, "数字员工", 12L, 1000, "EDITING"),
+            activeRef(8L, "<b>raw</b>", 13L, null, "unknown")));
+        String raw = "仓库仍被数字员工引用,无法删除:数字员工(#9007199254740993) 在线版本；数字员工(#7) 编辑草稿 v1000；<b>raw</b>(#8) 编辑草稿。请先在对应版本解除该仓库权限,或发布解除后的新版本再删除仓库。";
+        String expected = language.equals("zh-CN") ? raw : "The repository is still referenced by Agents and cannot be deleted: Agent(#9007199254740993) online version; 数字员工(#7) editing draft v1000; <b>raw</b>(#8) editing draft. Remove the repository permission from the relevant version, or publish a new version without it before deleting the repository.";
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.forLanguageTag(language));
+        com.aliyun.autowonder.context.AutoWonderContext.get().setCurrentWorkspaceId(1L);
+        com.aliyun.autowonder.context.AutoWonderContext.get().setUserId(2L);
+        try {
+            var error = assertThrows(BizException.class, () -> new RepoController(service).delete(1L));
+            assertEquals(raw, error.getMessage()); assertEquals(raw, error.getLocalizedMessage()); assertNull(error.getCause());
+            assertEquals(BizException.class, error.getClass()); assertEquals(ErrorCode.REPO_DELETE_IN_USE.getCode(), error.getCode());
+            var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals(200, response.getStatusCodeValue()); assertEquals(expected, response.getBody().getMessage());
+            var token = mock(com.aliyun.autowonder.mcp.McpAccessTokenService.class);
+            var tools = mock(com.aliyun.autowonder.mcp.McpToolService.class);
+            var principal = new com.aliyun.autowonder.mcp.McpAccessTokenService.Principal(1L,2L,3L,com.aliyun.autowonder.access.WorkspaceAccessLevel.READ_WRITE,com.aliyun.autowonder.mcp.McpAccessTokenService.CredentialType.CONVERSATION);
+            when(token.authenticate(null, "raw-token")).thenReturn(principal);
+            doAnswer(inv -> {service.delete(1L,1L,2L); return null;}).when(tools).call(principal, "autowonder.delete_repo", java.util.Map.of("id",1L));
+            var rpc = new com.aliyun.autowonder.mcp.McpController(token, tools, mock(com.aliyun.autowonder.mcp.McpSseService.class)).rpc(null, "raw-token", java.util.Map.of(
+                "id","raw-id","method","tools/call","params",java.util.Map.of("name","autowonder.delete_repo","arguments",java.util.Map.of("id",1L))));
+            assertEquals(-32000, rpc.getError().getCode()); assertEquals(expected, rpc.getError().getMessage()); assertEquals("raw-id", rpc.getId());
+            verify(repoDao, never()).softDelete(anyLong(),anyLong(),anyInt(),anyLong());
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); com.aliyun.autowonder.context.AutoWonderContext.destroy();}
+    }
+
 }

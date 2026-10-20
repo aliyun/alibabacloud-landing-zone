@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -667,4 +668,20 @@ describe('WorkspaceSelectPage', () => {
       expect(screen.getByTestId('location-path')).toHaveTextContent('/workspaces/recycle-bin');
     });
   });
+
+  it('switches workspace navigation language from the shared header without changing workspace names', async () => {
+    mockMine([MANAGEABLE_WORKSPACE]);
+    renderPage();
+    await screen.findByText('星云工坊');
+    try {
+      await userEvent.click(screen.getByRole('button', { name: '切换语言' }));
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'English' }));
+      expect(await screen.findByRole('tab', { name: 'My workspaces' })).toBeInTheDocument();
+      expect(screen.getByText('星云工坊')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: 'Switch language' })).toHaveLength(1);
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    }
+  });
+
 });

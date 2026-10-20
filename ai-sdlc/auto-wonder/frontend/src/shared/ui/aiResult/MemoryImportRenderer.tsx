@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Card, Input, Select, Button, Space, Typography, Empty } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
 import type { AiResultRendererProps } from './types';
@@ -6,15 +7,16 @@ import type { MemoryImportResult, MemoryImportItem, MemoryItemType } from '@/sha
 const { TextArea } = Input;
 const { Text } = Typography;
 
-const TYPE_OPTIONS: { value: MemoryItemType; label: MemoryItemType }[] = [
-  { value: '项目知识', label: '项目知识' },
-  { value: '工程规则', label: '工程规则' },
-  { value: '经验', label: '经验' },
-  { value: '偏好', label: '偏好' },
-  { value: '避坑', label: '避坑' },
-];
 
 export function MemoryImportRenderer({ value, onChange, disabled }: AiResultRendererProps<MemoryImportResult>) {
+  const { t } = useTranslation('shared');
+  const TYPE_OPTIONS: { value: MemoryItemType; label: string }[] = [
+    { value: '项目知识', label: t('memory.project') },
+    { value: '工程规则', label: t('memory.rules') },
+    { value: '经验', label: t('memory.experience') },
+    { value: '偏好', label: t('memory.preferences') },
+    { value: '避坑', label: t('memory.pitfalls') },
+  ];
   const items = value.items ?? [];
 
   const update = (i: number, patch: Partial<MemoryImportItem>) =>
@@ -24,7 +26,7 @@ export function MemoryImportRenderer({ value, onChange, disabled }: AiResultRend
     onChange({ items: items.filter((_, idx) => idx !== i) });
 
   if (items.length === 0) {
-    return <Empty description="没有可导入的记忆条目" />;
+    return <Empty description={t('memory.empty')} />;
   }
 
   return (
@@ -40,11 +42,9 @@ export function MemoryImportRenderer({ value, onChange, disabled }: AiResultRend
                 danger
                 type="text"
                 icon={<DeleteOutlined />}
-                aria-label={`丢弃第${i + 1}条`}
+                aria-label={t('memory.discardItem', { index: i + 1 })}
                 onClick={() => discard(i)}
-              >
-                丢弃
-              </Button>
+              >{t('memory.discard')}</Button>
             )
           }
           title={
@@ -58,14 +58,14 @@ export function MemoryImportRenderer({ value, onChange, disabled }: AiResultRend
             />
           }
         >
-          <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>标题（必填）</Text>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('memory.title')}</Text>
           <Input
             value={it.title}
             disabled={disabled}
             style={{ marginBottom: 8 }}
             onChange={(e) => update(i, { title: e.target.value })}
           />
-          <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>正文</Text>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>{t('memory.body')}</Text>
           <TextArea
             value={it.contentMd}
             disabled={disabled}

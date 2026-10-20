@@ -3,6 +3,7 @@ import { readWorkitemViewPreference, writeWorkitemViewPreference } from './viewP
 
 describe('workitem view preference', () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     window.localStorage.clear();
   });
@@ -29,17 +30,18 @@ describe('workitem view preference', () => {
   });
 
   it('tolerates unavailable storage on both read and write', () => {
-    const getItem = vi.spyOn(Storage.prototype, 'getItem')
-      .mockImplementation(() => { throw new Error('storage blocked'); });
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const storage = window.localStorage;
+    const getItem = vi.fn(() => { throw new Error('storage blocked'); });
+    const setItem = vi.fn(() => { throw new Error('storage blocked'); });
+    vi.stubGlobal('localStorage', { getItem, setItem });
     expect(readWorkitemViewPreference()).toBe('kanban');
     expect(getItem).toHaveBeenCalledWith('autowonder.workitems.view');
-    getItem.mockRestore();
-
-    const setItem = vi.spyOn(Storage.prototype, 'setItem')
-      .mockImplementation(() => { throw new Error('storage blocked'); });
+    storage.removeItem('autowonder.workitems.view');
     expect(() => writeWorkitemViewPreference('table')).not.toThrow();
     expect(setItem).toHaveBeenCalledWith('autowonder.workitems.view', 'table');
-    setItem.mockRestore();
+    vi.unstubAllGlobals();
+    expect(window.localStorage).toBe(storage);
     expect(window.localStorage.getItem('autowonder.workitems.view')).toBeNull();
   });
 });

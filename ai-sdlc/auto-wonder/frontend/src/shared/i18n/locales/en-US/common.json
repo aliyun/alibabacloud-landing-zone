@@ -1,0 +1,19 @@
+{
+  "language": { "switch": "Switch language", "syncFailed": "Could not save your language preference. Your selection is still active in this browser." },
+  "overlay": { "close": "Close" },
+  "appearance": { "dark": "Dark", "light": "Light", "system": "System", "switch": "Switch appearance", "current": "Appearance: {{mode}}", "scope": "Appearance applies only to this browser." },
+  "account": { "settings": "Profile settings", "logout": "Sign out", "menu": "User menu", "login": "Sign in", "expired": "You are not signed in or your session has expired", "networkError": "Network error" },
+  "workspace": { "switched": "Switched to {{name}}", "switchFailed": "Could not switch workspace", "notMember": "You are not a member of this work item's workspace", "linkedSwitchFailed": "Could not switch to this work item's workspace", "manage": "Manage workspaces...", "unselected": "Not selected" },
+  "navigation": { "expand": "Expand menu", "collapse": "Collapse menu", "help": "Help center", "content": "Page content" },
+  "duration": {
+    "second_one": "{{count}} second",
+    "second_other": "{{count}} seconds",
+    "minute_one": "{{count}} minute",
+    "minute_other": "{{count}} minutes",
+    "hour_one": "{{count}} hour",
+    "hour_other": "{{count}} hours",
+    "remainderMinute_one": "{{count}} minute",
+    "remainderMinute_other": "{{count}} minutes",
+    "hoursMinutes": "{{hours}} {{minutes}}"
+  }
+}

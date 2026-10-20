@@ -26,6 +26,22 @@ class PresenceManagerTest {
     }
 
     @Test
+    void conversationRuntimeCapabilitiesNormalizeForReadinessAndRouting() {
+        when(redisManager.getString("exec:session:1")).thenReturn("session-current");
+        when(redisManager.set(any(), any(), anyInt())).thenReturn(true);
+        var current = new ExecutorDispatchSnapshot("session-current", 10, true, true,
+                Set.of(), Set.of(), Set.of(), Set.of(), null, 123L);
+        var advertised = java.util.List.of("CONVERSATION_ACP_INTERACTION_V1", "CONVERSATION_TURN_CANCEL");
+        assertEquals(PresenceManager.SessionMutationResult.APPLIED,
+                presenceManager.publishHeartbeat(1L, 10L, "session-current", current, advertised, "0.3.8", "auto"));
+        verify(redisManager).set(eq("exec:dispatch-snapshot:1"),
+                argThat(value -> value instanceof ExecutorDispatchSnapshot stored
+                        && stored.protocolFeatures().contains("CONVERSATION_TURN_EVENT")), eq(90));
+        verify(redisManager).replaceSetWithExpire(eq("exec:protocol-features:1"),
+                argThat(features -> features.contains("CONVERSATION_TURN_EVENT")), eq(90L));
+    }
+
+    @Test
     void announceSessionPublishesCrossNodeReconciliation() {
         assertTrue(presenceManager.announceSession(1L, "session-new"));
 

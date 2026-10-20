@@ -10,7 +10,7 @@ import { useAuthStore } from '@/shared/auth/store';
 import { USER_IM_IDENTITIES_QUERY_KEY } from './profileApi';
 import type { UpdateDingTalkIdentityParams } from './profileApi';
 import { ProfileSettingsPage } from './ProfileSettingsPage';
-import { MCP_PERMISSION_HINT } from '@/features/open-platform/McpTokenSettingsPanel';
+import { getMcpPermissionHint } from '@/features/open-platform/McpTokenSettingsPanel';
 
 const successMock = vi.hoisted(() => vi.fn());
 const errorMock = vi.hoisted(() => vi.fn());
@@ -163,11 +163,14 @@ describe('ProfileSettingsPage', () => {
     await waitFor(() => expect(screen.getByLabelText('昵称')).toHaveValue('爱丽丝'));
 
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['基本信息', 'IM 工号', 'MCP 令牌', '修改密码', '账号注销']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['基本信息', 'IM 工号', '企业身份', 'MCP 令牌', '修改密码', '账号注销']);
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
 
     await userEvent.click(screen.getByRole('tab', { name: 'IM 工号' }));
     expect(await screen.findByLabelText('钉钉工号')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: '企业身份' }));
+    expect(await screen.findByTestId('federated-empty')).toBeInTheDocument();
   });
 
   it('loads existing DINGTALK identity and saves updated staff id', async () => {
@@ -386,7 +389,7 @@ describe('ProfileSettingsPage', () => {
     renderPage('/profile/settings?tab=mcp');
 
     expect(await screen.findByText('local-codex')).toBeInTheDocument();
-    expect(screen.getByText(MCP_PERMISSION_HINT)).toBeInTheDocument();
+    expect(screen.getByText(getMcpPermissionHint())).toBeInTheDocument();
   });
 
   it('drops the configured and effective access level columns', async () => {

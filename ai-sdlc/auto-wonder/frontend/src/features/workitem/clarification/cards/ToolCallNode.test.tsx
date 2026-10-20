@@ -37,7 +37,7 @@ describe('ToolCallNode', () => {
     render(<ToolCallNode tool={call({ toolKind: 'read', title: '读取 repo-map.json' })} />);
 
     expect(screen.getByTestId('tool-call-title')).toHaveTextContent('读取 repo-map.json');
-    expect(screen.getByText('completed')).toBeInTheDocument();
+    expect(screen.getByText('已完成')).toBeInTheDocument();
   });
 
   it('falls back to the tool name and a generic icon without ACP data', () => {
@@ -63,7 +63,7 @@ describe('ToolCallNode', () => {
 
   it('tags the call status so failures stand out', () => {
     const failed = render(<ToolCallNode tool={call({ status: 'failed' })} />);
-    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.getByText('失败')).toBeInTheDocument();
     expect(failed.container.querySelector('.ant-tag-red')).not.toBeNull();
     failed.unmount();
 

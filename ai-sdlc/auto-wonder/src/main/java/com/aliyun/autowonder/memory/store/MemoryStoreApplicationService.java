@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.memory.store.dto.MemoryChangePageVO;
 import com.aliyun.autowonder.memory.store.dto.MemoryMutationRequest;
@@ -224,11 +226,11 @@ public class MemoryStoreApplicationService {
                                      MemoryStoreDO requested) {
         if (!administrator) throw new MemoryAccessDeniedException();
         if (requested == null || !Set.of("AGENT", "SQUAD", "ORG").contains(requested.getScope())) {
-            throw new IllegalArgumentException("supported memory scope is required");
+            throw new KeyedIllegalArgumentException("memory.validation.scope_required", null, "supported memory scope is required");
         }
         Long ownerRef = "ORG".equals(requested.getScope()) ? 0L : requested.getOwnerRef();
         if (!"ORG".equals(requested.getScope()) && (ownerRef == null || ownerRef <= 0)) {
-            throw new IllegalArgumentException("memory owner is required");
+            throw new KeyedIllegalArgumentException("memory.validation.owner_required", null, "memory owner is required");
         }
         MemoryStoreDO existing = storeDao.findActive(tenantId, requested.getScope(), ownerRef);
         if (existing != null) return existing;
@@ -250,7 +252,7 @@ public class MemoryStoreApplicationService {
         MemoryStoreDO store = requiredStore(tenantId, storeId);
         require(permission(store, userSubjects(userId, administrator)), MemoryPermission.ADMIN);
         if ("AGENT".equals(store.getScope())) {
-            throw new IllegalArgumentException("agent personal memory store cannot be archived");
+            throw new KeyedIllegalArgumentException("memory.validation.personal_store_archive", null, "agent personal memory store cannot be archived");
         }
         if (storeDao.archive(tenantId, storeId, version, userId) != 1) {
             throw new MemoryDocumentService.MemoryConflictException("memory store version changed");
@@ -289,11 +291,11 @@ public class MemoryStoreApplicationService {
         MemoryStoreDO store = requiredStore(tenantId, storeId);
         require(permission(store, userSubjects(userId, administrator)), MemoryPermission.ADMIN);
         if (acl == null) {
-            throw new IllegalArgumentException("ACL is required");
+            throw new KeyedIllegalArgumentException("memory.validation.acl_required", null, "ACL is required");
         }
         MemoryPermission.valueOf(acl.getPermission());
         if (!Set.of("USER", "AGENT", "SQUAD", "ROLE").contains(acl.getSubjectType())) {
-            throw new IllegalArgumentException("unsupported ACL subject type");
+            throw new KeyedIllegalArgumentException("memory.validation.acl_subject_type", null, "unsupported ACL subject type");
         }
         acl.setTenantId(tenantId);
         acl.setStoreId(storeId);
@@ -315,17 +317,17 @@ public class MemoryStoreApplicationService {
         Set<Long> squads = safe(squadMemberDao.listByAgent(agentId)).stream()
                 .filter(member -> member != null && Long.valueOf(tenantId).equals(member.getTenantId()))
                 .map(SquadMemberDO::getSquadId).collect(Collectors.toSet());
-        return new MemoryStoreAccessService.Subjects(null, agentId, squads, Set.of("ALL_AGENTS"), false);
+        return new MemoryStoreAccessService.Subjects(null, agentId, squads, Set.of("ALL_AGENTS"), false, false);
     }
 
     private MemoryStoreAccessService.Subjects userSubjects(long userId, boolean administrator) {
-        return new MemoryStoreAccessService.Subjects(userId, null, Set.of(), Set.of(), administrator);
+        return new MemoryStoreAccessService.Subjects(userId, null, Set.of(), Set.of(), administrator, true);
     }
 
     private MemoryStoreDO requiredStore(long tenantId, long storeId) {
         MemoryStoreDO store = storeDao.findById(tenantId, storeId);
         if (store == null) {
-            throw new IllegalArgumentException("memory store not found");
+            throw new KeyedIllegalArgumentException("memory.validation.store_missing", null, "memory store not found");
         }
         return store;
     }

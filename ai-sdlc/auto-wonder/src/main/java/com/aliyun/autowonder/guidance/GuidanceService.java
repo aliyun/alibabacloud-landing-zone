@@ -4,10 +4,12 @@ import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDao;
 import com.aliyun.autowonder.scheduledtask.ScheduledTaskRunDO;
@@ -23,6 +25,7 @@ import com.aliyun.autowonder.workitem.WorkitemCommentDao;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import com.aliyun.autowonder.workitem.WorkitemService;
 import com.aliyun.autowonder.workitem.dto.CommentInteractionVO;
+import com.aliyun.autowonder.workitem.dto.CommentVO;
 import com.aliyun.autowonder.workitem.dto.ParticipantVO;
 import com.aliyun.autowonder.workitem.dto.TimelineItemVO;
 import org.springframework.context.ApplicationEventPublisher;
@@ -95,8 +98,42 @@ public class GuidanceService {
             targetAgentIds = resolveMention(workspaceId, workitemId, contentMd);
         }
         for (Long targetAgentId : targetAgentIds) {
-            create(workspaceId, workitemId, commentId, targetAgentId, creatorId, contentMd);
+            try {
+                create(workspaceId, workitemId, commentId, targetAgentId, creatorId, contentMd);
+            } catch (BizException ex) {
+                // Reachable callers (REST, Aone sync, MCP comment tool) save the comment in this
+                // transaction, so the notice must say the comment was not saved and point at
+                // reopening delivery; other conflicts keep their code.
+                if (DispatchRecoveryService.DELIVERY_CLOSED_MESSAGE_KEY.equals(ex.getMessageKey())) {
+                    throw BizException.keyed(ErrorCode.WORKITEM_DELIVERY_CLOSED,
+                            "workitem.comment.delivery_closed", new Object[0],
+                            "交付已关闭，评论未发送，无法启动数字员工", ex);
+                }
+                throw ex;
+            }
         }
+    }
+
+    /**
+     * Saves a human comment and starts its interactions in one transaction, matching the REST
+     * entry so a closed delivery still rolls the comment back with the notice.
+     */
+    @Transactional
+    public CommentVO addCommentWithInteraction(long workspaceId, long workitemId, String contentMd,
+            List<Long> targetHumanIds, List<Long> targetAgentIds, long userId) {
+        CommentVO comment = workitemService.addComment(workitemId, contentMd, targetHumanIds, workspaceId, userId);
+        createForComment(workspaceId, workitemId, comment.getId(), contentMd, targetAgentIds, userId);
+        return comment;
+    }
+
+    /** Saves an agent comment of a dispatch credential and starts its interactions in one transaction. */
+    @Transactional
+    public CommentVO addAgentCommentWithInteraction(long workspaceId, long workitemId, long agentId,
+            long operatorUserId, String contentMd, List<Long> targetHumanIds, List<Long> targetAgentIds) {
+        CommentVO comment = workitemService.addAgentComment(workitemId, contentMd, targetHumanIds, workspaceId,
+                agentId, operatorUserId);
+        createForComment(workspaceId, workitemId, comment.getId(), contentMd, targetAgentIds, operatorUserId);
+        return comment;
     }
 
     /** Creates a guidance delivery bound to a Run, never the similarly numbered Workitem. */
@@ -106,15 +143,15 @@ public class GuidanceService {
         if (scheduledTaskRunDao == null) throw new IllegalStateException("scheduled run guidance unavailable");
         ScheduledTaskRunDO run = scheduledTaskRunDao.findById(workspaceId, runId);
         if (run == null || !Objects.equals(run.getWorkspaceId(), workspaceId)) {
-            throw new IllegalArgumentException("scheduled run does not belong to tenant");
+            throw new KeyedIllegalArgumentException("guidance.validation.run_wrong_tenant", new Object[0], "scheduled run does not belong to tenant");
         }
         AgentDO agent = agentDao.findById(targetAgentId);
         if (agent == null || !Objects.equals(agent.getTenantId(), workspaceId)) {
-            throw new IllegalArgumentException("target agent does not belong to tenant");
+            throw new KeyedIllegalArgumentException("guidance.validation.agent_wrong_tenant", new Object[0], "target agent does not belong to tenant");
         }
         WorkitemCommentDO comment = commentDao.findBySourceAndId(workspaceId,
                 ExecutionSourceType.SCHEDULED_TASK_RUN.name(), runId, commentId);
-        if (comment == null) throw new IllegalArgumentException("guidance comment does not belong to scheduled run");
+        if (comment == null) throw new KeyedIllegalArgumentException("guidance.validation.comment_wrong_run", new Object[0], "guidance comment does not belong to scheduled run");
         GuidanceDO guidance = new GuidanceDO();
         guidance.setTenantId(workspaceId);
         guidance.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
@@ -292,11 +329,11 @@ public class GuidanceService {
             long creatorId, String commentContentMd) {
         WorkitemDO workitem = workitemDao.findById(workitemId);
         if (workitem == null || !Objects.equals(workitem.getTenantId(), workspaceId)) {
-            throw new IllegalArgumentException("workitem does not belong to tenant");
+            throw new KeyedIllegalArgumentException("guidance.validation.workitem_wrong_tenant", new Object[0], "workitem does not belong to tenant");
         }
         AgentDO agent = agentDao.findById(targetAgentId);
         if (agent == null || !Objects.equals(agent.getTenantId(), workspaceId)) {
-            throw new IllegalArgumentException("target agent does not belong to tenant");
+            throw new KeyedIllegalArgumentException("guidance.validation.agent_wrong_tenant", new Object[0], "target agent does not belong to tenant");
         }
         requireComment(workspaceId, ExecutionSourceType.WORKITEM, workitemId, commentId);
 
@@ -573,7 +610,7 @@ public class GuidanceService {
                 ? commentDao.findById(workspaceId, commentId)
                 : commentDao.findBySourceAndId(workspaceId, sourceType.name(), workitemId, commentId);
         if (comment == null || !Objects.equals(comment.getWorkitemId(), workitemId)) {
-            throw new IllegalArgumentException("guidance comment does not belong to source");
+            throw new KeyedIllegalArgumentException("guidance.validation.comment_wrong_source", new Object[0], "guidance comment does not belong to source");
         }
         return comment;
     }
@@ -597,7 +634,7 @@ public class GuidanceService {
             if (match == null || match <= 0) throw new IllegalArgumentException("frozen target agent context is missing");
             return match;
         } catch (RuntimeException invalid) {
-            throw new IllegalArgumentException("scheduled run snapshot is invalid for guidance", invalid);
+            throw new KeyedIllegalArgumentException("guidance.validation.run_snapshot_invalid", new Object[0], "scheduled run snapshot is invalid for guidance", invalid);
         }
     }
 

@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect } from 'vitest';
 import { buildAgentSquadNameMap, formatAgentSquadLabel } from './agentSquadLabel';
 
@@ -90,4 +91,11 @@ describe('agent squad label for the 归属 Agent dropdown', () => {
     ]);
     expect(new Set(labels).size).toBe(labels.length);
   });
+});
+
+it('localizes only the unassigned suffix and punctuation at call time', async () => {
+  await i18n.changeLanguage('en-US');
+  expect(formatAgentSquadLabel('<b>我的 Agent</b>', [])).toBe('<b>我的 Agent</b> (Unassigned)');
+  expect(formatAgentSquadLabel('A', ['小队甲', '小队乙'])).toBe('A (小队甲, 小队乙)');
+  await i18n.changeLanguage('zh-CN');
 });

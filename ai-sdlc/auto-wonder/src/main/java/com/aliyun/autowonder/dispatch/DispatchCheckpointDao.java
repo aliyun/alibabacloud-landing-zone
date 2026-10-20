@@ -7,6 +7,15 @@ import java.util.List;
 
 @Mapper
 public interface DispatchCheckpointDao {
+    int releaseResolvedPins(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId);
+    int markGarbage(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId, @Param("id") long id);
+    DispatchCheckpointDO findGarbageById(@Param("id") long id);
+    List<DispatchCheckpointDO> listGarbage(@Param("limit") int limit);
+    List<DispatchCheckpointDO> listRetentionSubjects(@Param("retain") int retain, @Param("limit") int limit);
+
+    int pinCompletion(@Param("tenantId") long tenantId, @Param("dispatchId") long dispatchId,
+                      @Param("checkpointSeq") long checkpointSeq, @Param("resultId") String resultId);
+
     void insert(DispatchCheckpointDO checkpoint);
 
     DispatchCheckpointDO findByDispatchAndSeq(@Param("tenantId") Long tenantId,

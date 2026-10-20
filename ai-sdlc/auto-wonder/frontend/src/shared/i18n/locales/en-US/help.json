@@ -1,0 +1,21 @@
+{
+  "title": "Help center",
+  "chapters": "Help chapters",
+  "outline": "On this page",
+  "download": "Download",
+  "previous": "Previous chapter",
+  "next": "Next chapter",
+  "load": {
+    "failed": "Could not load the help documentation. Please refresh the page or retry.",
+    "loading": "Loading help documentation…",
+    "retry": "Retry"
+  },
+  "code": {
+    "label": "Code",
+    "copyLabel": "Copy code",
+    "copy": "Copy",
+    "copied": "Copied",
+    "success": "Code copied",
+    "failure": "Copy failed. Select the code and copy it manually."
+  }
+}

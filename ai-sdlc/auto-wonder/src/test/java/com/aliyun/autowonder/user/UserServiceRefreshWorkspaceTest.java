@@ -4,6 +4,7 @@ import com.aliyun.autowonder.access.SystemAdminService;
 import com.aliyun.autowonder.auth.jwt.JwtProperties;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.auth.jwt.TokenPayload;
+import com.aliyun.autowonder.auth.session.SessionIssuanceService;
 import com.aliyun.autowonder.auth.session.SessionService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
@@ -40,7 +41,8 @@ class UserServiceRefreshWorkspaceTest {
         props.setAccessTtlSeconds(3600);
         jwtService = new JwtService(props);
         service = new UserService(mock(UserDao.class), jwtService, sessionService, props,
-                workspaceMemberDao, mock(SystemAdminService.class));
+                workspaceMemberDao, mock(SystemAdminService.class),
+                new SessionIssuanceService(jwtService, sessionService, props));
         when(sessionService.getUserIdByRefresh(REFRESH_TOKEN)).thenReturn(USER_ID);
     }
 

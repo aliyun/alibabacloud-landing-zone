@@ -13,7 +13,7 @@ import com.aliyun.autowonder.workspace.dto.RecycleBinItemVO;
 import com.aliyun.autowonder.workspace.dto.RestoreWorkspaceRequest;
 import com.aliyun.autowonder.workspace.dto.SubmitAccessRequestBody;
 import com.aliyun.autowonder.workspace.dto.TransferOwnerRequest;
-import com.aliyun.autowonder.workspace.dto.UpdateMemberAccessRequest;
+import com.aliyun.autowonder.workspace.dto.UpdateMemberRoleRequest;
 import com.aliyun.autowonder.workspace.dto.UpdateMemberIdentityTagsRequest;
 import com.aliyun.autowonder.workspace.dto.WorkspaceListItemVO;
 import com.aliyun.autowonder.workspace.dto.WorkspaceUpdateRequest;
@@ -97,10 +97,10 @@ class WorkspaceControllerTest {
     @Test
     void replacementMutationRoutesUseRequiredMethodsPathsAndAdminAccess() throws Exception {
         Method access = method(
-                "updateMemberAccess", Long.class, UpdateMemberAccessRequest.class);
-        assertArrayEquals(new String[]{"/current/members/{userId}/access-level"},
+                "updateMemberRole", Long.class, UpdateMemberRoleRequest.class);
+        assertArrayEquals(new String[]{"/current/members/{userId}/role"},
                 access.getAnnotation(PutMapping.class).value());
-        assertAccess(access, WorkspaceAccessLevel.ADMIN, "修改工作空间成员访问级别");
+        assertAccess(access, WorkspaceAccessLevel.ADMIN, "修改工作空间成员角色");
 
         Method tags = method(
                 "updateMemberIdentityTags", Long.class, UpdateMemberIdentityTagsRequest.class);

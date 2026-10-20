@@ -1,6 +1,8 @@
 package com.aliyun.autowonder.common.result;
 
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.log.BizLog;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -28,7 +30,15 @@ public class Result<T> {
     }
 
     public static <T> Result<T> fail(ErrorCode errorCode) {
-        return fail(errorCode.getCode(), errorCode.getMessage());
+        return failKeyed(errorCode.getCode(), errorCode.getMessageKey(), null, errorCode.getMessage(), null);
+    }
+
+    public static <T> Result<T> fail(BizException error) {
+        return failKeyed(error.getCode(), error.getMessageKey(), error.getMessageArgs(), error.getMessage(), null);
+    }
+
+    public static <T> Result<T> failKeyed(String code, String key, Object[] args, String diagnostic, T data) {
+        return failure(code, SystemMessages.render(key, args, diagnostic), diagnostic, data);
     }
 
     public static <T> Result<T> fail(String code, String message) {
@@ -36,6 +46,10 @@ public class Result<T> {
     }
 
     public static <T> Result<T> fail(String code, String message, T data) {
+        return failure(code, message, message, data);
+    }
+
+    private static <T> Result<T> failure(String code, String message, String diagnostic, T data) {
         Result<T> r = new Result<>();
         r.success = false;
         r.code = code;
@@ -43,7 +57,7 @@ public class Result<T> {
         r.data = data;
         r.traceId = currentTraceId();
         r.requestId = currentRequestId();
-        recordBizOutcome(false, code, message);
+        recordBizOutcome(false, code, diagnostic);
         return r;
     }
 

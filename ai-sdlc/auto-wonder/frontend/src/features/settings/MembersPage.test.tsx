@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mockRoles } from '@/test/mocks/workspaceRoles';
 import { server } from '@/test/mocks/server';
 import { useAuthStore } from '@/shared/auth/store';
 import { DEFAULT_MEMBERS_TAB, MembersPage, resolveMembersTab } from './MembersPage';
@@ -15,6 +16,7 @@ const mockMembers = [
     email: 'admin@co.com',
     nickname: '管理员',
     accessLevel: 'ADMIN',
+    roleId: 13, roleCode: 'ADMIN', roleName: null, readOnlyDomains: [],
     identityTags: ['需求管理员'],
     joinedAt: '2026-07-01',
     owner: true,
@@ -25,6 +27,7 @@ const mockMembers = [
     email: 'dev1@co.com',
     nickname: '开发者',
     accessLevel: 'READ_WRITE',
+    roleId: 12, roleCode: 'READ_WRITE', roleName: null, readOnlyDomains: [],
     identityTags: ['澄清员', '开发'],
     joinedAt: '2026-07-05',
     owner: false,
@@ -47,6 +50,7 @@ beforeEach(() => {
     'ADMIN',
   );
   server.use(
+    http.get('/api/workspaces/current/roles', () => HttpResponse.json({ success: true, code: '0', data: mockRoles })),
     http.get('/api/workspaces/current/members', () => HttpResponse.json({
       success: true, code: '0', message: '', data: mockMembers, traceId: null,
     })),
@@ -110,18 +114,18 @@ async function waitForAdminControls() {
 }
 
 describe('MembersPage', () => {
-  it('filters members by access level using the segmented control', async () => {
+  it('filters members by the assigned role', async () => {
     const user = userEvent.setup();
     renderPage();
 
     expect(await screen.findByText('dev1@co.com')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('radio', { name: '读写' }).closest('label')!);
+    await selectRole(user, '按角色筛选', '读写者');
 
     expect(screen.getByText('dev1@co.com')).toBeInTheDocument();
     expect(screen.queryByText('admin@co.com')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('radio', { name: '管理员' }).closest('label')!);
+    await selectRole(user, '按角色筛选', '管理员');
 
     expect(screen.getByText('admin@co.com')).toBeInTheDocument();
     expect(screen.queryByText('dev1@co.com')).not.toBeInTheDocument();
@@ -134,7 +138,7 @@ describe('MembersPage', () => {
         data: [
           {
             userId: 3, username: 'newbie', email: '', nickname: '',
-            accessLevel: 'READ_ONLY', identityTags: [], joinedAt: '', owner: false,
+            accessLevel: 'READ_ONLY', identityTags: [], joinedAt: '', owner: false, roleId: 11, roleCode: 'READ_ONLY', roleName: null, readOnlyDomains: [],
           },
         ],
         traceId: null,
@@ -144,15 +148,15 @@ describe('MembersPage', () => {
 
     const row = (await screen.findByText('newbie')).closest('tr');
     expect(within(row!).getAllByText('-').length).toBeGreaterThanOrEqual(2);
-    expect(within(row!).getByText('只读权限')).toBeInTheDocument();
+    expect(within(row!).getByText('只读者')).toBeInTheDocument();
   });
 
-  it('renders owner, access levels, and identity tags without role data', async () => {
+  it('renders owner, role names, and raw identity tags', async () => {
     renderPage();
 
     await screen.findByText('admin@co.com');
     expect(screen.getByText('工作空间所有者')).toBeInTheDocument();
-    expect(screen.getByText('读写权限')).toBeInTheDocument();
+    expect(screen.getByText('读写者')).toBeInTheDocument();
     expect(screen.getByText('需求管理员')).toBeInTheDocument();
     expect(screen.getByText('澄清员')).toBeInTheDocument();
     expect(screen.queryByText('分配角色')).not.toBeInTheDocument();
@@ -176,12 +180,12 @@ describe('MembersPage', () => {
     });
   });
 
-  it('updates another member access level and identity tags', async () => {
+  it('assigns another member a role and updates identity tags', async () => {
     const user = userEvent.setup();
     const accessHandler = vi.fn();
     const tagsHandler = vi.fn();
     server.use(
-      http.put('/api/workspaces/current/members/2/access-level', async ({ request }) => {
+      http.put('/api/workspaces/current/members/2/role', async ({ request }) => {
         accessHandler(await request.json());
         return HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null });
       }),
@@ -196,17 +200,34 @@ describe('MembersPage', () => {
     expect(devRow).not.toBeNull();
     await waitForAdminControls();
     await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
-    await user.click(screen.getByLabelText('只读权限'));
+    await selectRole(user, '角色', '只读者');
     const tagsInput = screen.getByRole('combobox', { name: '身份标签' });
     await user.type(tagsInput, '验收员{enter}');
     await user.click(screen.getByRole('button', { name: /保\s*存/ }));
 
     await waitFor(() => {
-      expect(accessHandler).toHaveBeenCalledWith({ accessLevel: 'READ_ONLY' });
+      expect(accessHandler).toHaveBeenCalledWith({ roleId: 11 });
       expect(tagsHandler).toHaveBeenCalledWith({
         identityTags: ['澄清员', '开发', '验收员'],
       });
     });
+  });
+
+  it('does not write unchanged role or tags and removes per-member feature overrides', async () => {
+    const user = userEvent.setup();
+    const roleHandler = vi.fn();
+    const tagsHandler = vi.fn();
+    server.use(http.put('/api/workspaces/current/members/2/role', roleHandler), http.put('/api/workspaces/current/members/2/identity-tags', tagsHandler));
+    renderPage();
+    const row = (await screen.findByText('dev1@co.com')).closest('tr');
+    await waitForAdminControls();
+    await user.click(within(row!).getByRole('button', { name: '编辑' }));
+    expect(screen.queryByText('访问等级')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /保\s*存/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(roleHandler).not.toHaveBeenCalled();
+    expect(tagsHandler).not.toHaveBeenCalled();
   });
 
   it('disables every edit control for non-admin members and shows the admin-only tip', async () => {
@@ -224,7 +245,7 @@ describe('MembersPage', () => {
         data: { ...mockMembers[0], accessLevel: 'READ_ONLY' },
         traceId: null,
       })),
-      http.put('/api/workspaces/current/members/2/access-level', writeHandler),
+      http.put('/api/workspaces/current/members/2/role', writeHandler),
       http.delete('/api/workspaces/current/members/2', writeHandler),
       http.post('/api/workspaces/current/owner/transfer', writeHandler),
     );
@@ -269,14 +290,14 @@ describe('MembersPage', () => {
     const user = userEvent.setup();
     const accessHandler = vi.fn();
     server.use(
-      http.put('/api/workspaces/current/members/2/access-level', accessHandler),
+      http.put('/api/workspaces/current/members/2/role', accessHandler),
     );
     renderPage();
 
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
     await waitForAdminControls();
     await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
-    await user.click(screen.getByLabelText('只读权限'));
+    await selectRole(user, '角色', '只读者');
     act(() => {
       useAuthStore.getState().setAccessLevel('READ_ONLY');
     });
@@ -323,7 +344,7 @@ describe('MembersPage', () => {
   it('surfaces the original backend conflict message', async () => {
     const user = userEvent.setup();
     server.use(
-      http.put('/api/workspaces/current/members/2/access-level', () => HttpResponse.json(
+      http.put('/api/workspaces/current/members/2/role', () => HttpResponse.json(
         {
           success: false,
           code: '10409',
@@ -339,7 +360,7 @@ describe('MembersPage', () => {
     const devRow = (await screen.findByText('dev1@co.com')).closest('tr');
     await waitForAdminControls();
     await user.click(within(devRow!).getByRole('button', { name: '编辑' }));
-    await user.click(screen.getByLabelText('只读权限'));
+    await selectRole(user, '角色', '只读者');
     await user.click(screen.getByRole('button', { name: /保\s*存/ }));
 
     expect(await screen.findByText('Owner 访问级别不能直接修改，请先移交 Owner')).toBeInTheDocument();
@@ -554,6 +575,7 @@ describe('MembersPage', () => {
 describe('resolveMembersTab', () => {
   it('accepts only the known tab keys', () => {
     expect(resolveMembersTab('requests')).toBe('requests');
+    expect(resolveMembersTab('roles')).toBe('roles');
     expect(resolveMembersTab(DEFAULT_MEMBERS_TAB)).toBe(DEFAULT_MEMBERS_TAB);
   });
 
@@ -563,3 +585,8 @@ describe('resolveMembersTab', () => {
     expect(resolveMembersTab('bogus')).toBe(DEFAULT_MEMBERS_TAB);
   });
 });
+
+async function selectRole(user: ReturnType<typeof userEvent.setup>, field: string, label: string) {
+  await user.click(screen.getByRole('combobox', { name: field }));
+  await user.click(screen.getAllByText(label).find((element) => element.classList.contains('ant-select-item-option-content'))!);
+}

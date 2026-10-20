@@ -1,0 +1,53 @@
+{
+  "list": {
+    "title": "Executions",
+    "refresh": "Refresh",
+    "time": "Time",
+    "workitem": "Work item",
+    "agent": "Agent",
+    "executor": "Executor",
+    "status": "Status",
+    "attempt": "Attempt",
+    "actions": "Actions",
+    "details": "Details",
+    "allAgents": "All Agents",
+    "allStatuses": "All statuses",
+    "workitemId": "Work item ID",
+    "last7Days": "Last 7 days",
+    "last30Days": "Last 30 days",
+    "last90Days": "Last 90 days",
+    "total_one": "{{total}} execution",
+    "total_other": "{{total}} executions",
+    "empty": "No executions"
+  },
+  "detail": {
+    "title": "Execution details",
+    "titleWithId": "Execution details · #{{id}}",
+    "error": "Error",
+    "workitem": "Work item",
+    "step": "SDLC step",
+    "agent": "Agent",
+    "executor": "Executor",
+    "attempt": "Attempts",
+    "status": "Status",
+    "summary": "Result summary",
+    "artifacts_one": "{{total}} artifact",
+    "artifacts_other": "{{total}} artifacts",
+    "noArtifacts": "No artifacts",
+    "openWorkitem": "Open work item",
+    "viewAgent": "View Agent",
+    "close": "Close",
+    "loading": "Loading"
+  },
+  "status": {
+    "PENDING": "Pending",
+    "PACKAGING": "Packaging",
+    "DISPATCHED": "Dispatched",
+    "ACKED": "Acknowledged",
+    "RUNNING": "Running",
+    "SUCCEEDED": "Succeeded",
+    "FAILED": "Failed",
+    "TIMEOUT": "Timed out",
+    "CANCELED": "Canceled"
+  }
+}

@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
+import { useLocale } from '@/shared/i18n/LocaleProvider';
 import { RouterProvider } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AppearanceProvider } from '@/shared/theme/AppearanceProvider';
 import { router } from './router';
 import { compactFavicon } from './favicon';
+import { BrandBootstrap } from './BrandBootstrap';
 import { BRANDING_QUERY_KEY, DEFAULT_BRANDING, getPublicBranding } from '@/features/platform/brandingApi';
 
 const queryClient = new QueryClient({
@@ -17,6 +19,7 @@ const queryClient = new QueryClient({
 });
 
 export function App() {
+  useLocale();
   return (
     <QueryClientProvider client={queryClient}>
       <BrandedApp />
@@ -25,18 +28,20 @@ export function App() {
 }
 
 function BrandedApp() {
-  const { data } = useQuery({
+  const { data: branding, isError, isFetching, refetch } = useQuery({
     queryKey: BRANDING_QUERY_KEY,
     queryFn: getPublicBranding,
   });
-  const branding = data || DEFAULT_BRANDING;
+  const platformName = branding ? branding.platformName || DEFAULT_BRANDING.platformName : null;
+  const logoUrl = branding ? branding.logoUrl || DEFAULT_BRANDING.logoUrl : null;
 
   useEffect(() => {
-    document.title = branding.platformName || DEFAULT_BRANDING.platformName;
-  }, [branding.platformName]);
+    if (!platformName) return;
+    document.title = platformName;
+  }, [platformName]);
 
   useEffect(() => {
-    const logoUrl = branding.logoUrl || DEFAULT_BRANDING.logoUrl;
+    if (!logoUrl) return;
     const icons = document.querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="shortcut icon"]');
     const updateIcons = (url: string) => icons.forEach((link) => {
       link.href = url;
@@ -50,7 +55,11 @@ function BrandedApp() {
       if (!controller.signal.aborted) updateIcons(url);
     }).catch(() => { /* Keep the original logo if loading or conversion fails. */ });
     return () => controller.abort();
-  }, [branding.logoUrl]);
+  }, [logoUrl]);
+
+  if (!branding) {
+    return <BrandBootstrap failed={isError} retrying={isFetching} onRetry={() => { void refetch(); }} />;
+  }
 
   return (
     <AppearanceProvider accent={branding.primaryColor || DEFAULT_BRANDING.primaryColor}>

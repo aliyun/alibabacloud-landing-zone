@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.memory.store;
 
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
+
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.squad.SquadDao;
 import com.aliyun.autowonder.memory.store.dto.MemoryMutationRequest;
@@ -88,7 +90,7 @@ public class MemoryTopicService {
         store.setName(name); store.setCreatorId(userId);
         int created = stores.insertIfAbsent(store);
         store = stores.findActive(tenantId, scope, owner);
-        if (store == null) throw new IllegalArgumentException("memory owner has an archived store");
+        if (store == null) throw new KeyedIllegalArgumentException("memory.validation.owner_store_archived", null, "memory owner has an archived store");
         store = stores.lockById(tenantId, store.getId());
         if (created > 0 && !"AGENT".equals(scope)) {
             var acl = new MemoryStoreAclDO(); acl.setTenantId(tenantId); acl.setStoreId(store.getId());
@@ -110,7 +112,7 @@ public class MemoryTopicService {
             if (squad != null && Objects.equals(squad.getTenantId(), tenantId)
                     && !Integer.valueOf(1).equals(squad.getIsDeleted())) return squad.getName();
         }
-        throw new IllegalArgumentException("memory owner does not exist in this workspace");
+        throw new KeyedIllegalArgumentException("memory.validation.owner_missing", null, "memory owner does not exist in this workspace");
     }
 
     MemoryDocumentDO writeTopic(long tenantId, long storeId, long userId, String path,
@@ -118,7 +120,7 @@ public class MemoryTopicService {
         var actor = new MemoryDocumentService.Actor(actorType, String.valueOf(userId), userId, null, null);
         String content = MemoryTopicFormat.render(path.substring(0, path.length() - 3), request.type(),
                 request.title(), request.description(), request.contentMd(), metadata);
-        if (!create && request.expectedVersion() == null) throw new IllegalArgumentException("expectedVersion required");
+        if (!create && request.expectedVersion() == null) throw new KeyedIllegalArgumentException("memory.validation.topic_version_required", null, "expectedVersion required");
         var mutation = create ? MemoryMutationRequest.create(path, content, request.idempotencyKey() + ":topic")
                 : MemoryMutationRequest.update(path, content, request.expectedVersion(), request.idempotencyKey() + ":topic");
         var topic = mutations.mutateWithFingerprint(tenantId, storeId, mutation, actor, fingerprint);
@@ -146,8 +148,8 @@ public class MemoryTopicService {
 
     private MemoryStoreDO writable(long tenantId, long userId, boolean administrator, long storeId) {
         var store = stores.lockById(tenantId, storeId);
-        if (store == null || !"ACTIVE".equals(store.getStatus())) throw new IllegalArgumentException("active memory store not found");
-        var subjects = new MemoryStoreAccessService.Subjects(userId, null, Set.of(), Set.of(), administrator);
+        if (store == null || !"ACTIVE".equals(store.getStatus())) throw new KeyedIllegalArgumentException("memory.validation.active_store_missing", null, "active memory store not found");
+        var subjects = new MemoryStoreAccessService.Subjects(userId, null, Set.of(), Set.of(), administrator, true);
         if (!access.resolve(store, acls.listByStore(tenantId, storeId), subjects).includes(MemoryPermission.WRITE))
             throw new MemoryStoreApplicationService.MemoryAccessDeniedException();
         return store;
@@ -155,24 +157,24 @@ public class MemoryTopicService {
 
     private MemoryDocumentDO requiredTopic(long tenantId, long storeId, String path) {
         MemoryPathValidator.requireSafe(path);
-        if ("MEMORY.md".equals(path)) throw new IllegalArgumentException("use index editor for MEMORY.md");
+        if ("MEMORY.md".equals(path)) throw new KeyedIllegalArgumentException("memory.validation.index_editor_required", null, "use index editor for MEMORY.md");
         var current = documents.findByPath(tenantId, storeId, path, false);
-        if (current == null) throw new IllegalArgumentException("memory topic not found");
+        if (current == null) throw new KeyedIllegalArgumentException("memory.validation.topic_missing", null, "memory topic not found");
         return current;
     }
 
     private void validate(MemoryTopicRequest request) {
-        if (request == null) throw new IllegalArgumentException("memory topic required");
+        if (request == null) throw new KeyedIllegalArgumentException("memory.validation.topic_required", null, "memory topic required");
         requireKey(request.idempotencyKey());
     }
 
     private void requireKey(String key) {
-        if (key == null || key.isBlank() || key.length() > 150) throw new IllegalArgumentException("invalid idempotency key");
+        if (key == null || key.isBlank() || key.length() > 150) throw new KeyedIllegalArgumentException("memory.validation.idempotency_key", null, "invalid idempotency key");
     }
 
     private String fingerprint(String operation, String scope, long owner, MemoryTopicRequest request) {
         try { return hash(json.writeValueAsString(new Object[]{operation, scope, owner, request})); }
-        catch (Exception e) { throw new IllegalArgumentException("invalid topic request", e); }
+        catch (Exception e) { throw new KeyedIllegalArgumentException("memory.validation.topic_request", null, "invalid topic request", e); }
     }
 
     private static String hash(String value) {

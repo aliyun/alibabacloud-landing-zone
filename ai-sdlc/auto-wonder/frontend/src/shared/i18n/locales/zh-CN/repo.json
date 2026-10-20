@@ -1,0 +1,143 @@
+{
+  "fields": {
+    "id": "ID",
+    "name": "名称",
+    "url": "URL",
+    "description": "描述",
+    "created": "创建时间",
+    "actions": "操作",
+    "repoName": "仓库名称",
+    "repoUrl": "仓库地址",
+    "branch": "默认分支",
+    "peer": "关联仓库",
+    "relationType": "关系类型",
+    "source": "来源仓库",
+    "target": "目标仓库"
+  },
+  "actions": {
+    "addRepo": "添加仓库",
+    "deleteRepo": "删除仓库",
+    "map": "关系图",
+    "save": "保存",
+    "cancel": "取消",
+    "confirm": "确定",
+    "delete": "删除",
+    "back": "返回",
+    "edit": "编辑",
+    "backList": "返回列表",
+    "addRelation": "添加关系",
+    "deleteRelation": "删除关系",
+    "close": "关闭",
+    "addRepoRelation": "添加仓库关系",
+    "deleteRepoRelation": "删除仓库关系",
+    "editRepo": "编辑仓库信息",
+    "saveRepo": "保存仓库信息",
+    "saveConclusion": "保存仓库扫描结论",
+    "editConclusion": "编辑仓库扫描结论",
+    "startScan": "发起仓库扫描",
+    "scan": "发起扫描",
+    "editConclusionButton": "编辑结论",
+    "deleteRepoLabel": "删除仓库 {{name}}",
+    "clearBranch": "清除默认分支",
+    "clearDescription": "清除描述"
+  },
+  "feedback": {
+    "added": "仓库已添加",
+    "deleted": "仓库已删除",
+    "repoSaved": "仓库信息已保存",
+    "conclusionSaved": "结论已保存",
+    "relationCreated": "关系已创建",
+    "relationDeleted": "关系已删除",
+    "scanConfirmed": "扫描结论已确认落库"
+  },
+  "errors": {
+    "addRepo": "添加仓库失败",
+    "deleteRepo": "删除仓库失败",
+    "save": "保存失败",
+    "create": "创建失败",
+    "invalidId": "无效的 ID",
+    "load": "加载失败",
+    "retry": "请稍后重试",
+    "graphRender": "关系图暂时无法渲染，请刷新页面后重试。",
+    "graphResize": "画布适配失败，请刷新重试。"
+  },
+  "validation": {
+    "nameRequired": "请输入仓库名称",
+    "urlRequired": "请输入仓库地址",
+    "urlInvalid": "请输入合法 URL",
+    "sourceRequired": "请选择来源仓库",
+    "targetRequired": "请选择目标仓库",
+    "typeRequired": "请选择关系类型",
+    "nameInvalid": "仓库名称必须为单级目录名，不能包含 / 或 \\、. 或 ..、绝对路径。如填写的是 namespace/repo-name 形式的标识，请将完整标识填在仓库地址中，仓库名称只填单级目录名"
+  },
+  "placeholders": {
+    "urlExample": "https://github.com/example/repo 或 git@example.com:workspace/repo.git",
+    "repoUrl": "Git 仓库地址",
+    "clearBranch": "留空表示清除默认分支",
+    "clearDescription": "仓库的背景描述，留空表示清除",
+    "source": "选择来源仓库",
+    "target": "选择目标仓库",
+    "type": "选择关系类型",
+    "description": "可选描述"
+  },
+  "confirm": {
+    "deleteHint": "删除后仓库及其所有关系将一并移除，此操作不可恢复。",
+    "deleteRelation": "确认删除此关系？",
+    "deleteRepo": "确认删除仓库「{{name}}」？"
+  },
+  "tabs": {
+    "info": "基础信息",
+    "relations": "仓库关系",
+    "conclusion": "扫描结论"
+  },
+  "scan": {
+    "status": "扫描状态",
+    "complete": "扫描完成",
+    "notScanned": "未扫描",
+    "lastTime": "上次扫描时间",
+    "purpose": "用途",
+    "business": "关键业务",
+    "upstreams": "上游依赖",
+    "downstreams": "下游消费",
+    "purposePlaceholder": "该仓库的主要用途",
+    "businessPlaceholder": "核心业务领域",
+    "upstreamsPlaceholder": "上游仓库/服务 (逗号分隔)",
+    "downstreamsPlaceholder": "下游仓库/服务 (逗号分隔)",
+    "markdown": "总结 (Markdown)",
+    "summaryPlaceholder": "仓库的详细总结...",
+    "summary": "总结",
+    "empty": "暂无扫描结论",
+    "emptyHint": "发起扫描或手动编辑添加结论",
+    "drawer": "AI 仓库扫描"
+  },
+  "map": {
+    "help": "滚轮缩放 · 拖动仓库或画布 · 点击查看详情",
+    "zoomOut": "缩小关系图",
+    "zoomIn": "放大关系图",
+    "exitFullscreen": "退出全屏",
+    "fullscreen": "全屏查看",
+    "fit": "适应画布",
+    "empty": "暂无仓库或关系数据",
+    "emptyHint": "添加仓库并创建关系后，这里会展示调用与依赖关系。",
+    "details": "关系详情",
+    "source": "来源:",
+    "target": "目标:",
+    "type": "类型:",
+    "description": "描述:"
+  },
+  "hub": {
+    "title": "仓库",
+    "listHint": "管理托管仓库与访问配置",
+    "mapHint": "查看与编辑仓库之间的依赖与调用关系"
+  },
+  "relation": {
+    "frontend": "前端",
+    "backend": "后端",
+    "clientServer": "客户端调用服务端",
+    "serverClient": "服务端下发客户端",
+    "gateway": "网关",
+    "dependency": "依赖",
+    "service": "服务调用",
+    "other": "其他"
+  }
+}

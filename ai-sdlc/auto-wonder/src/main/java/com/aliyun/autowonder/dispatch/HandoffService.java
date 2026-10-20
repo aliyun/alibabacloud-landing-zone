@@ -49,6 +49,13 @@ public class HandoffService {
     private final AgentDao agentDao;
     private final ApplicationEventPublisher eventPublisher;
     private ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator;
+    private DispatchRecoveryService recoveryService;
+
+    @Autowired
+    public void setRecoveryService(DispatchRecoveryService recoveryService) {
+        this.recoveryService = recoveryService;
+    }
+
 
     @Autowired
     public void setScheduledTaskRunOrchestrator(ScheduledTaskRunOrchestrator scheduledTaskRunOrchestrator) {
@@ -106,6 +113,10 @@ public class HandoffService {
         if (w == null || tenantId != w.getTenantId()) {
             log.info("handoff workitem not found or cross-tenant workitemId={}", workitemId);
             return HandoffResult.rejected("WORKITEM_NOT_FOUND", "work item not found in tenant");
+        }
+        if (source != null && (DispatchStatus.CANCELED.equals(source.getStatus())
+                || (recoveryService != null && recoveryService.isHandoffSourceFenced(source)))) {
+            return HandoffResult.rejected("SOURCE_SUPERSEDED", "source dispatch was fenced before handoff");
         }
         if (dispatchService.isSupersededByInteractionRework(tenantId, workitemId, dispatchId)) {
             log.info("handoff rejected because source was superseded workitemId={} dispatchId={}",
@@ -214,7 +225,7 @@ public class HandoffService {
                     actor.type(),
                     actor.ref(),
                     actor.displayName(),
-                    currentRequestId()));
+                    currentRequestId(), actor.actorNameKind()));
         }
         log.info("handoff to HUMAN workitemId={} target={} resolvedUserId={}", workitemId, to, resolved);
         return HandoffResult.human(resolved, fallbackReason);
@@ -240,7 +251,7 @@ public class HandoffService {
         if (dispatchDao == null || agentDao == null) {
             log.warn("handoff source actor resolution unavailable tenantId={} workitemId={} sourceDispatchId={} reason={}",
                     tenantId, workitemId, dispatchId, fallbackReason);
-            return AssignmentActor.system("系统");
+            return AssignmentActor.systemFallback();
         }
         try {
             DispatchDO source = dispatchDao.findById(dispatchId);
@@ -257,7 +268,7 @@ public class HandoffService {
                         source == null ? null : source.getWorkitemId(),
                         source == null ? null : source.getAgentId(),
                         fallbackReason);
-                return AssignmentActor.system("系统");
+                return AssignmentActor.systemFallback();
             }
             AgentDO agent = agentDao.findById(source.getAgentId());
             if (agent == null
@@ -268,13 +279,13 @@ public class HandoffService {
                                 + "sourceAgentId={} sourceAgentTenantId={} reason={}",
                         tenantId, workitemId, dispatchId, source.getAgentId(),
                         agent == null ? null : agent.getTenantId(), fallbackReason);
-                return AssignmentActor.system("系统");
+                return AssignmentActor.systemFallback();
             }
             return AssignmentActor.agent(source.getAgentId(), agent.getName());
         } catch (RuntimeException e) {
             log.warn("handoff source actor resolution exception tenantId={} workitemId={} sourceDispatchId={} reason={}",
                     tenantId, workitemId, dispatchId, fallbackReason, e);
-            return AssignmentActor.system("系统");
+            return AssignmentActor.systemFallback();
         }
     }
 

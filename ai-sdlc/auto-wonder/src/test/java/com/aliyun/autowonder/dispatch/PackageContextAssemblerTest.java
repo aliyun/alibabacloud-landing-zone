@@ -1547,4 +1547,20 @@ class PackageContextAssemblerTest {
         assertFalse(repos.get(0).containsKey("ref"));
         assertEquals("master", repos.get(1).get("ref"));
     }
+
+    @Test
+    void repoNameProblemUsesWholeEnglishSentenceWithoutChangingRawValidationContract() {
+        var repo = new com.aliyun.autowonder.repo.RepoDO(); repo.setId(17L); repo.setName("ns/<b>raw</b>");
+        var ex = assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+            () -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(assembler, "buildRepoEntry", repo, true));
+        assertTrue(ex.getMessage().contains(com.aliyun.autowonder.repo.RepoNameValidator.validate(repo.getName())));
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            String message = com.aliyun.autowonder.common.result.Result.fail(ex).getMessage();
+            assertTrue(message.startsWith("Repository “ns/<b>raw</b>” (#17)"));
+            assertFalse(message.contains("仓库名称")); assertEquals("ns/<b>raw</b>", repo.getName());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
 }

@@ -16,6 +16,38 @@ import static org.mockito.Mockito.*;
 class DispatchRuntimeReconcilerTest {
 
     @Test
+    void abandonedRecoveryReachesRowsBeyondAnIneligibleFullBatch() {
+        Fixture f = new Fixture(snapshot("s1", true, Set.of()));
+        List<String> statuses = List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING);
+        List<DispatchDO> first = java.util.stream.LongStream.rangeClosed(1, 200)
+                .mapToObj(id -> row(id, DispatchStatus.RUNNING)).toList();
+        DispatchDO eligible = row(201L, DispatchStatus.RUNNING);
+        when(f.dispatchDao.listByExecutorAndStatuses(10L, statuses, 200)).thenReturn(first);
+        when(f.dispatchDao.listByExecutorAndStatusesAfterId(10L, statuses, 0L, 200)).thenReturn(first);
+        when(f.dispatchDao.listByExecutorAndStatusesAfterId(10L, statuses, 200L, 200)).thenReturn(List.of(eligible));
+
+        f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+
+        verify(f.recovery).recoverAbandonedExecution(eligible, "s1");
+    }
+
+    @Test
+    void completeInventoryAlsoChecksForAbandonedActiveDispatches() {
+        Fixture f = new Fixture(snapshot("s1", true, Set.of()));
+        f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+        verify(f.dispatchDao).listByExecutorAndStatusesAfterId(10L,
+                List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING), 0L, 200);
+    }
+
+    @Test
+    void nonAuthoritativeInventoryDoesNotReconcileAnything() {
+        Fixture f = new Fixture(new ExecutorDispatchSnapshot("s1", 10, false, true,
+                Set.of(), Set.of(), Set.of(), Set.of(), null, System.currentTimeMillis()));
+        f.reconciler.reconcileNow(100L, 10L, 20L, "s1");
+        verifyNoInteractions(f.recovery, f.dispatchDao, f.drainScheduler);
+    }
+
+    @Test
     void stopReconciliationFailureDoesNotBlockSchedulingOtherTasks() {
         Fixture f = new Fixture(snapshot("s1", true, Set.of()));
         doThrow(new RuntimeException("stop query unavailable"))

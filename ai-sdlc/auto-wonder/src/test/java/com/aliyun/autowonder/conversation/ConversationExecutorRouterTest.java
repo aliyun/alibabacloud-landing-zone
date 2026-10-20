@@ -13,6 +13,18 @@ import static org.mockito.Mockito.*;
 
 class ConversationExecutorRouterTest {
     @Test
+    void platformSelectionRequiresEventsAndAllBoundEnvironmentFeatures() {
+        var refs=mock(AgentEnvironmentVariableRefDao.class);var selector=mock(ExecutorSelector.class);
+        var router=new ConversationExecutorRouter(refs,selector);
+        when(refs.listByVersion(1L,50L)).thenReturn(List.of());
+        router.selectPlatform(1L,3L,50L,9L);
+        verify(selector).select(3L,9L,ConversationProtocolFeatures.TURN_EVENT);
+        when(refs.listByVersion(1L,50L)).thenReturn(List.of(new AgentEnvironmentVariableRefDO()));
+        router.selectPlatform(1L,3L,50L,9L);
+        verify(selector).select(3L,9L,ConversationProtocolFeatures.TURN_EVENT+","+ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1);
+    }
+
+    @Test
     void envBoundVersionUsesFeatureAwareSelectionAndCanFallbackFromPreferred() {
         AgentEnvironmentVariableRefDao refs = mock(AgentEnvironmentVariableRefDao.class);
         ExecutorSelector selector = mock(ExecutorSelector.class);

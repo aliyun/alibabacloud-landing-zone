@@ -12,8 +12,13 @@ public class DeliveryStepVO {
     private String stepKey;
     private String name;
     private String status;
+    private Long currentDispatchId;
+    private String executionStatus;
+    private String waitingReason;
     private String planStatus;
     private Integer sourceAttempt;
+    private String agentName;
+    private Long executorId;
     private String executorName;
     private String error;
     private List<SubStepVO> subSteps;

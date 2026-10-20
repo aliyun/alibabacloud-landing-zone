@@ -1,22 +1,26 @@
+import { i18n } from '@/shared/i18n';
+
 export interface StatusMeta {
   label: string;
   color: string;
 }
 
-const META: Record<string, StatusMeta> = {
-  SUCCEEDED: { label: 'SUCCEEDED', color: 'success' },
-  FAILED: { label: 'FAILED', color: 'error' },
-  RUNNING: { label: 'RUNNING', color: 'orange' },
-  PENDING: { label: 'PENDING', color: 'default' },
-  PACKAGING: { label: 'PACKAGING', color: 'default' },
-  DISPATCHED: { label: 'DISPATCHED', color: 'default' },
-  ACKED: { label: 'ACKED', color: 'default' },
-  TIMEOUT: { label: 'TIMEOUT', color: 'default' },
-  CANCELED: { label: 'CANCELED', color: 'default' },
-};
+const META = {
+  SUCCEEDED: { key: 'status.SUCCEEDED', color: 'success' },
+  FAILED: { key: 'status.FAILED', color: 'error' },
+  RUNNING: { key: 'status.RUNNING', color: 'orange' },
+  PENDING: { key: 'status.PENDING', color: 'default' },
+  PACKAGING: { key: 'status.PACKAGING', color: 'default' },
+  DISPATCHED: { key: 'status.DISPATCHED', color: 'default' },
+  ACKED: { key: 'status.ACKED', color: 'default' },
+  TIMEOUT: { key: 'status.TIMEOUT', color: 'default' },
+  CANCELED: { key: 'status.CANCELED', color: 'default' },
+} as const;
 
 export function statusMeta(status: string): StatusMeta {
-  return META[status] ?? { label: status, color: 'default' };
+  if (!Object.prototype.hasOwnProperty.call(META, status)) return { label: status, color: 'default' };
+  const meta = META[status as keyof typeof META];
+  return { label: i18n.t(`execution:${meta.key}`), color: meta.color };
 }
 
 export const HAPPY_PATH: string[] = ['PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'SUCCEEDED'];

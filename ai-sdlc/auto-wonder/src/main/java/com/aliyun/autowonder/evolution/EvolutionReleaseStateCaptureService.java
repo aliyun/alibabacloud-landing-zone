@@ -21,7 +21,7 @@ public class EvolutionReleaseStateCaptureService {
     public String captureBefore(EvolutionProposalDO proposal, long tenantId) {
         if ("SKILL".equals(proposal.getAssetType())
                 && proposal.getAssetId() != null && proposal.getAssetId() > 0) {
-            return JSON.toJSONString(skillService.get(proposal.getAssetId()));
+            return skillAfterJson(skillService.get(proposal.getAssetId()));
         }
         return null;
     }
@@ -31,7 +31,11 @@ public class EvolutionReleaseStateCaptureService {
     }
 
     public String skillAfterJson(SkillVO skill) {
-        return JSON.toJSONString(skill);
+        String serialized = JSON.toJSONString(skill);
+        if (skill == null || skill.getModifierNameKind() == null) return serialized;
+        var snapshot = JSON.parseObject(serialized);
+        snapshot.remove("modifierNameKind");
+        return JSON.toJSONString(snapshot);
     }
 
     public String rollbackJson(String action, Long assetId) {

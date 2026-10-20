@@ -6,7 +6,7 @@ import { useInsightDateRange, useInsightPreference } from './useInsightPreferenc
 const scope = vi.hoisted(() => ({ user: { id: 1 }, currentWorkspace: { id: 2 } }));
 vi.mock('@/shared/auth/store', () => ({ useAuthStore: (selector: (s: typeof scope) => unknown) => selector(scope) }));
 beforeEach(() => { localStorage.clear(); scope.currentWorkspace.id = 2; });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const valid = (v: unknown) => v === 'DAY' || v === 'WEEK';
 
 it('restores selections after remount and isolates changes between workspaces', () => {
@@ -28,11 +28,20 @@ it('falls back for corrupt values and keeps controls usable when storage is bloc
   localStorage.setItem('aw:insights:v1:1:2:granularity', 'broken json');
   const { result } = renderHook(() => useInsightPreference('granularity', 'DAY', valid));
   expect(result.current[0]).toBe('DAY');
-  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+  const storage = localStorage;
+  const blockedWrite = vi.fn(() => { throw new Error('blocked'); });
+  // Storage may expose own methods (Node fallback) or proxy-backed prototype methods (jsdom).
+  vi.stubGlobal('localStorage', { getItem: storage.getItem.bind(storage), setItem: blockedWrite });
   act(() => result.current[1]('WEEK'));
   expect(result.current[0]).toBe('WEEK');
-  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+  expect(blockedWrite).toHaveBeenCalledWith('aw:insights:v1:1:2:granularity', JSON.stringify('WEEK'));
+  expect(storage.getItem('aw:insights:v1:1:2:granularity')).toBe('broken json');
+  vi.unstubAllGlobals();
+  localStorage.setItem('aw:insights:v1:1:2:granularity', JSON.stringify('WEEK'));
+  const blockedRead = vi.fn(() => { throw new Error('blocked'); });
+  vi.stubGlobal('localStorage', { getItem: blockedRead });
   expect(renderHook(() => useInsightPreference('granularity', 'DAY', valid)).result.current[0]).toBe('DAY');
+  expect(blockedRead).toHaveBeenCalledWith('aw:insights:v1:1:2:granularity');
 });
 
 it('restores date objects and rejects invalid, reversed, future or expired participation ranges', () => {

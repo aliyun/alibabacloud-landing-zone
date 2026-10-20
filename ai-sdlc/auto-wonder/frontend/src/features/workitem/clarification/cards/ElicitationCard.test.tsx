@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, afterEach } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import { ElicitationCard } from './ElicitationCard';
 
 const selectSchema = {
@@ -34,6 +35,16 @@ const describedSchema = {
 
 // 进行中的问题已改由 ElicitationWizard 浮层承担，ElicitationCard 只负责 resolved 内联回显。
 describe('ElicitationCard（resolved 内联展示）', () => {
+  afterEach(async () => { await act(async () => { await i18n.changeLanguage('zh-CN'); }); });
+  it.each([undefined, 'unknown', 'CONFIRMATION_REQUIRED'])('keeps restored questions and answers raw while translating an explicit heading (%s)', async (kind) => {
+    const restoredSchema = { ...describedSchema, 'x-autowonder-message-kind': kind };
+    render(<ElicitationCard requestId="r1" message="需要你的确认" schema={restoredSchema} resolved action="accept" answers={{ q0: '原始答案 {0}' }} />);
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByText(kind === 'CONFIRMATION_REQUIRED' ? 'Your confirmation is needed' : '需要你的确认')).toBeInTheDocument();
+    expect(screen.getByText('项目采用什么技术栈?(仓库目前是空的,需要先定基础)')).toBeInTheDocument();
+    expect(screen.getByTestId('elicitation-answer-q0')).toHaveTextContent('原始答案 {0}');
+    expect(restoredSchema.properties.q0.description).toBe(describedSchema.properties.q0.description);
+  });
   it('回显已回答的最终值并标记「已回答」', () => {
     render(
       <ElicitationCard requestId="r1" schema={selectSchema} resolved action="accept" answers={{ q0: 'nextjs' }} />,

@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ExecutorSchemaContractTest {
 
     private static final Path CANONICAL_SCHEMA = Path.of("docs/autowonder-schema.sql");
+    private static final Path HOSTNAME_MIGRATION =
+            Path.of("docs/migration/V083__executor_last_connect_hostname.sql");
     private static final Path LAUNCH_CONFIG_MIGRATION =
             Path.of("docs/migration/V056__executor_launch_config.sql");
 
@@ -43,4 +45,20 @@ class ExecutorSchemaContractTest {
                 "executor table must contain last_connect_ip VARCHAR(64)");
     }
 
+
+    @Test
+    void canonicalSchemaContainsLastConnectHostnameColumn() throws Exception {
+        String schema = Files.readString(CANONICAL_SCHEMA);
+        assertTrue(schema.contains("`last_connect_hostname` VARCHAR(128)"),
+                "executor table must contain last_connect_hostname VARCHAR(128)");
+    }
+
+    @Test
+    void migrationAddsLastConnectHostnameAfterLastConnectIp() throws Exception {
+        assertTrue(Files.exists(HOSTNAME_MIGRATION), "V064 migration must exist");
+        String sql = Files.readString(HOSTNAME_MIGRATION);
+        assertTrue(sql.contains("VARCHAR(128)"), "migration must use VARCHAR(128)");
+        assertTrue(sql.contains("AFTER `last_connect_ip`"),
+                "migration must place column AFTER last_connect_ip");
+    }
 }

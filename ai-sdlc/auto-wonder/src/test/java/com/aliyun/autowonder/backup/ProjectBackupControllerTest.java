@@ -35,11 +35,11 @@ class ProjectBackupControllerTest {
         AutoWonderContext.get().setWorkspaceAccessLevel(WorkspaceAccessLevel.ADMIN);
         controller.create();
         controller.list(-1, 999);
-        when(service.download(2, "id")).thenReturn("https://example.com/backup.zip");
+        when(service.download(2, "id", 9L)).thenReturn("https://example.com/backup.zip");
         controller.download("id");
         verify(service).create(2, 9);
         verify(service).list(2, 1, 100);
-        verify(service).download(2, "id");
+        verify(service).download(2, "id", 9L);
     }
 
     private ProjectBackupController proxy(ProjectBackupService service) {

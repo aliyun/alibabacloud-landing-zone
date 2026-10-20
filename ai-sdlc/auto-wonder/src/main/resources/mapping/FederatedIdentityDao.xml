@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.auth.federation.FederatedIdentityDao">
+
+    <insert id="insert" parameterType="com.aliyun.autowonder.auth.federation.FederatedIdentityDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO federated_identity
+            (provider_id, issuer, subject, user_id, display_name, email, last_login_at)
+        VALUES
+            (#{providerId}, #{issuer}, #{subject}, #{userId}, #{displayName}, #{email}, #{lastLoginAt})
+    </insert>
+
+    <select id="findBinding" resultType="com.aliyun.autowonder.auth.federation.FederatedIdentityDO">
+        SELECT * FROM federated_identity
+        WHERE provider_id = #{providerId} AND issuer = #{issuer} AND subject = #{subject}
+        LIMIT 1
+    </select>
+
+    <select id="findById" resultType="com.aliyun.autowonder.auth.federation.FederatedIdentityDO">
+        SELECT * FROM federated_identity
+        WHERE id = #{id}
+        LIMIT 1
+    </select>
+
+    <select id="listByUser" resultType="com.aliyun.autowonder.auth.federation.FederatedIdentityDO">
+        SELECT * FROM federated_identity
+        WHERE user_id = #{userId}
+        ORDER BY id ASC
+    </select>
+
+    <select id="countByUser" resultType="long">
+        SELECT COUNT(*) FROM federated_identity
+        WHERE user_id = #{userId}
+    </select>
+
+    <select id="countByProvider" resultType="long">
+        SELECT COUNT(*) FROM federated_identity
+        WHERE provider_id = #{providerId}
+    </select>
+
+    <!-- 登录成功后刷新展示信息与最近登录时间；不作为绑定键，email/UPN 变更不会迁移账号。 -->
+    <update id="updateLastLogin">
+        UPDATE federated_identity
+        SET last_login_at = NOW(),
+            display_name = #{displayName},
+            email = #{email},
+            gmt_modified = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM federated_identity
+        WHERE id = #{id}
+    </delete>
+</mapper>

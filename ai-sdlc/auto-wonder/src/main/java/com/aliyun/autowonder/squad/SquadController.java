@@ -2,11 +2,16 @@ package com.aliyun.autowonder.squad;
 
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.result.PageResult;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.squad.dto.AddMembersRequest;
+import com.aliyun.autowonder.squad.dto.CopyCheckResultVO;
+import com.aliyun.autowonder.squad.dto.CopySquadRequest;
+import com.aliyun.autowonder.squad.dto.CopySquadResultVO;
+import com.aliyun.autowonder.squad.dto.CopyTargetVO;
 import com.aliyun.autowonder.squad.dto.CreateSquadRequest;
 import com.aliyun.autowonder.squad.dto.SquadMemberVO;
 import com.aliyun.autowonder.squad.dto.SquadVO;
@@ -25,17 +30,19 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/squads")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看小队")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看小队", actionKey = "access.action.view_squads")
 public class SquadController {
 
     private final SquadService squadService;
+    private final SquadCopyService squadCopyService;
 
-    public SquadController(SquadService squadService) {
+    public SquadController(SquadService squadService, SquadCopyService squadCopyService) {
         this.squadService = squadService;
+        this.squadCopyService = squadCopyService;
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建小队")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建小队", actionKey = "access.action.create_a_squad")
     public Result<SquadVO> create(@RequestBody CreateSquadRequest req) {
         return Result.ok(squadService.create(req, currentWorkspaceId(), currentUserId()));
     }
@@ -53,13 +60,13 @@ public class SquadController {
     }
 
     @PutMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新小队")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新小队", actionKey = "access.action.update_a_squad")
     public Result<SquadVO> update(@PathVariable("id") Long id, @RequestBody UpdateSquadRequest req) {
         return Result.ok(squadService.update(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除小队")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除小队", actionKey = "access.action.delete_a_squad")
     public Result<Void> delete(@PathVariable("id") Long id) {
         squadService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
@@ -71,17 +78,37 @@ public class SquadController {
     }
 
     @PostMapping("/{id}/members")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加小队成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加小队成员", actionKey = "access.action.add_a_squad_member")
     public Result<Void> addMembers(@PathVariable("id") Long id, @RequestBody AddMembersRequest req) {
         squadService.addMembers(id, req.getAgentIds(), currentWorkspaceId());
         return Result.ok(null);
     }
 
     @DeleteMapping("/{id}/members/{agentId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除小队成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除小队成员", actionKey = "access.action.remove_a_squad_member")
     public Result<Void> removeMember(@PathVariable("id") Long id, @PathVariable("agentId") Long agentId) {
         squadService.removeMember(id, agentId, currentWorkspaceId());
         return Result.ok(null);
+    }
+
+    @GetMapping("/{id}/copy-check")
+    public Result<CopyCheckResultVO> copyCheck(@PathVariable("id") Long id) {
+        return Result.ok(squadCopyService.checkCopy(id, currentWorkspaceId()));
+    }
+
+    @GetMapping("/{id}/copy-targets")
+    public Result<PageResult<CopyTargetVO>> copyTargets(
+            @PathVariable("id") Long id,
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        return Result.ok(squadCopyService.listCopyTargets(currentWorkspaceId(), currentUserId(), keyword, page, size));
+    }
+
+    @PostMapping("/{id}/copy")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "复制小队到工作空间", actionKey = "access.action.copy_a_squad")
+    public Result<CopySquadResultVO> copy(@PathVariable("id") Long id, @RequestBody CopySquadRequest req) {
+        return Result.ok(squadCopyService.copySquad(id, currentWorkspaceId(), currentUserId(), req));
     }
 
     private long currentUserId() {

@@ -1,9 +1,14 @@
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatNumber } from '@/shared/i18n/format';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { getAgentRoleLabel } from '@/features/agent/constants';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Button, Space, Modal, Form, Input, Popconfirm, message, Tag, List, Select, Spin, Empty, Switch,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UserAddOutlined, EyeOutlined } from '@ant-design/icons';
+import { CloseOutlined, PlusOutlined, EditOutlined, DeleteOutlined, UserAddOutlined, EyeOutlined, CopyOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listAllSquads, createSquad, updateSquad, deleteSquad, getSquad,
@@ -12,21 +17,25 @@ import {
 import { listAgents } from '@/features/agent/api';
 import type { Squad, SquadMember } from './api';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { SquadCopyModal } from './SquadCopyModal';
 import './SquadListPage.css';
 
 export function SquadListPage() {
+  const { t } = useTranslation('squad');
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingSquad, setEditingSquad] = useState<Squad | null>(null);
   const [form] = Form.useForm();
+  useLocalizedValidation(form, formOpen);
 
   const [membersOpen, setMembersOpen] = useState(false);
   const [membersSquadId, setMembersSquadId] = useState<number | null>(null);
   const [addAgentId, setAddAgentId] = useState<number | undefined>(undefined);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailSquad, setDetailSquad] = useState<Squad | null>(null);
+  const [copySquad, setCopySquad] = useState<Squad | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data, isLoading } = useQuery({
@@ -67,7 +76,7 @@ export function SquadListPage() {
       return;
     }
     if (deepLinkFailed) {
-      message.warning(`小队 #${deepLinkSquadId} 不存在或当前账号无权访问`);
+      message.warning(i18n.t('deepLinkUnavailable', { ns: 'squad', id: deepLinkSquadId }));
       setDeepLinkSquadId(null);
     }
   }, [deepLinkSquadId, deepLinkSquad, deepLinkFailed]);
@@ -102,7 +111,7 @@ export function SquadListPage() {
 
   const createMut = useMutation({
     mutationFn: createSquad,
-    onSuccess: () => { invalidateSquads(); setFormOpen(false); form.resetFields(); message.success('创建成功'); },
+    onSuccess: () => { invalidateSquads(); setFormOpen(false); form.resetFields(); message.success(i18n.t('created', { ns: 'squad' })); },
   });
 
   const updateMut = useMutation({
@@ -110,26 +119,26 @@ export function SquadListPage() {
       id: number;
       data: { name?: string; description?: string; ownerId?: number | null; debugLogEnabled?: boolean };
     }) => updateSquad(id, d),
-    onSuccess: () => { invalidateSquads(); setFormOpen(false); setEditingSquad(null); form.resetFields(); message.success('已保存'); },
+    onSuccess: () => { invalidateSquads(); setFormOpen(false); setEditingSquad(null); form.resetFields(); message.success(i18n.t('saved', { ns: 'squad' })); },
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteSquad,
-    onSuccess: () => { invalidateSquads(); message.success('已删除'); },
+    onSuccess: () => { invalidateSquads(); message.success(i18n.t('deleted', { ns: 'squad' })); },
   });
 
   const addMemberMut = useMutation({
     mutationFn: (agentId: number) => addSquadMember(membersSquadId!, agentId),
-    onSuccess: () => { invalidateMembers(); invalidateSquads(); setAddAgentId(undefined); message.success('已添加'); },
+    onSuccess: () => { invalidateMembers(); invalidateSquads(); setAddAgentId(undefined); message.success(i18n.t('added', { ns: 'squad' })); },
   });
 
   const removeMemberMut = useMutation({
     mutationFn: (agentId: number) => removeSquadMember(membersSquadId!, agentId),
-    onSuccess: () => { invalidateMembers(); invalidateSquads(); message.success('已移除'); },
+    onSuccess: () => { invalidateMembers(); invalidateSquads(); message.success(i18n.t('removed', { ns: 'squad' })); },
   });
 
   const openCreate = () => {
-    accessCommand('READ_WRITE', '新建小队', () => {
+    accessCommand('READ_WRITE', t('create'), () => {
       setEditingSquad(null);
       form.resetFields();
       setFormOpen(true);
@@ -137,7 +146,7 @@ export function SquadListPage() {
   };
 
   const openEdit = (squad: Squad) => {
-    accessCommand('READ_WRITE', '编辑小队', () => {
+    accessCommand('READ_WRITE', t('editSquad'), () => {
       setEditingSquad(squad);
       form.setFieldsValue({
         name: squad.name,
@@ -149,10 +158,15 @@ export function SquadListPage() {
   };
 
   const openMembers = (squad: Squad) => {
-    accessCommand('READ_WRITE', '管理小队成员', () => {
+    accessCommand('READ_WRITE', t('manageMembers'), () => {
       setMembersSquadId(squad.id);
       setMembersOpen(true);
     });
+  };
+
+  // 复制沿用源空间的读写权限控制；前置检查在弹窗内执行，缺在线版本时弹窗只列名称、不进选择流程。
+  const openCopy = (squad: Squad) => {
+    accessCommand('READ_WRITE', t('copyToWorkspace'), () => setCopySquad(squad));
   };
 
   const openDetail = (squad: Squad) => {
@@ -160,9 +174,8 @@ export function SquadListPage() {
     setDetailOpen(true);
   };
 
-  const handleFormSubmit = async () => {
-    const values = await form.validateFields();
-    accessCommand('READ_WRITE', editingSquad ? '编辑小队' : '新建小队', () => {
+  const handleFormSubmit = (values: { name: string; description?: string; debugLogEnabled?: boolean }) => {
+    accessCommand('READ_WRITE', editingSquad ? t('editSquad') : t('create'), () => {
       if (editingSquad) {
         // 后端 update 混合 PUT/PATCH 语义：name/description/owner_id 无条件覆盖，
         // 只有 debug_log_enabled 走 COALESCE。必须整对象提交，否则切开关会把
@@ -199,17 +212,17 @@ export function SquadListPage() {
       <section className="squad-card-page">
         <div className="squad-list-toolbar">
           <div className="squad-summary-strip">
-            <SummaryPill label="小队总数" value={squads.length} />
-            <SummaryPill label="数字员工总数" value={memberTotal} />
-            <SummaryPill label="执行器在线" value={executorOnlineTotal} />
-            <SummaryPill label="关联 SDLC" value={sdlcTotal} />
+            <SummaryPill label={t('squadTotal')} value={squads.length} />
+            <SummaryPill label={t('agentTotal')} value={memberTotal} />
+            <SummaryPill label={t('executorsOnline')} value={executorOnlineTotal} />
+            <SummaryPill label={t('linkedSdlcs')} value={sdlcTotal} />
           </div>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建小队</Button>
+          <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={openCreate}>{t('create')}</Button>
         </div>
 
-        <Spin spinning={isLoading}>
+        <Spin spinning={isLoading} aria-label={t('loading')}>
           {squads.length === 0 && !isLoading ? (
-            <Empty description="暂无小队" />
+            <Empty description={t('emptySquads')} />
           ) : (
             <div className="squad-card-grid">
               {squads.map((squad) => (
@@ -223,30 +236,31 @@ export function SquadListPage() {
                       <div className="squad-card-title">
                         {squad.name}
                         {squad.debugLogEnabled ? (
-                          <Tag color="orange" style={{ marginLeft: 6 }}>Debug</Tag>
+                          <Tag color="orange" style={{ marginLeft: 6 }}>{t('debug')}</Tag>
                         ) : null}
                       </div>
-                      <div className="squad-card-description">{squad.description || '暂无描述'}</div>
+                      <div className="squad-card-description">{squad.description || t('noDescription')}</div>
                     </div>
                   </div>
 
                   <div className="squad-metric-grid">
-                    <SquadMetric label={`${squad.memberCount ?? 0} 个数字员工`} />
-                    <SquadMetric label={`${squad.roleCount ?? 0} 类角色`} />
+                    <SquadMetric label={t('agentCount', { count: squad.memberCount ?? 0 })} />
+                    <SquadMetric label={t('roleCount', { count: squad.roleCount ?? 0 })} />
                     <SquadMetric label={executorText(squad)} active={(squad.executorOnlineCount ?? 0) > 0} />
                     <SquadMetric label={sdlcText(squad)} />
                   </div>
 
                   <div className="squad-card-footer">
-                    <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openDetail(squad)}>详情</Button>
-                    <Button type="link" size="small" icon={<UserAddOutlined />} onClick={() => openMembers(squad)}>成员</Button>
-                    <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(squad)}>编辑</Button>
-                    <Popconfirm title="确认删除该小队？" onConfirm={() => accessCommand(
+                    <Button type="link" size="small" icon={<EyeOutlined aria-hidden="true" />} onClick={() => openDetail(squad)}>{t('details')}</Button>
+                    <Button type="link" size="small" icon={<UserAddOutlined aria-hidden="true" />} onClick={() => openMembers(squad)}>{t('members')}</Button>
+                    <Button type="link" size="small" icon={<EditOutlined aria-hidden="true" />} onClick={() => openEdit(squad)}>{t('edit')}</Button>
+                    <Button type="link" size="small" icon={<CopyOutlined aria-hidden="true" />} onClick={() => openCopy(squad)}>{t('copyToWorkspace')}</Button>
+                    <Popconfirm okText={t('confirm')} cancelText={t('cancel')} title={t('confirmDelete')} onConfirm={() => accessCommand(
                       'READ_WRITE',
-                      '删除小队',
+                      t('deleteSquad'),
                       () => deleteMut.mutate(squad.id),
                     )}>
-                      <Button type="link" size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                      <Button type="link" size="small" danger icon={<DeleteOutlined aria-hidden="true" />}>{t('delete')}</Button>
                     </Popconfirm>
                   </div>
                 </article>
@@ -257,33 +271,37 @@ export function SquadListPage() {
       </section>
 
       <Modal
-        title={editingSquad ? '编辑小队' : '新建小队'}
+        closable={{ 'aria-label': t('close'), closeIcon: <CloseOutlined aria-hidden="true" /> }}
+        title={editingSquad ? t('editSquad') : t('create')}
         open={formOpen}
-        onOk={handleFormSubmit}
+        okText={t('confirm')}
+        cancelText={t('cancel')}
+        onOk={() => form.submit()}
         onCancel={() => { setFormOpen(false); setEditingSquad(null); }}
         confirmLoading={createMut.isPending || updateMut.isPending}
       >
-        <Form form={form} layout="vertical">
-          <Form.Item name="name" label="小队名称" rules={[{ required: true, message: '请输入小队名称' }]}>
-            <Input placeholder="如: 前端开发小队" />
+        <Form form={form} layout="vertical" onFinish={handleFormSubmit}>
+          <Form.Item name="name" label={t('name')} rules={[{ required: true, message: t('nameRequired') }]}>
+            <Input placeholder={t('namePlaceholder')} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={3} placeholder="描述该小队的业务方向和职责" />
+          <Form.Item name="description" label={t('description')}>
+            <Input.TextArea rows={3} placeholder={t('descriptionPlaceholder')} />
           </Form.Item>
           {editingSquad ? (
             <Form.Item
               name="debugLogEnabled"
-              label="Debug 日志收集"
+              label={t('debugLogs')}
               valuePropName="checked"
-              extra="开启后，该小队数字员工每轮执行的全量日志将自动压缩上传，保留 60 天（下一轮生效）"
+              extra={t('debugLogsHelp')}
             >
-              <Switch data-testid="debug-log-switch" />
+              <Switch aria-label={t('debugLogs')} data-testid="debug-log-switch" />
             </Form.Item>
           ) : null}
         </Form>
       </Modal>
 
       <Modal
+        closable={{ 'aria-label': t('close'), closeIcon: <CloseOutlined aria-hidden="true" /> }}
         title={null}
         open={detailOpen}
         onCancel={() => { setDetailOpen(false); setDetailSquad(null); }}
@@ -300,24 +318,24 @@ export function SquadListPage() {
               <Space style={{ width: '100%', justifyContent: 'space-between' }} align="start">
                 <div>
                   <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--aw-text)' }}>{detailSquad?.name}</div>
-                  <div style={{ marginTop: 6, color: 'var(--aw-muted)' }}>{detailSquad?.description || '暂无描述'}</div>
+                  <div style={{ marginTop: 6, color: 'var(--aw-muted)' }}>{detailSquad?.description || t('noDescription')}</div>
                 </div>
                 <Space>
-                  <Tag color="cyan">{detailMembers.length || detailSquad?.memberCount || 0} 位成员</Tag>
-                  <Tag color="green">{roleStats.length} 类角色</Tag>
-                  <Tag color="blue">{detailSdlcs.length || detailSquad?.sdlcCount || 0} 个 SDLC</Tag>
+                  <Tag color="cyan">{t('memberCount', { count: detailMembers.length || detailSquad?.memberCount || 0 })}</Tag>
+                  <Tag color="green">{t('roleCount', { count: roleStats.length })}</Tag>
+                  <Tag color="blue">{t('sdlcCount', { count: detailSdlcs.length || detailSquad?.sdlcCount || 0 })}</Tag>
                 </Space>
               </Space>
             </Space>
           </div>
 
           <div style={{ padding: 24 }}>
-            {detailLoading ? <Spin /> : (
+            {detailLoading ? <Spin aria-label={t('loading')} /> : (
               <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 0.65fr', gap: 18 }}>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginBottom: 12 }}>数字员工阵容</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginBottom: 12 }}>{t('agentLineup')}</div>
                   {detailMembers.length === 0 ? (
-                    <Empty description="暂无成员，请先在成员管理中添加数字员工" />
+                    <Empty description={t('emptyLineup')} />
                   ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
                     {detailMembers.map((member, index) => (
@@ -333,7 +351,7 @@ export function SquadListPage() {
                         <DigitalHeadAvatar member={member} />
                         <div style={{ fontWeight: 800, color: 'var(--aw-text)', marginTop: 10 }}>{member.agentName}</div>
                         <div style={{ color: avatarPalette(index).text, fontSize: 12, marginTop: 4 }}>
-                          {member.roleName || member.roleCode || '未配置角色'}
+                          {getAgentRoleLabel(member.roleCode, member.roleName) || t('roleUnset')}
                         </div>
                         <div style={{
                           color: 'var(--aw-muted)',
@@ -342,7 +360,7 @@ export function SquadListPage() {
                           lineHeight: 1.5,
                           minHeight: 36,
                         }}>
-                          {member.responsibilities || '暂无职责说明'}
+                          {member.responsibilities || t('noResponsibilities')}
                         </div>
                       </div>
                     ))}
@@ -351,10 +369,10 @@ export function SquadListPage() {
                 </div>
 
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginBottom: 12 }}>角色构成</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginBottom: 12 }}>{t('roleComposition')}</div>
                   <div style={{ display: 'grid', gap: 10 }}>
                     {roleStats.map((role) => (
-                      <div key={role.name} style={{
+                      <div key={role.key} style={{
                         display: 'flex',
                         justifyContent: 'space-between',
                         border: '1px solid var(--aw-border)',
@@ -363,12 +381,12 @@ export function SquadListPage() {
                         background: 'var(--aw-panel)',
                       }}>
                         <span>{role.name}</span>
-                        <b>{role.count}</b>
+                        <b>{formatNumber(role.count)}</b>
                       </div>
                     ))}
                   </div>
 
-                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginTop: 20, marginBottom: 6 }}>SDLC 流程</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginTop: 20, marginBottom: 6 }}>{t('sdlcWorkflows')}</div>
                   <div style={{ display: 'grid', gap: 12 }}>
                     {sdlcGroups.map((group) => (
                       <div key={group.id} style={{
@@ -379,15 +397,15 @@ export function SquadListPage() {
                       }}>
                         <div style={{ fontWeight: 800, color: 'var(--aw-text)' }}>{group.name}</div>
                         <div style={{ color: 'var(--aw-muted)', fontSize: 12, marginTop: 3, marginBottom: 10 }}>
-                          {group.roles.length > 0 ? group.roles.join(' / ') : '暂无角色'}
+                          {group.roles.length > 0 ? group.roles.join(' / ') : t('noRoles')}
                         </div>
                         <div style={{ borderLeft: '3px solid color-mix(in srgb, var(--aw-info) 30%, var(--aw-border))', paddingLeft: 12, display: 'grid', gap: 10 }}>
                           {group.steps.length === 0 ? (
-                            <span style={{ color: 'var(--aw-muted)' }}>暂无步骤</span>
+                            <span style={{ color: 'var(--aw-muted)' }}>{t('noSteps')}</span>
                           ) : group.steps.map((step) => (
                             <div key={step.id}>
                               <b>{step.name}</b>
-                              <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{step.handlerRoleRef || step.handlerType || '-'}</div>
+                              <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{step.handlerRoleRef || handlerTypeLabel(step.handlerType) || '-'}</div>
                             </div>
                           ))}
                         </div>
@@ -395,10 +413,10 @@ export function SquadListPage() {
                     ))}
                   </div>
 
-                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginTop: 20, marginBottom: 6 }}>关联执行器</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--aw-text)', marginTop: 20, marginBottom: 6 }}>{t('relatedExecutors')}</div>
                   <div style={{ display: 'grid', gap: 8 }}>
                     {detailExecutors.length === 0 ? (
-                      <span style={{ color: 'var(--aw-muted)' }}>暂无执行器</span>
+                      <span style={{ color: 'var(--aw-muted)' }}>{t('noExecutors')}</span>
                     ) : detailExecutors.map((executor) => (
                       <div key={executor.id} style={{
                         display: 'flex',
@@ -412,9 +430,9 @@ export function SquadListPage() {
                       }}>
                         <div>
                           <div style={{ fontWeight: 700, color: 'var(--aw-text)' }}>{executor.name}</div>
-                          <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{executor.agentName || '未知 Agent'}</div>
+                          <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{executor.agentName || t('unknownAgent')}</div>
                         </div>
-                        <Tag color={executor.status === 'ONLINE' ? 'green' : 'default'}>{executor.status}</Tag>
+                        <Tag color={executor.status === 'ONLINE' ? 'green' : 'default'}>{executorStatusLabel(executor.status)}</Tag>
                       </div>
                     ))}
                   </div>
@@ -426,7 +444,8 @@ export function SquadListPage() {
       </Modal>
 
       <Modal
-        title="管理小队成员"
+        closable={{ 'aria-label': t('close'), closeIcon: <CloseOutlined aria-hidden="true" /> }}
+        title={t('manageMembers')}
         open={membersOpen}
         onCancel={() => { setMembersOpen(false); setMembersSquadId(null); }}
         footer={null}
@@ -436,60 +455,64 @@ export function SquadListPage() {
           <Space.Compact style={{ width: '100%' }}>
             <Select
               style={{ width: '100%' }}
-              placeholder="选择数字员工添加到小队"
+              placeholder={t('selectAgent')}
+              aria-label={t('selectAgent')}
               value={addAgentId}
               onChange={setAddAgentId}
               options={availableAgents.map((agent) => ({ value: agent.id, label: agent.name }))}
               showSearch
               filterOption={(input, option) => String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
             />
-            <Button type="primary" icon={<PlusOutlined />}
+            <Button type="primary" icon={<PlusOutlined aria-hidden="true" />}
               disabled={!addAgentId} loading={addMemberMut.isPending}
               onClick={() => addAgentId && accessCommand(
                 'READ_WRITE',
-                '添加小队成员',
+                t('addMember'),
                 () => addMemberMut.mutate(addAgentId),
               )}>
-              添加
+              {t('add')}
             </Button>
           </Space.Compact>
         </div>
 
-        {membersLoading ? <Spin /> : (
+        {membersLoading ? <Spin aria-label={t('loading')} /> : (
           <List
             size="small"
             dataSource={members}
-            locale={{ emptyText: '暂无成员' }}
+            locale={{ emptyText: t('emptyMembers') }}
             renderItem={(item: SquadMember) => (
               <List.Item
                 actions={[
-                  <Popconfirm key="rm" title="确认移除？" onConfirm={() => accessCommand(
+                  <Popconfirm okText={t('confirm')} cancelText={t('cancel')} key="rm" title={t('confirmRemove')} onConfirm={() => accessCommand(
                     'READ_WRITE',
-                    '移除小队成员',
+                    t('removeMember'),
                     () => removeMemberMut.mutate(item.agentId),
                   )}>
-                    <Button type="link" size="small" danger>移除</Button>
+                    <Button type="link" size="small" danger>{t('remove')}</Button>
                   </Popconfirm>,
                 ]}
               >
                 <List.Item.Meta
                   title={item.agentName}
-                  description={<Tag>{item.roleCode}</Tag>}
+                  description={<Tag>{getAgentRoleLabel(item.roleCode, item.roleName) || t('roleUnset')}</Tag>}
                 />
               </List.Item>
             )}
           />
         )}
       </Modal>
+
+      <SquadCopyModal squad={copySquad} onClose={() => setCopySquad(null)} />
     </>
   );
 }
 
 function SummaryPill({ label, value }: { label: string; value: number }) {
+  useTranslation('squad');
   return (
     <div className="squad-summary-pill">
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong>{formatNumber(value)}</strong>
     </div>
   );
 }
@@ -507,30 +530,34 @@ function executorText(squad: Squad) {
   const online = squad.executorOnlineCount ?? 0;
   const total = squad.executorTotalCount ?? 0;
   if (total <= 1) {
-    return online > 0 ? '执行器在线' : '执行器离线';
+    return i18n.t(online > 0 ? 'executorOnline' : 'executorOffline', { ns: 'squad' });
   }
-  return `${online}/${total} 在线`;
+  return i18n.t('onlineRatio', { ns: 'squad', online, total });
 }
 
 function sdlcText(squad: Squad) {
   const count = squad.sdlcCount ?? 0;
-  return count > 0 ? `${count} 个 SDLC` : '未关联 SDLC';
+  return count > 0 ? i18n.t('sdlcCount', { ns: 'squad', count }) : i18n.t('noSdlc', { ns: 'squad' });
 }
 
 function buildRoleStats(members: SquadMember[]) {
-  const counts = new Map<string, number>();
+  const counts = new Map<string, { key: string; name: string; count: number }>();
   members.forEach((member) => {
-    const key = member.roleName || member.roleCode || '未配置角色';
-    counts.set(key, (counts.get(key) || 0) + 1);
+    const key = member.roleName || member.roleCode || '';
+    const role = counts.get(key) ?? {
+      key, name: getAgentRoleLabel(member.roleCode, member.roleName) || i18n.t('roleUnset', { ns: 'squad' }), count: 0,
+    };
+    role.count += 1;
+    counts.set(key, role);
   });
-  return Array.from(counts.entries()).map(([name, count]) => ({ name, count }));
+  return Array.from(counts.values());
 }
 
 function buildSdlcGroups(members: SquadMember[]) {
   const groups = new Map<string, {
     id: string;
     name: string;
-    roles: Set<string>;
+    roles: Map<string, string>;
     steps: NonNullable<SquadMember['sdlcSteps']>;
   }>();
 
@@ -538,13 +565,13 @@ function buildSdlcGroups(members: SquadMember[]) {
     const id = String(member.sdlcId ?? member.sdlcName ?? 'none');
     const group = groups.get(id) ?? {
       id,
-      name: member.sdlcName || '未关联 SDLC',
-      roles: new Set<string>(),
+      name: member.sdlcName || i18n.t('noSdlc', { ns: 'squad' }),
+      roles: new Map<string, string>(),
       steps: [],
     };
     const role = member.roleName || member.roleCode;
     if (role) {
-      group.roles.add(role);
+      group.roles.set(role, getAgentRoleLabel(member.roleCode, member.roleName));
     }
     if (group.steps.length === 0 && member.sdlcSteps?.length) {
       group.steps = member.sdlcSteps;
@@ -555,9 +582,25 @@ function buildSdlcGroups(members: SquadMember[]) {
   return Array.from(groups.values()).map((group) => ({
     id: group.id,
     name: group.name,
-    roles: Array.from(group.roles),
+    roles: Array.from(group.roles.values()),
     steps: group.steps,
   }));
+}
+
+const executorStatusKeys = new Map([
+  ['ONLINE', 'executorStatus.ONLINE'], ['OFFLINE', 'executorStatus.OFFLINE'],
+  ['BUSY', 'executorStatus.BUSY'], ['REVOKED', 'executorStatus.REVOKED'],
+] as const);
+function executorStatusLabel(status: string) {
+  const key = executorStatusKeys.get(status as Parameters<typeof executorStatusKeys.get>[0]);
+  return key ? i18n.t(key, { ns: 'squad' }) : status;
+}
+const handlerTypeKeys = new Map([
+  ['AGENT', 'handlerType.AGENT'], ['HUMAN', 'handlerType.HUMAN'], ['SYSTEM', 'handlerType.SYSTEM'],
+] as const);
+function handlerTypeLabel(handlerType: string) {
+  const key = handlerTypeKeys.get(handlerType as Parameters<typeof handlerTypeKeys.get>[0]);
+  return key ? i18n.t(key, { ns: 'squad' }) : handlerType;
 }
 
 function avatarPalette(index: number) {

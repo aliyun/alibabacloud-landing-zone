@@ -29,7 +29,7 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "autowonder.integration.aone", name = "enabled",
         havingValue = "true", matchIfMissing = false)
 @RequestMapping("/api/integrations/aone")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理Aone集成")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理Aone集成", actionKey = "access.action.manage_aone_integration")
 public class AoneIntegrationController {
 
     private final AoneIntegrationService integrationService;

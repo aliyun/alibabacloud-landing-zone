@@ -119,4 +119,27 @@ class RepoConnectionTesterTest {
         assertFalse(result.isSuccess());
         assertEquals("连接测试失败，请检查仓库地址、网络和本机 git 权限", result.getMessage());
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing", "success", "silent", "stderr", "timeout", "exception"})
+    void freshConnectionSummaryUsesLocaleAndKeepsSanitizedExternalDetail(String branch) throws Exception {
+        Path fake = tempDir.resolve("fake-"+branch+".sh");
+        String script = switch(branch) {case "success" -> "#!/bin/sh\nexit 0\n";
+            case "stderr" -> "#!/bin/sh\necho 'Warning: Permanently added raw' >&2\necho '<b>raw</b>连接测试失败' >&2\nexit 128\n";
+            case "timeout" -> "#!/bin/sh\nsleep 1\n";default -> "#!/bin/sh\nexit 128\n";};
+        Files.writeString(fake,script);assertTrue(fake.toFile().setExecutable(true,true));
+        var req = new TestRepoConnectionRequest(); if(!branch.equals("missing")) req.setUrl("https://raw");
+        var tester = new RepoConnectionTester(branch.equals("exception") ? tempDir.resolve("missing").toString() : fake.toString(),branch.equals("timeout") ? 0 : 3);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {var result = tester.test(req); assertEquals(branch.equals("success"),result.isSuccess());
+            switch(branch) {
+                case "missing" -> assertEquals("The repository address cannot be empty",result.getMessage());
+                case "success" -> assertEquals("Connection succeeded; read access verified",result.getMessage());
+                case "silent" -> assertEquals("Connection test failed. Check the repository address, network and local git permissions",result.getMessage());
+                case "stderr" -> assertEquals("Connection test failed: <b>raw</b>连接测试失败",result.getMessage());
+                case "timeout" -> assertEquals("Connection test timed out. Check the repository address, network and local git permissions",result.getMessage());
+                case "exception" -> assertTrue(result.getMessage().startsWith("Connection test failed: Cannot run program"),result.getMessage());
+            }
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
 }

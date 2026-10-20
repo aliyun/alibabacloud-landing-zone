@@ -1,0 +1,143 @@
+{
+  "fields": {
+    "id": "ID",
+    "name": "Name",
+    "url": "URL",
+    "description": "Description",
+    "created": "Created",
+    "actions": "Actions",
+    "repoName": "Repository name",
+    "repoUrl": "Repository URL",
+    "branch": "Default branch",
+    "peer": "Related repository",
+    "relationType": "Relationship type",
+    "source": "Source repository",
+    "target": "Target repository"
+  },
+  "actions": {
+    "addRepo": "Add repository",
+    "deleteRepo": "Delete repository",
+    "map": "Relationship map",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "back": "Back",
+    "edit": "Edit",
+    "backList": "Back to list",
+    "addRelation": "Add relationship",
+    "deleteRelation": "Delete relationship",
+    "close": "Close",
+    "addRepoRelation": "Add repository relationship",
+    "deleteRepoRelation": "Delete repository relationship",
+    "editRepo": "Edit repository information",
+    "saveRepo": "Save repository information",
+    "saveConclusion": "Save repository scan conclusion",
+    "editConclusion": "Edit repository scan conclusion",
+    "startScan": "Start repository scan",
+    "scan": "Start scan",
+    "editConclusionButton": "Edit conclusion",
+    "deleteRepoLabel": "Delete repository {{name}}",
+    "clearBranch": "Clear default branch",
+    "clearDescription": "Clear description"
+  },
+  "feedback": {
+    "added": "Repository added",
+    "deleted": "Repository deleted",
+    "repoSaved": "Repository information saved",
+    "conclusionSaved": "Conclusion saved",
+    "relationCreated": "Relationship created",
+    "relationDeleted": "Relationship deleted",
+    "scanConfirmed": "Scan conclusion confirmed and saved"
+  },
+  "errors": {
+    "addRepo": "Failed to add repository",
+    "deleteRepo": "Failed to delete repository",
+    "save": "Failed to save",
+    "create": "Failed to create relationship",
+    "invalidId": "Invalid ID",
+    "load": "Failed to load",
+    "retry": "Please try again later",
+    "graphRender": "The relationship map could not be rendered. Refresh the page and try again.",
+    "graphResize": "The canvas could not be resized. Refresh the page and try again."
+  },
+  "validation": {
+    "nameRequired": "Enter a repository name",
+    "urlRequired": "Enter a repository URL",
+    "urlInvalid": "Enter a valid URL",
+    "sourceRequired": "Select a source repository",
+    "targetRequired": "Select a target repository",
+    "typeRequired": "Select a relationship type",
+    "nameInvalid": "Repository name must be a single directory segment. Do not include / or \\, use . or .., or enter an absolute path. For a namespace/repo-name identifier, enter the full identifier in the repository URL and use only the single directory segment as the name."
+  },
+  "placeholders": {
+    "urlExample": "https://github.com/example/repo or git@example.com:workspace/repo.git",
+    "repoUrl": "Git repository URL",
+    "clearBranch": "Leave blank to clear the default branch",
+    "clearDescription": "Repository background; leave blank to clear",
+    "source": "Select a source repository",
+    "target": "Select a target repository",
+    "type": "Select a relationship type",
+    "description": "Optional description"
+  },
+  "confirm": {
+    "deleteHint": "The repository and all its relationships will be removed. This cannot be undone.",
+    "deleteRelation": "Delete this relationship?",
+    "deleteRepo": "Delete repository “{{name}}”?"
+  },
+  "tabs": {
+    "info": "Basic information",
+    "relations": "Repository relationships",
+    "conclusion": "Scan conclusion"
+  },
+  "scan": {
+    "status": "Scan status",
+    "complete": "Scan complete",
+    "notScanned": "Not scanned",
+    "lastTime": "Last scan",
+    "purpose": "Purpose",
+    "business": "Key business areas",
+    "upstreams": "Upstream dependencies",
+    "downstreams": "Downstream consumers",
+    "purposePlaceholder": "Main purpose of this repository",
+    "businessPlaceholder": "Core business areas",
+    "upstreamsPlaceholder": "Upstream repositories/services (comma-separated)",
+    "downstreamsPlaceholder": "Downstream repositories/services (comma-separated)",
+    "markdown": "Summary (Markdown)",
+    "summaryPlaceholder": "Detailed repository summary…",
+    "summary": "Summary",
+    "empty": "No scan conclusion yet",
+    "emptyHint": "Start a scan or edit manually to add a conclusion",
+    "drawer": "AI repository scan"
+  },
+  "map": {
+    "help": "Scroll to zoom · Drag repositories or the canvas · Click for details",
+    "zoomOut": "Zoom out relationship map",
+    "zoomIn": "Zoom in relationship map",
+    "exitFullscreen": "Exit fullscreen",
+    "fullscreen": "View fullscreen",
+    "fit": "Fit to canvas",
+    "empty": "No repositories or relationships yet",
+    "emptyHint": "Add repositories and relationships to see calls and dependencies here.",
+    "details": "Relationship details",
+    "source": "Source:",
+    "target": "Target:",
+    "type": "Type:",
+    "description": "Description:"
+  },
+  "hub": {
+    "title": "Repositories",
+    "listHint": "Manage hosted repositories and access configuration",
+    "mapHint": "View and edit dependencies and calls between repositories"
+  },
+  "relation": {
+    "frontend": "Frontend",
+    "backend": "Backend",
+    "clientServer": "Client calls server",
+    "serverClient": "Server sends to client",
+    "gateway": "Gateway",
+    "dependency": "Dependency",
+    "service": "Service call",
+    "other": "Other"
+  }
+}

@@ -5,6 +5,7 @@ import com.aliyun.autowonder.json.JSONObject;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.executor.dto.ExecutorUpdateAllResultVO;
 import com.aliyun.autowonder.executor.dto.ExecutorUpdateSkipVO;
 import com.aliyun.autowonder.executor.dto.ExecutorUpdateVO;
@@ -167,13 +168,13 @@ public class ExecutorUpdateService {
         String reported = reportedVersion(executor);
         OptionalInt comparison = RuntimeVersion.compare(reported, target);
         if (comparison.isPresent() && comparison.getAsInt() >= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "执行器版本不低于目标版本 " + target + "，无需升级");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.update.up_to_date", new Object[]{target}, "执行器版本不低于目标版本 " + target + "，无需升级");
         }
         if (registry.isOnline(executorId) && !supportsUpgrade(executorId)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "当前客户端不支持远程升级，请先在本地升级客户端");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.update.unsupported", null, "当前客户端不支持远程升级，请先在本地升级客户端");
         }
         if (taskDao.findActiveByExecutor(tenantId, executorId) != null) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "已有升级任务进行中，请等待结果");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "executor.update.active", null, "已有升级任务进行中，请等待结果");
         }
         ExecutorUpdateTaskDO task = newTask(executor, target, reported, SOURCE_MANUAL, userId);
         taskDao.insert(task);
@@ -198,11 +199,13 @@ public class ExecutorUpdateService {
                 continue;
             }
             if (taskDao.findActiveByExecutor(tenantId, executorId) != null) {
-                skipped.add(new ExecutorUpdateSkipVO(executorId, executor.getName(), "已有升级任务进行中"));
+                skipped.add(new ExecutorUpdateSkipVO(executorId, executor.getName(),
+                        SystemMessages.render("executor.update.skip.active", null, "已有升级任务进行中"), "ACTIVE_TASK"));
                 continue;
             }
             if (registry.isOnline(executorId) && !supportsUpgrade(executorId)) {
-                skipped.add(new ExecutorUpdateSkipVO(executorId, executor.getName(), "客户端不支持远程升级"));
+                skipped.add(new ExecutorUpdateSkipVO(executorId, executor.getName(),
+                        SystemMessages.render("executor.update.skip.unsupported", null, "客户端不支持远程升级"), "UNSUPPORTED_CLIENT"));
                 continue;
             }
             // Offline executors are still scheduled: the task waits as 待升级 and ships on reconnect.
@@ -259,6 +262,7 @@ public class ExecutorUpdateService {
         if (executor == null || !Objects.equals(executor.getTenantId(), session.getTenantId())) {
             return;
         }
+        if (ExecutorLaunchConfigService.parse(executor.getLaunchConfig()).runtimeVersion != null) return;
         // The frame carries the version this heartbeat just reported; the router mirrored it to presence.
         String reported = version.trim();
         String target = targetVersion();

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Card, Avatar, Space, Typography, Spin, Empty } from 'antd';
 import { EyeOutlined } from '@ant-design/icons';
 import { useWatchers } from '../hooks';
@@ -13,13 +14,14 @@ interface WatcherListProps {
  * 失去工作空间访问权的用户由后端过滤，不会出现在列表中。
  */
 export function WatcherList({ workitemId }: WatcherListProps) {
+  const { t } = useTranslation('workitem');
   const { data: watchers = [], isLoading } = useWatchers(workitemId);
 
   return (
     <Card
       size="small"
       data-testid="workitem-watcher-list"
-      title={`关注人${watchers.length ? ` (${watchers.length})` : ''}`}
+      title={watchers.length ? t('watchers.titleCount', { count: watchers.length }) : t('watchers.title')}
       styles={{ body: { padding: '8px 12px' } }}
     >
       {isLoading ? (
@@ -27,7 +29,7 @@ export function WatcherList({ workitemId }: WatcherListProps) {
           <Spin size="small" />
         </div>
       ) : watchers.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无关注人" style={{ margin: '12px 0' }} />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('watchers.empty')} style={{ margin: '12px 0' }} />
       ) : (
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
           {watchers.map((w) => (
@@ -44,7 +46,7 @@ export function WatcherList({ workitemId }: WatcherListProps) {
               }}
             >
               <Avatar
-                aria-label="关注人头像"
+                aria-label={t('watchers.avatar')}
                 size={32}
                 icon={<EyeOutlined />}
                 style={{
@@ -57,7 +59,7 @@ export function WatcherList({ workitemId }: WatcherListProps) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Text ellipsis style={{ fontSize: 13, fontWeight: 600, display: 'block' }}>{w.name}</Text>
                 <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                  工号: {w.displayId ?? w.userId}
+                  {t('watchers.identity', { id: w.displayId ?? w.userId })}
                 </Text>
               </div>
             </div>

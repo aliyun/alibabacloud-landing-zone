@@ -26,4 +26,11 @@ public class ConversationExecutorRouter {
         return selector.select(agentId, preferredExecutorId,
                 ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1);
     }
+    public Long selectPlatform(long tenantId, long agentId, long agentVersionId, Long preferredExecutorId) {
+        var bindings = refs.listByVersion(tenantId, agentVersionId);
+        String required = ConversationProtocolFeatures.TURN_EVENT;
+        if (bindings != null && !bindings.isEmpty()) required += "," + ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1;
+        return selector.select(agentId, preferredExecutorId, required);
+    }
+
 }

@@ -131,7 +131,18 @@ public class AiWorkerPool {
             return;
         }
 
-        String base = adapter.buildSystemPrompt(session);
+        String base;
+        try {
+            base = adapter.buildSystemPrompt(session);
+        } catch (com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException e) {
+            // 读取边界拒绝是终态：标记失败而不是让会话卡在 QUEUED。
+            log.info("ai session exec denied sessionId={} scene={} domain={}",
+                    session.getId(), session.getScene(), e.getDomain());
+            sessionDao.updateFailed(session.getId(), session.getTenantId(),
+                    e.getMessage(), session.getVersion());
+            streamPublisher.publishStatus(session.getId(), session.getTenantId(), AiConstants.Status.FAILED);
+            return;
+        }
         String systemPrompt = (base != null ? base : "") + API_MODE_SUFFIX;
         log.info("AI session step=system_prompt_built sessionId={} scene={} systemPromptLen={}",
                 session.getId(), session.getScene(),

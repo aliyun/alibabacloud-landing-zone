@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.repo;
 
 import com.aliyun.autowonder.configuration.ThreadPoolManager;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.repo.dto.TestRepoConnectionRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -32,7 +33,7 @@ public class RepoConnectionTester {
 
     public RepoConnectionTestResult test(TestRepoConnectionRequest req) {
         if (req == null || req.getUrl() == null || req.getUrl().isBlank()) {
-            return RepoConnectionTestResult.fail("仓库地址不能为空");
+            return RepoConnectionTestResult.fail(SystemMessages.render("repo.connection.url_required", new Object[]{}, "仓库地址不能为空"));
         }
         Path tempDir = null;
         try {
@@ -50,16 +51,16 @@ public class RepoConnectionTester {
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return RepoConnectionTestResult.fail("连接测试超时，请检查仓库地址、网络和本机 git 权限");
+                return RepoConnectionTestResult.fail(SystemMessages.render("repo.connection.timeout", new Object[]{}, "连接测试超时，请检查仓库地址、网络和本机 git 权限"));
             }
             stdout.join();
             String err = stderr.join();
             if (process.exitValue() == 0) {
-                return RepoConnectionTestResult.ok("连接成功，已验证读取权限");
+                return RepoConnectionTestResult.ok(SystemMessages.render("repo.connection.success", new Object[]{}, "连接成功，已验证读取权限"));
             }
             return RepoConnectionTestResult.fail(sanitizeGitError(err));
         } catch (Exception e) {
-            return RepoConnectionTestResult.fail("连接测试失败：" + e.getMessage());
+            return RepoConnectionTestResult.fail(SystemMessages.render("repo.connection.failed_detail", new Object[]{e.getMessage()}, "连接测试失败：" + e.getMessage()));
         } finally {
             deleteQuietly(tempDir);
         }
@@ -79,13 +80,13 @@ public class RepoConnectionTester {
 
     private String sanitizeGitError(String err) {
         if (err == null || err.isBlank()) {
-            return "连接测试失败，请检查仓库地址、网络和本机 git 权限";
+            return SystemMessages.render("repo.connection.failed", new Object[]{}, "连接测试失败，请检查仓库地址、网络和本机 git 权限");
         }
         String trimmed = err.replaceAll("(?m)^Warning: Permanently added .*$\\n?", "").trim();
         if (trimmed.length() > 500) {
             trimmed = trimmed.substring(0, 500);
         }
-        return "连接测试失败：" + trimmed;
+        return SystemMessages.render("repo.connection.failed_detail", new Object[]{trimmed}, "连接测试失败：" + trimmed);
     }
 
     private String read(InputStream stream) {

@@ -1,3 +1,4 @@
+import { Trans, useTranslation } from 'react-i18next';
 import { Card } from 'antd';
 import type { SquadLine } from './api';
 import { BRAND } from './theme';
@@ -7,11 +8,12 @@ interface Props {
 }
 
 export default function SquadLines({ squads }: Props) {
+  const { t } = useTranslation('insights');
   return (
-    <Card title={<>小队产线{' '}
-        <span style={{ color: BRAND.textMuted, fontWeight: 400, fontSize: 12 }}>· 按运行中任务数排序</span></>} style={{ minWidth: 0 }}>
+    <Card title={<>{t('squadLines.title')}{' '}
+        <span style={{ color: BRAND.textMuted, fontWeight: 400, fontSize: 12 }}>{t('squadLines.hint')}</span></>} style={{ minWidth: 0 }}>
       {squads.length === 0 ? (
-        <div style={{ color: BRAND.textMuted, fontSize: 12, textAlign: 'center' }}>暂无小队</div>
+        <div style={{ color: BRAND.textMuted, fontSize: 12, textAlign: 'center' }}>{t('squadLines.empty')}</div>
       ) : (
         <div className="insight-squad-grid">
           {squads.map((s) => {
@@ -42,13 +44,13 @@ export default function SquadLines({ squads }: Props) {
                     {s.runningTasks}
                   </div>
                 </div>
-                <div style={{ fontSize: 12, color: BRAND.textMuted, marginBottom: 8 }}>运行中任务</div>
+                <div style={{ fontSize: 12, color: BRAND.textMuted, marginBottom: 8 }}>{t('squadLines.runningTasks')}</div>
                 <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--aw-muted)' }}>
-                  <span>成员 <b className="insight-realtime-metric">{s.members}</b></span>
-                  <span>在岗 <b className="insight-realtime-metric">{s.online}</b></span>
-                  <span>忙碌 <b className="insight-realtime-metric">{s.busy}</b></span>
+                  <span>{t('squadLines.members')} <b className="insight-realtime-metric">{s.members}</b></span>
+                  <span>{t('squadLines.online')} <b className="insight-realtime-metric">{s.online}</b></span>
+                  <span>{t('squadLines.busy')} <b className="insight-realtime-metric">{s.busy}</b></span>
                 </div>
-                <div role="img" aria-label={`忙碌成员 ${s.busy} / ${s.members}`}
+                <div role="img" aria-label={t('squadLines.busyAria', { busy: s.busy, members: s.members })}
                   style={{
                     marginTop: 8,
                     height: 6,
@@ -66,7 +68,7 @@ export default function SquadLines({ squads }: Props) {
                   />
                 </div>
                 <div style={{ fontSize: 12, color: BRAND.textMuted, marginTop: 4 }}>
-                  忙碌成员 <b className="insight-realtime-metric">{s.busy}/{s.members}</b> · 进行中工单 <b className="insight-realtime-metric">{s.inProgressWorkitems}</b>
+                  <Trans t={t} i18nKey="squadLines.summary" components={{ fraction: <b className="insight-realtime-metric">{s.busy}/{s.members}</b>, count: <b className="insight-realtime-metric">{s.inProgressWorkitems}</b> }} />
                 </div>
               </div>
             );

@@ -325,4 +325,26 @@ class ExternalWorkitemImportServiceTest {
                 + "### 附件\n"
                 + "- screenshot.png: https://files.example.com/screenshot.png";
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"null", "sourceSystem", "externalWorkitemId", "title", "type", "priority", "mapping"})
+    void ownedImportFailuresTranslateOnlyAtResponseAndRecordRaw(String branch) {
+        var req = request();
+        String raw; String english;
+        switch (branch) {
+            case "null" -> { req = null; raw = "请求体不能为空"; english = "Request body is required"; }
+            case "priority" -> { req.setPriority(null); req.setFieldMappings(Map.of("badPriority", "priority")); req.setExtensions(Map.of("badPriority", "P0")); raw = "priority必须是数字"; english = "priority must be a number"; }
+            case "mapping" -> { var link = new ExternalWorkitemLinkDO(); link.setWorkitemId(9L); when(linkDao.findByExternalScope(100L, 0L, "PROJ-123")).thenReturn(link); raw = "已存在外部工单映射,但本地工单不存在"; english = "An external work item mapping exists, but the local work item does not exist"; }
+            default -> { switch (branch) { case "sourceSystem" -> req.setSourceSystem(null); case "externalWorkitemId" -> req.setExternalWorkitemId(null); case "title" -> req.setTitle(null); case "type" -> req.setType(null); } raw = branch + "不能为空"; english = branch + " is required"; }
+        }
+        var request = req;
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {
+            var error = assertThrows(BizException.class, () -> service.importWorkitem(request, 100L, 9L));
+            assertEquals(raw, error.getMessage()); org.junit.jupiter.api.Assertions.assertNull(error.getCause());
+            verify(recordService).recordFailure(argThat(record -> raw.equals(record.getFailureReason())));
+            verify(workitemDao, never()).insert(any());
+            assertEquals(english, com.aliyun.autowonder.common.result.Result.fail(error).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
+import com.aliyun.autowonder.access.WorkspaceDomain;
 import com.aliyun.autowonder.artifact.RequirementDocumentService;
 import com.aliyun.autowonder.auth.jwt.JwtService;
 import com.aliyun.autowonder.branding.PlatformBrandingService;
@@ -60,7 +61,7 @@ public class WorkitemCliDownloadTokenService {
         if (workitem == null || workitem.getTenantId() == null) {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
-        requireReadMembership(workitem.getTenantId(), userId);
+        requireReadMembership(workitem.getTenantId(), userId, WorkspaceDomain.ARTIFACT);
 
         String token = TOKEN_PREFIX
                 + jwtService.signUserPurpose(userId, PURPOSE, TOKEN_TTL.getSeconds());
@@ -135,7 +136,7 @@ public class WorkitemCliDownloadTokenService {
      * Live authorization reused by the CLI download endpoints: an active membership at any
      * access level. Read-only members may download, matching list_workitem_documents visibility.
      */
-    public void requireReadMembership(long tenantId, long userId) {
+    public void requireReadMembership(long tenantId, long userId, WorkspaceDomain domain) {
         WorkspaceMemberDO member = workspaceMemberDao.findByWorkspaceAndUser(tenantId, userId);
         if (member == null
                 || !Integer.valueOf(0).equals(member.getStatus())
@@ -147,6 +148,7 @@ public class WorkitemCliDownloadTokenService {
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new BizException(ErrorCode.NO_PERMISSION);
         }
+
     }
 
     private static String posixQuote(String value) {

@@ -1,8 +1,13 @@
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
 import { listWorkitems } from '@/features/workitem/api';
 
 import { useAuthStore } from '@/shared/auth/store';
+
+/** 审核角标与审核列表是两份独立缓存，键在此统一定义，避免两处漂移后再次出现不一致 */
+export const PENDING_REVIEW_COUNT_QUERY_KEY = ['agents', 'reviews', 'count'] as const;
+export const PENDING_REVIEWS_QUERY_KEY = ['pendingReviews'] as const;
 
 export function useAgentList(status?: string, kind?: api.AgentKind, squadIds?: number[]) {
   return useQuery({
@@ -80,7 +85,7 @@ export function useSubmitForReview() {
     onSuccess: (_d, agentId) => {
       queryClient.invalidateQueries({ queryKey: ['agent', agentId] });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
-      queryClient.invalidateQueries({ queryKey: ['pendingReviews'] });
+      queryClient.invalidateQueries({ queryKey: PENDING_REVIEWS_QUERY_KEY });
     },
   });
 }
@@ -93,8 +98,8 @@ export function useApproveAgent() {
     onSuccess: (_d, v) => {
       queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
-      queryClient.invalidateQueries({ queryKey: ['pendingReviews'] });
-      queryClient.invalidateQueries({ queryKey: ['agents', 'reviews', 'count'] });
+      queryClient.invalidateQueries({ queryKey: PENDING_REVIEWS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PENDING_REVIEW_COUNT_QUERY_KEY });
     },
   });
 }
@@ -107,8 +112,8 @@ export function useRejectAgent() {
     onSuccess: (_d, v) => {
       queryClient.invalidateQueries({ queryKey: ['agent', v.agentId] });
       queryClient.invalidateQueries({ queryKey: ['agents'] });
-      queryClient.invalidateQueries({ queryKey: ['pendingReviews'] });
-      queryClient.invalidateQueries({ queryKey: ['agents', 'reviews', 'count'] });
+      queryClient.invalidateQueries({ queryKey: PENDING_REVIEWS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: PENDING_REVIEW_COUNT_QUERY_KEY });
     },
   });
 }
@@ -224,10 +229,47 @@ export function useRemoveEnvironmentVariableRef() {
 }
 
 export function usePendingReviews() {
-  return useQuery({
-    queryKey: ['pendingReviews'],
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: PENDING_REVIEWS_QUERY_KEY,
     queryFn: api.listPendingReviews,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
+
+  // 只订阅角标缓存、不额外发请求（角标查询由侧栏常驻维护）；
+  // 需要 disabled 观察者才能在角标轮询/聚焦刷新后感知新值。
+  const { data: pendingCount } = useQuery({
+    queryKey: PENDING_REVIEW_COUNT_QUERY_KEY,
+    queryFn: api.getPendingReviewCount,
+    enabled: false,
+  });
+
+  // 列表刷新后若与角标缓存不一致，让角标重取服务端真值。
+  // 反向联动见下方 effect：两处都只在双方数据都已缓存且仍不一致时触发失效，避免请求环。
+  const pendingList = query.data;
+  useEffect(() => {
+    if (!pendingList) return;
+    const cachedCount = queryClient.getQueryData<number>(PENDING_REVIEW_COUNT_QUERY_KEY);
+    if (typeof cachedCount === 'number' && cachedCount !== pendingList.length) {
+      void queryClient.invalidateQueries({ queryKey: PENDING_REVIEW_COUNT_QUERY_KEY });
+    }
+  }, [pendingList, queryClient]);
+
+  // 角标轮询/聚焦刷新后若与已缓存的列表长度不一致，让列表重取服务端真值。
+  // 只响应角标值的实际变化（首次值与相同值不触发）；联动只存在于审核页内，天然单实例。
+  const lastObservedCount = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (typeof pendingCount !== 'number') return;
+    const previousCount = lastObservedCount.current;
+    lastObservedCount.current = pendingCount;
+    if (previousCount === undefined || previousCount === pendingCount) return;
+    if (!pendingList || pendingList.length === pendingCount) return;
+    void queryClient.invalidateQueries({ queryKey: PENDING_REVIEWS_QUERY_KEY });
+  }, [pendingCount, pendingList, queryClient]);
+
+  return query;
 }
 
 export function useAgentWorkitems(agentId: number) {
@@ -252,11 +294,11 @@ export function useAgentMemories(agentId: number) {
 export function useAgentPendingReviewCount() {
   const hasAccess = useAuthStore((s) => s.hasAccess);
   return useQuery({
-    queryKey: ['agents', 'reviews', 'count'],
+    queryKey: PENDING_REVIEW_COUNT_QUERY_KEY,
     queryFn: api.getPendingReviewCount,
     refetchInterval: 60_000,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
     enabled: hasAccess('READ_WRITE'),
   });
 }

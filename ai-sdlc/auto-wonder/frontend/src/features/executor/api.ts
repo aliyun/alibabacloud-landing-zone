@@ -10,6 +10,8 @@ export interface ExecutorVO {
   // 历史数据可能缺少客户端类型（null），创建入口已强制必填；页面需明确展示「类型缺失」。
   clientKind: string | null;
   lastConnectIp: string | null;
+  // 执行器接入时客户端自报的主机名（落库），老客户端未上报时为 null。
+  lastConnectHostname: string | null;
   lastHeartbeat: string | null;
   // 执行器心跳上报的 client-runtime 版本号（存 Redis），老客户端未上报时为 null。
   version?: string | null;
@@ -20,7 +22,9 @@ export interface ExecutorVO {
   lastStartedAt?: string | null;
   restartSupported?: boolean;
   updateRestartSupported?: boolean;
-  restart?: { requestId: string; status: string; message: string; issuedAt: string; update: boolean } | null;
+  launchCommandSupported?: boolean;
+  restartPolicySupported?: boolean;
+  restart?: { requestId: string; status: string; message: string; messageOrigin?: string | null; restartMode?: ExecutorRestartMode | null; issuedAt: string; update: boolean } | null;
   // 连接的客户端是否理解 EXECUTOR_UPGRADE 指令；老客户端为 false，按钮据此禁用。
   upgradeSupported?: boolean;
   // version 是否为可解析的稳定版本且严格低于 targetVersion，服务端算好，前端不再自己比版本。
@@ -54,6 +58,7 @@ export interface ExecutorUpdateVO {
 
 // 批量升级时被有意跳过的一个执行器，连同跳过原因一起展示在结果弹窗里。
 export interface ExecutorUpdateSkipVO {
+  reasonCode?: string | null;
   executorId: number;
   executorName: string | null;
   reason: string;
@@ -77,7 +82,8 @@ export interface IssuedExecutorVO {
   id: number;
   agentId: number;
   name: string;
-  token: string;
+  /** 明文令牌仅管理员可见；读写成员创建时为空，需管理员经令牌接口获取。 */
+  token: string | null;
   clientKind: string;
   memoryMode: string | null;
   maxConcurrentDispatches?: number | null;
@@ -112,16 +118,27 @@ export interface ExecutorModelCatalog {
 
 // 服务端持久化的启动配置，页面「启动命令」弹窗与 MCP build_executor_launch_command 共享同一份。
 // 从未配置过的执行器返回全 null、version=1，首次写入可携带 version=1。
+export interface ModelUpgradePolicy {
+  enabled: boolean;
+  levels: { entryCount: number; model: string }[];
+}
+
 export interface ExecutorLaunchConfig {
+  modelUpgradePolicy?: ModelUpgradePolicy | null;
   model: string | null;
   reasoningEffort: string | null;
   contextWindow: string | null;
   memoryMode: string | null;
   maxConcurrentDispatches?: number | null;
+  runtimeVersion?: string | null;
+  workspaceRoot?: string | null;
+  daemonName?: string | null;
+  debug?: boolean | null;
   version: number;
 }
 
 export interface UpdateExecutorLaunchConfigRequest {
+  modelUpgradePolicy?: ModelUpgradePolicy | null;
   // 仅历史缺类型（clientKind 为 NULL/空白）执行器的恢复写入需要携带：与启动配置一并落库；
   // 类型已存在的执行器后端只接受同名值（不同值拒绝），不会改写正常执行器的类型。
   clientKind?: string;
@@ -174,6 +191,18 @@ export async function updateExecutorLaunchConfig(
   return resp.data;
 }
 
+export async function saveExecutorLaunchCommand(id: number, command: string, version: number): Promise<ExecutorLaunchConfig> {
+  const resp = await apiClient.put<ExecutorLaunchConfig>(`/api/executors/${id}/launch-command`, { command, version });
+  return resp.data;
+}
+
+export type ExecutorRestartMode = 'WHEN_IDLE' | 'FORCE';
+
+export async function applyExecutorLaunchCommand(id: number, version: number, restartMode: ExecutorRestartMode): Promise<ExecutorVO['restart']> {
+  const resp = await apiClient.post<ExecutorVO['restart']>(`/api/executors/${id}/launch-command/apply`, { version, restartMode });
+  return resp.data;
+}
+
 // 生成命令只接受输出格式选项：启动值一律来自数据库配置，前端不再自己拼命令。
 export type StartupOs = 'posix' | 'windows';
 export type DebugShell = 'bash' | 'powershell';
@@ -198,7 +227,6 @@ export interface ExecutorLaunchCommandVO {
   os: StartupOs;
   debug: boolean;
   shell: DebugShell | null;
-  logFileName: string | null;
   command: string;
 }
 
@@ -207,6 +235,14 @@ export async function buildExecutorLaunchCommand(
   body: ExecutorLaunchCommandRequest = {},
 ): Promise<ExecutorLaunchCommandVO> {
   const resp = await apiClient.post<ExecutorLaunchCommandVO>(`/api/executors/${id}/launch-command`, body);
+  return resp.data;
+}
+
+export async function previewExecutorLaunchCommand(
+  id: number,
+  body: ExecutorLaunchCommandRequest & { config: UpdateExecutorLaunchConfigRequest },
+): Promise<ExecutorLaunchCommandVO> {
+  const resp = await apiClient.post<ExecutorLaunchCommandVO>(`/api/executors/${id}/launch-command/preview`, body);
   return resp.data;
 }
 
@@ -238,5 +274,15 @@ export async function updateAllExecutors(squadIds?: number[]): Promise<ExecutorU
 // 开关本身是服务端 application.yml 里的部署配置（默认开启），没有写接口。
 export async function getRuntimeAutoUpdate(): Promise<RuntimeAutoUpdateVO> {
   const resp = await apiClient.get<RuntimeAutoUpdateVO>('/api/platform/runtime-auto-update');
+  return resp.data;
+}
+
+export async function getModelUpgradePolicy(id: number): Promise<ExecutorLaunchConfig> {
+  const resp = await apiClient.get<ExecutorLaunchConfig>(`/api/executors/${id}/model-upgrade-policy`);
+  return resp.data;
+}
+
+export async function updateModelUpgradePolicy(id: number, policy: ModelUpgradePolicy, version: number): Promise<ExecutorLaunchConfig> {
+  const resp = await apiClient.put<ExecutorLaunchConfig>(`/api/executors/${id}/model-upgrade-policy`, { modelUpgradePolicy: policy, version });
   return resp.data;
 }

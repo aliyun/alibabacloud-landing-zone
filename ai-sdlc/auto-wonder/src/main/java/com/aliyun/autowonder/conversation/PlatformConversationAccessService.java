@@ -7,14 +7,12 @@ import org.springframework.stereotype.Service;
 /**
  * 平台管家对话的唯一可见性闸门。
  *
- * <p>创建会话的人就是不可变更的 Owner：读可以额外开放给被分享人，写永远只属于 Owner 本人。
+ * <p>创建会话的人就是不可变更的 Owner：读写永远只属于 Owner 本人；历史分享记录不再授予访问权限。
  * 这里刻意没有工作空间管理员旁路 —— 管理员能管工作空间，不等于能替别人和他的管家聊天、
  * 更不等于能替别人确认写操作。
  */
 @Service
 public class PlatformConversationAccessService {
-
-    private static final String PERMISSION_READ = "READ";
 
     private final AgentConversationDao conversationDao;
     private final ConversationShareDao shareDao;
@@ -25,25 +23,20 @@ public class PlatformConversationAccessService {
         this.shareDao = shareDao;
     }
 
-    /** Owner 或被分享人可以读会话正文；其余人拿到的是与「不存在」无法区分的错误。 */
+    /** 只有 Owner 可以读会话正文；其余人拿到的是与「不存在」无法区分的错误。 */
     public AgentConversationDO requireBodyRead(Long tenantId, Long conversationId, Long userId) {
         AgentConversationDO conversation = loadPlatformConversation(tenantId, conversationId);
-        if (isOwner(conversation, userId) || hasActiveReadShare(tenantId, conversationId, userId)) {
+        if (isOwner(conversation, userId)) {
             return conversation;
         }
         throw new BizException(ErrorCode.PLATFORM_CONVERSATION_NOT_FOUND_OR_NO_PERMISSION);
     }
 
-    /** 改名、归档、删除、分享、发消息、确认写操作都只认 Owner。 */
+    /** 改名、归档、删除、发消息、确认写操作都只认 Owner。 */
     public AgentConversationDO requireBodyWrite(Long tenantId, Long conversationId, Long userId) {
         AgentConversationDO conversation = loadPlatformConversation(tenantId, conversationId);
         if (isOwner(conversation, userId)) {
             return conversation;
-        }
-        // 被分享人本来就知道会话存在，直接告诉他这是 Owner 专属操作；
-        // 其他人一律回同一个码，免得拿会话 id 探测别人聊了什么。
-        if (hasActiveReadShare(tenantId, conversationId, userId)) {
-            throw new BizException(ErrorCode.PLATFORM_CONVERSATION_OWNER_ONLY);
         }
         throw new BizException(ErrorCode.PLATFORM_CONVERSATION_NOT_FOUND_OR_NO_PERMISSION);
     }
@@ -70,11 +63,4 @@ public class PlatformConversationAccessService {
         return conversation;
     }
 
-    private boolean hasActiveReadShare(Long tenantId, Long conversationId, Long userId) {
-        if (userId == null) {
-            return false;
-        }
-        ConversationShareDO share = shareDao.findActive(tenantId, conversationId, userId);
-        return share != null && PERMISSION_READ.equals(share.getPermission());
-    }
 }

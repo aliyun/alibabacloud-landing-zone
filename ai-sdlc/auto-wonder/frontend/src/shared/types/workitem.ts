@@ -7,6 +7,12 @@ export interface ExternalPrincipal {
   mappedUserId: number | null;
 }
 
+/** Response-only source identity for a generated external name; authored names have no marker. */
+export type ExternalPrincipalNameFallback = Pick<ExternalPrincipal, 'provider'> & {
+  subjectId?: string | null;
+  displayName?: string | null;
+};
+
 export interface ExternalPrincipalRelation {
   sourceKey: string;
   displayName: string;
@@ -28,6 +34,7 @@ export interface ExternalCollaboration {
   syncStatus: 'HEALTHY' | 'DELAYED' | 'ACTION_REQUIRED' | string;
   lastErrorCode: string | null;
   lastError: string | null;
+  /** 最近一次按项目状态映射应用到的本地状态节点，用于展示同步落地结果与对账差异。 */
 }
 
 /** 定时工单当前所处阶段，由后端从定时字段、最新 dispatch 与状态节点派生；非定时工单为 null。 */
@@ -51,6 +58,7 @@ export interface Workitem {
   assigneeRef: number | null;
   assigneeName: string | null;
   assigneeDisplayName?: string | null;
+  assigneeNameFallback?: ExternalPrincipalNameFallback | null;
   creatorId?: number | null;
   creatorName?: string | null;
   creatorDisplayName?: string | null;
@@ -58,19 +66,25 @@ export interface Workitem {
   version: number;
   gmtCreate: string;
   gmtModified: string;
+  /** Soft-deletion time; only present in recycle-bin listings. */
+  deletedAt?: string | null;
   scheduledStartAt?: string | null;
   scheduledStartTriggeredAt?: string | null;
   scheduledPhase?: WorkitemScheduledPhase | null;
   tags?: string[];
   /** Whether the current user watches this workitem's progress. */
   watched?: boolean | null;
+  /** 当前用户最近一次成功评论该工单的时间；仅「我参与的」口径列表回填，其余为 null。 */
+  myLastCommentAt?: string | null;
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
+  healthStalledMinutes?: number | null;
   pendingDecision?: boolean | null;
   /** 看板统一分类（规格 3.1），服务端派生；为空时前端按 NEW 兜底。 */
   statusCategory?: WorkitemStatusCategory | string | null;
   /** 最近一次流转不在模板推荐范围内时的提示（规格 3.3）。 */
   transitionWarning?: string | null;
+  transitionWarningCode?: string | null;
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
   sourceProvider?: string | null;
   sourceUrl?: string | null;
@@ -98,8 +112,11 @@ export interface TimelineEvent {
   actorRef: number | null;
   actorName?: string | null;
   actorDisplayName?: string | null;
+  actorNameFallback?: ExternalPrincipalNameFallback | null;
   fromValDisplay?: string | null;
+  fromValNameFallback?: ExternalPrincipalNameFallback | null;
   toValDisplay?: string | null;
+  toValNameFallback?: ExternalPrincipalNameFallback | null;
   detailJson: string | null;
   gmtCreate: string;
 }
@@ -127,6 +144,7 @@ export interface WorkitemDetail {
   assigneeRef: number | null;
   assigneeName: string | null;
   assigneeDisplayName?: string | null;
+  assigneeNameFallback?: ExternalPrincipalNameFallback | null;
   creatorId?: number | null;
   creatorName?: string | null;
   creatorDisplayName?: string | null;
@@ -141,11 +159,13 @@ export interface WorkitemDetail {
   watched?: boolean | null;
   health?: 'OK' | 'STUCK' | null;
   healthReason?: string | null;
+  healthStalledMinutes?: number | null;
   pendingDecision?: boolean | null;
   /** 看板统一分类（规格 3.1），服务端派生；为空时前端按 NEW 兜底。 */
   statusCategory?: WorkitemStatusCategory | string | null;
   /** 最近一次流转不在模板推荐范围内时的提示（规格 3.3）。 */
   transitionWarning?: string | null;
+  transitionWarningCode?: string | null;
   sourceType?: 'NATIVE' | 'EXTERNAL' | string | null;
   deletable?: boolean | null;
   deletableReason?: string | null;
@@ -167,12 +187,17 @@ export interface Participant {
 }
 
 export interface DeliveryStep {
+  currentDispatchId?: number | null;
+  executionStatus?: string | null;
+  waitingReason?: string | null;
   stepId: number;
   stepKey?: string | null;
   name: string;
   status: 'cancelled' | 'done' | 'active' | 'paused' | 'pending' | 'failed' | 'reused' | 'skipped' | 'stale';
   planStatus?: 'RUN' | 'REUSED' | 'SKIPPED' | null;
   sourceAttempt?: number | null;
+  agentName?: string | null;
+  executorId?: number | null;
   executorName: string | null;
   error?: string | null;
   subSteps: SubStep[] | null;
@@ -182,19 +207,33 @@ export interface DeliveryStep {
 }
 
 export interface DispatchAttempt {
+  waitingReason?: string | null;
   dispatchId: number;
+  agentId?: number | null;
+  agentName?: string | null;
+  executorId?: number | null;
+  endedAt?: string | null;
   executorName: string | null;
   status: string | null;
   resumeMode?: string | null;
   error?: string | null;
   startedAt: string | null;
   durationMs: number | null;
+  stepTimings?: StepTiming[] | null;
   canContinue?: boolean;
   canPause?: boolean;
 }
 
+export interface StepTiming {
+  stepId: number;
+  name: string;
+  status: DeliveryStep['status'] | 'interrupted';
+  durationMs: number | null;
+}
+
 export interface SubStep {
   name: string;
+  fallbackCode?: string | null;
   status: 'cancelled' | 'done' | 'active' | 'pending' | 'failed';
 }
 
@@ -213,6 +252,7 @@ export interface WorkitemUsageRun {
   runIndex?: number | null;
   /** 后端给出的展示标签，形如 `DEV run-1`。 */
   label?: string | null;
+  labelKind?: string | null;
   credits?: number | null;
 }
 
@@ -222,6 +262,9 @@ export interface WorkitemUsageSummary {
 }
 
 export interface AgentDeliveryProgress {
+  currentDispatchId?: number | null;
+  executionStatus?: string | null;
+  waitingReason?: string | null;
   agentId: number;
   agentName: string;
   status: 'cancelled' | 'finished' | 'active' | 'paused' | 'pending' | 'failed';
@@ -232,6 +275,7 @@ export interface AgentDeliveryProgress {
 }
 
 export interface DeliveryProgress {
+  executions?: DispatchAttempt[] | null;
   steps: DeliveryStep[];
   agents?: AgentDeliveryProgress[] | null;
   workflowPlan?: WorkflowPlan | null;
@@ -243,6 +287,7 @@ export interface DeliveryProgress {
 
 export interface ProcessGraphNode {
   key: string;
+  agentNameFallback?: string | null;
   dispatchId?: number | null;
   agentId?: number | null;
   agentName: string;
@@ -385,6 +430,46 @@ export interface RuntimeTraceEvent {
   detail: Record<string, unknown>;
 }
 
+export interface RuntimeFailureDiagnostic {
+  timestamp?: string | null;
+  source?: string | null;
+  category?: string | null;
+  code?: string | null;
+  subCode?: string | null;
+  businessCode?: string | null;
+  httpStatus?: number | null;
+  message?: string | null;
+  requestId?: string | null;
+  serverRequestId?: string | null;
+  retryable?: boolean | null;
+  willRetry?: boolean | null;
+  occurrences?: number | null;
+  firstSeen?: string | null;
+  lastSeen?: string | null;
+}
+
+export interface RuntimeFailureRound {
+  phase?: string | null;
+  attemptIndex?: number | null;
+  provider?: string | null;
+  model?: string | null;
+  sessionId?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  durationMs?: number | null;
+  status?: string | null;
+  error?: string | null;
+  diagnostics?: RuntimeFailureDiagnostic[] | null;
+  diagnosticsTruncated?: boolean | null;
+  omittedDiagnostics?: number | null;
+}
+
+export interface RuntimeFailureHistory {
+  rounds?: RuntimeFailureRound[] | null;
+  truncated?: boolean | null;
+  omittedRounds?: number | null;
+}
+
 export interface RuntimeActivity {
   eventId?: string | null;
   seq?: number | null;
@@ -431,9 +516,17 @@ export interface WorkflowPlan {
 
 export interface TimelineItem {
   id: number;
+  eventType?: string | null;
+  fromValDisplay?: string | null;
+  fromValNameFallback?: ExternalPrincipalNameFallback | null;
+  toValDisplay?: string | null;
+  toValNameFallback?: ExternalPrincipalNameFallback | null;
+  operatorDisplayName?: string | null;
+  operatorNameFallback?: ExternalPrincipalNameFallback | null;
   type: 'comment' | 'system';
   authorId: number | null;
   authorName: string | null;
+  authorNameFallback?: ExternalPrincipalNameFallback | null;
   authorType: string;
   isAgent: boolean;
   content: string;
@@ -480,6 +573,8 @@ export interface LiveActivityAction {
   eventType: string;
   actionType: string;
   summary: string | null;
+  summaryOrigin?: string | null;
+  summaryTarget?: string | null;
   status: string;
   stepId: number | null;
   stepKey: string | null;
@@ -489,6 +584,8 @@ export interface LiveActivityAction {
   attempt: number | null;
 }
 
+export type DispatchRuntimeState = 'RUNNING' | 'RECOVERING' | 'UNKNOWN';
+
 export interface DispatchLiveActivity {
   schemaVersion: string;
   dispatchId: number;
@@ -497,6 +594,7 @@ export interface DispatchLiveActivity {
   sourceType: string | null;
   attempt: number | null;
   dispatchStatus: string | null;
+  runtimeState?: DispatchRuntimeState | null;
   changed: boolean;
   lastSeq: number | null;
   lastUpdatedAt: string | null;

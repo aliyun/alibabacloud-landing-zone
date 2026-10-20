@@ -705,4 +705,57 @@ class ConversationElicitationServiceTest {
         verify(transport, never()).sendElicitationReply(any(), anyLong(), anyString(),
                 anyString(), any());
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"missing", "settled", "action", "blank", "object", "turn", "concurrent"})
+    void ownedGuardLocalizesWithoutChangingRawCodeCauseOrWriteOrder(String branch) {
+        String requestId = "<b>raw-id</b>";
+        AgentConversationElicitationDO card = pending(requestId, 100L);
+        if ("settled".equals(branch)) card.setStatus("ANSWERED");
+        if (!"missing".equals(branch)) when(dao.findByRequestId(1L, 10L, requestId)).thenReturn(card);
+        if ("turn".equals(branch)) when(turnDao.findByConversationTurn(1L, 10L, 100L)).thenReturn(null);
+        String action = "action".equals(branch) ? "<raw>" : "accept";
+        String answer = "blank".equals(branch) ? " " : "object".equals(branch) ? "[]" : "{}";
+        BizException error = assertThrows(BizException.class, () -> service.reply(1L, 10L, requestId, action, answer));
+        String raw = switch(branch) {
+            case "missing" -> "elicitation not found in this conversation: " + requestId;
+            case "settled" -> "elicitation already settled: ANSWERED";
+            case "action" -> "unsupported elicitation action: <raw>";
+            case "blank" -> "elicitation answer is required";
+            case "object" -> "elicitation answer must be a JSON object";
+            case "turn" -> "elicitation turn is no longer processing: 100";
+            default -> "elicitation was settled concurrently: " + requestId;
+        };
+        assertEquals(raw, error.getMessage());
+        org.junit.jupiter.api.Assertions.assertNull(error.getCause());
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {
+            var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals("missing".equals(branch) ? 200
+                    : java.util.Set.of("action", "blank", "object").contains(branch) ? 400 : 409,
+                    response.getStatusCodeValue());
+            assertEquals(switch(branch) {
+                case "missing" -> "Question not found in this conversation: " + requestId;
+                case "settled" -> "This question has already been settled: ANSWERED";
+                case "action" -> "Unsupported question action: <raw>";
+                case "blank" -> "An answer is required.";
+                case "object" -> "The answer must be a JSON object.";
+                case "turn" -> "The question's turn is no longer processing: 100";
+                default -> "This question was settled concurrently: " + requestId;
+            }, response.getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            assertEquals(switch(branch) {
+                case "missing" -> "此会话中不存在该问题：" + requestId;
+                case "settled" -> "此问题已结算：ANSWERED";
+                case "action" -> "不支持的问题操作：<raw>";
+                case "blank" -> "回答不能为空。";
+                case "object" -> "回答必须是 JSON 对象。";
+                case "turn" -> "问题所属轮次已不再处理中：100";
+                default -> "此问题已被并发结算：" + requestId;
+            }, new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getBody().getMessage());
+
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+        verify(transport, never()).sendElicitationReply(any(), anyLong(), anyString(), anyString(), any());
+        if (!"concurrent".equals(branch)) verify(dao, never()).settleIfPending(anyLong(), anyLong(), anyString(), anyString(), any());
+    }
+
 }

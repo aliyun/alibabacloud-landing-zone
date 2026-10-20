@@ -10,8 +10,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -27,6 +31,49 @@ class ExecutorControllerTest {
         AutoWonderContext.destroy();
     }
 
+    @Test
+    void creationReturnsTheRecordButKeepsThePlaintextTokenForAdministratorsOnly() {
+        var executorService = mock(ExecutorService.class);
+        when(executorService.create(eq(9L), any(), eq(100L), eq(10000L))).thenAnswer(invocation -> {
+            var fresh = new com.aliyun.autowonder.executor.dto.IssuedExecutorVO();
+            fresh.setId(7L);
+            fresh.setToken("exec_secret_token");
+            return fresh;
+        });
+        ExecutorController controller = new ExecutorController(executorService,
+                mock(ProviderModelCatalogService.class), mock(ExecutorLaunchConfigService.class),
+                mock(ExecutorLaunchCommandService.class));
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
+        AutoWonderContext.get().setUserId(10000L);
+
+        AutoWonderContext.get().setWorkspaceAccessLevel(
+                com.aliyun.autowonder.access.WorkspaceAccessLevel.READ_WRITE);
+        assertNull(controller.create(9L, new com.aliyun.autowonder.executor.dto.CreateExecutorRequest())
+                .getData().getToken());
+
+        // 管理员创建仍可一次性拿到明文凭据。
+        AutoWonderContext.get().setWorkspaceAccessLevel(
+                com.aliyun.autowonder.access.WorkspaceAccessLevel.ADMIN);
+        assertEquals("exec_secret_token",
+                controller.create(9L, new com.aliyun.autowonder.executor.dto.CreateExecutorRequest())
+                        .getData().getToken());
+    }
+
+    @Test
+    void launchConfigReadUsesTheSideEffectFreeView() {
+        var configService = mock(ExecutorLaunchConfigService.class);
+        var stored = new com.aliyun.autowonder.executor.dto.ExecutorLaunchConfigVO();
+        when(configService.readStoredConfig(7L, 100L)).thenReturn(stored);
+        ExecutorController controller = new ExecutorController(mock(ExecutorService.class),
+                mock(ProviderModelCatalogService.class), configService,
+                mock(ExecutorLaunchCommandService.class));
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
+        AutoWonderContext.get().setUserId(10000L);
+
+        assertSame(stored, controller.getLaunchConfig(7L).getData());
+        verify(configService).readStoredConfig(7L, 100L);
+    }
+
     private ExecutorController controller() {
         ExecutorController controller = new ExecutorController(mock(ExecutorService.class),
                 mock(ProviderModelCatalogService.class), mock(ExecutorLaunchConfigService.class),
@@ -37,6 +84,20 @@ class ExecutorControllerTest {
     }
 
     /** A restart can carry the runtime upgrade with it, and that choice belongs to the caller. */
+    @Test
+    void previewUsesTheCurrentWorkspaceAndDoesNotRequestARestart() {
+        var commands = mock(ExecutorLaunchCommandService.class);
+        var request = new com.aliyun.autowonder.executor.dto.ExecutorLaunchCommandPreviewRequest();
+        var preview = new com.aliyun.autowonder.executor.dto.ExecutorLaunchCommandVO();
+        when(commands.previewForExecutor(7L, 100L, request)).thenReturn(preview);
+        AutoWonderContext.get().setCurrentWorkspaceId(100L);
+        var controller = new ExecutorController(mock(ExecutorService.class), mock(ProviderModelCatalogService.class),
+                mock(ExecutorLaunchConfigService.class), commands);
+        assertSame(preview, controller.previewLaunchCommand(7L, request).getData());
+        verify(commands).previewForExecutor(7L, 100L, request);
+        verifyNoInteractions(restartService);
+    }
+
     @Test
     void restartForwardsWhetherTheRuntimeShouldBeUpgradedToo() {
         JSONObject ack = new JSONObject();

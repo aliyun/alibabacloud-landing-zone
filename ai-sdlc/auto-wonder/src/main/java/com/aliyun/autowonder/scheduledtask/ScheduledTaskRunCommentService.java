@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.scheduledtask;
 
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
 import com.aliyun.autowonder.workitem.WorkitemCommentDO;
@@ -11,6 +12,7 @@ import com.aliyun.autowonder.workitem.WorkitemCommentMentionDO;
 import com.aliyun.autowonder.guidance.GuidanceService;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.agent.AgentDO;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
@@ -189,7 +191,7 @@ public class ScheduledTaskRunCommentService {
                 AgentDO target = agentDao.findById(targetId);
                 if (target == null || !Objects.equals(target.getTenantId(), workspaceId)
                         || !isFrozenParticipant(workspaceId, runId, targetId)) {
-                    throw new IllegalArgumentException("guidance target is not a frozen scheduled-run participant");
+                    throw new KeyedIllegalArgumentException("guidance.validation.target_not_frozen", new Object[0], "guidance target is not a frozen scheduled-run participant");
                 }
                 persistMentionAndGuidance(workspaceId, runId, comment, creatorId, target);
             }
@@ -259,35 +261,25 @@ public class ScheduledTaskRunCommentService {
         mention.setCommentId(comment.getId());
         mention.setTargetType("HUMAN");
         mention.setTargetRef(user.getId());
-        mention.setDisplayNameSnapshot(resolveHumanDisplayName(user));
+        mention.setDisplayNameSnapshot(UserAccountStates.displayName(user));
         mentionDao.insert(mention);
         if (eventPublisher != null && !Objects.equals(user.getId(), creatorId)) {
-            eventPublisher.publishEvent(new WorkitemCommentMentionedEvent(workspaceId, runId,
-                    resolveRunTitle(workspaceId, runId), comment.getId(), user.getId(),
-                    comment.getAuthorType(), comment.getAuthorRef() == null ? 0L : comment.getAuthorRef(),
-                    resolveActorDisplayName(comment), null, comment.getContentMd(),
-                    WorkitemCommentMentionedEvent.SOURCE_SCHEDULED_TASK_RUN));
-        }
-    }
-
-    private String resolveHumanDisplayName(UserDO user) {
-        if (user.getNickname() != null && !user.getNickname().isBlank()) {
-            return user.getNickname();
-        }
-        return user.getUsername();
-    }
-
-    private String resolveRunTitle(long workspaceId, long runId) {
-        if (scheduledTaskDao != null) {
-            ScheduledTaskRunDO run = runDao.findById(workspaceId, runId);
-            if (run != null && run.getScheduledTaskId() != null) {
-                ScheduledTaskDO task = scheduledTaskDao.findById(workspaceId, run.getScheduledTaskId());
-                if (task != null && task.getName() != null && !task.getName().isBlank()) {
-                    return task.getName();
+            ScheduledTaskDO task = null;
+            if (scheduledTaskDao != null) {
+                ScheduledTaskRunDO run = runDao.findById(workspaceId, runId);
+                if (run != null && run.getScheduledTaskId() != null) {
+                    task = scheduledTaskDao.findById(workspaceId, run.getScheduledTaskId());
                 }
             }
+            boolean missingTitle = task == null || task.getName() == null || task.getName().isBlank();
+            String title = missingTitle ? "定时任务运行 #" + runId : task.getName();
+            eventPublisher.publishEvent(new WorkitemCommentMentionedEvent(workspaceId, runId,
+                    title, comment.getId(), user.getId(),
+                    comment.getAuthorType(), comment.getAuthorRef() == null ? 0L : comment.getAuthorRef(),
+                    resolveActorDisplayName(comment), null, comment.getContentMd(),
+                    WorkitemCommentMentionedEvent.SOURCE_SCHEDULED_TASK_RUN,
+                    missingTitle ? WorkitemCommentMentionedEvent.SCHEDULED_RUN_ID_FALLBACK : null));
         }
-        return "定时任务运行 #" + runId;
     }
 
     private String resolveActorDisplayName(WorkitemCommentDO comment) {
@@ -298,9 +290,9 @@ public class ScheduledTaskRunCommentService {
             }
         }
         if ("HUMAN".equals(comment.getAuthorType()) && userDao != null && comment.getAuthorRef() != null) {
-            UserDO user = userDao.findById(comment.getAuthorRef());
+            UserDO user = userDao.findByIdIncludingDeleted(comment.getAuthorRef());
             if (user != null) {
-                return resolveHumanDisplayName(user);
+                return UserAccountStates.displayName(user);
             }
         }
         return comment.getAuthorType();

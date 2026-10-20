@@ -1,5 +1,6 @@
+import { i18n } from '@/shared/i18n';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -183,4 +184,18 @@ describe('SquadFilterBar', () => {
     expect(screen.getByText('按 Agent 分组')).toBeInTheDocument();
     expect(screen.getByText('按小队分组')).toBeInTheDocument();
   });
+});
+
+it('updates its own labels without resetting selected squad ids', async () => {
+  await i18n.changeLanguage('zh-CN');
+  const change = vi.fn();
+  renderWithClient(<SquadFilterBar options={[{ value: 7, label: '<b>自定义</b>' }]} value={[7]} onChange={change} grouped onGroupedChange={vi.fn()} />);
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByRole('combobox', { name: 'Filter by squad' })).toBeInTheDocument();
+  expect(screen.getByText('Grouped')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('combobox', { name: 'Filter by squad' }));
+  expect(await screen.findByText('<b>自定义</b>', { selector: '.ant-select-item-option-content' })).toBeInTheDocument();
+  expect(document.querySelector('.ant-select-item-option-selected')).toHaveTextContent('<b>自定义</b>');
+  expect(change).not.toHaveBeenCalled();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
 });

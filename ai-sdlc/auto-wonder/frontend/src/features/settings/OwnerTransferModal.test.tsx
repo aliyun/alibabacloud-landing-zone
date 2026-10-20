@@ -13,6 +13,8 @@ const candidates = [
     owner: false,
     accessLevel: 'READ_WRITE' as const,
     identityTags: ['开发'],
+    readOnlyDomains: [],
+    roleId: 12, roleCode: 'READ_WRITE', roleName: null,
   },
 ];
 

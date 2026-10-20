@@ -28,11 +28,11 @@ public class ExternalWorkitemSyncService {
     public AoneSyncResult syncLocalWorkitem(long workitemId, long tenantId, long userId) {
         ExternalWorkitemLinkDO link = linkDao.findByWorkitem(tenantId, AoneIntegrationService.PROVIDER, workitemId);
         if (link == null) {
-            throw new BizException(ErrorCode.NOT_FOUND, "当前工单未关联 Aone 工单");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "integration.sync_link_missing", new Object[0], "当前工单未关联 Aone 工单");
         }
         ExternalProjectBindingDO binding = bindingDao.findById(link.getBindingId());
         if (binding == null || !Long.valueOf(tenantId).equals(binding.getTenantId())) {
-            throw new BizException(ErrorCode.NOT_FOUND, "Aone 托管配置不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "integration.sync_binding_missing", new Object[0], "Aone 托管配置不存在");
         }
         return aoneInboundSyncService.refreshIssueIds(binding, List.of(link.getExternalWorkitemId()), userId);
     }

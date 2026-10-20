@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { message } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
@@ -46,7 +47,7 @@ export function useRunScheduledTaskNow() {
   return useMutation({
     mutationFn: ({ id, version, requestId }: { id: number; version: number; requestId: string }) => api.runScheduledTaskNow(id, version, requestId),
     onSuccess: (_run, variables) => {
-      message.success('已创建运行实例');
+      message.success(i18n.t('scheduledTask:messages.runCreated'));
       client.invalidateQueries({ queryKey: ['scheduled-tasks'] });
       client.invalidateQueries({ queryKey: ['scheduled-task-runs', variables.id] });
     },
@@ -58,7 +59,7 @@ export function useDeleteScheduledTask() {
   return useMutation({
     mutationFn: ({ id, version }: { id: number; version: number }) => api.deleteScheduledTask(id, version),
     onSuccess: () => {
-      message.success('定时任务已删除');
+      message.success(i18n.t('scheduledTask:messages.taskDeleted'));
       client.invalidateQueries({ queryKey: ['scheduled-tasks'] });
     },
   });
@@ -68,7 +69,7 @@ export function useUploadScheduledTaskDocuments() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ id, files }: { id: number; files: File[] }) => api.uploadScheduledTaskDocuments(id, files),
-    onSuccess: (_data, variables) => { message.success('需求文档已上传'); client.invalidateQueries({ queryKey: ['scheduled-tasks', variables.id, 'documents'] }); },
+    onSuccess: (_data, variables) => { message.success(i18n.t('scheduledTask:messages.documentsUploaded')); client.invalidateQueries({ queryKey: ['scheduled-tasks', variables.id, 'documents'] }); },
   });
 }
 
@@ -76,7 +77,7 @@ export function useDeleteScheduledTaskDocument() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ id, artifactId }: { id: number; artifactId: number }) => api.deleteScheduledTaskDocument(id, artifactId),
-    onSuccess: (_data, variables) => { message.success('附件已删除'); client.invalidateQueries({ queryKey: ['scheduled-tasks', variables.id, 'documents'] }); },
+    onSuccess: (_data, variables) => { message.success(i18n.t('scheduledTask:messages.documentDeleted')); client.invalidateQueries({ queryKey: ['scheduled-tasks', variables.id, 'documents'] }); },
   });
 }
 

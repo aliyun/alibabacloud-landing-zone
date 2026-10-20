@@ -3,7 +3,8 @@
 <mapper namespace="com.aliyun.autowonder.insights.MemberDeliveryDao">
     <sql id="workitemDispatchFence"><include refid="com.aliyun.autowonder.dashboard.DashboardDao.workitemDispatchFence"/></sql>
     <select id="members" resultType="com.aliyun.autowonder.insights.MemberDeliveryService$Member">
-        SELECT m.user_id AS memberId, COALESCE(NULLIF(u.nickname,''), u.username, CONCAT('成员 #',m.user_id)) AS memberName
+        SELECT m.user_id AS memberId, COALESCE(NULLIF(u.nickname,''), u.username, CONCAT('成员 #',m.user_id)) AS memberName,
+          CASE WHEN COALESCE(NULLIF(u.nickname,''), u.username) IS NULL THEN 'MEMBER_ID_FALLBACK' ELSE NULL END AS memberNameKind
         FROM org_member m LEFT JOIN user u ON u.id=m.user_id
         WHERE m.tenant_id=#{tenantId} AND m.is_deleted=0 AND m.status=0
     </select>

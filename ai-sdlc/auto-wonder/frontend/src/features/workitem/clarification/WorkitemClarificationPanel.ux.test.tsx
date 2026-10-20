@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
+import { typeComposer } from './composerTestUtils';
 import { WorkitemClarificationPanel, isNearScrollBottom } from './WorkitemClarificationPanel';
 import {
   clearClarificationPrefill,
@@ -17,6 +18,20 @@ vi.mock('@/shared/realtime/useRealtime', () => ({
     realtime.callback = opts.onEvent;
   },
 }));
+
+function okJson(data: unknown) {
+  return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data });
+}
+
+/** 会话轮次实时事件：与 acp 测试同口径，经 useRealtime 的 onEvent 注入（会话 1）。 */
+function emitTurnEvent(eventSeq: number, eventType: string, payload: unknown, turnId = 3) {
+  act(() => {
+    realtime.callback!({
+      type: 'CONVERSATION_TURN_EVENT',
+      payload: { conversationId: 1, turnId, eventSeq, eventType, payload },
+    });
+  });
+}
 
 interface MockConversation {
   id?: number;
@@ -97,7 +112,7 @@ async function renderPanelWithConversation(conv: MockConversation) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <WorkitemClarificationPanel workitemId="100" agents={[] as never} />
+      <WorkitemClarificationPanel workitemId="100" />
     </QueryClientProvider>,
   );
   const textarea = await screen.findByPlaceholderText('输入消息...');
@@ -221,7 +236,7 @@ describe('WorkitemClarificationPanel 回复体验（R1/R2/R3/R4）', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={queryClient}>
-        <WorkitemClarificationPanel workitemId="100" agents={[] as never} />
+        <WorkitemClarificationPanel workitemId="100" />
       </QueryClientProvider>,
     );
 
@@ -340,6 +355,142 @@ describe('WorkitemClarificationPanel 回复结束后的输入焦点（工单 533
     await waitFor(() => expect(textarea).toBeEnabled());
     expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(document.querySelector('.ProseMirror')));
+  });
+});
+
+describe('WorkitemClarificationPanel 终态先于结算与跨会话隔离（工单 55851）', () => {
+  afterEach(() => {
+    clearClarificationPrefill('100');
+    vi.restoreAllMocks();
+  });
+
+  // 现场形态：卡片结束、AI 改文字澄清后本轮已结束（流终态已到），详情却还停在
+  // PROCESSING/QUEUED。回复指示走的是流终态（已隐藏），输入禁用却依赖详情——不能
+  // 在无解释的禁用上卡死，也不能为了恢复输入而放开服务端未结算的并发门禁。
+  it('流终态先于详情结算时给出明确状态与重试入口，结算后输入恢复', async () => {
+    let detailCalls = 0;
+    let settled = false;
+    const submitPaths: string[] = [];
+    const processingPayload = conversationPayload({
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      turns: [{ id: 3, direction: 'IN', content: '请给方案', status: 'PROCESSING' }],
+    });
+    const settledPayload = conversationPayload({
+      turns: [
+        { id: 3, direction: 'IN', content: '请给方案', status: 'SUCCESS' },
+        { id: 4, direction: 'OUT', content: '这是方案', status: 'COMPLETED' },
+      ],
+    });
+    await renderPanelWithConversation({
+      processingStatus: 'PROCESSING',
+      processingTurnId: 3,
+      turns: [{ id: 3, direction: 'IN', content: '请给方案', status: 'PROCESSING' }],
+    });
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => {
+        detailCalls += 1;
+        return okJson(settled ? settledPayload : processingPayload);
+      }),
+      http.post(
+        '/api/workitems/:workitemId/clarification-conversations/:conversationId/turns',
+        ({ request }) => {
+          submitPaths.push(new URL(request.url).pathname);
+          return okJson(null);
+        },
+      ),
+    );
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    await waitFor(() => expect(textarea).toBeDisabled());
+
+    emitTurnEvent(1, 'text', { type: 'text', content: '这是方案' }, 3);
+    emitTurnEvent(2, 'status', { type: 'status', status: 'completed' }, 3);
+
+    // 指示已隐藏（流终态），输入仍禁用（详情未结算）：给出明确「结算中」状态与
+    // 重试入口，而不是静默禁用；此时不放开发送。
+    await waitFor(() => expect(screen.queryByTestId('clarification-replying-indicator')).toBeNull());
+    const notice = await screen.findByTestId('clarification-settling-notice');
+    expect(notice).toHaveTextContent('回复已结束，正在同步会话状态，输入暂不可用。');
+    expect(textarea).toBeDisabled();
+    expect(submitPaths).toHaveLength(0);
+
+    // 重试拉到结算后的详情：输入恢复、提示消失，无需退出重进
+    settled = true;
+    const before = detailCalls;
+    fireEvent.click(screen.getByTestId('clarification-settling-retry'));
+    await waitFor(() => expect(detailCalls).toBeGreaterThan(before));
+    await waitFor(() => expect(screen.queryByTestId('clarification-settling-notice')).toBeNull());
+    await waitFor(() => expect(screen.getByPlaceholderText('输入消息...')).toBeEnabled());
+    expect(await screen.findByText('这是方案')).toBeInTheDocument();
+  });
+
+  // 现场形态：旧会话 PROCESSING、旧提交的 POST 一直不返回时，成功新建的空会话必须
+  // 可编辑、可发送；旧请求稍后落地只影响它自己，不改变目标会话状态与输入内容。
+  it('旧提交未返回时新建会话可编辑可发送，旧请求落地不污染目标会话', async () => {
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    const existing = conversationPayload({
+      id: 1,
+      turns: [{ id: 1, direction: 'IN', content: '老会话消息', status: 'SUCCESS' }],
+    });
+    const created = conversationPayload({ id: 2, turns: [] });
+    let releaseSubmit: (() => void) | undefined;
+    const submitGate = new Promise<void>((resolve) => { releaseSubmit = resolve; });
+    const submitPaths: string[] = [];
+    server.use(
+      http.get('/api/squads', () => okJson({
+        list: [{ id: 9, name: '交付小队', description: '', memberCount: 1, gmtCreate: '' }],
+        total: 1, pageNum: 1, pageSize: 100,
+      })),
+      http.get('/api/squads/:squadId/members', () =>
+        okJson([{ agentId: 42, agentName: 'Agent-X', roleCode: 'AW_FS_DEV' }])),
+      http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+        okJson([existing, created])),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId',
+        ({ params }) => okJson(Number(params.conversationId) === 2 ? created : existing)),
+      http.post('/api/workitems/:workitemId/clarification-conversations', () => okJson(created)),
+      http.post(
+        '/api/workitems/:workitemId/clarification-conversations/:conversationId/turns',
+        async ({ request }) => {
+          submitPaths.push(new URL(request.url).pathname);
+          // 只有旧会话的提交一直扣着不返回：模拟「旧 HTTP 请求未返回」
+          if (request.url.includes('/clarification-conversations/1/')) await submitGate;
+          return okJson(null);
+        },
+      ),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkitemClarificationPanel workitemId="100" />
+      </QueryClientProvider>,
+    );
+    const textarea = await screen.findByPlaceholderText('输入消息...');
+    await screen.findByText('老会话消息');
+
+    // 旧会话发出提交且 POST 未返回：旧会话自己的输入保持禁用（同会话并发保护不变）
+    await typeComposer('旧会话的待发送内容');
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await waitFor(() => expect(submitPaths).toHaveLength(1));
+    expect(submitPaths[0]).toContain('/clarification-conversations/1/turns');
+    await waitFor(() => expect(textarea).toBeDisabled());
+
+    // 新建会话：目标空会话必须可编辑，不被旧会话的在飞请求阻塞
+    fireEvent.click(screen.getByRole('button', { name: /新对话/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('clarification-conversation-select')).toHaveTextContent('会话 #2'));
+    await waitFor(() => expect(textarea).toBeEnabled());
+
+    // 目标会话可正常发送，与旧请求互不影响
+    await typeComposer('新会话留言');
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
+    await waitFor(() => expect(submitPaths).toHaveLength(2));
+    expect(submitPaths[1]).toContain('/clarification-conversations/2/turns');
+
+    // 旧请求落地：目标会话不受影响——输入仍可用、不被旧草稿回填、无错误提示
+    releaseSubmit!();
+    await waitFor(() => expect(textarea).toBeEnabled());
+    expect(textarea).toHaveValue('');
+    expect(screen.queryByText('消息发送失败，请重试')).toBeNull();
   });
 });
 

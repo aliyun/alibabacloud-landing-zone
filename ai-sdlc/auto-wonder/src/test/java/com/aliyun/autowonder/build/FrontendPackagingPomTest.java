@@ -5,6 +5,7 @@ import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.xpath.XPathFactory;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,8 +35,17 @@ class FrontendPackagingPomTest {
 
         assertTrue(xml.contains("<id>auto-wonder</id>"),
                 "The default Maven profile must include the frontend build");
-        assertTrue(xml.contains("ci --include=dev --include=optional --cache ../target/npm-cache"),
-                "npm ci must include development and optional dependencies and use a project-local cache because Vite/Rollup uses platform-specific optional packages");
+        var xpath = XPathFactory.newInstance().newXPath();
+        Document pom = parsePom();
+        String npmCi = "//profile[id='auto-wonder']//execution[id='npm-ci']/configuration/";
+        assertEquals("ci --include=dev --include=optional",
+                xpath.evaluate(npmCi + "arguments", pom).trim(),
+                "npm ci must install development and platform-specific optional dependencies");
+        assertEquals("${frontend.npm.cache}",
+                xpath.evaluate(npmCi + "environmentVariables/npm_config_cache", pom).trim(),
+                "The plugin must pass the configured cache through the npm environment");
+        assertEquals("${user.home}/.cache/auto-wonder/npm", textOfFirst(pom, "frontend.npm.cache"),
+                "The default download cache must survive Maven clean");
         assertTrue(xml.contains("verify-frontend-static-assets"),
                 "Maven package lifecycle should verify static frontend assets before producing deployable artifacts");
         assertTrue(xml.contains("target/classes/static/index.html"),

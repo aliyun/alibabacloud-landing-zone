@@ -25,8 +25,9 @@ class EvolutionAssetRouterLiteServiceTest {
     void rejectsRetiredMemoryEvolutionLane() {
         when(proposalService.propose(any(), eq(1L), eq(2L))).thenAnswer(inv -> proposal(100L));
 
-        assertThrows(com.aliyun.autowonder.common.error.BizException.class,
+        var error = assertThrows(com.aliyun.autowonder.common.error.BizException.class,
                 () -> router.run(memoryCommand(), 1L, 2L));
+        assertEvolutionBoundary(error, "记忆直接通过规范记忆存储进行管理");
         verifyNoInteractions(proposalService);
     }
 
@@ -156,4 +157,17 @@ class EvolutionAssetRouterLiteServiceTest {
         proposal.setStatus("PROPOSED");
         return proposal;
     }
+    private static void assertEvolutionBoundary(com.aliyun.autowonder.common.error.BizException error, String chinese) {
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        String diagnostic = error.getMessage();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+            assertEquals(chinese, handler.handleBiz(error).getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals(diagnostic, handler.handleBiz(error).getBody().getMessage());
+            assertEquals(409, handler.handleBiz(error).getStatusCodeValue());
+            assertEquals(diagnostic, error.getMessage()); assertNull(error.getCause());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

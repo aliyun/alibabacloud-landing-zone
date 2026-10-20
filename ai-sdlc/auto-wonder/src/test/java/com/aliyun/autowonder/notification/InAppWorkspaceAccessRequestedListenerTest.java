@@ -71,7 +71,7 @@ class InAppWorkspaceAccessRequestedListenerTest {
         assertEquals(555L, sent.getRefId());
         assertEquals("/settings/members?tab=requests&workspaceId=100", sent.getLink());
         assertEquals("有新的权限申请", sent.getTitle());
-        assertEquals("李四 申请加入「研发效能部」，申请权限：读写", sent.getContent());
+        assertEquals("李四 申请加入「研发效能部」，申请角色：读写者", sent.getContent());
     }
 
     @Test
@@ -105,7 +105,7 @@ class InAppWorkspaceAccessRequestedListenerTest {
 
         ArgumentCaptor<NotifyEvent> captor = ArgumentCaptor.forClass(NotifyEvent.class);
         verify(notifyService).notify(captor.capture());
-        assertEquals("李四 申请加入「未命名工作空间」，申请权限：读写", captor.getValue().getContent());
+        assertEquals("李四 申请加入「未命名工作空间」，申请角色：读写者", captor.getValue().getContent());
     }
 
     @Test

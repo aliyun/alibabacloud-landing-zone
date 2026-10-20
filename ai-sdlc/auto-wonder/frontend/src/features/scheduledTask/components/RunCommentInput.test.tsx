@@ -1,3 +1,6 @@
+import { afterEach as resetAfterEach } from 'vitest';
+import { act, waitFor } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
@@ -196,3 +199,37 @@ describe('RunCommentInput mention menu', () => {
     });
   });
 });
+
+it('switches an open mention menu without losing targets, caret, draft or raw names/reasons', async () => {
+  mockCandidates = [
+    { userId: 12, targetType: 'AGENT', name: '<b>工程师</b>', online: false, mentionable: true },
+    { userId: 5, targetType: 'HUMAN', name: '张三', mentionable: true },
+    { userId: 21, targetType: 'AGENT', name: '自定义', mentionable: false, mentionDisabledReason: '<b>后端原因</b>' },
+    { userId: 22, targetType: 'AGENT', name: '未冻结', mentionable: false },
+  ];
+  const onSubmit = vi.fn();
+  const { container } = render(<RunCommentInput runId={10482} onSubmit={onSubmit} />);
+  const textarea = openMentionMenu('@');
+  fireEvent.keyDown(textarea, { key: 'Enter' });
+  await waitFor(() => expect(textarea.selectionStart).toBe(textarea.value.length));
+  fireEvent.change(textarea, { target: { value: '@<b>工程师</b> @', selectionStart: 13 } });
+  fireEvent.keyDown(textarea, { key: 'ArrowDown' });
+  const caret = textarea.selectionStart;
+  await act(() => i18n.changeLanguage('en-US'));
+  expect(screen.getByRole('textbox', { name: 'Comment on this run' })).toBe(textarea);
+  expect(textarea.value).toBe('@<b>工程师</b> @');
+  expect(textarea.selectionStart).toBe(caret);
+  expect(screen.getByRole('menuitem', { name: /张三 Human/ })).toHaveAttribute('aria-current', 'true');
+  expect(screen.getByRole('menuitem', { name: /工程师.*Agent.*Offline, delivered later/ })).toBeEnabled();
+  expect(screen.getByRole('menuitem', { name: /自定义.*<b>后端原因<\/b>/ })).toBeDisabled();
+  expect(screen.getByRole('menuitem', { name: /未冻结.*Not in this run’s frozen snapshot/ })).toBeDisabled();
+  expect(container.querySelector('b')).toBeNull();
+  fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true });
+  expect(onSubmit).not.toHaveBeenCalled();
+  fireEvent.keyDown(textarea, { key: 'Enter' });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(submitPayload(onSubmit)).toEqual({ contentMd: '@<b>工程师</b> @张三', targetAgentIds: [12], targetHumanIds: [5] });
+  await act(() => i18n.changeLanguage('zh-CN'));
+});
+
+resetAfterEach(async () => { await act(() => i18n.changeLanguage('zh-CN')); });

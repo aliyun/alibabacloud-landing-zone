@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
@@ -25,6 +26,7 @@ const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
 export function ResizeHandle({ direction, value, measureValue, measureMax, min, max, onChange, onDoubleClick, showIndicator = true, ...rest }: ResizeHandleProps) {
+  const { t } = useTranslation('shared');
   const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
   const startRef = useRef<{ pointer: number; size: number; max: number } | null>(null);
@@ -63,7 +65,7 @@ export function ResizeHandle({ direction, value, measureValue, measureMax, min, 
   return (
     <div
       role="separator"
-      aria-label={rest['aria-label'] ?? (horizontal ? '调整面板宽度' : '调整面板高度')}
+      aria-label={rest['aria-label'] ?? (horizontal ? t('resize.width') : t('resize.height'))}
       data-testid={horizontal ? 'resize-handle-horizontal' : 'resize-handle-vertical'}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

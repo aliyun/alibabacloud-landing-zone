@@ -75,7 +75,7 @@ class InAppWorkitemWatcherListenerTest {
         u.setId(id);
         u.setNickname(nickname);
         u.setUsername("user" + id);
-        when(userDao.findById(id)).thenReturn(u);
+        when(userDao.findByIdIncludingDeleted(id)).thenReturn(u);
     }
 
     private WorkitemCommentMentionDO mention(long commentId, String targetType, Long targetRef) {
@@ -327,7 +327,7 @@ class InAppWorkitemWatcherListenerTest {
     void commentActorNameFallsBackToUserIdWhenUserMissing() {
         stubWorkitem(TENANT);
         stubWatchers(30L);
-        // 不 stub userDao.findById(10) → 返回 null，humanName 回退为字符串形式的 userId
+        // 不 stub userDao.findByIdIncludingDeleted(10) → 返回 null，humanName 回退为字符串形式的 userId
         when(commentMentionDao.listByWorkitem(TENANT, WORKITEM)).thenReturn(Collections.emptyList());
 
         listener.onCommentCreated(new WorkitemCommentCreatedEvent(TENANT, WORKITEM, COMMENT, "HUMAN", 10L, "hello"));

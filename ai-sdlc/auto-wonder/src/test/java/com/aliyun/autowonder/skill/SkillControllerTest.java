@@ -203,4 +203,43 @@ class SkillControllerTest {
         vo.setName(name);
         return vo;
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,'{}','缺少 categoryId 参数','The categoryId parameter is required'", "true,'{}','缺少 skillIds 参数','The skillIds parameter is required'", "true,'{\"skillIds\":[0]}','skillIds 必须是数字数组','skillIds must be an array of numbers'", "true,'{\"skillIds\":[1]}','缺少 categoryId 参数','The categoryId parameter is required'", "false,'{\"categoryId\":0}','categoryId 必须是正整数或 null','categoryId must be a positive integer or null'"})
+    void categoryValidationKeepsOrderStatusAndRawRequest(boolean batch, String json, String raw, String en) throws Exception {
+        var body = new ObjectMapper().readTree(json);
+        var error = assertThrows(BizException.class, () -> {if(batch) controller.batchSetCategory(body); else controller.setCategory(1L,body);});
+        assertEquals(raw,error.getMessage()); assertEquals(json,new ObjectMapper().writeValueAsString(body));
+        assertEquals(BizException.class,error.getClass()); org.junit.jupiter.api.Assertions.assertNull(error.getCause());
+        assertEquals(ErrorCode.PARAM_INVALID.getCode(),error.getCode()); verifyNoInteractions(categoryService);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error);
+            assertEquals(400,response.getStatusCodeValue());assertEquals(en,response.getBody().getMessage());
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"raw","owned"})
+    void currentHttpJsonAddsOnlyActualOriginAndKeepsLegacyNullFieldsAndRawValues(String branch) throws Exception {
+        var dao=mock(SkillDao.class);var skill=new SkillDO();skill.setId(1L);skill.setTenantId(WORKSPACE_ID);skill.setType("MCP");skill.setInstallSpec(null);
+        when(dao.findById(1L)).thenReturn(skill);
+        var connection=new SkillConnectionTestService(dao);
+        if(branch.equals("raw")){
+            var result=new com.aliyun.autowonder.skill.dto.SkillConnectionTestVO();result.setSuccess(false);result.setMessage("<b>raw</b>MCP 配置为空");
+            connection=mock(SkillConnectionTestService.class);when(connection.test(1L,WORKSPACE_ID,null)).thenReturn(result);
+        }
+        var current=new SkillController(skillService,mock(SkillPackageService.class),connection,categoryService);
+        AutoWonderContext.get().setCurrentWorkspaceId(WORKSPACE_ID);AutoWonderContext.get().setUserId(USER_ID);
+        var mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(current).build();
+        var body=new ObjectMapper().readTree(mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/skills/1/connection-test"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8));
+        assertTrue(body.path("success").asBoolean());assertEquals("0",body.path("code").asText());var data=body.path("data");
+        assertEquals(branch.equals("raw") ? "<b>raw</b>MCP 配置为空" : "MCP 配置为空",data.path("message").asText());
+        assertTrue(data.has("durationMs"));assertTrue(!data.has("ownedFailureArgs"));
+        if(branch.equals("owned"))assertEquals("EMPTY_CONFIG",data.path("ownedFailureCode").asText());
+        else {assertTrue(data.path("durationMs").isNull());assertTrue(!data.has("ownedFailureCode"));}
+        var rawSkill=new SkillVO();rawSkill.setModifierName("用户 #7");
+        assertTrue(!new ObjectMapper().valueToTree(rawSkill).has("modifierNameKind"));
+        assertEquals("用户 #7",rawSkill.getModifierName());
+    }
+
 }

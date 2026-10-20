@@ -1,6 +1,10 @@
 package com.aliyun.autowonder.notification;
 
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
+import com.aliyun.autowonder.user.UserSettingService;
+import org.springframework.beans.factory.annotation.Autowired;
+import java.util.Locale;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import org.slf4j.Logger;
@@ -19,9 +23,17 @@ public class NotifyService {
     private final NotificationDao notificationDao;
     private final NotifyPrefDao prefDao;
     private final List<NotifyChannel> channels;
+    private final UserSettingService userSettings;
 
     public NotifyService(NotificationDao notificationDao, NotifyPrefDao prefDao,
                          List<NotifyChannel> channels) {
+        this(notificationDao, prefDao, channels, null);
+    }
+
+    @Autowired
+    public NotifyService(NotificationDao notificationDao, NotifyPrefDao prefDao,
+                         List<NotifyChannel> channels, UserSettingService userSettings) {
+        this.userSettings = userSettings;
         this.notificationDao = notificationDao;
         this.prefDao = prefDao;
         this.channels = channels;
@@ -32,12 +44,16 @@ public class NotifyService {
             return;
         }
         for (Long recipientId : event.getRecipientIds()) {
+            Locale locale = userSettings == null ? Locale.CHINA : userSettings.recipientLocale(recipientId);
             NotificationDO n = new NotificationDO();
+            n.setRecipientLocale(locale.toLanguageTag());
             n.setTenantId(event.getTenantId());
             n.setRecipientId(recipientId);
             n.setType(event.getType());
-            n.setTitle(event.getTitle());
-            n.setContent(event.getContent());
+            n.setTitle(SystemMessages.render(event.getTitleKey(), event.getTitleArgs(), event.getTitle(), locale));
+            Object[] contentArgs = event.getContentKey() != null && event.getContentArgsResolver() != null
+                    ? event.getContentArgsResolver().apply(locale) : event.getContentArgs();
+            n.setContent(SystemMessages.render(event.getContentKey(), contentArgs, event.getContent(), locale));
             n.setLink(event.getLink());
             n.setRefType(event.getRefType());
             n.setRefId(event.getRefId());
@@ -78,7 +94,7 @@ public class NotifyService {
     public void delete(long notificationId, long tenantId, long userId) {
         // 归属校验在 SQL 的 WHERE 上，0 行说明通知不存在或不属于当前用户，不能静默成功。
         if (notificationDao.delete(notificationId, tenantId, userId) == 0) {
-            throw new BizException(ErrorCode.NOT_FOUND, "通知不存在");
+            throw BizException.keyed(ErrorCode.NOT_FOUND, "error.notification_not_found", null, "通知不存在");
         }
     }
 

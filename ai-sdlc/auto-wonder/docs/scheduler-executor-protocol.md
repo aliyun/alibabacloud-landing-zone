@@ -287,11 +287,12 @@ sequenceDiagram
 
 `POST /api/daemon/dispatches/{dispatchId}/debug-log-upload?token={executorToken}`（`DebugLogUploadController`）
 
-- **触发**：runtime 轮结束（SUCCEEDED/FAILED/TIMEOUT/CANCELED 一律上传）gzip+sha256 之后。
-- **鉴权**：query `token`（executor 静态 token），经 `DaemonUploadAuthenticator.authenticateDetailed` 同款链校验（dispatchId → executor → TokenService.validate）。
-- **请求体**：`{"sizeBytes":123,"sha256":"<64hex>","truncated":false,"dispatchStatus":"SUCCEEDED"}`（`dispatchStatus` ∈ SUCCEEDED/FAILED/TIMEOUT/CANCELED）。
+- **触发**：runtime 轮结束（SUCCEEDED/FAILED/TIMEOUT/CANCELED 一律上传）gzip+sha256 之后、TASK_RESULT 发送之前——数据库终态恰恰由 TASK_RESULT 驱动，因此该申请必然发生在派发仍处非终态时（2026-09-21 工单 55510 修复前的旧闸门在此必然 409，导致日志永久丢失）。
+- **鉴权**：query `token`（executor 静态 token），经 `DaemonUploadAuthenticator.authenticateDetailed` 同款链校验（dispatchId → executor → TokenService.validate），已绑定当前执行器归属。
+- **请求体**：`{"sizeBytes":123,"sha256":"<64hex>","truncated":false,"dispatchStatus":"SUCCEEDED"}`（`dispatchStatus` ∈ SUCCEEDED/FAILED/TIMEOUT/CANCELED，为执行器本地执行结果）。
+- **收尾阶段签发**：派发尚未落库终态时，满足以下三项即放行签发（不改派发状态、不伪造终态）：① 鉴权通过（执行器归属）；② 派发已交付执行器（DISPATCHED/ACKED/RUNNING，覆盖 ACK 在途与轮内零进度即失败的竞态）；③ 请求体申报合法终态 `dispatchStatus`。签发把 `debug_log` 行 upsert 为 PENDING 快照（`dispatch_status` 暂存申报值），终值由 TASK_RESULT 的 `recordTaskResultReport` 或 24h 对账收敛，与 artifacts 中转通道（`relayTarget` 不检查终态）语义对齐。暂停族（PAUSING/PAUSED/PAUSE_FAILED/WAITING_FOR_PAUSE）与未交付态（PENDING/PACKAGING）不构成收尾阶段，维持 409——暂停路径不得被当作终态上传。
 - **200**：`{"objectKey":"debug/123/DevAgent-run-1.log.gz","uploadUrl":"https://...","expiresAt":"2026-09-04T12:34:56Z","alreadyUploaded":false}`；已 UPLOADED 时 `uploadUrl:null, expiresAt:null, alreadyUploaded:true`（幂等）。服务端此刻计算 `run_no`、生成 canonical `objectKey`、登记 `debug_log(PENDING)` 并 `presignPut`（公网 endpoint、TTL 20 分钟）；runtime 随后对 `uploadUrl` 直接 HTTP PUT（Content-Type: application/gzip），403/过期可重新申请一次。
-- **错误**（校验次序固定 404→403→409→422→400，runtime 对 4xx 的分类依赖该次序，不可重排）：400 请求体非法（`dispatchStatus` 不在枚举、`sizeBytes` 为负、`sha256` 非裸 64 位 hex）；403 token/归属不符；404 dispatch 不存在；409 dispatch 未到终态；422 该 dispatch 未开启 debug；503 签发失败（DB/OSS 异常，响应体单键 `error`，不泄存储细节）。runtime 按状态码分类处理（best-effort，绝不影响派发/结果链路）：4xx→业务拒绝，记 `error` 后终止，不重试、不中转；5xx/网络不可达→重试签发一次，仍失败则降级走 artifacts 中转通道。
+- **错误**（校验次序固定 404→403→409→422→400，runtime 对 4xx 的分类依赖该次序，不可重排）：400 请求体非法（`dispatchStatus` 不在枚举、`sizeBytes` 为负、`sha256` 非裸 64 位 hex）；403 token/归属不符；404 dispatch 不存在；409 dispatch 未到终态且不满足收尾阶段签发（暂停族、未交付态，或申报状态非合法终态/请求体缺失）；422 该 dispatch 未开启 debug；503 签发失败（DB/OSS 异常，响应体单键 `error`，不泄存储细节）。runtime 按状态码分类处理（best-effort，绝不影响派发/结果链路）：4xx→业务拒绝，记 `error` 后终止，不重试、不中转；5xx/网络不可达→重试签发一次，仍失败则降级走 artifacts 中转通道。
 - **中转兜底**：直传网络不可达时复用既有产物中转通道 `POST /api/daemon/dispatches/{id}/artifacts?token=`（`DaemonArtifactController`），文件路径 `debug/{roleCode}-{dispatchId}.log.gz`，filesMetadata 带 sha256+sizeBytes；服务端 `classify` 识别 `debug/` 前缀 → `DEBUG_LOG` 类型、跳过审计，并把存储 key 重排为与直传一致的 canonical objectKey（回执走既有逐文件 ACCEPTED/REJECTED 机制，未开启 debug 的 dispatch 回 `DEBUG_LOG_DISABLED`）。
 - **对账**：`debug_log` 行停留 PENDING 超 24h 由服务端定时任务（`DebugLogReconciliationTask`）收敛——`storage.exists` 为真 → UPLOADED，否则 FAILED。
 

@@ -11,4 +11,8 @@ public @interface RequireWorkspaceAccess {
     WorkspaceAccessLevel value() default WorkspaceAccessLevel.READ_ONLY;
 
     String action() default "访问工作空间资源";
+
+    /** Explicit system action identity; an omitted key preserves the raw action. */
+    String actionKey() default "";
+
 }

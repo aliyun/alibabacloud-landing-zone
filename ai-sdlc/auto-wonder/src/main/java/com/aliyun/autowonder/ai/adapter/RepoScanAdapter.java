@@ -2,8 +2,13 @@ package com.aliyun.autowonder.ai.adapter;
 
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.repo.RepoConclusionDO;
 import com.aliyun.autowonder.repo.RepoConclusionDao;
 import com.aliyun.autowonder.repo.RepoDao;
@@ -19,10 +24,12 @@ public class RepoScanAdapter implements SceneAdapter {
 
     private final RepoDao repoDao;
     private final RepoConclusionDao conclusionDao;
+    private final WorkspaceDomainGuard domainGuard;
 
-    public RepoScanAdapter(RepoDao repoDao, RepoConclusionDao conclusionDao) {
+    public RepoScanAdapter(RepoDao repoDao, RepoConclusionDao conclusionDao, WorkspaceDomainGuard domainGuard) {
         this.repoDao = repoDao;
         this.conclusionDao = conclusionDao;
+        this.domainGuard = domainGuard;
     }
 
     @Override
@@ -57,27 +64,35 @@ public class RepoScanAdapter implements SceneAdapter {
 
     @Override
     public String validateResult(String resultJson) {
+        BizException error = validateForConfirmation(resultJson);
+        return error == null ? null : error.getMessage();
+    }
+
+    @Override
+    public BizException validateForConfirmation(String resultJson) {
         log.info("repo scan validateResult jsonLen={}", resultJson != null ? resultJson.length() : 0);
         try {
             JSONObject obj = JSON.parseObject(resultJson);
             if (obj == null || obj.getString("purpose") == null || obj.getString("purpose").isBlank()) {
                 log.warn("repo scan validateResult failed: missing or blank purpose field");
-                return "missing or blank purpose field";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.purpose_missing", new Object[]{}, "missing or blank purpose field");
             }
             if (obj.getString("summaryMd") == null) {
                 log.warn("repo scan validateResult failed: missing summaryMd field");
-                return "missing summaryMd field";
+                return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.summary_missing", new Object[]{}, "missing summaryMd field");
             }
             log.info("repo scan validateResult passed");
             return null;
         } catch (Exception e) {
             log.warn("repo scan validateResult failed: invalid JSON", e);
-            return "invalid JSON: " + e.getMessage();
+            return BizException.keyed(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, "ai.validation.invalid_json", new Object[]{e.getMessage()}, "invalid JSON: " + e.getMessage());
         }
     }
 
     @Override
     public void persistConfirmedResult(AiSessionDO session, String resultJson) {
+        domainGuard.requireWritableDomains(session.getTenantId(), AutoWonderContext.get().getUserId(),
+                "确认AI会话", "access.action.confirm_an_ai_session", WorkspaceDomain.REPO);
         log.info("repo scan persistConfirmedResult sessionId={} bizRefId={} jsonLen={}",
                 session.getId(), session.getBizRefId(), resultJson != null ? resultJson.length() : 0);
         Long repoId = session.getBizRefId();

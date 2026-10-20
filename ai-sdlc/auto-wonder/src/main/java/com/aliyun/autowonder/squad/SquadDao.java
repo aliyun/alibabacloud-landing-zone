@@ -18,6 +18,7 @@ public interface SquadDao {
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
     int softDelete(@Param("id") Long id, @Param("tenantId") Long tenantId,
             @Param("version") Integer version, @Param("modifierId") Long modifierId);
+    int countByTenantAndName(@Param("tenantId") Long tenantId, @Param("name") String name);
 
     /** agent 所属（未解散）小队中开启 debug 日志收集的数量；打包冻结判定用。 */
     int countDebugEnabledByAgent(@Param("tenantId") Long tenantId, @Param("agentId") Long agentId);

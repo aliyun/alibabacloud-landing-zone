@@ -41,6 +41,7 @@ public enum ErrorCode {
     WORKITEM_EXTERNAL_NO_DELETE("13006", "外部平台集成工单不可删除"),
     WORKITEM_RUNNING_NO_DELETE("13007", "工单正在执行中，请等待完成或结束后再删除"),
     WORKITEM_EXTERNAL_CONTENT_READ_ONLY("13008", "外部工单的标题和描述由来源平台维护"),
+    WORKITEM_NOT_RECYCLED("13009", "工单未被删除，无需恢复"),
     STATUS_TEMPLATE_NAME_REQUIRED("13010", "模版名称不能为空"),
     STATUS_TEMPLATE_WORK_TYPE_REQUIRED("13011", "工单类型不能为空"),
     STATUS_TEMPLATE_DELETE_IN_USE("13012", "模版被工单引用,无法删除"),
@@ -54,6 +55,18 @@ public enum ErrorCode {
     STATUS_TRANSITION_DUPLICATE("13020", "相同起止节点的流转已存在"),
     STATUS_TRANSITION_NAME_REQUIRED("13021", "流转名称不能为空"),
     STATUS_TEMPLATE_VERSION_CONFLICT("13022", "模版已被修改,请重试"),
+    // 只对有权访问该项目的用户返回，用于提示切换项目后打开工单（见 WorkitemOwningWorkspaceResolver）。
+    // 消息与 zh_CN 资源保持一致（SystemMessagesResourceTest 强制校验），{0} 为目标项目名。
+    WORKITEM_IN_OTHER_WORKSPACE("13023", "该工单属于工作空间「{0}」，是否切换到该项目并打开？"),
+    // 交付已关闭时评论 @ 数字员工：明确失败原因与保存结果（整笔回滚，评论未保存）。
+    WORKITEM_DELIVERY_CLOSED("13024", "该工单的交付已关闭，无法启动数字员工"),
+    // 澄清会话附件
+    CLARIFICATION_ATTACHMENT_NOT_FOUND("13025", "附件不存在或已删除"),
+    CLARIFICATION_ATTACHMENT_TOO_LARGE("13026", "单个附件不能超过 {0}MB"),
+    CLARIFICATION_ATTACHMENT_ALREADY_SENT("13027", "附件已随消息发送，不能删除"),
+    CLARIFICATION_ATTACHMENT_FORBIDDEN("13028", "只能操作自己上传的附件"),
+    CLARIFICATION_ATTACHMENT_EMPTY("13029", "附件内容为空"),
+    CLARIFICATION_EXECUTOR_OFFLINE("13030", "执行器离线，请稍后重试"),
     // 14xxx 数字员工/Agent
     AGENT_NOT_FOUND("14001", "数字员工不存在"),
     AGENT_VERSION_NOT_FOUND("14002", "版本不存在"),
@@ -74,6 +87,7 @@ public enum ErrorCode {
     SQUAD_NOT_FOUND("15001", "小队不存在"),
     SQUAD_NAME_REQUIRED("15002", "小队名称不能为空"),
     SQUAD_MEMBER_DUPLICATE("15003", "该成员已在小队中"),
+    SQUAD_MEMBER_AGENT_INVALID("15004", "数字员工不存在或已删除，无法加入小队：{0}"),
     SQUAD_TEMPLATE_NOT_FOUND("15010", "小队模版不存在"),
     // 16xxx SDLC 编排
     SDLC_NOT_FOUND("16001", "SDLC流程不存在"),
@@ -163,12 +177,9 @@ public enum ErrorCode {
     IM_CHANNEL_NOT_READY("28001", "平台 IM 机器人配置不完整或未就绪"),
     IM_IDENTITY_NOT_CONFIGURED("28002", "尚未配置 IM 工号"),
     IM_TEST_SEND_FAILED("28003", "IM 测试消息发送失败"),
-    // 29xxx 账号注销
-    DEACTIVATION_ALREADY_PENDING("29001", "账号注销申请已提交，当前处于冷静期"),
+    // 29xxx 账号删除（注销）
     DEACTIVATION_BLOCKED_BY_WORKITEMS("29002", "存在未完结的工单，请先处理后再申请注销"),
     DEACTIVATION_BLOCKED_BY_SOLE_ADMIN("29003", "您是某工作空间的唯一管理员，请先转让管理权后再申请注销"),
-    DEACTIVATION_NOT_PENDING("29004", "当前没有进行中的注销申请"),
-    DEACTIVATION_ALREADY_REVOKED("29005", "注销申请已撤销"),
     DEACTIVATION_CONFIRM_MISMATCH("29006", "确认输入不匹配，请重新输入用户名确认"),
     DEACTIVATION_ACCOUNT_DISABLED("29007", "该账号已注销，无法登录"),
     // 30xxx 定时任务
@@ -209,7 +220,44 @@ public enum ErrorCode {
     CATEGORY_DUPLICATE_NAME("34003", "同一父分类下已存在此名称"),
     CATEGORY_DELETE_IN_USE("34004", "分类下仍有子分类或能力关联，无法删除"),
     CATEGORY_CYCLE_MOVE("34005", "分类不能移动到自身或其子分类下"),
-    CATEGORY_DEPTH_EXCEEDED("34006", "分类层级超过上限");
+    CATEGORY_DEPTH_EXCEEDED("34006", "分类层级超过上限"),
+    // 35xxx 跨工作空间复制小队
+    SQUAD_COPY_NO_ONLINE_VERSION("35001", "小队中存在没有在线版本的数字员工，无法复制：{0}"),
+    SQUAD_COPY_TARGETS_REQUIRED("35002", "请至少选择一个目标工作空间"),
+    SQUAD_COPY_REQUEST_ID_REQUIRED("35003", "复制请求标识不能为空"),
+    // 与 ORG_NOT_FOUND_OR_NO_PERMISSION 同理：合并「不存在」「已删除」「无权访问」，
+    // 否则可以拿目标 id 枚举出别人的工作空间。
+    SQUAD_COPY_TARGET_INVALID("35004", "目标工作空间不存在或没有复制权限"),
+    SQUAD_COPY_FINGERPRINT_MISMATCH("35005", "相同请求标识对应的复制参数不一致，请重新发起复制"),
+    SQUAD_COPY_DEPENDENCY_UNRESOLVED("35006", "复制依赖无法解析，目标空间未创建任何资源"),
+    SQUAD_COPY_SOURCE_CHANGED("35007", "源小队配置在复制过程中发生变化，请重新发起复制"),
+    SQUAD_COPY_TOO_MANY_TARGETS("35008", "一次最多选择 {0} 个目标工作空间"),
+    SQUAD_COPY_IN_PROGRESS("35009", "同一复制请求正在处理中，请稍后重试"),
+    // 36xxx 企业 SSO 联合登录
+    FEDERATION_CONNECTION_NOT_FOUND("36001", "SSO 登录方式不存在或未启用"),
+    FEDERATION_CONFIG_INVALID("36002", "SSO 登录方式配置不完整"),
+    FEDERATION_ASSERTION_INVALID("36003", "身份断言校验未通过，请重新登录"),
+    FEDERATION_REPLAY_DETECTED("36004", "身份断言已被使用，请重新登录"),
+    FEDERATION_STATE_INVALID("36005", "登录会话已失效，请重新发起登录"),
+    FEDERATION_IDENTITY_CONFLICT("36006", "该企业身份已绑定其他账号，请联系平台管理员"),
+    FEDERATION_ACCOUNT_DISABLED("36007", "该账号已停用，无法登录"),
+    FEDERATION_LAST_LOGIN_METHOD_FORBIDDEN("36008", "该身份是账号当前唯一的登录方式，无法解绑"),
+    FEDERATION_IDP_NOT_FOUND("36009", "身份提供方不存在"),
+    FEDERATION_IDP_IN_USE("36010", "身份提供方下仍有登录方式，无法删除"),
+    FEDERATION_CONNECTION_NAME_CONFLICT("36011", "登录方式名称已存在"),
+    FEDERATION_BIND_TICKET_INVALID("36012", "绑定请求已失效，请重新发起绑定"),
+    FEDERATION_CONNECTION_IN_USE("36013", "该登录方式下仍有已绑定的企业身份，无法删除"),
+    // 37xxx 平台用户管理
+    USER_ADMIN_DELETE_SELF_FORBIDDEN("37001", "不能删除当前登录用户自己"),
+    USER_ADMIN_OWNER_BLOCKED("37002", "该用户是工作空间所有者，请先转让工作空间后再删除"),
+    USER_ADMIN_SOLE_PLATFORM_ADMIN_BLOCKED("37003", "该用户是唯一平台管理员，无法删除"),
+    USER_ADMIN_ALREADY_DELETED("37004", "该用户已删除"),
+    USER_ADMIN_NOT_DELETED("37005", "该用户未处于已删除状态"),
+    USER_ADMIN_RESTORE_CONFLICT("37006", "用户名或邮箱已被占用，无法恢复"),
+    USER_ADMIN_READONLY("37007", "该账号为只读账号，无法执行此操作"),
+    USER_ADMIN_USERNAME_RESERVED("37008", "该用户名为平台保留名称"),
+    USER_ADMIN_PASSWORD_MISMATCH("37009", "两次输入的密码不一致"),
+    USER_ADMIN_DELETE_CONFLICT("37010", "删除失败：占位用户名已被其他账号占用，请先处理冲突账号后再试");
 
 
     private final String code;
@@ -219,6 +267,8 @@ public enum ErrorCode {
         this.code = code;
         this.message = message;
     }
+
+    public String getMessageKey() { return "error." + name().toLowerCase(java.util.Locale.ROOT); }
 
     public String getCode() { return code; }
     public String getMessage() { return message; }

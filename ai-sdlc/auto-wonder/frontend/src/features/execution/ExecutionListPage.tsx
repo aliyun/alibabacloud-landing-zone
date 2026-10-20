@@ -1,6 +1,8 @@
+import { useTranslation } from 'react-i18next';
+import { formatDateTime, formatNumber } from '@/shared/i18n/format';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Card, Tag, Select, Input, Segmented, Button, Space } from 'antd';
+import { Card, Tag, Select, Input, Segmented, Button, Space, Empty } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +21,7 @@ const STATUS_OPTIONS = [
 ].map((s) => ({ label: s, value: s }));
 
 export function ExecutionListPage() {
+  const { t } = useTranslation('execution');
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = usePageSizePreference('autowonder.executions.pageSize', [10, 20, 50, 100, 200], 10);
@@ -43,9 +46,9 @@ export function ExecutionListPage() {
   const { data: agents } = useQuery({ queryKey: ['agents-for-filter'], queryFn: () => listAgents({ page: 1, size: 200 }) });
 
   const columns: ColumnsType<DispatchVO> = [
-    { title: '时间', dataIndex: 'gmtCreate', width: 160,
-      render: (v: string) => new Date(v).toLocaleString('zh-CN', { hour12: false }) },
-    { title: '工单', align: 'left', dataIndex: 'workitemTitle', ellipsis: { showTitle: false },
+    { title: t('list.time'), dataIndex: 'gmtCreate', width: 160,
+      render: (v: string) => formatDateTime(v, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false }) },
+    { title: t('list.workitem'), align: 'left', dataIndex: 'workitemTitle', ellipsis: { showTitle: false },
       render: (_: unknown, r) => r.workitemId && r.workitemTitle
         ? (
           <EllipsisText tooltip={r.workitemTitle}>
@@ -53,35 +56,36 @@ export function ExecutionListPage() {
           </EllipsisText>
         )
         : '—' },
-    { title: 'Agent', dataIndex: 'agentName', width: 120, render: (v: string | null) => v ?? '—' },
-    { title: '执行器', dataIndex: 'executorName', width: 120, render: (v: string | null) => v ?? '—' },
-    { title: '状态', dataIndex: 'status', width: 130,
+    { title: t('list.agent'), dataIndex: 'agentName', width: 120, render: (v: string | null) => v ?? '—' },
+    { title: t('list.executor'), dataIndex: 'executorName', width: 120, render: (v: string | null) => v ?? '—' },
+    { title: t('list.status'), dataIndex: 'status', width: 130,
       render: (s: string) => <Tag color={statusMeta(s).color}>{statusMeta(s).label}</Tag> },
-    { title: '尝试', dataIndex: 'attempt', width: 70, render: (v: number | null) => v ?? '—' },
-    { title: '操作', width: 80,
-      render: (_: unknown, r) => <a onClick={(e) => { e.stopPropagation(); setDetailId(r.id); }}>详情</a> },
+    { title: t('list.attempt'), dataIndex: 'attempt', width: 70, render: (v: number | null) => v ?? '—' },
+    { title: t('list.actions'), width: 80,
+      render: (_: unknown, r) => <a onClick={(e) => { e.stopPropagation(); setDetailId(r.id); }}>{t('list.details')}</a> },
   ];
 
   return (
     <Card
-      className="aw-content-card" title={<PageHeading title="执行记录" />}
-      extra={<Button icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button>}
+      className="aw-content-card" title={<PageHeading title={t('list.title')} />}
+      extra={<Button icon={<ReloadOutlined aria-hidden="true" />} onClick={() => refetch()}>{t('list.refresh')}</Button>}
     >
       <Space wrap style={{ marginBottom: 16 }}>
-        <Select allowClear placeholder="全部 Agent" style={{ width: 160 }} value={agentId}
+        <Select allowClear aria-label={t('list.allAgents')} placeholder={t('list.allAgents')} style={{ width: 160 }} value={agentId}
           onChange={(v) => { setAgentId(v); setPage(1); }}
           options={(agents ?? []).map((a) => ({ label: a.name, value: a.id }))} />
-        <Select allowClear placeholder="全部状态" style={{ width: 150 }} value={status}
-          onChange={(v) => { setStatus(v); setPage(1); }} options={STATUS_OPTIONS} />
-        <Input allowClear placeholder="工单 ID" style={{ width: 140 }}
+        <Select allowClear aria-label={t('list.allStatuses')} placeholder={t('list.allStatuses')} style={{ width: 150 }} value={status}
+          onChange={(v) => { setStatus(v); setPage(1); }} options={STATUS_OPTIONS.map(option => ({ ...option, label: statusMeta(option.value).label }))} />
+        <Input allowClear aria-label={t('list.workitemId')} placeholder={t('list.workitemId')} style={{ width: 140 }}
           onChange={handleWorkitemIdChange} />
         <Segmented value={timeRange} onChange={(v) => { setTimeRange(v as DispatchTimeRange); setPage(1); }}
-          options={[{ label: '近 7 天', value: '7d' }, { label: '近 30 天', value: '30d' }, { label: '近 90 天', value: '90d' }]} />
+          options={[{ label: t('list.last7Days'), value: '7d' }, { label: t('list.last30Days'), value: '30d' }, { label: t('list.last90Days'), value: '90d' }]} />
       </Space>
 
       <Table<DispatchVO>
         rowKey="id"
         loading={isFetching}
+        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('list.empty')} /> }}
         columns={columns}
         dataSource={data?.list ?? []}
         onRow={(r) => ({ onClick: () => setDetailId(r.id) })}
@@ -90,7 +94,7 @@ export function ExecutionListPage() {
           pageSize,
           total: data?.total ?? 0,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (total) => t('list.total', { count: total, total: formatNumber(total) }),
           onChange: (p, ps) => { setPage(p); setPageSize(ps); },
         }}
       />

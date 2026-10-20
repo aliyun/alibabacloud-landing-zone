@@ -98,6 +98,7 @@ describe('useLiveActivity', () => {
     const { result } = renderHook(() => useLiveActivity(10));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe('network');
+    expect(result.current.runtimeState).toBe('UNKNOWN');
   });
 
   it('merges realtime events via handler', async () => {
@@ -195,6 +196,66 @@ describe('useLiveActivity', () => {
     // changed=false short-circuits applyResponse: existing actions and cursor are preserved.
     expect(result.current.actions.length).toBe(2);
     expect(result.current.lastSeq).toBe(2);
+  });
+
+  it('refreshes runtime health on an unchanged response', async () => {
+    mockGetActivity.mockResolvedValue(buildResponse({ runtimeState: 'RUNNING' }));
+    let reconnect: (() => void) | undefined;
+    mockUseRealtime.mockImplementation((_channel, opts) => { reconnect = opts.onReconnect; });
+    const { result } = renderHook(() => useLiveActivity(10));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    mockGetActivity.mockResolvedValue(buildResponse({ changed: false, actions: [], runtimeState: 'RECOVERING' }));
+    await act(async () => { reconnect?.(); });
+    expect(result.current.runtimeState).toBe('RECOVERING');
+    expect(result.current.actions).toHaveLength(2);
+  });
+
+  it('polls health while enabled even without runtime events', async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetActivity.mockResolvedValue(buildResponse({ runtimeState: 'RUNNING' }));
+      const { result, unmount } = renderHook(() => useLiveActivity(10));
+      await act(async () => {});
+      mockGetActivity.mockResolvedValue(buildResponse({ changed: false, actions: [], runtimeState: 'UNKNOWN' }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(mockGetActivity).toHaveBeenLastCalledWith(10, 2, 100);
+      expect(result.current.runtimeState).toBe('UNKNOWN');
+      unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(mockGetActivity).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a previous dispatch health response after selection changes', async () => {
+    mockGetActivity.mockResolvedValue(buildResponse({ runtimeState: 'RUNNING' }));
+    let reconnect: (() => void) | undefined;
+    mockUseRealtime.mockImplementation((_channel, opts) => { reconnect = opts.onReconnect; });
+    const { result, rerender } = renderHook(({ id }) => useLiveActivity(id), { initialProps: { id: 10 } });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let finishOld!: (response: DispatchLiveActivity) => void;
+    mockGetActivity.mockImplementationOnce(() => new Promise<DispatchLiveActivity>((resolve) => { finishOld = resolve; }));
+    act(() => { reconnect?.(); });
+    mockGetActivity.mockResolvedValue(buildResponse({ dispatchId: 20, runtimeState: 'RECOVERING' }));
+    rerender({ id: 20 });
+    await waitFor(() => expect(result.current.runtimeState).toBe('RECOVERING'));
+    await act(async () => { finishOld(buildResponse({ changed: false, runtimeState: 'UNKNOWN' })); });
+    expect(result.current.runtimeState).toBe('RECOVERING');
+  });
+
+  it('does not poll inactive dispatches', async () => {
+    vi.useFakeTimers();
+    try {
+      mockGetActivity.mockResolvedValue(buildResponse());
+      const { unmount } = renderHook(() => useLiveActivity(10, false));
+      await act(async () => {});
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(mockGetActivity).toHaveBeenCalledTimes(1);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps truncated sticky after client-side window overflow', async () => {

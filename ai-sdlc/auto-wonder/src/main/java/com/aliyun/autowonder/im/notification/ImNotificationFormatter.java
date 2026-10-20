@@ -1,6 +1,9 @@
 package com.aliyun.autowonder.im.notification;
 
 import org.springframework.stereotype.Component;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
+import com.aliyun.autowonder.workitem.AssignmentActor;
+import java.util.Locale;
 
 @Component
 public class ImNotificationFormatter {
@@ -9,49 +12,47 @@ public class ImNotificationFormatter {
 
     public String format(ImNotificationMessageContext context, ImNotificationTask task) {
         String normalizedBaseUrl = trimTrailingSlash(context.baseUrl());
+        Locale locale = task.deliveryLocale();
+        String workspace = safeText(context.workspaceName());
+        String actor = safeText(AssignmentActor.recipientDisplayName(task.actorDisplayName(), task.actorNameKind(), locale));
+        String title = task.isScheduledTaskRun()
+                && WorkitemCommentMentionedEvent.SCHEDULED_RUN_ID_FALLBACK.equals(task.workitemTitleKind())
+                ? SystemMessages.render("notification.scheduled_run.title_fallback",
+                        new Object[]{String.valueOf(task.workitemId())}, task.workitemTitle(), locale)
+                : safeText(task.workitemTitle());
+        if (ImNotificationTask.TYPE_APPROVAL_REQUIRED.equals(task.notificationType())
+                || ImNotificationTask.TYPE_INPUT_REQUIRED.equals(task.notificationType())) {
+            return render("human_input", locale, title, workspace, safeText(task.commentContentMd()),
+                    workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()));
+        }
         if (ImNotificationTask.TYPE_COMMENT_MENTION.equals(task.notificationType())) {
-            if (task.isScheduledTaskRun()) {
-                return "### 评论中提到了你\n\n"
-                        + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
-                        + "**定时任务**：" + safeText(task.workitemTitle()) + "\n"
-                        + "**评论人**：" + safeText(task.actorDisplayName()) + "\n"
-                        + commentSnippetBlock(task.commentContentMd())
-                        + "[查看执行记录](" + scheduledTaskRunUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()) + ")";
-            }
-            return "### 评论中提到了你\n\n"
-                    + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
-                    + "**工单**：" + safeText(task.workitemTitle()) + "\n"
-                    + "**评论人**：" + safeText(task.actorDisplayName()) + "\n"
-                    + commentSnippetBlock(task.commentContentMd())
-                    + "[查看工单](" + workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()) + ")";
+            boolean run = task.isScheduledTaskRun();
+            return render(run ? "mention_run" : "mention", locale, workspace, title, actor,
+                    commentSnippetBlock(task.commentContentMd(), locale),
+                    run ? scheduledTaskRunUrl(normalizedBaseUrl, task.workitemId(), context.tenantId())
+                            : workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()));
         }
         if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REQUEST.equals(task.notificationType())) {
-            return "### 有新的权限申请\n\n"
-                    + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
-                    + "**申请人**：" + safeText(task.actorDisplayName()) + "\n"
-                    + "**申请权限**：" + accessLevelLabel(task.commentContentMd()) + "\n\n"
-                    + "[去审批](" + memberReviewUrl(normalizedBaseUrl, context.tenantId()) + ")";
+            return render("access_request", locale, workspace, actor, accessLevelLabel(task.commentContentMd(), locale),
+                    memberReviewUrl(normalizedBaseUrl, context.tenantId()));
         }
         if (ImNotificationTask.TYPE_WORKSPACE_ACCESS_REVIEWED.equals(task.notificationType())) {
             if (OUTCOME_APPROVED.equals(task.sourceType())) {
-                return "### 权限申请已通过\n\n"
-                        + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
-                        + "**授予权限**：" + accessLevelLabel(task.commentContentMd()) + "\n"
-                        + "**审批人**：" + safeText(task.actorDisplayName()) + "\n\n"
-                        + "[进入工作空间](" + normalizedBaseUrl + "/workspaces)";
+                return render("access_approved", locale, workspace, accessLevelLabel(task.commentContentMd(), locale), actor,
+                        normalizedBaseUrl + "/workspaces");
             }
             String reason = safeText(task.commentContentMd()).trim();
-            return "### 权限申请被拒绝\n\n"
-                    + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
-                    + "**审批人**：" + safeText(task.actorDisplayName())
-                    + (reason.isEmpty() ? "" : "\n**原因**：" + reason);
+            return reason.isEmpty() ? render("access_rejected", locale, workspace, actor)
+                    : render("access_rejected_reason", locale, workspace, actor, reason);
         }
-        return "### 需要你处理\n\n"
-                + "**工作空间**：" + safeText(context.workspaceName()) + "\n"
-                + "**工单**：" + safeText(task.workitemTitle()) + "\n"
-                + "**状态**：" + safeText(context.statusName()) + "\n"
-                + "**指派人**：" + safeText(task.actorDisplayName()) + "\n\n"
-                + "[查看工单](" + workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()) + ")";
+        String status = context.assignedStatusFallback()
+                ? SystemMessages.render("im.status.assigned", null, context.statusName(), locale) : safeText(context.statusName());
+        return render("assigned", locale, workspace, title, status, actor,
+                workitemUrl(normalizedBaseUrl, task.workitemId(), context.tenantId()));
+    }
+
+    private static String render(String template, Locale locale, Object... args) {
+        return SystemMessages.render("im.markdown." + template, args, "", locale);
     }
 
     private static String workitemUrl(String baseUrl, long workitemId, long tenantId) {
@@ -75,21 +76,21 @@ public class ImNotificationFormatter {
         return value == null ? "" : value;
     }
 
-    private static String accessLevelLabel(String accessLevel) {
+    private static String accessLevelLabel(String accessLevel, Locale locale) {
         return switch (safeText(accessLevel)) {
-            case "READ_ONLY" -> "只读";
-            case "READ_WRITE" -> "读写";
-            case "ADMIN" -> "管理员";
+            case "READ_ONLY" -> SystemMessages.render("notification.access.read_only", null, "只读", locale);
+            case "READ_WRITE" -> SystemMessages.render("notification.access.read_write", null, "读写", locale);
+            case "ADMIN" -> SystemMessages.render("notification.access.admin", null, "管理员", locale);
             default -> safeText(accessLevel);
         };
     }
 
-    private static String commentSnippetBlock(String commentContentMd) {
+    private static String commentSnippetBlock(String commentContentMd, Locale locale) {
         String snippet = commentSnippet(commentContentMd);
         if (snippet.isEmpty()) {
             return "\n";
         }
-        return "**提及内容**：\n> " + snippet + "\n\n";
+        return render("snippet", locale, snippet);
     }
 
     private static String commentSnippet(String commentContentMd) {

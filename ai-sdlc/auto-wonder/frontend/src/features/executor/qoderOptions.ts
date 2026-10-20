@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import type { ExecutorModelCatalogModel, ExecutorModelCatalogProvider } from './api';
 
 export type QoderSelectOption = { value: string; label: string };
@@ -9,12 +10,12 @@ export type QoderModelOptions = {
   defaultReasoningEffort: string;
 };
 
-export const QODER_MODELS: QoderSelectOption[] = [
-  { value: 'auto', label: 'Auto (default)' },
-  { value: 'ultimate', label: 'Ultimate' },
-  { value: 'performance', label: 'Performance' },
-  { value: 'efficient', label: 'Efficient' },
-  { value: 'lite', label: 'Lite' },
+const QODER_MODELS: { value: string; label?: string; key?: 'modelAuto' | 'modelUltimate' | 'modelPerformance' | 'modelEfficient' | 'modelLite' }[] = [
+  { value: 'auto', key: 'modelAuto' },
+  { value: 'ultimate', key: 'modelUltimate' },
+  { value: 'performance', key: 'modelPerformance' },
+  { value: 'efficient', key: 'modelEfficient' },
+  { value: 'lite', key: 'modelLite' },
   { value: 'qmodel_38max', label: 'Qwen3.8-Max' },
   { value: 'qfmodel', label: 'Qwen3.8-Flash' },
   { value: 'qmodel_latest', label: 'Qwen3.7-Max' },
@@ -37,7 +38,7 @@ export function qoderProviderForClientKind(kind?: string | null): ExecutorModelC
 export function resolveQoderModelOptions(models?: ExecutorModelCatalogModel[] | null): QoderSelectOption[] {
   return models?.length
     ? models.map(({ id, name }) => ({ value: id, label: name }))
-    : QODER_MODELS;
+    : QODER_MODELS.map(({ value, label, key }) => ({ value, label: key ? i18n.t(`executor:${key}`) : label! }));
 }
 
 export function chooseQoderModel(options: QoderSelectOption[], saved?: string): string {
@@ -51,26 +52,20 @@ const CONTEXT_WINDOWS: QoderSelectOption[] = [
   { value: '260000', label: '260K' },
 ];
 
-const REASONING_EFFORTS: QoderSelectOption[] = [
-  { value: 'max', label: 'Max' },
-  { value: 'xhigh', label: 'Extra High' },
-  { value: 'high', label: 'High' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'low', label: 'Low' },
-  { value: 'none', label: 'None' },
-];
-
-const MODEL_OPTIONS: Record<string, QoderModelOptions> = Object.fromEntries(
-  QODER_MODELS.map(({ value }) => [value, {
-    contextWindows: CONTEXT_WINDOWS,
-    reasoningEfforts: REASONING_EFFORTS,
-    defaultContextWindow: '260000',
-    defaultReasoningEffort: value === 'ultimate' ? 'high' : 'medium',
-  }]),
-);
-
 export function qoderOptionsForModel(model: string): QoderModelOptions {
-  return MODEL_OPTIONS[model] ?? MODEL_OPTIONS.auto;
+  return {
+    contextWindows: CONTEXT_WINDOWS,
+    reasoningEfforts: [
+      { value: 'max', label: i18n.t('executor:reasonMax') },
+      { value: 'xhigh', label: i18n.t('executor:reasonExtraHigh') },
+      { value: 'high', label: i18n.t('executor:reasonHigh') },
+      { value: 'medium', label: i18n.t('executor:reasonMedium') },
+      { value: 'low', label: i18n.t('executor:reasonLow') },
+      { value: 'none', label: i18n.t('executor:reasonNone') },
+    ],
+    defaultContextWindow: '260000',
+    defaultReasoningEffort: model === 'ultimate' ? 'high' : 'medium',
+  };
 }
 
 export type QoderLaunchOptions = {
@@ -78,3 +73,14 @@ export type QoderLaunchOptions = {
   contextWindow: string;
   reasoningEffort: string;
 };
+
+export function resolveQoderLaunchOptions(model: string, current: Partial<QoderLaunchOptions>): QoderLaunchOptions {
+  const options = qoderOptionsForModel(model);
+  return {
+    model,
+    reasoningEffort: options.reasoningEfforts.some(({ value }) => value === current.reasoningEffort)
+      ? current.reasoningEffort! : options.defaultReasoningEffort,
+    contextWindow: options.contextWindows.some(({ value }) => value === current.contextWindow)
+      ? current.contextWindow! : options.defaultContextWindow,
+  };
+}

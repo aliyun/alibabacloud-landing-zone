@@ -38,6 +38,8 @@ class DeliveryRestartContextTest {
                     beans.registerSingleton("jdbc", jdbc);
                     beans.registerSingleton("transactions", transactions);
                     beans.registerSingleton("dispatches", dispatches);
+                    beans.registerSingleton("runtimeEvents", mock(DispatchRuntimeEventDao.class));
+                    beans.registerSingleton("checkpoints", mock(DispatchCheckpointDao.class));
                     beans.registerSingleton("workitems", mock(WorkitemDao.class));
                     beans.registerSingleton("transport", mock(DispatchControlTransport.class));
                     beans.registerSingleton("audit", mock(AuditLogService.class));

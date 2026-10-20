@@ -29,6 +29,19 @@ class ConversationRealtimeAuthorizationServiceTest {
     }
 
     @Test
+    void platformConversationsAreOwnerOnlyIncludingAdministratorsAndOldShares() {
+        AgentConversationDO conv = new AgentConversationDO();
+        conv.setId(10L); conv.setTenantId(100L);
+        conv.setChannel(com.aliyun.autowonder.conversation.PlatformConversationChannel.CHANNEL);
+        conv.setOwnerUserId(7001L);
+        when(convDao.findById(100L,10L)).thenReturn(conv);
+        assertTrue(service.authorize(100L,7001L,"conversation:10"));
+        assertFalse(service.authorize(100L,7002L,"conversation:10"));
+        conv.setDeletedAt(new java.util.Date());
+        assertFalse(service.authorize(100L,7001L,"conversation:10"));
+    }
+
+    @Test
     void deniesWhenConversationNotFound() {
         when(convDao.findById(100L, 10L)).thenReturn(null);
 

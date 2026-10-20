@@ -25,7 +25,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/scheduled-tasks")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务文档")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务文档", actionKey = "access.action.view_scheduled_task_documents")
 @RequiresScheduledTaskCapability(entry = "http")
 public class ScheduledTaskDocumentController {
 
@@ -41,7 +41,7 @@ public class ScheduledTaskDocumentController {
     }
 
     @PostMapping("/{id}/documents")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上传定时任务需求文档")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上传定时任务需求文档", actionKey = "access.action.upload_scheduled_task_requirement_documents")
     public Result<List<ArtifactVO>> upload(@PathVariable("id") Long id,
                                            @RequestParam("files") MultipartFile[] files) throws IOException {
         return Result.ok(requirementDocumentService.uploadWeb(
@@ -49,7 +49,7 @@ public class ScheduledTaskDocumentController {
     }
 
     @DeleteMapping("/{id}/documents/{artifactId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除定时任务需求文档")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除定时任务需求文档", actionKey = "access.action.delete_scheduled_task_requirement_documents")
     public Result<Boolean> delete(@PathVariable("id") Long id,
                                   @PathVariable("artifactId") Long artifactId) {
         requirementDocumentService.delete(owner(id), artifactId, currentWorkspaceId(), currentUserId());

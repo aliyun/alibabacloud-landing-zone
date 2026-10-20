@@ -57,10 +57,14 @@ public class ExternalArtifactShareService {
     public Map<String, Object> expose(long workspaceId, long workitemId, Long dispatchId,
                                       Long artifactId, String name, String expectedSha256) {
         if (artifactId == null && (name == null || name.isBlank())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "artifactId 与 name 至少提供一个");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.share.selector_required", null,
+                    "artifactId 与 name 至少提供一个");
         }
         if (dispatchId != null && dispatchId <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "dispatchId 必须是正整数");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.share.dispatch_id_invalid", null,
+                    "dispatchId 必须是正整数");
         }
         WorkitemDO workitem = workitemDao.findById(workitemId);
         if (workitem == null || !Long.valueOf(workspaceId).equals(workitem.getTenantId())) {
@@ -78,7 +82,8 @@ public class ExternalArtifactShareService {
                 || (dispatchId != null && !dispatchId.equals(artifact.getDispatchId()))
                 || (artifact.getSourceType() != null && !"WORKITEM".equals(artifact.getSourceType()))) {
             if (dispatchId != null) {
-                throw new BizException(ErrorCode.ARTIFACT_NOT_FOUND,
+                throw BizException.keyed(ErrorCode.ARTIFACT_NOT_FOUND,
+                        "artifact.share.dispatch_artifact_missing", null,
                         "该派发下未找到此产物（本轮可能尚未上传，请勿回退历史轮次）");
             }
             throw new BizException(ErrorCode.ARTIFACT_NOT_FOUND);
@@ -155,7 +160,9 @@ public class ExternalArtifactShareService {
         try {
             String actual = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
             if (!actual.equals(expectedSha256)) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "分享内容 SHA-256 不匹配，未公开此版本");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                        "artifact.share.digest_mismatch", null,
+                        "分享内容 SHA-256 不匹配，未公开此版本");
             }
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);

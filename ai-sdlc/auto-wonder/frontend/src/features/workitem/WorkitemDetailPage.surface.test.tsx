@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import { server } from '@/test/mocks/server';
 import { WorkitemDetailPage } from './WorkitemDetailPage';
 import { useAuthStore } from '@/shared/auth/store';
 import { BRANDING_QUERY_KEY } from '@/features/platform/brandingApi';
+import { i18n } from '@/shared/i18n';
 import { copyTextToClipboard } from '@/shared/lib/clipboard';
 
 /** 为什么单独开一个文件而不是加进 WorkitemDetailPage.test.tsx：
@@ -36,6 +37,7 @@ function ok<T>(data: T) {
 /** 只覆盖详情页首屏发起的请求；返回空集合让轮询条件不成立，避免二轮请求带来时序抖动。 */
 function surfaceHandlers() {
   return [
+    http.get('/api/workitems/1/dispatch-requests', () => ok([])),
     http.get('/api/workitems/1', () => ok(mockWorkitem)),
     http.get('/api/workitems/1/unified-timeline', () => ok([])),
     http.get('/api/workitems/1/participants', () => ok([])),
@@ -115,4 +117,24 @@ describe('WorkitemDetailPage right panel surface', () => {
     await act(async () => {});
     expect(screen.getByTestId('workitem-share-button')).toHaveTextContent('已复制');
   });
+});
+
+afterEach(async () => { await i18n.changeLanguage('zh-CN'); });
+
+it('projects the backend external assignee marker from the held detail response without another query', async () => {
+  useAuthStore.getState().clear();
+  useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  let calls = 0;
+  const raw = 'JIRA 用户（ID: null）';
+  const fixture = { ...mockWorkitem, assigneeType: 'EXTERNAL', assigneeName: raw, assigneeDisplayName: raw,
+    assigneeNameFallback: { provider: 'JIRA', subjectId: null, displayName: null } };
+  server.use(http.get('/api/workitems/1', () => { calls++; return ok(fixture); }), ...surfaceHandlers());
+  renderPage();
+  expect(await screen.findByText(raw)).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(screen.getByText('JIRA user (ID: null)')).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(screen.getByText(raw)).toBeInTheDocument();
+  expect(calls).toBe(1);
+  expect(fixture.assigneeName).toBe(raw);
 });

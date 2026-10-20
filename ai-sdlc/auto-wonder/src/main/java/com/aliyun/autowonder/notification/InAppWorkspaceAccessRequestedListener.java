@@ -49,7 +49,7 @@ public class InAppWorkspaceAccessRequestedListener {
 
             String content = WorkspaceAccessNotifyText.safe(event.requesterDisplayName())
                     + " 申请加入「" + WorkspaceAccessNotifyText.workspaceLabel(event.workspaceName())
-                    + "」，申请权限：" + WorkspaceAccessNotifyText.accessLevelLabel(event.requestedLevel());
+                    + "」，申请角色：" + WorkspaceAccessNotifyText.accessLevelLabel(event.requestedLevel());
 
             // One notify call per admin: NotifyService.notify loops recipients with no per-recipient
             // guard around notificationDao.insert, so a single failing admin would drop the bell rows
@@ -80,6 +80,11 @@ public class InAppWorkspaceAccessRequestedListener {
         notifyEvent.setType(REF_TYPE);
         notifyEvent.setTitle("有新的权限申请");
         notifyEvent.setContent(content);
+        notifyEvent.setTitleKey("notification.access.requested.title");
+        notifyEvent.setContentKey("notification.access.requested.content");
+        notifyEvent.setContentArgsResolver(locale -> new Object[]{WorkspaceAccessNotifyText.safe(event.requesterDisplayName()),
+                WorkspaceAccessNotifyText.workspaceLabel(event.workspaceName(), locale),
+                WorkspaceAccessNotifyText.accessLevelLabel(event.requestedLevel(), locale)});
         notifyEvent.setLink(WorkspaceAccessNotifyText.reviewLink(event.tenantId()));
         notifyEvent.setRefType(REF_TYPE);
         notifyEvent.setRefId(event.requestId());

@@ -5,6 +5,8 @@ import com.aliyun.autowonder.im.ImSendCommand;
 import com.aliyun.autowonder.im.PlatformImChannelConfigService;
 import com.aliyun.autowonder.im.UserImIdentityService;
 import com.aliyun.autowonder.setting.SystemSettingService;
+import com.aliyun.autowonder.im.notification.ImNotificationQueue;
+import com.aliyun.autowonder.im.notification.ImNotificationTask;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
@@ -16,13 +18,15 @@ public class PlatformImNotifyChannel implements NotifyChannel {
     private final UserImIdentityService identities;
     private final ImProviderRegistry providers;
     private final SystemSettingService settings;
+    private final ImNotificationQueue queue;
 
     public PlatformImNotifyChannel(PlatformImChannelConfigService configs, UserImIdentityService identities,
-                                   ImProviderRegistry providers, SystemSettingService settings) {
+                                   ImProviderRegistry providers, SystemSettingService settings, ImNotificationQueue queue) {
         this.configs = configs;
         this.identities = identities;
         this.providers = providers;
         this.settings = settings;
+        this.queue = queue;
     }
 
     @Override
@@ -34,6 +38,14 @@ public class PlatformImNotifyChannel implements NotifyChannel {
         if (java.util.Set.of("WORKITEM_ASSIGNED", "COMMENT_MENTION", "WORKSPACE_ACCESS_REQUEST", "WORKSPACE_ACCESS_REVIEWED")
                 .contains(notification.getType() == null ? "" : notification.getType())) return true;
         String provider = configs.selectedProvider();
+        if (ImNotificationTask.TYPE_APPROVAL_REQUIRED.equals(notification.getType())
+                || ImNotificationTask.TYPE_INPUT_REQUIRED.equals(notification.getType())) {
+            queue.enqueue(new ImNotificationTask("dispatch-request:" + notification.getId() + ":" + provider + ":" + notification.getRecipientId(),
+                    notification.getId(), notification.getTenantId(), notification.getRefId(), notification.getRecipientId(),
+                    "SYSTEM", 0, "数字员工", null, notification.getTitle(), notification.getType(), notification.getContent())
+                    .withRecipientLocale(notification.getRecipientLocale()));
+            return true;
+        }
         if (!configs.isReady(provider) || !Boolean.parseBoolean(settings.getDecryptedValue(
                 "NOTIFY", provider.toLowerCase(Locale.ROOT) + "_enabled", notification.getTenantId()))) return false;
         var identity = identities.find(notification.getRecipientId(), provider);

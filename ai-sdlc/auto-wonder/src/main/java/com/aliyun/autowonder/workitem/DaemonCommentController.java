@@ -138,6 +138,7 @@ public class DaemonCommentController {
         AuditLogRecord audit = daemonAuditRecord(auth, dispatchId, "UPDATE_WORKITEM_STATUS", "daemon.workitem-status");
         audit.detail("status", status);
         auditLogService.record(audit);
+        if (vo != null) vo.setAssigneeNameFallback(null);
         return ResponseEntity.ok(vo);
     }
 

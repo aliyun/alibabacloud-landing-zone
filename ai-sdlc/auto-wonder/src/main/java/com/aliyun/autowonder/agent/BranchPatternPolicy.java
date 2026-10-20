@@ -22,31 +22,32 @@ public final class BranchPatternPolicy {
             return List.of();
         }
         if (patterns.size() > MAX_PATTERNS) {
-            throw invalid("提交分支规则最多允许 " + MAX_PATTERNS + " 条");
+            throw invalid("agent.branch_pattern.limit", new Object[]{MAX_PATTERNS}, "提交分支规则最多允许 " + MAX_PATTERNS + " 条");
         }
         Set<String> unique = new LinkedHashSet<>();
         for (String pattern : patterns) {
             if (pattern == null || pattern.isEmpty()) {
-                throw invalid("提交分支规则不能为空");
+                throw invalid("agent.branch_pattern.empty", null, "提交分支规则不能为空");
             }
             int firstCodePoint = pattern.codePointAt(0);
             int lastCodePoint = pattern.codePointBefore(pattern.length());
             if (isWhitespace(firstCodePoint) || isWhitespace(lastCodePoint)
                     || pattern.codePoints().anyMatch(Character::isISOControl)) {
-                throw invalid("提交分支规则不能包含首尾空白或控制字符: " + pattern);
+                throw invalid("agent.branch_pattern.whitespace", new Object[]{pattern}, "提交分支规则不能包含首尾空白或控制字符: " + pattern);
             }
             if (pattern.getBytes(StandardCharsets.UTF_8).length > MAX_PATTERN_BYTES) {
-                throw invalid("提交分支规则不能超过 " + MAX_PATTERN_BYTES + " 个 UTF-8 字节");
+                throw invalid("agent.branch_pattern.bytes", new Object[]{MAX_PATTERN_BYTES},
+                        "提交分支规则不能超过 " + MAX_PATTERN_BYTES + " 个 UTF-8 字节");
             }
             int firstWildcard = pattern.indexOf('*');
             if (firstWildcard >= 0 && (firstWildcard != pattern.length() - 1 || pattern.indexOf('*', firstWildcard + 1) >= 0)) {
-                throw invalid("提交分支规则只允许一个结尾通配符: " + pattern);
+                throw invalid("agent.branch_pattern.wildcard", new Object[]{pattern}, "提交分支规则只允许一个结尾通配符: " + pattern);
             }
             String candidate = firstWildcard < 0
                     ? pattern
                     : pattern.substring(0, pattern.length() - 1) + WILDCARD_SENTINEL;
             if (!isValidBranch(candidate)) {
-                throw invalid("提交分支规则不是合法的 Git 分支: " + pattern);
+                throw invalid("agent.branch_pattern.invalid", new Object[]{pattern}, "提交分支规则不是合法的 Git 分支: " + pattern);
             }
             unique.add(pattern);
         }
@@ -95,7 +96,7 @@ public final class BranchPatternPolicy {
         return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint);
     }
 
-    private static BizException invalid(String message) {
-        return new BizException(ErrorCode.PARAM_INVALID, message);
+    private static BizException invalid(String key, Object[] args, String diagnostic) {
+        return BizException.keyed(ErrorCode.PARAM_INVALID, key, args, diagnostic);
     }
 }

@@ -1,12 +1,18 @@
 package com.aliyun.autowonder.ai.adapter;
 
 import com.aliyun.autowonder.json.JSON;
+import com.aliyun.autowonder.access.WorkspaceDomainReadOnlyException;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.ai.AiConstants;
 import com.aliyun.autowonder.ai.AiSessionDO;
+import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.repo.RepoConclusionDO;
 import com.aliyun.autowonder.repo.RepoConclusionDao;
 import com.aliyun.autowonder.repo.RepoDao;
 import com.aliyun.autowonder.repo.RepoDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDO;
+import com.aliyun.autowonder.workspace.WorkspaceMemberDao;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -19,13 +25,41 @@ class RepoScanAdapterTest {
 
     private RepoDao repoDao;
     private RepoConclusionDao conclusionDao;
+    private WorkspaceMemberDao workspaceMemberDao;
     private RepoScanAdapter adapter;
 
     @BeforeEach
     void setUp() {
         repoDao = mock(RepoDao.class);
         conclusionDao = mock(RepoConclusionDao.class);
-        adapter = new RepoScanAdapter(repoDao, conclusionDao);
+        workspaceMemberDao = mock(WorkspaceMemberDao.class);
+        adapter = new RepoScanAdapter(repoDao, conclusionDao, new WorkspaceDomainGuard(workspaceMemberDao));
+        AutoWonderContext.get().setUserId(7L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        AutoWonderContext.destroy();
+    }
+
+    @Test
+    void persistIsBlockedBeforeAnyWriteWhenOperatorForbidsRepoDomain() {
+        WorkspaceMemberDO member = new WorkspaceMemberDO();
+        member.setStatus(0);
+        member.setIsDeleted(0);
+        member.setAccessLevel("READ_WRITE");
+        member.setReadOnlyDomains("[\"REPO\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(100L, 7L)).thenReturn(member);
+        AiSessionDO session = new AiSessionDO();
+        session.setTenantId(100L);
+        session.setBizRefId(5L);
+        String json = JSON.toJSONString(Map.of("purpose", "p", "summaryMd", "s"));
+
+        assertThrows(WorkspaceDomainReadOnlyException.class,
+                () -> adapter.persistConfirmedResult(session, json));
+
+        verify(conclusionDao, never()).insert(any(RepoConclusionDO.class));
+        verify(repoDao, never()).updateScanStatus(anyLong(), anyLong(), any(), any(), any());
     }
 
     @Test

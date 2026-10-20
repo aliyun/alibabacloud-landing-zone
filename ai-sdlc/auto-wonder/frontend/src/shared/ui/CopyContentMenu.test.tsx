@@ -38,6 +38,7 @@ describe('CopyContentMenu', () => {
   it('copies the raw markdown unchanged', async () => {
     const md = '# 标题\n\n**重点** 与 [链接](https://example.com)';
     render(<CopyContentMenu contentMd={md} />);
+    expect(screen.queryAllByRole('img')).toHaveLength(0);
 
     await userEvent.click(screen.getByRole('button', { name: '复制内容' }));
     await userEvent.click(await screen.findByText('复制原始 Markdown'));

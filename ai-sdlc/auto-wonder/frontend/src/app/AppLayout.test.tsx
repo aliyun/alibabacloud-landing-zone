@@ -55,7 +55,7 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { name: '帮助正文' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /返回工单列表/ })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: /返回工单列表/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '帮助中心' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /登\s*录/ })).toBeInTheDocument();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
@@ -93,7 +93,7 @@ describe('AppLayout', () => {
     expect(removeWorkspaceDeepLink('?workspaceId=8')).toBe('');
   });
 
-  it('aligns the sidebar brand divider with the page header divider', () => {
+  it('aligns the sidebar brand divider with the page header divider', async () => {
     useAuthStore.getState().setCurrentWorkspace(
       { id: 7, name: '星云工坊', description: '' },
       'READ_ONLY',
@@ -109,7 +109,7 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
 
-    const brand = screen.getByRole('link', { name: /返回工单列表/ });
+    const brand = await screen.findByRole('link', { name: /返回工单列表/ });
     expect(brand.parentElement).toHaveStyle({ height: '60px' });
   });
 

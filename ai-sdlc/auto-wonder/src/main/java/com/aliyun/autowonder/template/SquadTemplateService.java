@@ -3,6 +3,8 @@ package com.aliyun.autowonder.template;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.json.JSONArray;
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.agent.*;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
@@ -38,13 +40,14 @@ public class SquadTemplateService {
     private final SdlcDao sdlcDao;
     private final SdlcStepDao sdlcStepDao;
     private final RepoDao repoDao;
+    private final WorkspaceDomainGuard domainGuard;
 
     public SquadTemplateService(SquadTemplateDao templateDao,
                                 SquadDao squadDao, SquadMemberDao squadMemberDao,
                                 AgentDao agentDao, AgentVersionDao agentVersionDao,
                                 AgentRepoPermDao agentRepoPermDao,
                                 SdlcDao sdlcDao, SdlcStepDao sdlcStepDao,
-                                RepoDao repoDao) {
+                                RepoDao repoDao, WorkspaceDomainGuard domainGuard) {
         this.templateDao = templateDao;
         this.squadDao = squadDao;
         this.squadMemberDao = squadMemberDao;
@@ -54,6 +57,7 @@ public class SquadTemplateService {
         this.sdlcDao = sdlcDao;
         this.sdlcStepDao = sdlcStepDao;
         this.repoDao = repoDao;
+        this.domainGuard = domainGuard;
     }
 
     public List<SquadTemplateVO> list(long tenantId) {
@@ -71,6 +75,10 @@ public class SquadTemplateService {
         if (template == null) {
             throw new BizException(ErrorCode.SQUAD_TEMPLATE_NOT_FOUND);
         }
+        // 模板应用实际写入小队、数字员工与已启用 SDLC 三个资源域，任何写入前先逐一校验。
+        domainGuard.requireWritableDomains(tenantId, userId,
+                "应用小队模板", "access.action.apply_a_squad_template",
+                WorkspaceDomain.SQUAD, WorkspaceDomain.AGENT, WorkspaceDomain.SDLC);
 
         JSONObject content = JSON.parseObject(template.getContentJson());
         JSONObject squadJson = content.getJSONObject("squad");

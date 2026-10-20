@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
+import { i18n } from '@/shared/i18n';
 import {
   buildPackageTree,
   buildDirectoryZip,
@@ -161,5 +162,19 @@ describe('buildPackageTree', () => {
     expect(tree[0].children!.map((node) => node.key)).toEqual(['a/b']);
     expect(tree[0].children![0].children!.map((node) => node.key)).toEqual(['a/b/c']);
     expect(tree[0].children![0].children![0].children!.map((node) => node.key)).toEqual(['a/b/c/d.md']);
+  });
+});
+
+
+describe('skillPackage current language', () => {
+  afterEach(async () => { await i18n.changeLanguage('zh-CN'); });
+  it('localizes directory validation without changing byte precision or authored tree names', async () => {
+    await i18n.changeLanguage('en-US');
+    await expect(buildDirectoryZip([])).rejects.toThrow('Select a folder with up to 500 files and a total size no larger than 100 MB');
+    await expect(buildDirectoryZip([file('one/a', ''), file('two/b', '')])).rejects.toThrow('Select one complete folder');
+    expect(buildPackageTree([entry('原始文件.md', 'TEXT', 1024)])[0]).toEqual({ title: '原始文件.md  1.0 KB', key: '原始文件.md', isLeaf: true });
+    expect(formatBytes(1023)).toBe('1,023 B');
+    await i18n.changeLanguage('zh-CN');
+    await expect(buildDirectoryZip([])).rejects.toThrow('请选择文件夹，最多 500 个文件，总大小不超过 100 MB');
   });
 });

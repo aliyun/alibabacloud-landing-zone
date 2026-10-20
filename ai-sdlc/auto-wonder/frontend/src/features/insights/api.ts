@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/client';
-import type { InsightMetrics, InsightAuditPage, InsightWorker, TimeRange, Granularity, HumanAgentParticipation, HumanAgentSlowTailPage } from './types';
+import type { InsightMetrics, InsightAuditPage, InsightWorker, TimeRange, Granularity, HumanAgentParticipation, HumanAgentSlowTailPage, RequirementDeliveryReport } from './types';
 
 export async function getInsightMetrics(params: {
   workerId?: number;
@@ -61,4 +61,14 @@ export async function getHumanAgentSlowTail(params: {
 
 export async function forceRefreshParticipation(): Promise<void> {
   await apiClient.post('/api/insights/human-agent-participation/refresh');
+}
+
+export async function getRequirementDelivery(params: {
+  startDate: string;
+  endDate: string;
+}): Promise<RequirementDeliveryReport> {
+  const resp = await apiClient.get<RequirementDeliveryReport>('/api/insights/requirement-delivery', {
+    params: { start_date: params.startDate, end_date: params.endDate },
+  });
+  return resp.data;
 }

@@ -9,7 +9,7 @@ public final class TenantTables {
             "agent", "agent_version", "agent_repo_perm", "agent_skill", "agent_memory_ref",
             "environment_variable", "agent_environment_variable_ref",
             "squad", "squad_member", "debug_log",
-            "sdlc", "sdlc_step", "dispatch", "workitem_comment_delivery",
+            "sdlc", "sdlc_step", "dispatch", "dispatch_model_selection", "workitem_comment_delivery",
             "ai_session", "ai_message",
             "repo", "repo_conclusion", "repo_relation",
             "memory", "memory_review", "memory_store", "memory_document", "memory_change",

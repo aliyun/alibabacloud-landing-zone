@@ -1,11 +1,13 @@
+import { useTranslation } from 'react-i18next';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Space, Tooltip } from 'antd';
-import { MessageOutlined, ArrowLeftOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
+import { Alert, Button, Collapse, Space, Tooltip } from 'antd';
+import { RightOutlined, MessageOutlined, ArrowLeftOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { WorkitemClarificationPanel } from '../clarification/WorkitemClarificationPanel';
 import { CLARIFICATION_THEME } from '../clarification/theme';
 import { SquadMembers } from './SquadMembers';
 import { WatcherList } from './WatcherList';
-import { DeliveryProgress } from './DeliveryProgress';
+import { DeliveryProgress, WorkflowPlanSummary } from './DeliveryProgress';
+import { RecoveryControls } from './RecoveryControls';
 import { DebugLogList } from './DebugLogList';
 import { ExternalCollaborationCard } from './ExternalCollaborationCard';
 import { ResizeHandle } from '@/shared/ui/ResizeHandle';
@@ -31,6 +33,8 @@ interface RightPanelProps {
   steps: DeliveryStep[];
   progress?: DeliveryProgressModel | null;
   stepsLoading?: boolean;
+  progressError?: boolean;
+  onRetryProgress?: () => void;
   terminalStatus?: string | null;
   artifacts: Artifact[];
   artifactsLoading?: boolean;
@@ -58,6 +62,8 @@ export function RightPanel({
   steps,
   progress,
   stepsLoading,
+  progressError,
+  onRetryProgress,
   terminalStatus,
   artifacts,
   artifactsLoading,
@@ -68,15 +74,15 @@ export function RightPanel({
   onFullscreenChange,
   onClarifyContextChange,
 }: RightPanelProps) {
+  const { t } = useTranslation('workitem');
   const [mode, setMode] = useState<ClarifyPanelMode>(initialMode ?? 'progress');
   const [clarifyHeight, setClarifyHeight] = useState<number | null>(null);
   const [clarifyFullscreen, setClarifyFullscreen] = useState(initialFullscreen ?? false);
   const clarifyBoxRef = useRef<HTMLDivElement>(null);
   /** 记录“用户主动退出过全屏”。不要以为它和面板内部的上报守卫重复：
-   *  onAgentConfirmed 在同一次挂载内可以多次触发——交付进度是轮询的，
-   *  某次响应缺少 agents 会让面板的 hasDeliveryAgents 翻转、内部守卫复位，
-   *  下一次轮询恢复 agents 时回调会再次触发。没有这个意图记录，
-   *  用户按 Esc 退出后会被下一次轮询硬拽回全屏（违反需求 D4）。
+   *  onAgentConfirmed 在同一次挂载内可以多次触发（URL 恢复落定、重选数字人都会让
+   *  面板的派生身份经过一次 null 后重新确定，内部守卫随之复位），
+   *  没有这个意图记录，用户按 Esc 退出后会被下一次回调硬拽回全屏（违反需求 D4）。
    *  仅在本次澄清会话内有效：返回进度再次进入澄清时重置，重新享受自动全屏。 */
   const userExitedFullscreenRef = useRef(false);
   const continueMutation = useContinueDispatch(workitemId);
@@ -175,35 +181,34 @@ export function RightPanel({
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           <WorkitemClarificationPanel
             workitemId={workitemId}
-            agents={progress?.agents ?? []}
             fullscreen={clarifyFullscreen}
             headerPrefix={(
               <Button
                 size={clarifyFullscreen ? 'middle' : 'small'}
                 icon={<ArrowLeftOutlined />}
-                aria-label="返回"
+                aria-label={t('detail.back')}
                 style={{ flexShrink: 0 }}
                 onClick={() => switchMode('progress')}
               >
-                返回
+                {t('detail.back')}
               </Button>
             )}
             headerSuffix={clarifyFullscreen ? (
-              <Tooltip title="退出全屏（Esc）">
+              <Tooltip title={t('detail.exitFullscreenHint')}>
                 <Button
                   size="middle"
                   icon={<FullscreenExitOutlined />}
-                  aria-label="退出全屏"
+                  aria-label={t('detail.exitFullscreen')}
                   style={{ flexShrink: 0 }}
                   onClick={exitFullscreen}
                 />
               </Tooltip>
             ) : (
-              <Tooltip title="全屏">
+              <Tooltip title={t('detail.fullscreen')}>
                 <Button
                   size="small"
                   icon={<FullscreenOutlined />}
-                  aria-label="全屏"
+                  aria-label={t('detail.fullscreen')}
                   style={{ flexShrink: 0 }}
                   onClick={enterFullscreen}
                 />
@@ -233,16 +238,36 @@ export function RightPanel({
             type="primary"
             icon={<MessageOutlined />}
             block
-            onClick={() => accessCommand('READ_WRITE', '发起 AI 需求澄清', () => switchMode('clarify'))}
+            onClick={() => accessCommand('READ_WRITE', t('detail.clarifyCommand'), () => switchMode('clarify'))}
           >
-            AI 需求澄清
+            {t('detail.aiClarification')}
           </Button>
         ) : null}
 
-        <ExternalCollaborationCard collaboration={externalCollaboration} />
-        <SquadMembers participants={participants} loading={participantsLoading} />
-        <WatcherList workitemId={workitemId} />
+        <Collapse
+          size="small"
+          defaultActiveKey={[]}
+          expandIcon={({ isActive }) => <RightOutlined aria-hidden="true" rotate={isActive ? 90 : 0} />}
+          items={[{
+            key: 'task-info',
+            label: t('detail.taskInfo'),
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                <ExternalCollaborationCard collaboration={externalCollaboration} />
+                <SquadMembers participants={participants} loading={participantsLoading} />
+                <WatcherList workitemId={workitemId} />
+                {progress?.workflowPlan && <WorkflowPlanSummary plan={progress.workflowPlan} />}
+              </Space>
+            ),
+          }]}
+        />
+        {progressError && <Alert type="warning" showIcon
+          message={t(progress ? 'delivery.refreshFailed' : 'delivery.loadFailed')}
+          action={<Button size="small" onClick={onRetryProgress}>{t('delivery.retryLoad')}</Button>} />}
         <DeliveryProgress
+          showWorkflowPlan={false}
+          renderRecovery={(dispatchId) => <RecoveryControls key={dispatchId} workitemId={workitemId} variant="execution" dispatchId={dispatchId} />}
+          restartHistory={<RecoveryControls workitemId={workitemId} variant="history" />}
           steps={steps}
           progress={progress}
           terminalStatus={terminalStatus}
@@ -251,13 +276,13 @@ export function RightPanel({
           loading={stepsLoading}
           onContinue={(dispatchId) => accessCommand(
             'READ_WRITE',
-            '恢复交付任务',
+            t('detail.resumeCommand'),
             () => continueMutation.mutate({ dispatchId }),
           )}
           continuingDispatchId={continueMutation.isPending ? continueMutation.variables?.dispatchId : null}
           onPause={(dispatchId) => accessCommand(
             'READ_WRITE',
-            '暂停交付任务',
+            t('detail.pauseCommand'),
             () => pauseMutation.mutate({ dispatchId }),
           )}
           pausingDispatchId={pauseMutation.isPending ? pauseMutation.variables?.dispatchId : null}

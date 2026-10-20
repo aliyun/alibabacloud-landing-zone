@@ -4,6 +4,8 @@ import com.aliyun.autowonder.ai.adapter.SceneAdapter;
 import com.aliyun.autowonder.ai.adapter.SceneRegistry;
 import com.aliyun.autowonder.ai.dto.*;
 import com.aliyun.autowonder.aiusage.AiUsageService;
+import com.aliyun.autowonder.access.WorkspaceDomain;
+import com.aliyun.autowonder.access.WorkspaceDomainGuard;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.repo.RepoDO;
@@ -29,16 +31,18 @@ public class AiSessionService {
     private final RedisManager redisManager;
     private final AiUsageService aiUsageService;
     private final RepoDao repoDao;
+    private final WorkspaceDomainGuard domainGuard;
 
     public AiSessionService(AiSessionDao sessionDao, AiMessageDao messageDao,
             SceneRegistry sceneRegistry, RedisManager redisManager,
-            AiUsageService aiUsageService, RepoDao repoDao) {
+            AiUsageService aiUsageService, RepoDao repoDao, WorkspaceDomainGuard domainGuard) {
         this.sessionDao = sessionDao;
         this.messageDao = messageDao;
         this.sceneRegistry = sceneRegistry;
         this.redisManager = redisManager;
         this.aiUsageService = aiUsageService;
         this.repoDao = repoDao;
+        this.domainGuard = domainGuard;
     }
 
     @Transactional
@@ -96,6 +100,10 @@ public class AiSessionService {
                 || req.getBizRefId() == null) {
             return;
         }
+        // 创建阶段即写入仓库扫描状态：REPO 域校验先于一切资源写入，
+        // 会话插入与队列投递随同一事务回滚。
+        domainGuard.requireWritableDomains(tenantId, userId,
+                "创建AI会话", "access.action.create_an_ai_session", WorkspaceDomain.REPO);
         RepoDO repo = repoDao.findById(req.getBizRefId());
         if (repo == null || repo.getTenantId() != tenantId) {
             throw new BizException(ErrorCode.REPO_NOT_FOUND);
@@ -167,9 +175,9 @@ public class AiSessionService {
             throw new BizException(ErrorCode.AI_SCENE_NOT_SUPPORTED);
         }
 
-        String validationError = adapter.validateResult(req.getResultJson());
+        BizException validationError = adapter.validateForConfirmation(req.getResultJson());
         if (validationError != null) {
-            throw new BizException(ErrorCode.AI_CONFIRM_VALIDATION_FAILED, validationError);
+            throw validationError;
         }
 
         adapter.persistConfirmedResult(session, req.getResultJson());

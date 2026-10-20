@@ -69,4 +69,29 @@
             content_md = COALESCE(#{contentMd}, content_md)
         WHERE tenant_id = #{tenantId} AND id = #{id} AND author_type = 'EXTERNAL'
     </update>
+    <!-- 本人在给定工单下最近一次评论时间（工单 #55705）；source-aware 必须限定 source_type='WORKITEM'，
+         legacy 表无该列。返回行只带 workitemId 与 gmtCreate，供列表一次性回填。 -->
+    <select id="listMyLastCommentTimes" databaseId="autowonder-source-aware"
+            resultType="com.aliyun.autowonder.workitem.WorkitemCommentDO">
+        SELECT workitem_id AS workitemId, MAX(gmt_create) AS gmtCreate
+        FROM workitem_comment
+        WHERE tenant_id = #{tenantId}
+          AND source_type = 'WORKITEM'
+          AND author_type = 'HUMAN'
+          AND author_ref = #{authorRef}
+          AND workitem_id IN
+          <foreach collection="workitemIds" item="workitemId" open="(" separator="," close=")">#{workitemId}</foreach>
+        GROUP BY workitem_id
+    </select>
+    <select id="listMyLastCommentTimes" databaseId="autowonder-legacy"
+            resultType="com.aliyun.autowonder.workitem.WorkitemCommentDO">
+        SELECT workitem_id AS workitemId, MAX(gmt_create) AS gmtCreate
+        FROM workitem_comment
+        WHERE tenant_id = #{tenantId}
+          AND author_type = 'HUMAN'
+          AND author_ref = #{authorRef}
+          AND workitem_id IN
+          <foreach collection="workitemIds" item="workitemId" open="(" separator="," close=")">#{workitemId}</foreach>
+        GROUP BY workitem_id
+    </select>
 </mapper>

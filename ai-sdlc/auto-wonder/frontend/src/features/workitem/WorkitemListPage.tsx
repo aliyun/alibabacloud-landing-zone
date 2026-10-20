@@ -1,18 +1,24 @@
+import { workitemDeleteReason } from './runtimeLabels';
 import { PageHeading } from '@/shared/ui/PageHeading';
+import { Trans, useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
 import { useMemo, useState } from 'react';
 import { Button, Tag, Space, Select, Card, Segmented, Popconfirm, Tooltip, Input } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
-import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
+import { PlusOutlined, AppstoreOutlined, UnorderedListOutlined, DeleteOutlined, StarOutlined, StarFilled, ExclamationCircleFilled, CloseOutlined, CloseCircleFilled, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useDeleteWorkitem, useWorkitemList, useWorkitemKanbanColumns, useToggleWatch } from './hooks';
 import { EllipsisText } from '@/shared/ui/EllipsisText';
 import { WorkitemKanban } from './components/WorkitemKanban';
+import { WorkitemAdvancedFilter } from './components/WorkitemAdvancedFilter';
 import { WorkitemHealthBadge } from './components/WorkitemHealthBadge';
 import { HumanInterventionBadge } from './components/HumanInterventionBadge';
 import { ScheduledExecutionBadge } from './components/ScheduledExecutionBadge';
 import { workTypeMap, STATUS_COLUMNS, getPriorityMeta } from './constants';
 import { displayNameWithoutId } from './nameDisplay';
 import { readWorkitemViewPreference, writeWorkitemViewPreference, type WorkitemViewMode } from './viewPreference';
+import { EMPTY_CREATED_TIME_RANGE, toCreatedTimeQuery, type CreatedTimeRangeDraft } from './createdTimeFilter';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import type { Workitem } from '@/shared/types/workitem';
 import type { WorkitemStatusCategory } from './api';
@@ -23,7 +29,7 @@ import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { useKanbanTransition } from './useKanbanTransition';
 
 type ViewMode = WorkitemViewMode;
-type Scope = 'ALL' | 'PENDING' | 'CREATED' | 'ASSIGNED' | 'WATCHED';
+type Scope = 'ALL' | 'PENDING' | 'CREATED' | 'ASSIGNED' | 'WATCHED' | 'COMMENTED';
 type StatusCategory = WorkitemStatusCategory;
 
 /** 看板每列首屏加载条数，点「加载更多」按此步长递增 */
@@ -36,7 +42,7 @@ const LEGACY_PENDING_KEY = 'autowonder.workitems.onlyMyPendingDecision';
 function readScopePreference(): Scope {
   try {
     const stored = window.localStorage.getItem(SCOPE_STORAGE_KEY);
-    if (stored === 'ALL' || stored === 'PENDING' || stored === 'CREATED' || stored === 'ASSIGNED' || stored === 'WATCHED') {
+    if (stored === 'ALL' || stored === 'PENDING' || stored === 'CREATED' || stored === 'ASSIGNED' || stored === 'WATCHED' || stored === 'COMMENTED') {
       return stored;
     }
     if (window.localStorage.getItem(LEGACY_PENDING_KEY) === 'true') {
@@ -59,20 +65,13 @@ function writeScopePreference(value: Scope) {
   }
 }
 
-const SCOPE_OPTIONS: { value: Scope; label: string }[] = [
-  { value: 'ALL', label: '全部' },
-  { value: 'PENDING', label: '待我决策' },
-  { value: 'CREATED', label: '我创建的' },
-  { value: 'ASSIGNED', label: '指派给我的' },
-  { value: 'WATCHED', label: '我关注的' },
-];
-
-function scopeToQuery(scope: Scope): { pendingDecisionOnly?: boolean; mineScope?: 'CREATED' | 'ASSIGNED' | 'WATCHED' } {
+function scopeToQuery(scope: Scope): { pendingDecisionOnly?: boolean; mineScope?: 'CREATED' | 'ASSIGNED' | 'WATCHED' | 'COMMENTED' } {
   switch (scope) {
     case 'PENDING': return { pendingDecisionOnly: true };
     case 'CREATED': return { mineScope: 'CREATED' };
     case 'ASSIGNED': return { mineScope: 'ASSIGNED' };
     case 'WATCHED': return { mineScope: 'WATCHED' };
+    case 'COMMENTED': return { mineScope: 'COMMENTED' };
     default: return {};
   }
 }
@@ -81,10 +80,24 @@ function scopeToQuery(scope: Scope): { pendingDecisionOnly?: boolean; mineScope?
 function creatorCellText(record: Workitem): string {
   if (record.sourceType === 'EXTERNAL') {
     const sourceCreator = record.sourceCreator;
-    if (!sourceCreator) return '来源创建者未返回';
-    return displayNameWithoutId(sourceCreator.displayName) || sourceCreator.subjectId || '来源创建者未返回';
+    if (!sourceCreator) return i18n.t('workitem:list.missingSourceCreator');
+    return displayNameWithoutId(sourceCreator.displayName) || sourceCreator.subjectId || i18n.t('workitem:list.missingSourceCreator');
   }
   return displayNameWithoutId(record.creatorDisplayName, record.creatorName) || '-';
+}
+
+/** 日期+时间双行单元格，列表时间列共用。 */
+function renderDateTimeCell(value: string | null | undefined) {
+  if (!value) return '-';
+  const d = new Date(value);
+  const date = formatDateTime(d, { year: 'numeric', month: 'numeric', day: 'numeric' });
+  const time = formatDateTime(d, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  return (
+    <div style={{ whiteSpace: 'nowrap' }}>
+      <div>{date}</div>
+      <div>{time}</div>
+    </div>
+  );
 }
 
 /** 表头单行显示，禁止逐字换行。 */
@@ -101,15 +114,16 @@ function WatchWorkitemButton({
   loading: boolean;
   onToggle: (record: Workitem) => void;
 }) {
+  const { t } = useTranslation('workitem');
   const watched = !!record.watched;
   return (
-    <Tooltip title={watched ? '取消关注' : '关注'}>
+    <Tooltip title={watched ? t('actions.unwatch') : t('actions.watch')}>
       <Button
         size="small"
         type="text"
         data-testid="workitem-watch-toggle"
-        aria-label={watched ? '取消关注工单' : '关注工单'}
-        icon={watched ? <StarFilled className="aw-watch-active" /> : <StarOutlined />}
+        aria-label={watched ? t('actions.unwatchAria') : t('actions.watchAria')}
+        icon={watched ? <StarFilled aria-hidden="true" className="aw-watch-active" /> : <StarOutlined aria-hidden="true" />}
         loading={loading}
         onClick={(event) => {
           event.stopPropagation();
@@ -129,15 +143,16 @@ function DeleteWorkitemButton({
   loading: boolean;
   onDelete: (id: number) => void;
 }) {
+  const { t } = useTranslation('workitem');
   if (record.deletable === false) {
     return (
-      <Tooltip title={record.deletableReason}>
+      <Tooltip title={workitemDeleteReason(record)}>
         <span>
           <Button
             danger
             size="small"
-            aria-label="删除工单"
-            icon={<DeleteOutlined />}
+            aria-label={t('actions.delete')}
+            icon={<DeleteOutlined aria-hidden="true" />}
             disabled
             onClick={(event) => event.stopPropagation()}
           />
@@ -147,18 +162,19 @@ function DeleteWorkitemButton({
   }
   return (
     <Popconfirm
-      title="删除工单"
-      description="正在执行或外部平台集成的工单不可删除"
-      okText="删除"
+      icon={<ExclamationCircleFilled aria-hidden="true" />}
+      title={t('actions.delete')}
+      description={t('list.deleteDescription')}
+      okText={t('list.deleteConfirm')}
       okButtonProps={{ danger: true }}
-      cancelText="取消"
+      cancelText={t('list.cancel')}
       onConfirm={() => onDelete(record.id)}
     >
       <Button
         danger
         size="small"
-        aria-label="删除工单"
-        icon={<DeleteOutlined />}
+        aria-label={t('actions.delete')}
+        icon={<DeleteOutlined aria-hidden="true" />}
         loading={loading}
         onClick={(event) => event.stopPropagation()}
       />
@@ -167,6 +183,15 @@ function DeleteWorkitemButton({
 }
 
 export function WorkitemListPage() {
+  const { t } = useTranslation('workitem');
+  const scopeOptions: { value: Scope; label: string }[] = [
+    { value: 'ALL', label: t('scope.all') },
+    { value: 'PENDING', label: t('scope.pending') },
+    { value: 'CREATED', label: t('scope.created') },
+    { value: 'ASSIGNED', label: t('scope.assigned') },
+    { value: 'WATCHED', label: t('scope.watched') },
+    { value: 'COMMENTED', label: t('scope.commented') },
+  ];
   const navigate = useNavigate();
   const user = useAuthStore(state => state.user);
   const accessCommand = useAccessCommand();
@@ -179,10 +204,13 @@ export function WorkitemListPage() {
   const [scope, setScope] = useState<Scope>(readScopePreference);
   const [keyword, setKeyword] = useState<string | undefined>();
   const [tag, setTag] = useState<string | undefined>();
+  const [createdRange, setCreatedRange] = useState<CreatedTimeRangeDraft>(EMPTY_CREATED_TIME_RANGE);
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
 
   const isKanban = viewMode === 'kanban';
-  const baseQuery = { workType, ...scopeToQuery(scope), keyword, tag };
+  const createdQuery = useMemo(() => toCreatedTimeQuery(createdRange), [createdRange]);
+  // 高级筛选与其他筛选条件以 AND 组合，表格与看板共用同一份查询条件
+  const baseQuery = { workType, ...scopeToQuery(scope), keyword, tag, ...createdQuery };
 
   // 表格视图用全量分页查询；看板视图下只取 total 给页面标题用
   const { data, isLoading } = useWorkitemList(
@@ -198,7 +226,7 @@ export function WorkitemListPage() {
   );
   const showDecisionSummary = isKanban && scope === 'ALL' && !!user && visibleColumnKeys.includes('PENDING_DECISION');
   const [myPendingColumn] = useWorkitemKanbanColumns(
-    { workType, keyword, tag, pendingDecisionOnly: true },
+    { workType, keyword, tag, ...createdQuery, pendingDecisionOnly: true },
     showDecisionSummary ? ['PENDING_DECISION'] : [], {}, 1, showDecisionSummary,
   );
   const kanbanItems = useMemo(() => {
@@ -216,7 +244,7 @@ export function WorkitemListPage() {
   const columns: ColumnsType<Workitem> = withNowrapHeader([
     { title: 'ID', dataIndex: 'id', className: 'aw-column-numeric', width: 80 },
     {
-      title: '标题', dataIndex: 'title', className: 'aw-column-title',
+      title: t('fields.title'), dataIndex: 'title', className: 'aw-column-title',
       render: (text: string, record: Workitem) => (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, minWidth: 0 }}>
           <EllipsisText lines={2} tooltip={text} placement="topLeft" style={{ flex: '1 1 auto', wordBreak: 'break-all' }}>
@@ -232,11 +260,11 @@ export function WorkitemListPage() {
       ),
     },
     {
-      title: '类型', dataIndex: 'workType', width: 80,
+      title: t('fields.type'), dataIndex: 'workType', width: 80,
       render: (t: string) => <Tag color={workTypeMap[t]?.color}>{workTypeMap[t]?.label || t}</Tag>,
     },
     {
-      title: '状态', dataIndex: 'statusName', width: 150,
+      title: t('fields.status'), dataIndex: 'statusName', width: 150,
       render: (s: string | null, record: Workitem) => (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
           {s ? <Tag color="processing" style={{ margin: 0 }}>{s}</Tag> : <Tag style={{ margin: 0 }}>-</Tag>}
@@ -246,48 +274,48 @@ export function WorkitemListPage() {
       ),
     },
     {
-      title: '优先级', dataIndex: 'priority', width: 96,
+      title: t('fields.priority'), dataIndex: 'priority', width: 96,
       render: (p: number) => {
         const meta = getPriorityMeta(p);
         return <Tag color={meta.color} style={{ margin: 0 }}>{meta.label}</Tag>;
       },
     },
     {
-      title: '当前处理人', dataIndex: 'assigneeName', width: 120,
+      title: t('fields.assignee'), dataIndex: 'assigneeName', width: 120,
       render: (_: string | null, record: Workitem) => {
         const text = displayNameWithoutId(record.assigneeDisplayName, record.assigneeName);
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%' }}>
             {record.assigneeType === 'AGENT' ? <Tag color="purple" style={{ margin: 0 }}>AI</Tag> : null}
             <EllipsisText tooltip={text ?? undefined}>
-              {text ?? '未指派'}
+              {text ?? t('assignee.unassigned')}
             </EllipsisText>
           </span>
         );
       },
     },
     {
-      title: '创建者', dataIndex: 'creatorDisplayName', width: 120,
+      title: t('fields.creator'), dataIndex: 'creatorDisplayName', width: 120,
       render: (_: string | null, record: Workitem) => {
         const text = creatorCellText(record);
-        return <EllipsisText tooltip={text === '-' || text === '来源创建者未返回' ? undefined : text}>{text}</EllipsisText>;
+        const hasCreator = record.sourceType === 'EXTERNAL'
+          ? record.sourceCreator?.displayName || record.sourceCreator?.subjectId
+          : record.creatorDisplayName || record.creatorName;
+        return <EllipsisText tooltip={hasCreator ? text : undefined}>{text}</EllipsisText>;
       },
     },
     {
-      title: '创建时间', dataIndex: 'gmtCreate', className: 'aw-column-numeric', width: 108,
-      render: (t: string) => {
-        if (!t) return '-';
-        const d = new Date(t);
-        return (
-          <div style={{ whiteSpace: 'nowrap' }}>
-            <div>{d.toLocaleDateString('zh-CN')}</div>
-            <div>{d.toLocaleTimeString('zh-CN', { hour12: false })}</div>
-          </div>
-        );
-      },
+      title: t('fields.created'), dataIndex: 'gmtCreate', className: 'aw-column-numeric', width: 108,
+      render: (value: string) => renderDateTimeCell(value),
     },
+    ...(scope === 'COMMENTED'
+      ? [{
+        title: t('fields.myLastCommentAt'), dataIndex: 'myLastCommentAt', className: 'aw-column-numeric', width: 132,
+        render: (value: string | null | undefined) => renderDateTimeCell(value),
+      } as ColumnsType<Workitem>[number]]
+      : []),
     {
-      title: '操作',
+      title: t('fields.actions'),
       dataIndex: 'operation',
       width: 112,
       render: (_: unknown, record: Workitem) => (
@@ -302,7 +330,7 @@ export function WorkitemListPage() {
             loading={deleteMutation.isPending}
             onDelete={(workitemId) => accessCommand(
               'READ_WRITE',
-              '删除工单',
+              t('actions.delete'),
               () => deleteMutation.mutate({ id: workitemId }),
             )}
           />
@@ -324,10 +352,16 @@ export function WorkitemListPage() {
     setSize(nextSize);
   };
 
+  const handleCreatedRangeApply = (range: CreatedTimeRangeDraft) => {
+    setCreatedRange(range);
+    setPage(1);
+    setColumnSizes({});
+  };
+
   return (
     <Card
       className="aw-content-card aw-workitems"
-      title={<PageHeading title="工单" description={<>总工单数 <span className="aw-heading-number">{total}</span> 个</>} />}
+      title={<PageHeading title={t('list.title')} description={<Trans t={t} i18nKey="list.total" count={total} components={{ total: <span className="aw-heading-number">{total}</span> }} />} />}
       extra={
         <Space>
           <Segmented
@@ -339,13 +373,13 @@ export function WorkitemListPage() {
               setPage(1);
             }}
             options={[
-              { value: 'kanban', icon: <AppstoreOutlined aria-label="看板视图" /> },
-              { value: 'table', icon: <UnorderedListOutlined aria-label="表格视图" /> },
+              { value: 'kanban', icon: <AppstoreOutlined aria-label={t('list.kanbanView')} /> },
+              { value: 'table', icon: <UnorderedListOutlined aria-label={t('list.tableView')} /> },
             ]}
           />
-          <Button type="primary" icon={<PlusOutlined />}
-            onClick={() => accessCommand('READ_WRITE', '新建工单', () => navigate('/workitems/new'))}>
-            新建工单
+          <Button type="primary" icon={<PlusOutlined aria-hidden="true" />}
+            onClick={() => accessCommand('READ_WRITE', t('actions.new'), () => navigate('/workitems/new'))}>
+            {t('actions.new')}
           </Button>
         </Space>
       }
@@ -354,40 +388,42 @@ export function WorkitemListPage() {
         <Segmented
           value={scope}
           onChange={handleScopeChange}
-          options={SCOPE_OPTIONS}
-          aria-label="归属筛选"
+          options={scopeOptions}
+          aria-label={t('scope.label')}
         />
         <Select
-          placeholder="类型筛选"
+          placeholder={t('list.typeFilter')}
+          value={workType}
           allowClear
           style={{ width: 120 }}
           onChange={(v) => { setWorkType(v); setPage(1); setColumnSizes({}); }}
-          options={[
-            { value: 'REQ', label: '需求' },
-            { value: 'TASK', label: '任务' },
-            { value: 'BUG', label: '缺陷' },
-          ]}
+          options={Object.entries(workTypeMap).map(([value, meta]) => ({ value, label: meta.label }))}
         />
+        <Button size="small" aria-label={t('list.clearType')} title={t('list.clearType')} icon={<CloseOutlined aria-hidden="true" />} disabled={!workType} onClick={() => { setWorkType(undefined); setPage(1); setColumnSizes({}); }} />
         <Select
-          placeholder="状态筛选"
+          placeholder={t('list.statusFilter')}
           allowClear
           style={{ width: 120 }}
           value={statusCategory}
           onChange={(v) => { setStatusCategory(v); setPage(1); setColumnSizes({}); }}
           options={STATUS_COLUMNS.map(col => ({ value: col.key as StatusCategory, label: col.title }))}
         />
+        <Button size="small" aria-label={t('list.clearStatus')} title={t('list.clearStatus')} icon={<CloseOutlined aria-hidden="true" />} disabled={!statusCategory} onClick={() => { setStatusCategory(undefined); setPage(1); setColumnSizes({}); }} />
         <Input.Search
-          allowClear
-          placeholder="搜索工单ID或标题"
+          enterButton={<Button aria-label={t('list.search')} icon={<SearchOutlined aria-hidden="true" />} />}
+          allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('list.clearSearch')} /> }}
+          placeholder={t('list.search')}
           onSearch={(v) => { setKeyword(v || undefined); setPage(1); setColumnSizes({}); }}
           style={{ width: 220 }}
         />
         <Input.Search
-          allowClear
-          placeholder="按标签筛选"
+          enterButton={<Button aria-label={t('list.tagFilter')} icon={<SearchOutlined aria-hidden="true" />} />}
+          allowClear={{ clearIcon: <CloseCircleFilled aria-label={t('list.clearTag')} /> }}
+          placeholder={t('list.tagFilter')}
           onSearch={(v) => { setTag(v?.trim() || undefined); setPage(1); setColumnSizes({}); }}
           style={{ width: 160 }}
         />
+        <WorkitemAdvancedFilter applied={createdRange} onApply={handleCreatedRangeApply} />
       </Space>
 
       {kanbanTransition.dialog}
@@ -423,7 +459,7 @@ export function WorkitemListPage() {
             total,
             onChange: handlePageChange,
             showSizeChanger: true,
-            showTotal: (itemTotal) => `共 ${itemTotal} 条`,
+            showTotal: (itemTotal) => t('list.pagination', { count: itemTotal }),
           }}
         />
       )}

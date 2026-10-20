@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/ai/sessions")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看AI会话")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看AI会话", actionKey = "access.action.view_ai_sessions")
 public class AiSessionController {
 
     private static final Logger log = LoggerFactory.getLogger(AiSessionController.class);
@@ -23,7 +23,7 @@ public class AiSessionController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建AI会话")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建AI会话", actionKey = "access.action.create_an_ai_session")
     public Result<Long> create(@RequestBody CreateSessionRequest req) {
         long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         long userId = AutoWonderContext.get().getUserId();
@@ -41,7 +41,7 @@ public class AiSessionController {
     }
 
     @PostMapping("/{id}/messages")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "追加AI会话消息")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "追加AI会话消息", actionKey = "access.action.append_an_ai_session_message")
     public Result<Void> appendMessage(@PathVariable Long id,
             @RequestBody AppendMessageRequest req) {
         long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
@@ -51,7 +51,7 @@ public class AiSessionController {
     }
 
     @PostMapping("/{id}/confirm")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "确认AI会话")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "确认AI会话", actionKey = "access.action.confirm_an_ai_session")
     public Result<Void> confirm(@PathVariable Long id,
             @RequestBody ConfirmResultRequest req) {
         long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
@@ -61,7 +61,7 @@ public class AiSessionController {
     }
 
     @PostMapping("/{id}/cancel")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "取消AI会话")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "取消AI会话", actionKey = "access.action.cancel_an_ai_session")
     public Result<Void> cancel(@PathVariable Long id) {
         long tenantId = AutoWonderContext.get().getCurrentWorkspaceId();
         log.info("ai session cancel id={} tenantId={}", id, tenantId);

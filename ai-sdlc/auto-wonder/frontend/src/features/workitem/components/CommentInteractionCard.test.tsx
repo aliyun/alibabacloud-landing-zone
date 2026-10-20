@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CommentInteractionCard } from './CommentInteractionCard';
 import { getRuntimeLog } from '../api';
@@ -119,5 +119,47 @@ describe('comment execution activity', () => {
     await act(async () => { vi.advanceTimersByTime(10000); });
     expect(getRuntimeLog).toHaveBeenCalledTimes(calls);
     expect(screen.getByText('已取消')).toBeInTheDocument();
+  });
+
+  it('shows every failed round instead of only the final error text', async () => {
+    const wrapped = 'workflow routing preflight failed: qoder semantic inactivity timeout after 10m0s';
+    vi.mocked(getRuntimeLog).mockResolvedValue({ ...snapshot, events: [
+      { eventType: 'llm.failed', eventTime: start, detail: { failureHistory: { rounds: [
+        { attemptIndex: 1, phase: 'routing_preflight', provider: 'qoder', model: 'dmodel', status: 'failed',
+          error: 'qoder turn failed: RESOURCE_LIMIT 10605 model_queued Queuing failed' },
+      ] } } },
+      { eventType: 'dispatch.failed', eventTime: start, detail: { error: wrapped, failureHistory: { rounds: [
+        { attemptIndex: 1, phase: 'routing_preflight', provider: 'qoder', model: 'dmodel', status: 'failed',
+          error: 'qoder turn failed: RESOURCE_LIMIT 10605 model_queued Queuing failed',
+          diagnostics: [{ source: 'provider_log', code: '10605', subCode: 'model_queued',
+            businessCode: 'RESOURCE_LIMIT', message: 'Queuing failed', occurrences: 2,
+            requestId: 'f203f510-c793-4e82-b64d-18c879abb08c' }] },
+        { attemptIndex: 2, phase: 'routing_preflight', provider: 'qoder', model: 'dmodel', status: 'failed',
+          error: 'qoder semantic inactivity timeout after 10m0s' },
+      ] } } },
+    ] } as never);
+    render(<CommentInteractionCard interaction={{ ...interaction, status: 'FAILED', error: wrapped }} createdAt={start} />);
+    await flush();
+    const panel = screen.getByTestId('comment-provider-error');
+    expect(panel.tagName).toBe('SECTION');
+    expect(within(panel).getByTestId('failure-history-summary')).toHaveTextContent(wrapped);
+    expect(within(panel).getByText('共 2 轮失败')).toBeInTheDocument();
+    expect(within(panel).getByTestId('failure-history-round-error-1')).toHaveTextContent('RESOURCE_LIMIT 10605 model_queued Queuing failed');
+    expect(within(panel).getByTestId('failure-history-round-error-2')).toHaveTextContent('semantic inactivity timeout after 10m0s');
+    fireEvent.click(within(panel).getByRole('button', { name: '展开第 1 轮失败详情' }));
+    expect(within(panel).getByText('重复 2 次')).toBeInTheDocument();
+  });
+
+  it('degrades to the flat legacy error text when events carry no history', async () => {
+    vi.mocked(getRuntimeLog).mockResolvedValue({ ...snapshot, events: [
+      { eventType: 'dispatch.failed', eventTime: start, detail: { error: 'qoder response timeout' } },
+    ] } as never);
+    render(<CommentInteractionCard interaction={{ ...interaction, status: 'FAILED', error: '查询失败' }} createdAt={start} />);
+    await flush();
+    const legacy = screen.getByTestId('comment-provider-error');
+    expect(legacy.tagName).toBe('PRE');
+    expect(legacy).toHaveTextContent('查询失败');
+    expect(legacy).toHaveTextContent('qoder response timeout');
+    expect(screen.queryByText('失败历史')).not.toBeInTheDocument();
   });
 });

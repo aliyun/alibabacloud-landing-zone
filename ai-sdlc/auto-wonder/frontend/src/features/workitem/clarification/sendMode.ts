@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 /**
  * 需求澄清面板的发送方式偏好。
  *
@@ -17,13 +18,13 @@ export const CLARIFICATION_SEND_MODE_QUERY_KEY =
   userSettingQueryKey(CLARIFICATION_SEND_MODE_KEY);
 
 export const SEND_MODE_LABELS: Record<SendMode, string> = {
-  'shift-enter': 'Shift+回车发送',
-  enter: '回车发送',
+  get 'shift-enter'() { return i18n.t('workitem:clarification.shiftEnterSend'); },
+  get enter() { return i18n.t('workitem:clarification.enterSend'); },
 };
 
 export const SEND_MODE_OPTIONS = [
-  { value: 'shift-enter' as const, label: SEND_MODE_LABELS['shift-enter'] },
-  { value: 'enter' as const, label: SEND_MODE_LABELS.enter },
+  { value: 'shift-enter' as const, get label() { return SEND_MODE_LABELS['shift-enter']; } },
+  { value: 'enter' as const, get label() { return SEND_MODE_LABELS.enter; } },
 ];
 
 /**

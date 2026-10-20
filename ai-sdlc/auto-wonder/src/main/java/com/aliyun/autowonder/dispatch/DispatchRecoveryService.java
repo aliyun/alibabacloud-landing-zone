@@ -3,6 +3,7 @@ package com.aliyun.autowonder.dispatch;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,8 @@ public class DispatchRecoveryService {
     private long retryDelayMs = 30_000L;
     /** A stop raised moments ago may still race the dispatch handshake; only older ones self-heal. */
     private static final long STOP_SELF_HEAL_GRACE_MS = 120_000L;
+    /** Callers that need to react to a closed delivery match this key instead of the rendered text. */
+    public static final String DELIVERY_CLOSED_MESSAGE_KEY = "dispatch.recovery.closed";
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final DispatchDao dispatches;
@@ -38,6 +41,13 @@ public class DispatchRecoveryService {
     private ExecutorRegistry executorRegistry;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setExecutorRegistry(ExecutorRegistry value) { executorRegistry = value; }
+    private DispatchRuntimeEventDao runtimeEvents;
+    private DispatchCheckpointDao checkpoints;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setCompletionEvidence(DispatchRuntimeEventDao runtimeEvents, DispatchCheckpointDao checkpoints) {
+        this.runtimeEvents = runtimeEvents;
+        this.checkpoints = checkpoints;
+    }
     private com.aliyun.autowonder.workitem.DeliveryRestartStore restartStore;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setRestartStore(com.aliyun.autowonder.workitem.DeliveryRestartStore value) { restartStore = value; }
@@ -77,7 +87,7 @@ public class DispatchRecoveryService {
 
     public void requireOpen(DispatchDO d) {
         if (d.executionSourceType() == ExecutionSourceType.WORKITEM && closed(d.getTenantId(), d.getWorkitemId()))
-            throw new BizException(ErrorCode.CONFLICT, "工单已关闭，请先重新打开交付");
+            throw BizException.keyed(ErrorCode.CONFLICT, DELIVERY_CLOSED_MESSAGE_KEY, new Object[0], "工单已关闭，请先重新打开交付");
     }
 
     public void insert(DispatchDO d) {
@@ -178,7 +188,7 @@ public class DispatchRecoveryService {
         String target = pendingStop && !force ? DispatchStatus.PAUSING : DispatchStatus.CANCELED;
         String reason = pendingStop ? (force ? "CANCELED_STOP_UNCONFIRMED: 平台已结束，执行器停止未确认" : "CANCEL_REQUESTED: 正在取消") : "USER_CANCELED";
         if (dispatches.updateStatus(d.getId(), d.getTenantId(), target, null, null, null, null, reason, d.getVersion(), userId) != 1)
-            throw new BizException(ErrorCode.CONFLICT, "执行状态已变化，请重试取消");
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.cancel_changed", new Object[0], "执行状态已变化，请重试取消");
         jdbc.update("INSERT INTO dispatch_recovery (tenant_id,dispatch_id,cancel_requested,stop_pending,forced,requested_at,modifier_id,reason) "
                 + "VALUES (?,?,1,?,?,NOW(),?,?) ON DUPLICATE KEY UPDATE cancel_requested=1,stop_pending=VALUES(stop_pending),"
                 + "forced=GREATEST(forced,VALUES(forced)),requested_at=COALESCE(requested_at,NOW()),modifier_id=VALUES(modifier_id),reason=VALUES(reason),gmt_modified=NOW()",
@@ -269,7 +279,7 @@ public class DispatchRecoveryService {
         tx.executeWithoutResult(s -> {
             DispatchDO subject = new DispatchDO(); subject.setTenantId(tenantId); subject.setWorkitemId(workitemId); subject.setSourceType("WORKITEM"); lockSubject(subject);
             if (dispatches.listByWorkitem(tenantId, workitemId).stream().anyMatch(d -> !DispatchStatus.isTerminal(d.getStatus())))
-                throw new BizException(ErrorCode.CONFLICT, "请先结束未完成的取消操作");
+                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.cancel_pending", new Object[0], "请先结束未完成的取消操作");
             jdbc.update("UPDATE workitem_execution_control SET closed=0,modifier_id=?,gmt_modified=NOW() WHERE tenant_id=? AND workitem_id=?", userId, tenantId, workitemId);
         });
         audit(tenantId, workitemId, userId, "REOPEN_DELIVERY", "WORKITEM");
@@ -279,6 +289,20 @@ public class DispatchRecoveryService {
     private void validateWorkitem(long tenantId, long workitemId) {
         var w = workitems.findById(workitemId);
         if (w == null || !Objects.equals(w.getTenantId(), tenantId)) throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
+    }
+
+    /** One read for all queued dispatches in a progress response; historical reasons are not current status. */
+    public Map<Long, String> waitingReasons(long tenantId, List<Long> dispatchIds) {
+        if (dispatchIds == null || dispatchIds.isEmpty()) return Map.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(dispatchIds.size(), "?"));
+        java.util.List<Object> args = new java.util.ArrayList<>(); args.add(tenantId); args.addAll(dispatchIds);
+        Map<Long, String> reasons = new java.util.HashMap<>();
+        jdbc.query("SELECT dispatch_id,reason FROM dispatch_recovery WHERE tenant_id=? AND phase='PENDING' AND dispatch_id IN ("
+                + placeholders + ")", (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+            String reason = rs.getString("reason");
+            if (reason != null) reasons.put(rs.getLong("dispatch_id"), reason);
+        }, args.toArray());
+        return reasons;
     }
 
     public Map<String, Object> state(long tenantId, long workitemId) {
@@ -361,6 +385,166 @@ public class DispatchRecoveryService {
                 + "WHERE id=? AND status IN ('QUEUED','DELIVERED') AND gmt_modified<? AND NOT EXISTS (SELECT 1 FROM dispatch d WHERE d.id=workitem_comment_delivery.dispatch_id AND d.tenant_id=workitem_comment_delivery.tenant_id)", row.get("id"), new Timestamp(System.currentTimeMillis() - 30 * 60_000L));
 
         reconcileStops(null);
+    }
+
+    /** Called after the workitem lock: use a current read even if handoff began before recovery committed. */
+    public boolean isHandoffSourceFenced(DispatchDO source) {
+        return tx.execute(s -> {
+            lockSubject(source);
+            var statuses = jdbc.query("SELECT status FROM dispatch WHERE id=? AND tenant_id=? FOR UPDATE",
+                    (rs, index) -> rs.getString("status"), source.getId(), source.getTenantId());
+            return statuses.isEmpty() || !Set.of(DispatchStatus.DISPATCHED, DispatchStatus.ACKED,
+                    DispatchStatus.RUNNING, DispatchStatus.SUCCEEDED).contains(statuses.get(0));
+        });
+    }
+
+    /**
+     * Release an inactive delivery that already handed off, or recover its unfinished step.
+     * A recovery claim only touches gmt_modified, so lock the row before testing its age; a
+     * version-only CAS would otherwise race a successful runtime claim.
+     */
+    public DispatchDO recoverAbandonedExecution(DispatchDO candidate, String expectedSessionId) {
+        if (executorRegistry == null || candidate == null || candidate.getExecutorId() == null
+                || candidate.executionSourceType() != ExecutionSourceType.WORKITEM) return null;
+        return tx.execute(s -> {
+            // Handoff takes this same lock before updating ownership and enqueuing its child.
+            // Keep workitem -> execution_control -> dispatch ordering in both paths.
+            var workitem = workitems.findByIdForUpdate(candidate.getWorkitemId(), candidate.getTenantId());
+            if (workitem == null) return null;
+            lockSubject(candidate);
+            var modified = jdbc.query("SELECT gmt_modified FROM dispatch WHERE id=? AND tenant_id=? FOR UPDATE",
+                    (rs, index) -> rs.getTimestamp("gmt_modified"), candidate.getId(), candidate.getTenantId());
+            if (modified.isEmpty() || modified.get(0) == null) return null;
+            DispatchDO current = dispatches.findById(candidate.getId());
+            if (current == null || !Set.of(DispatchStatus.ACKED, DispatchStatus.RUNNING).contains(current.getStatus())
+                    || !Objects.equals(current.getExecutorId(), candidate.getExecutorId()) || fenced(current)) return null;
+            var snapshot = executorRegistry.currentDispatchSnapshot(current.getExecutorId())
+                    .filter(value -> value.authoritativeInventory() && value.inventoryReady() && value.inventoryError() == null)
+                    .filter(value -> Objects.equals(expectedSessionId, value.sessionId()))
+                    .filter(value -> !value.ownedDispatchIds().contains(current.getId()))
+                    .filter(value -> !value.runningDispatchIds().contains(current.getId()))
+                    .orElse(null);
+            // Require evidence reported after the claim/dispatch grace, not a cached pre-claim inventory.
+            if (snapshot == null || modified.get(0).getTime() > snapshot.reportedAt() - STOP_SELF_HEAL_GRACE_MS) return null;
+            // Never restart an older worker step after a newer formal execution has taken over.
+            var interactionModes = Set.of("COMMENT_INTERACTION", "SIDE_INTERACTION", "CANONICAL_INTERACTION");
+            boolean interaction = interactionModes.contains(current.getResumeMode() == null ? "" : current.getResumeMode());
+            boolean waitingForHuman = !interaction && "HUMAN".equalsIgnoreCase(workitem.getAssigneeType());
+            boolean handedOff = dispatches.findByIdempotencyKey(current.getTenantId(), "handoff:" + current.getId()) != null;
+            boolean superseded = dispatches.listByWorkitem(current.getTenantId(), current.getWorkitemId()).stream()
+                    .filter(row -> Objects.equals(row.getAgentId(), current.getAgentId()) && row.getId() > current.getId())
+                    .anyMatch(row -> interaction
+                            || !interactionModes.contains(row.getResumeMode() == null ? "" : row.getResumeMode())
+                            || !DispatchStatus.isTerminal(row.getStatus()));
+            String idem = "continue:" + current.getId();
+            boolean continued = dispatches.findByIdempotencyKey(current.getTenantId(), idem) != null;
+            boolean replied = interaction && interactionRepliesApplied(current);
+            // Not restarting an old delivery must not leave its database capacity lease alive.
+            // A reply/handoff plus a durable terminal checkpoint proves completion. Otherwise
+            // retain the unfinished execution as PAUSED, without inventing success or canceling
+            // the business request. Never re-drive SDLC or overwrite its human/successor owner.
+            if (waitingForHuman || handedOff || superseded || continued || replied) {
+                boolean completed = (waitingForHuman || handedOff || replied) && hasCompletionEvidence(current);
+                String status = completed ? DispatchStatus.SUCCEEDED : DispatchStatus.PAUSED;
+                if (dispatches.updateStatus(current.getId(), current.getTenantId(), status,
+                        null, null, null, null, completed ? "" : null, current.getVersion(), 0L) == 1) {
+                    audit(current.getTenantId(), current.getId(), 0, "DISPATCH_" + status, "DISPATCH");
+                    log.info("released inactive dispatch without restarting delivery dispatchId={} status={} "
+                                    + "waitingForHuman={} handedOff={} superseded={} continued={} replied={}",
+                            current.getId(), status, waitingForHuman, handedOff, superseded, continued, replied);
+                }
+                return null;
+            }
+            String holdReason = hasCompletionEvidence(current) ? "COMPLETION_DELIVERY_UNCONFIRMED"
+                    : inventoryRecoveryBudgetExhausted(current) ? "RUNTIME_RECOVERY_LIMIT_EXCEEDED" : null;
+            if (holdReason != null) {
+                if (dispatches.updateStatus(current.getId(), current.getTenantId(), DispatchStatus.PAUSED,
+                        null, null, null, null, holdReason, current.getVersion(), 0L) == 1) {
+                    audit(current.getTenantId(), current.getId(), 0, "DISPATCH_PAUSED", "DISPATCH");
+                    log.warn("automatic recovery held dispatchId={} reason={}", current.getId(), holdReason);
+                }
+                return null;
+            }
+            DispatchDO next = new DispatchDO();
+            next.setTenantId(current.getTenantId());
+            next.setSourceType(ExecutionSourceType.WORKITEM.name());
+            next.setWorkitemId(current.getWorkitemId());
+            next.setSdlcStepId(current.getSdlcStepId());
+            next.setAgentId(current.getAgentId());
+            next.setAgentVersionId(current.getAgentVersionId());
+            next.setStatus(DispatchStatus.PENDING);
+            Integer maxAttempt = dispatches.findMaxAttempt(current.getTenantId(), current.getWorkitemId(), current.getSdlcStepId());
+            next.setAttempt(Math.max(maxAttempt == null ? 0 : maxAttempt,
+                    current.getAttempt() == null ? 0 : current.getAttempt()) + 1);
+            next.setIdempotencyKey(idem);
+            next.setResumeFromDispatchId(current.getId());
+            next.setResumeMode(interaction ? "CANONICAL_INTERACTION" : "RECOVERY");
+            next.setCreatorId(0L); next.setModifierId(0L); next.setVersion(0);
+            String reason = "RUNTIME_INVENTORY_LOST";
+            if (dispatches.updateStatus(current.getId(), current.getTenantId(), DispatchStatus.CANCELED,
+                    null, null, null, null, reason, current.getVersion(), 0L) != 1) return null;
+            projectTerminal(current, DispatchStatus.CANCELED, reason);
+            insert(next);
+            log.info("abandoned runtime execution recovered dispatchId={} recoveryDispatchId={} executorId={} stepId={}",
+                    current.getId(), next.getId(), current.getExecutorId(), current.getSdlcStepId());
+            return next;
+        });
+    }
+
+    /** Count only this automatic inventory-loss chain, never the workitem's global attempt. */
+    private boolean inventoryRecoveryBudgetExhausted(DispatchDO current) {
+        DispatchDO child = current;
+        for (int count = 0; count < 3; count++) {
+            Long parentId = child.getResumeFromDispatchId();
+            if (parentId == null || !Objects.equals(child.getCreatorId(), 0L)
+                    || !Objects.equals(child.getIdempotencyKey(), "continue:" + parentId)) return false;
+            DispatchDO parent = dispatches.findById(parentId);
+            if (parent == null || !Objects.equals(parent.getTenantId(), current.getTenantId())
+                    || !Objects.equals(parent.getWorkitemId(), current.getWorkitemId())
+                    || !Objects.equals(parent.getSdlcStepId(), current.getSdlcStepId())
+                    || !Objects.equals(parent.getAgentId(), current.getAgentId())
+                    || !DispatchStatus.CANCELED.equals(parent.getStatus())
+                    || !"RUNTIME_INVENTORY_LOST".equals(parent.getError())) return false;
+            child = parent;
+        }
+        return true;
+    }
+
+    private boolean interactionRepliesApplied(DispatchDO dispatch) {
+        var replies = jdbc.queryForList("SELECT status,reply_comment_id FROM workitem_comment_delivery "
+                        + "WHERE tenant_id=? AND dispatch_id=?",
+                dispatch.getTenantId(), dispatch.getId());
+        return !replies.isEmpty() && replies.stream().allMatch(row ->
+                "APPLIED".equals(row.get("status")) && row.get("reply_comment_id") != null);
+    }
+
+    /** Telemetry alone cannot replace a successful result: require its stored terminal checkpoint. */
+    private boolean hasCompletionEvidence(DispatchDO dispatch) {
+        if (runtimeEvents == null || checkpoints == null) return false;
+        var completed = runtimeEvents.findLatestByDispatchAndType(
+                dispatch.getTenantId(), dispatch.getId(), "dispatch.completed");
+        var terminal = runtimeEvents.findLatestByDispatchAndType(
+                dispatch.getTenantId(), dispatch.getId(), "runtime.checkpoint_saved");
+        if (completed == null || terminal == null || completed.getSeq() == null || terminal.getSeq() == null
+                || completed.getSeq() <= terminal.getSeq()) return false;
+        try {
+            var result = JSON.parseObject(completed.getDetailJson());
+            var receipt = JSON.parseObject(terminal.getDetailJson());
+            if (result == null || receipt == null || !"completed".equals(result.getString("state"))
+                    || !"terminal".equals(receipt.getString("reason"))) return false;
+            Long seq = receipt.getLong("checkpointSeq");
+            String hash = receipt.getString("sha256");
+            if (seq == null || seq <= 0 || hash == null) return false;
+            if (hash.startsWith("sha256:")) hash = hash.substring(7);
+            if (hash.isBlank()) return false;
+            var checkpoint = checkpoints.findByDispatchAndSeq(dispatch.getTenantId(), dispatch.getId(), seq);
+            return checkpoint != null && !checkpoint.isGcPending()
+                    && Objects.equals(checkpoint.getExecutorId(), dispatch.getExecutorId())
+                    && checkpoint.getOssRef() != null && !checkpoint.getOssRef().isBlank()
+                    && checkpoint.getSha256() != null && checkpoint.getSha256().equalsIgnoreCase(hash);
+        } catch (IllegalArgumentException | com.aliyun.autowonder.json.JSONException malformedEvidence) {
+            return false;
+        }
     }
 
     /** Reconciles only one executor after an authoritative heartbeat. */

@@ -1,16 +1,15 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { render, screen, within, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import { message } from 'antd';
 import { AgentReviewPage } from './AgentReviewPage';
 import { useAuthStore } from '@/shared/auth/store';
 
-function renderPage() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderPageWith(queryClient: QueryClient) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter><AgentReviewPage /></MemoryRouter>
@@ -18,10 +17,28 @@ function renderPage() {
   );
 }
 
+function renderPage() {
+  return renderPageWith(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+}
+
+// 回归用例要验证 hook 覆盖了 App 全局默认值（staleTime 30s、refetchOnWindowFocus false），
+// 因此这里刻意使用与 App 一致的默认 QueryClient，而不是测试里惯用的「零缓存」配置。
+function makeAppLikeClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: 30_000, refetchOnWindowFocus: false } },
+  });
+}
+
 describe('AgentReviewPage', () => {
   beforeEach(() => {
     useAuthStore.getState().clear();
     useAuthStore.getState().setCurrentWorkspace({ id: 1, name: 'O', description: '' }, 'READ_WRITE');
+  });
+
+  // antd 静态 message 的 toast 挂在 document.body 上，RTL 的 cleanup 不会移除，
+  // 不清掉会残留到后续用例造成重复文本命中。
+  afterEach(() => {
+    message.destroy();
   });
 
   it('renders empty state when no pending reviews', async () => {
@@ -116,5 +133,43 @@ describe('AgentReviewPage', () => {
     });
 
     errorSpy.mockRestore();
+  });
+
+  it('refetches the pending list on remount even inside the app default staleTime', async () => {
+    let listHits = 0;
+    server.use(
+      http.get('/api/agents', () => {
+        listHits += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
+      }),
+    );
+
+    const client = makeAppLikeClient();
+    const first = renderPageWith(client);
+    await screen.findByText(/暂无待审核/);
+    expect(listHits).toBe(1);
+    first.unmount();
+
+    renderPageWith(client);
+    await waitFor(() => expect(listHits).toBe(2));
+  });
+
+  it('refetches the pending list on window focus despite the app default disabling it', async () => {
+    let listHits = 0;
+    server.use(
+      http.get('/api/agents', () => {
+        listHits += 1;
+        return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
+      }),
+    );
+
+    renderPageWith(makeAppLikeClient());
+    await screen.findByText(/暂无待审核/);
+    expect(listHits).toBe(1);
+
+    act(() => focusManager.setFocused(false));
+    act(() => focusManager.setFocused(true));
+
+    await waitFor(() => expect(listHits).toBe(2));
   });
 });

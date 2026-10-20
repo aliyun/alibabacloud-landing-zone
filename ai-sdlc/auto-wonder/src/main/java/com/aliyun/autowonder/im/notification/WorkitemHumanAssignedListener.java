@@ -60,7 +60,8 @@ public class WorkitemHumanAssignedListener {
                     event.actorRef(),
                     event.actorDisplayName(),
                     event.requestId(),
-                    event.workitemTitle());
+                    event.workitemTitle(), ImNotificationTask.TYPE_WORKITEM_ASSIGNED, null, null,
+                    null, event.actorNameKind(), null);
             try {
                 queue.enqueue(task);
             } catch (Exception e) {

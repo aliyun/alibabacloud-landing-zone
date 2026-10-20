@@ -352,7 +352,7 @@ class DispatchServiceResultTest {
         when(dispatchDao.listOldestPendingByAgent(400L, 20)).thenReturn(java.util.List.of());
 
         assertTrue(service.onExecutorUnavailableResult(TENANT, 9L, 500L,
-                "agent_error.provider_quota_limit", "quota exhausted"));
+                "agent_error.provider_quota_limit", "quota exhausted", 0L));
 
         verify(executorRegistry).markProviderUnavailable(9L, "agent_error.provider_quota_limit");
         verify(dispatchDao).returnOwnedActiveToPending(500L, TENANT, 9L, 0, 0L);
@@ -373,12 +373,10 @@ class DispatchServiceResultTest {
         DispatchDO running = at(DispatchStatus.RUNNING);
         running.setExecutorId(9L);
         when(dispatchDao.findById(500L)).thenReturn(running);
-        when(redisManager.eval(anyString(), eq(java.util.List.of("dispatch:session-recovery:500")),
-                eq(java.util.List.of("86400")))).thenReturn(1L);
         when(dispatchDao.returnOwnedActiveToPending(500L, TENANT, 9L, 0, 0L)).thenReturn(1);
 
         assertTrue(service.onExecutorUnavailableResult(TENANT, 9L, 500L,
-                "runtime_recovery", "session not found"));
+                "runtime_recovery", "session not found", 0L));
 
         verify(dispatchDao).returnOwnedActiveToPending(500L, TENANT, 9L, 0, 0L);
         verify(sdlcDriver, never()).onFail(anyLong(), anyLong(), anyLong());
@@ -389,11 +387,9 @@ class DispatchServiceResultTest {
         DispatchDO running = at(DispatchStatus.RUNNING);
         running.setExecutorId(10L);
         when(dispatchDao.findById(500L)).thenReturn(running);
-        when(redisManager.eval(anyString(), eq(java.util.List.of("dispatch:session-recovery:500")),
-                eq(java.util.List.of("86400")))).thenReturn(2L);
 
         assertTrue(service.onExecutorUnavailableResult(TENANT, 10L, 500L,
-                "runtime_recovery", "session not found again"));
+                "runtime_recovery", "session not found again", 1L));
 
         verify(dispatchDao, never()).returnOwnedActiveToPending(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
         verify(dispatchDao).updateStatus(eq(500L), eq(TENANT), eq(DispatchStatus.FAILED),
@@ -408,7 +404,7 @@ class DispatchServiceResultTest {
         when(dispatchDao.findById(500L)).thenReturn(running);
 
         assertFalse(service.onExecutorUnavailableResult(TENANT, 9L, 500L,
-                "agent_error.unknown", "tests failed"));
+                "agent_error.unknown", "tests failed", 0L));
 
         verifyNoInteractions(executorRegistry);
         verify(dispatchDao, never()).returnOwnedActiveToPending(anyLong(), anyLong(), anyLong(), anyInt(), anyLong());
@@ -425,7 +421,7 @@ class DispatchServiceResultTest {
         when(dispatchDao.returnOwnedActiveToPending(500L, TENANT, 9L, 0, 0L)).thenReturn(0);
 
         assertTrue(service.onExecutorUnavailableResult(TENANT, 9L, 500L,
-                "agent_error.provider_quota_limit", "quota exhausted"));
+                "agent_error.provider_quota_limit", "quota exhausted", 0L));
 
         verify(dispatchDao, times(1)).returnOwnedActiveToPending(500L, TENANT, 9L, 0, 0L);
         verifyNoInteractions(sdlcDriver);

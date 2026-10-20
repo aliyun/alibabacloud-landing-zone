@@ -293,6 +293,17 @@
         LIMIT #{limit}
     </select>
 
+    <select id="listByExecutorAndStatusesAfterId" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE executor_id = #{executorId}
+          AND is_deleted = 0
+          AND id &gt; #{afterId}
+          AND status IN
+          <foreach collection="statuses" item="s" open="(" separator="," close=")">#{s}</foreach>
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
     <select id="listReleasedPausePredecessors" resultMap="dispatchMap">
         SELECT <include refid="cols"/> FROM dispatch d
         WHERE d.is_deleted = 0
@@ -352,6 +363,31 @@
     <select id="countByTenant" resultType="long">
         SELECT COUNT(*) FROM dispatch
         WHERE <include refid="tenantFilter"/>
+    </select>
+
+    <select id="listWorkitemExecutionsCreatedBetween" databaseId="autowonder-source-aware" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0
+          AND (source_type = 'WORKITEM' OR source_type IS NULL) AND workitem_id IS NOT NULL
+          AND gmt_create &gt;= #{from} AND gmt_create &lt; #{to}
+        <if test="cursorCreatedAt != null and cursorId != null">
+          AND (gmt_create &lt; #{cursorCreatedAt}
+               OR (gmt_create = #{cursorCreatedAt} AND id &lt; #{cursorId}))
+        </if>
+        ORDER BY gmt_create DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="listWorkitemExecutionsCreatedBetween" databaseId="autowonder-legacy" resultMap="dispatchMap">
+        SELECT <include refid="cols"/> FROM dispatch
+        WHERE tenant_id = #{tenantId} AND is_deleted = 0 AND workitem_id IS NOT NULL
+          AND gmt_create &gt;= #{from} AND gmt_create &lt; #{to}
+        <if test="cursorCreatedAt != null and cursorId != null">
+          AND (gmt_create &lt; #{cursorCreatedAt}
+               OR (gmt_create = #{cursorCreatedAt} AND id &lt; #{cursorId}))
+        </if>
+        ORDER BY gmt_create DESC, id DESC
+        LIMIT #{limit}
     </select>
 
     <select id="countActiveByExecutor" resultType="long">

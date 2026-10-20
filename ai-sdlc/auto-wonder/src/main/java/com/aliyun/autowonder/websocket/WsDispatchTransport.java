@@ -34,6 +34,9 @@ public class WsDispatchTransport implements DispatchTransport {
     /** 单轮 debug 日志硬上限 200MB（协议契约缺省值，runtime 超限截断并上报 truncated=true）。 */
     static final long DEBUG_LOG_MAX_BYTES = 209_715_200L;
 
+    @Autowired(required = false)
+    private com.aliyun.autowonder.dispatch.DispatchModelSelectionService modelSelectionService;
+
     private final SessionRegistry sessionRegistry;
     private final RedisManager redisManager;
     private final NodeIdentity nodeIdentity;
@@ -153,6 +156,13 @@ public class WsDispatchTransport implements DispatchTransport {
     private TaskDispatchFrame buildFrame(DispatchDO dispatch, TaskPackageResult pkg) {
         TaskDispatchFrame f = new TaskDispatchFrame();
         f.setDispatchId(dispatch.getId());
+        if (modelSelectionService != null) {
+            var decision = modelSelectionService.freeze(dispatch);
+            if (decision.getModel() != null && presenceManager != null
+                    && !presenceManager.supportsProtocolFeature(dispatch.getExecutorId(), "TASK_MODEL_SELECTION_V1"))
+                throw new ExecutorProtocolCompatibilityException("TASK_MODEL_SELECTION_V1");
+            f.setModelSelection(decision);
+        }
         f.setExecutorId(dispatch.getExecutorId());
         f.setTenantId(dispatch.getTenantId());
         f.setWorkitemId(dispatch.getWorkitemId());

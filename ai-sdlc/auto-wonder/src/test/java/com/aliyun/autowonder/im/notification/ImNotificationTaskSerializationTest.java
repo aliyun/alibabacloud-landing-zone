@@ -156,4 +156,22 @@ class ImNotificationTaskSerializationTest {
         assertEquals("WORKITEM_ASSIGNED", deserialized.notificationType());
         assertNull(deserialized.sourceType());
     }
+    @Test
+    void optionalSnapshotAndOriginsRoundTripButOldJsonAndHelpersRemainExact() throws Exception {
+        String literal = "{\"notificationKey\":\"1:FEISHU:9\",\"workitemEventId\":1,\"tenantId\":7,\"workitemId\":42,\"recipientUserId\":9,\"actorType\":\"AGENT\",\"actorRef\":3,\"actorDisplayName\":\"数字人\",\"requestId\":null,\"workitemTitle\":\"raw\",\"notificationType\":\"COMMENT_MENTION\",\"commentContentMd\":null,\"sourceType\":\"SCHEDULED_TASK_RUN\"}";
+        for (ObjectMapper mapper : java.util.List.of(new ObjectMapper(), objectMapper)) {
+            var legacy = mapper.readValue(literal, ImNotificationTask.class);
+            assertEquals(literal, mapper.writeValueAsString(legacy));
+            org.junit.jupiter.api.Assertions.assertEquals(java.util.Locale.CHINA, legacy.deliveryLocale());
+            var tree = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(literal);
+            tree.put("recipientLocale", "en-US").put("actorNameKind", "AGENT_NAME_FALLBACK").put("workitemTitleKind", "SCHEDULED_RUN_ID_FALLBACK");
+            var task = mapper.treeToValue(tree, ImNotificationTask.class);
+            assertEquals(tree, mapper.readTree(mapper.writeValueAsString(task)));
+            assertEquals("FEISHU", task.provider()); org.junit.jupiter.api.Assertions.assertTrue(task.isScheduledTaskRun());
+            assertEquals(java.util.Locale.US, task.deliveryLocale());
+            org.junit.jupiter.api.Assertions.assertFalse(mapper.valueToTree(task).has("deliveryLocale"));
+            tree.putObject("futureField").put("nested", true);
+            assertEquals(task, mapper.treeToValue(tree, ImNotificationTask.class));
+        }
+    }
 }

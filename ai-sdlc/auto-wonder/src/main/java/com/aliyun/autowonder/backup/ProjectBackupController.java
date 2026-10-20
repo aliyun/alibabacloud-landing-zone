@@ -12,7 +12,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/workspaces/current/backups")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理项目配置备份")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理项目配置备份", actionKey = "access.action.manage_project_configuration_backups")
 public class ProjectBackupController {
     private final ProjectBackupService service;
     public ProjectBackupController(ProjectBackupService service) { this.service = service; }
@@ -33,7 +33,9 @@ public class ProjectBackupController {
 
     @GetMapping("/{id}/download")
     public Result<Map<String, String>> download(@PathVariable String id) {
-        return Result.ok(Map.of("url", service.download(workspaceId(), id)));
+        Long userId = AutoWonderContext.get().getUserId();
+        if (userId == null) throw new BizException(ErrorCode.UNAUTHORIZED);
+        return Result.ok(Map.of("url", service.download(workspaceId(), id, userId)));
     }
 
     private long workspaceId() {

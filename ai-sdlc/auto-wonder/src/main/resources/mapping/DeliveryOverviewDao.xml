@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.insights.DeliveryOverviewDao">
+    <!--
+      看板统一分类（工单 #55395）跨命名空间复用 WorkitemDao.kanbanCategoryExpr，保证「待处理」
+      与列表/看板分类不漂移。该片段内部还以相对 refid 引用 dispatchActive/dispatchStarted/pendingHumanRequest，
+      按 MyBatis 语义会解析到本命名空间，故此处提供同名转发片段（与 MemberDeliveryDao 同一模式）。
+    -->
+    <sql id="dispatchActive"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.dispatchActive"/></sql>
+    <sql id="dispatchStarted"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.dispatchStarted"/></sql>
+    <sql id="pendingHumanRequest"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.pendingHumanRequest"/></sql>
+    <sql id="kanbanCategory"><include refid="com.aliyun.autowonder.workitem.WorkitemDao.kanbanCategoryExpr"/></sql>
+
+    <!-- 区间内新建工单口径（趋势统计与明细列表共用）：[start, end) 半开区间，租户隔离，排除已删除。 -->
+    <sql id="createdScope">
+        w.tenant_id = #{tenantId}
+        AND w.is_deleted = 0
+        AND w.gmt_create &gt;= #{start}
+        AND w.gmt_create &lt; #{end}
+    </sql>
+
+    <select id="listCreatedWorkitems" resultType="com.aliyun.autowonder.insights.DeliveryOverviewService$CreatedWorkitem">
+        SELECT w.id AS id,
+               w.gmt_create AS createdAt
+        FROM workitem w
+        WHERE <include refid="createdScope"/>
+        ORDER BY w.gmt_create, w.id
+    </select>
+
+    <select id="countCreatedWorkitems" resultType="long">
+        SELECT COUNT(*)
+        FROM workitem w
+        WHERE <include refid="createdScope"/>
+    </select>
+
+    <!--
+      新建工单明细列表：与统计卡同口径（含取消工单的新建），创建时间降序（最新在前）；
+      状态名与节点分类取自当前 status_node，供列表状态展示与着色。
+    -->
+    <select id="listCreatedWorkitemsPage"
+            resultType="com.aliyun.autowonder.insights.DeliveryOverviewService$CreatedWorkitemRow">
+        SELECT w.id AS id,
+               w.title AS title,
+               sn.name AS statusName,
+               sn.category AS statusCategory,
+               w.priority AS priority,
+               w.gmt_create AS createdAt
+        FROM workitem w
+        LEFT JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+        WHERE <include refid="createdScope"/>
+        ORDER BY w.gmt_create DESC, w.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!--
+      交付完成口径与 RequirementDeliveryDao.listDeliveredRequirements 完全一致（工单 #55697）：
+      当前状态节点 category='DONE'，完成时间取最近一次进入 DONE 类节点的 STATUS_CHANGE 事件；
+      无事件记录不计入（不从当前状态反推），取消不计，按 workitem 去重。全部工单类型计入吞吐。
+    -->
+    <select id="countDeliveredWorkitems" resultType="long">
+        SELECT COUNT(*)
+        FROM (
+            SELECT w.id AS id,
+                   (SELECT MAX(e.gmt_create)
+                    FROM workitem_event e
+                    JOIN status_node done_node
+                      ON done_node.tenant_id = e.tenant_id
+                     AND done_node.template_id = w.template_id
+                     AND done_node.code = e.to_val
+                     AND done_node.category = 'DONE'
+                    WHERE e.tenant_id = w.tenant_id
+                      AND e.workitem_id = w.id
+                      AND e.event_type = 'STATUS_CHANGE') AS delivered_at
+            FROM workitem w
+            JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+            WHERE w.tenant_id = #{tenantId}
+              AND w.is_deleted = 0
+              AND sn.category = 'DONE'
+        ) delivered
+        WHERE delivered.delivered_at &gt;= #{start} AND delivered.delivered_at &lt; #{end}
+    </select>
+
+    <!--
+      待处理 = 当前处理人为本人的工单且统一分类未结束（不含 DONE / CANCELED）；
+      排序：待决策优先，再按优先级升序（0=紧急 最高）、最近更新时间降序。
+    -->
+    <sql id="pendingScope">
+        w.tenant_id = #{tenantId}
+        AND w.is_deleted = 0
+        AND w.assignee_type = 'HUMAN'
+        AND w.assignee_ref = #{currentUserId}
+        AND <include refid="kanbanCategory"/> IN ('NEW', 'IN_PROGRESS', 'PENDING_DECISION')
+    </sql>
+
+    <select id="countPendingWorkitems" resultType="long">
+        SELECT COUNT(*)
+        FROM workitem w
+        WHERE <include refid="pendingScope"/>
+    </select>
+
+    <select id="listPendingWorkitems" resultType="com.aliyun.autowonder.insights.DeliveryOverviewService$PendingWorkitemRow">
+        SELECT w.id AS id,
+               w.title AS title,
+               sn.name AS statusName,
+               <include refid="kanbanCategory"/> AS statusCategory,
+               w.priority AS priority,
+               w.gmt_modified AS gmtModified
+        FROM workitem w
+        LEFT JOIN status_node sn ON sn.id = w.status_node_id AND sn.tenant_id = w.tenant_id
+        WHERE <include refid="pendingScope"/>
+        ORDER BY CASE <include refid="kanbanCategory"/> WHEN 'PENDING_DECISION' THEN 0 ELSE 1 END,
+                 w.priority ASC,
+                 w.gmt_modified DESC,
+                 w.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+</mapper>

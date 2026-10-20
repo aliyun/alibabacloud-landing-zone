@@ -3,6 +3,7 @@ package com.aliyun.autowonder.dispatch;
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.artifact.ArtifactDO;
 import com.aliyun.autowonder.artifact.ArtifactDao;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.dto.RuntimeTraceVO;
@@ -146,7 +147,7 @@ public class RuntimeTraceArtifactService {
     private void validateContentRef(String contentRef) {
         if (contentRef == null || !contentRef.startsWith(CONTEXT_PREFIX)
                 || contentRef.startsWith("/") || contentRef.contains("\\") || contentRef.contains("..")) {
-            throw new IllegalArgumentException("invalid context content ref");
+            throw new KeyedIllegalArgumentException("dispatch.context_ref.invalid", new Object[0], "invalid context content ref");
         }
     }
 

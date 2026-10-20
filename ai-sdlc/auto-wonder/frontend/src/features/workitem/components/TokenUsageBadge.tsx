@@ -1,3 +1,5 @@
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { Popover, Tooltip, Typography } from 'antd';
 import { ThunderboltOutlined } from '@ant-design/icons';
 import type { ReactNode } from 'react';
@@ -13,7 +15,7 @@ function hasCredits(usage: UsageSummary): boolean {
 }
 
 function creditsLabel(usage: UsageSummary): string {
-  return `${formatCredits(usage.credits)} credits`;
+  return i18n.t('workitem:usage.creditAmount', { amount: formatCredits(usage.credits) });
 }
 
 function UsageLabel({ tone, children }: { tone: PopoverTone; children: ReactNode }) {
@@ -31,12 +33,13 @@ interface UsagePopoverContentProps {
 }
 
 function UsagePopoverContent({ usage, showModel = true, tone = 'light' }: UsagePopoverContentProps) {
+  const { t } = useTranslation('workitem');
   return (
     <div style={{ minWidth: 200, lineHeight: '1.8', color: tone === 'dark' ? 'rgba(255, 255, 255, 0.95)' : undefined }}>
       {showModel && usage.model && (
-        <div><UsageLabel tone={tone}>模型:</UsageLabel> {usage.model}</div>
+        <div><UsageLabel tone={tone}>{t('usage.model')}</UsageLabel> {usage.model}</div>
       )}
-      <div><UsageLabel tone={tone}>Credits:</UsageLabel> {formatCredits(usage.credits)}</div>
+      <div><UsageLabel tone={tone}>{t('usage.credits')}</UsageLabel> {formatCredits(usage.credits)}</div>
     </div>
   );
 }
@@ -47,6 +50,7 @@ interface TokenUsageBadgeProps {
 }
 
 export function TokenUsageBadge({ usage, showModel = true }: TokenUsageBadgeProps) {
+  useTranslation('workitem');
   if (!hasCredits(usage)) return null;
 
   return (
@@ -64,6 +68,7 @@ interface StepTokenBadgeProps {
 }
 
 export function StepTokenBadge({ usage }: StepTokenBadgeProps) {
+  useTranslation('workitem');
   if (!hasCredits(usage)) return null;
 
   return (

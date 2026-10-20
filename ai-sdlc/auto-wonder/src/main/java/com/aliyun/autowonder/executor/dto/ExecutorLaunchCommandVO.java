@@ -22,12 +22,12 @@ public class ExecutorLaunchCommandVO {
     private String contextWindow;
     private String wsUrl;
     private String runtimeVersion;
+    private String workspaceRoot;
+    private String daemonName;
     /** "posix" or "windows". */
     private String os;
     private boolean debug;
     /** "bash" or "powershell"; only set when debug is true. */
     private String shell;
-    /** Debug log file name; only set when debug is true. */
-    private String logFileName;
     private String command;
 }

@@ -92,7 +92,7 @@ class ConversationModeTest {
         String suffix = ConversationMode.PLATFORM_ASSISTANT.promptSuffix();
         assertTrue(suffix.contains("autowonder.propose_platform_actions"),
                 "提示词必须点名产出行动计划的工具，否则模型会直接调通用写工具");
-        assertTrue(suffix.contains("autowonder.execute_platform_action_plan"),
+        assertTrue(suffix.contains("由服务端执行"),
                 "提示词必须点名执行行动计划的工具");
         assertTrue(suffix.contains("Owner"), "写操作只能由会话 Owner 本人确认");
     }

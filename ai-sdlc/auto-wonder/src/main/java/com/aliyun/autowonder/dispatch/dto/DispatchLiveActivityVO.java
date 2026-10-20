@@ -21,6 +21,8 @@ public class DispatchLiveActivityVO {
     private String sourceType;
     private Integer attempt;
     private String dispatchStatus;
+    /** Current executor inventory: RUNNING, RECOVERING, UNKNOWN; null for inactive dispatches. */
+    private String runtimeState;
     /** False when {@code afterSeq} already covers every persisted event; {@code actions} is then empty. */
     private boolean changed = true;
     private Long lastSeq;
@@ -52,6 +54,10 @@ public class DispatchLiveActivityVO {
         private String actionType;
         /** Human readable, sanitized and length bounded summary. */
         private String summary;
+        /** Assigned only by the server when no safe reported summary exists. */
+        private String summaryOrigin;
+        /** Existing sanitized, length-bounded target used in that fallback. */
+        private String summaryTarget;
         /** {@code RUNNING}, {@code COMPLETED}, {@code FAILED}, {@code PAUSED}, {@code RESUMED}, {@code CANCELLED} or {@code INFO}. */
         private String status;
         private Long stepId;

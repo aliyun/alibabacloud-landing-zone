@@ -44,3 +44,9 @@ describe('PlanCard', () => {
     expect(container.textContent).toBe('');
   });
 });
+
+
+it('preserves unknown external plan priorities instead of rendering a missing translation', () => {
+  render(<PlanCard entries={[{ content: 'Provider plan', priority: 'provider_custom' as never, status: 'pending' }]} />);
+  expect(screen.getByText('provider_custom')).toBeInTheDocument();
+});

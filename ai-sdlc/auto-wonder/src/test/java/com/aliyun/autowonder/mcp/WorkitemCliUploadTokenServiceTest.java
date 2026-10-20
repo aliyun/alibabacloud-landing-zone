@@ -46,8 +46,7 @@ class WorkitemCliUploadTokenServiceTest {
         assertEquals("AUTOWONDER_UPLOAD_TOKEN", vo.getTokenEnvName());
         assertEquals(com.aliyun.autowonder.artifact.RequirementDocumentService.SUPPORTED_EXTENSIONS,
                 vo.getSupportedExtensions());
-        assertTrue(vo.getSupportedExtensions().containsAll(java.util.List.of(
-                ".docx", ".doc", ".java", ".py", ".zip")));
+        assertEquals(java.util.List.of("*"), vo.getSupportedExtensions());
         assertEquals(10, vo.getMaxFiles());
         assertEquals(5L * 1024 * 1024, vo.getMaxFileSizeBytes());
         assertEquals(20L * 1024 * 1024, vo.getMaxTotalSizeBytes());
@@ -70,7 +69,7 @@ class WorkitemCliUploadTokenServiceTest {
             assertTrue(command.contains("--file <images-1>"), command);
             assertTrue(command.contains("--json"), command);
             assertFalse(command.contains("autowonder@latest"));
-            assertFalse(command.contains("auto-wonder.alibaba.net"));
+            assertFalse(command.contains("community.example"));
         }
         assertTrue(vo.getCommand().startsWith("export AUTOWONDER_UPLOAD_TOKEN='awupload_"));
         assertTrue(vo.getPowershellCommand().startsWith("$env:AUTOWONDER_UPLOAD_TOKEN='awupload_"));

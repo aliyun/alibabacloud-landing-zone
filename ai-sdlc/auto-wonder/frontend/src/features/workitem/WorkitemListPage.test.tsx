@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, within, fireEvent } from '@testing-library/react';
+import { i18n } from '@/shared/i18n';
 import userEvent from '@testing-library/user-event';
+import dayjs from 'dayjs';
 import { message } from 'antd';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -199,11 +201,11 @@ describe('WorkitemListPage', () => {
 
     renderPage();
     expect(await screen.findByText('人工处理工单')).toBeInTheDocument();
-    expect(screen.queryByText(/需人工（蔡何）/)).not.toBeInTheDocument();
+    expect(screen.queryByText('需要人工')).not.toBeInTheDocument();
     expect(screen.getByText('当前处理人: 蔡何')).toBeInTheDocument();
   });
 
-  it('shows 需人工（XXX）tag in table status column for a pending-decision workitem', async () => {
+  it('shows a nameless human-action tag in table status column for a pending-decision workitem', async () => {
     server.use(
       http.get('/api/workitems', () => {
         return HttpResponse.json({
@@ -218,7 +220,7 @@ describe('WorkitemListPage', () => {
     renderPage();
     await userEvent.click(await screen.findByLabelText('表格视图'));
     expect(await screen.findByText('表格人工工单')).toBeInTheDocument();
-    expect(screen.getByText(/需人工（蔡何）/)).toBeInTheDocument();
+    expect(screen.getByText('需要人工')).toBeInTheDocument();
     expect(screen.queryByText(/需人工（蔡何\(10000\)）/)).not.toBeInTheDocument();
   });
 
@@ -253,6 +255,50 @@ describe('WorkitemListPage', () => {
 
     renderPage();
     expect(await screen.findByRole('button', { name: /新建/ })).toBeInTheDocument();
+  });
+
+  it('retains exact bilingual New semantics and navigation without decorative glyph names', async () => {
+    useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+    server.use(http.get('/api/workitems', () => HttpResponse.json({ success: true, data: pageData([]) })));
+    renderPageWithProbe();
+    const button = await screen.findByRole('button', { name: '新建工单' });
+    expect(within(button).queryByRole('img')).not.toBeInTheDocument();
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    try {
+      expect(screen.getByRole('button', { name: 'New work item' })).toBe(button);
+      await userEvent.click(button);
+      expect(screen.getByTestId('location-probe')).toHaveTextContent(/^\/workitems\/new$/);
+    } finally { await act(async () => { await i18n.changeLanguage('zh-CN'); }); }
+  });
+
+  it('names the actual search clear button and offers a keyboard clear for hidden Select clear controls', async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(http.get('/api/workitems', ({ request }) => {
+      requests.push(new URL(request.url).searchParams);
+      return HttpResponse.json({ success: true, data: pageData([]) });
+    }));
+    renderPage();
+    const input = await screen.findByPlaceholderText('搜索工单ID或标题');
+    await userEvent.type(input, '<raw 用户>{enter}');
+    await waitFor(() => expect(requests.at(-1)?.get('keyword')).toBe('<raw 用户>'));
+    const clear = screen.getByRole('button', { name: '清空工单搜索' });
+    await userEvent.click(document.querySelectorAll('.ant-select-selector')[0]!);
+    await userEvent.click(await screen.findByTitle('缺陷'));
+    await waitFor(() => expect(requests.at(-1)?.get('workType')).toBe('BUG'));
+    const clearType = screen.getByRole('button', { name: '清空类型筛选' });
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    try {
+      expect(screen.getByRole('button', { name: 'Clear work item search' })).toBe(clear);
+      expect(screen.getByRole('button', { name: 'Clear type filter' })).toBe(clearType);
+      clearType.focus(); await userEvent.keyboard('{Enter}');
+      await waitFor(() => expect(requests.at(-1)?.has('workType')).toBe(false));
+      expect(requests.at(-1)?.get('keyword')).toBe('<raw 用户>');
+      expect(input).toHaveValue('<raw 用户>');
+      await userEvent.click(clear);
+      expect(input).toHaveValue('');
+      await waitFor(() => expect(requests.at(-1)?.has('keyword')).toBe(false));
+      expect(requests.at(-1)?.get('page')).toBe('1');
+    } finally { await act(async () => { await i18n.changeLanguage('zh-CN'); }); }
   });
 
   it('keeps create visible but blocks navigation for a read-only member', async () => {
@@ -303,6 +349,58 @@ describe('WorkitemListPage', () => {
     await userEvent.click(await screen.findByLabelText('表格视图'));
 
     expect(await screen.findByRole('button', { name: /删除工单/ })).toBeDisabled();
+  });
+
+  it('keeps the opened delete confirmation bilingual and decorative while preserving the delete request', async () => {
+    useAuthStore.setState({ accessLevel: 'READ_WRITE' });
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const rawTitle = '<b>raw</b> 删除工单';
+    const deleted: Array<{ method: string; path: string; body: string }> = [];
+    let reads = 0;
+    server.use(
+      http.get('/api/workitems', () => {
+        reads += 1;
+        return HttpResponse.json({ success: true, code: '0', data: pageData([{
+          id: 71, title: rawTitle, workType: 'TASK', statusName: '待处理', priority: 2,
+          assigneeType: 'HUMAN', assigneeRef: null, version: 1, deletable: true,
+        }]) });
+      }),
+      http.delete('/api/workitems/:id', async ({ request }) => {
+        deleted.push({ method: request.method, path: new URL(request.url).pathname, body: await request.text() });
+        return HttpResponse.json({ success: true, code: '0', data: null });
+      }),
+    );
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    try {
+      renderPageWithProbe();
+      expect(await screen.findByText(rawTitle)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: '删除工单' }));
+      const popup = await screen.findByRole('tooltip');
+      expect(within(popup).getByText('删除工单')).toBeInTheDocument();
+      expect(within(popup).getByText('正在执行或外部平台集成的工单不可删除')).toBeInTheDocument();
+      expect(within(popup).getByRole('button', { name: /^删\s*除$/ })).toBeInTheDocument();
+      expect(within(popup).getByRole('button', { name: /^取\s*消$/ })).toBeInTheDocument();
+      expect(within(popup).queryByRole('img', { name: 'exclamation-circle' })).not.toBeInTheDocument();
+      const glyph = within(popup).getAllByRole('img', { hidden: true })
+        .find(icon => icon.querySelector('svg')?.getAttribute('data-icon') === 'exclamation-circle');
+      expect(glyph).toHaveAttribute('aria-hidden', 'true');
+      expect(glyph?.querySelector('svg')).toHaveAttribute('data-icon', 'exclamation-circle');
+      const initialReads = reads;
+      await act(async () => { await i18n.changeLanguage('en-US'); });
+      expect(within(popup).getByText('Delete work item')).toBeInTheDocument();
+      expect(within(popup).getByText('Work items that are running or integrated with an external platform cannot be deleted.')).toBeInTheDocument();
+      expect(within(popup).getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+      expect(within(popup).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+      expect(within(popup).queryByRole('img', { name: 'exclamation-circle' })).not.toBeInTheDocument();
+      expect(screen.getByText(rawTitle)).toBeInTheDocument();
+      expect(reads).toBe(initialReads);
+      expect(deleted).toEqual([]);
+      await userEvent.click(within(popup).getByRole('button', { name: 'Delete' }));
+      await waitFor(() => expect(deleted).toEqual([{ method: 'DELETE', path: '/api/workitems/71', body: '' }]));
+      expect(screen.getByTestId('location-probe')).toHaveTextContent(/^\/workitems$/);
+    } finally {
+      await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    }
   });
 
   it('requests only my pending decisions through the server filter and remembers it', async () => {
@@ -464,6 +562,52 @@ describe('WorkitemListPage', () => {
       expect(lastReq).not.toContain('pendingDecisionOnly=true');
     });
     expect(window.localStorage.getItem('autowonder.workitems.scope')).toBe('ASSIGNED');
+  });
+
+  it('sends mineScope=COMMENTED when selecting 我参与的', async () => {
+    const requests: string[] = [];
+    server.use(
+      http.get('/api/workitems', ({ request }) => {
+        requests.push(new URL(request.url).searchParams.toString());
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([
+            { id: 6, title: '我参与的工单', workType: 'REQ', statusName: '待处理', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-07-01', gmtModified: '2026-07-01', myLastCommentAt: '2026-07-02T10:20:30Z' },
+          ]),
+        });
+      }),
+    );
+
+    renderPage();
+    expect(await screen.findByText('我参与的工单')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('我参与的'));
+
+    await waitFor(() => {
+      const lastReq = requests[requests.length - 1];
+      expect(lastReq).toContain('mineScope=COMMENTED');
+      expect(lastReq).toContain('page=1');
+      expect(lastReq).not.toContain('pendingDecisionOnly=true');
+    });
+    expect(window.localStorage.getItem('autowonder.workitems.scope')).toBe('COMMENTED');
+  });
+
+  it('restores the remembered 我参与的 scope on remount', async () => {
+    window.localStorage.setItem('autowonder.workitems.scope', 'COMMENTED');
+    const requests: string[] = [];
+    server.use(
+      http.get('/api/workitems', ({ request }) => {
+        requests.push(new URL(request.url).searchParams.toString());
+        return HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: pageData([]),
+        });
+      }),
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(requests.some(q => q.includes('mineScope=COMMENTED'))).toBe(true));
   });
 
   it('sends no scope params when selecting 全部', async () => {
@@ -1013,6 +1157,31 @@ describe('WorkitemListPage 表格列与字段展示', () => {
     expect(timeBlock.children).toHaveLength(2);
     expect(dateLine.nextElementSibling?.textContent).toMatch(/^\d{1,2}:\d{2}:\d{2}$/);
   });
+
+  it('shows my latest comment time only under 我参与的', async () => {
+    server.use(
+      http.get('/api/workitems', () => HttpResponse.json({
+        success: true, code: '0', message: '', traceId: null,
+        data: pageData([fieldRow({ id: 49, title: '参与工单', myLastCommentAt: '2026-07-02T10:20:30Z' })]),
+      })),
+    );
+
+    await renderTableView('参与工单');
+    expect(screen.queryByRole('columnheader', { name: '我最近参与时间' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('我参与的'));
+
+    expect(await screen.findByRole('columnheader', { name: '我最近参与时间' })).toBeInTheDocument();
+    const dateLine = screen.getByText('2026/7/2');
+    const timeBlock = dateLine.parentElement!;
+    expect(timeBlock.children).toHaveLength(2);
+    expect(dateLine.nextElementSibling?.textContent).toMatch(/^\d{1,2}:\d{2}:\d{2}$/);
+
+    await userEvent.click(screen.getByText('全部'));
+    await waitFor(() => {
+      expect(screen.queryByRole('columnheader', { name: '我最近参与时间' })).not.toBeInTheDocument();
+    });
+  });
 });
 
 // 视图切换（看板/表格）需要立即写入 localStorage 并在重新进入时恢复；
@@ -1054,5 +1223,166 @@ describe('WorkitemListPage 视图偏好记忆', () => {
     await screen.findByText('工单');
     expect(screen.queryByRole('columnheader', { name: '当前处理人' })).not.toBeInTheDocument();
     expect(screen.getByTestId('kanban-column-NEW')).toBeInTheDocument();
+  });
+});
+
+it.each(['zh-CN', 'en-US'])('final widget both workitem search buttons preserve raw keyword and trimmed tag in %s', async locale => {
+ useAuthStore.getState().clear(); localStorage.clear(); localStorage.setItem('autowonder.workitems.view', 'table');
+ const requests: URLSearchParams[] = [];
+ server.use(http.get('/api/workitems', ({ request }) => { requests.push(new URL(request.url).searchParams); return HttpResponse.json({ success: true, data: pageData([]) }); }));
+ await i18n.changeLanguage(locale); renderPage();
+ try {
+  const searchLabel = locale === 'en-US' ? 'Search work item ID or title' : '搜索工单ID或标题';
+  const tagLabel = locale === 'en-US' ? 'Filter by tag' : '按标签筛选';
+  const input = screen.getByPlaceholderText(searchLabel); const tag = screen.getByPlaceholderText(tagLabel);
+  const search = screen.getByRole('button', { name: searchLabel }); const tagSearch = screen.getByRole('button', { name: tagLabel });
+  await userEvent.type(input, '<raw>中文'); await userEvent.click(search);
+  await waitFor(() => expect(requests.at(-1)?.get('keyword')).toBe('<raw>中文'));
+  await userEvent.type(tag, '  原标签  '); await userEvent.click(tagSearch);
+  await waitFor(() => expect(requests.at(-1)?.get('tag')).toBe('原标签'));
+  expect(tag).toHaveValue('  原标签  ');
+  await userEvent.click(screen.getByRole('button', { name: locale === 'en-US' ? 'Clear tag filter' : '清空标签筛选' }));
+  await waitFor(() => expect(requests.at(-1)?.has('tag')).toBe(false)); expect(requests.at(-1)?.get('page')).toBe('1');
+ } finally { await act(() => i18n.changeLanguage('zh-CN')); }
+});
+
+// 创建时间高级筛选（工单 #55696）：入口在筛选栏，条件与既有关键词等筛选以 AND 叠加，
+// 表格与各看板状态列都必须携带同一份时间边界；应用/清除一律回到第 1 页，非法区间不提交。
+describe('WorkitemListPage 创建时间高级筛选', () => {
+  const FROM = dayjs('2026-10-01').startOf('day').toDate().toISOString();
+  const TO = dayjs('2026-10-10').startOf('day').add(1, 'day').toDate().toISOString();
+
+  const ROWS = [
+    { id: 61, title: '范围工单一', workType: 'REQ', statusName: '待处理', statusCategory: 'NEW', priority: 2, assigneeType: 'HUMAN', assigneeRef: null, assigneeName: null, version: 1, gmtCreate: '2026-10-03T02:00:00Z', gmtModified: '2026-10-03T02:00:00Z' },
+    { id: 62, title: '范围工单二', workType: 'REQ', statusName: '开发中', statusCategory: 'IN_PROGRESS', priority: 2, assigneeType: 'AGENT', assigneeRef: 5, assigneeName: '代码助手', version: 1, gmtCreate: '2026-10-05T02:00:00Z', gmtModified: '2026-10-05T02:00:00Z' },
+  ];
+
+  function useRecordingServer(requests: URLSearchParams[]) {
+    server.use(http.get('/api/workitems', ({ request }) => {
+      requests.push(new URL(request.url).searchParams);
+      return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: pageData(ROWS, 25) });
+    }));
+  }
+
+  async function openAdvancedFilter() {
+    await userEvent.click(screen.getByRole('button', { name: /高级筛选/ }));
+    return screen.findByRole('dialog');
+  }
+
+  /** 日期录入按 antd 自身的用例写法：先打开面板，改输入值后回车提交，避免依赖日历单元格。 */
+  function typeDate(dialog: HTMLElement, placeholder: string, value: string) {
+    const input = within(dialog).getByPlaceholderText(placeholder);
+    fireEvent.mouseDown(input);
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 });
+  }
+
+  beforeEach(() => {
+    useAuthStore.getState().clear();
+    window.localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('applies the created range to the table query and returns to the first page', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    await userEvent.click(await screen.findByTitle('2'));
+    await waitFor(() => expect(requests.at(-1)?.get('page')).toBe('2'));
+
+    const dialog = await openAdvancedFilter();
+    typeDate(dialog, '起始日期', '2026-10-01');
+    typeDate(dialog, '结束日期', '2026-10-10');
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.get('page')).toBe('1');
+      expect(last.get('createdFrom')).toBe(FROM);
+      expect(last.get('createdTo')).toBe(TO);
+    });
+    expect(await screen.findByTestId('workitem-created-filter-tag')).toBeInTheDocument();
+  });
+
+  it('combines the created range with the keyword filter and clears a single-sided condition', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    await userEvent.type(screen.getByPlaceholderText('搜索工单ID或标题'), '巡检{enter}');
+    await waitFor(() => expect(requests.at(-1)?.get('keyword')).toBe('巡检'));
+
+    const dialog = await openAdvancedFilter();
+    typeDate(dialog, '起始日期', '2026-10-01');
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.get('createdFrom')).toBe(FROM);
+      expect(last.has('createdTo')).toBe(false);
+      expect(last.get('keyword')).toBe('巡检');
+      expect(last.get('page')).toBe('1');
+    });
+
+    const tag = screen.getByTestId('workitem-created-filter-tag');
+    expect(tag.textContent).toMatch(/^创建时间：.+ 起$/);
+    await userEvent.click(screen.getByTestId('workitem-created-filter-clear'));
+
+    await waitFor(() => {
+      const last = requests.at(-1)!;
+      expect(last.has('createdFrom')).toBe(false);
+      expect(last.has('createdTo')).toBe(false);
+      expect(last.get('keyword')).toBe('巡检');
+    });
+    expect(screen.queryByTestId('workitem-created-filter-tag')).not.toBeInTheDocument();
+  });
+
+  it('sends the created range to every kanban status column and the pending summary', async () => {
+    useAuthStore.getState().setUser({ id: 42, username: 'zhangsan', nickname: '张三', email: '' });
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    typeDate(dialog, '起始日期', '2026-10-01');
+    typeDate(dialog, '结束日期', '2026-10-10');
+    await userEvent.click(within(dialog).getByRole('button', { name: /应\s*用/ }));
+
+    await waitFor(() => {
+      for (const category of ['NEW', 'IN_PROGRESS', 'PENDING_DECISION', 'DONE']) {
+        expect(requests.some(q => q.get('statusCategory') === category
+          && q.get('createdFrom') === FROM && q.get('createdTo') === TO)).toBe(true);
+      }
+      // 决策人汇总是看板列的一部分，时间条件同样生效，避免汇总数与列内卡片数不一致
+      expect(requests.some(q => q.get('pendingDecisionOnly') === 'true'
+        && q.get('createdFrom') === FROM && q.get('createdTo') === TO)).toBe(true);
+    });
+  });
+
+  it('warns instead of submitting when the start day is later than the end day', async () => {
+    window.localStorage.setItem('autowonder.workitems.view', 'table');
+    const requests: URLSearchParams[] = [];
+    useRecordingServer(requests);
+    renderPage();
+    await screen.findByText('范围工单一');
+
+    const dialog = await openAdvancedFilter();
+    typeDate(dialog, '起始日期', '2026-10-10');
+    typeDate(dialog, '结束日期', '2026-10-01');
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('起始日期不能晚于结束日期');
+    expect(within(dialog).getByRole('button', { name: /应\s*用/ })).toBeDisabled();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every(q => !q.has('createdFrom') && !q.has('createdTo'))).toBe(true);
   });
 });

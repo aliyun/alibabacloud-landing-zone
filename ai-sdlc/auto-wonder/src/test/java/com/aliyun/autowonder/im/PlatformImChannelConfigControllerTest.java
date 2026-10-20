@@ -51,7 +51,7 @@ class PlatformImChannelConfigControllerTest {
 
         assertEquals(channel, controller.updateDingTalk(request).getData());
 
-        verify(systemAdminService).requireSystemAdmin(10000L, "配置协作通知");
+        verify(systemAdminService).requireSystemAdmin(10000L, "配置协作通知", "access.admin.im_denied");
         verify(configService).updateDingTalk(10000L, request);
     }
 
@@ -68,7 +68,7 @@ class PlatformImChannelConfigControllerTest {
 
         assertEquals(channel, controller.updateFeishu(request).getData());
 
-        verify(systemAdminService).requireSystemAdmin(10000L, "配置协作通知");
+        verify(systemAdminService).requireSystemAdmin(10000L, "配置协作通知", "access.admin.im_denied");
         verify(configService).update(10000L, "FEISHU", request);
     }
 

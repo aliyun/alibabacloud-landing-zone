@@ -51,7 +51,9 @@ public class ArtifactShareRequestService {
             throw new BizException(ErrorCode.WORKITEM_NOT_FOUND);
         }
         if (sha256 == null || !sha256.matches("[0-9a-fA-F]{64}")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "分享本轮产物必须提供文件内容的 64 位 SHA-256");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.share_request.digest_required", null,
+                    "分享本轮产物必须提供文件内容的 64 位 SHA-256");
         }
         if (artifactId != null) {
             ArtifactDO artifact = artifacts.findWorkitemByTenantAndId(tenantId, artifactId);
@@ -60,7 +62,9 @@ public class ArtifactShareRequestService {
                 throw new BizException(ErrorCode.ARTIFACT_NOT_FOUND);
             }
             if (name != null && !logicalPath(name).equals(logicalPath(artifact.getName()))) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "artifactId 与 name 不一致");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                        "artifact.share_request.name_mismatch", null,
+                        "artifactId 与 name 不一致");
             }
             name = artifact.getName();
         }
@@ -75,7 +79,9 @@ public class ArtifactShareRequestService {
         ArtifactShareRequestDO saved = requests.find(tenantId, dispatchId, name);
         if (!Objects.equals(saved.getWorkitemId(), workitemId)
                 || !saved.getSha256().equals(request.getSha256())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "本派发同名产物已申请分享另一内容版本，请勿覆盖原申请");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.share_request.duplicate_content", null,
+                    "本派发同名产物已申请分享另一内容版本，请勿覆盖原申请");
         }
         if (DispatchStatus.isTerminal(dispatch.getStatus()) && "PENDING".equals(saved.getStatus())) {
             process(saved.getId());
@@ -170,14 +176,20 @@ public class ArtifactShareRequestService {
 
     static String logicalPath(String name) {
         String safe = DaemonArtifactController.sanitizePath(name);
-        if (safe == null) throw new BizException(ErrorCode.PARAM_INVALID, "无效的产物路径");
+        if (safe == null) throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                "artifact.share_request.path_invalid", null,
+                "无效的产物路径");
         String logical = ExternalArtifactShareService.logicalName(safe);
         if (logical.isBlank() || logical.length() > 256 || logical.chars().anyMatch(Character::isISOControl)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "无效的产物路径");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "artifact.share_request.path_invalid", null,
+                    "无效的产物路径");
         }
         for (String part : logical.split("/", -1)) {
             if (part.isEmpty() || part.equals(".") || part.equals("..")) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "产物路径必须是规范的 output 相对路径");
+                throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                        "artifact.share_request.path_not_canonical", null,
+                        "产物路径必须是规范的 output 相对路径");
             }
         }
         return logical;

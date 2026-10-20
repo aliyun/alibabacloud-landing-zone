@@ -1,3 +1,5 @@
+import { artifactTypeLabel } from '../runtimeLabels';
+import { useTranslation } from 'react-i18next';
 import { Card, Typography, Space, Spin } from 'antd';
 import { FileOutlined } from '@ant-design/icons';
 import type { Artifact } from '@/shared/types/workitem';
@@ -10,9 +12,10 @@ interface ArtifactListProps {
 }
 
 export function ArtifactList({ artifacts, loading }: ArtifactListProps) {
+  const { t } = useTranslation('workitem');
   if (loading) {
     return (
-      <Card size="small" title="产物">
+      <Card size="small" title={t('artifacts.title')}>
         <div style={{ textAlign: 'center', padding: 16 }}>
           <Spin size="small" />
         </div>
@@ -21,10 +24,10 @@ export function ArtifactList({ artifacts, loading }: ArtifactListProps) {
   }
 
   return (
-    <Card size="small" title="产物" styles={{ body: { padding: '8px 12px' } }}>
+    <Card size="small" title={t('artifacts.title')} styles={{ body: { padding: '8px 12px' } }}>
       {(!artifacts || artifacts.length === 0) ? (
         <Text type="secondary" style={{ fontSize: 12 }}>
-          暂无产物（开发完成后自动出现）
+          {t('artifacts.empty')}
         </Text>
       ) : (
         <Space direction="vertical" style={{ width: '100%' }} size={6}>
@@ -35,7 +38,7 @@ export function ArtifactList({ artifacts, loading }: ArtifactListProps) {
             >
               <FileOutlined style={{ color: 'var(--aw-muted)', fontSize: 14 }} />
               <Text ellipsis style={{ flex: 1, fontSize: 13 }}>{a.name}</Text>
-              <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{a.type}</Text>
+              <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{artifactTypeLabel(a.type)}</Text>
             </div>
           ))}
         </Space>

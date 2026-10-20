@@ -27,4 +27,20 @@ class MemberDeliveryServiceTest {
         assertThrows(RuntimeException.class, () -> service.get(1, "2020-01-01", "2026-01-01"));
         verifyNoInteractions(dao);
     }
+
+    @Test void historicalOriginIsOptionalAndOnlySetOnMissingCurrentNonNullId() throws Exception {
+        var dao=mock(MemberDeliveryDao.class);
+        var authored=new MemberDeliveryService.Member(); authored.setMemberId(7L);authored.setMemberName("历史成员 #8");
+        when(dao.members(9L)).thenReturn(List.of(authored));
+        var historical=new MemberDeliveryService.Counts(); historical.setMemberId(8L);historical.setTotal(1);
+        var unassigned=new MemberDeliveryService.Counts(); unassigned.setTotal(2);
+        when(dao.counts(eq(9L),any(),any())).thenReturn(List.of(historical,unassigned));
+        var report=new MemberDeliveryService(dao).get(9L,"2026-01-01","2026-01-07");
+        var json=new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(report.members());
+        assertEquals("历史成员 #8",report.members().get(1).getMemberName());
+        assertEquals(3,report.summary().getTotal()); assertEquals("未归属成员",report.members().get(2).getMemberName());
+        assertFalse(json.get(0).has("memberNameKind")); assertFalse(json.get(2).has("memberNameKind"));
+        assertEquals("HISTORICAL_MEMBER_FALLBACK",json.get(1).path("memberNameKind").asText());
+    }
+
 }

@@ -1,7 +1,9 @@
+import { transitionWarningText } from './runtimeLabels';
 import { message } from 'antd';
-import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
+import { i18n } from '@/shared/i18n';
+import { keepPreviousData, useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from './api';
-import type { WorkitemQuery, WorkitemStatusCategory } from './api';
+import type { WorkitemQuery, WorkitemStatusCategory, RecycledWorkitemQuery } from './api';
 import type { Workitem } from '@/shared/types/workitem';
 
 export function useWorkitemList(query: WorkitemQuery, options?: { enabled?: boolean }) {
@@ -145,7 +147,7 @@ export function useUpdateScheduledStart(workitemId: number | string) {
     mutationFn: (params: { scheduledStartAt?: string | null; executeNow?: boolean }) =>
       api.updateScheduledStart(workitemId, params),
     onSuccess: (_data, variables) => {
-      message.success(variables.executeNow ? '已立即执行' : variables.scheduledStartAt ? '计划执行时间已更新' : '已取消定时执行');
+      message.success(variables.executeNow ? i18n.t('workitem:messages.executedNow') : variables.scheduledStartAt ? i18n.t('workitem:messages.scheduledUpdated') : i18n.t('workitem:messages.scheduledCancelled'));
       invalidateWorkitemCaches(queryClient, workitemId);
     },
   });
@@ -156,7 +158,7 @@ export function useUpdateWorkitemTags(workitemId: number | string) {
   return useMutation({
     mutationFn: ({ tags }: { tags: string[] }) => api.updateWorkitemTags(workitemId, tags),
     onSuccess: () => {
-      message.success('标签已更新');
+      message.success(i18n.t('workitem:messages.tagsUpdated'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId] });
       queryClient.invalidateQueries({ queryKey: ['workitems'] });
     },
@@ -169,7 +171,7 @@ export function useUpdateWorkitemContent() {
     mutationFn: ({ id, title, contentMd }: { id: number | string; title: string; contentMd: string }) =>
       api.updateWorkitemContent(id, title, contentMd),
     onSuccess: (data, variables) => {
-      message.success('工单内容已保存');
+      message.success(i18n.t('workitem:messages.contentSaved'));
       queryClient.setQueryData(['workitem', variables.id], data);
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'unified-timeline'] });
       queryClient.invalidateQueries({ queryKey: ['workitems'] });
@@ -182,11 +184,35 @@ export function useDeleteWorkitem() {
   return useMutation({
     mutationFn: ({ id }: { id: number | string }) => api.deleteWorkitem(id),
     onSuccess: () => {
-      message.success('工单已删除');
+      message.success(i18n.t('workitem:messages.deleted'));
+      queryClient.invalidateQueries({ queryKey: ['workitems'] });
+      queryClient.invalidateQueries({ queryKey: ['workitems-recycled'] });
+    },
+    onError: (error: Error) => {
+      message.error(error.message || i18n.t('workitem:messages.deleteFailed'));
+    },
+  });
+}
+
+export function useRecycledWorkitemList(query: RecycledWorkitemQuery, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['workitems-recycled', query],
+    queryFn: () => api.listRecycledWorkitems(query),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+export function useRestoreWorkitem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: number | string }) => api.restoreWorkitem(id),
+    onSuccess: () => {
+      message.success(i18n.t('workitem:messages.restored'));
+      queryClient.invalidateQueries({ queryKey: ['workitems-recycled'] });
       queryClient.invalidateQueries({ queryKey: ['workitems'] });
     },
     onError: (error: Error) => {
-      message.error(error.message || '删除失败');
+      message.error(error.message || i18n.t('workitem:messages.restoreFailed'));
     },
   });
 }
@@ -197,10 +223,10 @@ export function useTransitionWorkitem() {
     mutationFn: ({ id, toNodeId }: { id: number | string; toNodeId: number }) =>
       api.transitionWorkitem(id, toNodeId),
     onSuccess: (data, variables) => {
-      message.success('状态已流转');
+      message.success(i18n.t('workitem:messages.transitioned'));
       // 越界流转放行但提示（规格 3.3）：警告由服务端在响应中下发。
       if (data?.transitionWarning) {
-        message.warning(data.transitionWarning);
+        message.warning(transitionWarningText(data));
       }
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'delivery-progress'] });
@@ -215,7 +241,7 @@ export function useSyncExternalWorkitem() {
   return useMutation({
     mutationFn: ({ id }: { id: number | string }) => api.syncExternalWorkitem(id),
     onSuccess: (result, variables) => {
-      message.success(`同步完成：新增 ${result.imported}，更新 ${result.updated}，评论 ${result.commentsImported}`);
+      message.success(i18n.t('workitem:messages.syncCompleted', { imported: result.imported, updated: result.updated, commentsImported: result.commentsImported }));
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'participants'] });
@@ -249,6 +275,8 @@ export function useMentionCandidates(workitemId: number | string, query?: string
     queryKey: ['workitem', workitemId, 'mention-candidates', query || ''],
     queryFn: () => api.getMentionCandidates(workitemId, query || undefined),
     enabled: !!workitemId,
+    // 查询键随输入变化时保留上一批候选人，候选菜单在请求完成前不被清空。
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -270,26 +298,29 @@ export function useToggleWatch() {
     mutationFn: ({ id, watched }: { id: number | string; watched: boolean }) =>
       watched ? api.unwatchWorkitem(id) : api.watchWorkitem(id),
     onSuccess: (state, variables) => {
-      message.success(state.watched ? '已关注' : '已取消关注');
+      message.success(state.watched ? i18n.t('workitem:messages.watched') : i18n.t('workitem:messages.unwatched'));
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['workitem', variables.id, 'watchers'] });
       queryClient.invalidateQueries({ queryKey: ['workitems'] });
     },
     onError: (error: Error) => {
-      message.error(error.message || '操作失败');
+      message.error(error.message || i18n.t('workitem:messages.operationFailed'));
     },
   });
 }
 
-export function useDeliveryProgress(workitemId: number | string) {
+export function useDeliveryProgress(workitemId: number | string, statusCategory?: string | null) {
   return useQuery({
     queryKey: ['workitem', workitemId, 'delivery-progress'],
     queryFn: () => api.getDeliveryProgress(workitemId),
+    retry: false,
     enabled: !!workitemId,
     refetchInterval: (query) => {
+      if (query.state.status === 'error') return 30000;
       const data = query.state.data;
-      const hasActive = data?.agents?.some((a) => a.status === 'active');
-      return hasActive ? 5000 : 30000;
+      const hasActive = data?.agents?.some((a) => a.status === 'active')
+        || data?.executions?.some((execution) => ['PENDING', 'PACKAGING', 'DISPATCHED', 'ACKED', 'RUNNING', 'PAUSING', 'PAUSE_FAILED', 'WAITING_FOR_PAUSE'].includes(execution.status ?? ''));
+      return hasActive || statusCategory === 'IN_PROGRESS' ? 5000 : 30000;
     },
   });
 }
@@ -299,7 +330,7 @@ export function useContinueDispatch(workitemId: number | string) {
   return useMutation({
     mutationFn: ({ dispatchId }: { dispatchId: number }) => api.continueDispatch(workitemId, dispatchId),
     onSuccess: () => {
-      message.success('已创建恢复执行');
+      message.success(i18n.t('workitem:messages.continued'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'unified-timeline'] });
     },
@@ -311,7 +342,7 @@ export function usePauseDispatch(workitemId: number | string) {
   return useMutation({
     mutationFn: ({ dispatchId }: { dispatchId: number }) => api.pauseDispatch(workitemId, dispatchId),
     onSuccess: () => {
-      message.success('已请求安全暂停，正在保存检查点');
+      message.success(i18n.t('workitem:messages.pauseRequested'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'delivery-progress'] });
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'unified-timeline'] });
     },
@@ -347,11 +378,11 @@ export function useUploadRequirementDocuments(workitemId: number | string) {
   return useMutation({
     mutationFn: ({ files }: { files: File[] }) => api.uploadRequirementDocuments(workitemId, files),
     onSuccess: () => {
-      message.success('需求文档已上传');
+      message.success(i18n.t('workitem:messages.documentsUploaded'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'requirement-documents'] });
     },
     onError: (error: Error) => {
-      message.error(error.message || '需求文档上传失败');
+      message.error(error.message || i18n.t('workitem:messages.documentUploadFailed'));
     },
   });
 }
@@ -361,11 +392,11 @@ export function useDeleteRequirementDocument(workitemId: number | string) {
   return useMutation({
     mutationFn: ({ artifactId }: { artifactId: number | string }) => api.deleteRequirementDocument(workitemId, artifactId),
     onSuccess: () => {
-      message.success('需求文档已删除');
+      message.success(i18n.t('workitem:messages.documentDeleted'));
       queryClient.invalidateQueries({ queryKey: ['workitem', workitemId, 'requirement-documents'] });
     },
     onError: (error: Error) => {
-      message.error(error.message || '需求文档删除失败');
+      message.error(error.message || i18n.t('workitem:messages.documentDeleteFailed'));
     },
   });
 }

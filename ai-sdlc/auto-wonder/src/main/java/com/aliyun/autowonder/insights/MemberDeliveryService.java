@@ -1,5 +1,7 @@
 package com.aliyun.autowonder.insights;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import lombok.Getter;
@@ -19,7 +21,11 @@ public class MemberDeliveryService {
         private long total, completed, inProgress, requirements;
         void add(Counts c) { total += c.total; completed += c.completed; inProgress += c.inProgress; requirements += c.requirements; }
     }
-    @Getter @Setter public static class Member extends Counts { private String memberName; }
+    @Getter @Setter public static class Member extends Counts {
+        private String memberName;
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private String memberNameKind;
+    }
     public record Report(String startDate, String endDate, String timezone, Counts summary,
                          long weekRequirements, List<Member> members) {}
     public Report get(long tenantId, String from, String to) {
@@ -39,7 +45,9 @@ public class MemberDeliveryService {
             summary.add(counts);
             Member member = members.computeIfAbsent(counts.getMemberId(), id -> {
                 Member m = new Member(); m.setMemberId(id);
-                m.setMemberName(id == null ? "未归属成员" : "历史成员 #" + id); return m;
+                m.setMemberName(id == null ? "未归属成员" : "历史成员 #" + id);
+                if (id != null) m.setMemberNameKind("HISTORICAL_MEMBER_FALLBACK");
+                return m;
             });
             member.add(counts);
         }

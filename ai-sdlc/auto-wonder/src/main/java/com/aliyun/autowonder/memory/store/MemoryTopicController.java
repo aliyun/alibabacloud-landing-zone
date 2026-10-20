@@ -4,6 +4,7 @@ import com.aliyun.autowonder.access.RequireWorkspaceAccess;
 import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.memory.store.dto.MemoryTopicRequest;
@@ -13,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 /** Human topic operations; the existing runtime document protocol is unchanged. */
 @RestController
 @RequestMapping("/api/memory-stores")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "维护记忆")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "维护记忆", actionKey = "access.action.maintain_memory")
 public class MemoryTopicController {
     private final MemoryTopicService topics;
 
@@ -24,7 +25,7 @@ public class MemoryTopicController {
 
     @ExceptionHandler(MemoryDocumentService.MemoryConflictException.class)
     public ResponseEntity<Result<Void>> conflict(MemoryDocumentService.MemoryConflictException error) {
-        return ResponseEntity.status(409).body(Result.fail(ErrorCode.CONFLICT.getCode(), "记忆已被修改，请刷新后重试"));
+        return ResponseEntity.status(409).body(Result.failKeyed(ErrorCode.CONFLICT.getCode(), "memory.topic.conflict_refresh", null, "记忆已被修改，请刷新后重试", null));
     }
 
     @ExceptionHandler(MemoryStoreApplicationService.MemoryAccessDeniedException.class)
@@ -34,6 +35,10 @@ public class MemoryTopicController {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Result<Void>> invalid(IllegalArgumentException error) {
+        if (error instanceof KeyedIllegalArgumentException keyed) {
+            return ResponseEntity.badRequest().body(Result.failKeyed(ErrorCode.PARAM_INVALID.getCode(),
+                    keyed.getMessageKey(), keyed.getMessageArgs(), error.getMessage(), null));
+        }
         return ResponseEntity.badRequest().body(Result.fail(ErrorCode.PARAM_INVALID.getCode(), error.getMessage()));
     }
 

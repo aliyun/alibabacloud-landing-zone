@@ -33,6 +33,35 @@ candidate was proved, not assumed: `25371cb1` is an ancestor of the community ti
 
 ## History
 
+### 2026-10-20: candidate sync to `2b97e41ff` — v1.0.0
+
+- Status: CANDIDATE; product verification and independent reviews PENDING.
+- previousVerifiedMasterSha: `25371cb104ac019fb26674f0c495c410c01e5041` (unchanged).
+- candidateMasterSha: `2b97e41ffda2cfbb64f1fa74963867ebed7fe3ef`.
+- communityBeforeSha: `f51d701719b036a22c82336ca8df7ed6fccbd49f`.
+- Already incorporated ancestor: `cc41f31632dd7ab5f5a8bd7d7916962445dcd02e`.
+- Resulting merge commit: the commit containing this entry; exact candidate SHA is
+  recorded externally in `step400359-candidate.json` to avoid self-referential edits.
+- MAJOR release for role API replacement and immediate logical user deletion;
+  public federation, i18n, dispatch durability/guidance, attachments, squad copy,
+  and runtime 0.3.22 are retained. See `releases/release_v1.0.0_20261020.md`.
+- Conflict and automatic-overlap decisions preserve public behavior, SecretCrypto,
+  Community dependency versions, required public storage, optional existing Aone,
+  and Qoder-only UI creation. Standalone Aone status mapping/reconciliation and
+  internal profiles/development history are excluded. Public SSO is not BUC.
+- `e2e-tests/` is byte-for-byte unchanged from communityBeforeSha; no master E2E
+  assets enter this sync. Published migrations are unchanged; new SQL is V076–V088.
+- Six optional federation keys are bound in YAML and reviewed against deployment
+  and upgrade inventory. Runtime recommendation remains source-derived. Existing
+  multipart limits cover attachments. The deployment upgrade planner now honors
+  nonempty Spring defaults for optional federation settings while retaining
+  required-setting checks; operator guidance and retention policy are updated. Aone-specific env omissions
+  remain intentional. Runtime and environment bindings retain upstream defaults.
+- Internal MR: NOT_CREATED. GitHub PR: NOT_CREATED. Tests/build/image/startup/
+  schema/API/UI/log attribution/cleanup and independent review: PENDING.
+- No unresolved product decisions; runtime validation remains required. This entry
+  does not advance Current Baseline or claim a successful release.
+
 ### 2026-10-10: Community SLS startup bugfix — v0.10.1
 
 - Community base: `5af9b768a9d9ada5898561321bd599f178bf202b` (v0.10.0).

@@ -18,6 +18,43 @@ import static org.mockito.Mockito.*;
 class DispatchCheckpointServiceTest {
 
     @Test
+    void completionUploadPinsIdentityBeforeReturningAndUsesImmutableObjectKey() {
+        DispatchCheckpointDao dao = mock(DispatchCheckpointDao.class);
+        ObjectStorage storage = mock(ObjectStorage.class);
+        DispatchResultStore store = mock(DispatchResultStore.class);
+        when(store.transaction(any())).thenAnswer(call -> ((java.util.function.Supplier<?>)call.getArgument(0)).get());
+        when(storage.put(anyString(), anyString(), any())).thenReturn(new StoredObject("bucket/immutable", "md5", 3L));
+        OssProperties properties = new OssProperties();
+        properties.setArtifactBucket("bucket");
+        DispatchCheckpointService service = new DispatchCheckpointService(dao, mock(DispatchRuntimeEventDao.class),
+                mock(DispatchDao.class), storage, properties);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "resultStore", store);
+        DispatchDO dispatch = new DispatchDO(); dispatch.setTenantId(100L); dispatch.setId(55L);
+        dispatch.setWorkitemId(200L); dispatch.setAgentId(9L);
+        String resultId="b55aa1a7-43d5-4452-b39a-278554b67942";
+        DispatchCheckpointDO receipt=service.store(dispatch,7,null,null,null,null,"abc".getBytes(),resultId);
+        assertEquals(resultId,receipt.getCompletionResultId());
+        var order=org.mockito.Mockito.inOrder(store,storage,dao);
+        order.verify(store).lockDispatch(100,55);
+        order.verify(storage).put(anyString(),argThat(key -> key.contains("checkpoint-7-") && key.endsWith(".tar.gz")),any());
+        order.verify(dao).insert(argThat(row -> resultId.equals(row.getCompletionResultId())));
+    }
+
+    @Test
+    void repeatedSequenceCannotChangeTheBytesBehindAReceipt() {
+        DispatchCheckpointDao dao=mock(DispatchCheckpointDao.class);
+        ObjectStorage storage=mock(ObjectStorage.class);
+        DispatchCheckpointDO old=checkpoint(7,"bucket/original","different-hash");
+        when(dao.findByDispatchAndSeq(100L,55L,7L)).thenReturn(old);
+        DispatchCheckpointService service=new DispatchCheckpointService(dao,mock(DispatchRuntimeEventDao.class),
+                mock(DispatchDao.class),storage,new OssProperties());
+        DispatchDO dispatch=new DispatchDO(); dispatch.setTenantId(100L); dispatch.setId(55L);
+        org.junit.jupiter.api.Assertions.assertThrows(DispatchCheckpointService.CheckpointConflictException.class,
+                () -> service.store(dispatch,7,null,null,null,null,"different".getBytes()));
+        org.mockito.Mockito.verifyNoInteractions(storage);
+    }
+
+    @Test
     void recoveryProjectsLegacyCheckpointThroughRetryLineageAndKeepsWireChecksumConsistent() throws Exception {
         LegacyCheckpointNormalizerTest fixture = new LegacyCheckpointNormalizerTest();
         DispatchCheckpointDO checkpoint = fixture.source(LegacyCheckpointNormalizerTest.PREFIX);
@@ -83,7 +120,7 @@ class DispatchCheckpointServiceTest {
     }
 
     @Test
-    void storePrunesCheckpointsOlderThanTheLatestTwo() {
+    void storeMarksObsoleteMetadataWithoutDeletingObjectsBeforeCommit() {
         DispatchCheckpointDao dao = mock(DispatchCheckpointDao.class);
         DispatchDao dispatchDao = mock(DispatchDao.class);
         DispatchRuntimeEventDao runtimeEventDao = mock(DispatchRuntimeEventDao.class);
@@ -108,9 +145,9 @@ class DispatchCheckpointServiceTest {
 
         service.store(dispatch, 3L, "codex", "session", "runtime", "step", new byte[]{1});
 
-        verify(storage).delete("artifact-bucket/old-checkpoint");
-        verify(storage).delete("artifact-bucket/old-checkpoint.compat-exact-ref-v1.tar.gz");
-        verify(dao).deleteById(100L, 55L, 1L);
+        verify(storage, never()).delete("artifact-bucket/old-checkpoint");
+        verify(storage, never()).delete("artifact-bucket/old-checkpoint.compat-exact-ref-v1.tar.gz");
+        verify(dao).markGarbage(100L, 55L, 1L);
     }
 
     @Test

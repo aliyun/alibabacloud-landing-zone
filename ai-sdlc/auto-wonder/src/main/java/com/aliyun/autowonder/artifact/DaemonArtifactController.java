@@ -102,16 +102,31 @@ public class DaemonArtifactController {
             @RequestParam(value = "filesMetadata", required = false) String filesMetadata,
             @RequestParam("files") MultipartFile[] files) throws Exception {
 
+        return uploadInternal(dispatchId, token, idempotencyKey, filesMetadata, files, false);
+    }
+
+    /** Diagnostics remain readable after failure/cancellation; this endpoint cannot publish business outputs. */
+    @PostMapping("/dispatches/{dispatchId}/diagnostics")
+    public ResponseEntity<?> uploadDiagnostics(@PathVariable long dispatchId, @RequestParam("token") String token,
+            @RequestParam(value = "idempotencyKey", required = false) String idempotencyKey,
+            @RequestParam(value = "filesMetadata", required = false) String filesMetadata,
+            @RequestParam("files") MultipartFile[] files) throws Exception {
+        return uploadInternal(dispatchId, token, idempotencyKey, filesMetadata, files, true);
+    }
+
+    private ResponseEntity<?> uploadInternal(long dispatchId, String token, String idempotencyKey,
+            String filesMetadata, MultipartFile[] files, boolean diagnosticsOnly) throws Exception {
         log.info("artifact upload request dispatchId={} fileCount={}", dispatchId, files.length);
         DaemonUploadAuthenticator.AuthResult auth = authenticator.authenticate(dispatchId, token);
-        if (!auth.isSuccess() || authenticator.isMutationFenced(dispatchId)) {
+        if (!auth.isSuccess() || (!diagnosticsOnly && authenticator.isMutationFenced(dispatchId))) {
             log.info("artifact upload auth failed dispatchId={}", dispatchId);
             return ResponseEntity.status(401).build();
         }
         if (auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
             capabilityGuard.requireAvailable("daemon");
         }
-        EvolutionMode evolutionMode = evolutionModeResolver.resolve(auth.getTenantId(), auth.getAgentId());
+        EvolutionMode evolutionMode = diagnosticsOnly ? EvolutionMode.MANUAL
+                : evolutionModeResolver.resolve(auth.getTenantId(), auth.getAgentId());
 
         JSONArray metadata = null;
         if (filesMetadata != null && !filesMetadata.isBlank()) {
@@ -145,7 +160,20 @@ public class DaemonArtifactController {
                 fileReceipts.add(rejectedFile(i, path, files[i].getSize(), "FILE_TOO_LARGE", MAX_SINGLE_FILE_BYTES));
                 continue;
             }
+            String diagnosticPath = logicalPath(path);
+            if (diagnosticsOnly && (!diagnosticPath.matches(
+                    "observability/runtime/hooks/receipts/[a-f0-9]{64}\\.json") || files[i].getSize() > 32L * 1024 * 1024)) {
+                fileReceipts.add(rejectedFile(i, path, files[i].getSize(), "INVALID_DIAGNOSTIC", null));
+                continue;
+            }
             byte[] bytes = files[i].getBytes();
+            if (diagnosticsOnly) {
+                String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+                if (!diagnosticPath.endsWith("/" + digest + ".json")) {
+                    fileReceipts.add(rejectedFile(i, path, files[i].getSize(), "DIAGNOSTIC_DIGEST_MISMATCH", null));
+                    continue;
+                }
+            }
 
             // Daemon uploads under the artifact root (e.g. artifacts/output/<typed-dir>/...);
             // typed-dir classification and memory ingest match on the logical path.
@@ -195,10 +223,10 @@ public class DaemonArtifactController {
                     ? artifactService.record(req, auth.getTenantId())
                     : artifactService.record(req, auth.getTenantId(),
                     new ArtifactOwnerRef(auth.getSourceType(), auth.getWorkitemId()));
-            if (auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN && scheduledTaskNotificationService != null) {
+            if (!diagnosticsOnly && auth.getSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN && scheduledTaskNotificationService != null) {
                 scheduledTaskNotificationService.artifact(auth.getTenantId(), auth.getWorkitemId());
             }
-            usageService.ingestArtifact(auth.getTenantId(), auth.getWorkitemId(), dispatchId, artifactId, path, so.getOssRef(), bytes);
+            if (!diagnosticsOnly) usageService.ingestArtifact(auth.getTenantId(), auth.getWorkitemId(), dispatchId, artifactId, path, so.getOssRef(), bytes);
             if (!isTelemetry(logical) && !debugLogFile) {
                 recordArtifactAudit(auth, dispatchId, path, classify(logical), so.getSize());
             }
@@ -237,6 +265,9 @@ public class DaemonArtifactController {
             }
         }
 
+        long acceptedCount = fileReceipts.stream().filter(f -> "ACCEPTED".equals(f.get("status"))).count();
+        log.info("artifact upload receipt prepared dispatchId={} receiptCount={} acceptedCount={} rejectedCount={} bodyType=Map",
+                dispatchId, fileReceipts.size(), acceptedCount, fileReceipts.size() - acceptedCount);
         return ResponseEntity.ok(Map.of("remoteRef", prefix, "files", fileReceipts));
     }
 

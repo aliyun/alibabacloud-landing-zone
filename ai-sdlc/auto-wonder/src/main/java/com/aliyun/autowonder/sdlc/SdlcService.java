@@ -154,8 +154,7 @@ public class SdlcService {
         if (workitemCount > 0 || !agentIds.isEmpty()) {
             List<Long> workitemIds = workitemCount > 0
                     ? workitemDao.listIdsBySdlcId(id, 5) : List.of();
-            throw new BizException(ErrorCode.SDLC_DELETE_IN_USE,
-                    buildInUseMessage(workitemCount, workitemIds, agentIds));
+            throw buildInUseException(workitemCount, workitemIds, agentIds);
         }
         int rows = sdlcDao.softDelete(id, tenantId, s.getVersion(), userId);
         if (rows == 0) {
@@ -164,8 +163,10 @@ public class SdlcService {
         stepDao.deleteAllBySdlc(id, tenantId);
     }
 
-    private String buildInUseMessage(long workitemCount, List<Long> workitemIds, List<Long> agentIds) {
+    private BizException buildInUseException(long workitemCount, List<Long> workitemIds, List<Long> agentIds) {
         List<String> refs = new ArrayList<>();
+        String workitemSample = workitemIds.stream().map(id -> "#" + id).collect(java.util.stream.Collectors.joining(", "));
+        String agentReferences = null;
         if (workitemCount > 0) {
             StringBuilder part = new StringBuilder("工单 ").append(workitemCount).append(" 个");
             if (!workitemIds.isEmpty()) {
@@ -193,10 +194,20 @@ public class SdlcService {
                     names.add("ID:" + agentId);
                 }
             }
-            refs.add("数字员工 " + agentIds.size() + " 个(" + String.join(", ", names) + ")");
+            agentReferences = String.join(", ", names);
+            refs.add("数字员工 " + agentIds.size() + " 个(" + agentReferences + ")");
         }
-        return ErrorCode.SDLC_DELETE_IN_USE.getMessage()
+        String diagnostic = ErrorCode.SDLC_DELETE_IN_USE.getMessage()
                 + ": 引用源: " + String.join("; ", refs) + "。请先解除上述引用后再删除。";
+        if (workitemCount == 0) {
+            return BizException.keyed(ErrorCode.SDLC_DELETE_IN_USE, "sdlc.delete_in_use.agents",
+                    new Object[]{String.valueOf(agentIds.size()), agentReferences}, diagnostic);
+        }
+        String key = agentIds.isEmpty() ? "sdlc.delete_in_use.workitems" : "sdlc.delete_in_use.combined";
+        if (!workitemIds.isEmpty()) key += workitemCount > workitemIds.size() ? ".more" : ".sample";
+        return BizException.keyed(ErrorCode.SDLC_DELETE_IN_USE, key,
+                new Object[]{String.valueOf(workitemCount), workitemSample,
+                        String.valueOf(agentIds.size()), agentReferences}, diagnostic);
     }
 
     @Transactional
@@ -427,9 +438,33 @@ public class SdlcService {
             return;
         }
         try {
-            JSON_MAPPER.readTree(value);
+            var node = JSON_MAPPER.readTree(value);
+            if ("gatePolicyJson".equals(field) && (!node.isObject()
+                    || node.has("humanApprovalRequired") && !node.get("humanApprovalRequired").isBoolean()
+                    || node.has("askWhenUnclear") && !node.get("askWhenUnclear").isBoolean())) {
+                throw BizException.keyed(ErrorCode.PARAM_INVALID, "sdlc.human_gate_policy_invalid", null, "gatePolicyJson 必须是对象，humanApprovalRequired 和 askWhenUnclear 必须是布尔值");
+            }
+            if ("gatePolicyJson".equals(field) && node.has("humanApprovers")) {
+                var approvers = node.get("humanApprovers");
+                if (!approvers.isObject()
+                        || approvers.has("includeCreator") && !approvers.get("includeCreator").isBoolean()
+                        || approvers.has("userIds") && !approvers.get("userIds").isArray()
+                        || approvers.has("identityTags") && !approvers.get("identityTags").isArray()) {
+                    throw BizException.keyed(ErrorCode.PARAM_INVALID, "sdlc.human_approvers_invalid", null, "humanApprovers 需要 includeCreator 布尔值、userIds 和 identityTags 数组");
+                }
+                for (var id : approvers.path("userIds")) {
+                    if (!id.isIntegralNumber() || !id.canConvertToLong() || id.asLong() <= 0) throw BizException.keyed(ErrorCode.PARAM_INVALID, "sdlc.approver_id_invalid", null, "审批人 ID 必须为正整数");
+                }
+                for (var tag : approvers.path("identityTags")) {
+                    if (!tag.isTextual() || tag.asText().isBlank() || tag.asText().length() > 32) throw BizException.keyed(ErrorCode.PARAM_INVALID, "sdlc.approver_tag_invalid", null, "审批身份标签必须为 1 至 32 字的文本");
+                }
+                if (!approvers.path("includeCreator").asBoolean() && approvers.path("userIds").isEmpty() && approvers.path("identityTags").isEmpty()) {
+                    throw BizException.keyed(ErrorCode.PARAM_INVALID, "sdlc.approver_selection_required", null, "请至少选择一位审批人、身份标签或工单创建人");
+                }
+            }
         } catch (JsonProcessingException e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, field + " 不是合法的 JSON");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID,
+                    "sdlc.json_invalid", new Object[]{field}, field + " 不是合法的 JSON");
         }
     }
 

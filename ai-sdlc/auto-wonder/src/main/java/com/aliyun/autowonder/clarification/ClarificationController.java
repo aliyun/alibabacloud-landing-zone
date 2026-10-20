@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/workitems/{workitemId}/clarification")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看澄清信息")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看澄清信息", actionKey = "access.action.view_clarification_information")
 public class ClarificationController {
 
     private final ClarificationService clarificationService;
@@ -32,7 +32,7 @@ public class ClarificationController {
     }
 
     @PutMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新澄清信息")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新澄清信息", actionKey = "access.action.update_clarification_information")
     public Result<ClarificationVO> put(@PathVariable("workitemId") Long workitemId,
                                        @RequestBody PutClarificationRequest req) {
         return Result.ok(clarificationService.put(workitemId, req.getContentMd(),

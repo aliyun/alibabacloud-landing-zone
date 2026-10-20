@@ -56,3 +56,36 @@ memory tables remain intact, but active memory writes use document stores and AC
 The upgrade planner already inventories this YAML placeholder; it does not need
 a redundant entry in the example environment file. No new service or credential
 is required. Recommended runtime remains derived from application.yml (0.3.3).
+
+## Public enterprise federation (1.0.0)
+
+OIDC and SAML2 identity providers are configured by platform administrators in
+Platform Configuration → Enterprise SSO. Connections and identity providers must
+both be enabled before a login option is visible. A configured public HTTPS base
+URL supplies callback URLs. Identity-provider endpoints and certificates are
+operator inputs; there is no built-in internal identity provider or BUC dependency.
+Client secrets use the same Community SecretCrypto master key as other protected
+configuration. Keep that key stable and backed up during upgrades.
+
+The following optional settings are bound in `application.yml`, so the deploy and
+upgrade environment inventory already includes them without duplicating entries
+in `application.env.example`:
+
+| Environment key | Default | Meaning |
+| --- | --- | --- |
+| AUTOWONDER_FEDERATION_SP_ENTITY_ID | autowonder | SAML issuer/audience |
+| AUTOWONDER_FEDERATION_LOGIN_STATE_TTL_SECONDS | 600 | One-time login state lifetime |
+| AUTOWONDER_FEDERATION_TICKET_TTL_SECONDS | 300 | Callback ticket lifetime |
+| AUTOWONDER_FEDERATION_CLOCK_SKEW_SECONDS | 120 | Assertion clock tolerance |
+| AUTOWONDER_FEDERATION_JWKS_CACHE_TTL_SECONDS | 3600 | OIDC signing-key cache lifetime |
+| AUTOWONDER_FEDERATION_HTTP_TIMEOUT_SECONDS | 15 | Identity-provider HTTP timeout |
+
+The properties preserve upstream defaults and validation behavior. Do not reduce
+clock or expiry protections to work around an incorrect IdP configuration. No
+new mandatory deployment secret is required when federation is unused.
+
+Runtime recommendation now defaults to 0.3.22 in `application.yml`. Deployment
+and upgrade scripts continue deriving it from that exact release and writing the
+resolved override before application activation; do not pin a second value in a
+manifest template. Community `application-local.yml` already provides multipart
+limits of 100 MB per file and 200 MB per request, including clarification uploads.

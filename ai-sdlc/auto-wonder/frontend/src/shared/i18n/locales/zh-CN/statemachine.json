@@ -1,0 +1,93 @@
+{
+  "page": {
+    "title": "状态模版管理",
+    "create": "新建模版",
+    "empty": "暂无模版"
+  },
+  "workTypes": {
+    "REQ": "需求 (REQ)",
+    "TASK": "任务 (TASK)",
+    "BUG": "缺陷 (BUG)"
+  },
+  "actions": {
+    "createTemplate": "新建状态模版",
+    "defaultTemplate": "设置默认状态模版",
+    "deleteTemplate": "删除状态模版",
+    "createNode": "添加状态节点",
+    "editNode": "编辑状态节点",
+    "deleteNode": "删除状态节点",
+    "createTransition": "添加状态流转",
+    "editTransition": "编辑状态流转",
+    "deleteTransition": "删除状态流转"
+  },
+  "common": {
+    "edit": "编辑",
+    "delete": "删除",
+    "cancel": "取消",
+    "close": "关闭"
+  },
+  "templates": {
+    "current": "当前模版:",
+    "default": "默认",
+    "setDefault": "设为默认",
+    "confirmDelete": "确认删除该模版？",
+    "name": "模版名称",
+    "nameRequired": "请输入模版名称",
+    "namePlaceholder": "如: 自定义需求流程"
+  },
+  "categories": {
+    "INIT": "初始态",
+    "IN_PROGRESS": "进行中",
+    "DONE": "完成态",
+    "CANCELED": "取消态"
+  },
+  "nodes": {
+    "title": "状态节点",
+    "help": "定义工单的所有可能状态",
+    "add": "添加节点",
+    "confirmDelete": "确认删除该状态节点？",
+    "editLabel": "编辑状态节点 {{code}}",
+    "deleteLabel": "删除状态节点 {{code}}",
+    "code": "编码",
+    "codeRequired": "请输入状态编码",
+    "codeHelp": "英文标识符，如 developing、verifying",
+    "codePlaceholder": "如: developing",
+    "name": "显示名称",
+    "nameRequired": "请输入显示名称",
+    "namePlaceholder": "如: 开发中",
+    "category": "分类",
+    "categoryRequired": "请选择分类",
+    "sort": "排序",
+    "sortHelp": "数字越小越靠前"
+  },
+  "transitions": {
+    "title": "推荐流转 (快捷操作)",
+    "help": "定义工单页面的快捷状态变更按钮",
+    "add": "添加推荐流转",
+    "editTitle": "编辑推荐流转",
+    "fromColumn": "起始状态",
+    "toColumn": "目标状态",
+    "name": "操作名称",
+    "actions": "操作",
+    "confirmDelete": "确认删除该流转？",
+    "warning": "推荐流转仅定义工单页面的快捷按钮。用户始终可以手动将工单切换到任意状态。",
+    "from": "从状态",
+    "fromRequired": "请选择起始状态",
+    "fromPlaceholder": "选择起始状态",
+    "to": "到状态",
+    "toRequired": "请选择目标状态",
+    "toPlaceholder": "选择目标状态",
+    "nameRequired": "请输入操作名称",
+    "nameHelp": "将显示为工单页面的快捷按钮文字",
+    "namePlaceholder": "如: 开始开发"
+  },
+  "messages": {
+    "templateCreated": "模版创建成功",
+    "saved": "已保存",
+    "deleted": "已删除",
+    "nodeAdded": "节点已添加",
+    "nodeDeleted": "节点已删除",
+    "transitionAdded": "流转已添加",
+    "transitionDeleted": "流转已删除"
+  }
+}

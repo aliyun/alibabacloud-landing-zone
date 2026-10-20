@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.integration.dingtalk;
 
 import com.aliyun.autowonder.security.crypto.SecretCrypto;
+import com.aliyun.autowonder.common.error.KeyedIllegalArgumentException;
 import com.aliyun.autowonder.integration.dingtalk.dto.BindingView;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -55,7 +56,7 @@ public class DingTalkBindingService {
             String appSecretPlain, String robotCode, Long agentId, String transportMode, String streamEnv,
             String callbackToken, String baseUrl, String regionId, String status) {
         if (dao.findByRobotCodeGlobal(robotCode) != null) {
-            throw new IllegalArgumentException("robotCode already bound: " + robotCode);
+            throw new KeyedIllegalArgumentException("integration.dingtalk_robot_bound", new Object[]{robotCode}, "robotCode already bound: " + robotCode);
         }
         DingtalkRobotBindingDO row = new DingtalkRobotBindingDO();
         row.setTenantId(tenantId);
@@ -87,11 +88,11 @@ public class DingTalkBindingService {
             String callbackToken, String baseUrl, String regionId, String status) {
         DingtalkRobotBindingDO existing = dao.findById(tenantId, id);
         if (existing == null) {
-            throw new IllegalArgumentException("binding not found: " + id);
+            throw new KeyedIllegalArgumentException("integration.dingtalk_binding_missing", new Object[]{String.valueOf(id)}, "binding not found: " + id);
         }
         DingtalkRobotBindingDO conflict = dao.findByRobotCodeGlobal(robotCode);
         if (conflict != null && !conflict.getId().equals(id)) {
-            throw new IllegalArgumentException("robotCode already bound: " + robotCode);
+            throw new KeyedIllegalArgumentException("integration.dingtalk_robot_bound", new Object[]{robotCode}, "robotCode already bound: " + robotCode);
         }
         existing.setAppKey(appKey);
         if (appSecretPlainOrNull != null && !appSecretPlainOrNull.isEmpty()) {
@@ -126,7 +127,7 @@ public class DingTalkBindingService {
         }
         String normalized = streamEnv.trim().toUpperCase(Locale.ROOT);
         if (!DEFAULT_STREAM_ENV.equals(normalized)) {
-            throw new IllegalArgumentException("unsupported DingTalk Stream env: " + streamEnv);
+            throw new KeyedIllegalArgumentException("integration.dingtalk_stream_env_unsupported", new Object[]{streamEnv}, "unsupported DingTalk Stream env: " + streamEnv);
         }
         return DEFAULT_STREAM_ENV;
     }
@@ -144,7 +145,7 @@ public class DingTalkBindingService {
         }
         String normalized = status.trim().toUpperCase(Locale.ROOT);
         if (!SUPPORTED_STATUSES.contains(normalized)) {
-            throw new IllegalArgumentException("unsupported DingTalk binding status: " + status);
+            throw new KeyedIllegalArgumentException("integration.dingtalk_status_unsupported", new Object[]{status}, "unsupported DingTalk binding status: " + status);
         }
         return normalized;
     }

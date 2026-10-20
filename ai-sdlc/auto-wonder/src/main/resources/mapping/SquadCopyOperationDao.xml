@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.aliyun.autowonder.squad.SquadCopyOperationDao">
+    <insert id="insert" parameterType="com.aliyun.autowonder.squad.SquadCopyOperationDO"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO squad_copy_operation
+            (source_workspace_id, source_squad_id, user_id, request_id, target_workspace_id,
+             request_fingerprint, source_snapshot_ref, status)
+        VALUES
+            (#{sourceWorkspaceId}, #{sourceSquadId}, #{userId}, #{requestId}, #{targetWorkspaceId},
+             #{requestFingerprint}, #{sourceSnapshotRef}, #{status})
+    </insert>
+    <select id="find" resultType="com.aliyun.autowonder.squad.SquadCopyOperationDO">
+        SELECT * FROM squad_copy_operation
+        WHERE source_workspace_id = #{sourceWorkspaceId}
+          AND user_id = #{userId}
+          AND request_id = #{requestId}
+          AND target_workspace_id = #{targetWorkspaceId}
+        LIMIT 1
+    </select>
+    <select id="listByRequest" resultType="com.aliyun.autowonder.squad.SquadCopyOperationDO">
+        SELECT * FROM squad_copy_operation
+        WHERE source_workspace_id = #{sourceWorkspaceId}
+          AND user_id = #{userId}
+          AND request_id = #{requestId}
+        ORDER BY target_workspace_id ASC
+    </select>
+    <!-- 状态守卫只推进处理中的记录：已完成结果不被重复请求改写。 -->
+    <update id="markSuccess">
+        UPDATE squad_copy_operation
+        SET status = 'SUCCESS',
+            target_squad_id = #{targetSquadId},
+            error_code = NULL,
+            error_message = NULL,
+            resource_cleanup_json = NULL,
+            gmt_modified = NOW(3)
+        WHERE id = #{id} AND status = 'IN_PROGRESS'
+    </update>
+    <update id="markFailed">
+        UPDATE squad_copy_operation
+        SET status = 'FAILED',
+            error_code = #{errorCode},
+            error_message = #{errorMessage},
+            resource_cleanup_json = #{resourceCleanupJson},
+            gmt_modified = NOW(3)
+        WHERE id = #{id} AND status = 'IN_PROGRESS'
+    </update>
+</mapper>

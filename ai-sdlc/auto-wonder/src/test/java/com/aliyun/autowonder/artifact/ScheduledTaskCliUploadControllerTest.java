@@ -218,16 +218,33 @@ class ScheduledTaskCliUploadControllerTest {
     }
 
     @Test
-    void unsupportedExtensionAndBadMagicBytesReturn400() throws Exception {
+    void knownFormatsWithBadMagicBytesReturn400() throws Exception {
         String token = mintToken();
 
-        for (String filename : new String[]{"a.exe", "fake.png", "fake.jpg", "fake.jpeg",
+        for (String filename : new String[]{"fake.png", "fake.jpg", "fake.jpeg",
                 "fake.webp", "fake.pdf", "fake.zip", "fake.docx", "fake.doc"}) {
             mvc.perform(multipart(uploadPath)
                             .file(new MockMultipartFile("files", filename, "application/octet-stream",
                                     "not-a-real-file".getBytes(StandardCharsets.UTF_8)))
                             .header("Authorization", "Bearer " + token))
                     .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void arbitraryExtensionsAndExtensionlessFilesPreserveBytes() throws Exception {
+        String token = mintToken();
+        byte[] bytes = {(byte) 0xFF, 0x00, 0x01, (byte) 0x80};
+
+        for (String filename : new String[]{"a.exe", "custom.backup", "README"}) {
+            mvc.perform(multipart(uploadPath)
+                            .file(new MockMultipartFile("files", filename, "application/octet-stream", bytes))
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true))
+                    .andExpect(jsonPath("$.data[0].name").value("requirements/" + filename));
+            assertArrayEquals(bytes, storage.get(
+                    "artifact-bucket/t/100/scheduled-task/321/requirements/" + filename));
         }
     }
 
@@ -356,6 +373,30 @@ class ScheduledTaskCliUploadControllerTest {
         return tokenService.mint(
                 com.aliyun.autowonder.mcp.McpAccessTokenService.CredentialType.LONG_LIVED,
                 USER_ID, MINT_WORKITEM_ID).getToken();
+    }
+
+    @Test
+    void issuedTokenStopsWorkingOnceOperatorForbiddenFromScheduledTaskDomain() throws Exception {
+        String token = mintToken();
+        // 定时任务文档上传与 REST 入口同属 SCHEDULEDTASK 域，禁用后立即拒绝。
+        WorkspaceMemberDO forbidden = member(TENANT_ID, "READ_WRITE", 0, 0);
+        forbidden.setReadOnlyDomains("[\"SCHEDULEDTASK\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(forbidden);
+
+        mvc.perform(multipart(uploadPath)
+                        .file(markdown("a.md", "# A"))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("10403"));
+
+        // 仅禁用 ARTIFACT 不影响定时任务文档上传（域按实际资源判定）。
+        WorkspaceMemberDO artifactOnly = member(TENANT_ID, "READ_WRITE", 0, 0);
+        artifactOnly.setReadOnlyDomains("[\"ARTIFACT\"]");
+        when(workspaceMemberDao.findByWorkspaceAndUser(TENANT_ID, USER_ID)).thenReturn(artifactOnly);
+        mvc.perform(multipart(uploadPath)
+                        .file(markdown("b.md", "# B"))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
     }
 
     private static MockMultipartFile markdown(String filename, String content) {

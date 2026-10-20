@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/capabilities/scheduled-task")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务能力")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看定时任务能力", actionKey = "access.action.view_scheduled_task_capabilities")
 public class ScheduledTaskCapabilityController {
 
     private final ScheduledTaskCapabilityGuard guard;

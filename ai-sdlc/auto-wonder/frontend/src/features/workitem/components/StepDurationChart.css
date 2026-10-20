@@ -1,0 +1,20 @@
+.step-duration-chart { container:step-duration / inline-size; min-width:0; margin:12px 0; padding:16px; border:1px solid var(--aw-border); border-radius:8px; background:var(--aw-panel); }
+.step-duration-heading { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; }
+.step-duration-heading > div { display:flex; flex-wrap:wrap; gap:4px 10px; min-width:0; }
+.step-duration-scope { font-size:12px; overflow-wrap:anywhere; }
+.step-duration-note { display:block; margin-top:8px; font-size:12px; }
+.step-duration-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 12px; margin:12px 0 8px; font-size:12px; }
+.step-duration-toolbar > .ant-typography { flex:1 1 180px; min-width:0; }
+.step-duration-rows { display:grid; min-width:0; gap:6px; list-style:none; margin:0; padding:0; }
+.step-duration-row { display:grid; grid-template-columns:minmax(0,1fr) fit-content(45%); align-items:center; gap:8px; min-width:0; padding:10px; border-radius:6px; }
+.step-duration-row.is-longest { background:rgba(var(--aw-accent-rgb),.07); }
+.step-duration-label { display:grid; min-width:0; gap:4px; overflow-wrap:anywhere; }
+.step-duration-label .ant-typography { font-size:12px; }
+.step-duration-label .ant-tag { margin:0; }
+.step-duration-meter { grid-row:2; grid-column:1 / -1; min-width:0; height:10px; border-radius:5px; overflow:hidden; background:var(--aw-raised); }
+.step-duration-meter > div { height:100%; border-radius:5px; background:var(--aw-accent-text); transition:width .25s ease; }
+.step-duration-row.is-longest .step-duration-meter > div { background:var(--aw-warning); }
+.step-duration-value { display:grid; grid-column:2; grid-row:1; min-width:0; gap:4px; text-align:right; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.step-duration-value > :last-child { font-size:12px; }
+@container step-duration (min-width:520px) { .step-duration-row { grid-template-columns:minmax(0,1.2fr) minmax(0,2fr) minmax(90px,auto); gap:16px; } .step-duration-meter { grid-row:1; grid-column:2; } .step-duration-value { grid-column:3; } }
+@media(prefers-reduced-motion:reduce) { .step-duration-meter > div { transition:none; } }

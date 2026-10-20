@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { formatDateTime } from '@/shared/i18n/format';
 import { Tag, Segmented, Empty } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import { Link } from 'react-router-dom';
@@ -15,13 +17,6 @@ interface AgentWorkitemListProps {
 }
 
 type FilterKey = 'ALL' | 'IN_PROGRESS' | 'PENDING_DECISION' | 'DONE';
-
-const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: 'ALL', label: '全部' },
-  { key: 'IN_PROGRESS', label: '执行中' },
-  { key: 'PENDING_DECISION', label: '待决策' },
-  { key: 'DONE', label: '已完成' },
-];
 
 const PAGE_SIZE_STORAGE_KEY = 'autowonder.agentDetail.workitems.pageSize';
 
@@ -71,6 +66,13 @@ function useAgentWorkitemCounts(agentId: number) {
 }
 
 export function AgentWorkitemList({ agentId }: AgentWorkitemListProps) {
+  const { t } = useTranslation('workitem');
+  const filters: { key: FilterKey; label: string }[] = [
+    { key: 'ALL', label: t('scope.all') },
+    { key: 'IN_PROGRESS', label: t('status.inProgress') },
+    { key: 'PENDING_DECISION', label: t('status.pendingDecision') },
+    { key: 'DONE', label: t('status.done') },
+  ];
   const [filter, setFilter] = useState<FilterKey>('ALL');
   const [page, setPage] = useState(1);
   const [size, setSize] = usePageSizePreference(PAGE_SIZE_STORAGE_KEY, [10, 20, 50, 100], 10);
@@ -81,23 +83,23 @@ export function AgentWorkitemList({ agentId }: AgentWorkitemListProps) {
 
   const columns: ColumnsType<Workitem> = [
     {
-      title: '类型', dataIndex: 'workType', width: 80,
+      title: t('fields.type'), dataIndex: 'workType', width: 80,
       render: (t: string) => {
         const m = workTypeMap[t] || { color: 'default', label: t };
         return <Tag color={m.color}>{m.label}</Tag>;
       },
     },
     {
-      title: '标题', dataIndex: 'title', align: 'left', ellipsis: { showTitle: false },
+      title: t('fields.title'), dataIndex: 'title', align: 'left', ellipsis: { showTitle: false },
       render: (title: string, r: Workitem) => (
         <EllipsisText tooltip={title}>
           <Link to={`/workitems/${r.id}`}>{title}</Link>
         </EllipsisText>
       ),
     },
-    { title: '状态', dataIndex: 'statusName', width: 120, render: (s: string | null) => s || '-' },
+    { title: t('fields.status'), dataIndex: 'statusName', width: 120, render: (s: string | null) => s || '-' },
     {
-      title: '优先级', dataIndex: 'priority', width: 90,
+      title: t('fields.priority'), dataIndex: 'priority', width: 90,
       render: (p: number) => {
         const m = getPriorityMeta(p);
         return <Tag color={m.color}>{m.label}</Tag>;
@@ -108,8 +110,8 @@ export function AgentWorkitemList({ agentId }: AgentWorkitemListProps) {
       render: (n: string | null) => <EllipsisText tooltip={n ?? undefined}>{n || '-'}</EllipsisText>,
     },
     {
-      title: '更新时间', dataIndex: 'gmtModified', width: 160,
-      render: (t: string) => (t ? new Date(t).toLocaleString('zh-CN') : '-'),
+      title: t('fields.updated'), dataIndex: 'gmtModified', width: 160,
+      render: (t: string) => (t ? formatDateTime(t, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '-'),
     },
   ];
 
@@ -119,7 +121,7 @@ export function AgentWorkitemList({ agentId }: AgentWorkitemListProps) {
         style={{ marginBottom: 12 }}
         value={filter}
         onChange={(v) => { setFilter(v as FilterKey); setPage(1); }}
-        options={FILTERS.map(f => ({ value: f.key, label: `${f.label} ${counts[f.key]}` }))}
+        options={filters.map(f => ({ value: f.key, label: t('agentList.filterCount', { label: f.label, count: counts[f.key] }) }))}
       />
       <Table
         rowKey={(r) => String(r.id)}
@@ -135,9 +137,9 @@ export function AgentWorkitemList({ agentId }: AgentWorkitemListProps) {
             if (nextSize !== size) setSize(nextSize);
           },
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (total) => t('list.pagination', { count: total }),
         }}
-        locale={{ emptyText: <Empty description="该员工暂无关联工单" /> }}
+        locale={{ emptyText: <Empty description={t('agentList.empty')} /> }}
       />
     </div>
   );

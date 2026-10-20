@@ -4,6 +4,7 @@ import { server } from '@/test/mocks/server';
 import { apiClient } from './client';
 import { ApiError } from '@/shared/types/common';
 import { useAuthStore } from '@/shared/auth/store';
+import { i18n } from '@/shared/i18n';
 
 describe('apiClient', () => {
   beforeEach(() => {
@@ -51,6 +52,45 @@ describe('apiClient', () => {
       expect(err.message).toBe('工单不存在');
       expect(err.traceId).toBe('trace-2');
     }
+  });
+
+  it('exposes the structured failure payload on ApiError.data in a 200 envelope', async () => {
+    // 13023 的载荷携带归属项目：拦截器必须原样透传，页面才能据此询问是否切换
+    server.use(
+      http.get('/api/workitem-owning', () => {
+        return HttpResponse.json({
+          success: false,
+          code: '13023',
+          message: '该工单属于工作空间「项目B」，是否切换到该项目并打开？',
+          data: { workspaceId: 250, workspaceName: '项目B' },
+          traceId: 'trace-owning',
+        });
+      }),
+    );
+
+    await expect(apiClient.get('/api/workitem-owning')).rejects.toMatchObject({
+      code: '13023',
+      data: { workspaceId: 250, workspaceName: '项目B' },
+    });
+  });
+
+  it('exposes the structured failure payload when the failure arrives with an HTTP error status', async () => {
+    server.use(
+      http.put('/api/workitem-owning-http', () => {
+        return HttpResponse.json({
+          success: false,
+          code: '13010',
+          message: '切换项目失败：服务暂时不可用',
+          data: { reason: 'UPSTREAM_UNAVAILABLE' },
+          traceId: 'trace-http',
+        }, { status: 403 });
+      }),
+    );
+
+    await expect(apiClient.put('/api/workitem-owning-http', {})).rejects.toMatchObject({
+      code: '13010',
+      data: { reason: 'UPSTREAM_UNAVAILABLE' },
+    });
   });
 
   it('unwraps list response even when a string field embeds a big integer', async () => {
@@ -689,4 +729,29 @@ describe('apiClient', () => {
         traceId: 'trace-envelope',
       });
   });
+});
+
+
+it('uses the current locale on ordinary requests, refresh fetch and replay', async () => {
+  const languages: Array<string | null> = [];
+  useAuthStore.getState().setTokens('expired', 'refresh');
+  server.use(
+    http.get('/api/locale-check', ({ request }) => {
+      languages.push(request.headers.get('Accept-Language'));
+      return request.headers.get('Authorization') === 'Bearer fresh'
+        ? HttpResponse.json({ success: true, code: '0', message: '', data: null, traceId: null })
+        : HttpResponse.json({ success: false, code: '10401', message: '', data: null, traceId: null }, { status: 401 });
+    }),
+    http.post('/api/auth/refresh', ({ request }) => {
+      languages.push(request.headers.get('Accept-Language'));
+      return HttpResponse.json({ success: true, code: '0', message: '', data: { accessToken: 'fresh' }, traceId: null });
+    }),
+  );
+  try {
+    await i18n.changeLanguage('en-US');
+    await apiClient.get('/api/locale-check');
+    await i18n.changeLanguage('zh-CN');
+    await apiClient.get('/api/locale-check');
+    expect(languages).toEqual(['en-US', 'en-US', 'en-US', 'zh-CN']);
+  } finally { await i18n.changeLanguage('zh-CN'); useAuthStore.getState().clear(); }
 });

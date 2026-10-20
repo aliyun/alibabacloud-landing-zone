@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { Tag, Button, Popconfirm, Space } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
@@ -12,10 +13,6 @@ const categoryStyle: Record<NodeCategory, { color: string; bg: string; border: s
   CANCELED: { color: 'var(--aw-error)', bg: 'color-mix(in srgb, var(--aw-error) 10%, var(--aw-panel))', border: 'color-mix(in srgb, var(--aw-error) 30%, var(--aw-border))' },
 };
 
-const categoryLabel: Record<NodeCategory, string> = {
-  INIT: '初始态', IN_PROGRESS: '进行中', DONE: '完成态', CANCELED: '取消态',
-};
-
 interface Props {
   nodes: StatusNode[];
   onCreate: (data: { code: string; name: string; category: string; sort: number }) => void;
@@ -26,15 +23,19 @@ interface Props {
 }
 
 export function StatusNodeEditor({ nodes, onCreate, onUpdate, onDelete, createLoading, updateLoading }: Props) {
+  const { t } = useTranslation('statemachine');
+  const categoryLabel: Record<NodeCategory, string> = {
+    INIT: t('categories.INIT'), IN_PROGRESS: t('categories.IN_PROGRESS'), DONE: t('categories.DONE'), CANCELED: t('categories.CANCELED'),
+  };
   const accessCommand = useAccessCommand();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<StatusNode | null>(null);
 
-  const openCreate = () => accessCommand('READ_WRITE', '添加状态节点', () => {
+  const openCreate = () => accessCommand('READ_WRITE', t('actions.createNode'), () => {
     setEditing(null);
     setModalOpen(true);
   });
-  const openEdit = (node: StatusNode) => accessCommand('READ_WRITE', '编辑状态节点', () => {
+  const openEdit = (node: StatusNode) => accessCommand('READ_WRITE', t('actions.editNode'), () => {
     setEditing(node);
     setModalOpen(true);
   });
@@ -53,9 +54,9 @@ export function StatusNodeEditor({ nodes, onCreate, onUpdate, onDelete, createLo
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>状态节点</span>
-        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--aw-muted)' }}>定义工单的所有可能状态</span>
-        <Button icon={<PlusOutlined />} onClick={openCreate} style={{ marginLeft: 'auto' }}>添加节点</Button>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>{t('nodes.title')}</span>
+        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--aw-muted)' }}>{t('nodes.help')}</span>
+        <Button icon={<PlusOutlined aria-hidden="true" />} onClick={openCreate} style={{ marginLeft: 'auto' }}>{t('nodes.add')}</Button>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         {nodes.map((node) => {
@@ -69,9 +70,9 @@ export function StatusNodeEditor({ nodes, onCreate, onUpdate, onDelete, createLo
               <span style={{ fontWeight: 500 }}>{node.code}</span>
               <span style={{ fontSize: 11, color: 'var(--aw-muted)' }}>{node.name}</span>
               <Space size={2} style={{ marginLeft: 4 }}>
-                <EditOutlined style={{ fontSize: 11, color: 'var(--aw-info)', cursor: 'pointer' }} onClick={() => openEdit(node)} />
-                <Popconfirm title="确认删除该状态节点？" onConfirm={() => onDelete(node.id)} okText="删除" cancelText="取消">
-                  <DeleteOutlined style={{ fontSize: 11, color: 'var(--aw-error)', cursor: 'pointer' }} />
+                <Button type="text" size="small" aria-label={t('nodes.editLabel', { code: node.code })} icon={<EditOutlined aria-hidden="true" />} style={{ color: 'var(--aw-info)' }} onClick={() => openEdit(node)} />
+                <Popconfirm title={t('nodes.confirmDelete')} onConfirm={() => onDelete(node.id)} okText={t('common.delete')} cancelText={t('common.cancel')}>
+                  <Button type="text" size="small" danger aria-label={t('nodes.deleteLabel', { code: node.code })} icon={<DeleteOutlined aria-hidden="true" />} />
                 </Popconfirm>
               </Space>
             </Tag>
@@ -81,7 +82,7 @@ export function StatusNodeEditor({ nodes, onCreate, onUpdate, onDelete, createLo
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--aw-muted)' }}>
         {Object.entries(categoryLabel).map(([cat, label]) => (
           <span key={cat} style={{ marginRight: 12 }}>
-            <span style={{ color: categoryStyle[cat as NodeCategory].color }}>●</span> {label}
+            <span aria-hidden="true" style={{ color: categoryStyle[cat as NodeCategory].color }}>●</span> {label}
           </span>
         ))}
       </div>

@@ -1,3 +1,7 @@
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { formatNumber } from '@/shared/i18n/format';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { PageBackButton } from '@/shared/ui/PageBackButton';
 import { useState } from 'react';
@@ -22,28 +26,36 @@ import { SDLC_AI_ENABLED } from './featureFlags';
 import type { SdlcId, SdlcStep, CreateStepParams, UpdateStepParams } from './api';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
+import { listMembers } from '@/features/settings/api';
+
+const checklistExample = '[{"id": "tests-pass", "text": "运行相关测试全部通过"}]';
+const policyExample = '{ "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }';
 
 const kindOptions = [
-  { value: 'analysis', label: '分析' },
-  { value: 'implementation', label: '实现' },
-  { value: 'test', label: '测试' },
-  { value: 'review', label: '审查' },
-  { value: 'artifact', label: '产物' },
-  { value: 'handoff', label: '交接' },
-  { value: 'cleanup', label: '清理' },
+  { value: 'analysis', key: 'kind.analysis' as const },
+  { value: 'implementation', key: 'kind.implementation' as const },
+  { value: 'test', key: 'kind.test' as const },
+  { value: 'review', key: 'kind.review' as const },
+  { value: 'artifact', key: 'kind.artifact' as const },
+  { value: 'handoff', key: 'kind.handoff' as const },
+  { value: 'cleanup', key: 'kind.cleanup' as const },
 ];
 
-const statusMap: Record<string, { color: string; label: string }> = {
-  DRAFT: { color: 'default', label: '草稿' },
-  ENABLED: { color: 'success', label: '已启用' },
-  DISABLED: { color: 'warning', label: '已禁用' },
+const statusMap: Record<string, { color: string; key: 'status.draft' | 'status.enabled' | 'status.disabled' }> = {
+  DRAFT: { color: 'default', key: 'status.draft' as const },
+  ENABLED: { color: 'success', key: 'status.enabled' as const },
+  DISABLED: { color: 'warning', key: 'status.disabled' as const },
 };
 
 export function SdlcDetailPage() {
+  const { t } = useTranslation('sdlc');
   const { id } = useParams<{ id: string }>();
+  const workTypes = new Map<string, string>([['REQUIREMENT', t('workType.requirement')], ['REQ', t('workType.requirement')], ['TASK', t('workType.task')], ['BUG', t('workType.bug')]]);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const accessCommand = useAccessCommand();
+  const rawAccessCommand = useAccessCommand();
+  const accessCommand: typeof rawAccessCommand = (required, action, command) =>
+    rawAccessCommand(required, action, command, 'SDLC');
   const rawId = id ?? '';
   const isValidSdlcId = /^\d+$/.test(rawId);
   const sdlcId = isValidSdlcId ? rawId : '';
@@ -54,6 +66,15 @@ export function SdlcDetailPage() {
   const [editingStep, setEditingStep] = useState<SdlcStep | null>(null);
   const [infoForm] = Form.useForm();
   const [stepForm] = Form.useForm();
+  const humanApprovalRequired = Form.useWatch('humanApprovalRequired', stepForm);
+  const { data: members = [] } = useQuery({
+    queryKey: ['workspace-members'], queryFn: listMembers, enabled: stepModalOpen,
+  });
+  const approverOptions = [
+    { value: 'creator', label: t('approval.creator') },
+    ...members.filter(m => m.accessLevel !== 'READ_ONLY').map(m => ({ value: `user:${m.userId}`, label: m.nickname || m.username })),
+    ...[...new Set(members.flatMap(m => m.identityTags || []))].map(tag => ({ value: `tag:${tag}`, label: t('approval.identityTag', { tag }) })),
+  ];
 
   const { data: sdlc, isLoading, isError, error } = useQuery({
     queryKey: ['sdlc', sdlcId],
@@ -66,35 +87,35 @@ export function SdlcDetailPage() {
   const updateInfoMutation = useMutation({
     mutationFn: (data: { name?: string; description?: string; workType?: string }) =>
       updateSdlcTemplate(sdlcId, data),
-    onSuccess: () => { invalidate(); setEditingInfo(false); message.success('已保存'); },
+    onSuccess: () => { invalidate(); setEditingInfo(false); message.success(i18n.t('sdlc:messages.saved')); },
   });
 
   const enableMutation = useMutation({
     mutationFn: () => enableSdlcTemplate(sdlcId),
-    onSuccess: () => { invalidate(); message.success('已启用'); },
+    onSuccess: () => { invalidate(); message.success(i18n.t('sdlc:status.enabled')); },
   });
 
   const disableMutation = useMutation({
     mutationFn: () => disableSdlcTemplate(sdlcId),
-    onSuccess: () => { invalidate(); message.success('已禁用'); },
+    onSuccess: () => { invalidate(); message.success(i18n.t('sdlc:status.disabled')); },
   });
 
   const addStepMutation = useMutation({
     mutationFn: (data: CreateStepParams) => addStep(sdlcId, data),
-    onSuccess: () => { invalidate(); setStepModalOpen(false); stepForm.resetFields(); message.success('步骤已添加'); },
-    onError: (e) => { message.error(e instanceof Error ? e.message : '添加步骤失败'); },
+    onSuccess: () => { invalidate(); setStepModalOpen(false); stepForm.resetFields(); message.success(i18n.t('sdlc:messages.stepAdded')); },
+    onError: (e) => { message.error(e instanceof Error ? e.message : i18n.t('sdlc:messages.addStepFailed')); },
   });
 
   const updateStepMutation = useMutation({
     mutationFn: ({ stepId, data }: { stepId: SdlcId; data: UpdateStepParams }) =>
       updateStep(sdlcId, stepId, data),
-    onSuccess: () => { invalidate(); setStepModalOpen(false); setEditingStep(null); stepForm.resetFields(); message.success('步骤已更新'); },
-    onError: (e) => { message.error(e instanceof Error ? e.message : '更新步骤失败'); },
+    onSuccess: () => { invalidate(); setStepModalOpen(false); setEditingStep(null); stepForm.resetFields(); message.success(i18n.t('sdlc:messages.stepUpdated')); },
+    onError: (e) => { message.error(e instanceof Error ? e.message : i18n.t('sdlc:messages.updateStepFailed')); },
   });
 
   const deleteStepMutation = useMutation({
     mutationFn: (stepId: SdlcId) => deleteStep(sdlcId, stepId),
-    onSuccess: () => { invalidate(); message.success('步骤已删除'); },
+    onSuccess: () => { invalidate(); message.success(i18n.t('sdlc:messages.stepDeleted')); },
   });
 
   const reorderMutation = useMutation({
@@ -102,13 +123,17 @@ export function SdlcDetailPage() {
     onSuccess: () => { invalidate(); },
   });
 
+  const formReady = isValidSdlcId && !isLoading && !isError && Boolean(sdlc);
+  useLocalizedValidation(infoForm, formReady && editingInfo);
+  useLocalizedValidation(stepForm, formReady && stepModalOpen);
+
   if (!isValidSdlcId) return (
-    <Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <Result status="404" title={t('messages.invalidId')} extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
   if (isError) return (
-    <Result status="error" title="加载失败" subTitle={error?.message || '请稍后重试'}
-      extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+    <Result status="error" title={t('messages.loadFailed')} subTitle={error?.message || t('messages.retry')}
+      extra={<Button onClick={() => navigate(-1)}>{t('actions.back')}</Button>} />
   );
   if (!sdlc) return null;
 
@@ -116,7 +141,7 @@ export function SdlcDetailPage() {
   const isEnabled = sdlc.status === 'ENABLED';
 
   const handleMoveStep = (index: number, direction: 'up' | 'down') => {
-    accessCommand('READ_WRITE', '调整 SDLC 步骤顺序', () => {
+    accessCommand('READ_WRITE', t('commands.reorder'), () => {
       const newSteps = [...steps];
       const swapIdx = direction === 'up' ? index - 1 : index + 1;
       [newSteps[index], newSteps[swapIdx]] = [newSteps[swapIdx], newSteps[index]];
@@ -125,23 +150,34 @@ export function SdlcDetailPage() {
   };
 
   const openAddStep = () => {
-    accessCommand('READ_WRITE', '添加 SDLC 步骤', () => {
+    accessCommand('READ_WRITE', t('commands.addStep'), () => {
       setEditingStep(null);
       stepForm.resetFields();
-      stepForm.setFieldsValue({ stepOrder: steps.length + 1, kind: 'analysis', required: true });
+      stepForm.setFieldsValue({ stepOrder: steps.length + 1, kind: 'analysis', required: true, humanApprovalRequired: false, approvers: ['creator'], askWhenUnclear: false });
       setStepModalOpen(true);
     });
   };
 
   const openEditStep = (step: SdlcStep) => {
-    accessCommand('READ_WRITE', '编辑 SDLC 步骤', () => {
+    accessCommand('READ_WRITE', t('commands.editStep'), () => {
       setEditingStep(step);
+      let policy;
+      try { policy = JSON.parse(step.gatePolicyJson || '{}'); }
+      catch { policy = {}; } // Keep malformed legacy JSON in the editor so it can be corrected.
+      if (!policy || typeof policy !== 'object' || Array.isArray(policy)) policy = {};
       stepForm.setFieldsValue({
         name: step.name,
         kind: step.kind || undefined,
         instructionMd: step.instructionMd || undefined,
         checklistJson: step.checklistJson || undefined,
         gatePolicyJson: step.gatePolicyJson || undefined,
+        humanApprovalRequired: policy.humanApprovalRequired === true,
+        approvers: policy.humanApprovers ? [
+          ...(policy.humanApprovers.includeCreator ? ['creator'] : []),
+          ...(policy.humanApprovers.userIds || []).map((id: number) => `user:${id}`),
+          ...(policy.humanApprovers.identityTags || []).map((tag: string) => `tag:${tag}`),
+        ] : ['creator'],
+        askWhenUnclear: policy.askWhenUnclear === true,
         required: step.required ?? true,
         timeoutSeconds: step.timeoutSeconds ?? undefined,
         retryBudget: step.retryBudget ?? undefined,
@@ -151,74 +187,93 @@ export function SdlcDetailPage() {
   };
 
   const handleStepSubmit = async () => {
-    const values = await stepForm.validateFields();
-    accessCommand('READ_WRITE', editingStep ? '编辑 SDLC 步骤' : '添加 SDLC 步骤', () => {
+    const values = await stepForm.validateFields().catch(() => null);
+    if (!values) return;
+    const { humanApprovalRequired, approvers = ['creator'], askWhenUnclear, ...stepValues } = values;
+    const policy = JSON.parse(stepValues.gatePolicyJson || '{}');
+    if (humanApprovalRequired) policy.humanApprovalRequired = true;
+    else delete policy.humanApprovalRequired;
+    if (humanApprovalRequired && !(approvers.length === 1 && approvers[0] === 'creator')) {
+      policy.humanApprovers = {
+        includeCreator: approvers.includes('creator'),
+        userIds: approvers.filter((s: string) => s.startsWith('user:')).map((s: string) => Number(s.slice(5))),
+        identityTags: approvers.filter((s: string) => s.startsWith('tag:')).map((s: string) => s.slice(4)),
+      };
+    } else delete policy.humanApprovers;
+    if (askWhenUnclear) policy.askWhenUnclear = true;
+    else delete policy.askWhenUnclear;
+    delete policy.askWhenUnclearGuidance;
+    stepValues.gatePolicyJson = JSON.stringify(policy);
+    accessCommand('READ_WRITE', editingStep ? t('commands.editStep') : t('commands.addStep'), () => {
       if (editingStep) {
         // 清空输入框时显式传 null，让后端将超时/重试恢复为未配置
         updateStepMutation.mutate({
           stepId: editingStep.id,
-          data: { ...values, timeoutSeconds: values.timeoutSeconds ?? null, retryBudget: values.retryBudget ?? null },
+          data: { ...stepValues, timeoutSeconds: values.timeoutSeconds ?? null, retryBudget: values.retryBudget ?? null },
         });
       } else {
-        addStepMutation.mutate({ ...values, stepOrder: steps.length + 1 });
+        addStepMutation.mutate({ ...stepValues, stepOrder: steps.length + 1 });
       }
     });
   };
 
   const handleInfoSave = async () => {
     const values = await infoForm.validateFields();
-    accessCommand('READ_WRITE', '编辑 SDLC 信息', () => updateInfoMutation.mutate(values));
+    accessCommand('READ_WRITE', t('commands.editInfo'), () => updateInfoMutation.mutate(values));
   };
 
   const stepColumns: ColumnsType<SdlcStep> = [
     { title: '#', width: 50, render: (_, __, idx) => idx + 1 },
-    { title: '步骤名称', dataIndex: 'name', align: 'left', width: 140 },
-    { title: '类型', dataIndex: 'kind', width: 110, render: (v: string | null) => v ? <Tag>{v}</Tag> : '-' },
-    { title: '必需', dataIndex: 'required', width: 80, render: (v: boolean) => v === false ? '否' : '是' },
+    { title: t('fields.stepName'), dataIndex: 'name', align: 'left', width: 140 },
+    { title: t('fields.kind'), dataIndex: 'kind', width: 110, render: (v: string | null) => {
+      const option = kindOptions.find(option => option.value === v);
+      return v ? <Tag>{option ? t(option.key) : v}</Tag> : '-';
+    } },
+    { title: t('fields.required'), dataIndex: 'required', width: 80, render: (v: boolean) => v === false ? t('messages.no') : t('messages.yes') },
     {
-      title: '执行说明', dataIndex: 'instructionMd',
+      title: t('fields.instruction'), dataIndex: 'instructionMd',
       render: (v: string | null) => v ? <span style={{ whiteSpace: 'pre-wrap' }}>{v}</span> : '-',
     },
     {
-      title: '检查项', dataIndex: 'checklistJson', width: 110,
+      title: t('fields.checklist'), dataIndex: 'checklistJson', width: 110,
       render: (v: string | null) => v ? (
-        <Popover title="检查项" trigger={['hover', 'click']} content={<ChecklistPreview raw={v} />}>
-          <Tag color="blue" style={{ cursor: 'pointer' }}>已配置</Tag>
+        <Popover title={t('fields.checklist')} trigger={['hover', 'click']} content={<ChecklistPreview raw={v} />}>
+          <Tag color="blue" style={{ cursor: 'pointer' }}>{t('messages.configured')}</Tag>
         </Popover>
       ) : '-',
     },
     {
-      title: '策略', dataIndex: 'gatePolicyJson', width: 110,
+      title: t('fields.policy'), dataIndex: 'gatePolicyJson', width: 110,
       render: (v: string | null) => v ? (
-        <Popover title="策略" trigger={['hover', 'click']} content={<GatePolicyPreview raw={v} />}>
-          <Tag color="blue" style={{ cursor: 'pointer' }}>已配置</Tag>
+        <Popover title={t('fields.policy')} trigger={['hover', 'click']} content={<GatePolicyPreview raw={v} />}>
+          <Tag color="blue" style={{ cursor: 'pointer' }}>{t('messages.configured')}</Tag>
         </Popover>
       ) : '-',
     },
     {
-      title: '操作', width: 160, fixed: 'right',
+      title: t('fields.actions'), width: 160, fixed: 'right',
       render: (_, record, idx) => (
         <Space size="small">
-          <Tooltip title="上移">
-            <Button type="text" size="small" icon={<ArrowUpOutlined />} disabled={idx === 0 || isEnabled}
+          <Tooltip title={t('actions.moveUp')}>
+            <Button type="text" size="small" aria-label={t('actions.moveUp')} icon={<ArrowUpOutlined aria-hidden="true" />} disabled={idx === 0 || isEnabled}
               onClick={() => handleMoveStep(idx, 'up')} />
           </Tooltip>
-          <Tooltip title="下移">
-            <Button type="text" size="small" icon={<ArrowDownOutlined />} disabled={idx === steps.length - 1 || isEnabled}
+          <Tooltip title={t('actions.moveDown')}>
+            <Button type="text" size="small" aria-label={t('actions.moveDown')} icon={<ArrowDownOutlined aria-hidden="true" />} disabled={idx === steps.length - 1 || isEnabled}
               onClick={() => handleMoveStep(idx, 'down')} />
           </Tooltip>
-          <Tooltip title="编辑">
-            <Button type="text" size="small" icon={<EditOutlined />} disabled={isEnabled}
+          <Tooltip title={t('actions.edit')}>
+            <Button type="text" size="small" aria-label={t('actions.editStep')} icon={<EditOutlined aria-hidden="true" />} disabled={isEnabled}
               onClick={() => openEditStep(record)} />
           </Tooltip>
-          <Popconfirm title="确认删除该步骤？" onConfirm={() => accessCommand(
+          <Popconfirm title={t('confirm.deleteStep')} onConfirm={() => accessCommand(
             'READ_WRITE',
-            '删除 SDLC 步骤',
+            t('commands.deleteStep'),
             () => deleteStepMutation.mutate(record.id),
           )}
             disabled={isEnabled}>
-            <Tooltip title="删除">
-              <Button type="text" size="small" danger icon={<DeleteOutlined />} disabled={isEnabled} />
+            <Tooltip title={t('actions.delete')}>
+              <Button type="text" size="small" danger aria-label={t('actions.delete')} icon={<DeleteOutlined aria-hidden="true" />} disabled={isEnabled} />
             </Tooltip>
           </Popconfirm>
         </Space>
@@ -230,74 +285,74 @@ export function SdlcDetailPage() {
     <div>
 
       <Card
-        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/sdlcs" label="返回列表" /><span>{sdlc.name}</span></span>} />}
+        className="aw-content-card" title={<PageHeading title={<span className="aw-detail-title"><PageBackButton to="/sdlcs" label={t('actions.backList')} /><span>{sdlc.name}</span></span>} />}
         extra={
           <Space>
             {!editingInfo && !isEnabled && (
-              <Button size="small" icon={<EditOutlined />}
-                onClick={() => accessCommand('READ_WRITE', '编辑 SDLC 信息', () => {
+              <Button size="small" icon={<EditOutlined aria-hidden="true" />}
+                onClick={() => accessCommand('READ_WRITE', t('commands.editInfo'), () => {
                   infoForm.setFieldsValue({ name: sdlc.name, description: sdlc.description, workType: sdlc.workType });
                   setEditingInfo(true);
-                })}>编辑信息</Button>
+                })}>{t('actions.editInfo')}</Button>
             )}
             {sdlc.status === 'DRAFT' || sdlc.status === 'DISABLED' ? (
-              <Popconfirm title="启用后步骤将不可编辑，确认启用？" onConfirm={() => accessCommand(
+              <Popconfirm title={t('confirm.enableLock')} onConfirm={() => accessCommand(
                 'READ_WRITE',
-                '启用 SDLC 模版',
+                t('commands.enable'),
                 () => enableMutation.mutate(),
               )}>
-                <Button type="primary" size="small" icon={<CheckCircleOutlined />}
-                  loading={enableMutation.isPending}>启用</Button>
+                <Button type="primary" size="small" icon={<CheckCircleOutlined aria-hidden="true" />}
+                  loading={enableMutation.isPending}>{t('actions.enable')}</Button>
               </Popconfirm>
             ) : (
-              <Popconfirm title="确认禁用该模版？" onConfirm={() => accessCommand(
+              <Popconfirm title={t('confirm.disableDetail')} onConfirm={() => accessCommand(
                 'READ_WRITE',
-                '禁用 SDLC 模版',
+                t('commands.disable'),
                 () => disableMutation.mutate(),
               )}>
-                <Button size="small" danger icon={<StopOutlined />}
-                  loading={disableMutation.isPending}>禁用</Button>
+                <Button size="small" danger icon={<StopOutlined aria-hidden="true" />}
+                  loading={disableMutation.isPending}>{t('actions.disable')}</Button>
               </Popconfirm>
             )}
           </Space>
         }
       >
         {editingInfo ? (
-          <Form form={infoForm} layout="vertical" onFinish={handleInfoSave}>
-            <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+          <Form name="sdlc-info" form={infoForm} layout="vertical" onFinish={handleInfoSave}>
+            <Form.Item name="name" label={t('fields.name')} rules={[{ required: true, message: t('validation.name') }]}>
               <Input />
             </Form.Item>
-            <Form.Item name="description" label="描述">
+            <Form.Item name="description" label={t('fields.description')}>
               <Input.TextArea rows={2} />
             </Form.Item>
-            <Form.Item name="workType" label="工单类型">
-              <Select allowClear placeholder="可选绑定工单类型"
+            <Form.Item name="workType" label={t('fields.workType')}>
+              <Select allowClear placeholder={t('placeholder.workType')}
                 options={[
-                  { value: 'REQUIREMENT', label: '需求' },
-                  { value: 'TASK', label: '任务' },
-                  { value: 'BUG', label: 'Bug' },
+                  { value: 'REQUIREMENT', label: t('workType.requirement') },
+                  { value: 'TASK', label: t('workType.task') },
+                  { value: 'BUG', label: t('workType.bug') },
                 ]} />
             </Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit" loading={updateInfoMutation.isPending}>保存</Button>
-              <Button onClick={() => setEditingInfo(false)}>取消</Button>
+              <Button type="primary" htmlType="submit" loading={updateInfoMutation.isPending}>{t('actions.save')}</Button>
+              <Button onClick={() => setEditingInfo(false)}>{t('actions.cancel')}</Button>
             </Space>
           </Form>
         ) : (
           <Descriptions column={2}>
-            <Descriptions.Item label="状态">
-              <Tag color={statusMap[sdlc.status]?.color}>{statusMap[sdlc.status]?.label || sdlc.status}</Tag>
+            <Descriptions.Item label={t('fields.status')}>
+              <Tag color={Object.prototype.hasOwnProperty.call(statusMap, sdlc.status) ? statusMap[sdlc.status].color : undefined}>{Object.prototype.hasOwnProperty.call(statusMap, sdlc.status) ? t(statusMap[sdlc.status].key) : sdlc.status}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="工单类型">{sdlc.workType || '通用'}</Descriptions.Item>
-            <Descriptions.Item label="版本">v{sdlc.version}</Descriptions.Item>
-            <Descriptions.Item label="步骤数">{steps.length}</Descriptions.Item>
-            <Descriptions.Item label="描述" span={2}>{sdlc.description || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.workType')}>{sdlc.workType ? workTypes.get(sdlc.workType) ?? sdlc.workType : t('workType.general')}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.version')}>v{sdlc.version}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.stepCount')}>{formatNumber(steps.length)}</Descriptions.Item>
+            <Descriptions.Item label={t('fields.description')} span={2}>{sdlc.description || '-'}</Descriptions.Item>
           </Descriptions>
         )}
       </Card>
 
       <Card
-        title="步骤概览"
+        title={t('overview.title')}
         size="small"
         data-testid="sdlc-step-overview-card"
         style={{
@@ -307,12 +362,12 @@ export function SdlcDetailPage() {
           boxShadow: 'none',
         }}
         styles={{ body: { padding: '14px 16px' } }}
-        extra={<span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{steps.length} steps</span>}
+        extra={<span style={{ color: 'var(--aw-muted)', fontSize: 12 }}>{t('overview.count', { count: steps.length })}</span>}
       >
         {steps.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="暂无步骤，添加后将在这里形成流程概览"
+            description={t('overview.empty')}
             style={{ margin: 0 }}
           />
         ) : (
@@ -333,7 +388,7 @@ export function SdlcDetailPage() {
                 <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' }}>
                   <Tooltip title={<StepOverviewTooltip step={step} />}>
                     <div
-                      aria-label={`步骤 ${index + 1}: ${step.name}`}
+                      aria-label={t('overview.step', { index: index + 1, name: step.name })}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -371,7 +426,7 @@ export function SdlcDetailPage() {
                   </Tooltip>
                   {index < steps.length - 1 && (
                     <span
-                      aria-label="下一步骤"
+                      aria-label={t('overview.next')}
                       style={{
                         color: tone.line,
                         fontSize: 15,
@@ -391,25 +446,25 @@ export function SdlcDetailPage() {
       </Card>
 
       <Card
-        title="步骤链编辑器"
+        title={t('overview.editor')}
         style={{ marginTop: 16 }}
         extra={
           <Space>
             {SDLC_AI_ENABLED && (
-              <Button icon={<BulbOutlined />}
-                onClick={() => accessCommand('READ_WRITE', 'AI 辅助设计 SDLC', () => setAiDrawerOpen(true))}>
-                AI 辅助
+              <Button icon={<BulbOutlined aria-hidden="true" />}
+                onClick={() => accessCommand('READ_WRITE', t('commands.aiAssist'), () => setAiDrawerOpen(true))}>
+                {t('actions.aiAssist')}
               </Button>
             )}
-            <Button type="primary" icon={<PlusOutlined />} onClick={openAddStep} disabled={isEnabled}>
-              添加步骤
+            <Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={openAddStep} disabled={isEnabled}>
+              {t('actions.addStep')}
             </Button>
           </Space>
         }
       >
         {isEnabled && (
           <div style={{ marginBottom: 12, color: 'var(--aw-warning)' }}>
-            模版已启用，如需编辑步骤请先禁用。
+            {t('overview.locked')}
           </div>
         )}
         <Table
@@ -423,39 +478,65 @@ export function SdlcDetailPage() {
       </Card>
 
       <Modal
-        title={editingStep ? '编辑步骤' : '添加步骤'}
+        title={editingStep ? t('actions.editStep') : t('actions.addStep')}
         open={stepModalOpen}
+        closable={{ 'aria-label': t('gallery.close') }}
         onOk={handleStepSubmit}
         onCancel={() => { setStepModalOpen(false); setEditingStep(null); }}
         confirmLoading={addStepMutation.isPending || updateStepMutation.isPending}
         destroyOnClose
       >
-        <Form form={stepForm} layout="vertical">
-          <Form.Item name="name" label="步骤名称" rules={[{ required: true, message: '请输入步骤名称' }]}>
-            <Input placeholder="如: 代码开发" />
+        <Form name="sdlc-step" form={stepForm} layout="vertical">
+          <Form.Item name="name" label={t('fields.stepName')} rules={[{ required: true, message: t('validation.stepName') }]}>
+            <Input placeholder={t('placeholder.stepName')} />
           </Form.Item>
-          <Form.Item name="kind" label="步骤类型">
-            <Select allowClear options={kindOptions} placeholder="选择步骤类型" />
+          <Form.Item name="kind" label={t('fields.stepKind')}>
+            <Select allowClear options={kindOptions.map(option => ({ ...option, label: t(option.key) }))} placeholder={t('placeholder.kind')} />
           </Form.Item>
-          <Form.Item name="required" label="是否必需" valuePropName="checked">
+          <Form.Item name="required" label={t('fields.isRequired')} valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="instructionMd" label="执行说明" rules={[{ required: true, message: '请输入执行说明' }]}>
-            <Input.TextArea rows={8} placeholder="详细描述本步骤要做什么、输入输出、注意事项、完成标准，以及需要交接时如何调用平台接口。" />
+          <Form.Item name="humanApprovalRequired" label={t('approval.required')} valuePropName="checked"
+            extra={t('approval.description')}>
+            <Switch checkedChildren={t('approval.needed')} unCheckedChildren={t('approval.notNeeded')} />
           </Form.Item>
-          <Form.Item name="checklistJson" label={<StepFieldHelp text="检查项 JSON" help={<ChecklistFieldHelp />} popover />}>
-            <Input.TextArea rows={3} placeholder='如: [{"id": "tests-pass", "text": "运行相关测试全部通过"}]' />
+          {humanApprovalRequired && <Form.Item name="approvers" label={t('approval.approvers')} rules={[{ required: true, message: t('approval.validation') }]}
+            extra={t('approval.approversDescription')}>
+            <Select mode="multiple" options={approverOptions} optionFilterProp="label" placeholder={t('approval.placeholder')} />
+          </Form.Item>}
+          <Form.Item label={t('humanInput.label')}>
+            <Space>
+              <Form.Item name="askWhenUnclear" valuePropName="checked" noStyle>
+                <Switch aria-label={t('humanInput.label')} />
+              </Form.Item>
+              <Tooltip title={t('humanInput.description')}>
+                <QuestionCircleOutlined tabIndex={0} aria-label={t('humanInput.help')} />
+              </Tooltip>
+            </Space>
           </Form.Item>
-          <Form.Item name="gatePolicyJson" label={<StepFieldHelp text="准入/准出策略 JSON" help={<GatePolicyFieldHelp />} popover />}>
-            <Input.TextArea rows={3} placeholder='如: { "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }' />
+          <Form.Item name="instructionMd" label={t('fields.instruction')} rules={[{ required: true, message: t('validation.instruction') }]}>
+            <Input.TextArea rows={8} placeholder={t('placeholder.instruction')} />
+          </Form.Item>
+          <Form.Item name="checklistJson" label={<StepFieldHelp text={t('fields.checklistJson')} help={<ChecklistFieldHelp />} popover />}>
+            <Input.TextArea rows={3} placeholder={t('help.examplePlaceholder', { example: checklistExample })} />
+          </Form.Item>
+          <Form.Item name="gatePolicyJson" label={<StepFieldHelp text={t('fields.policyJson')} help={<GatePolicyFieldHelp />} popover />}
+            rules={[{ validator: (_, value) => {
+              try {
+                const policy = JSON.parse(value || '{}');
+                if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw new Error();
+                return Promise.resolve();
+              } catch { return Promise.reject(new Error(t('validation.policyObject'))); }
+            } }]}>
+            <Input.TextArea rows={3} placeholder={t('help.examplePlaceholder', { example: policyExample })} />
           </Form.Item>
           <Space size="large" align="start">
-            <Form.Item name="timeoutSeconds" label="建议超时秒数">
+            <Form.Item name="timeoutSeconds" label={t('fields.timeout')}>
               <InputNumber min={1} precision={0} />
             </Form.Item>
             <Form.Item
               name="retryBudget"
-              label={<StepFieldHelp text="建议重试预算" help={<RetryBudgetTooltipContent />} popover />}
+              label={<StepFieldHelp text={t('fields.retry')} help={<RetryBudgetTooltipContent />} popover />}
             >
               <InputNumber min={0} precision={0} />
             </Form.Item>
@@ -464,8 +545,9 @@ export function SdlcDetailPage() {
       </Modal>
 
       <Drawer
-        title="AI 辅助设计 SDLC"
+        title={t('commands.aiAssist')}
         open={aiDrawerOpen}
+        closable={{ 'aria-label': t('gallery.close') }}
         onClose={() => setAiDrawerOpen(false)}
         width="min(1080px, 92vw)"
         destroyOnClose
@@ -474,7 +556,7 @@ export function SdlcDetailPage() {
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="AI 确认后会生成新的 SDLC 草稿，不会覆盖当前流程。你可以在列表中打开新草稿继续调整并启用。"
+          message={t('ai.assistWarning')}
         />
         <div style={{ height: 'calc(100vh - 170px)', minHeight: 520 }}>
           <AiSessionPanel
@@ -508,13 +590,15 @@ function getStepKindTone(kind?: string | null) {
 }
 
 function StepOverviewTooltip({ step }: { step: SdlcStep }) {
+  const { t } = useTranslation('sdlc');
+  const kind = kindOptions.find(option => option.value === step.kind);
   return (
     <div style={{ display: 'grid', gap: 4, maxWidth: 260 }}>
       <div style={{ fontWeight: 700 }}>{step.name}</div>
-      <div>类型：{step.kind || '未配置'}</div>
-      <div>必需：{step.required === false ? '否' : '是'}</div>
-      <div>超时：{step.timeoutSeconds ? `${step.timeoutSeconds} 秒` : '未配置'}</div>
-      <div>重试：{step.retryBudget ?? '未配置'}</div>
+      <div>{t('overview.kind', { kind: kind ? t(kind.key) : step.kind || t('messages.unconfigured') })}</div>
+      <div>{t('overview.required', { required: step.required === false ? t('messages.no') : t('messages.yes') })}</div>
+      <div>{t('overview.timeout', { timeout: step.timeoutSeconds ? t('overview.seconds', { count: step.timeoutSeconds }) : t('messages.unconfigured') })}</div>
+      <div>{t('overview.retry', { retry: step.retryBudget == null ? t('messages.unconfigured') : formatNumber(step.retryBudget) })}</div>
     </div>
   );
 }
@@ -522,6 +606,7 @@ function StepOverviewTooltip({ step }: { step: SdlcStep }) {
 const previewStyle: CSSProperties = { maxWidth: 360, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 };
 
 function ChecklistPreview({ raw }: { raw: string }) {
+  const { t } = useTranslation('sdlc');
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { parsed = null; }
   if (Array.isArray(parsed) && parsed.length > 0) {
@@ -531,7 +616,7 @@ function ChecklistPreview({ raw }: { raw: string }) {
           <div key={idx}>
             • {typeof item === 'string' ? item : typeof item?.text === 'string' ? item.text : JSON.stringify(item)}
             {item && typeof item === 'object' && item.allowNotApplicable === true && (
-              <div style={{ color: 'var(--aw-muted)' }}>允许不适用：{typeof item.notApplicableWhen === 'string' ? item.notApplicableWhen : '未填写有效条件'}</div>
+              <div style={{ color: 'var(--aw-muted)' }}>{t('help.allowedNotApplicable', { condition: typeof item.notApplicableWhen === 'string' ? item.notApplicableWhen : t('help.invalidCondition') })}</div>
             )}
           </div>
         ))}
@@ -557,51 +642,58 @@ function GatePolicyPreview({ raw }: { raw: string }) {
 }
 
 export function RetryBudgetTooltipContent() {
+  const { t } = useTranslation('sdlc');
   return (
     <div style={{ display: 'grid', gap: 8, maxWidth: 340 }}>
-      <div style={{ fontWeight: 700 }}>建议重试预算</div>
+      <div style={{ fontWeight: 700 }}>{t('fields.retry')}</div>
       <div>
-        <span style={{ fontWeight: 600 }}>含义：</span>
-        当步骤执行完成后，Runtime 的 Gate 会校验产出是否满足要求（如 evidence 目录非空、checklist
-        全部勾选等）。如果校验不通过，”重试预算”决定了 agent 有几次补救机会。
+        <span style={{ fontWeight: 600 }}>{t('help.meaning')}</span>
+        {t('help.retryMeaning')}
       </div>
       <div>
-        <span style={{ fontWeight: 600 }}>行为：</span>
+        <span style={{ fontWeight: 600 }}>{t('help.behavior')}</span>
         <ul style={{ margin: '4px 0 0', paddingLeft: 16 }}>
-          <li>值为 0（或未填写）：gate 失败后直接终止，agent 没有补救机会</li>
+          <li>{t('help.retryZero')}</li>
           <li>
-            值为 N：gate 失败后，agent 最多有 N 次额外尝试，每次会收到 gate
-            失败原因作为反馈，引导 agent 修正问题后重新提交
+            {t('help.retryAttempts')}
           </li>
         </ul>
       </div>
       <div>
-        <span style={{ fontWeight: 600 }}>示例：</span>
-        步骤「自测与交付」配置了 gate 策略要求 evidence/ 目录非空。设置重试预算 = 3
-        后，如果 agent 第一次提交时忘了保存测试日志，gate 会告诉它 “evidence required but none
-        provided”，agent 还有 3 次机会补充证据文件并重新提交。
+        <span style={{ fontWeight: 600 }}>{t('help.example')}</span>
+        {t('help.retryExample')}
       </div>
       <div>
-        <span style={{ fontWeight: 600 }}>建议值：</span>
-        一般建议设置为 2~3。过大可能导致 agent 在无法解决的问题上循环消耗资源。
+        <span style={{ fontWeight: 600 }}>{t('help.recommendation')}</span>
+        {t('help.retryRecommendation')}
       </div>
     </div>
   );
 }
 
 function StepFieldHelp({ text, help, popover }: { text: string; help: ReactNode; popover?: boolean }) {
+  const { t } = useTranslation('sdlc');
   const icon = (
-    <QuestionCircleOutlined style={{ marginLeft: 4, color: 'var(--aw-muted)', cursor: 'help' }} />
+    <span role="button" tabIndex={0} aria-label={t('help.field', { field: text })}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          event.currentTarget.click();
+        }
+      }}
+      style={{ marginLeft: 4, color: 'var(--aw-muted)', cursor: 'help' }}>
+      <QuestionCircleOutlined aria-hidden="true" />
+    </span>
   );
   return (
     <span>
       {text}
       {popover ? (
-        <Popover content={help} overlayInnerStyle={{ maxWidth: 460 }} placement="topLeft">
+        <Popover trigger={['hover', 'focus', 'click']} content={help} overlayInnerStyle={{ maxWidth: 460 }} placement="topLeft">
           {icon}
         </Popover>
       ) : (
-        <Tooltip title={help}>
+        <Tooltip trigger={['hover', 'focus']} title={help}>
           {icon}
         </Tooltip>
       )}
@@ -610,30 +702,32 @@ function StepFieldHelp({ text, help, popover }: { text: string; help: ReactNode;
 }
 
 function ChecklistFieldHelp() {
+  const { t } = useTranslation('sdlc');
   return (
     <div style={{ display: 'grid', gap: 6, maxWidth: 420 }}>
-      <div><b>含义：</b>步骤执行过程中 agent 需要逐项完成的检查清单。Agent 在执行时会看到这些检查项，完成后通过 API 逐个勾选。</div>
-      <div><b>行为：</b>如果策略中配置了 checklistRequired: true，gate 要求每项完成；仅明确允许不适用的项，可在满足配置条件时附原因标记为“不适用”，不能冒充检查通过。</div>
+      <div><b>{t('help.meaning')}</b>{t('help.checklistMeaning')}</div>
+      <div><b>{t('help.behavior')}</b>{t('help.checklistBehavior')}</div>
       <div>
-        <b>格式：</b>JSON 数组，每项含 id 和 text，如：
-        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{'[{"id": "tests-pass", "text": "运行相关测试全部通过"}]'}</pre>
+        <b>{t('help.format')}</b>{t('help.checklistFormat')}
+        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{checklistExample}</pre>
       </div>
-      <div><b>条件检查项：</b>先升级执行器 Runtime，再配置 allowNotApplicable: true 和非空 notApplicableWhen。执行时需报告 NOT_APPLICABLE、checked: false 及具体 reason；未配置的必需项仍须通过。</div>
+      <div><b>{t('help.conditional')}</b>{t('help.checklistConditional')}</div>
       <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{'[{"id":"code-tests","text":"代码测试通过","allowNotApplicable":true,"notApplicableWhen":"本轮仅澄清需求，未进入代码实施分支"}]'}</pre>
     </div>
   );
 }
 
 function GatePolicyFieldHelp() {
+  const { t } = useTranslation('sdlc');
   return (
     <div style={{ display: 'grid', gap: 6, maxWidth: 420 }}>
-      <div><b>含义：</b>步骤完成时 Runtime Gate 的校验规则。Agent 提交 completion 后，gate 会根据策略自动校验产出是否满足要求。</div>
-      <div><b>evidenceRequired：</b>是否要求 agent 在提交完成时声明 evidenceRefs（证据文件路径列表）。</div>
-      <div><b>requiredArtifacts：</b>要求产出目录中必须存在的文件/目录前缀。如 ["evidence/"] 表示 evidence/ 目录必须非空。</div>
-      <div><b>checklistRequired：</b>是否要求所有检查项完成或按配置条件附理由标为不适用。空清单与未处理项不能通过。</div>
+      <div><b>{t('help.meaning')}</b>{t('help.policyMeaning')}</div>
+      <div><b>{t('help.evidenceRequiredLabel')}</b>{t('help.evidenceRequired')}</div>
+      <div><b>{t('help.requiredArtifactsLabel')}</b>{t('help.requiredArtifacts')}</div>
+      <div><b>{t('help.checklistRequiredLabel')}</b>{t('help.checklistRequired')}</div>
       <div>
-        <b>示例：</b>
-        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{'{ "evidenceRequired": true, "requiredArtifacts": ["evidence/"] }'}</pre>
+        <b>{t('help.example')}</b>
+        <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{policyExample}</pre>
       </div>
     </div>
   );

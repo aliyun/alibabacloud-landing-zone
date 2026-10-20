@@ -57,6 +57,7 @@ public class MemoryDirectoryService {
     }
 
     static void describe(MemoryDocumentDO document) {
+        document.setDescriptionKind(null);
         document.setTitle(document.getPath());
         document.setBody(document.getContentMd());
         if ("MEMORY.md".equals(document.getPath())) return;
@@ -72,6 +73,7 @@ public class MemoryDirectoryService {
         } catch (IllegalArgumentException | org.yaml.snakeyaml.error.YAMLException error) {
             // Existing malformed files remain viewable as-is; do not invent metadata.
             document.setDescription("元信息无法解析，可在文件详情中查看原文");
+            document.setDescriptionKind("METADATA_PARSE_WARNING");
         }
     }
 

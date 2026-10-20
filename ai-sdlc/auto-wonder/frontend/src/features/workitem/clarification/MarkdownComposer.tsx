@@ -11,6 +11,11 @@ import Link from '@tiptap/extension-link';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { Markdown } from 'tiptap-markdown';
+import {
+  documentsFromDataTransfer,
+  filesFromClipboard,
+  pastedFileForUpload,
+} from '@/shared/lib/documentUpload';
 import { shouldSendOnKey, type SendMode } from './sendMode';
 import './markdownComposer.css';
 
@@ -25,6 +30,8 @@ interface MarkdownComposerProps {
   onChange: (markdown: string) => void;
   /** 按当前发送方式偏好触发发送；是否真的发送由父级守卫（回复中/加载中等）。 */
   onSendKey: () => void;
+  /** 粘贴/拖入的文件交给父级上传；剪贴板图片会先改成不重名的文件名。 */
+  onFiles?: (files: File[], info?: { containsDirectory?: boolean }) => void;
   sendMode: SendMode;
   disabled?: boolean;
   placeholder?: string;
@@ -60,6 +67,7 @@ export function MarkdownComposer({
   value,
   onChange,
   onSendKey,
+  onFiles,
   sendMode,
   disabled = false,
   placeholder = '',
@@ -68,16 +76,23 @@ export function MarkdownComposer({
   maxHeight,
   handleRef,
 }: MarkdownComposerProps) {
+  const placeholderRef = useRef(placeholder);
+  placeholderRef.current = placeholder;
   const rootRef = useRef<HTMLDivElement>(null);
   const lastEmittedRef = useRef<string>('');
   const editorRef = useRef<Editor | null>(null);
   const sendModeRef = useRef(sendMode);
   sendModeRef.current = sendMode;
+  // 编辑器只创建一次，粘贴/拖拽回调必须走 ref 才能拿到最新父级闭包。
+  const onFilesRef = useRef(onFiles);
+  onFilesRef.current = onFiles;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
 
   const editor = useEditor({
     extensions: [
       StarterKit,
-      Placeholder.configure({ placeholder }),
+      Placeholder.configure({ placeholder: () => placeholderRef.current }),
       Table.configure({ resizable: false }),
       TableRow,
       TableCell,
@@ -105,6 +120,24 @@ export function MarkdownComposer({
     ],
     content: value,
     editable: !disabled,
+    editorProps: {
+      handlePaste: (_view, event) => {
+        if (disabledRef.current) return false;
+        const files = filesFromClipboard(event.clipboardData);
+        if (files.length === 0) return false;
+        onFilesRef.current?.(files.map((file) => pastedFileForUpload(file)));
+        // 剪贴板同时带文本时照常插入文本；纯文件粘贴已提取，阻止编辑器插入空内容。
+        return !event.clipboardData?.getData('text/plain');
+      },
+      handleDrop: (_view, event, _slice, moved) => {
+        if (disabledRef.current || moved) return false;
+        if (!event.dataTransfer) return false;
+        const { files, containsDirectory } = documentsFromDataTransfer(event.dataTransfer);
+        if (!containsDirectory && files.length === 0) return false;
+        onFilesRef.current?.(files, { containsDirectory });
+        return true;
+      },
+    },
     onUpdate: ({ editor: current, transaction }) => {
       // setEditable 的 dispatch 未带 preventUpdate：disabled 切换（回复中/创建中）会以
       // 旧内容触发一次 update，把刚被外部清空的草稿写回 state。这类「非内容变化」的事务跳过。
@@ -119,6 +152,11 @@ export function MarkdownComposer({
     if (!editor) return;
     editor.setEditable(!disabled);
   }, [editor, disabled]);
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dispatch(editor.state.tr.setMeta('preventUpdate', true));
+  }, [editor, placeholder]);
 
   // 外部赋值同步：仅当 markdown 与编辑器当前序列化结果不一致时写回，
   // 避免打字回流（onChange → value prop）造成光标重置。

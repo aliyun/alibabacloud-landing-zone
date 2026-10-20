@@ -12,7 +12,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/memory-imports")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理记忆导入")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "管理记忆导入", actionKey = "access.action.manage_memory_imports")
 public class MemoryImportAdminController {
     private final MemoryImportAdminService imports;
 

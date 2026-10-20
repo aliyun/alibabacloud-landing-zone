@@ -5,6 +5,7 @@ import com.aliyun.autowonder.access.WorkspaceAccessLevel;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.common.result.PageResult;
+import com.aliyun.autowonder.user.UserAccountStates;
 import com.aliyun.autowonder.user.UserDO;
 import com.aliyun.autowonder.user.UserDao;
 import com.aliyun.autowonder.workspace.dto.AccessRequestVO;
@@ -50,13 +51,15 @@ public class AccessRequestService {
     private final UserDao userDao;
     private final ApplicationEventPublisher eventPublisher;
     private final SystemAdminService systemAdminService;
+    private final WorkspaceRoleService roleService;
 
     public AccessRequestService(WorkspaceDao workspaceDao,
                                 WorkspaceMemberDao workspaceMemberDao,
                                 AccessRequestDao accessRequestDao,
                                 UserDao userDao,
                                 ApplicationEventPublisher eventPublisher,
-                                SystemAdminService systemAdminService) {
+                                SystemAdminService systemAdminService, WorkspaceRoleService roleService) {
+        this.roleService = roleService;
         this.workspaceDao = workspaceDao;
         this.workspaceMemberDao = workspaceMemberDao;
         this.accessRequestDao = accessRequestDao;
@@ -151,7 +154,8 @@ public class AccessRequestService {
 
     public List<AccessRequestVO> listForWorkspace(long workspaceId, String status) {
         if (status == null || status.isBlank() || !REVIEWABLE_STATUSES.contains(status)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "Invalid access request status");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "workspace.access_request_status_invalid", null,
+                    "Invalid access request status");
         }
 
         List<AccessRequestDO> requests = accessRequestDao.listByTenantAndStatus(workspaceId, status);
@@ -170,8 +174,8 @@ public class AccessRequestService {
         }
         Map<Long, String> nameByUserId = new HashMap<>();
         if (!userIds.isEmpty()) {
-            for (UserDO user : userDao.listByIds(userIds)) {
-                nameByUserId.put(user.getId(), user.getNickname());
+            for (UserDO user : userDao.listByIdsIncludingDeleted(userIds)) {
+                nameByUserId.put(user.getId(), UserAccountStates.displayName(user));
             }
         }
 
@@ -195,6 +199,7 @@ public class AccessRequestService {
 
     @Transactional
     public void approve(long workspaceId, long requestId, long reviewerId) {
+        if (workspaceDao.findByIdForUpdate(workspaceId) == null) throw new BizException(ErrorCode.NOT_FOUND);
         AccessRequestDO request = requirePendingRequest(workspaceId, requestId);
 
         if (accessRequestDao.updateStatus(requestId, STATUS_APPROVED, reviewerId, null) == 0) {
@@ -213,7 +218,9 @@ public class AccessRequestService {
             member.setTenantId(workspaceId);
             member.setUserId(request.getRequesterId());
             member.setStatus(MEMBER_STATUS_ACTIVE);
-            member.setAccessLevel(request.getRequestedLevel());
+            WorkspaceRoleDO role = roleService.builtIn(workspaceId, parseLevel(request.getRequestedLevel()));
+            member.setRoleId(role.getId());
+            member.setAccessLevel(role.getAccessLevel());
             member.setIdentityTags(IdentityTags.toJson(List.of()));
             member.setCreatorId(reviewerId);
             member.setModifierId(reviewerId);
@@ -293,11 +300,9 @@ public class AccessRequestService {
     }
 
     private String displayName(long userId) {
-        UserDO user = userDao.findById(userId);
-        if (user == null || user.getNickname() == null || user.getNickname().isBlank()) {
-            return String.valueOf(userId);
-        }
-        return user.getNickname();
+        UserDO user = userDao.findByIdIncludingDeleted(userId);
+        String name = user == null ? null : UserAccountStates.displayName(user);
+        return name == null || name.isBlank() ? String.valueOf(userId) : name;
     }
 
     private WorkspaceAccessLevel parseLevel(String requestedLevel) {

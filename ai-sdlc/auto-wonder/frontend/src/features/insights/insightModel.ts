@@ -1,9 +1,9 @@
+import { i18n } from '@/shared/i18n';
 import type { InsightMetrics, InsightAuditItem, InsightModel, InsightCard, WorkerFinding, TimeRange } from './types';
 
-const DATE_LABELS: Record<string, string> = { '7d': '近7天', '30d': '近30天', '90d': '近90天' };
-const SDLC_LINKS = ['需求澄清', '实现开发', '单测验证', '代码评审', '交接同步', '负责人决策'];
-const REVIEW_LINKS = ['评审范围确认', '差异检查', '测试证据', '驳回说明', '通过交付'];
-const CODING_LINKS = ['需求确认', '实现开发', '自测记录', '分支推送', '评审交接'];
+const SDLC_LINKS = ['model.stages.clarification', 'model.stages.implementation', 'model.stages.unitTests', 'model.stages.codeReview', 'model.stages.handoff', 'model.stages.ownerDecision'] as const;
+const REVIEW_LINKS = ['model.stages.reviewScope', 'model.stages.diffCheck', 'model.stages.testEvidence', 'model.stages.rejectionReason', 'model.stages.approvedDelivery'] as const;
+const CODING_LINKS = ['model.stages.requirementConfirmation', 'model.stages.implementation', 'model.stages.selfTest', 'model.stages.branchPush', 'model.stages.reviewHandoff'] as const;
 
 export function buildInsightModel(
   metrics: InsightMetrics,
@@ -11,98 +11,96 @@ export function buildInsightModel(
   filters: { workerLabel: string; timeRange: TimeRange },
 ): InsightModel {
   const { workerLabel, timeRange } = filters;
-  const dateLabel = DATE_LABELS[timeRange] || '近30天';
+  const dateLabel = i18n.t('participation.lastDays', { ns: 'insights', count: timeRange === '7d' ? 7 : timeRange === '90d' ? 90 : 30 });
   const scopedAudit = workerLabel ? audit.filter((item) => item.worker === workerLabel) : audit;
   const workers = getWorkers(audit, workerLabel);
   const scale = dateScale(timeRange) * workerScale(workerLabel);
-
   const blockedSignals = scopedAudit.filter((item) => /waiting-human|blocked|review_failed|reopened|驳回/i.test(`${item.eventType} ${item.detail}`)).length;
   const retrySignals = scopedAudit.filter((item) => /retry|rerun|reopen/i.test(`${item.eventType} ${item.detail}`)).length;
   const highRiskSignals = scopedAudit.filter((item) => item.riskLevel === 'high').length;
   const handoffSignals = scopedAudit.filter((item) => /assigned|handoff|review|workitem/i.test(`${item.eventType} ${item.detail}`)).length;
-
   const adjustedMetrics = adjustMetrics(metrics, scale, workerLabel);
+  // These original fallback identities are calculation inputs, independent of localized display names.
   const primaryWorker = workerLabel || workers[0] || '全部数字员工';
   const problemScore = Math.max(1, Math.round((blockedSignals * 2 + retrySignals + handoffSignals * 0.8 + seed(primaryWorker) % 5) * dateIntensity(timeRange)));
   const anomalyScore = Math.max(1, Math.round((highRiskSignals * 2 + retrySignals + (seed(primaryWorker) % 7)) * dateIntensity(timeRange)));
-
+  const fallbackWorkers = !workerLabel && audit.length === 0;
+  const displayWorkers = fallbackWorkers ? [i18n.t('model.developmentAgent', { ns: 'insights' }), i18n.t('model.reviewAgent', { ns: 'insights' })] : workers;
+  const scopeWorker = workerLabel || i18n.t('analytics.allAgents', { ns: 'insights' });
+  const primaryDisplay = workerLabel || displayWorkers[0] || scopeWorker;
   return {
-    scope: { workerLabel: workerLabel || '全部数字员工', dateLabel },
+    scope: { workerLabel: scopeWorker, dateLabel },
     adjustedMetrics,
-    summaryCards: buildSummaryCards(workerLabel, dateLabel, problemScore, anomalyScore, primaryWorker),
+    summaryCards: buildSummaryCards(scopeWorker, dateLabel, problemScore, anomalyScore, primaryWorker, primaryDisplay),
     insightCards: buildInsightCards(workerLabel, dateLabel, problemScore, anomalyScore, handoffSignals),
-    workerFindings: workers.map((w, i) => buildWorkerFinding(w, problemScore + i)),
-    recommendations: buildRecommendations(primaryWorker, dateLabel, problemScore, anomalyScore),
+    workerFindings: workers.map((w, i) => buildWorkerFinding(w, problemScore + i, displayWorkers[i])),
+    recommendations: buildRecommendations(primaryDisplay, dateLabel, problemScore, anomalyScore),
   };
 }
 
-function buildSummaryCards(workerLabel: string, dateLabel: string, problemScore: number, anomalyScore: number, primaryWorker: string): InsightCard[] {
+function buildSummaryCards(worker: string, date: string, problemScore: number, anomalyScore: number, primaryWorker: string, primaryDisplay: string): InsightCard[] {
+  const link = topLink(primaryWorker, problemScore);
   return [
     {
-      title: '链路阻塞',
+      title: i18n.t('model.blockage', { ns: 'insights' }),
       value: `${problemScore}`,
-      body: `${workerLabel || '全部数字员工'} 在 ${dateLabel} 的 SDLC 卡点信号，主要集中在交接同步、评审证据和等待人工决策。`,
+      body: i18n.t('model.blockageBody', { ns: 'insights', worker, date }),
       severity: problemScore >= 8 ? 'critical' : problemScore >= 4 ? 'warning' : 'info',
     },
     {
-      title: '异动强度',
-      value: anomalyScore >= 8 ? '高' : anomalyScore >= 4 ? '中' : '低',
-      body: `${dateLabel} 内重试、驳回和高风险操作合计形成 ${anomalyScore} 个异常信号。`,
+      title: i18n.t('model.anomaly', { ns: 'insights' }),
+      value: i18n.t(anomalyScore >= 8 ? 'model.high' : anomalyScore >= 4 ? 'model.medium' : 'model.low', { ns: 'insights' }),
+      body: i18n.t('model.anomalyBody', { ns: 'insights', date, count: anomalyScore }),
       severity: anomalyScore >= 8 ? 'critical' : anomalyScore >= 4 ? 'warning' : 'good',
     },
     {
-      title: '可优化链路',
-      value: topLink(primaryWorker, problemScore),
-      body: `建议优先看 ${primaryWorker} 的 ${topLink(primaryWorker, problemScore)} 环节。`,
+      title: i18n.t('model.optimizable', { ns: 'insights' }),
+      value: link,
+      body: i18n.t('model.optimizableBody', { ns: 'insights', worker: primaryDisplay, link }),
       severity: 'info',
     },
   ];
 }
 
-function buildInsightCards(workerLabel: string, dateLabel: string, problemScore: number, anomalyScore: number, handoffSignals: number): InsightCard[] {
+function buildInsightCards(workerLabel: string, date: string, problemScore: number, anomalyScore: number, handoffSignals: number): InsightCard[] {
   return [
     {
-      title: 'SDLC 链路瓶颈',
+      title: i18n.t('model.bottleneck', { ns: 'insights' }),
       value: topLink(workerLabel || 'all', problemScore),
-      body: `${dateLabel} 内等待信号偏多，卡点集中在"交接后状态同步"和"评审证据不完整"。`,
+      body: i18n.t('model.bottleneckBody', { ns: 'insights', date }),
       severity: problemScore >= 8 ? 'critical' : 'warning',
     },
     {
-      title: '数据洞察异动',
+      title: i18n.t('model.dataAnomaly', { ns: 'insights' }),
       value: `${anomalyScore >= 4 ? '+' : ''}${anomalyScore - 4}%`,
-      body: `${dateLabel} 的异常强度相对基线${anomalyScore >= 4 ? '上升' : '下降'}，主要由重试和驳回占比变化驱动。`,
+      body: i18n.t(anomalyScore >= 4 ? 'model.anomalyRising' : 'model.anomalyFalling', { ns: 'insights', date }),
       severity: anomalyScore >= 8 ? 'critical' : anomalyScore >= 4 ? 'warning' : 'good',
     },
     {
-      title: '数字员工协作质量',
-      value: handoffSignals > 2 ? '需关注' : '平稳',
-      body: `交接事件密度${handoffSignals > 2 ? '偏高，适合检查开发 → 评审 → 开发 的轮次是否闭环' : '处于正常范围'}。`,
+      title: i18n.t('model.collaboration', { ns: 'insights' }),
+      value: i18n.t(handoffSignals > 2 ? 'model.attention' : 'model.steady', { ns: 'insights' }),
+      body: i18n.t(handoffSignals > 2 ? 'model.handoffHigh' : 'model.handoffNormal', { ns: 'insights' }),
       severity: handoffSignals > 2 ? 'warning' : 'good',
     },
   ];
 }
 
-function buildWorkerFinding(worker: string, score: number): WorkerFinding {
-  const links = worker.includes('review') ? REVIEW_LINKS : worker.includes('coding') ? CODING_LINKS : SDLC_LINKS;
-  const link = links[Math.abs(seed(worker) + score) % links.length];
+function buildWorkerFinding(worker: string, score: number, displayWorker: string): WorkerFinding {
   const severity = score >= 9 ? 'high' : score >= 5 ? 'medium' : 'low';
   return {
-    worker,
-    link,
-    issue: severity === 'high' ? '连续阻塞信号偏多' : severity === 'medium' ? '交接证据不稳定' : '轻微波动',
-    impact: severity === 'high' ? '可能导致同一工单多轮空转' : severity === 'medium' ? '会拉长待决策前的周转时间' : '暂不影响整体交付',
-    signal: `${score} 个信号`,
+    worker: displayWorker,
+    link: topLink(worker, score),
+    issue: i18n.t(severity === 'high' ? 'model.issueHigh' : severity === 'medium' ? 'model.issueMedium' : 'model.issueLow', { ns: 'insights' }),
+    impact: i18n.t(severity === 'high' ? 'model.impactHigh' : severity === 'medium' ? 'model.impactMedium' : 'model.impactLow', { ns: 'insights' }),
+    signal: i18n.t('model.signals', { ns: 'insights', count: score }),
     severity,
   };
 }
 
-function buildRecommendations(worker: string, dateLabel: string, problemScore: number, anomalyScore: number): string[] {
-  const recs = [
-    `${worker}：${dateLabel} 优先检查"交接同步"和"评审证据"两类 SDLC 记录，避免状态已流转但进度未同步。`,
-    `${worker}：把评审驳回后的等待条件收紧为"收到新评审请求后再继续"，减少重复轮询。`,
-  ];
-  if (problemScore >= 6) recs.push(`${worker}：给高频卡点链路加一个二级验收字段，区分"执行中""待决策"和"已完成"。`);
-  if (anomalyScore >= 5) recs.push(`${worker}：对异动日增加审计抽样，重点看重试、reopen、状态变更是否成对出现。`);
+function buildRecommendations(worker: string, date: string, problemScore: number, anomalyScore: number): string[] {
+  const recs = [i18n.t('model.recommendSync', { ns: 'insights', worker, date }), i18n.t('model.recommendWait', { ns: 'insights', worker })];
+  if (problemScore >= 6) recs.push(i18n.t('model.recommendAcceptance', { ns: 'insights', worker }));
+  if (anomalyScore >= 5) recs.push(i18n.t('model.recommendAudit', { ns: 'insights', worker }));
   return recs;
 }
 
@@ -145,7 +143,7 @@ function getWorkers(audit: InsightAuditItem[], workerId: string): string[] {
 
 function topLink(worker: string, score: number): string {
   const links = worker.includes('review') ? REVIEW_LINKS : worker.includes('coding') ? CODING_LINKS : SDLC_LINKS;
-  return links[Math.abs(seed(worker) + score) % links.length];
+  return i18n.t(links[Math.abs(seed(worker) + score) % links.length], { ns: 'insights' });
 }
 
 function dateScale(range: string): number { return range === '7d' ? 0.42 : range === '90d' ? 1.85 : 1; }

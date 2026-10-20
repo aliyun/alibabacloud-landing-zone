@@ -1,23 +1,21 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
+import { Suspense, type ReactNode } from 'react';
 import { DatePicker, Segmented, Spin, Empty, Card, Statistic, Tag, Button, Modal, Tooltip, message } from 'antd';
-import { ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { ReloadOutlined, InfoCircleOutlined, ExclamationCircleFilled } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { useHumanAgentParticipation, useForceRefreshParticipation } from '../hooks';
-import { formatDurationZh } from '@/shared/lib/duration';
-const ParticipationChart = lazy(() => import('./ParticipationChart'));
+import { lazyWithChunkReload } from '@/shared/lib/chunkLoadRecovery';
+import { formatDuration } from '@/shared/lib/duration';
+const ParticipationChart = lazyWithChunkReload(() => import('./ParticipationChart'));
 import { SlowTailTable } from './SlowTailTable';
 import type { Granularity } from '../types';
 
 import { useInsightPreference, useInsightDateRange } from '../useInsightPreference';
 
 const { RangePicker } = DatePicker;
-
-const GRANULARITY_OPTIONS = [
-  { label: '按天', value: 'DAY' },
-  { label: '按周', value: 'WEEK' },
-  { label: '按月', value: 'MONTH' },
-];
 
 function defaultDateRange(): [Dayjs, Dayjs] {
   const end = dayjs().subtract(1, 'day');
@@ -26,6 +24,12 @@ function defaultDateRange(): [Dayjs, Dayjs] {
 }
 
 export function ParticipationTab() {
+  const { t } = useTranslation('insights');
+  const granularityOptions = [
+    { label: t('participation.daily'), value: 'DAY' },
+    { label: t('participation.weekly'), value: 'WEEK' },
+    { label: t('participation.monthly'), value: 'MONTH' },
+  ];
   const [dateRange, setDateRange] = useInsightDateRange('participation.dates', defaultDateRange, 181, dayjs().subtract(1, 'day'));
   const [granularity, setGranularity] = useInsightPreference<Granularity>('participation.granularity', 'DAY', v => typeof v === 'string' && ['DAY', 'WEEK', 'MONTH'].includes(v));
 
@@ -34,31 +38,38 @@ export function ParticipationTab() {
   const { data, isLoading, isError, isFetching, refetch } = useHumanAgentParticipation(startDate, endDate, granularity);
   const forceRefresh = useForceRefreshParticipation();
   const hasSamples = !!data?.sampleSize;
-  const exclusionLabels: Record<string, string> = { MISSING_CREATE: '缺少创建事件', UNKNOWN_ASSIGNEE: '负责人类型无法识别', INVALID_TIMELINE: '时间记录异常' };
+  const exclusionKeys = { MISSING_CREATE: 'participation.exclusions.MISSING_CREATE', UNKNOWN_ASSIGNEE: 'participation.exclusions.UNKNOWN_ASSIGNEE', INVALID_TIMELINE: 'participation.exclusions.INVALID_TIMELINE' } as const;
   const scopeTip = <>
-    <p>按首次完成日期筛选，统计从创建到首次完成的完整自然时长，包含等待、夜间和周末；完成后返工不计入。人工与 Agent 按负责人归属拆分，不代表实际工时。</p>
-    <p>占比按累计负责时长计算，长耗时工单权重更大。无样本周期留空，不表示耗时为零。</p>
-    <p>在可识别的 {data?.identifiedCompletedCount ?? '—'} 条完成记录中，纳入 {data?.sampleSize ?? '—'} 条。
-      {Object.entries(data?.exclusions ?? {}).map(([reason, count]) => ` ${exclusionLabels[reason] ?? reason}：${count} 条。`)}
-      {` 使用历史负责人类型推断：${data?.inferredAssignmentCount ?? 0} 条。`}
-      缺少完成事件或状态已无法识别的工单不在此覆盖范围内。</p>
+    <p>{t('participation.scopeLifecycle')}</p>
+    <p>{t('participation.scopeWeight')}</p>
+    <p>{data?.sampleSize != null ? t('participation.scopeRecords', { identified: data.identifiedCompletedCount ?? '—', count: data.sampleSize }) : t('participation.scopeRecordsUnavailable', { identified: data?.identifiedCompletedCount ?? '—' })}
+      {Object.entries(data?.exclusions ?? {}).map(([reason, count]) => <span key={reason}> {t('participation.exclusionCount', { count, reason: Object.prototype.hasOwnProperty.call(exclusionKeys, reason) ? t(exclusionKeys[reason as keyof typeof exclusionKeys]) : reason })}</span>)}
+      <span> {t('participation.inferred', { count: data?.inferredAssignmentCount ?? 0 })} {t('participation.scopeMissing')}</span></p>
   </>;
-  const executionTip = `仅对本工单首次完成前派发、且会话开始／恢复与结束／中断记录齐全的样本计算；排除已记录的中断间隔，并发会话去重。包含会话内部的工具、网络等待，不等同于纯计算时间。缺少会话记录 ${data?.executionMissingCount ?? 0} 条，记录不完整 ${data?.executionIncompleteCount ?? 0} 条，不计入此平均值；剩余时间不推算为人工工时。`;
+  const executionTip = t('participation.executionTip', { missing: data?.executionMissingCount ?? 0, incomplete: data?.executionIncompleteCount ?? 0 });
 
   const handleForceRefresh = () => {
-    Modal.confirm({
-      title: '确认强制刷新数据？',
-      content: '人机协作数据为 T-1 离线计算（每日凌晨自动更新），通常情况下无需手动刷新。强制刷新将覆盖当前缓存并重新计算，耗时可能较长。',
-      okText: '确认刷新',
-      cancelText: '取消',
+    const localeEvent = 'languageChanged';
+    const localizedProps = () => ({
+      icon: <ExclamationCircleFilled aria-hidden="true" />,
+      title: i18n.t('insights:participation.refreshTitle'),
+      content: i18n.t('insights:participation.refreshContent'),
+      okText: i18n.t('insights:participation.confirmRefresh'),
+      cancelText: i18n.t('insights:participation.cancel'),
+    });
+    const dialog = Modal.confirm({
+      ...localizedProps(),
       okButtonProps: { danger: true },
+      afterClose: () => i18n.off(localeEvent, refreshLabels),
       onOk: () => {
         forceRefresh.mutate(undefined, {
-          onSuccess: () => message.success('已触发强制刷新，数据将在几分钟后更新'),
-          onError: () => message.error('刷新请求失败，请稍后重试'),
+          onSuccess: () => message.success(i18n.t('insights:participation.refreshSuccess')),
+          onError: () => message.error(i18n.t('insights:participation.refreshFailure')),
         });
       },
     });
+    const refreshLabels = () => dialog.update(localizedProps());
+    i18n.on(localeEvent, refreshLabels);
   };
 
   return (
@@ -66,11 +77,11 @@ export function ParticipationTab() {
       {/* Controls stay available during empty, loading and error states. */}
       <div className="participation-controls">
         <RangePicker
-          aria-label="统计日期范围"
+          aria-label={t('participation.range')}
           allowClear={false}
           presets={[7, 30, 90, 180].map(days => {
             const end = data?.dataThrough ? dayjs(data?.dataThrough) : dayjs().subtract(1, 'day');
-            return { label: `近${days}天`, value: [end.subtract(days - 1, 'day'), end] as [Dayjs, Dayjs] };
+            return { label: t('participation.lastDays', { count: days }), value: [end.subtract(days - 1, 'day'), end] as [Dayjs, Dayjs] };
           })}
           value={dateRange}
           onChange={(dates) => {
@@ -83,45 +94,45 @@ export function ParticipationTab() {
             return current && (current > upperBound || current < dayjs(data?.dataThrough || dayjs().subtract(1, 'day')).subtract(180, 'day'));
           }}
         />
-        <Segmented aria-label="统计粒度" options={GRANULARITY_OPTIONS} value={granularity} onChange={(v) => setGranularity(v as Granularity)} />
+        <Segmented aria-label={t('participation.granularity')} options={granularityOptions} value={granularity} onChange={(v) => setGranularity(v as Granularity)} />
         <Button
           style={{ marginLeft: 'auto' }}
-          icon={<ReloadOutlined />}
+          icon={<ReloadOutlined aria-hidden="true" />}
           loading={forceRefresh.isPending}
           onClick={handleForceRefresh}
         >
-          强制刷新
+          {t('participation.refresh')}
         </Button>
       </div>
 
       <div className="participation-scope">
-        <span className="participation-scope-summary"><span>数据截至 {data?.dataThrough || '—'} · 有效完成样本 <strong>{data?.sampleSize ?? '—'}</strong> 条</span>
-          <Tooltip title={scopeTip}><button type="button" className="participation-help" aria-label="查看人机协作统计口径"><InfoCircleOutlined /> 统计口径</button></Tooltip>
+        <span className="participation-scope-summary"><span>{data?.sampleSize != null ? <Trans ns="insights" i18nKey="participation.scopeSummary" count={data.sampleSize} components={{ date: <span>{data.dataThrough || '—'}</span>, samples: <strong>{data.sampleSize}</strong> }} /> : t('participation.scopeUnavailable', { date: data?.dataThrough || '—' })}</span>
+          <Tooltip title={scopeTip}><button type="button" className="participation-help" aria-label={t('participation.scopeAria')}><InfoCircleOutlined aria-hidden="true" /> {t('participation.scopeMethod')}</button></Tooltip>
         </span>
-        <span>{isFetching ? '正在更新…' : data?.generatedAt ? `更新于 ${dayjs(data.generatedAt).format('MM-DD HH:mm')} · 每日离线统计` : '每日离线统计'}</span>
+        <span>{isFetching ? t('participation.updating') : data?.generatedAt ? t('participation.updatedAt', { time: formatDateTime(data.generatedAt, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }) : t('participation.offline')}</span>
       </div>
-      {isLoading ? <div className="participation-state"><Spin tip="加载人机协作数据..." /></div>
-        : isError ? <div className="participation-state"><Empty description="加载失败，请重试或调整日期范围"><Button onClick={() => refetch()}>重试</Button></Empty></div>
-        : !data?.available ? <div className="participation-state"><Empty description={data?.refreshTriggered ? '数据正在生成中，请稍后刷新' : '暂无数据，请调整日期范围'} /></div>
+      {isLoading ? <div className="participation-state"><Spin tip={t('participation.loading')} /></div>
+        : isError ? <div className="participation-state"><Empty description={t('participation.loadFailure')}><Button onClick={() => refetch()}>{t('participation.retry')}</Button></Empty></div>
+        : !data?.available ? <div className="participation-state"><Empty description={t(data?.refreshTriggered ? 'participation.generating' : 'participation.noData')} /></div>
         : <>
       {/* Summary cards */}
       {data.average && (
         <div className="participation-stats">
-          <StatCard label="平均完成时长" value={hasSamples ? formatDurationZh(data.average.totalDurationSeconds) : '—'}
-            detail={hasSamples ? <>负责阶段 · <span className="is-human">人工 {formatDurationZh(data.average.humanDurationSeconds)}</span> / <span className="is-agent">Agent {formatDurationZh(data.average.agentDurationSeconds)}</span></> : '当前范围无有效完成样本'} />
-          <StatCard label="完成时长中位数" value={hasSamples && data.medianTotalSeconds != null ? formatDurationZh(data.medianTotalSeconds) : '—'}
-            detail={`P90 ${data.p90 ? formatDurationZh(data.p90.totalDurationSeconds) : '—'} · 自然时长，含等待`}
-            tip="中位数反映典型工单耗时；P90 表示约 90% 的样本耗时不超过此值，小样本时需谨慎比较。" />
-          <StatCard tone="agent" label="Agent 参与工单占比" value={hasSamples && data.agentWorkitemCount != null ? `${(data.agentWorkitemCount / data.sampleSize * 100).toFixed(1)}%` : '—'}
-            detail={`${data.agentWorkitemCount ?? '—'} / ${data.sampleSize} 条有效完成样本`}
-            tip="首次完成前曾转派给 Agent 或创建过工单执行任务，即计为参与。按工单数计算，不代表时间占比或自动完成率。" />
-          <StatCard tone="agent" label="Agent 平均会话执行时长" value={data.averageExecutionSeconds != null ? formatDurationZh(data.averageExecutionSeconds) : '—'}
-            detail={`完整记录 ${data.executionSampleSize ?? 0} / ${data.agentWorkitemCount ?? '—'} 条 Agent 参与工单`}
+          <StatCard label={t('participation.average')} value={hasSamples ? formatDuration(data.average.totalDurationSeconds) : '—'}
+            detail={hasSamples ? <Trans ns="insights" i18nKey="participation.responsibilityDetail" components={{ human: <span className="is-human">{t('series.human')} {formatDuration(data.average.humanDurationSeconds)}</span>, agent: <span className="is-agent">{t('series.agent')} {formatDuration(data.average.agentDurationSeconds)}</span> }} /> : t('participation.noSamples')} />
+          <StatCard label={t('participation.median')} value={hasSamples && data.medianTotalSeconds != null ? formatDuration(data.medianTotalSeconds) : '—'}
+            detail={t('participation.p90Detail', { duration: data.p90 ? formatDuration(data.p90.totalDurationSeconds) : '—' })}
+            tip={t('participation.medianTip')} />
+          <StatCard tone="agent" label={t('participation.agentShare')} value={hasSamples && data.agentWorkitemCount != null ? `${(data.agentWorkitemCount / data.sampleSize * 100).toFixed(1)}%` : '—'}
+            detail={t('participation.sampleFraction', { participating: data.agentWorkitemCount ?? '—', count: data.sampleSize })}
+            tip={t('participation.agentShareTip')} />
+          <StatCard tone="agent" label={t('participation.averageExecution')} value={data.averageExecutionSeconds != null ? formatDuration(data.averageExecutionSeconds) : '—'}
+            detail={data.agentWorkitemCount != null ? t('participation.executionRecords', { complete: data.executionSampleSize ?? 0, count: data.agentWorkitemCount }) : t('participation.executionRecordsUnavailable', { complete: data.executionSampleSize ?? 0 })}
             tip={executionTip} />
         </div>
       )}
 
-      <Suspense fallback={<div className="participation-state"><Spin tip="加载图表..." /></div>}>
+      <Suspense fallback={<div className="participation-state"><Spin tip={t('participation.loadingCharts')} /></div>}>
         <div className="participation-chart-grid" key={`${startDate}-${endDate}-${granularity}`}>
           <ParticipationChart kind="distribution" data={data.trend} average={data.average} sampleSize={data.sampleSize} granularity={granularity} />
           <ParticipationChart kind="ratio" data={data.trend} average={data.average} sampleSize={data.sampleSize} granularity={granularity} />
@@ -131,7 +142,7 @@ export function ParticipationTab() {
 
       {/* Slow tail table */}
       <Card
-        title={<span className="participation-slow-tail-title"><span>慢尾工单</span><Tag color="orange">Top 10%</Tag></span>}
+        title={<span className="participation-slow-tail-title"><span>{t('participation.slowTail')}</span><Tag color="orange">{t('participation.topPercent')}</Tag></span>}
         styles={{ body: { padding: 0 } }}
       >
         <SlowTailTable key={`${startDate}-${endDate}`} startDate={startDate} endDate={endDate} />
@@ -142,9 +153,10 @@ export function ParticipationTab() {
 }
 
 function StatCard({ label, value, tone, detail, tip }: { label: string; value: string; tone?: string; detail?: ReactNode; tip?: ReactNode }) {
+  const { t } = useTranslation('insights');
   return (
     <Card className={`participation-stat ${tone ? `is-${tone}` : ''}`}>
-      <Statistic title={<>{label}{tip && <Tooltip title={tip}><button type="button" className="participation-help" aria-label={`${label}说明`}><InfoCircleOutlined /></button></Tooltip>}</>} value={value} />
+      <Statistic title={<>{label}{tip && <Tooltip title={tip}><button type="button" className="participation-help" aria-label={t('participation.explanationAria', { label })}><InfoCircleOutlined aria-hidden="true" /></button></Tooltip>}</>} value={value} />
       <div className="participation-stat-detail">{detail}</div>
     </Card>
   );

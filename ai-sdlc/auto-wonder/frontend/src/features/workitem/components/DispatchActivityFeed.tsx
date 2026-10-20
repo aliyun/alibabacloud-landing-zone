@@ -1,3 +1,5 @@
+import { formatDateTime } from '@/shared/i18n/format';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState } from 'react';
 import { Button, Spin, Typography } from 'antd';
 import type { RuntimeActivity } from '@/shared/types/workitem';
@@ -9,7 +11,7 @@ const ACTIVE_DISPATCH_STATUSES = new Set(['RUNNING', 'ACKED', 'DISPATCHED', 'PAU
 function displayTime(value?: string | null): string {
   if (!value) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? value : formatDateTime(date, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false });
 }
 
 interface DispatchActivityFeedProps {
@@ -18,6 +20,7 @@ interface DispatchActivityFeedProps {
 }
 
 export function DispatchActivityFeed({ dispatchId, status }: DispatchActivityFeedProps) {
+  const { t } = useTranslation('workitem');
   const [activities, setActivities] = useState<RuntimeActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -102,22 +105,22 @@ export function DispatchActivityFeed({ dispatchId, status }: DispatchActivityFee
       data-testid={`dispatch-activities-${dispatchId}`}
       style={{ margin: '6px 0 8px 4px', paddingLeft: 9, borderLeft: '2px solid var(--aw-border)' }}
     >
-      <h4 id={titleId} style={{ margin: '0 0 4px', fontSize: 12 }}>执行详情</h4>
+      <h4 id={titleId} style={{ margin: '0 0 4px', fontSize: 12 }}>{t('execution.details')}</h4>
       {loading && (
-        <div role="status" aria-label="正在加载执行详情">
+        <div role="status" aria-label={t('execution.loading')}>
           <Spin size="small" />
         </div>
       )}
       {loadFailed && (
         <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Text type="danger" style={{ fontSize: 12 }}>执行详情加载失败</Text>
-          <Button type="link" size="small" aria-label="重试执行详情" onClick={() => loadRef.current?.()}>
-            重试执行详情
+          <Text type="danger" style={{ fontSize: 12 }}>{t('execution.loadFailed')}</Text>
+          <Button type="link" size="small" aria-label={t('execution.retry')} onClick={() => loadRef.current?.()}>
+            {t('execution.retry')}
           </Button>
         </div>
       )}
       {!loading && !loadFailed && activities.length === 0 && (
-        <Text type="secondary" style={{ fontSize: 12 }}>暂无执行详情</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>{t('execution.empty')}</Text>
       )}
       {activities.length > 0 && (
         <ul aria-labelledby={titleId} style={{ margin: 0, paddingLeft: 16 }}>

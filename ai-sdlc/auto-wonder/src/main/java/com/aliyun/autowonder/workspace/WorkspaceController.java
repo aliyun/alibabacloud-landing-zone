@@ -22,7 +22,7 @@ import com.aliyun.autowonder.workspace.dto.WorkspaceUpdateRequest;
 import com.aliyun.autowonder.workspace.dto.WorkspaceVO;
 import com.aliyun.autowonder.workspace.dto.SwitchWorkspaceResponse;
 import com.aliyun.autowonder.workspace.dto.TransferOwnerRequest;
-import com.aliyun.autowonder.workspace.dto.UpdateMemberAccessRequest;
+import com.aliyun.autowonder.workspace.dto.UpdateMemberRoleRequest;
 import com.aliyun.autowonder.workspace.dto.UpdateMemberIdentityTagsRequest;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -126,57 +126,58 @@ public class WorkspaceController {
     }
 
     @GetMapping("/current")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看当前工作空间")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看当前工作空间", actionKey = "access.action.view_the_current_workspace")
     public Result<WorkspaceVO> current() {
         return Result.ok(workspaceService.getCurrent(currentWorkspaceId()));
     }
 
     @GetMapping("/current/membership")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看当前工作空间成员身份")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看当前工作空间成员身份", actionKey = "access.action.view_current_workspace_membership")
     public Result<CurrentMembershipVO> currentMembership() {
         return Result.ok(workspaceService.currentMembership(currentWorkspaceId(), currentUserId()));
     }
 
     @GetMapping("/current/members")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看工作空间成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看工作空间成员", actionKey = "access.action.view_workspace_members")
     public Result<List<MemberVO>> listMembers() {
         return Result.ok(workspaceService.listMembers(currentWorkspaceId()));
     }
 
     @GetMapping("/current/member-candidates")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "搜索工作空间成员候选人")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "搜索工作空间成员候选人", actionKey = "access.action.search_workspace_member_candidates")
     public Result<List<MemberCandidateVO>> searchMemberCandidates(
             @RequestParam(value = "keyword", required = false) String keyword) {
         return Result.ok(workspaceService.searchMemberCandidates(currentWorkspaceId(), keyword));
     }
 
     @PostMapping("/current/members")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "添加工作空间成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "添加工作空间成员", actionKey = "access.action.add_a_workspace_member")
     public Result<Void> addMember(@RequestBody AddMemberRequest req) {
         workspaceService.addMember(
-                currentWorkspaceId(), req == null ? null : req.getUserId(), currentUserId());
+                currentWorkspaceId(), req == null ? null : req.getUserId(),
+                req == null ? null : req.getRoleId(), currentUserId());
         return Result.ok(null);
     }
 
     @DeleteMapping("/current/members/{userId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "移除工作空间成员")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "移除工作空间成员", actionKey = "access.action.remove_a_workspace_member")
     public Result<Void> removeMember(@PathVariable("userId") Long userId) {
         workspaceService.removeMember(currentWorkspaceId(), userId, currentUserId());
         return Result.ok(null);
     }
 
-    @PutMapping("/current/members/{userId}/access-level")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "修改工作空间成员访问级别")
-    public Result<Void> updateMemberAccess(
+    @PutMapping("/current/members/{userId}/role")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "修改工作空间成员角色", actionKey = "access.action.change_workspace_member_role")
+    public Result<Void> updateMemberRole(
             @PathVariable("userId") Long userId,
-            @RequestBody UpdateMemberAccessRequest req) {
-        workspaceService.updateMemberAccess(
-                currentWorkspaceId(), userId, req == null ? null : req.getAccessLevel(), currentUserId());
+            @RequestBody UpdateMemberRoleRequest req) {
+        workspaceService.updateMemberRole(
+                currentWorkspaceId(), userId, req == null ? null : req.getRoleId(), currentUserId());
         return Result.ok(null);
     }
 
     @PutMapping("/current/members/{userId}/identity-tags")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "修改工作空间成员身份标签")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "修改工作空间成员身份标签", actionKey = "access.action.change_workspace_member_identity_tags")
     public Result<Void> updateMemberIdentityTags(
             @PathVariable("userId") Long userId,
             @RequestBody UpdateMemberIdentityTagsRequest req) {
@@ -186,7 +187,7 @@ public class WorkspaceController {
     }
 
     @PostMapping("/current/owner/transfer")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "转让工作空间所有者")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "转让工作空间所有者", actionKey = "access.action.transfer_workspace_ownership")
     public Result<Void> transferOwner(@RequestBody TransferOwnerRequest req) {
         if (req == null || req.getTargetUserId() == null) {
             throw new BizException(ErrorCode.WORKSPACE_OWNER_TRANSFER_INVALID);
@@ -196,21 +197,21 @@ public class WorkspaceController {
     }
 
     @GetMapping("/current/access-requests")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看工作空间权限申请")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看工作空间权限申请", actionKey = "access.action.view_workspace_access_requests")
     public Result<List<AccessRequestVO>> listAccessRequests(
             @RequestParam(value = "status", defaultValue = "PENDING") String status) {
         return Result.ok(accessRequestService.listForWorkspace(currentWorkspaceId(), status));
     }
 
     @PostMapping("/current/access-requests/{requestId}/approve")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "通过工作空间权限申请")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "通过工作空间权限申请", actionKey = "access.action.approve_a_workspace_access_request")
     public Result<Void> approveAccessRequest(@PathVariable("requestId") Long requestId) {
         accessRequestService.approve(currentWorkspaceId(), requestId, currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/current/access-requests/{requestId}/reject")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "拒绝工作空间权限申请")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "拒绝工作空间权限申请", actionKey = "access.action.reject_a_workspace_access_request")
     public Result<Void> rejectAccessRequest(
             @PathVariable("requestId") Long requestId,
             @RequestBody(required = false) RejectAccessRequestBody req) {

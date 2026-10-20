@@ -114,6 +114,34 @@ class ScheduledTaskRunRecoveryServiceTest {
         verify(runDao, never()).markDegraded(anyLong(), anyLong(), anyString(), anyLong(), anyInt(), anyLong());
     }
 
+    @Test void actualTimeoutDegradationUsesRecipientIntentForPrimaryAndDirectFallbackWithoutChangingRawWrites() {
+        for (boolean primary : List.of(true,false)) {
+            var runs=mock(ScheduledTaskRunDao.class);var dispatches=mock(DispatchDao.class);
+            var selector=mock(ExecutorSelector.class);var service=mock(DispatchService.class);
+            Instant now=Instant.parse("2026-08-11T00:31:00Z");
+            var recovery=new ScheduledTaskRunRecoveryService(runs,dispatches,selector,service,Clock.fixed(now,ZoneOffset.UTC));
+            attachResumableCheckpoint(recovery);
+            var run=continuousRun(77L,now.minusSeconds(31*60));run.setOwnerId(3L);run.setError("OWNER_INACTIVE");
+            when(runs.listByTask(1L,12L,200,0)).thenReturn(List.of(run,terminalRun(66L)));
+            when(dispatches.listLatestBySourceAndAgent(1L,ExecutionSourceType.SCHEDULED_TASK_RUN.name(),66L,20L,20)).thenReturn(List.of(sourceDispatch(88L)));
+            when(selector.isAvailable(88L)).thenReturn(false);when(service.fencePendingContinuousResume(1L,77L)).thenReturn(true);
+            var f=new com.aliyun.autowonder.notification.RecipientNotificationTestSupport();f.preference(3,"\"en-US\"");
+            var redis=mock(com.aliyun.autowonder.redis.RedisManager.class);
+            if(primary)recovery.setScheduledTaskNotificationService(new ScheduledTaskNotificationService(f.service,null,redis,runs));
+            else recovery.setNotifyService(f.service);
+            assertEquals(ScheduledTaskRunRecoveryService.State.DEGRADED,recovery.reconcile(run).state());
+            assertEquals(1,f.rows.size());assertEquals("Source Executor wait timed out",f.rows.get(0).getContent());
+            assertEquals(primary?"Scheduled task run status updated":"Scheduled task session resumed with reduced continuity",f.rows.get(0).getTitle());
+            assertEquals(primary?"SCHEDULED_TASK_RUN_QUEUED":"SCHEDULED_TASK_RESUME_DEGRADED",f.rows.get(0).getType());
+            assertEquals("SCHEDULED_TASK_RUN",f.rows.get(0).getRefType());assertEquals(77L,f.rows.get(0).getRefId());
+            assertEquals("OWNER_INACTIVE",run.getError());assertEquals("QUEUED",run.getStatus());
+            var order=inOrder(service,runs,f.dao);order.verify(service).fencePendingContinuousResume(1L,77L);
+            order.verify(service).degradeResume(77L,900L,"SOURCE_EXECUTOR_TIMEOUT",1L);
+            order.verify(runs).markDegraded(1L,77L,"SOURCE_EXECUTOR_TIMEOUT",66L,9,0L);order.verify(f.dao).insert(any());
+            if(primary)verify(redis,times(1)).publish(eq("scheduled-run:77"),anyString());else verifyNoInteractions(redis);
+        }
+    }
+
     private static ScheduledTaskRunDO continuousRun(long id, Instant created) {
         ScheduledTaskRunDO run = new ScheduledTaskRunDO();
         run.setId(id); run.setWorkspaceId(1L); run.setScheduledTaskId(12L); run.setInitialAgentId(20L);

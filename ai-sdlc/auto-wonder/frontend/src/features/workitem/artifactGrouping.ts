@@ -1,14 +1,16 @@
+import { i18n } from '@/shared/i18n';
+import { runtimeStatusLabel } from './runtimeLabels';
 import { basename } from '@/shared/lib/artifactLinking';
-import type { Artifact, DeliveryStep } from '@/shared/types/workitem';
+import type { Artifact, DeliveryStep, DispatchAttempt } from '@/shared/types/workitem';
 
 export const artifactCategories = [
-  { key: 'deliverables', label: '交付结果', hint: '本轮交付文件' },
-  { key: 'patch', label: '代码补丁', hint: '本轮代码变更文件' },
-  { key: 'handoff', label: '交接说明', hint: '本轮结论与下一步' },
-  { key: 'evidence', label: '验证证据', hint: '测试、检查与评审材料' },
-  { key: 'learning', label: '经验沉淀', hint: '本轮形成的经验与改进记录' },
-  { key: 'runtime', label: '执行记录', hint: '重试快照与运行数据，排障时查看' },
-  { key: 'other', label: '其他文件', hint: '未识别用途的文件' },
+  { key: 'deliverables', get label() { return i18n.t('workitem:artifacts.deliverables'); }, get hint() { return i18n.t('workitem:artifacts.deliverablesHint'); } },
+  { key: 'patch', get label() { return i18n.t('workitem:artifacts.patch'); }, get hint() { return i18n.t('workitem:artifacts.patchHint'); } },
+  { key: 'handoff', get label() { return i18n.t('workitem:artifacts.handoff'); }, get hint() { return i18n.t('workitem:artifacts.handoffHint'); } },
+  { key: 'evidence', get label() { return i18n.t('workitem:artifacts.evidence'); }, get hint() { return i18n.t('workitem:artifacts.evidenceHint'); } },
+  { key: 'learning', get label() { return i18n.t('workitem:artifacts.learning'); }, get hint() { return i18n.t('workitem:artifacts.learningHint'); } },
+  { key: 'runtime', get label() { return i18n.t('workitem:artifacts.runtime'); }, get hint() { return i18n.t('workitem:artifacts.runtimeHint'); } },
+  { key: 'other', get label() { return i18n.t('workitem:artifacts.other'); }, get hint() { return i18n.t('workitem:artifacts.otherHint'); } },
 ] as const;
 
 type Category = typeof artifactCategories[number]['key'];
@@ -50,8 +52,8 @@ function readingPriority(path: string): number {
   return /(?:^|[-_])(report|summary)\.(md|markdown|html|pdf)$/.test(name) ? 1 : 2;
 }
 
-export function groupArtifactsByExecution(steps: Pick<DeliveryStep, 'name' | 'attempts'>[], artifacts: Artifact[]) {
-  const executions = new Map<number, { dispatchId: number; status: string; artifacts: Artifact[] }>();
+export function groupArtifactsByExecution(steps: Pick<DeliveryStep, 'name' | 'attempts'>[], artifacts: Artifact[], attempts: DispatchAttempt[] = []) {
+  const executions = new Map<number | null, { dispatchId: number | null; status: string; artifacts: Artifact[] }>();
   steps.forEach(step => step.attempts?.forEach(attempt => {
     if (attempt.dispatchId == null) return;
     const dispatchId = Number(attempt.dispatchId);
@@ -61,12 +63,20 @@ export function groupArtifactsByExecution(steps: Pick<DeliveryStep, 'name' | 'at
       artifacts: [],
     });
   }));
+  attempts.forEach(attempt => {
+    executions.set(Number(attempt.dispatchId), {
+      dispatchId: Number(attempt.dispatchId), status: attempt.status || 'UNKNOWN', artifacts: [],
+    });
+  });
   artifacts.forEach(artifact => {
-    if (artifact.dispatchId != null) executions.get(Number(artifact.dispatchId))?.artifacts.push(artifact);
+    const dispatchId = artifact.dispatchId == null ? null : Number(artifact.dispatchId);
+    if (!executions.has(dispatchId)) executions.set(dispatchId, { dispatchId, status: 'UNKNOWN', artifacts: [] });
+    executions.get(dispatchId)!.artifacts.push(artifact);
   });
   // Dispatch IDs are creation-ordered; step traversal order is not execution order.
+  let executionNumber = 0;
   return [...executions.values()]
-    .sort((a, b) => a.dispatchId - b.dispatchId)
-    .map((execution, index) => ({ ...execution, label: `第 ${index + 1} 次执行 · ${execution.status}` }))
+    .sort((a, b) => (a.dispatchId ?? -Infinity) - (b.dispatchId ?? -Infinity))
+    .map(execution => ({ ...execution, label: execution.dispatchId == null ? i18n.t('workitem:artifacts.unassignedExecution') : i18n.t('workitem:artifacts.execution', { number: ++executionNumber, status: runtimeStatusLabel(execution.status) }) }))
     .reverse();
 }

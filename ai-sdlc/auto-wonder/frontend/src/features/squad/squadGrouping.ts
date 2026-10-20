@@ -1,5 +1,7 @@
+import { i18n } from '@/shared/i18n';
+
 export const UNSQUADED_KEY = 'squad-unsquaded';
-export const UNSQUADED_LABEL = '未分组';
+export const getUnsquadedLabel = () => i18n.t('ungrouped', { ns: 'squad' });
 
 export interface SquadOption {
   value: number;
@@ -46,13 +48,13 @@ export function groupBySquad<T>(
   for (const item of items) {
     const squadIds = [...new Set(readSquadIds(item) ?? [])];
     if (squadIds.length === 0) {
-      groupFor(UNSQUADED_KEY, null, UNSQUADED_LABEL).items.push(item);
+      groupFor(UNSQUADED_KEY, null, getUnsquadedLabel()).items.push(item);
       continue;
     }
     for (const squadId of squadIds) {
       // A squad deleted after the list was fetched has no name; keep the row visible instead of
       // silently reclassifying it as unaffiliated.
-      const label = squadNameById.get(squadId) ?? `小队 #${squadId}`;
+      const label = squadNameById.get(squadId) ?? i18n.t('squadFallback', { ns: 'squad', id: squadId });
       groupFor(`squad-${squadId}`, squadId, label).items.push(item);
     }
   }

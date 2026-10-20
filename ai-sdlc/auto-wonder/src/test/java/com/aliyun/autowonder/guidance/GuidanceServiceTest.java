@@ -3,8 +3,11 @@ package com.aliyun.autowonder.guidance;
 import com.aliyun.autowonder.agent.AgentDO;
 import com.aliyun.autowonder.agent.AgentDao;
 import com.aliyun.autowonder.artifact.ArtifactOwnerRef;
+import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.error.ErrorCode;
 import com.aliyun.autowonder.dispatch.DispatchDO;
 import com.aliyun.autowonder.dispatch.DispatchDao;
+import com.aliyun.autowonder.dispatch.DispatchRecoveryService;
 import com.aliyun.autowonder.dispatch.DispatchService;
 import com.aliyun.autowonder.dispatch.AgentSdlcResolver;
 import com.aliyun.autowonder.dispatch.ExecutionSourceType;
@@ -102,6 +105,60 @@ class GuidanceServiceTest {
 
         verify(guidanceDao).insert(argThat(row -> Long.valueOf(40013L).equals(row.getTargetAgentId())));
         verify(workitemService, never()).getParticipants(anyLong(), anyLong());
+    }
+
+    @Test
+    void closedDeliveryRewritesTheCommentConflictIntoAnActionableCode() {
+        when(dispatchService.enqueueCommentInteraction(100L, 50L, 40013L, null, false,
+                811L, 701L, 7L)).thenThrow(closedDeliveryConflict());
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.createForComment(100L, 50L, 600L, "@AW全栈开发 看下", List.of(40013L), 7L));
+
+        assertEquals(ErrorCode.WORKITEM_DELIVERY_CLOSED.getCode(), failure.getCode());
+        assertEquals("workitem.comment.delivery_closed", failure.getMessageKey());
+    }
+
+    @Test
+    void closedDeliveryAlsoRewritesTheFirstMentionFormalStartPath() {
+        when(dispatchDao.listByWorkitem(100L, 50L)).thenReturn(List.of());
+        when(dispatchService.enqueue(100L, 50L, 811L, 40013L, 1, 7L)).thenThrow(closedDeliveryConflict());
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.createForComment(100L, 50L, 600L, "@AW全栈开发", List.of(40013L), 7L));
+
+        assertEquals(ErrorCode.WORKITEM_DELIVERY_CLOSED.getCode(), failure.getCode());
+        assertEquals("workitem.comment.delivery_closed", failure.getMessageKey());
+    }
+
+    @Test
+    void otherCommentConflictsKeepTheirOwnCodeAndMessageKey() {
+        when(workitemService.getParticipants(50L, 100L)).thenReturn(List.of(participant(40013L, "AW全栈开发")));
+        when(dispatchService.enqueueCommentInteraction(100L, 50L, 40013L, null, false,
+                811L, 701L, 7L)).thenThrow(BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.busy",
+                        new Object[0], "恢复请求正在处理中"));
+
+        BizException failure = assertThrows(BizException.class,
+                () -> service.createForComment(100L, 50L, 600L, "请 @AW全栈开发 看下", null, 7L));
+
+        assertEquals(ErrorCode.CONFLICT.getCode(), failure.getCode());
+        assertEquals("dispatch.recovery.busy", failure.getMessageKey());
+    }
+
+    @Test
+    void commentWithoutMentionedAgentNeverReachesDispatch() {
+        when(workitemService.getParticipants(50L, 100L)).thenReturn(List.of());
+        when(agentDao.listByTenant(100L)).thenReturn(List.of());
+
+        service.createForComment(100L, 50L, 600L, "普通评论，没有提及任何人", null, 7L);
+
+        verify(guidanceDao, never()).insert(any(GuidanceDO.class));
+        verifyNoInteractions(dispatchService);
+    }
+
+    private static BizException closedDeliveryConflict() {
+        return BizException.keyed(ErrorCode.CONFLICT, DispatchRecoveryService.DELIVERY_CLOSED_MESSAGE_KEY,
+                new Object[0], "工单已关闭，请先重新打开交付");
     }
 
     @Test
@@ -742,4 +799,43 @@ class GuidanceServiceTest {
         participant.setAgent(true);
         return participant;
     }
+
+    @Test
+    void sharedHumanGuidanceOwnershipFailureKeepsIllegalArgumentTypeAndGlobalCode() {
+        ScheduledTaskRunDao runs = mock(ScheduledTaskRunDao.class);
+        ReflectionTestUtils.setField(service, "scheduledTaskRunDao", runs);
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> service.createForScheduledRunComment(100L, 50L, 600L, 40013L, 7L));
+        assertEquals("scheduled run does not belong to tenant", failure.getMessage());
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var result = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleIllegalArg(failure);
+            assertEquals("10001", result.getCode());
+            assertEquals("Scheduled run does not belong to the current tenant", result.getMessage());
+            assertEquals("scheduled run does not belong to tenant", failure.getLocalizedMessage());
+            assertEquals("scheduled run does not belong to tenant", new com.aliyun.autowonder.common.web.GlobalExceptionHandler()
+                    .handleIllegalArg(new IllegalArgumentException(failure.getMessage())).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+        verifyNoInteractions(dispatchService);
+    }
+
+    @Test
+    void sharedFrozenGuidanceWrapperRetainsTheOriginalNestedDiagnostic() {
+        ScheduledTaskRunDO run = new ScheduledTaskRunDO();
+        run.setExecutionSnapshotJson("{\"agentContexts\":[]}");
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> ReflectionTestUtils.invokeMethod(service, "frozenAgentVersion", run, 40013L));
+        assertEquals("scheduled run snapshot is invalid for guidance", failure.getMessage());
+        org.junit.jupiter.api.Assertions.assertInstanceOf(IllegalArgumentException.class, failure.getCause());
+        assertEquals("frozen target agent context is missing", failure.getCause().getMessage());
+        try {
+            var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            assertEquals("定时运行快照无法用于指导", handler.handleIllegalArg(failure).getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("Scheduled run snapshot is invalid for guidance", handler.handleIllegalArg(failure).getMessage());
+            assertEquals("scheduled run snapshot is invalid for guidance", failure.getLocalizedMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
 }

@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.user;
 
 import com.aliyun.autowonder.context.AutoWonderContext;
+import com.aliyun.autowonder.user.dto.DeactivationRequest;
 import com.aliyun.autowonder.user.dto.UpdateProfileRequest;
 import com.aliyun.autowonder.user.dto.UserProfileVO;
 import org.junit.jupiter.api.AfterEach;
@@ -18,9 +19,9 @@ class UserAccountControllerProfileTest {
     private static final long USER_ID = 9L;
 
     private final UserService userService = mock(UserService.class);
-    private final AccountDeactivationService deactivationService = mock(AccountDeactivationService.class);
+    private final UserDeletionService userDeletionService = mock(UserDeletionService.class);
     private final UserAccountController controller =
-            new UserAccountController(userService, deactivationService);
+            new UserAccountController(userService, userDeletionService);
 
     @AfterEach
     void tearDown() {
@@ -69,5 +70,29 @@ class UserAccountControllerProfileTest {
             fields.add(field.getName());
         }
         assertEquals(java.util.Set.of("nickname", "email", "phone"), fields);
+    }
+
+    @Test
+    void selfServiceDeactivationDeletesTheCallerWithTheNonAdminFlag() {
+        // Self-service cancellation now goes through the single deletion implementation with
+        // adminInitiated = false, so the "may not delete yourself" guard does not apply to it.
+        AutoWonderContext.get().setUserId(USER_ID);
+        DeactivationRequest req = new DeactivationRequest();
+        req.setConfirmUsername("alice");
+
+        controller.initiateDeactivation(req);
+
+        verify(userDeletionService).delete(USER_ID, USER_ID, "alice", false);
+    }
+
+    @Test
+    void aMissingDeactivationBodyDeletesWithoutAConfirmationInsteadOfThrowingNpe() {
+        AutoWonderContext.get().setUserId(USER_ID);
+
+        controller.initiateDeactivation(null);
+
+        // The username confirmation is enforced inside the shared implementation, which rejects
+        // null with 29006; the controller must not dereference a null body on the way there.
+        verify(userDeletionService).delete(USER_ID, USER_ID, null, false);
     }
 }

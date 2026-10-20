@@ -87,10 +87,16 @@ public class ScheduledTaskRunService {
 
     /** The sole terminal persistence/observability path for scheduled Runs. */
     public boolean finish(ScheduledTaskRunDO run, String target, String summary, String error, long userId) {
+        return finish(run, target, summary, error, userId, null);
+    }
+
+    /** Optional notification-only intent; stored error, metrics and terminal CAS retain their raw values. */
+    public boolean finish(ScheduledTaskRunDO run, String target, String summary, String error, long userId,
+            String notificationSystemReason) {
         if (run == null || run.getWorkspaceId() == null || run.getId() == null || run.getVersion() == null || terminal(run.getStatus())) return false;
         if (runDao.updateTerminalResult(run.getWorkspaceId(), run.getId(), run.getStatus(), target, summary, error, run.getVersion(), userId) != 1) return false;
         run.setStatus(target); run.setResultSummary(summary); run.setError(error);
-        run.setFinishedAt(new java.util.Date()); run.setVersion(run.getVersion() + 1); observed(run, target, error);
+        run.setFinishedAt(new java.util.Date()); run.setVersion(run.getVersion() + 1); observed(run, target, error, notificationSystemReason);
         return true;
     }
     public boolean markCancelPending(ScheduledTaskRunDO run, long userId) {
@@ -105,7 +111,14 @@ public class ScheduledTaskRunService {
     }
 
     private void observed(ScheduledTaskRunDO run, String status, String reason) {
-        if (notificationService != null) notificationService.status(run, reason);
+        observed(run, status, reason, null);
+    }
+
+    private void observed(ScheduledTaskRunDO run, String status, String reason, String notificationSystemReason) {
+        if (notificationService != null) {
+            if (notificationSystemReason == null) notificationService.status(run, reason);
+            else notificationService.statusSystemReason(run, notificationSystemReason);
+        }
         if (metrics != null) {
             metrics.status(status, reason);
             if (terminal(status) && run.getStartedAt() != null) metrics.duration(System.currentTimeMillis() - run.getStartedAt().getTime());

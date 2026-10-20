@@ -5,8 +5,10 @@ import { getDispatchLiveActivity } from './api';
 import type { DispatchLiveActivity, LiveActivityAction } from '@/shared/types/workitem';
 
 const MAX_WINDOW = 100;
+const HEALTH_POLL_MS = 30_000;
 
 export interface UseLiveActivityResult {
+  runtimeState?: DispatchLiveActivity['runtimeState'];
   actions: LiveActivityAction[];
   currentAction: LiveActivityAction | null;
   lastUpdatedAt: string | null;
@@ -44,6 +46,8 @@ function reduceMerge(
 }
 
 export function useLiveActivity(dispatchId: number | null | undefined, enabled = true): UseLiveActivityResult {
+  const [runtimeState, setRuntimeState] = useState<DispatchLiveActivity['runtimeState']>(null);
+  const generationRef = useRef(0);
   const [actions, setActions] = useState<LiveActivityAction[]>([]);
   const [currentAction, setCurrentAction] = useState<LiveActivityAction | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
@@ -70,6 +74,7 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
   }, []);
 
   const applyResponse = useCallback((data: DispatchLiveActivity, isInitial: boolean) => {
+    setRuntimeState(data.runtimeState);
     if (!data.changed && !isInitial) return;
     const incoming = [...data.actions].reverse();
     if (isInitial) {
@@ -86,11 +91,15 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
 
   const fetchActivity = useCallback(async (afterSeq?: number | null) => {
     if (!dispatchId) return;
+    const generation = generationRef.current;
     try {
       const data = await getDispatchLiveActivity(dispatchId, afterSeq, MAX_WINDOW);
+      if (generation !== generationRef.current) return;
       applyResponse(data, afterSeq == null);
       setError(null);
     } catch (e: unknown) {
+      if (generation !== generationRef.current) return;
+      setRuntimeState('UNKNOWN');
       setError(e instanceof Error ? e.message : 'fetch failed');
     }
   }, [dispatchId, applyResponse]);
@@ -102,6 +111,8 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
       return;
     }
     let cancelled = false;
+    generationRef.current += 1;
+    setRuntimeState(null);
     actionsRef.current = [];
     clientTruncatedRef.current = false;
     setActions([]);
@@ -122,14 +133,22 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
       })
       .catch((e: unknown) => {
         if (cancelled) return;
+        setRuntimeState('UNKNOWN');
         setError(e instanceof Error ? e.message : 'fetch failed');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; generationRef.current += 1; };
   }, [dispatchId, applyResponse]);
+
+  // Heartbeat health can change without a runtime event or a browser reconnect.
+  useEffect(() => {
+    if (!dispatchId || !enabled || loading) return;
+    const timer = setInterval(() => { void fetchActivity(seqRef.current); }, HEALTH_POLL_MS);
+    return () => clearInterval(timer);
+  }, [dispatchId, enabled, loading, fetchActivity]);
 
   const handleEvent = useCallback((event: RealtimeEvent) => {
     if (event.type !== 'live-activity' || !event.payload) return;
@@ -156,5 +175,5 @@ export function useLiveActivity(dispatchId: number | null | undefined, enabled =
   const channel = dispatchId && enabled ? `dispatch:${dispatchId}` : null;
   useRealtime(channel, { onEvent: handleEvent, enabled, onReconnect: handleReconnect });
 
-  return { actions, currentAction, lastUpdatedAt, lastSeq, truncated, awaitingRuntime, loading, error };
+  return { runtimeState, actions, currentAction, lastUpdatedAt, lastSeq, truncated, awaitingRuntime, loading, error };
 }

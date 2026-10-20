@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 用户级偏好读写。userId 一律由调用方从登录上下文传入、且参与每一条 DAO 语句的过滤，
@@ -27,6 +28,20 @@ public class UserSettingService {
 
     public UserSettingService(UserSettingDao userSettingDao) {
         this.userSettingDao = userSettingDao;
+    }
+
+    /** Recipient preference is global per user; infrastructure failures remain failures. */
+    public Locale recipientLocale(long userId) {
+        UserSettingDO row = userSettingDao.findLive(userId, "ui.locale");
+        if (row != null && row.getValueJson() != null) {
+            try {
+                Object value = JSON.parse(row.getValueJson());
+                if (value instanceof String tag && "en-US".equals(tag)) return Locale.US;
+            } catch (RuntimeException malformedJson) {
+                // Invalid or unsupported stored scalars use the creation-language default.
+            }
+        }
+        return Locale.CHINA;
     }
 
     /** 未设置过时返回 key 有值、valueJson 为 null 的 VO，调用方无需区分「无记录」与「无响应」。 */

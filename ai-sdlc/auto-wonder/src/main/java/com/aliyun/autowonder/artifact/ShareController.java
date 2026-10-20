@@ -1,6 +1,7 @@
 package com.aliyun.autowonder.artifact;
 
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
@@ -52,9 +53,11 @@ public class ShareController {
                     .header(HttpHeaders.CACHE_CONTROL, "no-store")
                     .header("X-Content-Type-Options", "nosniff")
                     .header(HttpHeaders.RETRY_AFTER, "5")
-                    .body(("<!doctype html><html lang=\"zh\"><meta charset=\"utf-8\">"
-                            + "<meta http-equiv=\"refresh\" content=\"5\"><title>产物生成中</title>"
-                            + "<p>产物正在生成，执行成功并校验通过后可读取。此页面会自动刷新。</p></html>")
+                    .body(("<!doctype html><html lang=\"" + htmlLanguage() + "\"><meta charset=\"utf-8\">"
+                            + "<meta http-equiv=\"refresh\" content=\"5\"><title>"
+                            + htmlMessage("artifact.share_page.pending_title", null, "产物生成中") + "</title>"
+                            + "<p>" + htmlMessage("artifact.share_page.pending_body", null,
+                            "产物正在生成，执行成功并校验通过后可读取。此页面会自动刷新。") + "</p></html>")
                             .getBytes(StandardCharsets.UTF_8));
         }
         if (!"SHARED".equals(request.getStatus()) || request.getArtifactId() == null) return notFoundBytes();
@@ -165,24 +168,35 @@ public class ShareController {
 
     private String renderDirectory(String title, List<ArtifactDO> artifacts, String token) {
         StringBuilder html = new StringBuilder();
-        html.append("<!DOCTYPE html><html lang=\"zh\"><head><meta charset=\"utf-8\">")
+        html.append("<!DOCTYPE html><html lang=\"").append(htmlLanguage()).append("\"><head><meta charset=\"utf-8\">")
                 .append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
                 .append("<title>").append(HtmlUtils.htmlEscape(title)).append(" · AutoWonder</title></head>")
                 .append("<body style=\"font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;")
                 .append("max-width:860px;margin:32px auto;padding:0 16px;color:#24292f\">")
                 .append("<h2 style=\"margin-bottom:4px\">").append(HtmlUtils.htmlEscape(title)).append("</h2>")
-                .append("<p style=\"color:#57606a;font-size:13px\">AutoWonder 对外只读产物（")
-                .append(artifacts.size()).append("）· 仅含已授权公开的结论文件</p>");
+                .append("<p style=\"color:#57606a;font-size:13px\">")
+                .append(htmlMessage("artifact.share_page.summary", new Object[]{artifacts.size()},
+                        "AutoWonder 对外只读产物（" + artifacts.size() + "）· 仅含已授权公开的结论文件"))
+                .append("</p>");
         if (artifacts.isEmpty()) {
-            html.append("<p>暂无对外公开的产物。</p></body></html>");
+            html.append("<p>").append(htmlMessage("artifact.share_page.empty", null, "暂无对外公开的产物。"))
+                    .append("</p></body></html>");
             return html.toString();
         }
         html.append("<table style=\"border-collapse:collapse;width:100%;font-size:14px\">")
                 .append("<tr style=\"text-align:left;color:#57606a\">")
-                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">文件</th>")
-                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">类型</th>")
-                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">大小</th>")
-                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">发布时间</th></tr>");
+                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">")
+                .append(htmlMessage("artifact.share_page.file", null, "文件"))
+                .append("</th>")
+                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">")
+                .append(htmlMessage("artifact.share_page.type", null, "类型"))
+                .append("</th>")
+                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">")
+                .append(htmlMessage("artifact.share_page.size", null, "大小"))
+                .append("</th>")
+                .append("<th style=\"padding:8px;border-bottom:1px solid #d0d7de\">")
+                .append(htmlMessage("artifact.share_page.published_at", null, "发布时间"))
+                .append("</th></tr>");
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm");
         for (ArtifactDO artifact : artifacts) {
             String name = ExternalArtifactShareService.logicalName(artifact.getName());
@@ -192,7 +206,9 @@ public class ShareController {
                     .append("<a href=\"").append(url).append("\">")
                     .append(HtmlUtils.htmlEscape(name)).append("</a>")
                     .append(" <a style=\"font-size:12px;color:#57606a\" href=\"").append(url)
-                    .append("?download=1\">下载</a></td>")
+                    .append("?download=1\">")
+                    .append(htmlMessage("artifact.share_page.download", null, "下载"))
+                    .append("</a></td>")
                     .append("<td style=\"padding:8px;border-bottom:1px solid #d8dee4\">")
                     .append(HtmlUtils.htmlEscape(artifact.getType() == null ? "" : artifact.getType()))
                     .append("</td><td style=\"padding:8px;border-bottom:1px solid #d8dee4\">")
@@ -203,6 +219,16 @@ public class ShareController {
         }
         html.append("</table></body></html>");
         return html.toString();
+    }
+
+    private static String htmlMessage(String key, Object[] args, String diagnostic) {
+        return HtmlUtils.htmlEscape(SystemMessages.render(key, args, diagnostic));
+    }
+
+    private static String htmlLanguage() {
+        var context = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        return context != null && context.getLocale() != null
+                && "en".equals(context.getLocale().getLanguage()) ? "en" : "zh";
     }
 
     private static String readableSize(Long bytes) {
@@ -277,7 +303,7 @@ public class ShareController {
                     .contentType(MediaType.valueOf("text/plain;charset=UTF-8"))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .header("X-Content-Type-Options", "nosniff")
-                .body("链接无效或产物已下线");
+                .body(SystemMessages.render("artifact.share_page.not_found", null, "链接无效或产物已下线"));
     }
 
     private ResponseEntity<byte[]> notFoundBytes() {
@@ -285,6 +311,7 @@ public class ShareController {
                 .contentType(MediaType.valueOf("text/plain;charset=UTF-8"))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .header("X-Content-Type-Options", "nosniff")
-                .body("链接无效或产物已下线".getBytes(StandardCharsets.UTF_8));
+                .body(SystemMessages.render("artifact.share_page.not_found", null, "链接无效或产物已下线")
+                        .getBytes(StandardCharsets.UTF_8));
     }
 }

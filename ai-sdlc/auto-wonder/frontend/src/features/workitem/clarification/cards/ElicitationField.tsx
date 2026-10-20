@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import { Checkbox, Input, InputNumber, Radio, Switch } from 'antd';
@@ -48,6 +49,7 @@ function OptionLabel({ option }: { option: ElicitationOption }) {
 export function ElicitationField({
   field, value, otherText, error, disabled, onValueChange, onOtherTextChange, onPickOption,
 }: ElicitationFieldProps) {
+  const { t } = useTranslation('workitem');
   const otherInputRef = useRef<TextAreaRef>(null);
 
   const isOtherSelected = field.control === 'select'
@@ -72,7 +74,7 @@ export function ElicitationField({
       value={otherText}
       disabled={disabled}
       rows={2}
-      placeholder="输入其他想法"
+      placeholder={t('clarification.otherPlaceholder')}
       data-testid={`elicitation-other-input-${field.name}`}
       onChange={(e) => onOtherTextChange(e.target.value)}
       style={{ marginTop: 6 }}
@@ -110,7 +112,7 @@ export function ElicitationField({
             data-testid={`elicitation-option-${field.name}-other`}
             style={otherOptionBlockStyle}
           >
-            <span style={{ fontSize: 16 }}>有其他想法</span>
+            <span style={{ fontSize: 16 }}>{t('clarification.otherIdeas')}</span>
           </Radio>
         </Radio.Group>
         {value === OTHER_SENTINEL ? otherInput : null}
@@ -142,7 +144,7 @@ export function ElicitationField({
             data-testid={`elicitation-option-${field.name}-other`}
             style={otherOptionBlockStyle}
           >
-            <span style={{ fontSize: 16 }}>有其他想法</span>
+            <span style={{ fontSize: 16 }}>{t('clarification.otherIdeas')}</span>
           </Checkbox>
         </Checkbox.Group>
         {arr.includes(OTHER_SENTINEL) ? otherInput : null}
@@ -181,7 +183,7 @@ export function ElicitationField({
         />
         {field.rawSchema !== undefined ? (
           <details style={{ marginTop: 4 }}>
-            <summary style={{ cursor: 'pointer', fontSize: 14, color: CLARIFICATION_THEME.textMuted }}>原始 Schema</summary>
+            <summary style={{ cursor: 'pointer', fontSize: 14, color: CLARIFICATION_THEME.textMuted }}>{t('clarification.rawSchema')}</summary>
             <pre
               data-testid={`elicitation-raw-schema-${field.name}`}
               style={{

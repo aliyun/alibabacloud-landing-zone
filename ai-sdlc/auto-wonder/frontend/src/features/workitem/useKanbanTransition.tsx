@@ -1,4 +1,8 @@
+import { CloseOutlined } from '@ant-design/icons';
+import { transitionWarningText } from './runtimeLabels';
 import { useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
 import { Button, Modal, Space, Typography, message } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
@@ -56,6 +60,7 @@ function recommendedTargetIds(item: WorkitemDetail, template: TemplateDetail): S
 }
 
 export function useKanbanTransition() {
+  const { t } = useTranslation('workitem');
   const queryClient = useQueryClient();
   const accessCommand = useAccessCommand();
   const locked = useRef(false);
@@ -77,18 +82,18 @@ export function useKanbanTransition() {
   const commit = async (item: WorkitemDetail, node: StatusNode) => {
     setSaving(true);
     try {
-      await accessCommand('READ_WRITE', '流转工单状态', async () => {
+      await accessCommand('READ_WRITE', i18n.t('workitem:actions.transition'), async () => {
         const updated = await transitionWorkitem(item.id, node.id, {
           fromNodeId: item.statusNodeId!, expectedVersion: item.version,
         });
-        message.success(`状态已更新为「${node.name}」`);
+        message.success(i18n.t('workitem:transition.updated', { name: node.name }));
         // 越界流转放行但提示（规格 3.3）：警告由服务端在响应中下发。
         if (updated.transitionWarning) {
-          message.warning(updated.transitionWarning);
+          message.warning(transitionWarningText(updated));
         }
       });
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '状态更新失败，请重试');
+      message.error(error instanceof Error ? error.message : i18n.t('workitem:transition.updateFailed'));
     } finally {
       await refresh(item.id);
       setSaving(false);
@@ -98,23 +103,23 @@ export function useKanbanTransition() {
 
   const move = (dragged: Workitem, column: string) => {
     if (locked.current || statusCategoryOf(dragged) === column) return;
-    return accessCommand('READ_WRITE', '流转工单状态', async () => {
+    return accessCommand('READ_WRITE', i18n.t('workitem:actions.transition'), async () => {
       locked.current = true;
       setBusy(true);
       try {
         // Fetch fresh state and rules; never infer permission from the visual column alone.
         const item = await getWorkitem(dragged.id);
         if (item.version !== dragged.version || String(item.statusNodeId) !== String(dragged.statusNodeId)) {
-          throw new Error('工单已被更新，请刷新后重新拖拽');
+          throw new Error(i18n.t('workitem:transition.stale'));
         }
         if (item.templateId == null || item.statusNodeId == null) {
-          throw new Error('工单未配置状态流程，无法拖拽流转');
+          throw new Error(i18n.t('workitem:transition.noWorkflow'));
         }
         const template = await getTemplateDetail(item.templateId);
         const nodes = kanbanTransitionTargets(item, template, column);
         if (nodes.length === 0) {
           const title = STATUS_COLUMNS.find(col => col.key === column)?.title ?? column;
-          throw new Error(`当前模板没有可流转到「${title}」的状态节点，请在详情页处理或联系管理员调整模板`);
+          throw new Error(i18n.t('workitem:transition.noTarget', { title }));
         }
         const recommendedIds = recommendedTargetIds(item, template);
         // 终态重开必须显式选择状态：流转后的落列由服务端按派发事实分类，
@@ -128,7 +133,7 @@ export function useKanbanTransition() {
           setChoice({ item, nodes, recommendedIds });
         }
       } catch (error) {
-        message.error(error instanceof Error ? error.message : '状态检查失败，请重试');
+        message.error(error instanceof Error ? error.message : i18n.t('workitem:transition.checkFailed'));
         await refresh(dragged.id);
         release();
       }
@@ -136,9 +141,9 @@ export function useKanbanTransition() {
   };
 
   const dialog = (
-    <Modal title="选择目标状态" open={!!choice} footer={null} onCancel={release}
-      closable={!saving} maskClosable={!saving} keyboard={!saving}>
-      <Typography.Paragraph>当前状态「{choice?.item.statusName}」可流转到以下状态：</Typography.Paragraph>
+    <Modal title={t('transition.choose')} open={!!choice} footer={null} onCancel={release}
+      closeIcon={<CloseOutlined aria-hidden="true" />} closable={!saving && { 'aria-label': t('projection.close') }} maskClosable={!saving} keyboard={!saving}>
+      <Typography.Paragraph>{t('transition.choices', { name: choice?.item.statusName ?? '' })}</Typography.Paragraph>
       <Space wrap>
         {choice?.nodes.map(node => (
           <Button key={String(node.id)} disabled={saving}

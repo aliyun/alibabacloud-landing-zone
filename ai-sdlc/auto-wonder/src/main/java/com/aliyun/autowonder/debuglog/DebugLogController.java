@@ -19,7 +19,7 @@ import java.util.List;
 /** debug_log 只读查询（设计文档 §4.7），租户隔离沿用 AutoWonderContext 工作空间。 */
 @RestController
 @RequestMapping("/api/debug-logs")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看 Debug 日志")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看 Debug 日志", actionKey = "access.action.view_debug_logs")
 public class DebugLogController {
 
     private final DebugLogService debugLogService;

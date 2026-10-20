@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/evolution/gates")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进门禁运行")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看演进门禁运行", actionKey = "access.action.view_evolution_gate_runs")
 public class EvolutionGateRunController {
 
     private final EvolutionGateRunLiteService gateRunService;
@@ -20,7 +20,7 @@ public class EvolutionGateRunController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "记录演进门禁运行")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "记录演进门禁运行", actionKey = "access.action.record_an_evolution_gate_run")
     public Result<EvolutionGateRunDO> record(@RequestBody EvolutionGateRunCommand req) {
         return Result.ok(gateRunService.record(req, currentWorkspaceId(), currentUserId()));
     }

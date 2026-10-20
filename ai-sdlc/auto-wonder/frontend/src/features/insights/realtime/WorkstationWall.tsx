@@ -1,8 +1,9 @@
+import { Trans, useTranslation } from 'react-i18next';
 import { Alert, Button, Card } from 'antd';
 import { useState } from 'react';
 import type { Workstation } from './api';
 import { useAgentRunning } from './hooks';
-import { formatMinutesZh } from '@/shared/lib/duration';
+import { formatMinutes } from '@/shared/lib/duration';
 import { BRAND } from './theme';
 
 interface Props {
@@ -10,14 +11,15 @@ interface Props {
 }
 
 export default function WorkstationWall({ workstations }: Props) {
+  const { t } = useTranslation('insights');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const { data: runningTasks, isLoading, isError, refetch } = useAgentRunning(expandedId);
 
   return (
-    <Card title={<>数字员工工位墙{' '}
-        <span style={{ color: BRAND.textMuted, fontWeight: 400, fontSize: 12 }}>· 点击展开正在执行的任务</span></>} style={{ minWidth: 0 }}>
+    <Card title={<>{t('workstations.title')}{' '}
+        <span style={{ color: BRAND.textMuted, fontWeight: 400, fontSize: 12 }}>{t('workstations.hint')}</span></>} style={{ minWidth: 0 }}>
       {workstations.length === 0 ? (
-        <div style={{ color: BRAND.textMuted, fontSize: 12, textAlign: 'center' }}>暂无在岗数字员工</div>
+        <div style={{ color: BRAND.textMuted, fontSize: 12, textAlign: 'center' }}>{t('workstations.empty')}</div>
       ) : (
         <div className="insight-workstation-grid">
           {workstations.map((w) => {
@@ -69,7 +71,7 @@ export default function WorkstationWall({ workstations }: Props) {
                   </div>
                 </div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: w.busy ? BRAND.orange : 'var(--aw-muted)' }}>
-                  {w.busy ? `● 忙碌 · ${w.runningTasks} 任务` : '○ 空闲'}
+                  {w.busy ? t('workstations.busy', { count: w.runningTasks }) : t('workstations.idle')}
                 </div>
               </div>
             );
@@ -86,16 +88,15 @@ export default function WorkstationWall({ workstations }: Props) {
             color: 'var(--aw-muted)',
           }}
         >
-          {isLoading && <div style={{ color: BRAND.textMuted }}>加载中…</div>}
-          {isError && <Alert type="error" showIcon message="任务加载失败" action={<Button size="small" onClick={() => { void refetch(); }}>重试</Button>} />}
+          {isLoading && <div style={{ color: BRAND.textMuted }}>{t('workstations.loading')}</div>}
+          {isError && <Alert type="error" showIcon message={t('workstations.loadFailure')} action={<Button size="small" onClick={() => { void refetch(); }}>{t('participation.retry')}</Button>} />}
           {!isLoading && !isError && (runningTasks?.length ?? 0) === 0 && (
-            <div style={{ color: BRAND.textMuted }}>该数字员工当前没有正在执行的任务</div>
+            <div style={{ color: BRAND.textMuted }}>{t('workstations.noRunning')}</div>
           )}
           {!isLoading && !isError &&
-            runningTasks?.map((t) => (
-              <div key={t.dispatchId} style={{ lineHeight: 2 }}>
-                <span style={{ color: BRAND.orange }}>▶</span> {t.workitemTitle ?? '未命名工单'}
-                {t.stepName ? ` · ${t.stepName}` : ''} · 已运行 <span className="insight-realtime-metric">{formatMinutesZh(t.runningMinutes)}</span>
+            runningTasks?.map((task) => (
+              <div key={task.dispatchId} style={{ lineHeight: 2 }}>
+                <span aria-hidden="true" style={{ color: BRAND.orange }}>▶</span> <Trans ns="insights" i18nKey="workstations.taskDetail" components={{ task: <span>{task.workitemTitle ?? t('activity.unnamed')}</span>, step: <span>{task.stepName ? t('workstations.stepLabel', { step: task.stepName }) : ''}</span>, duration: <span className="insight-realtime-metric">{formatMinutes(task.runningMinutes)}</span> }} />
               </div>
             ))}
         </div>

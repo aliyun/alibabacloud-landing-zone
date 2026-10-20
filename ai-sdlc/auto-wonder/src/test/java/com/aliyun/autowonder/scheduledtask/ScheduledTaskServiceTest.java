@@ -575,4 +575,54 @@ class ScheduledTaskServiceTest {
         task.setVersion(version);
         return task;
     }
+
+    @Test
+    void taskMutationAndReferenceReasonsRetainCodesAndRawDiagnostics() {
+        assertBilingual(assertThrows(BizException.class, () -> service.create(null, TENANT_ID, USER_ID)), "请求不能为空", "Request is required");
+        assertBilingual(assertThrows(BizException.class, () -> service.create(cronRequest(), 0L, USER_ID)), "workspaceId 和 userId 必须为正数", "workspaceId and userId must be positive");
+        assertBilingual(assertThrows(BizException.class, () -> service.update(900L, null, TENANT_ID, USER_ID)), "version 必须提供且不能为负数", "version is required and must not be negative");
+        assertBilingual(assertThrows(BizException.class, () -> service.list(TENANT_ID, "UNKNOWN", null, null, null, 20, 0)), "查询条件不合法", "Query criteria are invalid");
+        when(squadDao.findById(30L)).thenReturn(null);
+        assertBilingual(assertThrows(BizException.class, () -> service.create(cronRequest(), TENANT_ID, USER_ID)), "小队不存在或不属于当前工作空间", "Squad does not exist or does not belong to the current workspace");
+        verify(taskDao, never()).insert(any());
+    }
+
+    private void assertBilingual(BizException failure, String diagnostic, String english) {
+        assertEquals(diagnostic, failure.getMessage());
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.SIMPLIFIED_CHINESE);
+            var chinese = handler.handleBiz(failure);
+            assertEquals(200, chinese.getStatusCodeValue());
+            assertEquals(diagnostic, chinese.getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            var translated = handler.handleBiz(failure);
+            assertEquals(200, translated.getStatusCodeValue());
+            assertEquals(failure.getCode(), translated.getBody().getCode());
+            assertEquals(english, translated.getBody().getMessage());
+            assertEquals(diagnostic, failure.getLocalizedMessage());
+            assertEquals(diagnostic, com.aliyun.autowonder.common.result.Result.fail(failure.getCode(), diagnostic).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @Test
+    void stateAndReferenceFailuresAreTranslatedWithoutRelaxingValidation() {
+        org.junit.jupiter.api.Assertions.assertAll(
+            () -> { when(taskDao.findById(TENANT_ID, 900L)).thenReturn(storedTask("ARCHIVED", 5));
+                assertBilingual(assertThrows(BizException.class, () -> service.update(900L, updateRequest(5), TENANT_ID, USER_ID)), "归档任务不可修改", "Archived tasks cannot be modified"); },
+            () -> { when(taskDao.findById(TENANT_ID, 900L)).thenReturn(storedTask("ACTIVE", 2));
+                assertBilingual(assertThrows(BizException.class, () -> service.enable(900L, 2, TENANT_ID, USER_ID)), "只有暂停任务可以启用", "Only paused tasks can be enabled"); },
+            () -> { when(taskDao.findById(TENANT_ID, 900L)).thenReturn(storedTask("ACTIVE", 2));
+                assertBilingual(assertThrows(BizException.class, () -> service.archive(900L, 2, TENANT_ID, USER_ID)), "只有暂停或已耗尽任务可以归档", "Only paused or exhausted tasks can be archived"); },
+            () -> { when(taskDao.findById(TENANT_ID, 900L)).thenReturn(storedTask("ACTIVE", 2));
+                when(runDao.findActiveByTask(TENANT_ID, 900L)).thenReturn(List.of(new ScheduledTaskRunDO()));
+                assertBilingual(assertThrows(BizException.class, () -> service.delete(900L, 2, TENANT_ID, USER_ID)), "存在未结束的运行实例，请先取消后再删除", "Cancel unfinished runs before deleting this task"); },
+            () -> { givenValidSquadAndAgent(TENANT_ID); when(squadDao.findById(30L)).thenReturn(null);
+                assertBilingual(assertThrows(BizException.class, () -> service.create(cronRequest(), TENANT_ID, USER_ID)), "小队不存在或不属于当前工作空间", "Squad does not exist or does not belong to the current workspace"); },
+            () -> { givenValidSquadAndAgent(TENANT_ID); when(agentDao.findById(40L)).thenReturn(null);
+                assertBilingual(assertThrows(BizException.class, () -> service.create(cronRequest(), TENANT_ID, USER_ID)), "初始 Agent 不存在、未上线或不属于当前工作空间", "Initial Agent does not exist, is offline, or does not belong to the current workspace"); },
+            () -> { givenValidSquadAndAgent(TENANT_ID); when(memberDao.findBySquadAndAgent(30L, 40L)).thenReturn(null);
+                assertBilingual(assertThrows(BizException.class, () -> service.create(cronRequest(), TENANT_ID, USER_ID)), "初始 Agent 不是该小队成员", "Initial Agent is not a member of this squad"); });
+    }
+
 }

@@ -1,5 +1,8 @@
-export const REPO_NAME_INVALID_MESSAGE =
-  '仓库名称必须为单级目录名，不能包含 / 或 \\、. 或 ..、绝对路径。如填写的是 namespace/repo-name 形式的标识，请将完整标识填在仓库地址中，仓库名称只填单级目录名';
+import { i18n } from '@/shared/i18n';
+
+export function repoNameInvalidMessage() {
+  return i18n.t('repo:validation.nameInvalid');
+}
 
 export function isValidRepoName(value?: string): boolean {
   const name = value?.trim();

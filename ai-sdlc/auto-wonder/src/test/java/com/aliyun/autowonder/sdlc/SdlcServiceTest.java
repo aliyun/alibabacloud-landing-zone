@@ -965,6 +965,7 @@ class SdlcServiceTest {
 
         assertEquals("10001", ex.getCode());
         assertTrue(ex.getMessage().contains("checklistJson"));
+        assertBilingual(ex, "checklistJson is not valid JSON");
         verify(stepDao, never()).update(any(SdlcStepDO.class));
     }
 
@@ -986,6 +987,34 @@ class SdlcServiceTest {
 
         assertEquals("10001", ex.getCode());
         assertTrue(ex.getMessage().contains("gatePolicyJson"));
+        assertBilingual(ex, "gatePolicyJson is not valid JSON");
+        verify(stepDao, never()).update(any(SdlcStepDO.class));
+    }
+
+    @Test
+    void updateStep_rejects_invalid_question_policy_before_writing() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        SdlcStepDO step = new SdlcStepDO();
+        step.setId(1L); step.setSdlcId(9L); step.setStepOrder(1); step.setName("分析");
+        when(stepDao.findById(1L)).thenReturn(step);
+        for (String[] sample : List.of(
+                new String[]{"{\"askWhenUnclear\":\"true\"}", "gatePolicyJson must be an object, and humanApprovalRequired and askWhenUnclear must be booleans."},
+                new String[]{"{\"askWhenUnclear\":null}", "gatePolicyJson must be an object, and humanApprovalRequired and askWhenUnclear must be booleans."},
+                new String[]{"{\"humanApprovers\":null}", "humanApprovers must use a boolean includeCreator and arrays for userIds and identityTags."},
+                new String[]{"{\"humanApprovers\":{}}", "Select at least one approver, identity tag, or the work item creator."},
+                new String[]{"{\"humanApprovers\":{\"includeCreator\":\"true\"}}", "humanApprovers must use a boolean includeCreator and arrays for userIds and identityTags."},
+                new String[]{"{\"humanApprovers\":{\"userIds\":[-1]}}", "Approver IDs must be positive integers."},
+                new String[]{"{\"humanApprovers\":{\"userIds\":[1.5]}}", "Approver IDs must be positive integers."},
+                new String[]{"{\"humanApprovers\":{\"userIds\":\"9\"}}", "humanApprovers must use a boolean includeCreator and arrays for userIds and identityTags."},
+                new String[]{"{\"humanApprovers\":{\"identityTags\":[9]}}", "Approver identity tags must contain between 1 and 32 characters."},
+                new String[]{"{\"humanApprovers\":{\"identityTags\":[\" \"]}}", "Approver identity tags must contain between 1 and 32 characters."})) {
+            UpdateStepRequest req = new UpdateStepRequest();
+            req.setGatePolicyJson(sample[0]);
+            BizException ex = assertThrows(BizException.class,
+                    () -> service.updateStep(9L, 1L, req, 100L, 7L));
+            assertEquals("10001", ex.getCode());
+            assertBilingual(ex, sample[1]);
+        }
         verify(stepDao, never()).update(any(SdlcStepDO.class));
     }
 
@@ -1033,6 +1062,7 @@ class SdlcServiceTest {
 
         assertEquals("10001", ex.getCode());
         assertTrue(ex.getMessage().contains("checklistJson"));
+        assertBilingual(ex, "checklistJson is not valid JSON");
         verify(stepDao, never()).insert(any(SdlcStepDO.class));
     }
 
@@ -1049,6 +1079,7 @@ class SdlcServiceTest {
 
         assertEquals("10001", ex.getCode());
         assertTrue(ex.getMessage().contains("gatePolicyJson"));
+        assertBilingual(ex, "gatePolicyJson is not valid JSON");
         verify(stepDao, never()).insert(any(SdlcStepDO.class));
     }
 
@@ -1112,4 +1143,55 @@ class SdlcServiceTest {
         verify(stepDao).insert(argThat(step ->
                 step.getChecklistJson() == null && step.getGatePolicyJson() == null));
     }
+    @Test void deleteInUseRendersCompleteSentencesForEveryReferenceShape() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        String rawName = "<b>{0}'员工";
+        AgentDO named = new AgentDO(); named.setName(rawName); when(agentDao.findById(5L)).thenReturn(named);
+        for (boolean hasAgents : new boolean[]{false, true}) {
+            when(agentVersionDao.listAgentIdsBySdlcId(9L)).thenReturn(hasAgents ? List.of(5L, 6L) : List.of());
+            for (int shape = hasAgents ? 0 : 1; shape < 4; shape++) {
+                long count = shape == 0 ? 0 : shape == 3 ? 8 : 2;
+                List<Long> sample = shape < 2 ? List.of() : List.of(77L, 78L);
+                when(workitemDao.countBySdlcId(9L)).thenReturn((int) count);
+                when(workitemDao.listIdsBySdlcId(9L, 5)).thenReturn(sample);
+                String refs = count == 0 ? "" : "Work item references: " + count
+                    + (sample.isEmpty() ? "" : " (#77, #78" + (shape == 3 ? " and more" : "") + ")");
+                if (hasAgents) refs += (count == 0 ? "" : "; ") + "Agent references: 2 (" + rawName + "(ID:5), ID:6)";
+                BizException error = assertThrows(BizException.class, () -> service.delete(9L, 100L, 7L));
+                assertBilingual(error, "Cannot delete this workflow because it is in use. " + refs + ". Remove these references before deleting.");
+                assertEquals("16010", error.getCode());
+                assertEquals(200, new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(error).getStatusCodeValue());
+            }
+        }
+        verify(sdlcDao, never()).softDelete(anyLong(), anyLong(), anyInt(), anyLong());
+        verify(stepDao, never()).deleteAllBySdlc(anyLong(), anyLong());
+    }
+
+    private static void assertBilingual(com.aliyun.autowonder.common.error.BizException error, String english) {
+        var handler = new com.aliyun.autowonder.common.web.GlobalExceptionHandler();
+        String diagnostic = error.getMessage();
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.CHINA);
+            assertEquals(diagnostic, handler.handleBiz(error).getBody().getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals(english, handler.handleBiz(error).getBody().getMessage());
+            assertEquals(diagnostic, error.getMessage());
+            assertEquals(diagnostic, error.getLocalizedMessage());
+            assertNull(error.getCause());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @Test void addAndUpdateStepsCarryDefinitionReasonsBeforePersistence() {
+        when(sdlcDao.findById(9L)).thenReturn(sdlc(9L, "DRAFT"));
+        SdlcStepDO step = new SdlcStepDO(); step.setId(1L); step.setSdlcId(9L);
+        when(stepDao.findById(1L)).thenReturn(step);
+        CreateStepRequest create = new CreateStepRequest(); create.setChecklistJson("{}");
+        UpdateStepRequest update = new UpdateStepRequest(); update.setChecklistJson("{}");
+        assertBilingual(assertThrows(BizException.class, () -> service.addStep(9L, create, 100L, 7L)),
+                "checklistJson must be an array");
+        assertBilingual(assertThrows(BizException.class, () -> service.updateStep(9L, 1L, update, 100L, 7L)),
+                "checklistJson must be an array");
+        verify(stepDao, never()).insert(any()); verify(stepDao, never()).update(any());
+    }
+
 }

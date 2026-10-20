@@ -22,6 +22,7 @@ test_classes=(
   MemoryBehaviorLoopMySqlTest
   MemoryTopicTransactionMySqlTest
   ExecutorLaunchConfigRecoveryMySqlTest
+  DispatchResultConcurrencyMySqlTest
 )
 report_classes=(
   com.aliyun.autowonder.scheduledtask.DockerReleaseGateIT
@@ -35,6 +36,7 @@ report_classes=(
   com.aliyun.autowonder.memory.store.MemoryBehaviorLoopMySqlTest
   com.aliyun.autowonder.memory.store.MemoryTopicTransactionMySqlTest
   com.aliyun.autowonder.executor.ExecutorLaunchConfigRecoveryMySqlTest
+  com.aliyun.autowonder.dispatch.DispatchResultConcurrencyMySqlTest
 )
 test_selector="$(IFS=,; echo "${test_classes[*]}")"
 

@@ -154,3 +154,60 @@ export async function addSquadMember(squadId: number, agentId: number): Promise<
 export async function removeSquadMember(squadId: number, agentId: number): Promise<void> {
   await apiClient.delete(`/api/squads/${squadId}/members/${agentId}`);
 }
+
+export interface SquadCopyCheck {
+  eligible: boolean;
+  missingOnlineVersions: { agentId: number; agentName: string }[];
+  /** 悬空引用（agent#/skill#/plugin#/environment_variable#/sdlc#），与版本无关。 */
+  missingDependencies: string[];
+}
+
+export interface SquadCopyTarget {
+  id: number;
+  name: string;
+  description: string;
+}
+
+export interface SquadCopyTargetResult {
+  workspaceId: number;
+  workspaceName: string;
+  success: boolean;
+  squadId: number | null;
+  errorCode: string | null;
+  message: string | null;
+}
+
+export interface SquadCopyResult {
+  requestId: string;
+  results: SquadCopyTargetResult[];
+}
+
+export async function checkSquadCopy(squadId: number): Promise<SquadCopyCheck> {
+  const resp = await apiClient.get<SquadCopyCheck>(`/api/squads/${squadId}/copy-check`);
+  return {
+    eligible: resp.data?.eligible === true,
+    missingOnlineVersions: resp.data?.missingOnlineVersions ?? [],
+    // 旧服务端响应没有该字段，缺省为空列表而不是 undefined。
+    missingDependencies: resp.data?.missingDependencies ?? [],
+  };
+}
+
+/** 服务端分页的目标候选；过滤（源空间、已删除、权限）在服务端完成，前端只负责展示与选择。 */
+export async function listSquadCopyTargets(
+  squadId: number,
+  params: { keyword?: string; pageNum: number; pageSize: number },
+): Promise<PageResult<SquadCopyTarget>> {
+  const keyword = params.keyword?.trim();
+  const resp = await apiClient.get<PageResult<SquadCopyTarget>>(`/api/squads/${squadId}/copy-targets`, {
+    params: { keyword: keyword || undefined, page: params.pageNum, size: params.pageSize },
+  });
+  return resp.data;
+}
+
+export async function copySquadToWorkspaces(
+  squadId: number,
+  params: { requestId: string; targetWorkspaceIds: number[] },
+): Promise<SquadCopyResult> {
+  const resp = await apiClient.post<SquadCopyResult>(`/api/squads/${squadId}/copy`, params);
+  return resp.data;
+}

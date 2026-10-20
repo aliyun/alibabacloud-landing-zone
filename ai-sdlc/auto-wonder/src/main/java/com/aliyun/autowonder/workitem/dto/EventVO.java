@@ -19,4 +19,10 @@ public class EventVO {
     private String toValDisplay;
     private String detailJson;
     private Date gmtCreate;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private ExternalPrincipalVO actorNameFallback;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private ExternalPrincipalVO fromValNameFallback;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private ExternalPrincipalVO toValNameFallback;
 }

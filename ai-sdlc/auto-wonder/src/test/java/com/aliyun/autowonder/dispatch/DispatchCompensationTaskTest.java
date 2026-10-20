@@ -20,6 +20,8 @@ class DispatchCompensationTaskTest {
     private RedisManager redisManager;
     private InteractionWorkflowService interactionWorkflowService;
     private DispatchCompensationTask task;
+    private com.aliyun.autowonder.executor.ExecutorRegistry registry;
+    private DispatchRuntimeReconciler reconciler;
 
     @BeforeEach
     void setUp() {
@@ -30,6 +32,9 @@ class DispatchCompensationTaskTest {
         interactionWorkflowService = mock(InteractionWorkflowService.class);
         task = new DispatchCompensationTask(dispatchDao, dispatchService, pauseService,
                 interactionWorkflowService, redisManager);
+        registry = mock(com.aliyun.autowonder.executor.ExecutorRegistry.class);
+        reconciler = mock(DispatchRuntimeReconciler.class);
+        task.setRuntimeReconciliation(registry, reconciler);
     }
 
     private DispatchDO row(long id, long tenantId, long workitemId, long stepId, String status) {
@@ -39,7 +44,27 @@ class DispatchCompensationTaskTest {
         d.setWorkitemId(workitemId);
         d.setSdlcStepId(stepId);
         d.setStatus(status);
+        d.setExecutorId(9L);
+        d.setAgentId(20L);
+        d.setGmtModified(new java.util.Date(System.currentTimeMillis() - 2 * 60 * 60_000L));
         return d;
+    }
+
+    @Test
+    void requestReconciliationFailureDoesNotSkipCheckpointRetentionOrRelease() {
+        var requests = mock(DispatchRequestService.class);
+        var checkpoints = mock(DispatchCheckpointService.class);
+        task.setDispatchRequests(requests);
+        task.setCheckpoints(checkpoints);
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+        doThrow(new IllegalStateException("request reconciliation failed")).when(requests).reconcile();
+
+        assertDoesNotThrow(task::sweep);
+
+        verify(requests).reconcile();
+        verify(checkpoints).reconcileRetention();
+        verify(interactionWorkflowService).reconcileReleasedWaiters();
+        verify(redisManager).releaseLock(eq("dispatch:compensation:lock"), anyString());
     }
 
     @Test
@@ -50,7 +75,7 @@ class DispatchCompensationTaskTest {
     }
 
     @Test
-    void redrivesStuckPendingAndTimesOutStuckRunning() {
+    void redrivesStuckPendingAndPreservesRunningWithoutAuthoritativeInventory() {
         when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
         when(dispatchDao.listStuck(eq(List.of(DispatchStatus.PENDING)), anyLong(), anyInt()))
                 .thenReturn(List.of(row(1L, 100L, 200L, 300L, DispatchStatus.PENDING)));
@@ -61,8 +86,54 @@ class DispatchCompensationTaskTest {
         task.sweep();
 
         verify(dispatchService).runPending(1L);
-        verify(dispatchService).onTimeout(101L, 2L);
+        verify(dispatchService, never()).onTimeout(anyLong(), anyLong());
+        verify(dispatchService, never()).runPending(2L);
         verify(redisManager).releaseLock(eq("dispatch:compensation:lock"), anyString());
+    }
+
+    @Test
+    void scheduledRunRetainsExistingTimeoutCompensation() {
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+        var scheduled = row(2L, 101L, 201L, 301L, DispatchStatus.RUNNING);
+        scheduled.setSourceType(ExecutionSourceType.SCHEDULED_TASK_RUN.name());
+        when(dispatchDao.listStuck(eq(List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING)), anyLong(), anyInt()))
+                .thenReturn(List.of(scheduled));
+        task.sweep();
+        verify(dispatchService).onTimeout(101L, 2L);
+        verifyNoInteractions(reconciler);
+    }
+
+    @Test
+    void reconcilesRequestsAndTwoHourOldExecutionWithoutTimingOutOrDuplicatingIt() {
+        var requests = mock(DispatchRequestService.class);
+        task.setDispatchRequests(requests);
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+        var old = row(2L, 101L, 201L, 301L, DispatchStatus.RUNNING);
+        when(dispatchDao.listStuck(eq(List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING)), anyLong(), anyInt()))
+                .thenReturn(List.of(old));
+        // Ownership includes a local RECOVERING task even when no provider call is running yet.
+        when(registry.currentDispatchSnapshot(9L)).thenReturn(java.util.Optional.of(
+                new com.aliyun.autowonder.executor.ExecutorDispatchSnapshot("session", 10, true, true,
+                        java.util.Set.of(), java.util.Set.of(2L), java.util.Set.of(), java.util.Set.of(),
+                        null, System.currentTimeMillis())));
+        task.sweep();
+        verify(requests).reconcile();
+        verify(reconciler).request(101L, 9L, 20L, "session");
+        verifyNoInteractions(dispatchService);
+        org.junit.jupiter.api.Assertions.assertEquals(DispatchStatus.RUNNING, old.getStatus());
+    }
+
+    @Test
+    void incompleteInventoryCannotAuthorizeRecoveryAfterLongDowntime() {
+        when(redisManager.tryAcquireLock(anyString(), anyString(), anyLong())).thenReturn(true);
+        when(dispatchDao.listStuck(eq(List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING)), anyLong(), anyInt()))
+                .thenReturn(List.of(row(2L, 101L, 201L, 301L, DispatchStatus.ACKED)));
+        when(registry.currentDispatchSnapshot(9L)).thenReturn(java.util.Optional.of(
+                new com.aliyun.autowonder.executor.ExecutorDispatchSnapshot("session", 10, true, false,
+                        java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of(),
+                        null, System.currentTimeMillis())));
+        task.sweep();
+        verifyNoInteractions(reconciler, dispatchService);
     }
 
     @Test
@@ -169,7 +240,8 @@ class DispatchCompensationTaskTest {
 
         assertDoesNotThrow(task::sweep);
 
-        verify(dispatchService).onTimeout(101L, 12L);
+        verify(dispatchDao).listStuck(eq(List.of(DispatchStatus.ACKED, DispatchStatus.RUNNING)), anyLong(), anyInt());
+        verify(dispatchService, never()).onTimeout(anyLong(), anyLong());
         verify(redisManager).releaseLock(eq("dispatch:compensation:lock"), anyString());
     }
 

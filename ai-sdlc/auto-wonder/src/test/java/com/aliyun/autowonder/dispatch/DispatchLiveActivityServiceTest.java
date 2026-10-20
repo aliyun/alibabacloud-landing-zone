@@ -1,6 +1,10 @@
 package com.aliyun.autowonder.dispatch;
 
 import com.aliyun.autowonder.json.JSONObject;
+import com.aliyun.autowonder.executor.ExecutorRegistry;
+import com.aliyun.autowonder.executor.ExecutorDispatchSnapshot;
+import java.util.Optional;
+import java.util.Set;
 import com.aliyun.autowonder.dispatch.dto.DispatchLiveActivityVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,13 +21,46 @@ class DispatchLiveActivityServiceTest {
     private DispatchRuntimeEventDao eventDao;
     private DispatchLiveActivityMetrics metrics;
     private DispatchLiveActivityService service;
+    private ExecutorRegistry executorRegistry;
 
     @BeforeEach
     void setUp() {
         dispatchDao = mock(DispatchDao.class);
         eventDao = mock(DispatchRuntimeEventDao.class);
         metrics = mock(DispatchLiveActivityMetrics.class);
-        service = new DispatchLiveActivityService(dispatchDao, eventDao, metrics);
+        executorRegistry = mock(ExecutorRegistry.class);
+        service = new DispatchLiveActivityService(dispatchDao, eventDao, metrics, executorRegistry);
+    }
+
+    @Test
+    void unchangedDeltaStillRefreshesRuntimeHealth() {
+        DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
+        dispatch.setExecutorId(44L);
+        when(dispatchDao.findById(1L)).thenReturn(dispatch);
+        when(eventDao.listByDispatchAfterSeq(100L, 1L, 5L)).thenReturn(List.of());
+        when(executorRegistry.currentDispatchSnapshot(44L)).thenReturn(Optional.of(snapshot(Set.of(1L), Set.of(1L))),
+                Optional.of(snapshot(Set.of(), Set.of(1L))), Optional.empty());
+        DispatchLiveActivityVO running = service.get(100L, 1L, 5L, null);
+        assertFalse(running.isChanged());
+        assertEquals("RUNNING", running.getRuntimeState());
+        assertEquals("RECOVERING", service.get(100L, 1L, 5L, null).getRuntimeState());
+        assertEquals("UNKNOWN", service.get(100L, 1L, 5L, null).getRuntimeState());
+    }
+
+    @Test
+    void missingExecutorOrUnownedInventoryIsUnknownAndTerminalDispatchIsInactive() {
+        DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
+        when(dispatchDao.findById(1L)).thenReturn(dispatch);
+        assertEquals("UNKNOWN", service.get(100L, 1L).getRuntimeState());
+        dispatch.setExecutorId(44L);
+        when(executorRegistry.currentDispatchSnapshot(44L)).thenReturn(Optional.of(snapshot(Set.of(), Set.of())));
+        assertEquals("UNKNOWN", service.get(100L, 1L).getRuntimeState());
+        dispatch.setStatus("SUCCEEDED");
+        assertNull(service.get(100L, 1L).getRuntimeState());
+    }
+
+    private ExecutorDispatchSnapshot snapshot(Set<Long> running, Set<Long> owned) {
+        return new ExecutorDispatchSnapshot("session", 2, true, true, running, owned, Set.of(), Set.of(), null, System.currentTimeMillis());
     }
 
     @Test
@@ -278,4 +315,35 @@ class DispatchLiveActivityServiceTest {
         event.setStepName("编码实现");
         return event;
     }
+
+    @Test
+    void onlyServerFallbackSummaryRendersInRequestLanguageAndRawCollisionStaysRaw() {
+        var previous = org.springframework.context.i18n.LocaleContextHolder.getLocaleContext();
+        try {
+            DispatchDO dispatch = buildDispatch(1L, 100L, 1001L);
+            var fallback = buildEvent("step.started", 1L, null);
+            var raw = buildEvent("step.started", 2L, "开始 SDLC 步骤");
+            raw.setDetailJson("{\"summaryOrigin\":\"SYSTEM_FALLBACK\"}");
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+            assertEquals("Start SDLC step", service.toAction(dispatch, fallback).getSummary());
+            assertEquals("开始 SDLC 步骤", service.toAction(dispatch, raw).getSummary());
+            assertNull(fallback.getMessage()); assertEquals("开始 SDLC 步骤", raw.getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.setLocaleContext(previous); }
+    }
+
+
+    @Test
+    void fallbackOriginUsesOnlySanitizedTargetAndNeverAcceptsClientOriginClaim() {
+        var dispatch = buildDispatch(1L,100L,1001L);
+        var fallback = buildEvent("bash.started",1L,null);
+        fallback.setDetailJson("{\"tool\":\"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\",\"summaryOrigin\":\"CLIENT\"}");
+        var action = service.toAction(dispatch,fallback);
+        assertEquals("SYSTEM_FALLBACK",action.getSummaryOrigin());
+        assertNotNull(action.getSummaryTarget()); assertTrue(action.getSummaryTarget().length() <= 49);
+        var raw = buildEvent("bash.started",2L,"执行命令 <b>raw</b>"); raw.setDetailJson("{\"summaryOrigin\":\"SYSTEM_FALLBACK\"}");
+        assertNull(service.toAction(dispatch,raw).getSummaryOrigin()); assertNull(service.toAction(dispatch,raw).getSummaryTarget());
+        assertEquals("执行命令 <b>raw</b>",raw.getMessage());
+        var unknown = buildEvent("unknown.raw",3L,"raw"); assertNull(service.toAction(dispatch,unknown));
+    }
+
 }

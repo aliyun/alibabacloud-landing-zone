@@ -22,7 +22,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看执行器")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看执行器", actionKey = "access.action.view_executors")
 public class ExecutorController {
 
     private ExecutorRestartService restartService;
@@ -34,7 +34,7 @@ public class ExecutorController {
     public void setUpdateService(ExecutorUpdateService service) { this.updateService = service; }
 
     @PostMapping("/executors/{id}/restart")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "重启执行器")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "重启执行器", actionKey = "access.action.restart_an_executor")
     public Result<com.aliyun.autowonder.json.JSONObject> restart(@PathVariable("id") Long id,
             @RequestBody(required = false) RestartRequest request) {
         return Result.ok(restartService.request(id, currentWorkspaceId(), currentUserId(), request != null && request.update()));
@@ -42,7 +42,7 @@ public class ExecutorController {
     public record RestartRequest(boolean update) {}
 
     @PostMapping("/executors/{id}/update")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "升级执行器")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "升级执行器", actionKey = "access.action.upgrade_an_executor")
     public Result<ExecutorUpdateVO> update(@PathVariable("id") Long id) {
         return Result.ok(updateService.updateOne(id, currentWorkspaceId(), currentUserId()));
     }
@@ -52,7 +52,7 @@ public class ExecutorController {
      * executor the operator can currently see, and reports skips instead of failing the whole batch.
      */
     @PostMapping("/executors/update-all")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "批量升级执行器")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "批量升级执行器", actionKey = "access.action.upgrade_executors_in_bulk")
     public Result<ExecutorUpdateAllResultVO> updateAll(
             @RequestParam(value = "squadIds", required = false) List<Long> squadIds) {
         return Result.ok(updateService.updateAll(currentWorkspaceId(), squadIds, currentUserId()));
@@ -73,10 +73,15 @@ public class ExecutorController {
     }
 
     @PostMapping("/agents/{agentId}/executors")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "创建执行器")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建执行器", actionKey = "access.action.create_an_executor")
     public Result<IssuedExecutorVO> create(@PathVariable("agentId") Long agentId,
                                            @RequestBody CreateExecutorRequest req) {
-        return Result.ok(executorService.create(agentId, req, currentWorkspaceId(), currentUserId()));
+        IssuedExecutorVO issued = executorService.create(agentId, req, currentWorkspaceId(), currentUserId());
+        // 令牌等同机器凭据：非管理员创建时只返回执行器记录，凭据由管理员经令牌接口单独获取。
+        if (AutoWonderContext.get().getWorkspaceAccessLevel() != WorkspaceAccessLevel.ADMIN) {
+            issued.setToken(null);
+        }
+        return Result.ok(issued);
     }
 
     @GetMapping("/agents/{agentId}/executors")
@@ -96,19 +101,33 @@ public class ExecutorController {
     }
 
     @GetMapping("/executors/{id}/token")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "获取执行器令牌")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "获取执行器令牌", actionKey = "access.action.get_an_executor_token")
     public Result<String> getToken(@PathVariable("id") Long id) {
         return Result.ok(executorService.getToken(id, currentWorkspaceId()));
     }
 
     @GetMapping("/executors/{id}/launch-config")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "查看执行器启动配置")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看执行器启动配置", actionKey = "access.action.view_executor_launch_configuration")
     public Result<ExecutorLaunchConfigVO> getLaunchConfig(@PathVariable("id") Long id) {
-        return Result.ok(executorLaunchConfigService.getConfig(id, currentWorkspaceId(), currentUserId()));
+        // 读取不得写库：沿用无副作用的存储视图，过期模型由页面提示、保存时经写路径修复。
+        return Result.ok(executorLaunchConfigService.readStoredConfig(id, currentWorkspaceId()));
+    }
+
+    @GetMapping("/executors/{id}/model-upgrade-policy")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看模型升级策略", actionKey = "access.action.view_model_upgrade_policy")
+    public Result<ExecutorLaunchConfigVO> getModelUpgradePolicy(@PathVariable("id") Long id) {
+        return Result.ok(executorLaunchConfigService.readStoredConfig(id, currentWorkspaceId()));
+    }
+
+    @PutMapping("/executors/{id}/model-upgrade-policy")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新模型升级策略", actionKey = "access.action.update_model_upgrade_policy")
+    public Result<ExecutorLaunchConfigVO> updateModelUpgradePolicy(@PathVariable("id") Long id,
+            @RequestBody UpdateExecutorLaunchConfigRequest request) {
+        return Result.ok(executorLaunchConfigService.updateModelUpgradePolicy(id, currentWorkspaceId(), request, currentUserId()));
     }
 
     @PutMapping("/executors/{id}/launch-config")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新执行器启动配置")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新执行器启动配置", actionKey = "access.action.update_executor_launch_configuration")
     public Result<ExecutorLaunchConfigVO> updateLaunchConfig(@PathVariable("id") Long id,
                                                              @RequestBody UpdateExecutorLaunchConfigRequest req) {
         return Result.ok(executorLaunchConfigService.updateConfig(id, currentWorkspaceId(), req, currentUserId()));
@@ -119,7 +138,7 @@ public class ExecutorController {
      * copies exactly what autowonder.build_executor_launch_command returns for the same executor.
      */
     @PostMapping("/executors/{id}/launch-command")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "生成执行器启动命令")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "生成执行器启动命令", actionKey = "access.action.generate_an_executor_launch_command")
     public Result<ExecutorLaunchCommandVO> buildLaunchCommand(@PathVariable("id") Long id,
                                                              @RequestBody(required = false)
                                                              ExecutorLaunchCommandRequest req) {
@@ -128,8 +147,29 @@ public class ExecutorController {
                 Boolean.TRUE.equals(request.getDebug()), request.getShell()));
     }
 
+    @PutMapping("/executors/{id}/launch-command")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "更新执行器启动命令", actionKey = "access.action.update_executor_launch_command")
+    public Result<ExecutorLaunchConfigVO> saveLaunchCommand(@PathVariable("id") Long id,
+            @RequestBody com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest request) {
+        return Result.ok(executorLaunchCommandService.saveCommand(id, currentWorkspaceId(), currentUserId(), request));
+    }
+
+    @PostMapping("/executors/{id}/launch-command/preview")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "生成执行器启动命令", actionKey = "access.action.generate_an_executor_launch_command")
+    public Result<ExecutorLaunchCommandVO> previewLaunchCommand(@PathVariable("id") Long id,
+            @RequestBody com.aliyun.autowonder.executor.dto.ExecutorLaunchCommandPreviewRequest request) {
+        return Result.ok(executorLaunchCommandService.previewForExecutor(id, currentWorkspaceId(), request));
+    }
+
+    @PostMapping("/executors/{id}/launch-command/apply")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "在线应用执行器启动命令", actionKey = "access.action.apply_executor_launch_command")
+    public Result<com.aliyun.autowonder.json.JSONObject> applyLaunchCommand(@PathVariable("id") Long id,
+            @RequestBody com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest request) {
+        return Result.ok(restartService.applyLaunchCommand(id, currentWorkspaceId(), currentUserId(), request.getVersion(), request.getRestartMode()));
+    }
+
     @DeleteMapping("/executors/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.ADMIN, action = "删除执行器")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除执行器", actionKey = "access.action.delete_an_executor")
     public Result<Void> delete(@PathVariable("id") Long id) {
         executorService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);

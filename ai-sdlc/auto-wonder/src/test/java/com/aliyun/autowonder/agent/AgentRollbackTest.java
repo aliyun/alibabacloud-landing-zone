@@ -201,4 +201,22 @@ class AgentRollbackTest {
         assertEquals("14001", error.getCode());
         verify(versionDao, never()).listByAgent(anyLong());
     }
+    @Test void historicalSummariesSerializeEachVersionsOwnRoleCodeAndKeepNamesRaw() {
+        AgentDO agent = new AgentDO(); agent.setId(10L); agent.setTenantId(100L); agent.setOnlineVersionId(99L);
+        when(agentDao.findById(10L)).thenReturn(agent);
+        var rows = new java.util.ArrayList<AgentVersionDO>();
+        for (String code : java.util.Arrays.asList("BACKEND_DEV", "QA", "constructor", null)) {
+            AgentVersionDO row = new AgentVersionDO(); row.setId((long) rows.size()); row.setVersionNo(rows.size()+1);
+            row.setRoleCode(code); row.setRoleName("后端开发工程师"); rows.add(row);
+        }
+        when(versionDao.listByAgent(10L)).thenReturn(rows);
+        var json = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(service.listVersions(10L, 100L));
+        assertEquals("BACKEND_DEV", json.get(0).path("roleCode").asText());
+        assertEquals("QA", json.get(1).path("roleCode").asText());
+        assertEquals("constructor", json.get(2).path("roleCode").asText());
+        assertTrue(json.get(3).path("roleCode").isNull());
+        for (var row : json) assertEquals("后端开发工程师", row.path("roleName").asText());
+        verify(versionDao, never()).findById(99L);
+    }
+
 }

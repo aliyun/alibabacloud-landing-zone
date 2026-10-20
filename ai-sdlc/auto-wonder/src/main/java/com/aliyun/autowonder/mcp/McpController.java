@@ -2,14 +2,16 @@ package com.aliyun.autowonder.mcp;
 
 import com.aliyun.autowonder.json.JSON;
 import com.aliyun.autowonder.common.error.BizException;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.common.result.Result;
 import com.aliyun.autowonder.context.AutoWonderContext;
 import com.aliyun.autowonder.mcp.dto.McpRpcResponse;
 import com.aliyun.autowonder.mcp.dto.McpToolCallRequest;
 import com.aliyun.autowonder.mcp.dto.McpToolVO;
 import com.aliyun.autowonder.memory.store.MemoryStoreApplicationService;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import org.springframework.http.MediaType;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,7 +22,10 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.cors.CorsUtils;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -30,10 +35,12 @@ import java.util.UUID;
 public class McpController {
     private final McpAccessTokenService tokenService;
     private final McpToolService toolService;
+    private final McpSseService sseService;
 
-    public McpController(McpAccessTokenService tokenService, McpToolService toolService) {
+    public McpController(McpAccessTokenService tokenService, McpToolService toolService, McpSseService sseService) {
         this.tokenService = tokenService;
         this.toolService = toolService;
+        this.sseService = sseService;
     }
 
     @GetMapping(value = {
@@ -41,10 +48,33 @@ public class McpController {
             "/{pathToken}", "/{pathToken}/",
             "/{pathToken}/rpc", "/{pathToken}/rpc/"
     })
-    public ResponseEntity<Void> rejectGetProbe() {
-        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-                .allow(HttpMethod.POST)
-                .build();
+    public SseEmitter stream(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                     @PathVariable(value = "pathToken", required = false) String pathToken,
+                                     @RequestParam(value = "token", required = false) String queryToken,
+                                     HttpServletRequest request, HttpServletResponse response) throws IOException {
+        try {
+            if (CorsUtils.isCorsRequest(request)) {
+                response.setStatus(HttpStatus.FORBIDDEN.value());
+                return null;
+            }
+        } catch (IllegalArgumentException malformedOrigin) {
+            response.setStatus(HttpStatus.FORBIDDEN.value());
+            return null;
+        }
+        try {
+            tokenService.authenticate(authorization, resolveToken(pathToken, queryToken));
+        } catch (BizException e) {
+            // Force JSON before opening the stream, even for clients accepting only SSE.
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setHeader("WWW-Authenticate", "Bearer");
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            response.getWriter().write(JSON.toJSONString(Result.fail(e)));
+            return null;
+        }
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
+        return sseService.open();
     }
 
     @GetMapping("/tools")
@@ -103,7 +133,8 @@ public class McpController {
         } catch (MemoryStoreApplicationService.MemoryMaintenanceLeaseConflictException e) {
             return McpRpcResponse.error(id, -32009, "MEMORY_MAINTENANCE_LOCKED: retry later");
         } catch (BizException e) {
-            return McpRpcResponse.error(id, -32000, e.getMessage());
+            return McpRpcResponse.error(id, -32000,
+                    SystemMessages.render(e.getMessageKey(), e.getMessageArgs(), e.getMessage()));
         } catch (Exception e) {
             return McpRpcResponse.error(id, -32603, e.getMessage());
         }

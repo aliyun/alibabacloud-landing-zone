@@ -12,6 +12,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class WorkitemUsageAggregatorTest {
 
@@ -206,4 +207,18 @@ class WorkitemUsageAggregatorTest {
         assertEquals(List.of("DEV run-1", "CR run-1", "DEV run-2"),
                 summary.getRuns().stream().map(WorkitemUsageRunVO::getLabel).toList());
     }
+
+    @Test void newOwnedRunOriginKeepsRawLabelNameAndOldDtoJson() {
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+        for(String name:List.of("  <b>DEV</b>  ","   ","\u3000", "\u00a0", "unknown", "agent-77")) {
+            var summary=WorkitemUsageAggregator.summarize(List.of(usage(30L,77L,"3")),List.of(dispatch(30L,77L,1L)), id->name);
+            var run=summary.getRuns().get(0);
+            assertEquals(name,run.getAgentName()); assertEquals((name.isBlank()?"agent-77":name.trim())+" run-1",run.getLabel());
+            assertCredits("3",run.getCredits());assertEquals(1,run.getRunIndex());
+            assertEquals("AGENT_RUN",mapper.valueToTree(run).path("labelKind").asText());
+        }
+        assertFalse(mapper.valueToTree(new WorkitemUsageRunVO()).has("labelKind"));
+        assertEquals("{\"agentId\":null,\"agentName\":null,\"runIndex\":null,\"label\":null,\"credits\":null}",mapper.valueToTree(new WorkitemUsageRunVO()).toString());
+    }
+
 }

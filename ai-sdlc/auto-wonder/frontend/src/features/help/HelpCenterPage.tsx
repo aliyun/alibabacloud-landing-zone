@@ -1,3 +1,6 @@
+import { useTranslation } from 'react-i18next';
+import { useLocale } from '@/shared/i18n/LocaleProvider';
+import { useAppearance } from '@/shared/theme/AppearanceProvider';
 import { useEffect, useRef, useState, type CSSProperties, type ComponentPropsWithoutRef } from 'react';
 import { Button, theme } from 'antd';
 import { ArrowLeftOutlined, ArrowRightOutlined, CheckOutlined, CopyOutlined, DownloadOutlined } from '@ant-design/icons';
@@ -34,16 +37,16 @@ function remarkChapterLayout(chapterId: string) {
       for (const node of tree.children) {
         const isQuestion = node.type === 'paragraph'
           && node.children[0]?.type === 'text'
-          && node.children[0].value.startsWith('Q：');
+          && /^Q[:：]/.test(node.children[0].value);
         if (isQuestion) {
           node.children = [{ type: 'strong', children: node.children }];
           groups.push({ type: 'blockquote', children: [], data: { hName: 'section', hProperties: { className: ['help-faq'] } } });
         }
         if (node.type === 'paragraph' && node.children[0]?.type === 'text'
-          && node.children[0].value.startsWith('A：')) {
+          && /^A[:：]/.test(node.children[0].value)) {
           const first = node.children[0];
           node.children = [
-            { type: 'strong', children: [{ type: 'text', value: 'A：' }] },
+            { type: 'strong', children: [{ type: 'text', value: first.value.slice(0, 2) }] },
             { ...first, value: first.value.slice(2) },
             ...node.children.slice(1),
           ];
@@ -82,6 +85,7 @@ function remarkChapterLayout(chapterId: string) {
 }
 
 function CodeBlock({ children, node, ...props }: ComponentPropsWithoutRef<'pre'> & ExtraProps) {
+  const { t } = useTranslation('help');
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -103,23 +107,27 @@ function CodeBlock({ children, node, ...props }: ComponentPropsWithoutRef<'pre'>
   return (
     <div className="help-code">
       <div className="help-code-toolbar">
-        <span>{language || '代码'}</span>
-        <Button size="small" type="text" aria-label="复制代码" onClick={() => void copyCode()}
-          icon={status === 'copied' ? <CheckOutlined /> : <CopyOutlined />}>
-          {status === 'copied' ? '已复制' : '复制'}
+        <span>{language || t('code.label')}</span>
+        <Button size="small" type="text" aria-label={t('code.copyLabel')} onClick={() => void copyCode()}
+          icon={status === 'copied' ? <CheckOutlined aria-hidden="true" /> : <CopyOutlined aria-hidden="true" />}>
+          {status === 'copied' ? t('code.copied') : t('code.copy')}
         </Button>
       </div>
       <pre {...props}>{children}</pre>
-      <span className="help-sr-only" role="status">{status === 'copied' ? '代码已复制' : status === 'failed' ? '复制失败，请选中代码手动复制' : ''}</span>
+      <span className="help-sr-only" role="status">{status === 'copied' ? t('code.success') : status === 'failed' ? t('code.failure') : ''}</span>
     </div>
   );
 }
 
 export function HelpCenterPage() {
+  const { t } = useTranslation('help');
+  const { locale } = useLocale();
+  const { resolved: appearance } = useAppearance();
   const { token } = theme.useToken();
   const [params] = useSearchParams();
   const location = useLocation();
   const [chapters, setChapters] = useState<HelpChapter[] | null>(null);
+  const [retry, setRetry] = useState(0);
   const [loadFailed, setLoadFailed] = useState(false);
   const [activeSection, setActiveSection] = useState(0);
   const article = useRef<HTMLElement>(null);
@@ -128,18 +136,19 @@ export function HelpCenterPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch('/help/content.json', { credentials: 'omit', signal: controller.signal })
+    setLoadFailed(false);
+    void fetch(locale === 'en-US' ? '/help/content.en-US.json' : '/help/content.json', { credentials: 'omit', signal: controller.signal })
       .then((response) => {
-        if (!response.ok) throw new Error('帮助文档加载失败');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         return response.json() as Promise<HelpChapter[]>;
       })
       .then((data) => {
-        if (data.length === 0) throw new Error('帮助文档为空');
+        if (data.length === 0) throw new Error('Empty help corpus');
         if (!controller.signal.aborted) setChapters(data);
       })
       .catch(() => { if (!controller.signal.aborted) setLoadFailed(true); });
     return () => controller.abort();
-  }, []);
+  }, [locale, retry]);
 
   useEffect(() => {
     const container = article.current;
@@ -174,16 +183,16 @@ export function HelpCenterPage() {
     '--help-radius': `${token.borderRadius}px`,
   } as CSSProperties;
 
-  if (!chapter || !chapters) {
+  if (loadFailed || !chapter || !chapters) {
     return <main className="help-load-state" style={variables} role={loadFailed ? 'alert' : 'status'}>
-      {loadFailed ? '帮助文档加载失败，请刷新页面重试。' : '正在加载帮助文档…'}
+      {loadFailed ? <>{t('load.failed')} <Button onClick={() => setRetry(value => value + 1)}>{t('load.retry')}</Button></> : t('load.loading')}
     </main>;
   }
 
   return (
     <main className={`help-center${chapter.sections.length === 0 ? ' help-center-no-outline' : ''}`} style={variables}>
-      <nav className="help-chapters" aria-label="帮助章节">
-        <div className="help-nav-title">帮助中心</div>
+      <nav className="help-chapters" aria-label={t('chapters')}>
+        <div className="help-nav-title">{t('title')}</div>
         <div className="help-chapter-links">
           {chapters.map((item) => (
             <Link key={item.id} to={`/help?chapter=${item.id}`} aria-current={item.id === chapter.id ? 'page' : undefined}>
@@ -195,14 +204,15 @@ export function HelpCenterPage() {
 
       <article className="help-article" ref={article} key={chapter.id}>
         <div className="help-reading-width">
-          <div className="help-breadcrumb">帮助中心 <span>/</span> {chapter.title}</div>
+          <div className="help-breadcrumb">{t('title')} <span>/</span> {chapter.title}</div>
           <h1>{chapter.title}</h1>
           <div className="help-markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm, [remarkSectionIds, chapter.sections], [remarkChapterLayout, chapter.id]]} components={{
               pre: CodeBlock,
+              img: ({ node: _node, src, ...props }) => <img {...props} src={src?.replace(/^(\/help\/assets\/\d{2}-(?:zh-CN|en-US))\.png$/, `$1-${appearance}.png`)} />,
               a: ({ node: _node, href, children, ...props }) => {
                 if (href === '/help/assets/auto-wonder.zip') {
-                  return <Button className="help-download" href={href} download="auto-wonder.zip" icon={<DownloadOutlined />}>下载 {children}</Button>;
+                  return <Button className="help-download" href={href} download="auto-wonder.zip" icon={<DownloadOutlined aria-hidden="true" />}>{t('download')} {children}</Button>;
                 }
                 const external = /^(?:https?:)?\/\//i.test(href || '') || /^(?:mailto|tel):/i.test(href || '');
                 return <a {...props} href={href} target={external ? '_blank' : undefined} rel={external ? 'noopener noreferrer' : undefined}>{children}</a>;
@@ -210,14 +220,14 @@ export function HelpCenterPage() {
             }}>{chapter.markdown}</ReactMarkdown>
           </div>
           <footer className="help-pagination">
-            {chapterIndex > 0 ? <Link to={`/help?chapter=${chapters[chapterIndex - 1].id}`}><ArrowLeftOutlined /><span><small>上一章</small>{chapters[chapterIndex - 1].title}</span></Link> : <span />}
-            {chapterIndex < chapters.length - 1 && <Link to={`/help?chapter=${chapters[chapterIndex + 1].id}`}><span><small>下一章</small>{chapters[chapterIndex + 1].title}</span><ArrowRightOutlined /></Link>}
+            {chapterIndex > 0 ? <Link to={`/help?chapter=${chapters[chapterIndex - 1].id}`}><ArrowLeftOutlined aria-hidden="true" /><span><small>{t('previous')}</small>{chapters[chapterIndex - 1].title}</span></Link> : <span />}
+            {chapterIndex < chapters.length - 1 && <Link to={`/help?chapter=${chapters[chapterIndex + 1].id}`}><span><small>{t('next')}</small>{chapters[chapterIndex + 1].title}</span><ArrowRightOutlined aria-hidden="true" /></Link>}
           </footer>
         </div>
       </article>
 
-      {chapter.sections.length > 0 && <nav className="help-outline" aria-label="本页目录">
-        <div>本页目录</div>
+      {chapter.sections.length > 0 && <nav className="help-outline" aria-label={t('outline')}>
+        <div>{t('outline')}</div>
         {chapter.sections.map((section, index) => (
           <Link key={section.id} title={section.title} className={section.level === 3 ? 'help-outline-step' : undefined} replace to={`/help?chapter=${chapter.id}#${section.id}`} aria-current={activeSection === index ? 'location' : undefined}>
             {section.navTitle ?? section.title}</Link>

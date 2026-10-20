@@ -44,6 +44,15 @@ public interface AgentConversationTurnDao {
             @Param("fromStatus") String fromStatus, @Param("toStatus") String toStatus,
             @Param("error") String error);
 
+    int updateInboundStatusAndContextIfProcessing(@Param("tenantId") Long tenantId,
+            @Param("conversationId") Long conversationId, @Param("id") Long id,
+            @Param("status") String status, @Param("error") String error,
+            @Param("sourceContext") String sourceContext);
+
+    int updateStatusAndContextIfCurrent(@Param("tenantId") Long tenantId, @Param("id") Long id,
+            @Param("fromStatus") String fromStatus, @Param("toStatus") String toStatus,
+            @Param("error") String error, @Param("sourceContext") String sourceContext);
+
     int recordDispatchAttemptIfProcessing(@Param("tenantId") Long tenantId,
             @Param("conversationId") Long conversationId, @Param("id") Long id);
 

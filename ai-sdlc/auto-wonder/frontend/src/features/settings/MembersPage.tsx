@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { formatDateTime, formatNumber } from '@/shared/i18n/format';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -5,7 +7,6 @@ import {
   Button,
   Card,
   Popconfirm,
-  Segmented,
   Select,
   Space,
   Tabs,
@@ -16,8 +17,6 @@ import { Table } from '@/shared/theme/ThemedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
-import { ACCESS_LEVEL_LABEL } from '@/shared/auth/access';
-import type { WorkspaceAccessLevel } from '@/shared/types/common';
 import {
   useAddMember,
   useCurrentMembership,
@@ -25,22 +24,19 @@ import {
   useMembers,
   useRemoveMember,
   useTransferOwner,
-  useUpdateMemberAccess,
+  useUpdateMemberRole,
+  useWorkspaceRoles,
   useUpdateMemberIdentityTags,
 } from './hooks';
 import { AccessRequestsPanel } from './AccessRequestsPanel';
+import { workspaceRoleLabel } from './roles';
+import { WorkspaceRolesPanel } from './WorkspaceRolesPanel';
 import { MemberAccessModal } from './MemberAccessModal';
 import { OwnerTransferModal } from './OwnerTransferModal';
 import type { MemberVO } from './api';
 
-const ACCESS_LEVEL_COLORS: Record<WorkspaceAccessLevel, string> = {
-  READ_ONLY: 'default',
-  READ_WRITE: 'blue',
-  ADMIN: 'green',
-};
-
 export const DEFAULT_MEMBERS_TAB = 'members';
-const MEMBERS_TAB_KEYS: readonly string[] = [DEFAULT_MEMBERS_TAB, 'requests'];
+const MEMBERS_TAB_KEYS: readonly string[] = [DEFAULT_MEMBERS_TAB, 'roles', 'requests'];
 
 /** Whitelisted so an unknown `tab` value keeps the historical default instead of blanking the pane. */
 export function resolveMembersTab(tabParam: string | null): string {
@@ -50,10 +46,14 @@ export function resolveMembersTab(tabParam: string | null): string {
 }
 
 export function MembersPage() {
+  useTranslation('shared');
+  const { t } = useTranslation('settings');
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = resolveMembersTab(searchParams.get('tab'));
   const accessCommand = useAccessCommand();
   const { data: members = [], isLoading } = useMembers();
+  const { data: roles = [] } = useWorkspaceRoles();
+  const [selectedRoleId, setSelectedRoleId] = useState<number>();
   const { data: membership } = useCurrentMembership();
   const isAdmin = membership?.accessLevel === 'ADMIN';
   const [candidateKeyword, setCandidateKeyword] = useState('');
@@ -62,11 +62,11 @@ export function MembersPage() {
     useMemberCandidates(candidateKeyword);
   const addMemberMutation = useAddMember();
   const removeMemberMutation = useRemoveMember();
-  const updateAccessMutation = useUpdateMemberAccess();
+  const updateRoleMutation = useUpdateMemberRole();
   const updateTagsMutation = useUpdateMemberIdentityTags();
   const transferOwnerMutation = useTransferOwner();
 
-  const [levelFilter, setLevelFilter] = useState<WorkspaceAccessLevel | 'ALL'>('ALL');
+  const [roleFilter, setRoleFilter] = useState<number | 'ALL'>('ALL');
   const [memberPage, setMemberPage] = useState(1);
   const [memberPageSize, setMemberPageSize] = usePageSizePreference(
     'autowonder.members.pageSize', [10, 20, 50, 100], 10);
@@ -79,21 +79,21 @@ export function MembersPage() {
       return <>{control}</>;
     }
     return (
-      <Tooltip title="仅管理员可操作">
+      <Tooltip title={t('adminOnly')}>
         {/* antd Tooltip 对 disabled 控件不触发鼠标事件，须用 span 包裹 */}
         <span>{control}</span>
       </Tooltip>
     );
   };
 
-  const filteredMembers = levelFilter === 'ALL'
+  const filteredMembers = roleFilter === 'ALL'
     ? members
-    : members.filter((member) => member.accessLevel === levelFilter);
+    : members.filter((member) => member.roleId === roleFilter);
 
   const handleAddMember = () => {
     if (selectedUserId === undefined) return;
-    accessCommand('ADMIN', '添加成员', () => {
-      addMemberMutation.mutate(selectedUserId, {
+    accessCommand('ADMIN', t('addMember'), () => {
+      addMemberMutation.mutate({ userId: selectedUserId, roleId: selectedRoleId }, {
         onSuccess: () => {
           setSelectedUserId(undefined);
           setCandidateKeyword('');
@@ -103,19 +103,16 @@ export function MembersPage() {
   };
 
   const handleEditConfirm = async (values: {
-    accessLevel: WorkspaceAccessLevel;
+    roleId: number;
     identityTags: string[];
   }) => {
     if (!editTarget) return;
-    await accessCommand('ADMIN', '编辑成员', async () => {
+    await accessCommand('ADMIN', t('editMember'), async () => {
       const tagsChanged =
         JSON.stringify(values.identityTags) !== JSON.stringify(editTarget.identityTags);
       try {
-        if (values.accessLevel !== editTarget.accessLevel) {
-          await updateAccessMutation.mutateAsync({
-            userId: editTarget.userId,
-            accessLevel: values.accessLevel,
-          });
+        if (values.roleId !== editTarget.roleId) {
+          await updateRoleMutation.mutateAsync({ userId: editTarget.userId, roleId: values.roleId });
         }
         if (tagsChanged) {
           await updateTagsMutation.mutateAsync({
@@ -131,7 +128,7 @@ export function MembersPage() {
   };
 
   const handleTransferOwner = async (targetUserId: number) => {
-    await accessCommand('ADMIN', '移交 Owner', async () => {
+    await accessCommand('ADMIN', t('transferOwner'), async () => {
       try {
         await transferOwnerMutation.mutateAsync(targetUserId);
         setOwnerTransferOpen(false);
@@ -143,27 +140,27 @@ export function MembersPage() {
 
   const columns: ColumnsType<MemberVO> = [
     {
-      title: '用户',
+      title: t('user'),
       key: 'user',
       render: (_, member) => (
         <div>
           <Space size={6}>
             <span style={{ fontWeight: 500 }}>{member.nickname || member.username}</span>
-            {member.owner && <Tag color="gold">工作空间所有者</Tag>}
+            {member.owner && <Tag color="gold">{t('workspaceOwner')}</Tag>}
           </Space>
           <div style={{ fontSize: 12, color: 'var(--aw-muted)' }}>{member.email}</div>
         </div>
       ),
     },
     {
-      title: '访问等级',
-      dataIndex: 'accessLevel',
-      render: (level: WorkspaceAccessLevel) => (
-        <Tag color={ACCESS_LEVEL_COLORS[level]}>{ACCESS_LEVEL_LABEL[level]}</Tag>
-      ),
+      title: t('role'),
+      key: 'role',
+      render: (_, member) => <Tag color={member.accessLevel === 'ADMIN' ? 'green' : undefined}>
+        {workspaceRoleLabel({ id: member.roleId, code: member.roleCode, name: member.roleName })}
+      </Tag>,
     },
     {
-      title: '身份标签',
+      title: t('tags'),
       dataIndex: 'identityTags',
       render: (tags: string[]) => (
         <Space size={4} wrap>
@@ -174,12 +171,12 @@ export function MembersPage() {
       ),
     },
     {
-      title: '加入时间',
+      title: t('joinedAt'),
       dataIndex: 'joinedAt',
-      render: (value: string) => value ? new Date(value).toLocaleDateString() : '-',
+      render: (value: string) => value ? formatDateTime(value, { year: 'numeric', month: 'numeric', day: 'numeric' }) : '-',
     },
     {
-      title: '操作',
+      title: t('actions'),
       key: 'action',
       render: (_, member) => (
         <Space>
@@ -188,28 +185,28 @@ export function MembersPage() {
               type="link"
               size="small"
               disabled={!isAdmin}
-              onClick={() => accessCommand('ADMIN', '编辑成员', () => setEditTarget(member))}
+              onClick={() => accessCommand('ADMIN', t('editMember'), () => setEditTarget(member))}
             >
-              编辑
+              {t('edit')}
             </Button>,
           )}
           {adminOnlyTip(
             <Popconfirm
-              title="确定移除该成员？"
+              title={t('removeConfirm')}
               open={removeConfirmUserId === member.userId}
               onOpenChange={(open) => {
                 if (!open) {
                   setRemoveConfirmUserId(undefined);
                   return;
                 }
-                accessCommand('ADMIN', '移除成员', () => setRemoveConfirmUserId(member.userId));
+                accessCommand('ADMIN', t('removeMember'), () => setRemoveConfirmUserId(member.userId));
               }}
-              onConfirm={() => accessCommand('ADMIN', '移除成员', () =>
+              onConfirm={() => accessCommand('ADMIN', t('removeMember'), () =>
                 removeMemberMutation.mutate(member.userId, {
                   onSettled: () => setRemoveConfirmUserId(undefined),
                 }))}
             >
-              <Button type="link" size="small" danger disabled={!isAdmin}>移除</Button>
+              <Button type="link" size="small" danger disabled={!isAdmin}>{t('remove')}</Button>
             </Popconfirm>,
           )}
         </Space>
@@ -218,16 +215,16 @@ export function MembersPage() {
   ];
 
   return (
-    <Card className="aw-content-card" title={<PageHeading title="成员管理" />}
+    <Card className="aw-content-card" title={<PageHeading title={t('members')} />}
       extra={
         <Space size={12}>
           {adminOnlyTip(
             <Button
               disabled={!isAdmin}
               onClick={() =>
-                accessCommand('ADMIN', '移交 Owner', () => setOwnerTransferOpen(true))}
+                accessCommand('ADMIN', t('transferOwner'), () => setOwnerTransferOpen(true))}
             >
-              移交 Owner
+              {t('transferOwner')}
             </Button>,
           )}
           {activeTab === 'members' && (
@@ -237,10 +234,10 @@ export function MembersPage() {
                   showSearch
                   allowClear
                   filterOption={false}
-                  aria-label="搜索全局人员"
+                  aria-label={t('searchPeople')}
                   disabled={!isAdmin}
                   value={selectedUserId}
-                  placeholder="搜索全局人员"
+                  placeholder={t('searchPeople')}
                   loading={candidatesLoading}
                   style={{ width: 240 }}
                   onSearch={setCandidateKeyword}
@@ -254,20 +251,23 @@ export function MembersPage() {
                     label: `${candidate.nickname || candidate.username}${candidate.email ? ` (${candidate.email})` : ''}`,
                   }))}
                   notFoundContent={
-                    candidateKeyword.trim() ? '暂无可添加人员' : '输入姓名、用户名或邮箱搜索'
+                    candidateKeyword.trim() ? t('noCandidates') : t('searchPeopleHint')
                   }
                 />,
               )}
+              <Select aria-label={t('newMemberRole')} disabled={!isAdmin} style={{ minWidth: 140 }}
+                value={selectedRoleId ?? roles.find((role) => role.code === 'READ_ONLY')?.id}
+                onChange={setSelectedRoleId} options={roles.map((role) => ({ value: role.id, label: workspaceRoleLabel(role) }))} />
               {adminOnlyTip(
                 <Button
                   type="primary"
-                  icon={<PlusOutlined />}
-                  aria-label="添加成员"
+                  icon={<PlusOutlined aria-hidden="true" />}
+                  aria-label={t('addMember')}
                   disabled={!isAdmin || selectedUserId === undefined}
                   loading={addMemberMutation.isPending}
                   onClick={handleAddMember}
                 >
-                  添加成员
+                  {t('addMember')}
                 </Button>,
               )}
             </Space>
@@ -289,19 +289,18 @@ export function MembersPage() {
         items={[
           {
             key: 'members',
-            label: '成员管理',
+            label: t('members'),
             children: (
               <>
                 <div style={{ marginBottom: 16 }}>
-                  <Segmented
+                  <Select
+                    aria-label={t('filterRole')} style={{ minWidth: 180 }}
                     options={[
-                      { label: `全部 (${members.length})`, value: 'ALL' },
-                      { label: '管理员', value: 'ADMIN' },
-                      { label: '读写', value: 'READ_WRITE' },
-                      { label: '只读', value: 'READ_ONLY' },
+                      { label: t('allMembers', { count: members.length, total: formatNumber(members.length) }), value: 'ALL' as const },
+                      ...roles.map((role) => ({ label: workspaceRoleLabel(role), value: role.id })),
                     ]}
-                    value={levelFilter}
-                    onChange={(value) => { setLevelFilter(value as WorkspaceAccessLevel | 'ALL'); setMemberPage(1); }}
+                    value={roleFilter}
+                    onChange={(value) => { setRoleFilter(value); setMemberPage(1); }}
                   />
                 </div>
                 <Table
@@ -318,16 +317,17 @@ export function MembersPage() {
                       if (nextSize !== memberPageSize) setMemberPageSize(nextSize);
                     },
                     showSizeChanger: true,
-                    showTotal: (t) => `共 ${t} 条`,
+                    showTotal: (total) => t('totalMembers', { count: total, total: formatNumber(total) }),
                   }}
                   scroll={{ x: 880 }}
                 />
               </>
             ),
           },
+          { key: 'roles', label: t('roles'), children: <WorkspaceRolesPanel isAdmin={isAdmin} /> },
           {
             key: 'requests',
-            label: '待审批申请',
+            label: t('accessRequests'),
             children: <AccessRequestsPanel />,
           },
         ]}
@@ -335,7 +335,8 @@ export function MembersPage() {
       <MemberAccessModal
         open={editTarget !== null}
         member={editTarget}
-        loading={updateAccessMutation.isPending || updateTagsMutation.isPending}
+        roles={roles}
+        loading={updateRoleMutation.isPending || updateTagsMutation.isPending}
         onClose={() => setEditTarget(null)}
         onConfirm={handleEditConfirm}
       />

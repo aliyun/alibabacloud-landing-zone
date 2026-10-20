@@ -268,8 +268,8 @@ describe('RightPanel clarify fullscreen', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.getByTestId('clarify-resize-box')).toHaveStyle('position: relative');
 
-    // 轮询让 agents 短暂缺失又恢复，面板内部守卫复位后会再次上报；
-    // 此时不能把用户硬拽回他刚刚主动退出的全屏
+    // 重选数字人（或 URL 恢复落定）会让面板的派生身份经过一次 null 再重新确定，
+    // 内部守卫随之复位并再次上报；此时不能把用户硬拽回他刚刚主动退出的全屏
     await userEvent.click(screen.getByRole('button', { name: 'stub-confirm-agent' }));
     expect(screen.getByTestId('clarify-resize-box')).toHaveStyle('position: relative');
     expect(screen.getByTestId('resize-handle-vertical')).toBeInTheDocument();
@@ -557,10 +557,34 @@ describe('RightPanel 关注人列表装配', () => {
       }),
     );
 
-    renderPanel({ workitemId: '77' });
+    renderPanel({ workitemId: '77', progress: { agents: [], steps: [], workflowPlan: { revision: 2, targetStepId: 'qa', steps: [] } } });
+    const taskInfo = screen.getByRole('button', { name: '任务信息' });
+    expect(taskInfo).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('workitem-watcher-list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('workflow-plan-card')).not.toBeInTheDocument();
+    expect(screen.getByTestId('delivery-progress-card')).toBeInTheDocument();
+    await userEvent.click(taskInfo);
+    expect(taskInfo).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByTestId('workflow-plan-card')).toHaveLength(1);
 
     expect(await screen.findByTestId('workitem-watcher-list')).toBeInTheDocument();
     await waitFor(() => expect(requested).toContain('77'));
     expect(screen.getByText('林一')).toBeInTheDocument();
+  });
+});
+
+describe('delivery progress failures', () => {
+  it('shows a retry action after an initial failure', () => {
+    const retry = vi.fn();
+    renderPanel({ progressError: true, onRetryProgress: retry });
+    expect(screen.getByText('交付进度加载失败，请稍后重试。')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains that cached progress is stale after a refresh failure', () => {
+    renderPanel({ progressError: true, progress: { steps: [], agents: [] } });
+    expect(screen.getByText('交付进度更新失败，当前显示上次成功加载的数据。')).toBeInTheDocument();
+    expect(screen.getByTestId('delivery-progress-card')).toBeInTheDocument();
   });
 });

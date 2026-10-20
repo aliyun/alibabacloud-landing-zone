@@ -38,6 +38,15 @@ export interface WorkspaceInfo {
 
 export type WorkspaceAccessLevel = 'READ_ONLY' | 'READ_WRITE' | 'ADMIN';
 
+/** 与后端 WorkspaceDomain 枚举一一对应的功能域。 */
+export type WorkspaceDomain =
+  | 'AGENT' | 'AI' | 'AIUSAGE' | 'ARTIFACT' | 'AUDIT' | 'AUTH' | 'BACKUP'
+  | 'CATEGORY' | 'CLARIFICATION' | 'CONVERSATION' | 'DASHBOARD' | 'DEBUGLOG'
+  | 'DISPATCH' | 'ENVIRONMENT' | 'EVOLUTION' | 'EXECUTOR' | 'INSIGHTS'
+  | 'INTEGRATION' | 'MCP' | 'MEMORY' | 'REPO' | 'SCHEDULEDTASK' | 'SDLC'
+  | 'SETTING' | 'SKILL' | 'SQUAD' | 'STATEMACHINE' | 'TEMPLATE' | 'USER'
+  | 'WORKITEM' | 'WORKSPACE';
+
 export interface WorkspaceListItem {
   id: number;
   name: string;
@@ -80,12 +89,15 @@ export interface SwitchWorkspaceResponse {
 export class ApiError extends Error {
   code: string;
   traceId: string | null;
+  /** 业务失败时后端随 Result 下发的结构化载荷（如工单归属项目）；无载荷时为 undefined。 */
+  data?: unknown;
 
-  constructor(code: string, message: string, traceId: string | null) {
+  constructor(code: string, message: string, traceId: string | null, data?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.traceId = traceId;
+    this.data = data;
   }
 }
 
@@ -101,4 +113,7 @@ export const ErrorCodes = {
   ORG_DELETED_OR_DISABLED: '11005',
   ORG_NOT_FOUND_OR_NO_PERMISSION: '11006',
   ORG_RESTORE_NAME_CONFLICT: '11007',
+  WORKITEM_IN_OTHER_WORKSPACE: '13023',
+  /** 交付已关闭导致评论未保存（整笔回滚），需要独立文案与后续指引。 */
+  WORKITEM_DELIVERY_CLOSED: '13024',
 } as const;

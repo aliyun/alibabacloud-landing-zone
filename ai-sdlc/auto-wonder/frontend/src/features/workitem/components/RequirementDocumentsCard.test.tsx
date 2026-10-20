@@ -21,7 +21,6 @@ vi.mock('@/shared/auth/useAccessCommand', () => ({
 import { RequirementDocumentsCard } from './RequirementDocumentsCard';
 import type { Artifact } from '@/shared/types/workitem';
 
-const UNSUPPORTED_MESSAGE = '仅支持上传 .md、.markdown、.txt、.html、.pdf、.png、.jpg、.jpeg、.webp、.docx、.doc、.java、.py、.zip 文件';
 
 function droppedFiles(files: File[]) {
   return {
@@ -48,7 +47,7 @@ describe('RequirementDocumentsCard', () => {
     render(<RequirementDocumentsCard workitemId={1} documents={[]} />);
 
     expect(screen.getByText('需求/设计上下文')).toBeInTheDocument();
-    expect(screen.getByText(/PNG、JPEG、WebP/)).toBeInTheDocument();
+    expect(screen.getByText(/支持任意类型文件（包括 Excel）/)).toBeInTheDocument();
     expect(screen.getByText(/最多 10 个.*20 MB/)).toBeInTheDocument();
   });
 
@@ -63,29 +62,17 @@ describe('RequirementDocumentsCard', () => {
     expect(uploadMutate).toHaveBeenCalledWith({ files: [file] });
   });
 
-  it('rejects an unsupported SVG selection without uploading', () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts vector.svg through change', () => {
     render(<RequirementDocumentsCard workitemId={1} documents={[]} />);
-    const input = screen.getByTestId('requirement-document-file-input') as HTMLInputElement;
-    const file = new File(['<svg/>'], 'unsafe.svg', { type: 'image/svg+xml' });
-
-    // userEvent.upload filters against the input accept attribute; use fireEvent
-    // to simulate a file picked through the OS dialog regardless of accept.
-    fireEvent.change(input, { target: { files: [file] } });
-
-    expect(errorSpy).toHaveBeenCalled();
-    expect(uploadMutate).not.toHaveBeenCalled();
-    errorSpy.mockRestore();
+    const file = new File(['payload'], 'vector.svg', { type: 'image/svg+xml' });
+    fireEvent.change(screen.getByTestId('requirement-document-file-input'), { target: { files: [file] } });
+    expect(uploadMutate).toHaveBeenCalledWith({ files: [file] });
   });
 
-  it('advertises word, source code and archive formats in the hint and the picker', () => {
+  it('allows every file type in the picker and explains the limits', () => {
     render(<RequirementDocumentsCard workitemId={1} documents={[]} />);
-
-    expect(screen.getByText(/Word（\.docx\/\.doc）、Java、Python、ZIP/)).toBeInTheDocument();
-    const input = screen.getByTestId('requirement-document-file-input') as HTMLInputElement;
-    for (const extension of ['.docx', '.doc', '.java', '.py', '.zip']) {
-      expect(input.accept).toContain(extension);
-    }
+    expect(screen.getByText(/支持任意类型文件/)).toBeInTheDocument();
+    expect(screen.getByTestId('requirement-document-file-input')).not.toHaveAttribute('accept');
   });
 
   it.each([
@@ -107,18 +94,11 @@ describe('RequirementDocumentsCard', () => {
     expect(uploadMutate).toHaveBeenCalledWith({ files: [file] });
   });
 
-  it('rejects an unsupported extension and reports the full whitelist', () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts notes.xlsx through change', () => {
     render(<RequirementDocumentsCard workitemId={1} documents={[]} />);
-    const input = screen.getByTestId('requirement-document-file-input') as HTMLInputElement;
-
-    fireEvent.change(input, {
-      target: { files: [new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' })] },
-    });
-
-    expect(errorSpy).toHaveBeenCalledWith(UNSUPPORTED_MESSAGE);
-    expect(uploadMutate).not.toHaveBeenCalled();
-    errorSpy.mockRestore();
+    const file = new File(['payload'], 'notes.xlsx', { type: 'application/vnd.ms-excel' });
+    fireEvent.change(screen.getByTestId('requirement-document-file-input'), { target: { files: [file] } });
+    expect(uploadMutate).toHaveBeenCalledWith({ files: [file] });
   });
 
   it('highlights the upload area while a file drag hovers and uploads dropped files', () => {
@@ -164,18 +144,11 @@ describe('RequirementDocumentsCard', () => {
     errorSpy.mockRestore();
   });
 
-  it('applies the picker validation copy to dropped files', () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts report.custom through drop', () => {
     render(<RequirementDocumentsCard workitemId={1} documents={[]} />);
-    const zone = screen.getByTestId('requirement-document-dropzone');
-
-    fireEvent.drop(zone, {
-      dataTransfer: droppedFiles([new File(['sheet'], 'notes.xlsx', { type: 'application/vnd.ms-excel' })]),
-    });
-
-    expect(errorSpy).toHaveBeenCalledWith(UNSUPPORTED_MESSAGE);
-    expect(uploadMutate).not.toHaveBeenCalled();
-    errorSpy.mockRestore();
+    const file = new File(['payload'], 'report.custom', { type: 'application/octet-stream' });
+    fireEvent.drop(screen.getByTestId('requirement-document-dropzone'), { dataTransfer: droppedFiles([file]) });
+    expect(uploadMutate).toHaveBeenCalledWith({ files: [file] });
   });
 
   it('rejects a dropped file whose name already exists', () => {
@@ -237,18 +210,11 @@ describe('RequirementDocumentsCard', () => {
     expect(firstName).not.toBe(secondName);
   });
 
-  it('rejects an unsupported pasted file with the shared copy', () => {
-    const errorSpy = vi.spyOn(message, 'error');
+  it('accepts legacy.xls through paste', () => {
     render(<RequirementDocumentsCard workitemId={1} documents={[]} />);
-    const zone = screen.getByTestId('requirement-document-dropzone');
-
-    fireEvent.paste(zone, {
-      clipboardData: pastedImages(new File(['gif'], 'anim.gif', { type: 'image/gif' })),
-    });
-
-    expect(errorSpy).toHaveBeenCalledWith(UNSUPPORTED_MESSAGE);
-    expect(uploadMutate).not.toHaveBeenCalled();
-    errorSpy.mockRestore();
+    const file = new File(['payload'], 'legacy.xls', { type: 'application/vnd.ms-excel' });
+    fireEvent.paste(screen.getByTestId('requirement-document-dropzone'), { clipboardData: pastedImages(file) });
+    expect(uploadMutate).toHaveBeenCalledWith({ files: [file] });
   });
 
   it('leaves plain-text paste untouched', () => {

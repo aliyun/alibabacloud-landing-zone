@@ -8,6 +8,7 @@ import com.aliyun.autowonder.category.dto.CreateCategoryRequest;
 import com.aliyun.autowonder.category.dto.UpdateCategoryRequest;
 import com.aliyun.autowonder.common.error.BizException;
 import com.aliyun.autowonder.common.error.ErrorCode;
+import com.aliyun.autowonder.common.i18n.SystemMessages;
 import com.aliyun.autowonder.skill.SkillDao;
 import com.aliyun.autowonder.skill.SkillDO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,8 +71,7 @@ public class CategoryService {
         if (parentId != null) {
             int parentDepth = lockAncestorChain(-1L, parentId, tenantId);
             if (parentDepth + 1 > MAX_CATEGORY_DEPTH) {
-                throw new BizException(ErrorCode.CATEGORY_DEPTH_EXCEEDED,
-                        "分类层级不能超过 " + MAX_CATEGORY_DEPTH + " 层");
+                throw BizException.keyed(ErrorCode.CATEGORY_DEPTH_EXCEEDED, "category.depth_exceeded", new Object[]{MAX_CATEGORY_DEPTH}, "分类层级不能超过 " + MAX_CATEGORY_DEPTH + " 层");
             }
         }
         requireSiblingNameAvailable(tenantId, parentId, name, null);
@@ -112,7 +112,7 @@ public class CategoryService {
         int rows = categoryDao.update(id, tenantId, parentId, name, description,
                 current.getVersion(), userId);
         if (rows == 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "分类已被修改，请刷新后重试");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "category.changed", new Object[0], "分类已被修改，请刷新后重试");
         }
         return get(id, tenantId);
     }
@@ -126,10 +126,10 @@ public class CategoryService {
         // 引用/子分类检查用锁定读：与并发打标的 upsert、并发建子分类在行/范围锁上互斥，
         // 快照读不会漏掉并发提交的关联，删除后不留失效 parent_id / asset_category_ref
         if (!categoryDao.listChildIdsForUpdate(tenantId, id).isEmpty()) {
-            throw new BizException(ErrorCode.CATEGORY_DELETE_IN_USE, "该分类包含子分类，请先迁移子分类");
+            throw BizException.keyed(ErrorCode.CATEGORY_DELETE_IN_USE, "category.children_in_use", new Object[0], "该分类包含子分类，请先迁移子分类");
         }
         if (!skillCategoryRefDao.listIdsByCategoryForUpdate(tenantId, id).isEmpty()) {
-            throw new BizException(ErrorCode.CATEGORY_DELETE_IN_USE, "该分类仍被能力引用，请先迁移或取消能力打标");
+            throw BizException.keyed(ErrorCode.CATEGORY_DELETE_IN_USE, "category.skills_in_use", new Object[0], "该分类仍被能力引用，请先迁移或取消能力打标");
         }
         Map<Long, CategoryDO> tree = loadTree(tenantId);
         // 空节点物理删除不留墓碑，重名可立即复用
@@ -157,10 +157,12 @@ public class CategoryService {
             try {
                 doSetSkillCategory(skillId, categoryId, tenantId, userId);
                 item.setSuccess(true);
-                item.setMessage(categoryId == null ? "已取消打标" : "已设置分类");
+                item.setMessage(categoryId == null
+                        ? SystemMessages.render("category.assignment_removed", null, "已取消打标")
+                        : SystemMessages.render("category.assignment_set", null, "已设置分类"));
             } catch (BizException e) {
                 item.setSuccess(false);
-                item.setMessage(e.getMessage());
+                item.setMessage(SystemMessages.render(e.getMessageKey(), e.getMessageArgs(), e.getMessage()));
             }
             results.add(item);
         }
@@ -284,7 +286,7 @@ public class CategoryService {
         }
         String name = raw.trim();
         if (name.length() > 128) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "分类名称最长 128 个字符");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "category.name_too_long", new Object[]{128}, "分类名称最长 128 个字符");
         }
         return name;
     }
@@ -298,7 +300,7 @@ public class CategoryService {
             return null;
         }
         if (parentId <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "上级分类不合法");
+            throw BizException.keyed(ErrorCode.PARAM_INVALID, "category.parent_invalid", new Object[0], "上级分类不合法");
         }
         return parentId;
     }
@@ -325,8 +327,7 @@ public class CategoryService {
         int newParentDepth = lockAncestorChain(id, newParentId, tenantId);
         int subtreeHeight = subtreeHeight(id, loadTree(tenantId));
         if (newParentDepth + subtreeHeight > MAX_CATEGORY_DEPTH) {
-            throw new BizException(ErrorCode.CATEGORY_DEPTH_EXCEEDED,
-                    "移动后的分类层级不能超过 " + MAX_CATEGORY_DEPTH + " 层");
+            throw BizException.keyed(ErrorCode.CATEGORY_DEPTH_EXCEEDED, "category.move_depth_exceeded", new Object[]{MAX_CATEGORY_DEPTH}, "移动后的分类层级不能超过 " + MAX_CATEGORY_DEPTH + " 层");
         }
     }
 
@@ -334,7 +335,7 @@ public class CategoryService {
     private int lockAncestorChain(long forbiddenId, long startId, long tenantId) {
         CategoryDO node = categoryDao.findByIdAndTenantForUpdate(startId, tenantId);
         if (node == null) {
-            throw new BizException(ErrorCode.CATEGORY_NOT_FOUND, "上级分类不存在");
+            throw BizException.keyed(ErrorCode.CATEGORY_NOT_FOUND, "category.parent_missing", new Object[0], "上级分类不存在");
         }
         int depth = 0;
         while (node != null) {

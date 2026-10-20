@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -6,7 +7,6 @@ import { http, HttpResponse } from 'msw';
 import { server } from '@/test/mocks/server';
 import {
   WorkitemClarificationPanel,
-  buildDeliveryAgentOptions,
   computeInputHeightMax,
   clarificationInputAutoSize,
   CLARIFICATION_INPUT_DEFAULT_ROWS,
@@ -49,18 +49,11 @@ type PanelTestProps = {
   onContextChange?: (context: ReportedClarifyContext) => void;
 };
 
-function renderPanel(
-  agents: Array<{ agentId: number; agentName: string; status: string }> = [],
-  props: PanelTestProps = {},
-) {
+function renderPanel(props: PanelTestProps = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <WorkitemClarificationPanel
-        workitemId="100"
-        agents={agents as never}
-        {...props}
-      />
+      <WorkitemClarificationPanel workitemId="100" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -190,17 +183,6 @@ const PROCESSING_CONVERSATION = {
   ],
 };
 
-function mockAgentDirectory(entries: Array<{ id: number; executorOnlineCount?: number }>) {
-  server.use(
-    http.get('/api/agents', () =>
-      HttpResponse.json({
-        success: true, code: '0', message: '', traceId: null,
-        data: entries.map((e) => ({ id: e.id, name: `Agent-${e.id}`, executorOnlineCount: e.executorOnlineCount })),
-      }),
-    ),
-  );
-}
-
 // jsdom 没有 PointerEvent 构造器，fireEvent.pointer* 会丢失坐标，用 MouseEvent 派生 pointer 事件
 function firePointer(
   type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel',
@@ -221,7 +203,7 @@ async function renderActiveConversation(props: PanelTestProps = {}) {
   writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
   mockSquads();
   mockConversationWithTurns(42);
-  const view = renderPanel([], props);
+  const view = renderPanel(props);
   // textarea = 镜像（placeholder/value 断言）；composer = 编辑器根（高度/布局断言）
   const textarea = await screen.findByPlaceholderText('输入消息...');
   const composer = await screen.findByTestId('clarification-composer-input');
@@ -240,82 +222,17 @@ async function typeComposer(value: string) {
   });
 }
 
-describe('buildDeliveryAgentOptions', () => {
-  it('uses real executor online counts and falls back to online for unknown agents', () => {
-    const online = new Map([[1, true], [2, false]]);
-    expect(buildDeliveryAgentOptions(
-      [
-        { agentId: 1, agentName: 'Agent-A' },
-        { agentId: 2, agentName: 'Agent-B' },
-        { agentId: 3, agentName: 'Agent-C' },
-      ],
-      online,
-    )).toEqual([
-      { agentId: 1, agentName: 'Agent-A', executorOnline: true },
-      { agentId: 2, agentName: 'Agent-B', executorOnline: false },
-      { agentId: 3, agentName: 'Agent-C', executorOnline: true },
-    ]);
-  });
-
-  it('returns an empty option list for empty delivery agents', () => {
-    expect(buildDeliveryAgentOptions([], new Map([[1, true]]))).toEqual([]);
-  });
-});
-
 describe('WorkitemClarificationPanel', () => {
   beforeEach(() => {
     window.localStorage.clear();
     realtime.callback = null;
   });
 
-  it('uses delivery agents when progress already provides them', () => {
-    renderPanel([
-      { agentId: 1, agentName: 'Agent-A', status: 'active' },
-      { agentId: 2, agentName: 'Agent-B', status: 'pending' },
-    ]);
-    expect(screen.getByText('选择数字员工')).toBeInTheDocument();
-    expect(screen.getByText('Agent-A')).toBeInTheDocument();
-  });
-
-  it('shows delivery agent online status from real executor counts, not delivery status', async () => {
-    mockAgentDirectory([
-      { id: 1, executorOnlineCount: 2 },
-      { id: 2, executorOnlineCount: 0 },
-      { id: 4 }, // 无 executorOnlineCount 字段 → 视为离线
-    ]);
-    renderPanel([
-      { agentId: 1, agentName: 'Agent-A', status: 'pending' },
-      { agentId: 2, agentName: 'Agent-B', status: 'active' },
-      { agentId: 3, agentName: 'Agent-C', status: 'finished' },
-      { agentId: 4, agentName: 'Agent-D', status: 'active' },
-    ]);
-
-    const itemOf = (name: string) => screen.getByText(name).closest('.ant-list-item') as HTMLElement;
-    // 初始渲染按在线兜底；等 Agent-B 翻转为离线，证明目录数据已生效
-    // （交付状态 active 但执行器真实离线 → 离线）
-    await waitFor(() => expect(itemOf('Agent-B')).toHaveTextContent('离线'));
-    // 交付状态 pending 但执行器真实在线 → 在线
-    expect(itemOf('Agent-A')).toHaveTextContent('在线');
-    // 目录中不存在的数字员工按在线兜底，保持可选
-    expect(itemOf('Agent-C')).toHaveTextContent('在线');
-    // 目录项缺少在线数 → 离线
-    expect(itemOf('Agent-D')).toHaveTextContent('离线');
-  });
-
-  it('keeps truly online agents selectable to re-enter historical clarification conversations', async () => {
-    mockAgentDirectory([
-      { id: 1, executorOnlineCount: 1 },
-      { id: 2, executorOnlineCount: 0 },
-    ]);
-    const conversation = {
-      id: 3, agentId: 1, agentName: 'Agent-A', channelConversationId: 'ch-3',
-      status: 'ACTIVE', executorOnline: true, streamingSupported: true,
-      cliSessionRef: null, processingStatus: null, processingTurnId: null,
-      lastTurnAt: '2026-01-01T00:00:00', gmtCreate: '2026-01-01T00:00:00',
-      turns: [
-        { id: 9, direction: 'IN', content: '历史澄清记录', status: 'COMPLETED', error: null, gmtCreate: '2026-01-01T00:00:00' },
-      ],
-    };
+  // 工单 56281：澄清候选只来自「小队 → 成员」。以前面板在有交付进度时改列交付历史里的
+  // 数字人，评论 @ 出来的执行历史会反过来把候选限死，未参与过交付的澄清数字人直接消失。
+  it('reaches a clarification worker that never appeared in any delivery history', async () => {
+    mockSquads();
+    const conversation = { ...makeConversation(8, '历史澄清记录'), agentId: 42, agentName: 'Agent-X' };
     server.use(
       http.get('/api/workitems/:workitemId/clarification-conversations', () =>
         HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [conversation] }),
@@ -325,27 +242,23 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([
-      { agentId: 1, agentName: 'Agent-A', status: 'pending' },
-      { agentId: 2, agentName: 'Agent-B', status: 'pending' },
-    ]);
+    renderPanel();
+    expect(screen.getByText('选择小队和数字员工')).toBeInTheDocument();
 
-    // 等待在线状态按真实执行器数落定后再交互
-    const itemOf = (name: string) => screen.getByText(name).closest('.ant-list-item') as HTMLElement;
-    await waitFor(() => expect(itemOf('Agent-B')).toHaveTextContent('离线'));
+    const comboboxes = await screen.findAllByRole('combobox');
+    await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText('交付小队'));
+    await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText('Agent-X (AW_FS_DEV)'));
 
-    // 离线数字员工点击后仍停留在选择页
-    fireEvent.click(screen.getByText('Agent-B'));
-    expect(screen.getByText('选择数字员工')).toBeInTheDocument();
-
-    // 之前被误标离线的数字员工现可点选并重入历史澄清会话
-    fireEvent.click(screen.getByText('Agent-A'));
     expect(await screen.findByText('历史澄清记录')).toBeInTheDocument();
   });
 
-  it('falls back to squad selector when no delivery agents exist', async () => {
+  it('always offers the squad-member picker for a fresh panel', async () => {
     mockSquads();
-    renderPanel([]);
+    renderPanel();
     expect(screen.getByText('选择小队和数字员工')).toBeInTheDocument();
     // Antd Select renders its placeholder inside a span, not an input attribute;
     // wait for the squad input to become enabled (squads loaded).
@@ -356,7 +269,7 @@ describe('WorkitemClarificationPanel', () => {
 
   it('persists the selection to localStorage for delivery prefill', async () => {
     mockSquads();
-    renderPanel([]);
+    renderPanel();
     const comboboxes = await screen.findAllByRole('combobox');
     await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
     fireEvent.mouseDown(comboboxes[0]);
@@ -375,12 +288,12 @@ describe('WorkitemClarificationPanel', () => {
   it('prefills from localStorage when re-opened', () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
-    renderPanel([]);
+    renderPanel();
     // The prefilled selection short-circuits the agent-selection screen.
     expect(screen.queryByText('选择小队和数字员工')).not.toBeInTheDocument();
   });
 
-  it('shows the selected conversation agent name when delivery has not started', async () => {
+  it('shows the selected conversation agent name instead of the generic placeholder', async () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     server.use(
@@ -412,7 +325,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     expect(await screen.findByText('已选择的开发')).toBeInTheDocument();
     expect(screen.queryByText('数字员工')).not.toBeInTheDocument();
@@ -438,7 +351,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     expect(await screen.findByDisplayValue(
       '请通过平台 MCP 读取工单 #100，与我进行需求澄清。',
@@ -467,7 +380,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await waitFor(() => expect(textarea).toHaveValue('请通过平台 MCP 读取工单 #100，与我进行需求澄清。'));
 
@@ -486,13 +399,13 @@ describe('WorkitemClarificationPanel', () => {
         HttpResponse.json({ success: true, data: empty })),
     );
     const prompt = '请通过平台 MCP 读取工单 #100，与我进行需求澄清。';
-    const first = renderPanel([], { fullscreen: true, initialConversationId: 7 });
+    const first = renderPanel({ fullscreen: true, initialConversationId: 7 });
     const input = await screen.findByDisplayValue(prompt);
     await typeComposer('');
     fireEvent.blur(input);
     expect(input).toHaveValue('');
     first.unmount();
-    renderPanel([], { fullscreen: true, initialConversationId: 7 });
+    renderPanel({ fullscreen: true, initialConversationId: 7 });
     expect(await screen.findByDisplayValue(prompt)).toBeInTheDocument();
   });
 
@@ -506,7 +419,7 @@ describe('WorkitemClarificationPanel', () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
-    renderPanel([]);
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
@@ -522,7 +435,7 @@ describe('WorkitemClarificationPanel', () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
-    renderPanel([]);
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
@@ -536,7 +449,7 @@ describe('WorkitemClarificationPanel', () => {
     client.setQueryData(['workitem', '100', 'clarification-conversation', 1], makeConversation(1, '用户气泡主题校验'));
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     const html = renderToStaticMarkup(<QueryClientProvider client={client}>
-      <WorkitemClarificationPanel workitemId="100" agents={[]} initialConversationId={1} />
+      <WorkitemClarificationPanel workitemId="100" initialConversationId={1} />
     </QueryClientProvider>);
     const bubbleMarkup = html.match(/<div[^>]*data-testid="clarification-user-bubble"[^>]*>/)?.[0];
     expect(bubbleMarkup).toContain('background-color:var(--aw-raised)');
@@ -560,7 +473,7 @@ describe('WorkitemClarificationPanel', () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
-    renderPanel([]);
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText('你好，我想讨论需求')).toBeInTheDocument();
@@ -582,7 +495,7 @@ describe('WorkitemClarificationPanel', () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
-    renderPanel([]);
+    renderPanel();
 
     // 代码块/表格/引用的浅色样式全挂在 .aw-clarify-md 作用域下（clarification.css）。
     // 这个类此前只在 ConversationEventView 的用例里被断言过，主路径（TurnBubble）
@@ -614,7 +527,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
     await screen.findByText('请给方案');
     await waitFor(() => expect(realtime.callback).not.toBeNull());
 
@@ -670,7 +583,7 @@ describe('WorkitemClarificationPanel', () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(
       <QueryClientProvider client={queryClient}>
-        <WorkitemClarificationPanel workitemId="100" agents={[] as never} />
+        <WorkitemClarificationPanel workitemId="100" />
       </QueryClientProvider>,
     );
     await screen.findByText('第二轮提问');
@@ -727,7 +640,7 @@ describe('WorkitemClarificationPanel', () => {
     writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
     mockSquads();
     mockConversationWithTurns(42);
-    renderPanel([]);
+    renderPanel();
 
     // jsdom 没有 Element.prototype.scrollTo，按元素挂 mock（与 R4 用例同法）
     const scrollEl = await screen.findByTestId('clarification-message-scroll');
@@ -786,7 +699,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    const view = renderPanel([]);
+    const view = renderPanel();
     await screen.findByText('请给方案');
     await waitFor(() => expect(realtime.callback).not.toBeNull());
 
@@ -827,7 +740,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    const view = renderPanel([]);
+    const view = renderPanel();
 
     expect(await screen.findByText('请选择 A、B 或 C')).toBeInTheDocument();
     expect(view.container.querySelector('.ant-spin')).toBeNull();
@@ -844,7 +757,7 @@ describe('WorkitemClarificationPanel', () => {
         return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
       }),
     );
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('你好，我想讨论需求');
     await typeComposer('你好');
@@ -864,7 +777,7 @@ describe('WorkitemClarificationPanel', () => {
         ),
       ),
     );
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await typeComposer('请保留这条消息');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true });
@@ -895,7 +808,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     expect(await screen.findByText('我的需求')).toBeInTheDocument();
     expect(screen.getByText('历史需求')).toBeInTheDocument();
@@ -933,7 +846,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     expect((await screen.findByText('需求目标')).tagName).toBe('STRONG');
   });
@@ -961,7 +874,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     const userBubble = await screen.findByTestId('clarification-user-bubble');
     const agentBlock = screen.getByTestId('clarification-agent-block');
@@ -984,7 +897,7 @@ describe('WorkitemClarificationPanel', () => {
         return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
       }),
     );
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await typeComposer('第一行');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' });
@@ -1004,7 +917,7 @@ describe('WorkitemClarificationPanel', () => {
         return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null });
       }),
     );
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await typeComposer('候选');
     fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', shiftKey: true, isComposing: true });
@@ -1035,7 +948,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     expect(await screen.findByText('问题9的答案')).toBeInTheDocument();
     expect(screen.getByText('（未返回内容）')).toBeInTheDocument();
@@ -1045,11 +958,12 @@ describe('WorkitemClarificationPanel', () => {
   it('auto creates a conversation when switching to an agent without history', async () => {
     let createCalls = 0;
     const created = {
-      id: 9, agentId: 2, agentName: 'Agent-B', channelConversationId: 'ch-9',
+      id: 9, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-9',
       status: 'ACTIVE', executorOnline: true, streamingSupported: true,
       cliSessionRef: null, processingStatus: null, processingTurnId: null,
       lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
     };
+    mockSquads();
     server.use(
       http.get('/api/workitems/:workitemId/clarification-conversations', () =>
         HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
@@ -1057,7 +971,7 @@ describe('WorkitemClarificationPanel', () => {
       http.post('/api/workitems/:workitemId/clarification-conversations', async ({ request }) => {
         createCalls += 1;
         const body = await request.json() as { agentId?: number };
-        expect(body.agentId).toBe(2);
+        expect(body.agentId).toBe(42);
         return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created });
       }),
       http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
@@ -1065,12 +979,15 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([
-      { agentId: 1, agentName: 'Agent-A', status: 'active' },
-      { agentId: 2, agentName: 'Agent-B', status: 'active' },
-    ]);
+    renderPanel();
 
-    fireEvent.click(await screen.findByText('Agent-B'));
+    const comboboxes = await screen.findAllByRole('combobox');
+    await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText('交付小队'));
+    await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText('Agent-X (AW_FS_DEV)'));
 
     await waitFor(() => expect(createCalls).toBe(1));
     expect(await screen.findByPlaceholderText('输入消息...')).toBeInTheDocument();
@@ -1079,6 +996,7 @@ describe('WorkitemClarificationPanel', () => {
 
   it('does not auto-retry a failed conversation creation; manual retry via 新对话 still works', async () => {
     let createCalls = 0;
+    mockSquads();
     server.use(
       http.get('/api/workitems/:workitemId/clarification-conversations', () =>
         HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
@@ -1092,12 +1010,15 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([
-      { agentId: 1, agentName: 'Agent-A', status: 'active' },
-      { agentId: 2, agentName: 'Agent-B', status: 'active' },
-    ]);
+    renderPanel();
 
-    fireEvent.click(await screen.findByText('Agent-B'));
+    const comboboxes = await screen.findAllByRole('combobox');
+    await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText('交付小队'));
+    await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText('Agent-X (AW_FS_DEV)'));
 
     await waitFor(() => expect(createCalls).toBe(1));
     expect(await screen.findByText('自动创建会话失败，请点击「新对话」重试')).toBeInTheDocument();
@@ -1132,7 +1053,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
 
     expect(await screen.findByText('最新会话消息')).toBeInTheDocument();
     await waitFor(() => expect(listedAgentId).toBe('42'));
@@ -1169,7 +1090,7 @@ describe('WorkitemClarificationPanel', () => {
       ),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
 
     // 历史未知（缺陷一）：显式报错而不是空白，输入受限，也不塞引导提示词
@@ -1193,7 +1114,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     await screen.findByText('最新会话消息');
     await waitFor(() => expect(realtime.callback).not.toBeNull());
     act(() => {
@@ -1218,21 +1139,41 @@ describe('WorkitemClarificationPanel', () => {
     expect(screen.queryByText('旧会话流式思考')).toBeNull();
   });
 
-  it('clears a draft before switching to another delivery agent', async () => {
+  it('clears a draft before switching to another squad member', async () => {
     const agentAConversation = {
       ...makeConversation(201, '数字员工 A 的会话消息'),
-      agentId: 1,
-      agentName: 'Agent-A',
+      agentId: 42,
+      agentName: 'Agent-X',
     };
     const agentBConversation = {
       ...makeConversation(202, '数字员工 B 的会话消息'),
-      agentId: 2,
-      agentName: 'Agent-B',
+      agentId: 77,
+      agentName: 'Agent-Y',
     };
     server.use(
+      http.get('/api/squads', () =>
+        HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: {
+            list: [
+              { id: 9, name: '交付小队', description: '', memberCount: 1, gmtCreate: '' },
+              { id: 11, name: '澄清小队', description: '', memberCount: 1, gmtCreate: '' },
+            ],
+            total: 2, pageNum: 1, pageSize: 100,
+          },
+        }),
+      ),
+      http.get('/api/squads/:squadId/members', ({ params }) =>
+        HttpResponse.json({
+          success: true, code: '0', message: '', traceId: null,
+          data: Number(params.squadId) === 9
+            ? [{ agentId: 42, agentName: 'Agent-X', roleCode: 'AW_FS_DEV' }]
+            : [{ agentId: 77, agentName: 'Agent-Y', roleCode: 'AW_CR' }],
+        }),
+      ),
       http.get('/api/workitems/:workitemId/clarification-conversations', ({ request }) => {
         const agentId = new URL(request.url).searchParams.get('agentId');
-        const conversations = agentId === '1' ? [agentAConversation] : [agentBConversation];
+        const conversations = agentId === '42' ? [agentAConversation] : [agentBConversation];
         return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversations });
       }),
       http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', ({ params }) => {
@@ -1240,12 +1181,9 @@ describe('WorkitemClarificationPanel', () => {
         return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: conversation });
       }),
     );
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
 
-    renderPanel([
-      { agentId: 1, agentName: 'Agent-A', status: 'active' },
-      { agentId: 2, agentName: 'Agent-B', status: 'active' },
-    ]);
-    fireEvent.click(await screen.findByText('Agent-A'));
+    renderPanel();
 
     await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('数字员工 A 的会话消息');
@@ -1254,7 +1192,14 @@ describe('WorkitemClarificationPanel', () => {
     const switchButton = screen.getByRole('button', { name: '切换数字员工' });
     expect(switchButton.querySelector('.anticon-user-switch')).toBeInTheDocument();
     fireEvent.click(switchButton);
-    fireEvent.click(await screen.findByText('Agent-B'));
+
+    const comboboxes = await screen.findAllByRole('combobox');
+    await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[0]);
+    fireEvent.click(await screen.findByText('澄清小队'));
+    await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+    fireEvent.mouseDown(comboboxes[1]);
+    fireEvent.click(await screen.findByText('Agent-Y (AW_CR)'));
 
     expect(await screen.findByText('数字员工 B 的会话消息')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('输入消息...')).toHaveValue('');
@@ -1278,7 +1223,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('当前会话消息');
     await typeComposer('不应带入新会话的草稿');
@@ -1309,7 +1254,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     await screen.findByText('最新会话消息');
 
     const selector = screen.getByTestId('clarification-conversation-select');
@@ -1346,7 +1291,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     await screen.findByText('历史会话消息');
 
     fireEvent.click(screen.getByRole('button', { name: /新对话/ }));
@@ -1391,7 +1336,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     await screen.findByText('当前会话消息');
     fireEvent.click(screen.getByRole('button', { name: /新对话/ }));
     await waitFor(() => expect(createStarted).toBe(true));
@@ -1423,7 +1368,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     expect(await screen.findByText('正在处理的会话消息')).toBeInTheDocument();
     expect(textarea).toBeDisabled();
@@ -1464,7 +1409,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('当前会话消息');
 
@@ -1504,7 +1449,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await screen.findByText('当前会话消息');
     await typeComposer('只属于当前会话的草稿');
@@ -1539,7 +1484,7 @@ describe('WorkitemClarificationPanel', () => {
       }),
     );
 
-    renderPanel([]);
+    renderPanel();
     const textarea = await screen.findByPlaceholderText('输入消息...');
     await waitFor(() => expect(resolveDetail).toBeTypeOf('function'));
     expect(textarea).toBeDisabled();
@@ -1734,10 +1679,10 @@ describe('WorkitemClarificationPanel', () => {
 
     it('fills the viewport with the agent selection screen when fullscreen', async () => {
       // 选人页在全屏态下真实可达：全屏中点「切换数字员工」会回到这一屏，
-      // 轮询把 hasDeliveryAgents 翻转也会落到这里。早返回若绕过铺满列，
+      // URL 恢复落定前后（身份未确定）也会经过它。早返回若绕过铺满列，
       // 它就成了唯一与对话屏宽度不一致的全屏面。
       mockSquads();
-      renderPanel([], { fullscreen: true });
+      renderPanel({ fullscreen: true });
 
       const column = screen.getByTestId('clarification-selection-column');
       expect(column).toContainElement(screen.getByText('选择小队和数字员工'));
@@ -1750,7 +1695,7 @@ describe('WorkitemClarificationPanel', () => {
 
     it('leaves the docked agent selection screen unconstrained', async () => {
       mockSquads();
-      renderPanel([]);
+      renderPanel();
 
       const column = screen.getByTestId('clarification-selection-column');
       expect(column).toContainElement(screen.getByText('选择小队和数字员工'));
@@ -1764,7 +1709,7 @@ describe('WorkitemClarificationPanel', () => {
     });
   });
 
-  describe('URL 恢复上下文（工单 53035）', () => {
+  describe('URL 恢复上下文（工单 53035 / 56281）', () => {
     function mockConversationList(conversations: Array<ReturnType<typeof makeConversation>>) {
       server.use(
         http.get('/api/workitems/:workitemId/clarification-conversations', () =>
@@ -1780,33 +1725,22 @@ describe('WorkitemClarificationPanel', () => {
       );
     }
 
-    /** 交付数字员工来自轮询查询，挂载当帧往往还是空数组——
-     *  恢复逻辑必须能等到列表落地后再补认，所以要能中途换 agents。
-     *  同理，外层会把面板上报的上下文写回 URL 再作为 prop 回流，props 也要能中途换。 */
-    function renderRestorable(
-      agents: Array<{ agentId: number; agentName: string; status: string }>,
-      props: PanelTestProps = {},
-    ) {
+    /** 外层会把面板上报的上下文写回 URL 再作为 prop 回流，props 要能中途换。
+     *  工单 56281 之后恢复不再依赖交付进度里的数字人列表，所以只剩 props 这一条。 */
+    function renderRestorable(props: PanelTestProps = {}) {
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      const element = (nextAgents: typeof agents, nextProps: PanelTestProps) => (
+      const element = (nextProps: PanelTestProps) => (
         <QueryClientProvider client={queryClient}>
-          <WorkitemClarificationPanel workitemId="100" agents={nextAgents as never} {...nextProps} />
+          <WorkitemClarificationPanel workitemId="100" {...nextProps} />
         </QueryClientProvider>
       );
-      const view = render(element(agents, props));
-      // 两个助手各自记住最新值：交付列表落地与 URL 回流是会叠加发生的两件事，
-      // 后一次 rerender 不能把前一次的结果退回初值。
-      let latestAgents = agents;
+      const view = render(element(props));
       let latestProps = props;
       return {
         ...view,
-        rerenderAgents: (nextAgents: typeof agents) => {
-          latestAgents = nextAgents;
-          view.rerender(element(latestAgents, latestProps));
-        },
         rerenderProps: (nextProps: PanelTestProps) => {
           latestProps = nextProps;
-          view.rerender(element(latestAgents, latestProps));
+          view.rerender(element(latestProps));
         },
       };
     }
@@ -1818,7 +1752,7 @@ describe('WorkitemClarificationPanel', () => {
       const historical = makeConversation(101, '历史会话消息');
       mockConversationList([latest, historical]);
 
-      renderPanel([], { initialConversationId: 101 });
+      renderPanel({ initialConversationId: 101 });
 
       // 自动选择挑的是列表首条 202；URL 记着 101 时必须落在 101 上
       expect(await screen.findByText('历史会话消息')).toBeInTheDocument();
@@ -1831,7 +1765,7 @@ describe('WorkitemClarificationPanel', () => {
       mockSquads();
       mockConversationList([makeConversation(202, '最新会话消息')]);
 
-      renderPanel([], { initialConversationId: 999 });
+      renderPanel({ initialConversationId: 999 });
 
       expect(await screen.findByText('最新会话消息')).toBeInTheDocument();
     });
@@ -1840,7 +1774,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       const onContextChange = vi.fn();
-      const view = renderRestorable([], { onContextChange });
+      const view = renderRestorable({ onContextChange });
 
       // 没有历史会话 → 自动创建 5 号会话并上报给外层写回 URL
       await waitFor(() =>
@@ -1857,71 +1791,134 @@ describe('WorkitemClarificationPanel', () => {
       expect(screen.queryByText('暂无对话')).toBeNull();
     });
 
-    it('adopts the restored agent once the delivery agent list lands', async () => {
+    // 工单 56281 的核心：URL 里的数字人只靠「小队成员」校验，不需要任何交付进度输入。
+    // 修复前恢复源是交付列表，未参与过交付的澄清数字人刷新后会被弹回选人页。
+    it('restores an agent recorded in the URL purely from squad membership', async () => {
       mockSquads();
-      mockAgentDirectory([{ id: 1 }, { id: 2 }]);
-      // 会话归属交付数字员工 2：header 的 displayName 优先取会话详情里的 agentName，
-      // 沿用 makeConversation 默认的 Agent-X 会让「认领的是 2 号」这条断言失去指向
       mockConversationList([
-        { ...makeConversation(101, '历史会话消息'), agentId: 2, agentName: 'Agent-B' },
+        { ...makeConversation(101, '历史会话消息'), agentId: 42, agentName: 'Agent-X' },
       ]);
       const onContextChange = vi.fn();
-      const view = renderRestorable([], {
-        initialAgentId: 2, initialConversationId: 101, onContextChange,
-      });
+      const view = renderRestorable({ initialAgentId: 42, initialConversationId: 101, onContextChange });
 
-      // 交付数字员工还没落地：先停在小队选人屏（会话内容要等选人屏让位后才渲染）
-      expect(await screen.findByText('选择小队和数字员工')).toBeInTheDocument();
-
-      // 交付列表是轮询来的，挂载当帧必然为空。这一窗口里上报 agentId: null，
-      // 页面就会把 URL 里的 agent 删掉，回流后恢复源自己没了（CR53035-001）。
-      const reported = onContextChange.mock.calls.map(
-        (call) => call[0] as ReportedClarifyContext,
+      await waitFor(() =>
+        expect(onContextChange).toHaveBeenLastCalledWith({ agentId: 42, conversationId: 101 }),
       );
-      expect(reported.length).toBeGreaterThan(0);
-      for (const context of reported) {
-        expect(context).not.toHaveProperty('agentId');
-      }
+      expect(await screen.findByText('历史会话消息')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '切换数字员工' })).toBeInTheDocument();
+      expect(screen.queryByText('选择小队和数字员工')).toBeNull();
 
-      // 回流走真实编解码器：把每一次上报都写回 URL，再读回来当 props。
-      // 少一环都复现不了缺陷——手写成固定的 initialAgentId: 2 等于替旧代码兜了底。
-      const echoedSearch = reported.reduce(
-        (search, context) => writeClarifyView(search, context),
-        new URLSearchParams('panel=clarify&fullscreen=1&agent=2&conversation=101'),
+      // 回流走真实编解码器：恢复源不能在「上报 → 写回 URL」循环里被自己抹掉（CR53035-001）
+      const echoedSearch = onContextChange.mock.calls.reduce(
+        (search, call) => writeClarifyView(search, call[0] as ReportedClarifyContext),
+        new URLSearchParams('panel=clarify&fullscreen=1&agent=42&conversation=101'),
       );
       const echoed = readClarifyView(echoedSearch);
-      expect(echoed.agentId).toBe(2);
+      expect(echoed.agentId).toBe(42);
+      expect(echoed.conversationId).toBe(101);
 
-      view.rerenderAgents([
-        { agentId: 1, agentName: 'Agent-A', status: 'active' },
-        { agentId: 2, agentName: 'Agent-B', status: 'active' },
-      ]);
       view.rerenderProps({
         initialAgentId: echoed.agentId,
         initialConversationId: echoed.conversationId,
         onContextChange,
       });
-
-      // 列表落地后补认 URL 里的数字员工 2，直接进对话页而不是再让人选一次
-      await waitFor(() => expect(screen.queryByText('选择数字员工')).toBeNull());
-      expect(await screen.findByRole('button', { name: '切换数字员工' })).toBeInTheDocument();
-      await waitFor(() => expect(screen.getByText('Agent-B')).toBeInTheDocument());
-      // 恢复落定后把 agent 补回 URL，会话仍是原来那条
-      await waitFor(() => expect(onContextChange).toHaveBeenLastCalledWith({
-        agentId: 2, conversationId: 101,
-      }));
-      // 且真的停在那条会话的内容上，不是重新挑过的另一条
       expect(await screen.findByText('历史会话消息')).toBeInTheDocument();
     });
 
-    it('ignores a restored agent that is no longer in the delivery list', async () => {
-      // 数字员工被换掉后，URL 里的旧 id 不该把面板钉死在选不出人的状态
-      mockAgentDirectory([{ id: 1, executorOnlineCount: 1 }]);
-      renderPanel([{ agentId: 1, agentName: 'Agent-A', status: 'pending' }], { initialAgentId: 7 });
+    it('holds auto-creation until the URL agent identity settles', async () => {
+      // 预填数字员工 42 名下一条会话都没有，URL 记的却是 2 号（2 号也在小队 9 里）。
+      // 身份落定前若无条件自动建会话，会把预填数字人的会话钉在恢复目标身上（缺陷二）。
+      writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+      let releaseSquads: (() => void) | null = null;
+      const squadsGate = new Promise<void>((resolve) => { releaseSquads = resolve; });
+      const createdAgentIds: number[] = [];
+      server.use(
+        http.get('/api/squads', async () => {
+          await squadsGate;
+          return HttpResponse.json({
+            success: true, code: '0', message: '', traceId: null,
+            data: {
+              list: [{ id: 9, name: '交付小队', description: '', memberCount: 2, gmtCreate: '' }],
+              total: 1, pageNum: 1, pageSize: 100,
+            },
+          });
+        }),
+        http.get('/api/squads/:squadId/members', () =>
+          HttpResponse.json({
+            success: true, code: '0', message: '', traceId: null,
+            data: [
+              { agentId: 42, agentName: 'Agent-X', roleCode: 'AW_FS_DEV' },
+              { agentId: 2, agentName: 'Agent-B', roleCode: 'AW_CR' },
+            ],
+          }),
+        ),
+        http.get('/api/workitems/:workitemId/clarification-conversations', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+        ),
+        http.post('/api/workitems/:workitemId/clarification-conversations', async ({ request }) => {
+          const body = await request.json() as { agentId?: number };
+          createdAgentIds.push(body.agentId ?? 0);
+          return HttpResponse.json({
+            success: true, code: '0', message: '', traceId: null,
+            data: { ...makeConversation(5, 'unused'), agentId: body.agentId ?? 0, turns: [] },
+          });
+        }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null }),
+        ),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/events', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
+        ),
+      );
 
-      expect(await screen.findByText('选择数字员工')).toBeInTheDocument();
-      expect(screen.getByText('Agent-A')).toBeInTheDocument();
+      renderRestorable({ initialAgentId: 2 });
+
+      // 恢复中：预填的 42 立刻可用，但此刻不能代它自动建会话——会话区停在空态，没有新会话被创建
+      expect(await screen.findByText('暂无对话')).toBeInTheDocument();
+      expect(createdAgentIds).toEqual([]);
+
+      await waitFor(() => expect(releaseSquads).not.toBeNull());
+      releaseSquads!();
+
+      // 落定后恢复目标 2 无历史 → 为 2 建会话；预填的 42 从头到尾没被创建过
+      await waitFor(() => expect(createdAgentIds).toEqual([2]));
+      expect(createdAgentIds).not.toContain(42);
+    });
+
+    it('ignores a URL agent that no longer belongs to any squad', async () => {
+      // 数字员工被移出所有小队后，URL 里的旧 id 不该把面板钉在不可选的状态
+      mockSquads();
+      const requestedAgentIds: string[] = [];
+      server.use(
+        http.get('/api/workitems/:workitemId/clarification-conversations', ({ request }) => {
+          requestedAgentIds.push(new URL(request.url).searchParams.get('agentId') ?? '');
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
+        }),
+      );
+
+      renderRestorable({ initialAgentId: 7 });
+
+      expect(await screen.findByText('选择小队和数字员工')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '切换数字员工' })).toBeNull();
+      expect(requestedAgentIds).not.toContain('7');
+    });
+
+    it('restores a historical conversation whose agent left every squad without fabricating local memory', async () => {
+      // 已不在任何小队的历史数字人：会话照常恢复（squadId 0 只是占位），
+      // 但不能把「不在任何小队」编造成一条本地选择记忆，否则下次打开会拿它去选人
+      mockSquads();
+      mockConversationList([
+        { ...makeConversation(101, '历史会话消息'), agentId: 77, agentName: 'Agent-Z' },
+      ]);
+      const onContextChange = vi.fn();
+      renderRestorable({ initialConversationId: 101, onContextChange });
+
+      expect(await screen.findByText('历史会话消息')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(onContextChange).toHaveBeenLastCalledWith({ agentId: 77, conversationId: 101 }),
+      );
+      expect(screen.getByText('Agent-Z')).toBeInTheDocument();
+      expect(readClarificationPrefill('100')).toBeNull();
     });
 
     it('reports the restored context upward so the page can keep the URL in sync', async () => {
@@ -1930,7 +1927,7 @@ describe('WorkitemClarificationPanel', () => {
       mockConversationList([makeConversation(202, '最新会话消息'), makeConversation(101, '历史会话消息')]);
       const onContextChange = vi.fn();
 
-      renderPanel([], { initialConversationId: 101, onContextChange });
+      renderPanel({ initialConversationId: 101, onContextChange });
 
       await waitFor(() => expect(onContextChange).toHaveBeenCalledWith({ agentId: 42, conversationId: 101 }));
     });
@@ -1939,7 +1936,7 @@ describe('WorkitemClarificationPanel', () => {
       // 首次上报若带上 null/null，外层会把刚从 URL 读出来的恢复源自己抹掉
       mockSquads();
       const onContextChange = vi.fn();
-      renderPanel([], { onContextChange });
+      renderPanel({ onContextChange });
 
       const comboboxes = await screen.findAllByRole('combobox');
       await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
@@ -1952,7 +1949,7 @@ describe('WorkitemClarificationPanel', () => {
       mockConversationList([makeConversation(202, '最新会话消息'), makeConversation(101, '历史会话消息')]);
       const onContextChange = vi.fn();
 
-      renderPanel([], { onContextChange });
+      renderPanel({ onContextChange });
       await screen.findByText('最新会话消息');
 
       const selector = screen.getByTestId('clarification-conversation-select');
@@ -1965,26 +1962,30 @@ describe('WorkitemClarificationPanel', () => {
     });
 
     /** 缺陷二 A/B 竞态：localStorage 预填 A=42，URL 记录 B=2/会话101。恢复窗口内
-     *  先落地的是 A 的会话列表，旧代码拿它校验恢复的 101 会判「不存在」→ 清掉 →
-     *  自动选上 A 的 202，刷新后永远回不到 B 的会话。校验必须等 B 的身份与它自己
-     *  的列表就绪。 */
+     *  先落地的是 A 的会话列表（不含 101），旧代码拿它校验恢复的 101 会判「不存在」→
+     *  清掉 → 自动选上 A 的 202，刷新后永远回不到 B 的会话。校验必须等 B 的身份与它自己
+     *  的列表就绪。这里用「详情响应扣住不放」把窗口钉死，避免依赖真实时序。 */
     it('validates the restored conversation only after the restored agent identity settles', async () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
-      mockAgentDirectory([{ id: 1 }, { id: 2 }]);
       const aConversation = makeConversation(202, '预填数字员工的会话');
       const bConversation = {
         ...makeConversation(101, '恢复目标的历史会话'), agentId: 2, agentName: 'Agent-B',
       };
+      let releaseDetail: (() => void) | null = null;
+      const detailGate = new Promise<void>((resolve) => { releaseDetail = resolve; });
+      let prefillListCalls = 0;
       server.use(
         http.get('/api/workitems/:workitemId/clarification-conversations', ({ request }) => {
           const agentId = new URL(request.url).searchParams.get('agentId');
+          if (agentId !== '2') prefillListCalls += 1;
           return HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
             data: agentId === '2' ? [bConversation] : [aConversation] });
         }),
-        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', ({ params }) => {
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', async ({ params }) => {
           const found = [aConversation, bConversation]
             .find((item) => item.id === Number(params.conversationId));
+          if (found?.id === 101) await detailGate;
           return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: found ?? null });
         }),
         http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/events', () =>
@@ -1992,26 +1993,25 @@ describe('WorkitemClarificationPanel', () => {
         ),
       );
       const onContextChange = vi.fn();
-      const view = renderRestorable([], {
+      renderRestorable({
         initialAgentId: 2, initialConversationId: 101, onContextChange,
       });
 
-      // 窗口期内：恢复会话的历史正常展示，但身份未落定前发送必须受限
+      // 窗口期内发送受限：身份没落定前不能把消息发进还没校验归属的会话
       const textarea = await screen.findByPlaceholderText('正在恢复会话，请稍候…');
-      expect(await screen.findByText('恢复目标的历史会话')).toBeInTheDocument();
       expect(textarea).toBeDisabled();
 
-      // 交付列表落地，URL 里的数字员工 2 被认领
-      view.rerenderAgents([
-        { agentId: 1, agentName: 'Agent-A', status: 'active' },
-        { agentId: 2, agentName: 'Agent-B', status: 'active' },
-      ]);
+      // 预填数字员工 42 的会话列表（不含 101）先落地，恢复中的 101 不能被判成不存在
+      await waitFor(() => expect(prefillListCalls).toBeGreaterThan(0));
+      expect(screen.getByPlaceholderText('正在恢复会话，请稍候…')).toBeDisabled();
 
-      // 最终停在 URL 记录的 B/101：预填数字员工的 202 从头到尾不该出现，
-      // 也没有把恢复会话误判成不存在而清空
+      await waitFor(() => expect(releaseDetail).not.toBeNull());
+      releaseDetail!();
+
+      // 最终停在 URL 记录的 B/101：预填数字员工的 202 从头到尾不该出现
       await waitFor(() =>
         expect(screen.getByPlaceholderText('输入消息...')).not.toBeDisabled());
-      expect(screen.getByText('恢复目标的历史会话')).toBeInTheDocument();
+      expect(await screen.findByText('恢复目标的历史会话')).toBeInTheDocument();
       expect(screen.queryByText('预填数字员工的会话')).toBeNull();
       await waitFor(() => expect(onContextChange).toHaveBeenLastCalledWith({
         agentId: 2, conversationId: 101,
@@ -2019,49 +2019,85 @@ describe('WorkitemClarificationPanel', () => {
     });
 
     /** 缺陷二优先级：用户手动选择 > URL 恢复。恢复窗口内用户已通过小队选择器
-     *  自己选了数字员工，迟到的 URL 恢复不得再把面板拽到别的数字员工上。 */
+     *  自己选了数字员工，迟到的 URL 恢复不得再把面板拽到别的数字员工上。
+     *  URL 恢复的归属查询被扣住，选择器改用缓存数据先渲染，两边互不干扰。 */
     it('lets a manual agent selection win over the URL restore arriving late', async () => {
-      mockSquads();
-      mockAgentDirectory([{ id: 1 }, { id: 2 }]);
-      const bConversation = {
-        ...makeConversation(101, '迟到恢复的会话'), agentId: 2, agentName: 'Agent-B',
-      };
+      const squad9 = { id: 9, name: '交付小队', description: '', memberCount: 2, gmtCreate: '' };
+      const members = [
+        { agentId: 42, agentName: 'Agent-X', roleCode: 'AW_FS_DEV' },
+        { agentId: 2, agentName: 'Agent-B', roleCode: 'AW_CR' },
+      ];
+      let releaseSquads: (() => void) | null = null;
+      const squadsGate = new Promise<void>((resolve) => { releaseSquads = resolve; });
+      const requestedAgentIds: string[] = [];
+      const createdAgentIds: number[] = [];
       server.use(
+        http.get('/api/squads', async () => {
+          await squadsGate;
+          return HttpResponse.json({
+            success: true, code: '0', message: '', traceId: null,
+            data: { list: [squad9], total: 1, pageNum: 1, pageSize: 100 },
+          });
+        }),
+        http.get('/api/squads/:squadId/members', () =>
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: members }),
+        ),
         http.get('/api/workitems/:workitemId/clarification-conversations', ({ request }) => {
-          const agentId = new URL(request.url).searchParams.get('agentId');
-          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null,
-            data: agentId === '2' ? [bConversation] : [] });
+          requestedAgentIds.push(new URL(request.url).searchParams.get('agentId') ?? '');
+          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] });
         }),
-        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', ({ params }) => {
-          const found = Number(params.conversationId) === 101 ? bConversation : null;
-          return HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: found });
+        http.post('/api/workitems/:workitemId/clarification-conversations', async ({ request }) => {
+          const body = await request.json() as { agentId?: number };
+          createdAgentIds.push(body.agentId ?? 0);
+          return HttpResponse.json({
+            success: true, code: '0', message: '', traceId: null,
+            data: { ...makeConversation(5, '手动选择的会话'), agentId: body.agentId ?? 0 },
+          });
         }),
+        http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
+          HttpResponse.json({
+            success: true, code: '0', message: '', traceId: null,
+            data: { ...makeConversation(5, '手动选择的会话'), agentId: 42 },
+          }),
+        ),
         http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/events', () =>
           HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
         ),
       );
-      const view = renderRestorable([], { initialAgentId: 2 });
 
-      // 恢复窗口内：用户自己先在小队选择器里选了 42
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      queryClient.setQueryData(
+        ['squads', 'clarification'],
+        { list: [squad9], total: 1, pageNum: 1, pageSize: 100 },
+      );
+      queryClient.setQueryData(['squad-members', 'clarification', 9], members);
+      render(
+        <QueryClientProvider client={queryClient}>
+          <WorkitemClarificationPanel workitemId="100" initialAgentId={2} />
+        </QueryClientProvider>,
+      );
+
+      // 恢复窗口内：用户自己选了小队 9 的成员 42
       const comboboxes = await screen.findAllByRole('combobox');
-      await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
       fireEvent.mouseDown(comboboxes[0]);
       fireEvent.click(await screen.findByText('交付小队'));
       await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
       fireEvent.mouseDown(comboboxes[1]);
       fireEvent.click(await screen.findByText('Agent-X (AW_FS_DEV)'));
 
-      // 交付列表随后落地且包含 URL 里的 2：恢复必须让位（没有自动认领），
-      // 面板停在选人页而不是直接进入 2 号的会话
-      view.rerenderAgents([
-        { agentId: 1, agentName: 'Agent-A', status: 'active' },
-        { agentId: 2, agentName: 'Agent-B', status: 'active' },
-      ]);
+      await waitFor(() => expect(createdAgentIds).toEqual([42]));
 
-      expect(await screen.findByText('选择数字员工')).toBeInTheDocument();
-      expect(screen.queryByText('迟到恢复的会话')).toBeNull();
+      // 迟到的恢复归属查询落地（2 号也在小队 9 里）：不得夺走用户的选择
+      await waitFor(() => expect(releaseSquads).not.toBeNull());
+      releaseSquads!();
+
+      await waitFor(() => expect(screen.queryByText('选择小队和数字员工')).toBeNull());
+      expect(createdAgentIds).toEqual([42]);
+      expect(requestedAgentIds).not.toContain('2');
+      expect(await screen.findByText('手动选择的会话')).toBeInTheDocument();
     });
   });
+
 
   describe('历史加载状态与错误反馈（工单 55411 缺陷一）', () => {
     it('renders an explicit error and blocks sending instead of a blank history when the detail request fails', async () => {
@@ -2082,7 +2118,7 @@ describe('WorkitemClarificationPanel', () => {
         }),
       );
 
-      renderPanel([]);
+      renderPanel();
       const textarea = await screen.findByPlaceholderText('输入消息...');
 
       expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
@@ -2126,7 +2162,7 @@ describe('WorkitemClarificationPanel', () => {
         }),
       );
 
-      renderPanel([]);
+      renderPanel();
 
       expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
       fireEvent.click(within(screen.getByTestId('clarification-history-error')).getByRole('button'));
@@ -2165,7 +2201,7 @@ describe('WorkitemClarificationPanel', () => {
         }),
       );
 
-      renderPanel([]);
+      renderPanel();
       expect(await screen.findByText('第一次加载的消息')).toBeInTheDocument();
 
       // 切走再切回：切回触发后台刷新失败，已有内容必须保留并给出降级提示
@@ -2210,7 +2246,7 @@ describe('WorkitemClarificationPanel', () => {
         ),
       );
 
-      renderPanel([]);
+      renderPanel();
 
       expect(await screen.findByTestId('clarification-list-error')).toBeInTheDocument();
       // 列表失败不是「暂无对话」，也不能靠自动建新会话掩盖
@@ -2240,7 +2276,7 @@ describe('WorkitemClarificationPanel', () => {
         }),
       );
 
-      renderPanel([]);
+      renderPanel();
 
       expect(await screen.findByTestId('clarification-history-error')).toBeInTheDocument();
       // 404 重试无意义：一次请求后立即失败，按真实原因呈现
@@ -2250,27 +2286,10 @@ describe('WorkitemClarificationPanel', () => {
   });
 
   describe('onAgentConfirmed', () => {
-    it('fires when a delivery agent is picked from the list', async () => {
-      mockAgentDirectory([{ id: 1, executorOnlineCount: 1 }]);
-      server.use(
-        http.get('/api/workitems/:workitemId/clarification-conversations', () =>
-          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
-        ),
-      );
-      const onAgentConfirmed = vi.fn();
-      renderPanel([{ agentId: 1, agentName: 'Agent-A', status: 'pending' }], { onAgentConfirmed });
-
-      expect(onAgentConfirmed).not.toHaveBeenCalled();
-
-      fireEvent.click(screen.getByText('Agent-A'));
-
-      await waitFor(() => expect(onAgentConfirmed).toHaveBeenCalledTimes(1));
-    });
-
     it('fires when a squad agent is picked from the dropdowns', async () => {
       mockSquads();
       const onAgentConfirmed = vi.fn();
-      renderPanel([], { onAgentConfirmed });
+      renderPanel({ onAgentConfirmed });
 
       const comboboxes = await screen.findAllByRole('combobox');
       await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
@@ -2290,7 +2309,7 @@ describe('WorkitemClarificationPanel', () => {
       mockSquads();
       mockConversationWithTurns(42);
       const onAgentConfirmed = vi.fn();
-      renderPanel([], { onAgentConfirmed });
+      renderPanel({ onAgentConfirmed });
 
       await waitFor(() => expect(onAgentConfirmed).toHaveBeenCalledTimes(1));
     });
@@ -2310,7 +2329,6 @@ describe('WorkitemClarificationPanel', () => {
         <QueryClientProvider client={queryClient}>
           <WorkitemClarificationPanel
             workitemId="100"
-            agents={[] as never}
             onAgentConfirmed={() => onAgentConfirmed()}
           />
         </QueryClientProvider>
@@ -2332,7 +2350,13 @@ describe('WorkitemClarificationPanel', () => {
     // 守卫必须在派生值回到 null 时复位：「切换数字员工」正是把选择清回 null，
     // 少了复位分支，用户切换后重新选人就再也不会重新进全屏。
     it('fires again after 「切换数字员工」 resets the selection and a new agent is picked', async () => {
-      mockAgentDirectory([{ id: 1, executorOnlineCount: 1 }]);
+      mockSquads();
+      const created = {
+        id: 5, agentId: 42, agentName: 'Agent-X', channelConversationId: 'ch-5',
+        status: 'ACTIVE', executorOnline: true, streamingSupported: true,
+        cliSessionRef: null, processingStatus: null, processingTurnId: null,
+        lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
+      };
       server.use(
         http.get('/api/workitems/:workitemId/clarification-conversations', () =>
           HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
@@ -2340,35 +2364,37 @@ describe('WorkitemClarificationPanel', () => {
         // 选中后面板会自动建会话，这条用例活得比隔壁更久，不兜住会话相关请求
         // 会让 msw 抛未处理请求
         http.post('/api/workitems/:workitemId/clarification-conversations', () =>
-          HttpResponse.json({
-            success: true, code: '0', message: '', traceId: null,
-            data: {
-              id: 5, agentId: 1, agentName: 'Agent-A', channelConversationId: 'ch-5',
-              status: 'ACTIVE', executorOnline: true, streamingSupported: true,
-              cliSessionRef: null, processingStatus: null, processingTurnId: null,
-              lastTurnAt: null, gmtCreate: '2026-01-01T00:00:00', turns: [],
-            },
-          }),
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created }),
         ),
         http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () =>
-          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: null }),
+          HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: created }),
         ),
         http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId/events', () =>
           HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
         ),
       );
       const onAgentConfirmed = vi.fn();
-      renderPanel([{ agentId: 1, agentName: 'Agent-A', status: 'pending' }], { onAgentConfirmed });
+      renderPanel({ onAgentConfirmed });
 
-      fireEvent.click(screen.getByText('Agent-A'));
+      const pickAgent = async () => {
+        const comboboxes = await screen.findAllByRole('combobox');
+        await waitFor(() => expect(comboboxes[0]).not.toBeDisabled());
+        fireEvent.mouseDown(comboboxes[0]);
+        fireEvent.click(await screen.findByText('交付小队'));
+        await waitFor(() => expect(comboboxes[1]).not.toBeDisabled());
+        fireEvent.mouseDown(comboboxes[1]);
+        fireEvent.click(await screen.findByText('Agent-X (AW_FS_DEV)'));
+      };
+
+      await pickAgent();
       await waitFor(() => expect(onAgentConfirmed).toHaveBeenCalledTimes(1));
 
       // 回到选择页：派生值被清回 null，选人列表重新挂载，元素需重新查询
       fireEvent.click(screen.getByText('切换数字员工'));
-      expect(await screen.findByText('选择数字员工')).toBeInTheDocument();
+      expect(await screen.findByText('选择小队和数字员工')).toBeInTheDocument();
       expect(onAgentConfirmed).toHaveBeenCalledTimes(1);
 
-      fireEvent.click(screen.getByText('Agent-A'));
+      await pickAgent();
 
       await waitFor(() => expect(onAgentConfirmed).toHaveBeenCalledTimes(2));
     });
@@ -2409,7 +2435,7 @@ describe('WorkitemClarificationPanel', () => {
           HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
         ),
       );
-      renderPanel([]);
+      renderPanel();
 
       await screen.findByText('结论如下：');
       const buttons = screen.getAllByTestId('copy-message-button');
@@ -2424,7 +2450,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       mockConversationWithTurns(42);
-      renderPanel([]);
+      renderPanel();
 
       await screen.findByText('你好，我想讨论需求');
       const buttons = screen.getAllByTestId('copy-message-button');
@@ -2438,7 +2464,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       mockConversationWithTurns(42);
-      const view = renderPanel([]);
+      const view = renderPanel();
 
       await screen.findByText('你好，我想讨论需求');
       // jsdom 不加载外部 CSS，只能验证钩子类名挂上了；真实显隐靠浏览器核对
@@ -2450,7 +2476,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       mockConversationWithTurns(42);
-      renderPanel([]);
+      renderPanel();
 
       await screen.findByText('好的，请说说你的想法');
       const aiBlock = screen.getByTestId('clarification-agent-block');
@@ -2469,7 +2495,7 @@ describe('WorkitemClarificationPanel', () => {
       writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
       mockSquads();
       mockConversationWithTurns(42);
-      renderPanel([]);
+      renderPanel();
 
       await screen.findByText('好的，请说说你的想法');
       const aiBubble = screen.getByTestId('clarification-agent-block')
@@ -2509,7 +2535,7 @@ describe('WorkitemClarificationPanel', () => {
           HttpResponse.json({ success: true, code: '0', message: '', traceId: null, data: [] }),
         ),
       );
-      renderPanel([]);
+      renderPanel();
 
       await screen.findByText('（未返回内容）');
       expect(screen.queryByTestId('copy-message-button')).toBeNull();
@@ -2529,7 +2555,7 @@ describe('WorkitemClarificationPanel', () => {
         ),
       );
 
-      renderPanel([]);
+      renderPanel();
       await screen.findByText('请给方案');
       await waitFor(() => expect(realtime.callback).not.toBeNull());
 
@@ -2561,7 +2587,7 @@ describe('WorkitemClarificationPanel', () => {
         ),
       );
 
-      renderPanel([]);
+      renderPanel();
       await screen.findByText('请给方案');
       await waitFor(() => expect(realtime.callback).not.toBeNull());
 
@@ -2585,5 +2611,67 @@ describe('WorkitemClarificationPanel', () => {
       await waitFor(() =>
         expect(vi.mocked(copyTextToClipboard)).toHaveBeenCalledWith('最终方案'));
     });
+  });
+});
+
+
+describe('owned conversation fallback display', () => {
+  it('switches cached source notices without requests, remount, draft loss or raw copy changes', async () => {
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    window.localStorage.clear();
+    writeClarificationPrefill('100', { squadId: 9, agentId: 42 });
+    mockSquads();
+    let requests = 0;
+    const detail = '<b>原始</b> **raw** [link](https://example.com)';
+    const entry = (code: string, args = {}) => ({ code, args });
+    const turn = (id: number, code: string, raw: string, args = {}) => ({
+      id, direction: 'OUT', content: raw, status: 'SUCCESS', error: null, gmtCreate: '',
+      display: { content: entry(code, args) },
+    });
+    const data = { ...makeConversation(1, 'raw input'), turns: [
+      turn(1, 'CANCELED', '响应已终止'),
+      turn(2, 'REPLY_FAILED', '回复失败：' + detail, { detail }),
+      turn(3, 'EMPTY_OUTPUT', '（数字人未返回内容）'),
+      turn(4, 'DISPATCH_REPLY_FAILED', '回复失败：conversation dispatch failed: ' + detail, { detail }),
+      { id: 5, direction: 'IN', content: '**authored**', status: 'FAILED', error: 'raw dispatch diagnostic', gmtCreate: '',
+        display: { error: entry('DISPATCH_FAILED', { detail }) } },
+      { id: 6, direction: 'IN', content: 'raw attempts', status: 'FAILED', error: 'raw attempts diagnostic', gmtCreate: '',
+        display: { error: entry('DELIVERY_ATTEMPTS_EXHAUSTED', { attempts: 3 }) } },
+      { id: 7, direction: 'IN', content: 'raw compatibility', status: 'FAILED', error: 'raw compatibility diagnostic', gmtCreate: '',
+        display: { error: entry('EXECUTOR_COMPATIBILITY_FAILED', { detail }) } },
+      { id: 8, direction: 'OUT', content: '响应已终止', status: 'CANCELED', error: '<i>raw error</i>', gmtCreate: '' },
+      turn(9, 'UNKNOWN', '**legacy unknown**'),
+      turn(10, 'REPLY_FAILED', '**missing args**'),
+    ] };
+    server.use(
+      http.get('/api/workitems/:workitemId/clarification-conversations', () => { requests++; return HttpResponse.json({ success: true, data: [data] }); }),
+      http.get('/api/workitems/:workitemId/clarification-conversations/:conversationId', () => { requests++; return HttpResponse.json({ success: true, data }); }),
+    );
+    const view = renderPanel();
+    await screen.findByText('authored');
+    const editor = screen.getByTestId('clarification-composer-input');
+    await typeComposer('语言切换保留草稿');
+    const count = requests;
+    const blocks = screen.getAllByTestId('clarification-agent-block');
+    fireEvent.click(screen.getAllByTestId('copy-message-button')[0]);
+    await waitFor(() => expect(vi.mocked(copyTextToClipboard)).toHaveBeenCalledWith('响应已终止'));
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(blocks[0]).toHaveTextContent('Response stopped.');
+    expect(blocks[1]).toHaveTextContent('Reply failed: ' + detail);
+    expect(blocks[2]).toHaveTextContent('(The Agent returned no content.)');
+    expect(blocks[3]).toHaveTextContent('Reply failed because conversation dispatch failed: ' + detail);
+    expect(view.container).toHaveTextContent('Conversation dispatch failed: ' + detail);
+    expect(view.container).toHaveTextContent('Conversation runtime did not acknowledge after 3 delivery attempts.');
+    expect(view.container).toHaveTextContent('Conversation executor compatibility failed: ' + detail);
+    expect(blocks[1].querySelector('b, strong, a')).toBeNull();
+    expect(blocks[4]).toHaveTextContent('响应已终止');
+    expect(blocks[5].querySelector('strong')).toHaveTextContent('legacy unknown');
+    expect(blocks[6].querySelector('strong')).toHaveTextContent('missing args');
+    expect(screen.getByTestId('clarification-composer-input')).toBe(editor);
+    expect(screen.getByPlaceholderText('Enter a message...')).toHaveValue('语言切换保留草稿');
+    expect(requests).toBe(count);
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+    expect(blocks[0]).toHaveTextContent('响应已终止');
+    expect(requests).toBe(count);
   });
 });

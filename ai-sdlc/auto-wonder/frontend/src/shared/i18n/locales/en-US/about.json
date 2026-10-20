@@ -1,0 +1,17 @@
+{
+  "title": "About the platform",
+  "tagline": "AI Native SDLC Platform",
+  "intro": "Automated software product delivery platform",
+  "version": "Platform version",
+  "currentVersion": "Current platform version",
+  "flow": "Automated software delivery workflow: requirement clarification, start, development, verification, review, deployment, testing and delivery, with continuous iteration",
+  "iteration": "Continuous iteration",
+  "clarification": "Requirement clarification",
+  "start": "Start",
+  "development": "Development",
+  "verification": "Verification",
+  "review": "Review",
+  "deployment": "Deployment",
+  "testing": "Testing",
+  "delivery": "Delivery"
+}

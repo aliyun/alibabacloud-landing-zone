@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -38,6 +39,7 @@ class ProjectBackupServiceTest {
     InMemoryObjectStorage objects;
     ProjectBackupService service;
     OssProperties props;
+    com.aliyun.autowonder.workspace.WorkspaceMemberDao workspaceMemberDao;
 
     @BeforeEach
     void setup() throws Exception {
@@ -73,6 +75,7 @@ class ProjectBackupServiceTest {
         storage = mock(ObjectStorage.class, delegatesTo(objects));
         props = new OssProperties();
         props.setBackupBucket("backup-bucket");
+        workspaceMemberDao = mock(com.aliyun.autowonder.workspace.WorkspaceMemberDao.class);
         service = new ProjectBackupService(jdbc, json, storage, props, new DataSourceTransactionManager(datasource));
     }
 
@@ -120,7 +123,7 @@ class ProjectBackupServiceTest {
         if (!artifactBucket.isEmpty() && !expectedBucket.equals(artifactBucket)) {
             verify(storage, never()).put(eq(artifactBucket), anyString(), any());
         }
-        service.download(1, result.id());
+        service.download(1, result.id(), 9L);
         verify(storage).exists(result.ossRef());
         verify(storage).presignGet(result.ossRef(), 300);
     }
@@ -161,7 +164,7 @@ class ProjectBackupServiceTest {
         assertEquals("SUCCEEDED", result.status());
         Map<String, byte[]> zip = unzip(objects.get(result.ossRef()));
         JsonNode manifest = json.readTree(zip.get("manifest.json"));
-        assertEquals(1, manifest.get("formatVersion").asInt());
+        assertEquals(2, manifest.get("formatVersion").asInt());
         assertArrayEquals(skill, zip.get("packages/skill-1.zip"));
         assertEquals("retained knowledge", json.readTree(zip.get("config/memory.json")).get(0).get("content_md").asText());
         JsonNode feishu = json.readTree(zip.get("config/feishu_robot_binding.json")).get(0);
@@ -185,9 +188,9 @@ class ProjectBackupServiceTest {
         }
         assertEquals(1, service.list(1, 1, 20).size());
         assertTrue(service.list(2, 1, 20).isEmpty());
-        assertThrows(BizException.class, () -> service.download(2, result.id()));
+        assertThrows(BizException.class, () -> service.download(2, result.id(), 9L));
         verify(storage, never()).presignGet(anyString(), anyInt());
-        service.download(1, result.id());
+        service.download(1, result.id(), 9L);
         verify(storage).presignGet(result.ossRef(), 300);
     }
 
@@ -224,7 +227,7 @@ class ProjectBackupServiceTest {
         var backup = service.list(1, 1, 20).get(0);
         assertEquals("FAILED", backup.status());
         assertFalse(backup.errorMessage().contains("sensitive"));
-        assertThrows(BizException.class, () -> service.download(1, backup.id()));
+        assertThrows(BizException.class, () -> service.download(1, backup.id(), 9L));
     }
 
     @Test
@@ -241,11 +244,128 @@ class ProjectBackupServiceTest {
         verify(storage, never()).get(anyString());
     }
 
+    @Test
+    void archivePreservesMemberForbiddenDomainsNullAndNonNull() throws Exception {
+        var unrestricted = service.create(1, 9);
+        JsonNode empty = json.readTree(unzip(objects.get(unrestricted.ossRef()))
+                .get("config/org_member.json"));
+        assertTrue(empty.get(0).get("forbidden_domains").isNull());
+
+        jdbc.update("UPDATE org_member SET forbidden_domains='[\"SDLC\",\"MEMORY\",\"REPO\"]' WHERE id=1");
+        var restricted = service.create(1, 9);
+        JsonNode rows = json.readTree(unzip(objects.get(restricted.ossRef()))
+                .get("config/org_member.json"));
+        // JSON 列在压缩包中按数据库原样（字符串）保存，恢复时逐字回填。
+        assertEquals("[\"SDLC\",\"MEMORY\",\"REPO\"]",
+                rows.get(0).get("forbidden_domains").asText());
+    }
+
+    @Test
+    void roleAssignmentsAndPermissionsAreIncludedInVersionTwoBackup() throws Exception {
+        jdbc.update("UPDATE org_member SET role_id='12' WHERE id=1");
+        jdbc.update("UPDATE workspace_role SET name='交付协作', read_only_domains='[\"SDLC\"]' WHERE id=1");
+        var result = service.create(1, 9);
+        var archive = unzip(objects.get(result.ossRef()));
+        assertEquals("12", json.readTree(archive.get("config/org_member.json")).get(0).get("role_id").asText());
+        var role = json.readTree(archive.get("config/workspace_role.json")).get(0);
+        assertEquals("交付协作", role.get("name").asText());
+        assertEquals("[\"SDLC\"]", role.get("read_only_domains").asText());
+        assertEquals(2, ProjectBackupRules.FORMAT_VERSION);
+        assertNotNull(service.download(1, result.id(), 9L));
+    }
+
     static Map<String, byte[]> unzip(byte[] bytes) throws Exception {
         Map<String, byte[]> files = new LinkedHashMap<>();
         try (var zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
             for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) files.put(entry.getName(), zip.readAllBytes());
         }
         return files;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"bucket", "pending", "deleted", "rows", "missing", "corrupt", "size", "provider"})
+    void bilingualFreshFailuresPreserveDiagnosticsAndHistory(String branch) throws Exception {
+        String raw; String en; String code; BizException failure;
+        switch (branch) {
+            case "bucket" -> {
+                props.setBackupBucket(null);
+                raw = "请先配置持久化对象存储和 oss.backup-bucket（可回退至 oss.artifact-bucket / oss.bucket）";
+                en = "Configure persistent object storage and oss.backup-bucket first (falls back to oss.artifact-bucket / oss.bucket).";
+                code = "10001"; failure = assertThrows(BizException.class, () -> service.create(1, 9));
+                assertTrue(service.list(1, 1, 20).isEmpty());
+            }
+            case "pending" -> {
+                jdbc.update("INSERT INTO project_backup(id,tenant_id,status) VALUES('pending',1,'RUNNING')");
+                raw="备份尚未成功，无法下载"; en="The backup has not succeeded and cannot be downloaded."; code="10409";
+                failure=assertThrows(BizException.class, () -> service.download(1,"pending",9L));
+                verifyNoInteractions(storage);
+            }
+            case "deleted" -> {
+                jdbc.update("INSERT INTO project_backup(id,tenant_id,status,oss_ref) VALUES('gone',1,'SUCCEEDED','b/gone')");
+                raw="备份文件已不存在"; en="The backup file no longer exists."; code="10404";
+                failure=assertThrows(BizException.class, () -> service.download(1,"gone",9L));
+                verify(storage,never()).presignGet(anyString(),anyInt());
+            }
+            default -> {
+                code="10000";
+                if (branch.equals("rows")) {
+                    jdbc=spy(jdbc);
+                    doReturn(Collections.nCopies(ProjectBackupService.MAX_ROWS+1, Map.of())).when(jdbc).queryForList(anyString(),eq(1L));
+                    service=new ProjectBackupService(jdbc,json,storage,props,new DataSourceTransactionManager(jdbc.getDataSource()));
+                    raw="配置数据过多，超过单表 100000 条备份上限"; en="Configuration data exceeds the backup limit of 100000 rows per table.";
+                } else if (branch.equals("missing")) {
+                    jdbc.update("UPDATE skill SET id=123456789,package_oss_ref='skills/missing.zip' WHERE id=1");
+                    raw="技能包文件缺失，备份未完成（技能 ID：123456789）"; en="The Skill package file is missing; the backup is incomplete (Skill ID: 123456789).";
+                } else if (branch.equals("corrupt")) {
+                    objects.put("skills","corrupt.zip",new byte[]{1});
+                    jdbc.update("UPDATE skill SET id=123456789,package_oss_ref='skills/corrupt.zip',package_md5='bad' WHERE id=1");
+                    raw="技能包校验失败，备份未完成（技能 ID：123456789）"; en="Skill package verification failed; the backup is incomplete (Skill ID: 123456789).";
+                } else if (branch.equals("size")) {
+                    jdbc.update("UPDATE skill SET package_oss_ref='skills/large.zip',package_size=? WHERE id=1",ProjectBackupService.MAX_BYTES+1);
+                    raw="备份原始数据超过 64 MiB 上限"; en="The raw backup data exceeds the 64 MiB limit.";
+                } else {
+                    doThrow(new IllegalStateException("sensitive provider detail")).when(storage).put(anyString(),anyString(),any());
+                    raw="备份失败，请检查数据库、对象存储配置及技能包文件后重试"; en="Backup failed. Check the database, object storage configuration and Skill package files, then retry.";
+                }
+                failure=assertThrows(BizException.class, () -> service.create(1,9));
+                assertNotNull(failure.getCause());
+                assertEquals(raw,service.list(1,1,20).get(0).errorMessage());
+                assertEquals("FAILED",service.list(1,1,20).get(0).status());
+                assertEquals(branch.equals("provider") ? IllegalStateException.class : BizException.class,failure.getCause().getClass());
+            }
+        }
+        assertEquals(BizException.class,failure.getClass()); assertEquals(code,failure.getCode());
+        assertEquals(raw,failure.getMessage()); assertEquals(raw,failure.getLocalizedMessage());
+        var response=new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(failure);
+        assertEquals(code.equals("10001") ? 400 : code.equals("10409") ? 409 : 200,response.getStatusCodeValue());
+        try {
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(Locale.SIMPLIFIED_CHINESE);
+            assertEquals(raw,com.aliyun.autowonder.common.result.Result.fail(failure).getMessage());
+            org.springframework.context.i18n.LocaleContextHolder.setLocale(Locale.US);
+            assertEquals(en,com.aliyun.autowonder.common.result.Result.fail(failure).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings={"备份文件已不存在", "<b>provider raw</b>"})
+    void rawBizCatchKeepsSameLookingMessageCauseAndStoredHistory(String raw) {
+        var cause=new BizException("10005",raw,null);
+        doThrow(cause).when(storage).put(anyString(),anyString(),any());
+        var failure=assertThrows(BizException.class, () -> service.create(1,9));
+        assertSame(cause,failure.getCause()); assertEquals("10000",failure.getCode());
+        assertEquals(raw,failure.getMessage()); assertEquals(raw,service.list(1,1,20).get(0).errorMessage());
+        try { org.springframework.context.i18n.LocaleContextHolder.setLocale(Locale.US);
+            assertEquals(raw,com.aliyun.autowonder.common.result.Result.fail(failure).getMessage());
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+
+    @Test void explicitlyKeyedCaughtBizCarriesItsSourceMetadataWithOriginalCause() {
+        var cause=BizException.keyed("10409","error.conflict",new Object[0],"<b>raw diagnostic</b>",null);
+        doThrow(cause).when(storage).put(anyString(),anyString(),any());
+        var failure=assertThrows(BizException.class,()->service.create(1,9));
+        assertSame(cause,failure.getCause());assertEquals("10000",failure.getCode());
+        assertEquals("<b>raw diagnostic</b>",failure.getMessage());assertEquals(failure.getMessage(),service.list(1,1,20).get(0).errorMessage());
+        assertEquals(cause.getMessageKey(),failure.getMessageKey());
     }
 }

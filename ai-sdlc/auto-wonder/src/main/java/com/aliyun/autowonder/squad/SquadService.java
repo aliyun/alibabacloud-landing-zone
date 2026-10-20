@@ -141,6 +141,7 @@ public class SquadService {
         if (squad == null) {
             throw new BizException(ErrorCode.SQUAD_NOT_FOUND);
         }
+        requireResolvableAgents(agentIds, tenantId);
         for (Long agentId : agentIds) {
             if (memberDao.findBySquadAndAgent(squadId, agentId) != null) {
                 continue;
@@ -150,6 +151,26 @@ public class SquadService {
             m.setSquadId(squadId);
             m.setAgentId(agentId);
             memberDao.insert(m);
+        }
+    }
+
+    /**
+     * A membership row must resolve to a live Agent of the same workspace. A stale id would
+     * otherwise silently poison squad copy pre-checks with an unresolvable agent#&lt;id&gt; dependency,
+     * so the whole batch is rejected before anything is inserted.
+     */
+    private void requireResolvableAgents(List<Long> agentIds, long tenantId) {
+        Set<Long> resolvable = new HashSet<>();
+        for (AgentDO agent : agentDao.listByIds(tenantId, agentIds)) {
+            resolvable.add(agent.getId());
+        }
+        for (Long agentId : agentIds) {
+            if (!resolvable.contains(agentId)) {
+                throw BizException.keyed(ErrorCode.SQUAD_MEMBER_AGENT_INVALID,
+                        ErrorCode.SQUAD_MEMBER_AGENT_INVALID.getMessageKey(),
+                        new Object[] { agentId },
+                        "数字员工不存在或已删除，无法加入小队：#" + agentId);
+            }
         }
     }
 

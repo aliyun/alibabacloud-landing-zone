@@ -80,9 +80,11 @@ class DebugLogUploadControllerTest {
 
     @Test
     void nonTerminalDispatchReturns409() {
+        // 申报状态非终态（premature 请求）：非终态派发维持 409。
+        // 申报合法终态的 RUNNING 收尾阶段签发已放行，见 closingPhase* 用例（工单 55510 修复）。
         stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
 
-        ResponseEntity<?> resp = controller.requestUpload(900L, "tok", request("SUCCEEDED"));
+        ResponseEntity<?> resp = controller.requestUpload(900L, "tok", request("RUNNING"));
 
         assertEquals(409, resp.getStatusCode().value());
         verifyNoInteractions(debugLogService);
@@ -222,9 +224,11 @@ class DebugLogUploadControllerTest {
 
     @Test
     void nonTerminalGatePrecedesBodyValidation() {
-        // 校验顺序契约钉死：409（未终态）先于 400（请求体非法），不可重排
+        // 校验顺序契约钉死：409（未终态且不构成收尾签发）先于 400（请求体非法），不可重排。
+        // 申报状态非终态使请求不构成收尾签发，非法 sha256 不得先于 409 暴露 400；
+        // 申报合法终态的 RUNNING + 非法 sha256 走 400，见 closingPhaseStillValidatesBody。
         stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
-        DebugLogUploadRequest badSha = request("SUCCEEDED");
+        DebugLogUploadRequest badSha = request("RUNNING");
         badSha.setSha256("xyz");
 
         ResponseEntity<?> resp = controller.requestUpload(900L, "tok", badSha);
@@ -234,6 +238,152 @@ class DebugLogUploadControllerTest {
         Map<String, Object> body = (Map<String, Object>) resp.getBody();
         assertEquals("dispatch_not_terminal", body.get("error"));
         verifyNoInteractions(debugLogService);
+    }
+
+    @Test
+    void closingPhaseIssuanceSucceedsWhileRunningBeforeTaskResult() {
+        // 协议顺序回归（工单 55510）：runtime 先申请上传、后发 TASK_RESULT，
+        // DB 终态恰恰由 TASK_RESULT 驱动 —— RUNNING 派发的收尾签发必须放行，
+        // 且申报的本地终态（此处 FAILED）原样传入 issueUpload 落 PENDING 快照。
+        stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
+        when(debugLogService.issueUpload(any(DispatchDO.class), eq(123L), eq("a".repeat(64)),
+                eq(false), eq("FAILED")))
+                .thenReturn(new DebugLogService.IssueResult("debug/200/DevAgent-run-1.log.gz",
+                        "https://oss/put", Instant.parse("2026-09-21T12:34:56Z"), false));
+
+        ResponseEntity<?> resp = controller.requestUpload(900L, "tok", request("FAILED"));
+
+        assertEquals(200, resp.getStatusCode().value());
+        org.mockito.Mockito.verify(debugLogService).issueUpload(any(DispatchDO.class), eq(123L),
+                eq("a".repeat(64)), eq(false), eq("FAILED"));
+    }
+
+    @Test
+    void closingPhaseIssuanceCoversDispatchedAndAcked() {
+        // ACK 在途 / 首个进度事件未到（如轮内零进度即失败）的竞态：
+        // 已交付执行器的 DISPATCHED/ACKED 同样处于收尾阶段。
+        for (String status : new String[]{"DISPATCHED", "ACKED"}) {
+            stubAuth(DetailedAuthStatus.OK, enabledDispatch(status));
+            when(debugLogService.issueUpload(any(DispatchDO.class), any(), any(), anyBoolean(), any()))
+                    .thenReturn(new DebugLogService.IssueResult("k", "https://oss/put",
+                            Instant.parse("2026-09-21T12:34:56Z"), false));
+
+            assertEquals(200, controller.requestUpload(900L, "tok", request("SUCCEEDED"))
+                    .getStatusCode().value(), status);
+        }
+    }
+
+    @Test
+    void pauseFamilyNeverQualifiesForClosingPhaseIssuance() {
+        // 验收标准 4：暂停路径不得被当作终态上传，一律 409
+        for (String status : new String[]{"PAUSING", "PAUSED", "PAUSE_FAILED", "WAITING_FOR_PAUSE"}) {
+            stubAuth(DetailedAuthStatus.OK, enabledDispatch(status));
+
+            ResponseEntity<?> resp = controller.requestUpload(900L, "tok", request("SUCCEEDED"));
+
+            assertEquals(409, resp.getStatusCode().value(), status);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = (Map<String, Object>) resp.getBody();
+            assertEquals("dispatch_not_terminal", body.get("error"), status);
+        }
+        verifyNoInteractions(debugLogService);
+    }
+
+    @Test
+    void notYetDispatchedStatusesNeverQualifyForClosingPhaseIssuance() {
+        // 未交付执行器（PENDING/PACKAGING）的派发不存在可申报的本地执行结果，维持 409
+        for (String status : new String[]{"PENDING", "PACKAGING"}) {
+            stubAuth(DetailedAuthStatus.OK, enabledDispatch(status));
+
+            assertEquals(409, controller.requestUpload(900L, "tok", request("SUCCEEDED"))
+                    .getStatusCode().value(), status);
+        }
+        verifyNoInteractions(debugLogService);
+    }
+
+    @Test
+    void closingPhaseRequiresTerminalDeclaredStatus() {
+        // 申报非终态状态、null 申报、null 请求体：均不构成收尾签发，维持 409
+        stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
+
+        assertEquals(409, controller.requestUpload(900L, "tok", request("RUNNING"))
+                .getStatusCode().value());
+        assertEquals(409, controller.requestUpload(900L, "tok", request(null))
+                .getStatusCode().value());
+        assertEquals(409, controller.requestUpload(900L, "tok", null)
+                .getStatusCode().value());
+        verifyNoInteractions(debugLogService);
+    }
+
+    @Test
+    void closingPhaseStillRequiresDebugEnabled() {
+        // 收尾签发不放松打包时冻结的 debug 开关（验收标准 5）
+        DispatchDO d = enabledDispatch("RUNNING");
+        d.setDebugLogEnabled(false);
+        stubAuth(DetailedAuthStatus.OK, d);
+
+        ResponseEntity<?> resp = controller.requestUpload(900L, "tok", request("SUCCEEDED"));
+
+        assertEquals(422, resp.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) resp.getBody();
+        assertEquals("debug_log_disabled", body.get("error"));
+        verifyNoInteractions(debugLogService);
+    }
+
+    @Test
+    void closingPhaseStillValidatesBody() {
+        // 收尾签发放行后，请求体校验（sha256/sizeBytes）照常生效
+        stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
+        DebugLogUploadRequest badSha = request("FAILED");
+        badSha.setSha256("xyz");
+        assertEquals(400, controller.requestUpload(900L, "tok", badSha)
+                .getStatusCode().value());
+
+        DebugLogUploadRequest negative = request("FAILED");
+        negative.setSizeBytes(-1L);
+        assertEquals(400, controller.requestUpload(900L, "tok", negative)
+                .getStatusCode().value());
+        verifyNoInteractions(debugLogService);
+    }
+
+    @Test
+    void closingPhaseIssueFailureStillReturns503() {
+        // 收尾路径上签发异常语义不变：503 单键 error，不泄存储细节
+        stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
+        when(debugLogService.issueUpload(any(DispatchDO.class), any(), any(), anyBoolean(), any()))
+                .thenThrow(new RuntimeException("db down"));
+
+        ResponseEntity<?> resp = controller.requestUpload(900L, "tok", request("FAILED"));
+
+        assertEquals(503, resp.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) resp.getBody();
+        assertEquals("issue_failed", body.get("error"));
+    }
+
+    @Test
+    void closingPhaseThenTerminalReIssueConvergesIdempotently() {
+        // 协议顺序回归（工单 55510）：TASK_RESULT 之前 RUNNING 收尾签发 →
+        // TASK_RESULT 落库终态（此处 FAILED）后的重复签发走既有幂等路径（alreadyUploaded）
+        stubAuth(DetailedAuthStatus.OK, enabledDispatch("RUNNING"));
+        when(debugLogService.issueUpload(any(DispatchDO.class), any(), any(), anyBoolean(), any()))
+                .thenReturn(new DebugLogService.IssueResult("debug/200/DevAgent-run-1.log.gz",
+                        "https://oss/put", Instant.parse("2026-09-21T12:34:56Z"), false));
+        ResponseEntity<?> before = controller.requestUpload(900L, "tok", request("FAILED"));
+        assertEquals(200, before.getStatusCode().value());
+
+        stubAuth(DetailedAuthStatus.OK, enabledDispatch("FAILED"));
+        when(debugLogService.issueUpload(any(DispatchDO.class), any(), any(), anyBoolean(), any()))
+                .thenReturn(new DebugLogService.IssueResult("debug/200/DevAgent-run-1.log.gz",
+                        null, null, true));
+        ResponseEntity<?> after = controller.requestUpload(900L, "tok", request("FAILED"));
+
+        assertEquals(200, after.getStatusCode().value());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) after.getBody();
+        assertEquals(true, body.get("alreadyUploaded"));
+        assertNull(body.get("uploadUrl"));
     }
 
     @Test

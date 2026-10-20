@@ -1,11 +1,15 @@
+import { CloseOutlined } from '@ant-design/icons';
+import { workitemDeleteReason } from './runtimeLabels';
+import { useTranslation } from 'react-i18next';
 import { RecoveryControls } from './components/RecoveryControls';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { DispatchRequests } from './components/DispatchRequests';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Empty, List, Modal, Spin, Result, Button, Space, Tag, Typography } from 'antd';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTemplateDetail } from '@/features/statemachine/hooks';
 import {
-  useWorkitem, useUnifiedTimeline, useParticipants, useMentionCandidates,
+  useWorkitem, useUnifiedTimeline, useParticipants,
   useDeliveryProgress, useClarification, useArtifacts, useRequirementDocuments, useTransitionWorkitem, useSyncExternalWorkitem,
   useUpdateWorkitemContent, useDeleteWorkitem, useToggleWatch,
 } from './hooks';
@@ -17,6 +21,8 @@ import { WorkitemActionBar } from './components/WorkitemActionBar';
 import { StartDeliveryModal } from './components/StartDeliveryModal';
 import { ClarifyReminderModal } from './components/ClarifyReminderModal';
 import { AssignHumanModal } from './components/AssignHumanModal';
+import { OtherWorkspacePrompt } from './components/OtherWorkspacePrompt';
+import { readWorkitemOwningWorkspace } from './otherWorkspace';
 import { WorkitemContent } from './components/WorkitemContent';
 import { RequirementDocumentsCard } from './components/RequirementDocumentsCard';
 import { ClarificationResult } from './components/ClarificationResult';
@@ -31,10 +37,17 @@ import type { ClarifyContext, ClarifyView } from './clarifyView';
 import { isClarifyReminderSuppressed, suppressClarifyReminder } from './clarifyReminderPreference';
 import { useAccessCommand } from '@/shared/auth/useAccessCommand';
 import { CLARIFICATION_THEME } from './clarification/theme';
+import type { Artifact, Participant, TimelineItem } from '@/shared/types/workitem';
 
 const CLARIFY_MIN_WIDTH = 320;
 
+// 模块级空数组：查询数据未就绪时不生成新引用，避免时间线 memo 被空数组默认值击穿。
+const EMPTY_TIMELINE: TimelineItem[] = [];
+const EMPTY_PARTICIPANTS: Participant[] = [];
+const EMPTY_ARTIFACTS: Artifact[] = [];
+
 export function WorkitemDetailPage() {
+  const { t } = useTranslation('workitem');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -46,7 +59,6 @@ export function WorkitemDetailPage() {
   const [assignHumanOpen, setAssignHumanOpen] = useState(false);
   const [transitionOpen, setTransitionOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   // Router 导航可以延后提交。同帧的全屏/会话上报必须累积到尚未提交的 URL，
@@ -80,6 +92,8 @@ export function WorkitemDetailPage() {
   );
 
   const { data: workitem, isLoading, isError, error } = useWorkitem(id || '');
+  // 当前项目查不到不等于工单不存在：服务端确认用户对归属项目有权限时才下发 13023（单 55699）
+  const owningWorkspace = readWorkitemOwningWorkspace(error);
   const templateId = workitem?.templateId != null ? Number(workitem.templateId) : null;
   const validTemplateId = templateId != null && Number.isFinite(templateId) ? templateId : null;
   const currentStatusNodeId = workitem?.statusNodeId != null ? Number(workitem.statusNodeId) : null;
@@ -89,20 +103,34 @@ export function WorkitemDetailPage() {
   const externalSyncMutation = useSyncExternalWorkitem();
   const deleteMutation = useDeleteWorkitem();
   const watchMutation = useToggleWatch();
-  const { data: timeline = [], isLoading: timelineLoading } = useUnifiedTimeline(id || '');
-  const { data: participants = [], isLoading: participantsLoading } = useParticipants(id || '');
-  const { data: mentionCandidates = participants } = useMentionCandidates(id || '', mentionQuery);
-  const { data: progress, isLoading: progressLoading } = useDeliveryProgress(id || '');
+  const { data: timelineData, isLoading: timelineLoading } = useUnifiedTimeline(id || '');
+  const timeline = timelineData ?? EMPTY_TIMELINE;
+  const { data: participantsData, isLoading: participantsLoading } = useParticipants(id || '');
+  const participants = participantsData ?? EMPTY_PARTICIPANTS;
+  const { data: progress, isLoading: progressLoading, isError: progressError, refetch: retryProgress } = useDeliveryProgress(id || '', workitem?.statusCategory);
   const { data: clarification } = useClarification(id || '');
-  const { data: artifacts = [], isLoading: artifactsLoading } = useArtifacts(id || '');
-  const { data: requirementDocuments = [], isLoading: requirementDocumentsLoading } = useRequirementDocuments(id || '');
+  const { data: artifactsData, isLoading: artifactsLoading } = useArtifacts(id || '');
+  const artifacts = artifactsData ?? EMPTY_ARTIFACTS;
+  const { data: requirementDocumentsData, isLoading: requirementDocumentsLoading } = useRequirementDocuments(id || '');
+  const requirementDocuments = requirementDocumentsData ?? EMPTY_ARTIFACTS;
+  const timelineArtifacts = useMemo(
+    () => [...artifacts, ...requirementDocuments],
+    [artifacts, requirementDocuments],
+  );
 
-  if (!id) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}><Result status="404" title="无效的 ID" extra={<Button onClick={() => navigate(-1)}>返回</Button>} /></div>;
+  if (!id) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}><Result status="404" title={t('detail.invalidId')} extra={<Button onClick={() => navigate(-1)}>{t('detail.back')}</Button>} /></div>;
   if (isLoading) return <Spin size="large" style={{ display: 'block', margin: '100px auto' }} />;
   if (isError) return (
     <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-      <Result status="error" title="加载失败" subTitle={error?.message || '请稍后重试'}
-        extra={<Button onClick={() => navigate(-1)}>返回</Button>} />
+      {owningWorkspace ? (
+        <OtherWorkspacePrompt
+          owning={owningWorkspace}
+          errorMessage={error?.message || undefined}
+        />
+      ) : (
+        <Result status="error" title={t('detail.loadFailed')} subTitle={error?.message || t('detail.retryLater')}
+          extra={<Button onClick={() => navigate(-1)}>{t('detail.back')}</Button>} />
+      )}
     </div>
   );
   if (!workitem) return null;
@@ -121,7 +149,7 @@ export function WorkitemDetailPage() {
     && !hasSdlc && !clarificationDone && !hasRequirementDocuments && !clarifyReminderSuppressed;
   const handleStartDeliveryClick = () => accessCommand(
     'READ_WRITE',
-    hasSdlc ? '重新指派工单' : '启动工单交付',
+    hasSdlc ? t('detail.reassignCommand') : t('detail.startDeliveryCommand'),
     // 引导弹窗只是插在原流程前面：跳过就照旧打开启动交付弹窗
     () => (shouldRemindClarify ? setClarifyReminderOpen(true) : setDeliveryOpen(true)),
   );
@@ -134,7 +162,7 @@ export function WorkitemDetailPage() {
   const handleGoClarify = (rememberChoice: boolean) => {
     rememberClarifyReminderChoice(rememberChoice);
     setClarifyReminderOpen(false);
-    accessCommand('READ_WRITE', '发起 AI 需求澄清', () => updateClarifyView({ mode: 'clarify' }));
+    accessCommand('READ_WRITE', t('detail.clarifyCommand'), () => updateClarifyView({ mode: 'clarify' }));
   };
   const handleSkipClarifyReminder = (rememberChoice: boolean) => {
     rememberClarifyReminderChoice(rememberChoice);
@@ -154,7 +182,7 @@ export function WorkitemDetailPage() {
     .filter((node) => Number(node.id) !== currentStatusNodeId)
     .sort((a, b) => Number(recommendedNodeIds.has(Number(b.id))) - Number(recommendedNodeIds.has(Number(a.id))));
   const handleTransition = (toNodeId: number) => {
-    accessCommand('READ_WRITE', '流转工单状态', () => {
+    accessCommand('READ_WRITE', t('actions.transition'), () => {
       transitionMutation.mutate(
         { id, toNodeId },
         { onSuccess: () => setTransitionOpen(false) },
@@ -164,12 +192,12 @@ export function WorkitemDetailPage() {
   const handleSaveContent = async (values: { title: string; contentMd: string }) => {
     await accessCommand(
       'READ_WRITE',
-      '编辑工单内容',
+      t('detail.editCommand'),
       () => updateContentMutation.mutateAsync({ id, ...values }),
     );
   };
   const handleDelete = () => {
-    accessCommand('READ_WRITE', '删除工单', () => {
+    accessCommand('READ_WRITE', t('actions.delete'), () => {
       deleteMutation.mutate(
         { id },
         { onSuccess: () => navigate('/workitems') },
@@ -201,6 +229,7 @@ export function WorkitemDetailPage() {
             priority={workitem.priority}
             assigneeName={workitem.assigneeName ?? null}
             assigneeDisplayName={workitem.assigneeDisplayName ?? null}
+            assigneeNameFallback={workitem.assigneeNameFallback}
             assigneeType={workitem.assigneeType}
             creatorDisplayName={workitem.creatorDisplayName ?? null}
             sdlcName={workitem.sdlcName ?? null}
@@ -220,22 +249,23 @@ export function WorkitemDetailPage() {
             onStartDelivery={handleStartDeliveryClick}
             onAssignHuman={() => accessCommand(
               'READ_WRITE',
-              '指派工单给真人',
+              t('detail.assignHumanCommand'),
               () => setAssignHumanOpen(true),
             )}
-            onTransition={() => accessCommand('READ_WRITE', '流转工单状态', () => setTransitionOpen(true))}
+            onTransition={() => accessCommand('READ_WRITE', t('actions.transition'), () => setTransitionOpen(true))}
             onSyncExternal={() => accessCommand(
               'READ_WRITE',
-              '同步工单到 Aone',
+              t('detail.syncCommand'),
               () => externalSyncMutation.mutate({ id }),
             )}
-            onDelete={() => accessCommand('READ_WRITE', '删除工单', () => setDeleteOpen(true))}
+            onDelete={() => accessCommand('READ_WRITE', t('actions.delete'), () => setDeleteOpen(true))}
             syncExternalLoading={externalSyncMutation.isPending}
             deleteLoading={deleteMutation.isPending}
             deleteDisabled={workitem.deletable === false}
-            deleteDisabledReason={workitem.deletableReason}
+            deleteDisabledReason={workitemDeleteReason(workitem)}
           />} />
           <HumanInterventionAlert item={workitem} />
+          <DispatchRequests workitemId={id} artifacts={artifacts} />
           <WorkitemContent
             title={workitem.title}
             contentMd={workitem.contentMd}
@@ -250,9 +280,10 @@ export function WorkitemDetailPage() {
           />
           {AI_CLARIFICATION_ENABLED ? <ClarificationResult clarification={clarification} /> : null}
             <UnifiedTimeline
+              key={id}
               items={timeline}
               participants={participants}
-              artifacts={artifacts}
+              artifacts={timelineArtifacts}
               loading={timelineLoading}
             />
           </div>
@@ -260,10 +291,10 @@ export function WorkitemDetailPage() {
         </div>
         <div data-testid="workitem-sticky-comment" style={{ flexShrink: 0, padding: '0 24px 16px', borderTop: '1px solid var(--aw-border)' }}>
           <CommentInput
+            key={id}
             workitemId={id}
+            documents={requirementDocuments}
             participants={participants}
-            mentionCandidates={mentionCandidates}
-            onMentionQueryChange={setMentionQuery}
           />
         </div>
       </div>
@@ -292,7 +323,7 @@ export function WorkitemDetailPage() {
             min={CLARIFY_MIN_WIDTH}
             max={clarifyMaxWidth}
             onChange={setClarifyWidth}
-            aria-label="调整澄清窗口宽度"
+            aria-label={t('detail.resizeClarification')}
           />
         ) : null}
         <RightPanel
@@ -304,6 +335,8 @@ export function WorkitemDetailPage() {
           steps={progress?.steps || []}
           progress={progress}
           stepsLoading={progressLoading}
+          progressError={progressError}
+          onRetryProgress={() => { void retryProgress(); }}
           terminalStatus={workitem.statusName}
           artifacts={artifacts}
           artifactsLoading={artifactsLoading}
@@ -338,17 +371,19 @@ export function WorkitemDetailPage() {
         onClose={() => setAssignHumanOpen(false)}
       />
       <Modal
-        title="流转状态"
+        closeIcon={<CloseOutlined aria-hidden="true" />}
+        closable={{ 'aria-label': t('projection.close') }}
+        title={t('detail.transitionTitle')}
         open={transitionOpen}
         footer={null}
         onCancel={() => setTransitionOpen(false)}
       >
         {!validTemplateId ? (
-          <Empty description="当前工单未绑定状态模板" />
+          <Empty description={t('detail.noTemplate')} />
         ) : templateLoading ? (
           <Spin style={{ display: 'block', margin: '32px auto' }} />
         ) : transitionCandidates.length === 0 ? (
-          <Empty description="当前模板暂无可流转的状态节点" />
+          <Empty description={t('detail.noTransitions')} />
         ) : (
           <List
             dataSource={transitionCandidates}
@@ -362,18 +397,18 @@ export function WorkitemDetailPage() {
                       type={recommended ? 'primary' : 'default'}
                       loading={transitionMutation.isPending}
                       disabled={transitionMutation.isPending}
-                      aria-label={`流转到${node.name}`}
+                      aria-label={t('detail.transitionTo', { name: node.name })}
                       onClick={() => handleTransition(Number(node.id))}
                     >
-                      流转
+                      {t('detail.transition')}
                     </Button>,
                   ]}
                 >
                   <Space direction="vertical" size={4}>
                     <Typography.Text strong>{node.name}</Typography.Text>
                     {recommended
-                      ? <Tag color="blue">推荐流转</Tag>
-                      : <Tag>非推荐流转</Tag>}
+                      ? <Tag color="blue">{t('detail.recommended')}</Tag>
+                      : <Tag>{t('detail.notRecommended')}</Tag>}
                   </Space>
                 </List.Item>
               );
@@ -382,15 +417,17 @@ export function WorkitemDetailPage() {
         )}
       </Modal>
       <Modal
-        title="删除工单"
+        closeIcon={<CloseOutlined aria-hidden="true" />}
+        closable={{ 'aria-label': t('projection.close') }}
+        title={t('actions.delete')}
         open={deleteOpen}
-        okText="删除"
+        okText={t('detail.delete')}
         okButtonProps={{ danger: true, loading: deleteMutation.isPending }}
-        cancelText="取消"
+        cancelText={t('detail.cancel')}
         onOk={handleDelete}
         onCancel={() => setDeleteOpen(false)}
       >
-        删除后该工单将从列表中移除。正在执行或外部平台集成的工单不可删除。
+        {t('detail.deleteDescription')}
       </Modal>
     </div>
   );

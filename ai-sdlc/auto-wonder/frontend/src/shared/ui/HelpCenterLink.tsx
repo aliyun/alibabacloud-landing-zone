@@ -1,10 +1,10 @@
+import { useTranslation } from 'react-i18next';
 import { Button } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
 
 export function HelpCenterLink() {
+  const { t } = useTranslation('shared');
   return (
-    <Button type="text" href="/help" target="_blank" rel="noopener noreferrer" aria-label="帮助中心" icon={<QuestionCircleOutlined />}>
-      帮助中心
-    </Button>
+    <Button type="text" href="/help" target="_blank" rel="noopener noreferrer" aria-label={t('help')} icon={<QuestionCircleOutlined />}>{t('help')}</Button>
   );
 }

@@ -1,6 +1,9 @@
+import { liveActivitySummary } from '../runtimeLabels';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { Typography, Space, Tag, Collapse, Spin, Button } from 'antd';
-import { ClockCircleOutlined, LoadingOutlined, ExpandOutlined } from '@ant-design/icons';
+import { ClockCircleOutlined, LoadingOutlined, ExpandOutlined, CodeOutlined } from '@ant-design/icons';
 import type { LiveActivityAction } from '@/shared/types/workitem';
 import { useLiveActivity } from '../useLiveActivity';
 
@@ -11,25 +14,25 @@ const RELATIVE_TIME_TICK_MS = 30_000;
 const { Text } = Typography;
 
 const ACTION_TYPE_LABELS: Record<string, string> = {
-  CONTEXT_PREPARE: '上下文准备',
-  REPO_PREPARE: '仓库准备',
-  SDLC_STEP: 'SDLC 步骤',
-  DISPATCH: '调度',
-  HANDOFF: '交接',
-  ARTIFACT: '产物',
-  COMMAND: '命令执行',
-  SKILL_LOAD: 'Skill 加载',
-  PLUGIN_LOAD: 'Plugin 加载',
-  MCP_LOAD: 'MCP 加载',
-  MCP_CALL: 'MCP 调用',
-  SKILL: 'Skill 调用',
-  SESSION: '会话',
-  MODEL_TURN: '推理',
-  SUBAGENT: '子代理',
-  SEARCH_READ: '检索/读取',
-  FILE_EDIT: '文件修改',
-  TOOL: '工具调用',
-  AGENT: 'Agent',
+  get CONTEXT_PREPARE() { return i18n.t('workitem:live.contextPrepare'); },
+  get REPO_PREPARE() { return i18n.t('workitem:live.repoPrepare'); },
+  get SDLC_STEP() { return i18n.t('workitem:live.sdlcStep'); },
+  get DISPATCH() { return i18n.t('workitem:live.dispatch'); },
+  get HANDOFF() { return i18n.t('workitem:live.handoff'); },
+  get ARTIFACT() { return i18n.t('workitem:artifacts.title'); },
+  get COMMAND() { return i18n.t('workitem:live.command'); },
+  get SKILL_LOAD() { return i18n.t('workitem:live.skillLoad'); },
+  get PLUGIN_LOAD() { return i18n.t('workitem:live.pluginLoad'); },
+  get MCP_LOAD() { return i18n.t('workitem:live.mcpLoad'); },
+  get MCP_CALL() { return i18n.t('workitem:live.mcpCall'); },
+  get SKILL() { return i18n.t('workitem:live.skillCall'); },
+  get SESSION() { return i18n.t('workitem:live.session'); },
+  get MODEL_TURN() { return i18n.t('workitem:live.modelTurn'); },
+  get SUBAGENT() { return i18n.t('workitem:live.subagent'); },
+  get SEARCH_READ() { return i18n.t('workitem:live.searchRead'); },
+  get FILE_EDIT() { return i18n.t('workitem:live.fileEdit'); },
+  get TOOL() { return i18n.t('workitem:live.tool'); },
+  get AGENT() { return i18n.t('workitem:live.agent'); },
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -45,21 +48,22 @@ const STATUS_COLOR: Record<string, string> = {
 function formatRelativeTime(iso: string | null): string {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 0) return '刚刚';
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}秒前`;
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`;
-  return `${Math.floor(diff / 3_600_000)}小时前`;
+  if (diff < 0) return i18n.t('workitem:live.justNow');
+  if (diff < 60_000) return i18n.t('workitem:live.seconds', { count: Math.floor(diff / 1000) });
+  if (diff < 3_600_000) return i18n.t('workitem:live.minutes', { count: Math.floor(diff / 60_000) });
+  return i18n.t('workitem:live.hours', { count: Math.floor(diff / 3_600_000) });
 }
 
 function ActionItem({ action }: { action: LiveActivityAction }) {
+  useTranslation('workitem');
   const label = ACTION_TYPE_LABELS[action.actionType] ?? action.actionType;
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '3px 0' }}>
       <Tag color={STATUS_COLOR[action.status] ?? 'default'} style={{ margin: 0, fontSize: 11, lineHeight: '18px' }}>
         {label}
       </Tag>
-      <Text style={{ fontSize: 12, flex: 1, minWidth: 0 }} ellipsis={{ tooltip: action.summary }}>
-        {action.summary ?? label}
+      <Text style={{ fontSize: 12, flex: 1, minWidth: 0 }} ellipsis={{ tooltip: liveActivitySummary(action) }}>
+        {liveActivitySummary(action) ?? label}
       </Text>
       {action.eventTime && (
         <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
@@ -70,11 +74,13 @@ function ActionItem({ action }: { action: LiveActivityAction }) {
   );
 }
 
-export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: number | null; enabled?: boolean }) {
+export function LiveActivityPanel({ dispatchId, enabled = true, summaryOnly = false }: { dispatchId: number | null; enabled?: boolean; summaryOnly?: boolean }) {
+  const { t } = useTranslation('workitem');
   const [logOpen, setLogOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [, setTick] = useState(0);
-  const { actions, currentAction, lastUpdatedAt, loading, truncated } = useLiveActivity(dispatchId, enabled);
+  const { actions, currentAction, lastUpdatedAt, loading, truncated, runtimeState } = useLiveActivity(dispatchId, enabled);
 
   // Periodic re-render so "最近更新于" / relative timestamps keep advancing while the panel is open.
   useEffect(() => {
@@ -85,11 +91,20 @@ export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: 
 
   if (!dispatchId) return null;
 
+  const healthMessage = enabled && runtimeState === 'RECOVERING'
+    ? t('live.runtimeRecovering')
+    : enabled && runtimeState === 'UNKNOWN' ? t('live.runtimeUnknown') : null;
+  const healthNotice = healthMessage ? (
+    <Text type="warning" role="status" data-testid="live-activity-health" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>
+      {healthMessage}
+    </Text>
+  ) : null;
+
   if (loading && actions.length === 0) {
     return (
       <div style={{ padding: '6px 0' }}>
-        <Spin size="small" indicator={<LoadingOutlined />} />
-        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>加载实时动态…</Text>
+        <Spin size="small" indicator={<LoadingOutlined aria-hidden="true" />} />
+        <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>{t('live.loading')}</Text>
       </div>
     );
   }
@@ -100,12 +115,25 @@ export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: 
     const waiting = enabled;
     return (
       <div style={{ padding: '6px 0' }} data-testid={waiting ? 'live-activity-awaiting' : 'live-activity-empty'}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          <ClockCircleOutlined style={{ marginRight: 4 }} />
-          {waiting ? '正在等待 Agent 上报实时动作' : '本次执行未上报实时动作'}
-        </Text>
+        {healthNotice}
+        {!healthMessage && <Text type="secondary" style={{ fontSize: 12 }}>
+          <ClockCircleOutlined aria-hidden="true" style={{ marginRight: 4 }} />
+          {waiting ? t('live.awaiting') : t('live.empty')}
+        </Text>}
       </div>
     );
+  }
+
+  if (summaryOnly) {
+    const action = currentAction ?? actions[actions.length - 1];
+    return <div data-testid="live-activity-panel">
+      {healthNotice}
+      {action && <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        {enabled && currentAction && <LoadingOutlined aria-hidden="true" style={{ color: 'var(--aw-accent-text)', flexShrink: 0 }} />}
+        <Text data-testid="live-activity-current" style={{ display: 'block', flex: 1, minWidth: 0 }} ellipsis={{ tooltip: liveActivitySummary(action) }}>{liveActivitySummary(action) ?? ACTION_TYPE_LABELS[action.actionType] ?? action.actionType}</Text>
+      </div>}
+      {lastUpdatedAt && <Text type="secondary" data-testid="live-activity-updated" style={{ display: 'block', fontSize: 12 }}>{t('live.updated', { time: formatRelativeTime(lastUpdatedAt) })}</Text>}
+    </div>;
   }
 
   // actions are seq-ascending (oldest first); collapsed shows the most recent 5, newest first.
@@ -113,22 +141,24 @@ export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: 
 
   return (
     <div data-testid="live-activity-panel" style={{ padding: '4px 0' }}>
-      {enabled && currentAction && (
+      {healthNotice}
+      {enabled && !healthMessage && currentAction && (
         <div style={{ marginBottom: 4, padding: '4px 8px', background: 'rgba(var(--aw-accent-rgb),.10)', borderRadius: 4 }}>
           <Space size={4}>
-            <LoadingOutlined style={{ color: 'var(--aw-accent-text)', fontSize: 12 }} />
+            <LoadingOutlined aria-hidden="true" style={{ color: 'var(--aw-accent-text)', fontSize: 12 }} />
             <Text strong style={{ fontSize: 12 }} data-testid="live-activity-current">
-              {currentAction.summary ?? ACTION_TYPE_LABELS[currentAction.actionType] ?? currentAction.actionType}
+              {liveActivitySummary(currentAction) ?? ACTION_TYPE_LABELS[currentAction.actionType] ?? currentAction.actionType}
             </Text>
           </Space>
         </div>
       )}
       {lastUpdatedAt && (
         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }} data-testid="live-activity-updated">
-          最近更新于 {formatRelativeTime(lastUpdatedAt)}
+          {t('live.updated', { time: formatRelativeTime(lastUpdatedAt) })}
         </Text>
       )}
       {logOpen && <RuntimeLogDrawer key={dispatchId} dispatchId={dispatchId} onClose={() => setLogOpen(false)} />}
+      {terminalOpen && <RuntimeLogDrawer key={`terminal-${dispatchId}`} dispatchId={dispatchId} terminal onClose={() => setTerminalOpen(false)} />}
       <Collapse
         ghost
         size="small"
@@ -136,11 +166,11 @@ export function LiveActivityPanel({ dispatchId, enabled = true }: { dispatchId: 
         onChange={(keys) => setExpanded(Array.isArray(keys) ? keys.includes('timeline') : keys === 'timeline')}
         items={[{
           key: 'timeline',
-          extra: <Button size="small" type="text" icon={<ExpandOutlined />} onClick={e => { e.stopPropagation(); setLogOpen(true); }}>放大查看</Button>,
+          extra: <Space size={0}><Button size="small" type="text" icon={<ExpandOutlined aria-hidden="true" />} onClick={e => { e.stopPropagation(); setLogOpen(true); }}>{t('live.expand')}</Button><Button size="small" type="text" icon={<CodeOutlined aria-hidden="true" />} onClick={e => { e.stopPropagation(); setTerminalOpen(true); }}>{t('runtimeLog.terminal')}</Button></Space>,
           forceRender: true,
           label: (
             <Text style={{ fontSize: 12 }}>
-              近期动作（{actions.length}）{truncated ? ' · 已裁剪' : ''}
+              {t('live.recentActions', { count: actions.length, trimmed: truncated ? t('live.trimmed') : '' })}
             </Text>
           ),
           children: (

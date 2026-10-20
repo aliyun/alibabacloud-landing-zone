@@ -1,5 +1,10 @@
-import { useState } from 'react';
-import { Typography, Avatar, Spin } from 'antd';
+import { externalPrincipalName, timelineSystemContent } from '../runtimeLabels';
+import { Trans, useTranslation } from 'react-i18next';
+import { i18n } from '@/shared/i18n';
+import { formatDateTime } from '@/shared/i18n/format';
+import { memo, useCallback, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { Typography, Avatar, Spin, Button } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
 import { CommentRobotIcon } from './CommentRobotIcon';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
@@ -9,6 +14,16 @@ import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { CommentInteractionCard } from './CommentInteractionCard';
 
 const { Text } = Typography;
+
+const TIMELINE_PAGE_SIZE = 50;
+
+const timelineItemStyle: CSSProperties = {
+  contentVisibility: 'auto',
+  containIntrinsicSize: 'auto 120px',
+};
+
+const EMPTY_PARTICIPANTS: Participant[] = [];
+const EMPTY_ARTIFACTS: Artifact[] = [];
 
 interface UnifiedTimelineProps {
   items: TimelineItem[];
@@ -24,47 +39,41 @@ function formatTime(gmtCreate: string): string {
   const diffMin = Math.floor(diffMs / 60000);
   const diffHour = Math.floor(diffMs / 3600000);
 
-  if (diffMin < 1) return '刚刚';
-  if (diffMin < 60) return `${diffMin}分钟前`;
-  if (diffHour < 24) return `${diffHour}小时前`;
+  if (diffMin < 1) return i18n.t('workitem:timeline.justNow');
+  if (diffMin < 60) return i18n.t('workitem:timeline.minutes', { count: diffMin });
+  if (diffHour < 24) return i18n.t('workitem:timeline.hours', { count: diffHour });
 
-  const d = new Date(gmtCreate);
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const hour = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${month}/${day} ${hour}:${min}`;
+  return formatDateTime(gmtCreate, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-function CommentCard({
+const CommentCard = memo(function CommentCard({
   item,
-  participants,
+  mentionNames,
   artifacts,
   onArtifactClick,
 }: {
   item: TimelineItem;
-  participants?: Participant[];
+  mentionNames: string[];
   artifacts?: Artifact[];
   onArtifactClick?: (artifact: Artifact) => void;
 }) {
+  const { t } = useTranslation('workitem');
+  const authorName = externalPrincipalName(item.authorName, item.authorNameFallback);
   const bgColor = item.isAgent ? 'rgba(var(--aw-accent-rgb),.10)' : 'var(--aw-raised)';
-  const mentionNames = participants
-    ?.map((participant) => participant.name)
-    .filter((name): name is string => Boolean(name)) ?? [];
 
   return (
     <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
       <Avatar
         size={32}
         style={{ background: bgColor, color: item.isAgent ? 'var(--aw-accent-text)' : 'var(--aw-info)', flexShrink: 0 }}
-        icon={item.isAgent ? <CommentRobotIcon /> : item.authorName ? undefined : <UserOutlined />}
-      >{!item.isAgent && item.authorName ? Array.from(item.authorName)[0] : null}</Avatar>
+        icon={item.isAgent ? <CommentRobotIcon /> : authorName ? undefined : <UserOutlined aria-hidden="true" />}
+      >{!item.isAgent && authorName ? Array.from(authorName)[0] : null}</Avatar>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <Text strong style={{ fontSize: 13 }}>{item.authorName || '未知'}</Text>
+          <Text strong style={{ fontSize: 13 }}>{authorName || t('timeline.unknown')}</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>{formatTime(item.gmtCreate)}</Text>
           <span style={{ marginLeft: 'auto' }}>
-            <CopyContentMenu contentMd={item.content} tooltip="复制评论" />
+            <CopyContentMenu contentMd={item.content} tooltip={t('timeline.copyComment')} />
           </span>
         </div>
         <div style={{ background: item.isAgent ? 'rgba(var(--aw-accent-rgb),.10)' : 'var(--aw-raised)', borderRadius: 6, padding: '9px 12px', fontSize: 13 }}>
@@ -82,7 +91,7 @@ function CommentCard({
       </div>
     </div>
   );
-}
+});
 
 function formatParticipantLabel(participant: Participant | undefined, id: string): string {
   if (!participant?.name) return id;
@@ -100,22 +109,17 @@ function formatSystemContent(content: string, participants: Participant[] = []):
 }
 
 function renderSystemItem(item: TimelineItem, participants: Participant[] = []) {
-  const content = formatSystemContent(item.content, participants);
-  if (item.sourceProvider === 'AONE' && item.sourceExternalWorkitemId) {
-    const marker = '已从 Aone 工单';
-    if (content.startsWith(marker)) {
-      const workitemId = item.sourceExternalWorkitemId;
-      const link = item.sourceExternalUrl ? (
-        <Typography.Link href={item.sourceExternalUrl} target="_blank" rel="noreferrer">{workitemId}</Typography.Link>
-      ) : workitemId;
-      const action = content.slice(marker.length).replace(/^[:\s]+/, '');
-      return <>{marker} {link}{action ? ` ${action}` : ''}</>;
-    }
+  const content = item.eventType ? timelineSystemContent(item) : formatSystemContent(item.content, participants);
+  if (item.sourceProvider === 'AONE' && item.sourceExternalWorkitemId && (item.eventType === 'AONE_IMPORT' || item.eventType === 'AONE_UPDATE')) {
+    const workitemId = item.sourceExternalWorkitemId;
+    const link = item.sourceExternalUrl ? <Typography.Link href={item.sourceExternalUrl} target="_blank" rel="noreferrer">{workitemId}</Typography.Link> : <span>{workitemId}</span>;
+    return <Trans ns="workitem" i18nKey={item.eventType === 'AONE_IMPORT' ? 'projection.aoneImport' : 'projection.aoneUpdate'} components={{ source: link }} />;
   }
   return content;
 }
 
-function SystemCard({ item, participants }: { item: TimelineItem; participants?: Participant[] }) {
+const SystemCard = memo(function SystemCard({ item, participants }: { item: TimelineItem; participants?: Participant[] }) {
+  const { t } = useTranslation('workitem');
   return (
     <div
       style={{
@@ -127,16 +131,41 @@ function SystemCard({ item, participants }: { item: TimelineItem; participants?:
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>系统</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>{t('timeline.system')}</Text>
         <Text type="secondary" style={{ fontSize: 12 }}>{formatTime(item.gmtCreate)}</Text>
       </div>
       <div>{renderSystemItem(item, participants)}</div>
     </div>
   );
-}
+});
 
-export function UnifiedTimeline({ items, participants = [], artifacts = [], loading }: UnifiedTimelineProps) {
+export const UnifiedTimeline = memo(function UnifiedTimeline({
+  items,
+  participants = EMPTY_PARTICIPANTS,
+  artifacts = EMPTY_ARTIFACTS,
+  loading,
+}: UnifiedTimelineProps) {
+  const { t } = useTranslation('workitem');
   const [previewArtifact, setPreviewArtifact] = useState<Artifact | null>(null);
+  const [visibleCount, setVisibleCount] = useState(TIMELINE_PAGE_SIZE);
+  // 只在 participants 引用变化时重建，避免每次时间线渲染都给所有评论换一个新的 mentionNames 引用。
+  const mentionNames = useMemo(
+    () => participants
+      .map((participant) => participant.name)
+      .filter((name): name is string => Boolean(name)),
+    [participants],
+  );
+  const handleArtifactClick = useCallback((artifact: Artifact) => setPreviewArtifact(artifact), []);
+  const handlePreviewClose = useCallback(() => setPreviewArtifact(null), []);
+
+  const hiddenCount = Math.max(0, items.length - visibleCount);
+  const handleLoadEarlier = useCallback(
+    () => setVisibleCount((current) => Math.min(items.length, current + TIMELINE_PAGE_SIZE)),
+    [items.length],
+  );
+
+  // API 按最新在前返回，窗口取数组头部即最近 N 条；展开时在下方追加更旧条目，当前视口不移动。
+  const visibleItems = items.slice(0, visibleCount);
 
   return (
     <div
@@ -150,30 +179,47 @@ export function UnifiedTimeline({ items, participants = [], artifacts = [], load
       }}
     >
       <Text strong style={{ display: 'block', marginBottom: 16, fontSize: 14 }}>
-        评论 &amp; 时间线
+        {t('timeline.title')}
       </Text>
       {loading ? (
         <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
       ) : (
-        items.map((item) => (
-          item.type === 'comment'
-            ? (
-              <CommentCard
-                key={item.id}
-                item={item}
-                participants={participants}
-                artifacts={artifacts}
-                onArtifactClick={setPreviewArtifact}
-              />
-            )
-            : <SystemCard key={item.id} item={item} participants={participants} />
-        ))
+        <>
+          <div>
+            {visibleItems.map((item) => (
+              <div key={item.id} data-testid="timeline-item" style={timelineItemStyle}>
+                {item.type === 'comment'
+                  ? (
+                    <CommentCard
+                      item={item}
+                      mentionNames={mentionNames}
+                      artifacts={artifacts}
+                      onArtifactClick={handleArtifactClick}
+                    />
+                  )
+                  : <SystemCard item={item} participants={participants} />}
+              </div>
+            ))}
+          </div>
+          {hiddenCount > 0 && (
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <Button
+                type="link"
+                size="small"
+                data-testid="timeline-load-earlier"
+                onClick={handleLoadEarlier}
+              >
+                {t('timeline.loadEarlier', { count: Math.min(TIMELINE_PAGE_SIZE, hiddenCount) })}
+              </Button>
+            </div>
+          )}
+        </>
       )}
       <ArtifactPreviewModal
         open={previewArtifact != null}
         artifact={previewArtifact}
-        onClose={() => setPreviewArtifact(null)}
+        onClose={handlePreviewClose}
       />
     </div>
   );
-}
+});

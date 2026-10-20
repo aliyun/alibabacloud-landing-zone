@@ -54,6 +54,8 @@ public class DispatchService {
     private static final long SYSTEM_USER_ID = 0L;
     private static final long LOCK_TTL_MS = 30_000L;
     private static final long CAPACITY_LOCK_TTL_MS = 10_000L;
+    private static final Set<String> PERMANENT_PACKAGE_INPUT_MESSAGE_KEYS = Set.of(
+            TaskPackager.MESSAGE_KEY_NO_CHECKOUT, TaskPackager.MESSAGE_KEY_QA_UNPUSHED);
 
     private final DispatchDao dispatchDao;
     private final DispatchRuntimeEventDao runtimeEventDao;
@@ -120,12 +122,6 @@ public class DispatchService {
             "agent_error.runtime_missing_executable",
             "runtime_recovery");
 
-    private static final String SESSION_RECOVERY_COUNTER_SCRIPT = """
-            local count = redis.call('INCR', KEYS[1])
-            if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
-            return count
-            """;
-    private static final long SESSION_RECOVERY_COUNTER_TTL_SECONDS = 86400L;
     private static final long MAX_SESSION_RECOVERY_FAILOVERS = 1L;
 
     @Autowired
@@ -276,7 +272,7 @@ public class DispatchService {
         if (dispatch == null || !Objects.equals(dispatch.getTenantId(), workspaceId)
                 || dispatch.executionSourceType() != ExecutionSourceType.SCHEDULED_TASK_RUN
                 || dispatch.getAgentId() == null || agentVersionId <= 0) {
-            throw new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+            throw BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "dispatch.pin.invalid", new Object[0],
                     "scheduled dispatch cannot be pinned to its frozen agent version");
         }
         // A recovery can encounter an already-delivered row after a process crash.
@@ -306,7 +302,7 @@ public class DispatchService {
     }
 
     private static BizException pinLost(long dispatchId) {
-        return new BizException(ErrorCode.SCHEDULED_TASK_INVALID_STATE,
+        return BizException.keyed(ErrorCode.SCHEDULED_TASK_INVALID_STATE, "dispatch.pin.lost", new Object[]{dispatchId},
                 "scheduled dispatch version pin was lost: dispatchId=" + dispatchId);
     }
 
@@ -791,6 +787,13 @@ public class DispatchService {
         return false;
     }
 
+    private DispatchRequestService requests;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DispatchModelSelectionService modelSelectionService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setDispatchRequests(DispatchRequestService requests) { this.requests = requests; }
+
     /**
      * Create a new fenced dispatch from a failed/stale one. The old dispatch ID
      * is never reused, so delayed frames from the old executor cannot complete
@@ -801,7 +804,7 @@ public class DispatchService {
         String lockKey = "dispatch:continue:" + workspaceId + ":" + workitemId;
         String lockOwner = UUID.randomUUID().toString();
         if (!redisManager.tryAcquireLock(lockKey, lockOwner, LOCK_TTL_MS)) {
-            throw new BizException(ErrorCode.CONFLICT, "恢复请求正在处理中");
+            throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.busy", new Object[0], "恢复请求正在处理中");
         }
         try {
             DispatchDO source = dispatchDao.findById(sourceDispatchId);
@@ -823,7 +826,7 @@ public class DispatchService {
             if (isInteractionDispatch(source)) {
                 // 交互记录本身：维持现行围栏语义，不转接（现网该调用在最新交互上可成功续跑）
                 if (latestAny == null || !latestAny.getId().equals(source.getId())) {
-                    throw new BizException(ErrorCode.CONFLICT, "只能继续该 Worker 的最新一次执行");
+                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.latest", new Object[0], "只能继续该 Worker 的最新一次执行");
                 }
                 target = source;
             } else {
@@ -831,18 +834,18 @@ public class DispatchService {
                 // 被后续正式执行甩在身后的残留交互不得永久阻断继续
                 if (latestAny != null && isInteractionDispatch(latestAny)
                         && !DispatchStatus.isTerminal(latestAny.getStatus())) {
-                    throw new BizException(ErrorCode.CONFLICT, "该 Worker 正在处理评论交互，请稍后再试");
+                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.interaction", new Object[0], "该 Worker 正在处理评论交互，请稍后再试");
                 }
                 target = workerDispatches.stream()
                         .filter(item -> !isInteractionDispatch(item))
                         .reduce((left, right) -> right)
                         .orElse(null);
                 if (target == null) {
-                    throw new BizException(ErrorCode.CONFLICT, "只能继续该 Worker 的最新一次执行");
+                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.latest", new Object[0], "只能继续该 Worker 的最新一次执行");
                 }
                 if (!target.getId().equals(source.getId())
                         && !java.util.Objects.equals(target.getSdlcStepId(), source.getSdlcStepId())) {
-                    throw new BizException(ErrorCode.CONFLICT, "该 Worker 有更新的执行（dispatchId="
+                    throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.newer", new Object[]{target.getId(), target.getSdlcStepId()}, "该 Worker 有更新的执行（dispatchId="
                             + target.getId() + ", stepId=" + target.getSdlcStepId()
                             + "），请刷新后对最新执行操作");
                 }
@@ -853,15 +856,15 @@ public class DispatchService {
                 return existing;
             }
             if (recoveryService != null && !DispatchStatus.isTerminal(target.getStatus()) && !DispatchStatus.PAUSED.equals(target.getStatus())) {
-                throw new BizException(ErrorCode.CONFLICT, "请先取消或强制结束旧执行，再重试");
+                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.end_previous", new Object[0], "请先取消或强制结束旧执行，再重试");
             }
             if (!canContinue(target, System.currentTimeMillis())) {
-                throw new BizException(ErrorCode.CONFLICT, "当前执行仍在线或已成功，不能继续");
+                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.recovery.online", new Object[0], "当前执行仍在线或已成功，不能继续");
             }
             if (!DispatchStatus.isTerminal(target.getStatus())
                     && !transition(target, DispatchStatus.CANCELED, null, null, null, null,
                             DispatchFailureReason.MANUAL_CONTINUE)) {
-                throw new BizException(ErrorCode.CONFLICT, "执行状态已变化，请刷新后重试");
+                throw BizException.keyed(ErrorCode.CONFLICT, "dispatch.state_changed", new Object[0], "执行状态已变化，请刷新后重试");
             }
             Integer maxAttempt = dispatchDao.findMaxAttempt(workspaceId, workitemId,
                     target.getSdlcStepId());
@@ -943,6 +946,7 @@ public class DispatchService {
 
     /** Package and dispatch a PENDING row. Returns true once capacity was reserved. */
     public boolean runPending(long dispatchId) {
+        if (ResultCommitActions.defer("dispatch:" + dispatchId, () -> runPending(dispatchId))) return false;
         String lockKey = "dispatch:lock:" + dispatchId;
         String lockOwner = UUID.randomUUID().toString();
         if (!redisManager.tryAcquireLock(lockKey, lockOwner, LOCK_TTL_MS)) {
@@ -1008,6 +1012,9 @@ public class DispatchService {
                 Long preferredExecutorId = preferredResumeExecutor(d);
                 String requiredFeature = hasEnvironmentBindings(workspaceId, version.getId())
                         ? ExecutorProtocolFeatures.AGENT_ENVIRONMENT_VARIABLES_V1 : null;
+                if (requests != null && requests.requiresHumanRequests(d)) {
+                    requiredFeature = requiredFeature == null ? "DISPATCH_REQUESTS_V1" : requiredFeature + ",DISPATCH_REQUESTS_V1";
+                }
                 DispatchWaitingReason selectionFailure = null;
                 try {
                     if ("CONTINUOUS".equals(d.getResumeMode()) && preferredExecutorId != null) {
@@ -1073,6 +1080,7 @@ public class DispatchService {
 
             TaskPackageResult pkg;
             try {
+                if (modelSelectionService != null) modelSelectionService.freeze(d);
                 PackageContext ctx = assembler.assemble(d, version);
 				if (trialAssignmentService != null) {
 					trialAssignmentService.prepare(ctx, d);
@@ -1087,7 +1095,7 @@ public class DispatchService {
                     failAndDrive(d, reason);
                 } else if (isPermanentPackageInputFailure(packagingFailure)) {
                     String reason = "TASK_PACKAGE_CONFIG_ERROR: "
-                            + rootFailureMessage(packagingFailure);
+                            + packageInputFailureDetail(packagingFailure);
                     log.error("dispatch packaging input failure dispatchId={} reason={}",
                             d.getId(), reason, packagingFailure);
                     failAndDrive(d, reason);
@@ -1208,6 +1216,7 @@ public class DispatchService {
 
     /** Fill currently available capacity from the durable oldest-first PENDING queue. */
     public void drainPending(long agentId) {
+        if (ResultCommitActions.defer("drain:" + agentId, () -> drainPending(agentId))) return;
         while (true) {
             java.util.List<DispatchDO> pending = dispatchDao.listOldestPendingByAgent(agentId, 20);
             if (pending == null || pending.isEmpty()) {
@@ -1304,7 +1313,8 @@ public class DispatchService {
     private static boolean isPermanentPackageInputFailure(Throwable failure) {
         BizException businessFailure = findCause(failure, BizException.class);
         if (businessFailure != null
-                && ErrorCode.SCHEDULED_TASK_INVALID_STATE.getCode().equals(businessFailure.getCode())) {
+                && (ErrorCode.SCHEDULED_TASK_INVALID_STATE.getCode().equals(businessFailure.getCode())
+                || isPermanentPackageInputKey(businessFailure))) {
             return true;
         }
         if (findCause(failure, IllegalArgumentException.class) != null) {
@@ -1317,6 +1327,21 @@ public class DispatchService {
         return illegalState.getMessage().startsWith("bound capability is missing")
                 || illegalState.getMessage().startsWith("capability config must be a JSON object")
                 || illegalState.getMessage().startsWith("COMMENT_REWORK_CONTEXT_MISSING:");
+    }
+
+    private static String packageInputFailureDetail(Throwable failure) {
+        BizException businessFailure = findCause(failure, BizException.class);
+        if (businessFailure != null && isPermanentPackageInputKey(businessFailure)) {
+            return com.aliyun.autowonder.common.i18n.SystemMessages.render(businessFailure.getMessageKey(),
+                    businessFailure.getMessageArgs(), rootFailureMessage(failure));
+        }
+        return rootFailureMessage(failure);
+    }
+
+    // Legacy non-keyed BizExceptions carry a null message key, which immutable sets reject on lookup.
+    private static boolean isPermanentPackageInputKey(BizException businessFailure) {
+        String messageKey = businessFailure.getMessageKey();
+        return messageKey != null && PERMANENT_PACKAGE_INPUT_MESSAGE_KEYS.contains(messageKey);
     }
 
     private static String rootFailureMessage(Throwable failure) {
@@ -1372,9 +1397,17 @@ public class DispatchService {
         log.info("dispatch onProgress dispatchId={} workspaceId={} frameKeys={}",
                 dispatchId, workspaceId, frame != null ? frame.keySet() : "null");
         DispatchDO d = loadInboundRow(workspaceId, dispatchId);
-        if (d == null || DispatchStatus.isTerminal(d.getStatus())) {
-            log.info("dispatch onProgress skip dispatchId={} reason={}", dispatchId,
-                    d == null ? "NOT_FOUND" : "TERMINAL_" + d.getStatus());
+        if (d == null) {
+            log.info("dispatch onProgress skip dispatchId={} reason=NOT_FOUND", dispatchId);
+            return;
+        }
+        if (DispatchStatus.isTerminal(d.getStatus())) {
+            // The ws result frame can terminalize the row before the runtime's trailing event
+            // frames arrive; persist them so the chain keeps the aggregate dispatch.failed, but
+            // never transition a terminal row again.
+            recordRuntimeEvent(d, frame);
+            log.info("dispatch onProgress skip transition dispatchId={} reason={}", dispatchId,
+                    "TERMINAL_" + d.getStatus());
             return;
         }
         recordRuntimeEvent(d, frame);
@@ -1490,7 +1523,9 @@ public class DispatchService {
         if (eventType == null || eventType.isBlank()) {
             return false;
         }
-        return eventType.startsWith("step.")
+        return "context.compact_started".equals(eventType)
+                || "context.compact_completed".equals(eventType)
+                || eventType.startsWith("step.")
                 || eventType.startsWith("workflow.")
                 || eventType.startsWith("agent.")
                 || "completion_requested".equals(eventType)
@@ -1546,6 +1581,18 @@ public class DispatchService {
             }
         }
         return null;
+    }
+
+    /** Called only inside the v2 result transaction, with subject and dispatch locks held. */
+    public boolean rejectProtocolResult(long workspaceId, long executorId, long dispatchId, String reason) {
+        DispatchDO row = loadInboundRow(workspaceId, executorId, dispatchId);
+        if (row == null) return false;
+        if (DispatchStatus.isTerminal(row.getStatus()) && !DispatchStatus.SUCCEEDED.equals(row.getStatus())) return true;
+        if (!transition(row, DispatchStatus.FAILED, null, null, null, null, reason)) return false;
+        ResultCommitActions.cancel("succeeded:" + dispatchId);
+        if (row.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN && !isInteractionDispatch(row))
+            completeScheduledRun(row, false, null, reason);
+        return true;
     }
 
     /** Terminal result. Idempotent; returns true when the authenticated owner may be ACKed. */
@@ -1611,8 +1658,9 @@ public class DispatchService {
         // 产物上传在 runtime 轮结束时已完成，成功终态后发布事件让监听者
         //（如对外分享 DispatchShareListener）在数据就绪的前提下执行
         if (success && eventPublisher != null) {
-            eventPublisher.publishEvent(new DispatchSucceededEvent(
+            Runnable publish = () -> eventPublisher.publishEvent(new DispatchSucceededEvent(
                     d.getTenantId(), d.getWorkitemId(), d.getId(), d.getAgentId()));
+            if (!ResultCommitActions.defer("succeeded:" + d.getId(), publish)) publish.run();
         }
         // Run guidance is a detached conversational turn.  It shares the Run
         // owner solely for packaging/audit; it must not advance or terminalize
@@ -1708,7 +1756,7 @@ public class DispatchService {
      * The same dispatch and step attempt are returned to PENDING so business retry budgets are untouched.
      */
     public boolean onExecutorUnavailableResult(long workspaceId, long executorId, long dispatchId,
-            String failureCategory, String error) {
+            String failureCategory, String error, long committedRecoveryFailures) {
         if (!isExecutorFailureCategory(failureCategory) || executorRegistry == null) {
             return false;
         }
@@ -1716,9 +1764,11 @@ public class DispatchService {
         if (current == null) {
             return false;
         }
-        executorRegistry.markProviderUnavailable(executorId, failureCategory);
+        if (!ResultCommitActions.defer("provider-failure:" + executorId,
+                () -> executorRegistry.markProviderUnavailable(executorId, failureCategory)))
+            executorRegistry.markProviderUnavailable(executorId, failureCategory);
         if ("runtime_recovery".equals(failureCategory)
-                && incrementSessionRecoveryFailures(dispatchId) > MAX_SESSION_RECOVERY_FAILOVERS) {
+                && committedRecoveryFailures >= MAX_SESSION_RECOVERY_FAILOVERS) {
             String reason = "SESSION_RECOVERY_EXHAUSTED: " + error;
             log.error("provider session recovery exhausted dispatchId={} executorId={}",
                     dispatchId, executorId);
@@ -1758,6 +1808,39 @@ public class DispatchService {
         return false;
     }
 
+    void recordRuntimeRecoveryEvent(DispatchDO source, DispatchDO replacement) {
+        DispatchRuntimeEventDO event = new DispatchRuntimeEventDO();
+        event.setTenantId(source.getTenantId());
+        event.setWorkitemId(source.getWorkitemId());
+        event.setDispatchId(source.getId());
+        event.setAgentId(source.getAgentId());
+        event.setStepId(source.getSdlcStepId());
+        event.setEventId("dispatch:" + source.getId() + ":runtime-recovery:" + replacement.getId());
+        event.setEventType("dispatch.runtime_recovery");
+        // This is the final event of the fenced source, not a new runtime stream.
+        // Give polling clients a cursor beyond all accepted source events.
+        long lastSeq = runtimeEventDao.listByDispatch(source.getTenantId(), source.getId()).stream()
+                .map(DispatchRuntimeEventDO::getSeq).filter(java.util.Objects::nonNull)
+                .mapToLong(Long::longValue).max().orElse(0L);
+        event.setSeq(lastSeq + 1);
+        event.setMessage(com.aliyun.autowonder.common.i18n.SystemMessages.render(
+                "dispatch.runtime_recovery.queued", new Object[]{replacement.getId()},
+                "Execution interrupted; automatic recovery queued"));
+        event.setDetailJson(new JSONObject()
+                .fluentPut("recoveredDispatchId", replacement.getId())
+                .fluentPut("reason", "RUNTIME_INVENTORY_LOST")
+                .fluentPut("retrying", true).toJSONString());
+        event.setEventTime(new java.util.Date());
+        runtimeEventDao.insert(event);
+        if (liveActivityPublisher != null) {
+            try {
+                liveActivityPublisher.publish(source, event);
+            } catch (RuntimeException e) {
+                log.warn("runtime recovery activity publish failed dispatchId={}", source.getId(), e);
+            }
+        }
+    }
+
     private void recordExecutorFailoverEvent(DispatchDO dispatch, long executorId,
             String failureCategory, String error) {
         String detailError = "Runtime " + executorId + " · " + failureCategory
@@ -1783,18 +1866,6 @@ public class DispatchService {
         runtimeEventDao.insert(event);
         if (scheduledTaskNotificationService != null && dispatch.executionSourceType() == ExecutionSourceType.SCHEDULED_TASK_RUN) {
             scheduledTaskNotificationService.runtime(dispatch.getTenantId(), dispatch.getWorkitemId());
-        }
-    }
-
-    private long incrementSessionRecoveryFailures(long dispatchId) {
-        try {
-            Object value = redisManager.eval(SESSION_RECOVERY_COUNTER_SCRIPT,
-                    java.util.List.of("dispatch:session-recovery:" + dispatchId),
-                    java.util.List.of(Long.toString(SESSION_RECOVERY_COUNTER_TTL_SECONDS)));
-            return value instanceof Number number ? number.longValue() : MAX_SESSION_RECOVERY_FAILOVERS + 1;
-        } catch (Exception e) {
-            log.error("session recovery counter unavailable dispatchId={}", dispatchId, e);
-            return MAX_SESSION_RECOVERY_FAILOVERS + 1;
         }
     }
 

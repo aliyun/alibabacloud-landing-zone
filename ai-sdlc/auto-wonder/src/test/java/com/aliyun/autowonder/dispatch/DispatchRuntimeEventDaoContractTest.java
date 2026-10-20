@@ -10,6 +10,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DispatchRuntimeEventDaoContractTest {
 
     @Test
+    void progressProjectionPreservesPlansHistoryAndIsolationInBothSchemas() throws Exception {
+        for (String databaseId : java.util.List.of("autowonder-source-aware", "autowonder-legacy")) {
+            org.apache.ibatis.session.Configuration config = new org.apache.ibatis.session.Configuration();
+            config.setDatabaseId(databaseId);
+            try (var input = getClass().getResourceAsStream("/mapping/DispatchRuntimeEventDao.xml")) {
+                new org.apache.ibatis.builder.xml.XMLMapperBuilder(input, config,
+                        "mapping/DispatchRuntimeEventDao.xml", config.getSqlFragments()).parse();
+            }
+            String sql = config.getMappedStatement(DispatchRuntimeEventDao.class.getName() + ".listForProgress")
+                    .getBoundSql(java.util.Map.of("tenantId", 7L, "workitemId", 100L)).getSql();
+            assertTrue(sql.contains("CASE WHEN event_type = 'workflow.plan_applied' THEN detail_json ELSE NULL END"));
+            assertTrue(sql.contains("e.tenant_id = ? AND e.workitem_id = ?"));
+            assertTrue(sql.contains("d.id = e.dispatch_id"));
+            assertTrue(sql.contains("d.is_deleted = 0"));
+            assertTrue(sql.contains("ORDER BY id ASC"));
+            assertFalse(sql.contains("LIMIT"));
+            assertTrue(sql.contains("d.source_type = 'WORKITEM'") == databaseId.equals("autowonder-source-aware"));
+            String fullSql = config.getMappedStatement(DispatchRuntimeEventDao.class.getName() + ".listByWorkitem")
+                    .getBoundSql(java.util.Map.of("tenantId", 7L, "workitemId", 100L)).getSql();
+            assertFalse(fullSql.contains("CASE WHEN"));
+        }
+    }
+
+    @Test
     void workitemTimelineRequiresMatchingWorkitemDispatchSource() throws Exception {
         String xml = new String(getClass().getResourceAsStream(
                 "/mapping/DispatchRuntimeEventDao.xml").readAllBytes(), StandardCharsets.UTF_8);

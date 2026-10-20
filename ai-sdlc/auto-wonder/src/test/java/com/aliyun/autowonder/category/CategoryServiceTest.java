@@ -636,4 +636,109 @@ class CategoryServiceTest {
                 () -> service.categoryAndDescendantIds(TENANT, 99L));
         assertEquals(ErrorCode.CATEGORY_NOT_FOUND.getCode(), ex.getCode());
     }
+
+    private static java.util.Set<String> fieldNames(com.fasterxml.jackson.databind.JsonNode node) {
+        var fields = new java.util.HashSet<String>(); node.fieldNames().forEachRemaining(fields::add); return fields;
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "name,分类名称最长 128 个字符,Category names cannot exceed 128 characters,10001,400",
+        "parent,上级分类不合法,The parent category is invalid,10001,400",
+        "missing,上级分类不存在,The parent category does not exist,34001,200",
+        "depth,分类层级不能超过 5 层,Category depth cannot exceed 5 levels,34006,200",
+        "move,移动后的分类层级不能超过 5 层,Category depth after moving cannot exceed 5 levels,34006,200",
+        "conflict,分类已被修改，请刷新后重试,The category has changed. Refresh and try again,10001,400",
+        "children,该分类包含子分类，请先迁移子分类,This category contains subcategories. Move them before deleting it,34004,200",
+        "refs,该分类仍被能力引用，请先迁移或取消能力打标,This category is still referenced by Skills. Move or remove their category assignments first,34004,200"
+    })
+    void ownedCategoryReasonsKeepRawDiagnosticsAndRenderBothLanguages(String branch, String raw, String en,
+            String code, int status) {
+        category(1L, null, "<b>分类</b>");
+        Runnable action;
+        switch (branch) {
+            case "name" -> action = () -> service.create(createRequest("长".repeat(129), null, null), TENANT, USER);
+            case "parent" -> action = () -> service.create(createRequest("raw", 0L, null), TENANT, USER);
+            case "missing" -> action = () -> service.create(createRequest("raw", 99L, null), TENANT, USER);
+            case "depth" -> {
+                for (long id=2; id<=5; id++) category(id, id-1, "raw");
+                action = () -> service.create(createRequest("raw", 5L, null), TENANT, USER);
+            }
+            case "move" -> {
+                for (long id=2; id<=5; id++) category(id, id-1, "raw");
+                category(10L, null, "raw");
+                action = () -> service.update(1L, updateRequest("raw", 10L, null), TENANT, USER);
+            }
+            case "conflict" -> {
+                when(categoryDao.update(anyLong(), anyLong(), any(), any(), any(), any(), anyLong())).thenReturn(0);
+                action = () -> service.update(1L, updateRequest("raw", null, null), TENANT, USER);
+            }
+            case "children" -> {
+                category(2L, 1L, "raw"); action = () -> service.delete(1L, TENANT, USER);
+            }
+            case "refs" -> {
+                skill(7L, TENANT); service.setSkillCategory(7L, 1L, TENANT, USER);
+                action = () -> service.delete(1L, TENANT, USER);
+            }
+            default -> throw new AssertionError(branch);
+        }
+        var ex = assertThrows(BizException.class, action::run);
+        assertEquals(raw, ex.getMessage()); assertEquals(raw, ex.getLocalizedMessage());
+        assertEquals(code, ex.getCode()); assertEquals(BizException.class, ex.getClass()); assertNull(ex.getCause());
+        try {
+            for (var locale : List.of(java.util.Locale.CHINA, java.util.Locale.US)) {
+                org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+                var response = new com.aliyun.autowonder.common.web.GlobalExceptionHandler().handleBiz(ex);
+                assertEquals(status, response.getStatusCodeValue()); assertEquals(code, response.getBody().getCode());
+                assertEquals(locale.equals(java.util.Locale.US) ? en : raw, response.getBody().getMessage());
+            }
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"zh", "en"})
+    void batchCurrentRestResultsRenderOwnedMessagesAndPreserveRawCatchIntent(String language) throws Exception {
+        var locale = language.equals("en") ? java.util.Locale.US : java.util.Locale.CHINA;
+        var cause = new IllegalStateException("external cause <b>{0}</b>");
+        var raw = new BizException(ErrorCode.SKILL_NOT_FOUND, "技能不存在");
+        var unknown = BizException.keyed(ErrorCode.SKILL_NOT_FOUND,"unknown.task23c",new Object[]{"raw"},"<b>外部</b>{0}",cause);
+        var custom = BizException.keyed(ErrorCode.PARAM_INVALID,"skill.category_id_required",new Object[]{},"缺少 categoryId 参数",cause);
+        when(skillDao.findByIdForUpdate(8L)).thenThrow(raw);
+        when(skillDao.findByIdForUpdate(9L)).thenThrow(unknown);
+        when(skillDao.findByIdForUpdate(10L)).thenThrow(custom);
+        skill(7L,TENANT); category(1L,null,"已设置分类");
+        com.aliyun.autowonder.context.AutoWonderContext.get().setCurrentWorkspaceId(TENANT);
+        com.aliyun.autowonder.context.AutoWonderContext.get().setUserId(USER);
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(locale);
+        try {
+            var controller = new com.aliyun.autowonder.skill.SkillController(null,null,null,service);
+            var response = controller.batchSetCategory(new com.fasterxml.jackson.databind.ObjectMapper().readTree(
+                    "{\"skillIds\":[7,8,9,10,11,7],\"categoryId\":1}"));
+            assertTrue(response.isSuccess()); assertEquals("0",response.getCode());
+            var items=response.getData(); assertEquals(List.of(7L,8L,9L,10L,11L),items.stream().map(BatchSkillCategoryResultVO::getSkillId).toList());
+            assertEquals(List.of(true,false,false,false,false),items.stream().map(BatchSkillCategoryResultVO::isSuccess).toList());
+            assertEquals("技能不存在",items.get(1).getMessage()); assertEquals("<b>外部</b>{0}",items.get(2).getMessage());
+            assertEquals(cause,unknown.getCause()); assertEquals(cause,custom.getCause()); assertEquals("缺少 categoryId 参数",custom.getMessage());
+            assertEquals(language.equals("en")?"The categoryId parameter is required":"缺少 categoryId 参数",items.get(3).getMessage());
+            assertEquals(language.equals("en")?"Skill not found":"技能不存在",items.get(4).getMessage());
+            assertEquals(language.equals("en")?"Category assigned":"已设置分类",items.get(0).getMessage());
+            assertEquals(language.equals("en")?"Category assignment removed":"已取消打标",
+                    service.batchSetSkillCategory(List.of(7L),null,TENANT,USER).get(0).getMessage());
+            var json=new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(items.get(0));
+            assertEquals(java.util.Set.of("skillId","success","message"),fieldNames(json));
+        } finally { org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext(); com.aliyun.autowonder.context.AutoWonderContext.destroy(); }
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans={true,false})
+    void freshBatchSuccessLabelsUseEnglishWithoutChangingAssignments(boolean clear) {
+        skill(7L,TENANT); category(1L,null,"已设置分类");
+        org.springframework.context.i18n.LocaleContextHolder.setLocale(java.util.Locale.US);
+        try {
+            var item=service.batchSetSkillCategory(List.of(7L),clear?null:1L,TENANT,USER).get(0);
+            assertEquals(7L,item.getSkillId());assertTrue(item.isSuccess());
+            assertEquals(clear?"Category assignment removed":"Category assigned",item.getMessage());
+        } finally {org.springframework.context.i18n.LocaleContextHolder.resetLocaleContext();}
+    }
 }

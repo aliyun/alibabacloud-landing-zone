@@ -1,14 +1,18 @@
+import { useTranslation } from 'react-i18next';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { formatDateTime as formatSharedDateTime, formatNumber } from '@/shared/i18n/format';
+import { i18n } from '@/shared/i18n';
 import { PageHeading } from '@/shared/ui/PageHeading';
 import { usePageSizePreference } from '@/shared/lib/usePageSizePreference';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Key, ReactNode } from 'react';
+import type { AriaAttributes, Key, ReactNode } from 'react';
 import {
   Card, Collapse, Tag, Button, Space, Segmented, Modal, Form, Input, Select, Popconfirm, message,
   Radio, Alert, Typography, Descriptions, Divider, InputNumber, Checkbox, Tooltip, Tree, TreeSelect, Spin, Switch, Empty} from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, FolderOpenOutlined, FileTextOutlined,
-  MinusCircleOutlined, DownloadOutlined, ApartmentOutlined,
+  CloseCircleFilled, MinusCircleOutlined, DownloadOutlined, ApartmentOutlined,
 } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -22,6 +26,7 @@ import type {
   Category, BatchSkillCategoryResult,
 } from './api';
 import type { ColumnsType } from 'antd/es/table';
+import type { CheckboxProps } from 'antd';
 import type { DataNode } from 'antd/es/tree';
 import { buildDirectoryZip, buildPackageTree, formatBytes } from './skillPackage';
 import { MarkdownView } from '@/shared/ui/MarkdownView';
@@ -38,32 +43,21 @@ import {
   isCategoryGroupingEnabled, setCategoryGroupingEnabled,
 } from './categoryDisplayPreference';
 
-const typeLabel: Record<Skill['type'], string> = {
-  MCP: 'MCP 服务',
-  SKILL: '技能',
-  PLUGIN: '插件',
-  HOOK: 'Runtime Hook',
-};
+function skillTypeLabel(type: string): string {
+  switch (type) {
+    case 'MCP': return i18n.t('skill:types.mcp');
+    case 'SKILL': return i18n.t('skill:types.skill');
+    case 'PLUGIN': return i18n.t('skill:types.plugin');
+    case 'HOOK': return i18n.t('skill:types.hook');
+    default: return type;
+  }
+}
 
 const typeColor: Record<string, string> = {
   MCP: 'blue', SKILL: 'green', PLUGIN: 'orange', HOOK: 'purple',
 };
 
-const filterTypeOptions = [
-  { value: '', label: '全部' },
-  { value: 'SKILL', label: '技能' },
-  { value: 'MCP', label: 'MCP 服务' },
-  { value: 'HOOK', label: 'Runtime Hook' },
-];
-
-const creatableTypeOptions = [
-  { value: 'SKILL', label: '技能' },
-  { value: 'MCP', label: 'MCP 服务' },
-  { value: 'HOOK', label: 'Runtime Hook' },
-];
-
 const MAX_SKILL_PACKAGE_BYTES = 100 * 1024 * 1024;
-const skillPackageLimitHint = '最多 500 个文件；压缩包和解压后的总大小均不超过 100 MB。';
 const AUTHORIZATION_MASK = '********';
 
 // antd Select 对 null/undefined 值会按空值处理，分类下拉用字符串哨兵表示「未分类」，
@@ -76,13 +70,13 @@ const NO_CATEGORIES: Category[] = [];
 
 function accessLabel(record: Skill) {
   if (record.sourceType === 'OSS_ZIP') {
-    if (record.type === 'HOOK') return 'Hook 包';
-    return '能力包上传';
+    if (record.type === 'HOOK') return i18n.t('skill:access.hook');
+    return i18n.t('skill:access.package');
   }
   if (record.type === 'SKILL') {
-    return '平台内置';
+    return i18n.t('skill:access.builtin');
   }
-  return '命令行接入';
+  return i18n.t('skill:access.command');
 }
 
 /** 与后端 packageRef 的前置校验保持一致：只有存在 packageOssRef 的 OSS_ZIP 才有包可看。 */
@@ -95,10 +89,24 @@ function isMarkdown(path: string): boolean {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : '操作失败';
+  return error instanceof Error && error.message ? error.message : i18n.t('skill:errors.operation');
 }
 
 export function SkillListPage() {
+  const { t } = useTranslation('skill');
+  const filterTypeOptions = [
+    { value: '', label: t('all') },
+    { value: 'SKILL', label: t('types.skill') },
+    { value: 'MCP', label: t('types.mcp') },
+    { value: 'HOOK', label: t('types.hook') },
+  ];
+
+  const creatableTypeOptions = [
+    { value: 'SKILL', label: t('types.skill') },
+    { value: 'MCP', label: t('types.mcp') },
+    { value: 'HOOK', label: t('types.hook') },
+  ];
+
   const queryClient = useQueryClient();
   const runWithAccess = useAccessCommand();
   const [page, setPage] = useState(1);
@@ -121,11 +129,12 @@ export function SkillListPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const zipInputRef = useRef<HTMLInputElement | null>(null);
   const [form] = Form.useForm();
+  useLocalizedValidation(form);
   const selectedType = Form.useWatch('type', form);
 
   const [packageFiles, setPackageFiles] = useState<SkillPackageFile[]>([]);
   const [packageFilesLoading, setPackageFilesLoading] = useState(false);
-  const [packageFilesError, setPackageFilesError] = useState<string | null>(null);
+  const [packageFilesError, setPackageFilesError] = useState<{ message?: string } | null>(null);
   const [selectedPackagePath, setSelectedPackagePath] = useState<string | null>(null);
   const [packageFileContent, setPackageFileContent] = useState<SkillPackageFileContent | null>(null);
   const [packageFileLoading, setPackageFileLoading] = useState(false);
@@ -144,6 +153,7 @@ export function SkillListPage() {
   const [pendingDeleteCategoryId, setPendingDeleteCategoryId] = useState<number | null>(null);
   const [categoryExpandedKeys, setCategoryExpandedKeys] = useState<Key[]>([]);
   const [categoryForm] = Form.useForm();
+  useLocalizedValidation(categoryForm);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [batchCategoryOpen, setBatchCategoryOpen] = useState(false);
   const [batchCategoryValue, setBatchCategoryValue] = useState<string>(UNCATEGORIZED);
@@ -186,12 +196,12 @@ export function SkillListPage() {
     [categoryTreeData, groupedSkills],
   );
   const categorySelectOptions = useMemo(() => [
-    { value: UNCATEGORIZED, label: '未分类' },
+    { value: UNCATEGORIZED, label: i18n.t('skill:uncategorized') },
     ...categories.map((category) => ({
       value: String(category.id),
       label: category.path || category.name,
     })),
-  ], [categories]);
+  ], [categories, t]);
 
   const categorySelectTree = useMemo(() => {
     interface SelectTreeNode {
@@ -242,10 +252,10 @@ export function SkillListPage() {
         children: node.children ? filterNodes(node.children) : undefined,
       }));
     return [
-      { value: UNCATEGORIZED, title: '无（顶级分类）', path: '无（顶级分类）' },
+      { value: UNCATEGORIZED, title: i18n.t('skill:category.top'), path: i18n.t('skill:category.top') },
       ...filterNodes(categorySelectTree),
     ];
-  }, [categories, categorySelectTree, editingCategoryId]);
+  }, [categories, categorySelectTree, editingCategoryId, t]);
 
   // 分类树变更（新增/删除/移动）后默认全部展开，方便继续维护
   useEffect(() => {
@@ -269,7 +279,7 @@ export function SkillListPage() {
   };
 
   const openCategoryManage = () => {
-    runWithAccess('ADMIN', '管理分类', () => {
+    runWithAccess('ADMIN', i18n.t('skill:category.manage'), () => {
       startCreateCategory(null);
       setCategoryManageOpen(true);
     });
@@ -284,7 +294,7 @@ export function SkillListPage() {
         label: (
           <Space size={8}>
             <Typography.Text strong>{group.category.name}</Typography.Text>
-            <Typography.Text type="secondary">{group.totalCount} 项</Typography.Text>
+            <Typography.Text type="secondary">{t('items', { count: group.totalCount })}</Typography.Text>
           </Space>
         ),
         children: (
@@ -315,7 +325,7 @@ export function SkillListPage() {
     // 首次加载时由外层 Spin 呈现加载态，避免闪现「暂无能力」空态
     if (groupedSkillsLoading && groupedSkills.length === 0) return null;
     if (categoryGrouping.groups.length === 0 && categoryGrouping.uncategorized.length === 0) {
-      return <Empty description="当前类型下暂无能力" />;
+      return <Empty description={i18n.t('skill:empty')} />;
     }
     return (
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
@@ -327,8 +337,8 @@ export function SkillListPage() {
               key: 'uncategorized',
               label: (
                 <Space size={8}>
-                  <Typography.Text strong>未分类</Typography.Text>
-                  <Typography.Text type="secondary">{categoryGrouping.uncategorized.length} 项</Typography.Text>
+                  <Typography.Text strong>{i18n.t('skill:uncategorized')}</Typography.Text>
+                  <Typography.Text type="secondary">{t('items', { count: categoryGrouping.uncategorized.length })}</Typography.Text>
                 </Space>
               ),
               children: (
@@ -345,7 +355,7 @@ export function SkillListPage() {
           />
         )}
         <Typography.Text type="secondary">
-          共 {groupedSkills.length} 条能力 · 按分类展示，类型筛选仍生效
+          {t('grouped', { count: groupedSkills.length })}
         </Typography.Text>
       </Space>
     );
@@ -379,7 +389,7 @@ export function SkillListPage() {
         if (!cancelled) setPackageFiles(result.files ?? []);
       })
       .catch((error) => {
-        if (!cancelled) setPackageFilesError(errorMessage(error));
+        if (!cancelled) setPackageFilesError(error instanceof Error && error.message ? { message: error.message } : {});
       })
       .finally(() => {
         if (!cancelled) setPackageFilesLoading(false);
@@ -391,7 +401,7 @@ export function SkillListPage() {
     () => new Map(packageFiles.map((file) => [file.path, file])),
     [packageFiles],
   );
-  const packageTree = useMemo(() => buildPackageTree(packageFiles), [packageFiles]);
+  const packageTree = useMemo(() => buildPackageTree(packageFiles), [packageFiles, t]);
   const selectedPackageEntry = selectedPackagePath ? packageEntryMap.get(selectedPackagePath) ?? null : null;
 
   const handlePackageSelect = async (keys: Key[]) => {
@@ -431,7 +441,7 @@ export function SkillListPage() {
 
   const renderPackagePreview = () => {
     if (!selectedPackagePath || !selectedPackageEntry) {
-      return <Typography.Text type="secondary">选择左侧文件查看内容</Typography.Text>;
+      return <Typography.Text type="secondary">{i18n.t('skill:package.selectPreview')}</Typography.Text>;
     }
     if (selectedPackageEntry.dir) {
       const prefix = `${selectedPackagePath}/`;
@@ -440,7 +450,7 @@ export function SkillListPage() {
       return (
         <Space direction="vertical" size={4}>
           <Typography.Text strong>{selectedPackagePath}</Typography.Text>
-          <Typography.Text type="secondary">目录 · {childCount} 项</Typography.Text>
+          <Typography.Text type="secondary">{t('package.directoryCount', { count: childCount })}</Typography.Text>
         </Space>
       );
     }
@@ -449,7 +459,7 @@ export function SkillListPage() {
         <Space direction="vertical" size={4}>
           <Typography.Text strong>{selectedPackageEntry.name}</Typography.Text>
           <Typography.Text type="secondary">
-            该文件不支持在线预览（{selectedPackageEntry.kind === 'IMAGE' ? '图片' : '二进制'} · {formatBytes(selectedPackageEntry.size)}）
+            {t('package.noPreview', { kind: selectedPackageEntry.kind === 'IMAGE' ? t('package.image') : t('package.binary'), size: formatBytes(selectedPackageEntry.size) })}
           </Typography.Text>
         </Space>
       );
@@ -458,7 +468,7 @@ export function SkillListPage() {
       return <Spin />;
     }
     if (!packageFileContent) {
-      return <Typography.Text type="secondary">内容加载失败</Typography.Text>;
+      return <Typography.Text type="secondary">{i18n.t('skill:package.loadFailed')}</Typography.Text>;
     }
     return isMarkdown(packageFileContent.path) ? (
       <MarkdownView content={packageFileContent.content} />
@@ -477,7 +487,8 @@ export function SkillListPage() {
   };
 
   // 成功后的收尾（关表单、提示、刷新）统一放在 handleSubmit：保存能力后还要链式设置分类，
-  // 若在各 mutation 的 onSuccess 里各自处理，无法保证两条请求的先后与失败提示
+  // 若在各 mutation 的 onSuccess 里各自处理，无法保证两条请求的先后与失败提示；
+  // 列表刷新必须无条件执行——分类未变时 applyCategoryTag 不会刷新，再次编辑会读到旧行。
   const createMut = useMutation({ mutationFn: createSkill });
 
   const updateMut = useMutation({
@@ -511,7 +522,7 @@ export function SkillListPage() {
       // 分类增删改会改变能力列表里的分类路径回显，技能查询要一并失效
       invalidateCategories();
       invalidate();
-      message.success('分类已删除');
+      message.success(i18n.t('skill:category.deleted'));
     },
     onError: (error) => message.error(errorMessage(error)),
   });
@@ -521,7 +532,7 @@ export function SkillListPage() {
     onSuccess: () => {
       invalidate();
       setPendingDeleteId(null);
-      message.success('已删除');
+      message.success(i18n.t('skill:deleted'));
     },
   });
 
@@ -532,19 +543,21 @@ export function SkillListPage() {
       if (result.success) {
         message.success(formatConnectionResult(result));
       } else {
-        message.error(result.message || '连接失败');
+        message.error(formatConnectionResult(result));
       }
     },
     onError: (error, variables) => {
-      const errorMessage = error instanceof Error ? error.message : '连接失败';
-      setConnectionResults((prev) => ({ ...prev, [variables.skillId]: { success: false, message: errorMessage } }));
-      message.error(errorMessage);
+      const result: SkillConnectionTestResult = error instanceof Error && error.message
+        ? { success: false, message: error.message }
+        : { success: false, message: '', ownedFailureCode: 'CONNECTION_FAILED' };
+      setConnectionResults((prev) => ({ ...prev, [variables.skillId]: result }));
+      message.error(formatConnectionResult(result));
     },
     onSettled: () => setTestingSkillId(null),
   });
 
   const openCreate = () => {
-    runWithAccess('READ_WRITE', '新增能力', () => {
+    runWithAccess('READ_WRITE', i18n.t('skill:create'), () => {
       setEditingSkill(null);
       setAccessMode('manual');
       packageSelectionSeq.current += 1;
@@ -557,7 +570,7 @@ export function SkillListPage() {
   };
 
   const openEdit = (skill: Skill) => {
-    runWithAccess('READ_WRITE', '编辑能力', () => {
+    runWithAccess('READ_WRITE', i18n.t('skill:edit'), () => {
       setEditingSkill(skill);
       setAccessMode(skill.sourceType === 'OSS_ZIP' ? 'package' : 'manual');
       packageSelectionSeq.current += 1;
@@ -603,32 +616,35 @@ export function SkillListPage() {
       await setSkillCategory(skillId, target);
       invalidate();
     } catch (error) {
-      message.error(`能力已保存，但分类设置失败：${errorMessage(error)}`);
+      message.error(i18n.t('skill:category.savedTagFailed', { reason: errorMessage(error) }));
     }
   };
 
   const handleSubmit = async () => {
-    await runWithAccess('READ_WRITE', editingSkill ? '编辑能力' : '新增能力', async () => {
+    await runWithAccess('READ_WRITE', editingSkill ? i18n.t('skill:edit') : i18n.t('skill:create'), async () => {
       if (accessMode === 'package') {
         if (packageReading || !zipFile) {
-          message.error('请先选择并完成解析文件夹或 ZIP');
+          message.error(i18n.t('skill:package.selectFirst'));
           return;
         }
-        const values = await form.validateFields();
+        const values = await form.validateFields().catch(() => null);
+        if (!values) return;
         const metadata = { type: values.type, name: values.name, description: values.description, providers: values.providers };
         try {
           const skill = editingSkill
             ? await updatePackageMut.mutateAsync({ id: editingSkill.id, file: zipFile, metadata })
             : await createPackageMut.mutateAsync({ file: zipFile, metadata });
+          await invalidate();
           await applyCategoryTag(skill.id, values.categoryId);
-          message.success(editingSkill ? '已覆盖上传' : '上传成功');
+          message.success(editingSkill ? i18n.t('skill:package.replaced') : i18n.t('skill:package.uploaded'));
           closeForm();
         } catch (error) {
           message.error(errorMessage(error));
         }
         return;
       }
-      const values = await form.validateFields();
+      const values = await form.validateFields().catch(() => null);
+      if (!values) return;
       if (values.type === 'MCP') {
         const headers = serializeMcpValues(values.mcpHeaders);
         const env = serializeMcpValues(values.mcpEnv);
@@ -657,8 +673,9 @@ export function SkillListPage() {
             },
           })
           : await createMut.mutateAsync(values);
+        await invalidate();
         await applyCategoryTag(skill.id, values.categoryId);
-        message.success(editingSkill ? '已保存' : '创建成功');
+        message.success(editingSkill ? i18n.t('skill:saved') : i18n.t('skill:created'));
         closeForm();
       } catch (error) {
         message.error(errorMessage(error));
@@ -683,8 +700,8 @@ export function SkillListPage() {
     if (selectedType === 'SKILL') form.setFieldsValue({ name: '', description: '' });
     try {
       const file = directory ? await buildDirectoryZip(files) : files[0];
-      if (!file.name.toLowerCase().endsWith('.zip')) throw new Error('请选择 ZIP 文件');
-      if (file.size > MAX_SKILL_PACKAGE_BYTES) throw new Error(`压缩包超过 100 MB。${skillPackageLimitHint}`);
+      if (!file.name.toLowerCase().endsWith('.zip')) throw new Error(i18n.t('skill:package.zipRequired'));
+      if (file.size > MAX_SKILL_PACKAGE_BYTES) throw new Error(i18n.t('skill:package.archiveLimit'));
       const metadata = selectedType === 'SKILL' ? await inspectSkillPackage(file) : null;
       if (seq !== packageSelectionSeq.current) return;
       setZipFile(file);
@@ -699,7 +716,7 @@ export function SkillListPage() {
   };
 
   const handleTestConnection = (skill: Skill) => {
-    runWithAccess('READ_WRITE', '测试 MCP 连接', () => {
+    runWithAccess('READ_WRITE', i18n.t('skill:connection.testAction'), () => {
       setTestTargetSkill(skill);
       setTestExecutorId(executors.find((executor) => executor.status === 'ONLINE')?.id);
     });
@@ -716,7 +733,7 @@ export function SkillListPage() {
   };
 
   const handleCategorySubmit = async () => {
-    await runWithAccess('ADMIN', editingCategoryId ? '更新分类' : '创建分类', async () => {
+    await runWithAccess('ADMIN', editingCategoryId ? i18n.t('skill:category.update') : i18n.t('skill:category.create'), async () => {
       // 校验失败由 antd 在字段上内联提示，静默返回即可，不能让拒绝逃逸成 unhandled rejection
       const values = await categoryForm.validateFields().catch(() => null);
       if (!values) return;
@@ -734,7 +751,7 @@ export function SkillListPage() {
         // 分类变更会让能力列表的分类路径回显失效
         invalidateCategories();
         invalidate();
-        message.success(editingCategoryId ? '分类已保存' : '分类已创建');
+        message.success(editingCategoryId ? i18n.t('skill:category.saved') : i18n.t('skill:category.created'));
         // 保存后停在编辑态，直接用响应回填表单（列表刷新前 categories 里可能还没有新节点）
         setEditingCategoryId(saved.id);
         categoryForm.setFieldsValue({
@@ -761,7 +778,7 @@ export function SkillListPage() {
 
   const handleBatchApply = async () => {
     if (selectedRowKeys.length === 0) return;
-    await runWithAccess('READ_WRITE', '批量设置能力分类', async () => {
+    await runWithAccess('READ_WRITE', i18n.t('skill:category.batchAction'), async () => {
       const categoryId = batchCategoryValue === UNCATEGORIZED ? null : Number(batchCategoryValue);
       setBatchApplying(true);
       try {
@@ -771,11 +788,10 @@ export function SkillListPage() {
         );
         const failed = results.filter((item) => !item.success);
         if (failed.length === 0) {
-          message.success(`已为 ${results.length} 项能力设置分类`);
+          message.success(i18n.t('skill:category.batchSaved', { count: results.length }));
         } else {
           message.warning(
-            `成功 ${results.length - failed.length} 项、失败 ${failed.length} 项：`
-            + failed.map((item) => `#${item.skillId} ${item.message ?? ''}`.trim()).join('；'),
+            i18n.t('skill:category.batchFailed', { succeeded: formatNumber(results.length - failed.length), failed: formatNumber(failed.length), reasons: failed.map((item) => `#${item.skillId} ${item.message ?? ''}`.trim()).join(i18n.t('skill:category.failureSeparator')) }),
           );
         }
         setBatchCategoryOpen(false);
@@ -790,22 +806,22 @@ export function SkillListPage() {
   };
 
   const columns: ColumnsType<Skill> = [
-    { title: 'ID', dataIndex: 'id', width: 70 },
+    { title: t('id'), dataIndex: 'id', width: 70 },
     {
-      title: '名称', dataIndex: 'name', align: 'left',
+      title: t('name'), dataIndex: 'name', align: 'left',
       render: (v: string) => <EllipsisText tooltip={v}>{v}</EllipsisText>,
     },
     {
       // 描述内容普遍很长，悬停提示意义不大：纯省略，不加 tooltip
-      title: '描述', dataIndex: 'description', align: 'left', ellipsis: true,
+      title: t('description'), dataIndex: 'description', align: 'left', ellipsis: true,
       render: (v: string) => v ?? '—',
     },
     {
-      title: '类型', dataIndex: 'type', width: 90,
-      render: (t: Skill['type']) => <Tag color={typeColor[t]}>{typeLabel[t]}</Tag>,
+      title: t('type'), dataIndex: 'type', width: 90,
+      render: (type: Skill['type']) => <Tag color={Object.prototype.hasOwnProperty.call(typeColor, type) ? typeColor[type] : undefined}>{skillTypeLabel(type)}</Tag>,
     },
     {
-      title: '分类', key: 'category', width: 160,
+      title: t('category.label'), key: 'category', width: 160,
       render: (_, record) => activeCategorySkillId === record.id ? (
         <TreeSelect
           autoFocus
@@ -813,7 +829,7 @@ export function SkillListPage() {
           onDropdownVisibleChange={(open) => { if (!open) setActiveCategorySkillId(null); }}
           onBlur={() => setActiveCategorySkillId(null)}
           onKeyDown={(event) => { if (event.key === 'Escape') setActiveCategorySkillId(null); }}
-          aria-label={`${record.name}的分类`}
+          aria-label={t('category.rowLabel', { name: record.name })}
           style={{ width: 130 }}
           dropdownMatchSelectWidth={260}
           showSearch
@@ -821,19 +837,19 @@ export function SkillListPage() {
           treeLine
           treeNodeFilterProp="path"
           treeNodeLabelProp="path"
-          placeholder="选择分类"
-          allowClear
+          placeholder={t('category.select')}
+          allowClear={{ clearIcon: <CloseCircleFilled role="button" aria-label={t('clearCategory')} /> }}
           value={record.categoryId == null ? undefined : String(record.categoryId)}
           treeData={categorySelectTree}
           loading={savingCategoryIds.includes(record.id)}
           disabled={savingCategoryIds.includes(record.id)}
-          onChange={(value) => runWithAccess('READ_WRITE', '设置能力分类', async () => {
+          onChange={(value) => runWithAccess('READ_WRITE', t('category.set'), async () => {
             setActiveCategorySkillId(null);
             setSavingCategoryIds((ids) => [...ids, record.id]);
             try {
               await setSkillCategory(record.id, value == null ? null : Number(value));
               await invalidate();
-              message.success('分类已保存');
+              message.success(i18n.t('skill:category.saved'));
             } catch (error) {
               message.error(errorMessage(error));
             } finally {
@@ -844,25 +860,25 @@ export function SkillListPage() {
       ) : (
         <button
           type="button"
-          aria-label={`修改${record.name}的分类`}
-          title={record.categoryPath || '选择分类'}
+          aria-label={t('category.rowEdit', { name: record.name })}
+          title={record.categoryPath || t('category.select')}
           disabled={savingCategoryIds.includes(record.id)}
-          onClick={() => runWithAccess('READ_WRITE', '设置能力分类', () => setActiveCategorySkillId(record.id))}
+          onClick={() => runWithAccess('READ_WRITE', t('category.set'), () => setActiveCategorySkillId(record.id))}
           style={{ border: 0, background: 'none', padding: 0, font: 'inherit',
             color: record.categoryId == null ? 'var(--aw-muted)' : 'inherit', cursor: 'pointer',
             maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}
         >
-          {savingCategoryIds.includes(record.id) ? '保存中…' : (record.categoryPath || '—')}
+          {savingCategoryIds.includes(record.id) ? t('saving') : (record.categoryPath || '—')}
         </button>
       ),
     },
     {
-      title: '操作', width: 280, fixed: 'right',
+      title: t('actions'), width: 280, fixed: 'right',
       render: (_, record) => {
         const connectionResult = connectionResults[record.id];
         return (
           <Space size={4} wrap>
-            <Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => setDetailSkill(record)}>详情</Button>
+            <Button type="link" size="small" icon={<FileTextOutlined aria-hidden="true" />} onClick={() => setDetailSkill(record)}>{t('detail')}</Button>
             {record.type === 'MCP' && (
               <Button
                 type="link"
@@ -870,8 +886,7 @@ export function SkillListPage() {
                 loading={testingSkillId === record.id}
                 onClick={() => handleTestConnection(record)}
               >
-                测试连接
-              </Button>
+                {t('connection.test')}</Button>
             )}
             {record.type === 'MCP' && connectionResult && (
               <Tag color={connectionResult.success ? 'success' : 'error'}>
@@ -880,19 +895,19 @@ export function SkillListPage() {
             )}
             {record.type === 'MCP' && connectionResult?.success && connectionResult.tools && (
               <Button type="link" size="small" onClick={() => setToolListResult(connectionResult)}>
-                查看 {connectionResult.tools.length} 个工具
+                {t('connection.viewTools', { count: connectionResult.tools.length })}
               </Button>
             )}
-            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
+            <Button type="link" size="small" icon={<EditOutlined aria-hidden="true" />} onClick={() => openEdit(record)}>{t('editButton')}</Button>
             <Popconfirm
-              title="确认删除该技能吗？"
+              title={t('deleteConfirm')}
               open={pendingDeleteId === record.id}
               onOpenChange={(open) => {
                 if (!open) setPendingDeleteId(null);
               }}
               onConfirm={() => runWithAccess(
                 'READ_WRITE',
-                '删除能力',
+                t('deleteAction'),
                 () => deleteMut.mutate(record.id),
               )}
             >
@@ -900,15 +915,14 @@ export function SkillListPage() {
                 type="link"
                 size="small"
                 danger
-                icon={<DeleteOutlined />}
+                icon={<DeleteOutlined aria-hidden="true" />}
                 onClick={() => runWithAccess(
                   'READ_WRITE',
-                  '删除能力',
+                  t('deleteAction'),
                   () => setPendingDeleteId(record.id),
                 )}
               >
-                删除
-              </Button>
+                {t('delete')}</Button>
             </Popconfirm>
           </Space>
         );
@@ -919,8 +933,8 @@ export function SkillListPage() {
   return (
     <>
       <Card
-        className="aw-content-card" title={<PageHeading title="能力库" />}
-        extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增能力</Button>}
+        className="aw-content-card" title={<PageHeading title={t('title')} />}
+        extra={<Button type="primary" icon={<PlusOutlined aria-hidden="true" />} onClick={openCreate}>{t('create')}</Button>}
       >
         <div style={{
           marginBottom: 16,
@@ -937,14 +951,14 @@ export function SkillListPage() {
           />
           <Space size={16}>
             <Space size={8}>
-              <Typography.Text type="secondary">按分类展示</Typography.Text>
+              <Typography.Text type="secondary">{t('category.group')}</Typography.Text>
               <Switch
                 checked={groupByCategory}
                 onChange={handleToggleGroupByCategory}
-                aria-label="按分类展示"
+                aria-label={t('category.group')}
               />
             </Space>
-            <Button icon={<ApartmentOutlined />} onClick={openCategoryManage}>管理分类</Button>
+            <Button icon={<ApartmentOutlined aria-hidden="true" />} onClick={openCategoryManage}>{t('category.manage')}</Button>
           </Space>
         </div>
         {groupByCategory ? (
@@ -956,14 +970,13 @@ export function SkillListPage() {
             {selectedRowKeys.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <Space>
-                  <Typography.Text type="secondary">已选 {selectedRowKeys.length} 项</Typography.Text>
+                  <Typography.Text type="secondary">{t('selected', { count: selectedRowKeys.length })}</Typography.Text>
                   <Button
                     size="small"
-                    onClick={() => runWithAccess('READ_WRITE', '批量设置能力分类', () => setBatchCategoryOpen(true))}
+                    onClick={() => runWithAccess('READ_WRITE', t('category.batchAction'), () => setBatchCategoryOpen(true))}
                   >
-                    批量设置分类
-                  </Button>
-                  <Button size="small" type="text" onClick={() => setSelectedRowKeys([])}>清除选择</Button>
+                    {t('category.batch')}</Button>
+                  <Button size="small" type="text" onClick={() => setSelectedRowKeys([])}>{t('clearSelection')}</Button>
                 </Space>
               </div>
             )}
@@ -973,6 +986,8 @@ export function SkillListPage() {
               dataSource={skills}
               loading={isLoading}
               rowSelection={{
+                getCheckboxProps: (record): CheckboxProps & Pick<AriaAttributes, 'aria-label'> => ({ 'aria-label': t('selection.row', { name: record.name }) }),
+                getTitleCheckboxProps: () => ({ 'aria-label': t('selection.all') }),
                 selectedRowKeys,
                 onChange: (keys) => setSelectedRowKeys(keys),
               }}
@@ -980,7 +995,7 @@ export function SkillListPage() {
                 current: page, pageSize: size, total,
                 onChange: (p, ps) => { setPage(p); setSize(ps); },
                 showSizeChanger: true,
-                showTotal: (t) => `共 ${t} 条`,
+                showTotal: (count) => t('count', { count }),
               }}
               scroll={{ x: 900 }}
             />
@@ -989,7 +1004,8 @@ export function SkillListPage() {
       </Card>
 
       <Modal
-        title="选择测试 Runtime"
+        closable={{ 'aria-label': t('close') }}
+        title={t('connection.runtimeTitle')}
         open={!!testTargetSkill}
         onCancel={() => setTestTargetSkill(null)}
         onOk={() => {
@@ -1000,43 +1016,44 @@ export function SkillListPage() {
         }}
         okButtonProps={{ disabled: !testExecutorId }}
       >
-        <Alert type="info" showIcon message="MCP 将在所选 Runtime 本机执行，不会在服务端执行。" style={{ marginBottom: 16 }} />
+        <Alert type="info" showIcon message={t('connection.runtimeHint')} style={{ marginBottom: 16 }} />
         <Select
           style={{ width: '100%' }}
           value={testExecutorId}
           onChange={setTestExecutorId}
-          placeholder="选择在线 Runtime"
+          placeholder={t('connection.runtimeSelect')}
           options={executors.filter((executor) => executor.status === 'ONLINE').map((executor) => ({
             value: executor.id,
-            label: `${executor.name}（${executor.agentName || '未命名员工'} · #${executor.id}）`,
+            label: t('connection.runtimeOption', { name: executor.name, agent: executor.agentName || t('connection.unnamedAgent'), id: executor.id }),
           }))}
-          notFoundContent="没有在线 Runtime"
+          notFoundContent={t('connection.noRuntime')}
         />
       </Modal>
       <Modal
-        title="能力详情"
+        closable={{ 'aria-label': t('close') }}
+        title={t('detailTitle')}
         open={!!detailSkill}
         onCancel={closeDetail}
-        footer={<Button onClick={closeDetail}>关闭</Button>}
+        footer={<Button onClick={closeDetail}>{t('close')}</Button>}
         width={720}
       >
         {detailSkill && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Descriptions column={2} size="small" bordered>
-              <Descriptions.Item label="名称" span={2}>{detailSkill.name}</Descriptions.Item>
-              <Descriptions.Item label="类型">
-                <Tag color={typeColor[detailSkill.type]}>{typeLabel[detailSkill.type]}</Tag>
+              <Descriptions.Item label={t('name')} span={2}>{detailSkill.name}</Descriptions.Item>
+              <Descriptions.Item label={t('type')}>
+                <Tag color={Object.prototype.hasOwnProperty.call(typeColor, detailSkill.type) ? typeColor[detailSkill.type] : undefined}>{skillTypeLabel(detailSkill.type)}</Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="接入方式">{accessLabel(detailSkill)}</Descriptions.Item>
-              <Descriptions.Item label="分类">{detailSkill.categoryPath || '未分类'}</Descriptions.Item>
-              <Descriptions.Item label="版本">{detailSkill.version}</Descriptions.Item>
-              <Descriptions.Item label="更新人">
-                {detailSkill.modifierName || (detailSkill.modifierId ? `用户 #${detailSkill.modifierId}` : '-')}
+              <Descriptions.Item label={t('access.label')}>{accessLabel(detailSkill)}</Descriptions.Item>
+              <Descriptions.Item label={t('category.label')}>{detailSkill.categoryPath || t('uncategorized')}</Descriptions.Item>
+              <Descriptions.Item label={t('version')}>{detailSkill.version}</Descriptions.Item>
+              <Descriptions.Item label={t('modifier')}>
+                {modifierName(detailSkill)}
               </Descriptions.Item>
-              <Descriptions.Item label="更新时间" span={2}>{formatDateTime(detailSkill.gmtModified)}</Descriptions.Item>
+              <Descriptions.Item label={t('modifiedAt')} span={2}>{formatDateTime(detailSkill.gmtModified)}</Descriptions.Item>
             </Descriptions>
             <div>
-              <Typography.Text strong>描述</Typography.Text>
+              <Typography.Text strong>{t('description')}</Typography.Text>
               <div style={{
                 marginTop: 8,
                 padding: 12,
@@ -1045,11 +1062,11 @@ export function SkillListPage() {
                 borderRadius: 8,
                 whiteSpace: 'pre-wrap',
               }}>
-                {detailSkill.description || '暂无描述'}
+                {detailSkill.description || t('noDescription')}
               </div>
             </div>
             <div>
-              <Typography.Text strong>{detailSkill.sourceType === 'OSS_ZIP' ? '上传包信息' : '安装/命令行接入'}</Typography.Text>
+              <Typography.Text strong>{detailSkill.sourceType === 'OSS_ZIP' ? t('package.info') : t('access.installCommand')}</Typography.Text>
               <pre style={{
                 marginTop: 8,
                 padding: 12,
@@ -1066,7 +1083,7 @@ export function SkillListPage() {
               <>
                 <Divider style={{ margin: 0 }} />
                 <Typography.Text type="secondary">
-                  OSS Ref: {detailSkill.packageOssRef}
+                  {t('package.ossRef', { ref: detailSkill.packageOssRef })}
                 </Typography.Text>
               </>
             )}
@@ -1075,18 +1092,17 @@ export function SkillListPage() {
                 <Divider style={{ margin: 0 }} />
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Typography.Text strong>包内容</Typography.Text>
+                    <Typography.Text strong>{t('package.contents')}</Typography.Text>
                     <Button
                       size="small"
-                      icon={<DownloadOutlined />}
+                      icon={<DownloadOutlined aria-hidden="true" />}
                       loading={downloadingPackage}
                       onClick={handleDownloadPackage}
                     >
-                      下载技能包
-                    </Button>
+                      {t('package.download')}</Button>
                   </div>
                   {packageFilesError && (
-                    <Alert type="error" showIcon style={{ marginTop: 8 }} message={packageFilesError} />
+                    <Alert type="error" showIcon style={{ marginTop: 8 }} message={packageFilesError.message || t('errors.operation')} />
                   )}
                   <Spin spinning={packageFilesLoading}>
                     <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
@@ -1113,7 +1129,7 @@ export function SkillListPage() {
                           />
                         ) : packageFilesLoading || packageFilesError ? null : (
                           // 清单拉取失败时上方已有错误 Alert，再显示空态会被误读为包本身没内容
-                          <Typography.Text type="secondary">技能包为空</Typography.Text>
+                          <Typography.Text type="secondary">{t('package.empty')}</Typography.Text>
                         )}
                       </div>
                       <div
@@ -1140,7 +1156,8 @@ export function SkillListPage() {
       </Modal>
 
       <Modal
-        title={editingSkill ? '编辑能力' : '新增能力'}
+        closable={{ 'aria-label': t('close') }}
+        title={editingSkill ? t('edit') : t('create')}
         open={formOpen}
         width={680}
         forceRender
@@ -1148,8 +1165,8 @@ export function SkillListPage() {
         onCancel={closeForm}
         confirmLoading={packageReading || createMut.isPending || updateMut.isPending || createPackageMut.isPending || updatePackageMut.isPending}
       >
-        <Form form={form} layout="vertical">
-          <Form.Item name="type" label="类型" rules={[{ required: true }]}>
+        <Form name="skillEditor" form={form} layout="vertical">
+          <Form.Item name="type" label={t('type')} rules={[{ required: true }]}>
 			<Select disabled={!!editingSkill} onChange={(value) => {
               packageSelectionSeq.current += 1;
               setPackageReading(false);
@@ -1159,7 +1176,7 @@ export function SkillListPage() {
               options={creatableTypeOptions} />
           </Form.Item>
           {(selectedType === 'SKILL' || selectedType === 'PLUGIN' || selectedType === 'HOOK') && (
-            <Form.Item label="接入方式">
+            <Form.Item label={t('access.label')}>
               <Radio.Group
                 value={accessMode}
                 onChange={(e) => {
@@ -1169,22 +1186,20 @@ export function SkillListPage() {
                   setZipFile(null);
                 }}
                 options={selectedType === 'PLUGIN' || selectedType === 'HOOK'
-                  ? [{ value: 'package', label: selectedType === 'HOOK' ? '上传 Hook 文件夹 / ZIP' : '上传插件文件夹 / ZIP' }]
-                  : [{ value: 'manual', label: '手动接入' }, { value: 'package', label: '上传文件夹 / ZIP' }]}
+                  ? [{ value: 'package', label: selectedType === 'HOOK' ? t('package.uploadHook') : t('package.uploadPlugin') }]
+                  : [{ value: 'manual', label: t('access.manual') }, { value: 'package', label: t('package.uploadFolder') }]}
               />
             </Form.Item>
           )}
           {accessMode === 'package' && selectedType !== 'MCP' && (
-            <Form.Item label="能力包" required>
+            <Form.Item label={t('package.label')} required>
               <Space direction="vertical" style={{ width: '100%' }}>
-                <Alert type="info" showIcon message="上传限制" description={skillPackageLimitHint} />
+                <Alert type="info" showIcon message={t('package.limitsTitle')} description={t('package.limit')} />
                 <Space>
-                  <Button icon={<FolderOpenOutlined />} onClick={() => fileInputRef.current?.click()}>
-                    选择文件夹
-                  </Button>
-                  <Button icon={<FileTextOutlined />} onClick={() => zipInputRef.current?.click()}>
-                    选择 ZIP
-                  </Button>
+                  <Button icon={<FolderOpenOutlined aria-hidden="true" />} onClick={() => fileInputRef.current?.click()}>
+                    {t('package.chooseFolder')}</Button>
+                  <Button icon={<FileTextOutlined aria-hidden="true" />} onClick={() => zipInputRef.current?.click()}>
+                    {t('package.chooseZip')}</Button>
                 </Space>
                 <input
                   ref={(node) => {
@@ -1192,7 +1207,7 @@ export function SkillListPage() {
                     node?.setAttribute('webkitdirectory', '');
                     node?.setAttribute('directory', '');
                   }}
-                  aria-label="选择能力文件夹"
+                  aria-label={t('package.folderInput')}
                   type="file"
                   multiple
                   style={{ display: 'none' }}
@@ -1200,96 +1215,99 @@ export function SkillListPage() {
                 />
                 <input
                   ref={zipInputRef}
-                  aria-label="选择能力 ZIP"
+                  aria-label={t('package.zipInput')}
                   type="file"
                   accept=".zip,application/zip"
                   style={{ display: 'none' }}
                   onChange={(e) => handlePackageSelectFiles(e.target.files, false)}
                 />
                 {packageReading ? <Spin /> : zipFile ? (
-                  <Alert type="success" showIcon message={`已选择 ${zipFile.name}`} description={formatBytes(zipFile.size)} />
+                  <Alert type="success" showIcon message={t('package.selected', { name: zipFile.name })} description={formatBytes(zipFile.size)} />
                 ) : (
                   <Alert type="info" showIcon
-                    message={selectedType === 'SKILL' ? '请选择根目录包含 SKILL.md 的文件夹或 ZIP'
-                      : selectedType === 'HOOK' ? '请选择根目录包含 hook.yaml 的文件夹或 ZIP' : '请选择插件文件夹或 ZIP'}
+                    message={selectedType === 'SKILL' ? t('package.skillRequired')
+                      : selectedType === 'HOOK' ? t('package.hookRequired') : t('package.pluginRequired')}
                     description={editingSkill?.sourceType === 'OSS_ZIP'
-                      ? `当前包：${editingSkill.packageFileName || editingSkill.packageOssRef || '已上传'}，重新选择文件夹或 ZIP 后会覆盖上传。`
-                      : selectedType === 'SKILL' ? '系统会读取 SKILL.md 顶部 YAML frontmatter 中的 name 和 description。' : undefined}
+                      ? t('package.current', { name: editingSkill.packageFileName || editingSkill.packageOssRef || t('package.alreadyUploaded') })
+                      : selectedType === 'SKILL' ? t('package.frontmatter') : undefined}
                   />
                 )}
               </Space>
             </Form.Item>
           )}
           {selectedType === 'PLUGIN' && (
-            <Form.Item name="providers" label="适用 Provider" rules={[{ required: true, message: '请选择 Provider' }]}>
+            <Form.Item name="providers" label={t('providers')} rules={[{ required: true, message: t('validation.provider') }]}>
               <Select mode="multiple" options={[{ value: 'claude' }, { value: 'qoder' }]} />
             </Form.Item>
           )}
-          <Form.Item name="name" label="名称"
-            rules={selectedType === 'HOOK' ? [] : [{ required: true, message: '请输入能力名称' }]}>
-            <Input disabled={accessMode === 'package' && selectedType === 'SKILL'} placeholder="如: code-review-mcp" />
+          <Form.Item name="name" label={t('name')}
+            rules={selectedType === 'HOOK' ? [] : [{ required: true, message: t('validation.name') }]}>
+            <Input disabled={accessMode === 'package' && selectedType === 'SKILL'} placeholder={t('placeholder.name')} />
           </Form.Item>
           <Form.Item
             name="categoryId"
-            label="分类标签（选填）"
+            label={t('category.optional')}
             initialValue={UNCATEGORIZED}
-            extra="选择“未分类”即取消打标，不改变能力内容、类型或绑定关系。"
+            extra={t('category.tagHint')}
           >
-            <Select options={categorySelectOptions} placeholder="未分类" />
+            <Select options={categorySelectOptions} placeholder={t('uncategorized')} />
           </Form.Item>
           {selectedType === 'MCP' && (
             <>
-              <Form.Item name="mcpTransport" label="服务器类型" initialValue="http">
+              <Form.Item name="mcpTransport" label={t('mcp.serverType')} initialValue="http">
                 <Select options={[
-                  { value: 'http', label: 'Streamable HTTP' },
-                  { value: 'sse', label: 'SSE' },
-                  { value: 'stdio', label: '本地命令（STDIO）' },
+                  { value: 'http', label: t('mcp.http') },
+                  { value: 'sse', label: t('mcp.sse') },
+                  { value: 'stdio', label: t('mcp.stdio') },
                 ]} />
               </Form.Item>
               <Form.Item noStyle shouldUpdate={(prev, next) => prev.mcpTransport !== next.mcpTransport}>
                 {({ getFieldValue }) => getFieldValue('mcpTransport') === 'stdio' ? (
                   <>
-                    <Form.Item name="mcpCommand" label="可执行文件" rules={[{ required: true }]}><Input placeholder="如 npx" /></Form.Item>
+                    <Form.Item name="mcpCommand" label={t('mcp.executable')} rules={[{ required: true }]}><Input placeholder={t('placeholder.command')} /></Form.Item>
                     <Form.List name="mcpArgs">
-                      {(fields, { add, remove }) => <Form.Item label="参数（可选）">
+                      {(fields, { add, remove }) => <Form.Item label={t('mcp.args')}>
                         {fields.map((field) => <div key={field.key} style={{ display: 'flex', width: '100%', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                          <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: '请输入参数' }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
-                            <Input placeholder="如 --server-url" />
+                          <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: t('validation.argument') }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                            <Input aria-label={t('mcp.argument')} placeholder={t('placeholder.argument')} />
                           </Form.Item>
-                          <MinusCircleOutlined aria-label="删除参数" onClick={() => remove(field.name)} />
+                          <Button type="text" aria-label={t('mcp.removeArgument')} onClick={() => remove(field.name)} icon={<MinusCircleOutlined aria-hidden="true" />} />
                         </div>)}
-                        <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined />}>添加参数</Button>
+                        <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined aria-hidden="true" />}>{t('mcp.addArgument')}</Button>
                       </Form.Item>}
                     </Form.List>
                     <Form.List name="mcpEnv">
-                      {(fields, { add, remove }) => <Form.Item label="Env（可选）">
+                      {(fields, { add, remove }) => <Form.Item label={t('mcp.env')}>
                         {fields.map((field) => <div key={field.key} style={{ display: 'flex', width: '100%', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                          <Form.Item {...field} name={[field.name, 'name']} rules={[{ required: true, message: '请输入变量名' }]} style={{ flex: '0 1 240px', minWidth: 0, marginBottom: 0 }}>
-                            <Input placeholder="变量名" />
+                          <Form.Item {...field} name={[field.name, 'name']} rules={[{ required: true, message: t('validation.envName') }]} style={{ flex: '0 1 240px', minWidth: 0, marginBottom: 0 }}>
+                            <Input aria-label={t('placeholder.envName')} placeholder={t('placeholder.envName')} />
                           </Form.Item>
-                          <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: '请输入变量值' }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
-                            <Input placeholder="变量值" autoComplete="new-password" onFocus={(event) => { if (form.getFieldValue(['mcpEnv', field.name, 'secret']) && event.currentTarget.value === AUTHORIZATION_MASK) form.setFieldValue(['mcpEnv', field.name, 'value'], ''); }} />
+                          <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: t('validation.envValue') }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                            <Input aria-label={t('placeholder.envValue')} placeholder={t('placeholder.envValue')} autoComplete="new-password" onFocus={(event) => { if (form.getFieldValue(['mcpEnv', field.name, 'secret']) && event.currentTarget.value === AUTHORIZATION_MASK) form.setFieldValue(['mcpEnv', field.name, 'value'], ''); }} />
                           </Form.Item>
-                          <Form.Item {...field} name={[field.name, 'secret']} valuePropName="checked" style={{ flex: 'none', marginBottom: 0 }}><Tooltip title="加密保存；编辑时只能填写新值"><Checkbox style={{ whiteSpace: 'nowrap' }} onChange={(event) => form.setFieldValue(['mcpEnv', field.name, 'secret'], event.target.checked)}>私密</Checkbox></Tooltip></Form.Item>
-                          <MinusCircleOutlined aria-label="删除 Env" onClick={() => remove(field.name)} />
+                          <Form.Item {...field} name={[field.name, 'secret']} valuePropName="checked" style={{ flex: 'none', marginBottom: 0 }}>
+                            <SecretCheckbox label={t('mcp.private')} hint={t('mcp.secretHint')} />
+                          </Form.Item>
+                          <Button type="text" aria-label={t('mcp.removeEnv')} onClick={() => remove(field.name)} icon={<MinusCircleOutlined aria-hidden="true" />} />
                         </div>)}
-                        <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined />}>添加 Env</Button>
+                        <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined aria-hidden="true" />}>{t('mcp.addEnv')}</Button>
                       </Form.Item>}
                     </Form.List>
                   </>
                 ) : (
                   <>
-                    <Form.Item name="mcpUrl" label="HTTPS 地址" rules={[{ required: true, type: 'url' }]}><Input placeholder="https://example.com/mcp" /></Form.Item>
+                    <Form.Item name="mcpUrl" label={t('mcp.url')} rules={[{ required: true, type: 'url' }]}><Input placeholder="https://example.com/mcp" /></Form.Item>
                     <Form.List name="mcpHeaders">
                       {(fields, { add, remove }) => (
-                        <Form.Item label="Headers（可选）">
+                        <Form.Item label={t('mcp.headers')}>
                           {fields.map((field) => (
                             <div key={field.key} style={{ display: 'flex', width: '100%', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                              <Form.Item {...field} name={[field.name, 'name']} rules={[{ required: true, message: '请输入 Header 名称' }]} style={{ flex: '0 1 180px', minWidth: 0, marginBottom: 0 }}>
-                                <Input placeholder="Authorization" />
+                              <Form.Item {...field} name={[field.name, 'name']} rules={[{ required: true, message: t('validation.headerName') }]} style={{ flex: '0 1 180px', minWidth: 0, marginBottom: 0 }}>
+                                <Input aria-label={t('mcp.headerName')} placeholder="Authorization" />
                               </Form.Item>
-                              <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: '请输入 Header 值' }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
+                              <Form.Item {...field} name={[field.name, 'value']} rules={[{ required: true, message: t('validation.headerValue') }]} style={{ flex: 1, minWidth: 0, marginBottom: 0 }}>
                                 <Input
+                                  aria-label={t('mcp.headerValue')}
                                   placeholder="Bearer your-token"
                                   autoComplete="new-password"
                                   onFocus={(event) => {
@@ -1300,17 +1318,17 @@ export function SkillListPage() {
                                 />
                               </Form.Item>
                               <Form.Item {...field} name={[field.name, 'secret']} valuePropName="checked" style={{ flex: 'none', marginBottom: 0 }}>
-                                <Tooltip title="加密保存；编辑时只能填写新值"><Checkbox style={{ whiteSpace: 'nowrap' }} onChange={(event) => form.setFieldValue(['mcpHeaders', field.name, 'secret'], event.target.checked)}>私密</Checkbox></Tooltip>
+                                <SecretCheckbox label={t('mcp.private')} hint={t('mcp.secretHint')} />
                               </Form.Item>
-                              <MinusCircleOutlined aria-label="删除 Header" onClick={() => remove(field.name)} />
+                              <Button type="text" aria-label={t('mcp.removeHeader')} onClick={() => remove(field.name)} icon={<MinusCircleOutlined aria-hidden="true" />} />
                             </div>
                           ))}
-                          <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined />}>添加 Header</Button>
+                          <Button block type="dashed" onClick={() => add()} icon={<PlusOutlined aria-hidden="true" />}>{t('mcp.addHeader')}</Button>
                         </Form.Item>
                       )}
                     </Form.List>
-                    <Form.Item name="mcpTimeoutSeconds" label="超时时间（秒）" initialValue={60}
-                      rules={[{ required: true, message: '请输入超时时间' }]} extra="连接、工具列表获取和工具调用的超时时间，范围 1–600 秒。">
+                    <Form.Item name="mcpTimeoutSeconds" label={t('mcp.timeout')} initialValue={60}
+                      rules={[{ required: true, message: t('validation.timeout') }]} extra={t('mcp.timeoutHint')}>
                       <InputNumber min={1} max={600} precision={0} style={{ width: '100%' }} />
                     </Form.Item>
                   </>
@@ -1319,17 +1337,17 @@ export function SkillListPage() {
             </>
           )}
           {accessMode === 'manual' && selectedType === 'SKILL' && (
-            <Form.Item name="installSpec" label="安装/下载方式" rules={[{ required: true, message: '请填写安装方式' }]}
-              tooltip="如 npx @anthropic/mcp-server 或 pip install xxx">
-              <Input.TextArea rows={2} placeholder="如: npx @anthropic/mcp-server-github" />
+            <Form.Item name="installSpec" label={t('access.install')} rules={[{ required: true, message: t('validation.install') }]}
+              tooltip={t('placeholder.installHint')}>
+              <Input.TextArea rows={2} placeholder={t('placeholder.install')} />
             </Form.Item>
           )}
-          <Form.Item name="description" label="描述">
-            <Input.TextArea disabled={accessMode === 'package' && selectedType === 'SKILL'} rows={2} placeholder="描述该能力的功能" />
+          <Form.Item name="description" label={t('description')}>
+            <Input.TextArea disabled={accessMode === 'package' && selectedType === 'SKILL'} rows={2} placeholder={t('placeholder.description')} />
           </Form.Item>
         </Form>
       </Modal>
-      <Modal title={`MCP 工具列表（${toolListResult?.tools?.length || 0}）`} open={toolListResult !== null}
+      <Modal closable={{ 'aria-label': t('close') }} title={t('connection.tools', { count: toolListResult?.tools?.length || 0 })} open={toolListResult !== null}
         footer={null} onCancel={() => setToolListResult(null)} width={680}>
         {(toolListResult?.tools || []).length > 0 && <Collapse
           expandIconPosition="start"
@@ -1345,11 +1363,12 @@ export function SkillListPage() {
             </>,
           }))}
         />}
-        {toolListResult?.tools?.length === 0 && <Typography.Text type="secondary">该 MCP 未返回工具。</Typography.Text>}
+        {toolListResult?.tools?.length === 0 && <Typography.Text type="secondary">{t('connection.emptyTools')}</Typography.Text>}
       </Modal>
 
       <Modal
-        title="管理分类"
+        closable={{ 'aria-label': t('close') }}
+        title={t('category.manage')}
         open={categoryManageOpen}
         onCancel={() => setCategoryManageOpen(false)}
         footer={null}
@@ -1370,17 +1389,16 @@ export function SkillListPage() {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Typography.Text type="secondary">分类目录</Typography.Text>
+              <Typography.Text type="secondary">{t('category.directory')}</Typography.Text>
               <Button
                 size="small"
-                icon={<PlusOutlined />}
-                onClick={() => runWithAccess('ADMIN', '创建分类', () => startCreateCategory(editingCategoryId))}
+                icon={<PlusOutlined aria-hidden="true" />}
+                onClick={() => runWithAccess('ADMIN', t('category.create'), () => startCreateCategory(editingCategoryId))}
               >
-                新增分类
-              </Button>
+                {t('category.add')}</Button>
             </div>
             {categories.length === 0 ? (
-              <Typography.Text type="secondary">还没有分类，先在右侧新增一个。</Typography.Text>
+              <Typography.Text type="secondary">{t('category.empty')}</Typography.Text>
             ) : (
               <Tree
                 treeData={manageTreeData}
@@ -1392,21 +1410,21 @@ export function SkillListPage() {
                     {editingCategoryId === node.key && (
                       <span onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                         <Popconfirm
-                          title={`确定删除分类「${node.title}」？`}
-                          description="有子分类或关联能力时，请先迁移后再删除。"
+                          title={t('category.deleteConfirm', { name: node.title as string })}
+                          description={t('category.deleteHint')}
                           open={pendingDeleteCategoryId === node.key}
                           onOpenChange={(open) => { if (!open) setPendingDeleteCategoryId(null); }}
-                          onConfirm={() => runWithAccess('ADMIN', '删除分类',
+                          onConfirm={() => runWithAccess('ADMIN', t('category.delete'),
                             () => handleDeleteCategory(Number(node.key)))}
-                          okText="删除"
-                          cancelText="取消"
+                          okText={t('delete')}
+                          cancelText={t('cancel')}
                           okButtonProps={{ danger: true, loading: deleteCategoryMut.isPending }}
                         >
-                          <Button type="text" size="small" danger icon={<DeleteOutlined />}
-                            aria-label={`删除分类「${node.title}」`}
-                            title="删除分类"
+                          <Button type="text" size="small" danger icon={<DeleteOutlined aria-hidden="true" />}
+                            aria-label={t('category.deleteLabel', { name: node.title as string })}
+                            title={t('category.delete')}
                             loading={deleteCategoryMut.isPending}
-                            onClick={() => runWithAccess('ADMIN', '删除分类',
+                            onClick={() => runWithAccess('ADMIN', t('category.delete'),
                               () => setPendingDeleteCategoryId(Number(node.key)))}
                           />
                         </Popconfirm>
@@ -1427,31 +1445,30 @@ export function SkillListPage() {
             )}
             <Divider style={{ margin: '12px 0 8px' }} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              未分类为系统视图，不是分类节点。
-            </Typography.Text>
+              {t('category.systemView')}</Typography.Text>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {editingCategoryId != null
-                ? `当前：${categories.find((item) => item.id === editingCategoryId)?.path ?? ''}`
-                : '新增分类'}
+                ? t('category.current', { path: categories.find((item) => item.id === editingCategoryId)?.path ?? '' })
+                : t('category.add')}
             </Typography.Text>
-            <Form form={categoryForm} layout="vertical" style={{ marginTop: 8 }}>
+            <Form name="skillCategory" form={categoryForm} layout="vertical" style={{ marginTop: 8 }}>
               <Form.Item
                 name="name"
-                label="分类名称"
+                label={t('category.name')}
                 rules={[
-                  { required: true, message: '请输入分类名称' },
-                  { max: 50, message: '名称不超过 50 个字符' },
+                  { required: true, message: t('validation.categoryName') },
+                  { max: 50, message: t('validation.categoryNameMax') },
                 ]}
               >
-                <Input maxLength={50} placeholder="如: Vue" showCount />
+                <Input maxLength={50} placeholder={t('placeholder.categoryName')} showCount />
               </Form.Item>
               <Form.Item
                 name="parentId"
-                label="上级分类"
+                label={t('category.parent')}
                 initialValue={UNCATEGORIZED}
-                extra="选择“无（顶级分类）”创建顶级分类；选择已有节点创建子分类。"
+                extra={t('category.parentHint')}
               >
                 <TreeSelect
                   treeData={parentCategoryOptions}
@@ -1464,59 +1481,64 @@ export function SkillListPage() {
               </Form.Item>
               <Form.Item
                 name="description"
-                label="分类说明（选填）"
-                extra="供上传人和调用 MCP 的智能体判断适用范围。"
+                label={t('category.description')}
+                extra={t('category.descriptionHint')}
               >
-                <Input.TextArea rows={3} maxLength={1000} placeholder="说明该分类的适用范围与排除项" />
+                <Input.TextArea rows={3} maxLength={1000} placeholder={t('placeholder.categoryDescription')} />
               </Form.Item>
               <Form.Item style={{ marginBottom: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
                   borderTop: '1px solid var(--aw-border)', paddingTop: 16 }}>
                   <Space>
-                    <Button onClick={() => setCategoryManageOpen(false)}>取消</Button>
+                    <Button onClick={() => setCategoryManageOpen(false)}>{t('cancel')}</Button>
                     <Button
                       type="primary"
                       loading={createCategoryMut.isPending || updateCategoryMut.isPending}
                       onClick={handleCategorySubmit}
                     >
-                      保存分类
-                    </Button>
+                      {t('category.save')}</Button>
                   </Space>
                 </div>
               </Form.Item>
             </Form>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              修改名称或说明不改变已有能力的分类关联。
-            </Typography.Text>
+              {t('category.editHint')}</Typography.Text>
           </div>
         </div>
       </Modal>
 
       <Modal
-        title="批量设置分类"
+        closable={{ 'aria-label': t('close') }}
+        title={t('category.batch')}
         open={batchCategoryOpen}
         onCancel={() => setBatchCategoryOpen(false)}
         onOk={handleBatchApply}
         confirmLoading={batchApplying}
-        okText="应用"
+        okText={t('apply')}
         width={520}
       >
         <Typography.Paragraph type="secondary">
-          将为已选的 {selectedRowKeys.length} 项能力设置分类；选择“未分类”将取消其分类关联。
+          {t('category.batchHint', { count: selectedRowKeys.length })}
         </Typography.Paragraph>
         <Form layout="vertical">
-          <Form.Item label="目标分类">
+          <Form.Item label={t('category.target')}>
             <Select
               value={batchCategoryValue}
               onChange={setBatchCategoryValue}
               options={categorySelectOptions}
-              aria-label="目标分类"
+              aria-label={t('category.target')}
             />
           </Form.Item>
         </Form>
       </Modal>
     </>
   );
+}
+
+function modifierName(skill: Skill): string {
+  return skill.modifierNameKind === 'USER_ID_FALLBACK' && skill.modifierId != null
+    ? i18n.t('skill:modifierFallback', { id: skill.modifierId })
+    : skill.modifierName || (skill.modifierId ? i18n.t('skill:modifierFallback', { id: skill.modifierId }) : '-');
 }
 
 function formatDateTime(value?: string) {
@@ -1527,27 +1549,49 @@ function formatDateTime(value?: string) {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return date.toLocaleString('zh-CN', { hour12: false });
+  return formatSharedDateTime(value, { hour12: false });
 }
 
 function formatConnectionResult(result: SkillConnectionTestResult) {
   if (result.success) {
-    return `连接成功${typeof result.durationMs === 'number' ? `（${result.durationMs}ms）` : ''}`;
+    return typeof result.durationMs === 'number'
+      ? i18n.t('skill:connection.successDuration', { duration: formatNumber(result.durationMs) })
+      : i18n.t('skill:connection.success');
   }
-  return `连接失败：${result.message || '未知错误'}`;
+  const code = result.ownedFailureCode;
+  const failureKeys = {
+    SELECT_RUNTIME: 'connection.failures.SELECT_RUNTIME',
+    RUNTIME_UNAVAILABLE: 'connection.failures.RUNTIME_UNAVAILABLE',
+    EMPTY_CONFIG: 'connection.failures.EMPTY_CONFIG',
+    INVALID_CONFIG_JSON: 'connection.failures.INVALID_CONFIG_JSON',
+    SECRET_CRYPTO_UNAVAILABLE: 'connection.failures.SECRET_CRYPTO_UNAVAILABLE',
+    CONNECTION_TIMEOUT: 'connection.failures.CONNECTION_TIMEOUT',
+    CONNECTION_FAILED: 'connection.failures.CONNECTION_FAILED',
+    LEGACY_RESULT_INCOMPATIBLE: 'connection.failures.LEGACY_RESULT_INCOMPATIBLE',
+    TEST_INTERRUPTED: 'connection.failures.TEST_INTERRUPTED',
+    RUNTIME_WAIT_TIMEOUT: 'connection.failures.RUNTIME_WAIT_TIMEOUT',
+    INVALID_RESULT: 'connection.failures.INVALID_RESULT',
+    REQUEST_CREATE_FAILED: 'connection.failures.REQUEST_CREATE_FAILED',
+    DISPATCH_FAILED: 'connection.failures.DISPATCH_FAILED',
+  } as const;
+  const reason = code && Object.prototype.hasOwnProperty.call(failureKeys, code)
+    && (code !== 'RUNTIME_WAIT_TIMEOUT' || typeof result.ownedFailureArgs?.seconds === 'number' && Number.isFinite(result.ownedFailureArgs.seconds))
+    ? i18n.t(`skill:${failureKeys[code]}`, { seconds: formatNumber(result.ownedFailureArgs?.seconds ?? 0) })
+    : result.message || i18n.t('skill:connection.unknown');
+  return i18n.t('skill:connection.failureReason', { reason });
 }
 
 function detailAccessText(skill: Skill) {
   if (skill.sourceType === 'OSS_ZIP') {
     const lines = [
-      `文件名: ${skill.packageFileName || '-'}`,
-      `大小: ${skill.packageSize ? `${Math.ceil(skill.packageSize / 1024)} KB` : '-'}`,
-      `MD5: ${skill.packageMd5 || '-'}`,
+      i18n.t('skill:package.fileName', { name: skill.packageFileName || '-' }),
+      i18n.t('skill:package.size', { size: skill.packageSize ? `${formatNumber(Math.ceil(skill.packageSize / 1024))} KB` : '-' }),
+      i18n.t('skill:package.md5', { md5: skill.packageMd5 || '-' }),
     ];
     return lines.join('\n');
   }
   if (skill.type !== 'MCP') {
-    return skill.installSpec || '暂无安装/下载方式';
+    return skill.installSpec || i18n.t('skill:access.noInstall');
   }
   try {
     const config = JSON.parse(skill.installSpec || '{}') as Record<string, unknown>;
@@ -1563,8 +1607,22 @@ function detailAccessText(skill: Skill) {
     ]));
     return JSON.stringify(config, null, 2);
   } catch {
-    return skill.installSpec || '暂无安装/下载方式';
+    return skill.installSpec || i18n.t('skill:access.noInstall');
   }
+}
+
+/** Tooltip 只透传子元素自身 props，Form.Item 注入的 checked/onChange 必须由组件显式接收再交给 Checkbox。 */
+function SecretCheckbox({ checked, onChange, label, hint }: {
+  checked?: boolean;
+  onChange?: CheckboxProps['onChange'];
+  label: string;
+  hint: string;
+}) {
+  return (
+    <Tooltip title={hint}>
+      <Checkbox checked={checked} onChange={onChange} style={{ whiteSpace: 'nowrap' }}>{label}</Checkbox>
+    </Tooltip>
+  );
 }
 
 function mcpValues(raw: unknown) {

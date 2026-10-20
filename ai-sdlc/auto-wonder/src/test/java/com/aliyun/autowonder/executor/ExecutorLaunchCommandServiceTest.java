@@ -13,10 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.Base64;
-import java.util.Date;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -41,7 +38,6 @@ class ExecutorLaunchCommandServiceTest {
     ExecutorLaunchConfigService launchConfigService;
     ExecutorLaunchCommandService service;
     ExecutorLaunchCommandService wiredService;
-    Date now;
 
     @BeforeEach
     void setUp() {
@@ -53,7 +49,6 @@ class ExecutorLaunchCommandServiceTest {
         executorService = mock(ExecutorService.class);
         launchConfigService = mock(ExecutorLaunchConfigService.class);
         wiredService = new ExecutorLaunchCommandService(brandingService, executorService, launchConfigService);
-        now = Date.from(ZonedDateTime.of(2026, 9, 4, 13, 45, 0, 0, ZoneId.systemDefault()).toInstant());
     }
 
     @Test
@@ -77,7 +72,6 @@ class ExecutorLaunchCommandServiceTest {
         assertEquals("posix", vo.getOs());
         assertFalse(vo.isDebug());
         assertNull(vo.getShell());
-        assertNull(vo.getLogFileName());
     }
 
     @Test
@@ -113,34 +107,33 @@ class ExecutorLaunchCommandServiceTest {
     }
 
     @Test
-    void debugBashCommandTeesToThePageLogFileName() {
-        ExecutorLaunchCommandVO vo = buildAt("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
-                "medium", "260000", "posix", true, null, now);
+    void debugBashCommandAppendsDebugWithoutTeeingToAFile() {
+        ExecutorLaunchCommandVO vo = build("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
+                "medium", "260000", "posix", true, null);
 
         assertEquals("bash", vo.getShell());
-        assertEquals("aw-qoder-9-260904-13-45-00.log", vo.getLogFileName());
-        assertTrue(vo.getCommand().endsWith(" --token-aware-enable --debug"
-                + " 2>&1 | tee ~/aw-qoder-9-260904-13-45-00.log"));
+        assertTrue(vo.getCommand().endsWith(" --token-aware-enable --debug"), vo.getCommand());
+        assertFalse(vo.getCommand().contains("tee"), vo.getCommand());
     }
 
     @Test
-    void debugOnWindowsDefaultsToPowerShellAndTeeObject() {
-        ExecutorLaunchCommandVO vo = buildAt("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
-                "medium", "260000", "windows", true, null, now);
+    void debugOnWindowsDefaultsToPowerShellWithoutTeeingToAFile() {
+        ExecutorLaunchCommandVO vo = build("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
+                "medium", "260000", "windows", true, null);
 
         assertEquals("powershell", vo.getShell());
-        assertEquals("aw-qoder-9-260904-13-45-00.log", vo.getLogFileName());
-        assertTrue(decode(vo.getCommand()).endsWith(" --token-aware-enable --debug"
-                + " 2>&1 | Tee-Object -FilePath \"$HOME/aw-qoder-9-260904-13-45-00.log\""));
+        assertTrue(decode(vo.getCommand()).endsWith(" --token-aware-enable --debug"), decode(vo.getCommand()));
+        assertFalse(decode(vo.getCommand()).contains("Tee-Object"), decode(vo.getCommand()));
     }
 
     @Test
     void debugShellCanBeOverriddenOnWindows() {
-        ExecutorLaunchCommandVO vo = buildAt("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
-                "medium", "260000", "windows", true, "bash", now);
+        ExecutorLaunchCommandVO vo = build("awexec_plain", "QODER_CLI", "platform", "qmodel_latest",
+                "medium", "260000", "windows", true, "bash");
 
         assertEquals("bash", vo.getShell());
-        assertTrue(vo.getCommand().endsWith(" 2>&1 | tee ~/aw-qoder-9-260904-13-45-00.log"));
+        assertTrue(vo.getCommand().endsWith(" --token-aware-enable --debug"), vo.getCommand());
+        assertFalse(vo.getCommand().contains("tee"), vo.getCommand());
     }
 
     @Test
@@ -262,13 +255,12 @@ class ExecutorLaunchCommandServiceTest {
     }
 
     @Test
-    void publicBuildUsesTheCurrentTimeForTheDebugLogName() {
+    void publicBuildAppendsDebugWithoutATeePipeline() {
         ExecutorLaunchCommandVO vo = service.build("awexec_plain", 9L, "QODER_CLI", "platform",
                 "auto", "medium", "260000", "posix", true, "bash");
 
-        assertTrue(vo.getLogFileName().matches("aw-qoder-9-\\d{6}-\\d{2}-\\d{2}-\\d{2}\\.log"),
-                vo.getLogFileName());
-        assertTrue(vo.getCommand().endsWith("| tee ~/" + vo.getLogFileName()));
+        assertTrue(vo.getCommand().endsWith(" --debug"), vo.getCommand());
+        assertFalse(vo.getCommand().contains("tee"), vo.getCommand());
     }
 
     @Test
@@ -293,14 +285,6 @@ class ExecutorLaunchCommandServiceTest {
     }
 
     @Test
-    void debugLogFileNameUsesTheProviderAndPaddedTimestamp() {
-        assertEquals("aw-qodercn-12-260904-13-45-00.log",
-                ExecutorLaunchCommandService.debugLogFileName("QODER_CN_CLI", 12L, now));
-        assertEquals("aw-claude-3-260904-13-45-00.log",
-                ExecutorLaunchCommandService.debugLogFileName("CLAUDE_CODE", 3L, now));
-    }
-
-    @Test
     void launchCommandWsUrlFollowsTheBrandingDomainWithoutRestart() {
         PlatformBrandingDao dao = mock(PlatformBrandingDao.class);
         PlatformBrandingService realBranding = new PlatformBrandingService(
@@ -311,14 +295,14 @@ class ExecutorLaunchCommandServiceTest {
         when(dao.findActive()).thenReturn(brandingRow("https://wonder.example.com"));
 
         ExecutorLaunchCommandVO withDomain = brandedService.buildAt("awexec_plain", 9L, "QODER_CLI",
-                "platform", "auto", "medium", "260000", "posix", false, null, now);
+                "platform", "auto", "medium", "260000", "posix", false, null);
 
         assertEquals("wss://wonder.example.com/ws/executor", withDomain.getWsUrl());
         assertTrue(withDomain.getCommand().contains("--ws-url wss://wonder.example.com/ws/executor"));
 
         when(dao.findActive()).thenReturn(brandingRow(null));
         ExecutorLaunchCommandVO cleared = brandedService.buildAt("awexec_plain", 9L, "QODER_CLI",
-                "platform", "auto", "medium", "260000", "posix", false, null, now);
+                "platform", "auto", "medium", "260000", "posix", false, null);
 
         assertEquals("wss://daily.auto-wonder.example.com/ws/executor", cleared.getWsUrl());
     }
@@ -346,6 +330,39 @@ class ExecutorLaunchCommandServiceTest {
         }
     }
 
+    @Test void savedVersionWorkspaceNameAndDebugAreUsedInBothShellFormats() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        var config = launchConfigService.requireCompleteConfig(9L, TENANT);
+        config.runtimeVersion = "0.3.9";
+        config.workspaceRoot = "/data/任务 owner's";
+        config.daemonName = "custom daemon";
+        config.debug = true;
+        var posix = wiredService.buildForExecutor(9L, TENANT, "posix", false, null);
+        assertEquals("0.3.9", posix.getRuntimeVersion());
+        assertEquals(config.workspaceRoot, posix.getWorkspaceRoot());
+        var parsed = ExecutorLaunchCommandParser.parse(posix.getCommand(), posix.getCommand(), 2);
+        assertEquals(config.workspaceRoot, parsed.getWorkspaceRoot());
+        assertEquals("custom daemon", parsed.getDaemonName());
+        assertTrue(parsed.getDebug());
+        String windows = decode(wiredService.buildForExecutor(9L, TENANT, "windows", false, null).getCommand());
+        assertTrue(windows.contains("autowonder@0.3.9"));
+        assertTrue(windows.contains("--workspace-root '/data/任务 owner''s'"));
+    }
+
+    @Test void editedCommandWritesParsedValuesThroughTheSharedConfigValidation() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        String command = wiredService.buildForExecutor(9L, TENANT, "posix", false, null).getCommand();
+        var request = new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchCommandRequest();
+        request.setVersion(4);
+        request.setCommand(command.replace("autowonder@" + RUNTIME_VERSION, "autowonder@0.3.9") + " --workspace-root '/data/new tasks'");
+        wiredService.saveCommand(9L, TENANT, 7L, request);
+        var parsed = org.mockito.ArgumentCaptor.forClass(com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest.class);
+        verify(launchConfigService).updateConfig(eq(9L), eq(TENANT), parsed.capture(), eq(7L));
+        assertEquals("0.3.9", parsed.getValue().getRuntimeVersion());
+        assertEquals("/data/new tasks", parsed.getValue().getWorkspaceRoot());
+        assertEquals(4, parsed.getValue().getVersion());
+    }
+
     // ---------- buildForExecutor：页面与 MCP 共用的唯一生成入口 ----------
 
     private void stubStoredExecutor(String clientKind, String memoryMode, String model, String reasoningEffort,
@@ -361,6 +378,38 @@ class ExecutorLaunchCommandServiceTest {
         config.reasoningEffort = reasoningEffort;
         config.contextWindow = contextWindow;
         when(launchConfigService.requireCompleteConfig(9L, TENANT)).thenReturn(config);
+    }
+
+    @Test
+    void previewsDraftValuesThroughTheCanonicalFormatterWithoutSaving() {
+        stubStoredExecutor("QODER_CLI", "platform", "auto", "medium", "260000");
+        var config = new ExecutorLaunchConfigService.LaunchConfig();
+        config.memoryMode = "none";
+        config.model = "ultimate";
+        config.reasoningEffort = "low";
+        config.contextWindow = "1000000";
+        config.maxConcurrentDispatches = 7;
+        config.runtimeVersion = "0.3.9";
+        config.workspaceRoot = "/data/tasks with spaces";
+        var request = new com.aliyun.autowonder.executor.dto.ExecutorLaunchCommandPreviewRequest();
+        var draft = new com.aliyun.autowonder.executor.dto.UpdateExecutorLaunchConfigRequest();
+        draft.setVersion(4);
+        request.setConfig(draft);
+        when(launchConfigService.previewConfig(9L, TENANT, draft)).thenReturn(config);
+
+        String posix = wiredService.previewForExecutor(9L, TENANT, request).getCommand();
+        assertTrue(posix.contains("autowonder@0.3.9"));
+        assertTrue(posix.contains("--model ultimate --reasoning-effort low --context-window 1000000"));
+        assertTrue(posix.contains("--max-tasks 7"));
+        assertTrue(posix.contains("--workspace-root '/data/tasks with spaces'"));
+        request.setOs("windows");
+        String windows = wiredService.previewForExecutor(9L, TENANT, request).getCommand();
+        assertTrue(windows.startsWith("powershell -NoProfile -EncodedCommand "));
+        String script = new String(java.util.Base64.getDecoder().decode(windows.substring(windows.lastIndexOf(' ') + 1)),
+                java.nio.charset.StandardCharsets.UTF_16LE);
+        assertTrue(script.contains("--model ultimate"));
+        assertTrue(script.contains("--context-window 1000000"));
+        verify(launchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
     }
 
     @Test
@@ -398,8 +447,6 @@ class ExecutorLaunchCommandServiceTest {
         assertEquals("qodercn", vo.getProvider());
         assertTrue(vo.isDebug());
         assertEquals("powershell", vo.getShell());
-        assertTrue(vo.getLogFileName().matches("aw-qodercn-9-\\d{6}-\\d{2}-\\d{2}-\\d{2}\\.log"),
-                vo.getLogFileName());
         assertTrue(vo.getCommand().startsWith("powershell -NoProfile -EncodedCommand "));
         assertEquals(PREAMBLE + "npx -y autowonder@" + RUNTIME_VERSION + " connect"
                         + " --ws-url " + WS_URL
@@ -410,8 +457,7 @@ class ExecutorLaunchCommandServiceTest {
                         + " --model auto"
                         + " --reasoning-effort high"
                         + " --context-window 1000000"
-                        + " --token-aware-enable --debug"
-                        + " 2>&1 | Tee-Object -FilePath \"$HOME/" + vo.getLogFileName() + "\"",
+                        + " --token-aware-enable --debug",
                 decode(vo.getCommand()));
         verify(launchConfigService, never()).updateConfig(anyLong(), anyLong(), any(), anyLong());
     }
@@ -466,13 +512,8 @@ class ExecutorLaunchCommandServiceTest {
 
     private ExecutorLaunchCommandVO build(String token, String clientKind, String memoryMode, String model,
             String reasoningEffort, String contextWindow, String os, boolean debug, String shell) {
-        return buildAt(token, clientKind, memoryMode, model, reasoningEffort, contextWindow, os, debug, shell, now);
-    }
-
-    private ExecutorLaunchCommandVO buildAt(String token, String clientKind, String memoryMode, String model,
-            String reasoningEffort, String contextWindow, String os, boolean debug, String shell, Date at) {
         return service.buildAt(token, 9L, clientKind, memoryMode, model, reasoningEffort, contextWindow,
-                os, debug, shell, at);
+                os, debug, shell);
     }
 
     private static String decode(String command) {

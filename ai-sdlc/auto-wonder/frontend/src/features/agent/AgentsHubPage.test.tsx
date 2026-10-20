@@ -100,4 +100,16 @@ describe('AgentsHubPage', () => {
     const reviewsTab = screen.getByRole('tab', { name: '版本审核' });
     expect(reviewsTab.textContent).toBe('版本审核');
   });
+
+  it('unmounts the reviews pane when leaving the tab so returning remounts it fresh', async () => {
+    const user = userEvent.setup();
+    renderHub('/agents?tab=reviews');
+    expect(screen.getByTestId('agent-review-pane')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: '数字员工' }));
+    expect(screen.queryByTestId('agent-review-pane')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: '版本审核' }));
+    expect(screen.getByTestId('agent-review-pane')).toBeInTheDocument();
+  });
 });

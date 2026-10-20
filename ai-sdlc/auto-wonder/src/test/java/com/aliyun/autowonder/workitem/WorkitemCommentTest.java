@@ -139,6 +139,7 @@ class WorkitemCommentTest {
         UserDO self = user(7L, "张三", "zhangsan");
         UserDO other = user(9L, "李四", "lisi");
         when(userDao.findById(7L)).thenReturn(self);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(self);
         when(userDao.findById(9L)).thenReturn(other);
 
         service.addComment(5L, "@张三 @李四 请确认", List.of(7L, 9L), 100L, 7L);
@@ -425,7 +426,7 @@ class WorkitemCommentTest {
         reviewer.setId(9L);
         reviewer.setNickname("李四");
         reviewer.setUsername("lisi");
-        when(userDao.findById(7L)).thenReturn(creator);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(creator);
         when(userDao.findById(9L)).thenReturn(reviewer);
         WorkspaceMemberDO member = new WorkspaceMemberDO();
         member.setTenantId(100L);
@@ -481,7 +482,7 @@ class WorkitemCommentTest {
         user.setId(7L);
         user.setUsername("alice");
         user.setNickname("Alice");
-        when(userDao.findById(7L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(7L)).thenReturn(user);
 
         List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
 
@@ -537,7 +538,7 @@ class WorkitemCommentTest {
         user.setId(10000L);
         user.setUsername("real-user");
         user.setNickname("真人");
-        when(userDao.findById(10000L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(10000L)).thenReturn(user);
 
         List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
 
@@ -564,7 +565,7 @@ class WorkitemCommentTest {
         user.setId(10000L);
         user.setUsername("caihe");
         user.setNickname("蔡何");
-        when(userDao.findById(10000L)).thenReturn(user);
+        when(userDao.findByIdIncludingDeleted(10000L)).thenReturn(user);
 
         List<TimelineItemVO> items = service.getUnifiedTimeline(5L);
 

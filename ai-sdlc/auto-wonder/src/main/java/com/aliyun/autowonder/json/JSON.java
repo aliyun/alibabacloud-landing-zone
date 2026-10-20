@@ -15,6 +15,7 @@ import java.util.Map;
 public final class JSON {
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .findAndRegisterModules()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
 

@@ -40,7 +40,8 @@ public class ScheduledTaskSchedule {
 
     public List<Instant> preview(String expression, String timezone, Instant after, int count) {
         if (count <= 0 || count > MAX_PREVIEW_COUNT) {
-            throw new BizException(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED,
+            throw BizException.keyed(ErrorCode.SCHEDULED_TASK_VALIDATION_FAILED,
+                    "scheduled_task.validation.preview_count", new Object[]{1, MAX_PREVIEW_COUNT},
                     "预览次数必须在 1 到 " + MAX_PREVIEW_COUNT + " 之间");
         }
         List<Instant> result = new ArrayList<>(count);

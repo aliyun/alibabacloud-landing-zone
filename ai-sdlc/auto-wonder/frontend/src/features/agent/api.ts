@@ -40,6 +40,7 @@ export interface AgentVersionSummary {
   versionNo: number;
   status: string;
   roleName: string;
+  roleCode?: string | null;
   gmtCreate: string;
 }
 

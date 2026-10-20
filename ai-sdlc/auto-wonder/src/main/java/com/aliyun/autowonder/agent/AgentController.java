@@ -34,7 +34,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/agents")
-@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看智能体")
+@RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_ONLY, action = "查看智能体", actionKey = "access.action.view_agents")
 public class AgentController {
 
     private final AgentService agentService;
@@ -46,7 +46,7 @@ public class AgentController {
     }
 
     @PostMapping
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建智能体")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "创建智能体", actionKey = "access.action.create_an_agent")
     public Result<AgentVO> create(@RequestBody CreateAgentRequest req) {
         return Result.ok(agentService.create(req, currentWorkspaceId(), currentUserId()));
     }
@@ -57,14 +57,14 @@ public class AgentController {
     }
 
     @DeleteMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除智能体")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "删除智能体", actionKey = "access.action.delete_an_agent")
     public Result<Void> delete(@PathVariable("id") Long id) {
         agentService.delete(id, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PatchMapping("/{id}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新智能体")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "更新智能体", actionKey = "access.action.update_an_agent")
     public Result<AgentVO> update(@PathVariable("id") Long id, @RequestBody UpdateAgentRequest req) {
         req.setId(id);
         return Result.ok(agentService.updateAgent(req, currentWorkspaceId(), currentUserId()));
@@ -81,49 +81,49 @@ public class AgentController {
     }
 
     @GetMapping("/reviews/count")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "查看待审核数量")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "查看待审核数量", actionKey = "access.action.view_the_pending_review_count")
     public Result<Long> countPendingReviews() {
         return Result.ok(agentService.countPendingReviews(currentWorkspaceId()));
     }
 
     @PutMapping("/{id}/config")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "编辑智能体配置")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "编辑智能体配置", actionKey = "access.action.edit_agent_configuration")
     public Result<AgentVersionVO> editConfig(@PathVariable("id") Long id, @RequestBody UpdateConfigRequest req) {
         return Result.ok(agentService.editConfig(id, req, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/{id}/submit")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "提交智能体审核")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "提交智能体审核", actionKey = "access.action.submit_an_agent_for_review")
     public Result<AgentVO> submit(@PathVariable("id") Long id) {
         return Result.ok(agentService.submit(id, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/{id}/approve")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "通过智能体审核")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "通过智能体审核", actionKey = "access.action.approve_an_agent_review")
     public Result<AgentVO> approve(@PathVariable("id") Long id, @RequestBody ReviewRequest req) {
         return Result.ok(agentService.approve(id, currentWorkspaceId(), currentUserId(), req.getComment()));
     }
 
     @PostMapping("/{id}/reject")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "驳回智能体审核")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "驳回智能体审核", actionKey = "access.action.reject_an_agent_review")
     public Result<AgentVO> reject(@PathVariable("id") Long id, @RequestBody ReviewRequest req) {
         return Result.ok(agentService.reject(id, currentWorkspaceId(), currentUserId(), req.getComment()));
     }
 
     @PostMapping("/{id}/rollback")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "回滚智能体版本")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "回滚智能体版本", actionKey = "access.action.roll_back_an_agent_version")
     public Result<AgentVO> rollback(@PathVariable("id") Long id, @RequestBody RollbackRequest req) {
         return Result.ok(agentService.rollback(id, req.getVersionNo(), currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/{id}/offline")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "下线智能体")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "下线智能体", actionKey = "access.action.take_an_agent_offline")
     public Result<AgentVO> offline(@PathVariable("id") Long id) {
         return Result.ok(agentService.offline(id, currentWorkspaceId(), currentUserId()));
     }
 
     @PostMapping("/{id}/online")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上线智能体")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "上线智能体", actionKey = "access.action.bring_an_agent_online")
     public Result<AgentVO> online(@PathVariable("id") Long id) {
         return Result.ok(agentService.online(id, currentWorkspaceId(), currentUserId()));
     }
@@ -139,42 +139,42 @@ public class AgentController {
     }
 
     @PostMapping("/{id}/repos")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加智能体仓库权限")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加智能体仓库权限", actionKey = "access.action.add_agent_repository_access")
     public Result<Void> addRepoPerm(@PathVariable("id") Long id, @RequestBody RepoPermRequest req) {
         agentService.addRepoPerm(id, req, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @DeleteMapping("/{id}/repos/{repoId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除智能体仓库权限")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除智能体仓库权限", actionKey = "access.action.remove_agent_repository_access")
     public Result<Void> removeRepoPerm(@PathVariable("id") Long id, @PathVariable("repoId") Long repoId) {
         agentService.removeRepoPerm(id, repoId, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/skills")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加智能体技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加智能体技能", actionKey = "access.action.add_an_agent_skill")
     public Result<Void> addSkill(@PathVariable("id") Long id, @RequestBody SkillRequest req) {
         agentService.addSkill(id, req, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @DeleteMapping("/{id}/skills/{skillId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除智能体技能")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除智能体技能", actionKey = "access.action.remove_an_agent_skill")
     public Result<Void> removeSkill(@PathVariable("id") Long id, @PathVariable("skillId") Long skillId) {
         agentService.removeSkill(id, skillId, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @PostMapping("/{id}/memories")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加智能体记忆")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "添加智能体记忆", actionKey = "access.action.add_agent_memory")
     public Result<Void> addMemoryRef(@PathVariable("id") Long id, @RequestBody MemoryRefRequest req) {
         agentService.addMemoryRef(id, req, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
     }
 
     @DeleteMapping("/{id}/memories/{memoryId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除智能体记忆")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "移除智能体记忆", actionKey = "access.action.remove_agent_memory")
     public Result<Void> removeMemoryRef(@PathVariable("id") Long id, @PathVariable("memoryId") Long memoryId) {
         agentService.removeMemoryRef(id, memoryId, currentWorkspaceId(), currentUserId());
         return Result.ok(null);
@@ -186,7 +186,7 @@ public class AgentController {
     }
 
     @PostMapping("/{id}/environment-variables/{environmentVariableId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "挂载智能体环境变量")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "挂载智能体环境变量", actionKey = "access.action.mount_agent_environment_variables")
     public Result<Void> addEnvironmentVariableRef(@PathVariable("id") Long id,
                                                    @PathVariable("environmentVariableId") Long environmentVariableId) {
         agentService.addEnvironmentVariableRef(id, environmentVariableId, currentWorkspaceId(), currentUserId());
@@ -194,7 +194,7 @@ public class AgentController {
     }
 
     @DeleteMapping("/{id}/environment-variables/{environmentVariableId}")
-    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "解绑智能体环境变量")
+    @RequireWorkspaceAccess(value = WorkspaceAccessLevel.READ_WRITE, action = "解绑智能体环境变量", actionKey = "access.action.unmount_agent_environment_variables")
     public Result<Void> removeEnvironmentVariableRef(@PathVariable("id") Long id,
                                                       @PathVariable("environmentVariableId") Long environmentVariableId) {
         agentService.removeEnvironmentVariableRef(id, environmentVariableId, currentWorkspaceId(), currentUserId());

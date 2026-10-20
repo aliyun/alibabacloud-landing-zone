@@ -16,8 +16,10 @@ public interface ExecutorDao {
     int softDelete(@Param("id") Long id, @Param("tenantId") Long tenantId,
                    @Param("modifierId") Long modifierId);
     int updateTokenRef(@Param("id") Long id, @Param("tokenRef") String tokenRef);
-    int updateLastConnectIp(@Param("id") Long id, @Param("tenantId") Long tenantId,
-                            @Param("lastConnectIp") String lastConnectIp, @Param("modifierId") Long modifierId);
+    int updateLastConnectInfo(@Param("id") Long id, @Param("tenantId") Long tenantId,
+                              @Param("lastConnectIp") String lastConnectIp,
+                              @Param("lastConnectHostname") String lastConnectHostname,
+                              @Param("modifierId") Long modifierId);
     int updateLastStartedAt(@Param("id") Long id, @Param("tenantId") Long tenantId, @Param("startedAt") java.util.Date startedAt);
     int updateLastHeartbeat(@Param("id") Long id, @Param("tenantId") Long tenantId);
     int updateLaunchConfig(@Param("id") Long id, @Param("tenantId") Long tenantId,
@@ -37,6 +39,7 @@ public interface ExecutorDao {
     /**
      * Scan source for automatic upgrades: identity columns only. The reported version is presence
      * state in Redis ({@code exec:version:{id}}), never a column, so it is read per executor instead.
+     * Explicit command version pins are filtered in SQL without returning the launch config.
      */
     List<ExecutorDO> listForVersionScan();
 }

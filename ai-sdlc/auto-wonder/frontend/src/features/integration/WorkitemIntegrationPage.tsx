@@ -1,7 +1,11 @@
+import { formatDateTime } from '@/shared/i18n/format';
+import { useLocalizedValidation } from '@/shared/i18n/useLocalizedValidation';
+import { i18n } from '@/shared/i18n';
+import { useTranslation } from 'react-i18next';
 import { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, InputNumber, Select, Space, Tag, Tooltip, Typography, message } from 'antd';
 import { Table } from '@/shared/theme/ThemedTable';
-import { ApiOutlined, CloudSyncOutlined, InfoCircleOutlined, SaveOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
+import { EyeOutlined, EyeInvisibleOutlined, ApiOutlined, CloudSyncOutlined, InfoCircleOutlined, SaveOutlined, SearchOutlined, SendOutlined } from '@ant-design/icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -31,6 +35,7 @@ type IntegrationForm = AoneBindingRequest & {
 };
 
 export function WorkitemIntegrationPage() {
+  const { t } = useTranslation('integration');
   const { data: capabilities, isLoading } = useQuery({
     queryKey: ['integration-capabilities'],
     queryFn: getIntegrationCapabilities,
@@ -40,13 +45,15 @@ export function WorkitemIntegrationPage() {
     return <Card loading />;
   }
   if (!capabilities?.aoneEnabled) {
-    return <Alert type="info" showIcon message="Aone 集成未启用" />;
+    return <Alert type="info" showIcon message={t('aoneDisabled')} />;
   }
   return <AoneIntegrationPanel />;
 }
 
 function AoneIntegrationPanel() {
+  const { t } = useTranslation('integration');
   const [form] = Form.useForm<IntegrationForm>();
+  useLocalizedValidation(form);
   const queryClient = useQueryClient();
   const runAccessCommand = useAccessCommand();
   const [testResult, setTestResult] = useState<AoneTestConnectionResult | null>(null);
@@ -66,19 +73,19 @@ function AoneIntegrationPanel() {
     },
     onSuccess: (result) => {
       setProjects(result.items || []);
-      message.success(`找到 ${result.items?.length || 0} 个项目`);
+      message.success(i18n.t('integration:projectsFound', { count: result.items?.length || 0 }));
     },
-    onError: (error: Error) => message.error(error.message || '搜索项目失败'),
+    onError: (error: Error) => { message.error(error.message || i18n.t('integration:searchFailed')); },
   });
 
   const testMutation = useMutation({
     mutationFn: testAoneConnection,
     onSuccess: (result) => {
       setTestResult(result);
-      if (result.success) message.success(result.message);
-      else message.error(result.message || '连接失败');
+      if (result.success) message.success(i18n.t('integration:connectionSucceeded'));
+      else message.error(result.message || i18n.t('integration:connectionFailed'));
     },
-    onError: (error: Error) => message.error(error.message || '连接失败'),
+    onError: (error: Error) => { message.error(error.message || i18n.t('integration:connectionFailed')); },
   });
 
   const createMutation = useMutation({
@@ -101,29 +108,29 @@ function AoneIntegrationPanel() {
     onSuccess: ({ savedCount, reusedCount }) => {
       const createdCount = savedCount - reusedCount;
       if (reusedCount > 0) {
-        message.success(`已处理 ${savedCount} 个托管项目：新建 ${createdCount} 个，复用已有 ${reusedCount} 个。`);
+        message.success(i18n.t('integration:projectsReused', { count: savedCount, created: createdCount, reused: reusedCount }));
       } else {
-        message.success(`已保存 ${savedCount} 个托管项目。`);
+        message.success(i18n.t('integration:projectsSaved', { count: savedCount }));
       }
       queryClient.invalidateQueries({ queryKey: ['aone-bindings'] });
     },
-    onError: (error: Error) => message.error(error.message || '保存失败'),
+    onError: (error: Error) => { message.error(error.message || i18n.t('integration:saveFailed')); },
   });
 
   const syncMutation = useMutation({
     mutationFn: ({ bindingId, issueIds }: { bindingId: string; issueIds: string[] }) => syncAoneNow(bindingId, issueIds),
     onSuccess: (result) => {
       setSyncResult(result);
-      message.success(`同步完成：新增 ${result.imported}，更新 ${result.updated}，评论 ${result.commentsImported}`);
+      message.success(i18n.t('integration:syncCompleted', { ...result, count: result.commentsImported }));
       queryClient.invalidateQueries({ queryKey: ['aone-bindings'] });
     },
-    onError: (error: Error) => message.error(error.message || '同步失败'),
+    onError: (error: Error) => { message.error(error.message || i18n.t('integration:syncFailed')); },
   });
 
   const dispatchMutation = useMutation({
     mutationFn: dispatchAoneOutbox,
-    onSuccess: (count) => message.success(`已处理 ${count} 条写回任务`),
-    onError: (error: Error) => message.error(error.message || '写回失败'),
+    onSuccess: (count) => { message.success(i18n.t('integration:outboxProcessed', { count })); },
+    onError: (error: Error) => { message.error(error.message || i18n.t('integration:writebackFailed')); },
   });
 
   const projectOptions = useMemo(() => projects.map((project) => ({
@@ -132,32 +139,33 @@ function AoneIntegrationPanel() {
   })), [projects]);
 
   const bindingColumns: ColumnsType<AoneBinding> = [
-    { title: 'ID', dataIndex: 'id', width: 80 },
-    { title: '平台', dataIndex: 'provider', width: 90, render: () => <Tag color="blue">Aone</Tag> },
-    { title: '托管项目', dataIndex: 'externalProjectName', align: 'left', render: (v, r) => v || r.externalProjectId },
-    { title: '项目ID', dataIndex: 'externalProjectId', width: 120 },
-    { title: 'ClientName', dataIndex: 'clientKey', width: 150 },
-    { title: '写回身份', dataIndex: 'writebackStaffId', width: 180, render: (v) => v || '-' },
+    { title: t('id'), dataIndex: 'id', width: 80 },
+    { title: t('platform'), dataIndex: 'provider', width: 90, render: () => <Tag color="blue">{t('aone')}</Tag> },
+    { title: t('managedProjects'), dataIndex: 'externalProjectName', align: 'left', render: (v, r) => v || r.externalProjectId },
+    { title: t('projectId'), dataIndex: 'externalProjectId', width: 120 },
+    { title: t('clientName'), dataIndex: 'clientKey', width: 150 },
+    { title: t('writebackIdentity'), dataIndex: 'writebackStaffId', width: 180, render: (v) => v || '-' },
     {
-      title: '状态',
+      title: t('status'),
       dataIndex: 'enabled',
       width: 90,
-      render: (v) => v ? <Tag color="success">启用</Tag> : <Tag>停用</Tag>,
+      render: (v) => v ? <Tag color="success">{t('enabled')}</Tag> : <Tag>{t('disabled')}</Tag>,
     },
     {
-      title: '最近成功同步',
+      title: t('lastSync'),
       dataIndex: 'lastSuccessAt',
       width: 180,
-      render: (_, record) => (
-        <Space direction="vertical" size={2}>
-          <span>{record.lastSuccessAt ? new Date(record.lastSuccessAt).toLocaleString('zh-CN') : '-'}</span>
+      render: (_, record) => {
+        const time = record.lastSuccessAt ? formatDateTime(record.lastSuccessAt, { dateStyle: 'medium', timeStyle: 'medium' }) : '-';
+        return <Space direction="vertical" size={2}>
+          <span>{time}</span>
           {record.lastError && (
             <Tooltip title={record.lastError}>
-              <Tag color="error">最近同步失败</Tag>
+              <Tag color="error">{t('lastSyncFailed')}</Tag>
             </Tooltip>
           )}
-        </Space>
-      ),
+        </Space>;
+      },
     },
   ];
 
@@ -193,7 +201,7 @@ function AoneIntegrationPanel() {
     const values = await readSaveValues();
     const selectedId = values.selectedProjectIds?.[0];
     if (!selectedId) {
-      message.warning('请先选择至少一个托管项目');
+      message.warning(i18n.t('integration:selectProjectFirst'));
       return;
     }
     const project = selectedProjects([selectedId])[0];
@@ -208,22 +216,16 @@ function AoneIntegrationPanel() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card title={<Space size={8}>
-        平台配置
-        <Tooltip trigger={['hover', 'focus']} title="第一次导入前先完成平台凭证和托管项目配置。平台会以外部平台为事实源同步需求、缺陷、任务、评论和状态；本地评论会带平台签名后写回。">
-          <Button type="text" size="small" aria-label="首次导入说明" icon={<InfoCircleOutlined />} />
+      <Card title={<Space size={8}>{t('platformConfig')}<Tooltip trigger={['hover', 'focus']} title={t('firstImportHelp')}>
+          <Button type="text" size="small" aria-label={t('firstImport')} icon={<InfoCircleOutlined aria-hidden="true" />} />
         </Tooltip>
       </Space>} extra={<Space>
-          <Button icon={<ApiOutlined />} loading={testMutation.isPending} onClick={() =>
-            runAccessCommand('ADMIN', '测试工单平台连接', runConnectionTest)
-          }>
-            测试连接
-          </Button>
-          <Button type="primary" icon={<SaveOutlined />} loading={createMutation.isPending} onClick={() =>
-            runAccessCommand('ADMIN', '保存托管项目', () => createMutation.mutate())
-          }>
-            保存托管项目
-          </Button>
+          <Button aria-label={t('testConnection')} icon={<ApiOutlined aria-hidden="true" />} loading={testMutation.isPending} onClick={() =>
+            runAccessCommand('ADMIN', t('testCommand'), runConnectionTest)
+          }>{t('testConnection')}</Button>
+          <Button type="primary" aria-label={t('saveProjects')} icon={<SaveOutlined aria-hidden="true" />} loading={createMutation.isPending} onClick={() =>
+            runAccessCommand('ADMIN', t('saveProjects'), () => createMutation.mutate())
+          }>{t('saveProjects')}</Button>
         </Space>}>
         <Form
           form={form}
@@ -237,83 +239,88 @@ function AoneIntegrationPanel() {
           }}
         >
           <div className="integration-fields">
-            <Form.Item label="平台" name="provider" rules={[{ required: true }]}>
+            <Form.Item label={t('platform')} name="provider" rules={[{ required: true, message: t('requiredPlatform') }]}>
               <Select
                 options={[
-                  { label: 'Aone', value: 'AONE' },
-                  { label: 'Jira（待接入）', value: 'JIRA', disabled: true },
-                  { label: '云效（待接入）', value: 'YUNXIAO', disabled: true },
+                  { label: t('aone'), value: 'AONE' },
+                  { label: t('jiraPending'), value: 'JIRA', disabled: true },
+                  { label: t('yunxiaoPending'), value: 'YUNXIAO', disabled: true },
                 ]}
               />
             </Form.Item>
-            <Form.Item label="Base URL" name="baseUrl" rules={[{ required: true }]} style={{ width: 300 }}>
+            <Form.Item label={t('baseUrl')} name="baseUrl" rules={[{ required: true }]} style={{ width: 300 }}>
               <Input />
             </Form.Item>
-            <Form.Item label="ClientName / AppName" name="clientKey" rules={[{ required: true }]}>
+            <Form.Item label={t('clientKey')} name="clientKey" rules={[{ required: true, message: t('requiredClient') }]}>
               <Input />
             </Form.Item>
-            <Form.Item label="Access Secret" name="accessSecret" rules={[{ required: true }]}>
-              <Input.Password />
+            <Form.Item label={t('accessSecret')} name="accessSecret" rules={[{ required: true, message: t('requiredAccessSecret') }]}>
+              <Input.Password iconRender={(visible) => <Button type="text" htmlType="button" aria-label={visible ? t('hideSecret') : t('showSecret')}
+                icon={visible ? <EyeOutlined aria-hidden="true" /> : <EyeInvisibleOutlined aria-hidden="true" />}
+                style={{ padding: 0, width: 16, height: 16 }} />} />
             </Form.Item>
 
-            <Form.Item label="RegionId" name="regionId">
+            <Form.Item label={t('regionId')} name="regionId">
               <Input />
             </Form.Item>
             <Form.Item
-              label="写回身份 StaffId"
+              label={t('writebackStaffId')}
               name="writebackStaffId"
-              rules={[{ required: true, message: '请输入写回身份 StaffId' }]}
+              rules={[{ required: true, message: t('requiredStaffId') }]}
             >
               <Input />
             </Form.Item>
-            <Form.Item label="轮询秒数" name="pollIntervalSeconds">
-              <InputNumber min={3} max={3600} style={{ width: '100%' }} />
+            {/* ponytail: upstream step buttons hardcode English aria names; keep keyboard steps until public label props exist. */}
+            <Form.Item label={t('pollSeconds')} name="pollIntervalSeconds">
+              <InputNumber controls={false} min={3} max={3600} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item label="项目关键词" htmlFor="projectQuery">
+            <Form.Item label={t('projectKeyword')} htmlFor="projectQuery">
               <Space.Compact style={{ width: '100%' }}>
                 <Form.Item name="projectQuery" noStyle>
-                  <Input placeholder="项目名或关键字" />
+                  <Input placeholder={t('projectQuery')} />
                 </Form.Item>
-                <Button icon={<SearchOutlined />} aria-label="搜索可托管项目" loading={searchMutation.isPending} onClick={() =>
-                  runAccessCommand('ADMIN', '搜索可托管项目', () => searchMutation.mutate())
-                }>搜索</Button>
+                <Button icon={<SearchOutlined aria-hidden="true" />} aria-label={t('searchProjects')} loading={searchMutation.isPending} onClick={() =>
+                  runAccessCommand('ADMIN', t('searchProjects'), () => searchMutation.mutate())
+                }>{t('search')}</Button>
               </Space.Compact>
             </Form.Item>
           </div>
           <Form.Item
-            label="托管项目"
+            label={t('managedProjects')}
             name="selectedProjectIds"
-            rules={[{ required: true, message: '请选择至少一个托管项目' }]}
+            rules={[{ required: true, message: t('requiredProjects') }]}
             style={{ marginBottom: 0 }}
           >
-            <Select mode="multiple" options={projectOptions} placeholder="先搜索项目，再多选托管项目" />
+            <Select mode="multiple" options={projectOptions} placeholder={t('projectPlaceholder')} />
           </Form.Item>
         </Form>
         {testResult && (
           <Alert
             style={{ marginTop: 16 }}
             type={testResult.success ? 'success' : 'error'}
-            message={testResult.message}
+            message={testResult.success ? t('connectionSucceeded') : testResult.message || t('connectionFailed')}
             description={testResult.checks?.join(' / ') || null}
           />
         )}
       </Card>
 
-      <Card title="手动同步与写回">
+      <Card title={t('manualSync')}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <div className="integration-sync-toolbar">
             <Input
               value={issueIdsText}
-              placeholder="输入外部工单 ID，多个用英文逗号分隔；留空则同步托管项目内全部工单"
+              aria-label={t('externalWorkitemIds')}
+              placeholder={t('issueIdsHint')}
               onChange={(event) => setIssueIdsText(event.target.value)}
             />
             <Space>
               <Button
-                icon={<CloudSyncOutlined />}
+                aria-label={t('syncIds')}
+                icon={<CloudSyncOutlined aria-hidden="true" />}
                 disabled={!selectedBindingId}
                 loading={syncMutation.isPending}
                 onClick={() => {
-                  runAccessCommand('ADMIN', '手动同步工单', () => {
+                  runAccessCommand('ADMIN', t('syncCommand'), () => {
                     const issueIds = issueIdsText
                       .split(',')
                       .map((v: string) => v.trim())
@@ -321,27 +328,23 @@ function AoneIntegrationPanel() {
                     syncMutation.mutate({ bindingId: selectedBindingId, issueIds });
                   });
                 }}
-              >
-                同步选中 ID
-              </Button>
-              <Button icon={<SendOutlined />} loading={dispatchMutation.isPending} onClick={() =>
-                runAccessCommand('ADMIN', '处理工单写回队列', () => dispatchMutation.mutate())
-              }>
-                处理写回队列
-              </Button>
+              >{t('syncIds')}</Button>
+              <Button aria-label={t('outbox')} icon={<SendOutlined aria-hidden="true" />} loading={dispatchMutation.isPending} onClick={() =>
+                runAccessCommand('ADMIN', t('outboxCommand'), () => dispatchMutation.mutate())
+              }>{t('outbox')}</Button>
             </Space>
           </div>
           {syncResult && (
             <Alert
               type="success"
-              message={`同步结果：新增 ${syncResult.imported}，更新 ${syncResult.updated}，评论 ${syncResult.commentsImported}`}
-              description={<Text>本地工单ID：{syncResult.workitemIds.join(', ') || '-'}</Text>}
+              message={t('syncResults', { ...syncResult, count: syncResult.commentsImported })}
+              description={<Text>{t('localIds')}{syncResult.workitemIds.join(', ') || '-'}</Text>}
             />
           )}
         </Space>
       </Card>
 
-      <Card title="已托管项目">
+      <Card title={t('existingProjects')}>
         <Table scroll={{ x: 1100 }} rowKey="id" columns={bindingColumns} dataSource={bindings} loading={bindingsLoading} pagination={false} />
       </Card>
     </Space>

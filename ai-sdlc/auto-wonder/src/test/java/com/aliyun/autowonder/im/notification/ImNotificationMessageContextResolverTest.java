@@ -10,6 +10,7 @@ import com.aliyun.autowonder.workitem.WorkitemDao;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 class ImNotificationMessageContextResolverTest {
@@ -78,6 +79,24 @@ class ImNotificationMessageContextResolverTest {
 
         // 域名解析只发生在 PlatformBrandingService：resolver 不再自己读 VO 的 domain 字段推导
         verify(brandingService, never()).publicConfig();
+    }
+
+    @Test
+    void missingNodeSourceStatusRendersAssignedInTaskLocaleButAuthoredCollisionStaysRaw() throws Exception {
+        var workitems = mock(WorkitemDao.class); var nodes = mock(StatusNodeDao.class);
+        var branding = mock(PlatformBrandingService.class);
+        when(branding.effectivePublicBaseUrl()).thenReturn("https://example.com");
+        var resolver = new ImNotificationMessageContextResolver(mock(WorkspaceDao.class), workitems, nodes, branding);
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var task = mapper.readValue("{\"workitemId\":42,\"recipientLocale\":\"en-US\"}", ImNotificationTask.class);
+        var context = resolver.resolve(task);
+        assertEquals("已指派", context.statusName());
+        verify(workitems).findById(42L); verifyNoInteractions(nodes);
+        assertTrue(new ImNotificationFormatter().format(context, task).contains("**Status**: Assigned"));
+        var workitem = new WorkitemDO(); workitem.setStatusNodeId(88L);
+        var node = new StatusNodeDO(); node.setName(" 已指派 ");
+        when(workitems.findById(42L)).thenReturn(workitem); when(nodes.findById(88L)).thenReturn(node);
+        assertTrue(new ImNotificationFormatter().format(resolver.resolve(task), task).contains("**Status**: 已指派"));
     }
 
     private static ImNotificationTask task() {

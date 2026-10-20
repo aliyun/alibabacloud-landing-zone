@@ -41,6 +41,12 @@ public class InAppCommentMentionedListener {
                 notifyEvent.setLink("/workitems/" + event.workitemId());
                 notifyEvent.setRefType("WORKITEM");
             }
+            notifyEvent.setTitleKey(event.isScheduledTaskRun() ? "notification.mention.run.title" : "notification.mention.title");
+            notifyEvent.setContentKey(event.isScheduledTaskRun() ? "notification.mention.run.content" : "notification.mention.content");
+            notifyEvent.setContentArgs(new Object[]{event.actorDisplayName(), event.workitemTitle(), summary});
+            if (event.isScheduledTaskRun() && WorkitemCommentMentionedEvent.SCHEDULED_RUN_ID_FALLBACK.equals(event.workitemTitleKind())) {
+                notifyEvent.setContentArgsResolver(locale -> new Object[]{event.actorDisplayName(), event.recipientTitle(locale), summary});
+            }
             notifyEvent.setRefId(event.workitemId());
             notifyEvent.setRecipientIds(List.of(event.recipientUserId()));
 

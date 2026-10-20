@@ -1,3 +1,4 @@
+import { i18n } from '@/shared/i18n';
 import { act, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -107,4 +108,19 @@ describe('ReplyingIndicator', () => {
     // 旋转头保持 textMuted，动效才读得出来
     expect((ring as HTMLElement).style.animation).toContain('aw-clarify-spin');
   });
+});
+
+
+it('switches the current replying state immediately while preserving an HTML-like agent name', async () => {
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  const name = '<b>我的员工</b>';
+  const view = render(<ReplyingIndicator agentName={name} />);
+  const row = view.getByTestId('clarification-replying-indicator');
+  const before = row.textContent;
+  await act(async () => { await i18n.changeLanguage('en-US'); });
+  expect(row).toHaveTextContent(`${name} Thinking…`);
+  expect(row.querySelector('b')).toBeNull();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  expect(row.textContent).toBe(before);
+  vi.restoreAllMocks();
 });
