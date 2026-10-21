@@ -13,3 +13,29 @@ detective_guardrails = [
     tag_scope_value = ""
   }
 ]
+
+preventive_guardrails = [
+  {
+    rule_name = "DenyCreateRamRole"
+    rule_description = "Deny creating RAM role"
+    policy_document = <<EOF
+{
+    "Statement": [
+        {
+            "Action": [
+                "ram:CreateRole"
+            ],
+            "Resource": "*",
+            "Effect": "Deny",
+            "Condition": {
+                "StringNotLike": {
+                    "acs:PrincipalARN": "acs:ram:*:*:role/resourcedirectoryaccountaccessrole"
+                }
+            }
+        }
+    ],
+    "Version": "1"
+}
+    EOF
+  }
+]
