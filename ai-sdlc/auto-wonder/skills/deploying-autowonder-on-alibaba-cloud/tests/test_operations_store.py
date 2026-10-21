@@ -62,6 +62,16 @@ class MemoryOss:
 
 
 class OperationsStoreTests(unittest.TestCase):
+    def test_cloud_regions_include_international_regions_from_live_catalogue(self):
+        import resource_inventory
+        response = {'Regions': {'Region': [{'RegionId': 'cn-beijing'}, {'RegionId': 'ap-southeast-1'},
+                                            {'RegionId': 'eu-central-1'}]}}
+        with mock.patch.object(resource_inventory, 'request', return_value=response):
+            self.assertEqual(['ap-southeast-1', 'cn-beijing', 'eu-central-1'], self.module.cloud_regions())
+        with mock.patch.object(resource_inventory, 'request', return_value={'Regions': {'Region': []}}):
+            with self.assertRaises(self.module.StateError):
+                self.module.cloud_regions()
+
     def setUp(self):
         self.assertTrue((SCRIPTS / 'operations-store.py').is_file(), 'cloud-first state coordinator is missing')
         sys.path.insert(0, str(SCRIPTS))

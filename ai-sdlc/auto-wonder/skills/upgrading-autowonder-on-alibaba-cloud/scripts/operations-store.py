@@ -20,7 +20,6 @@ from operation_metrics import measure
 
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADE = SCRIPTS
-REGIONS = ('cn-zhangjiakou', 'cn-hangzhou', 'cn-shanghai', 'cn-beijing')
 UPGRADE_FIELDS = {'upgrade', 'upgradeInventory', 'rollingUpgrade'}
 
 
@@ -415,6 +414,30 @@ def main(argv=None):
         return 1
 
 
+def cloud_regions():
+    """Discover public regions without depending on the deployment Skill bundle."""
+    try:
+        result = subprocess.run(
+            ['aliyun', 'ecs', 'DescribeRegions', '--region', 'cn-beijing',
+             '--profile', 'auto-wonder'], capture_output=True, timeout=30, check=False)
+        if result.returncode:
+            raise ValueError()
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict) or data.get('Code') or data.get('Success') in (False, 'false'):
+            raise ValueError()
+        regions = data['Regions']['Region']
+        if not isinstance(regions, list) or not regions or any(
+                not isinstance(row, dict) or not isinstance(row.get('RegionId'), str)
+                or not re.fullmatch(r'[a-z][a-z0-9]*(?:-[a-z0-9]+)+', row['RegionId'])
+                for row in regions):
+            raise ValueError()
+        return sorted({row['RegionId'] for row in regions})
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError):
+        # Provider diagnostics may contain signed requests. Never echo them or
+        # silently narrow discovery to a partial list after a catalogue failure.
+        raise StateError('Public cloud region catalogue is unavailable or invalid') from None
+
+
 def resolve(args, store_factory):
     root = Path(args.project_root or Path.cwd()).resolve()
     hint = read(args.manifest) if args.manifest and Path(args.manifest).is_file() else {}
@@ -422,7 +445,7 @@ def resolve(args, store_factory):
     region = args.region or hint.get('region')
     candidates = []
     stores = {}
-    for selected_region in (region,) if region else REGIONS:
+    for selected_region in (region,) if region else cloud_regions():
         store = store_factory(selected_region)
         expected_account = hint.get('accountUid') or hint.get('operationsStore', {}).get('accountUid')
         if expected_account and expected_account != store.identity():

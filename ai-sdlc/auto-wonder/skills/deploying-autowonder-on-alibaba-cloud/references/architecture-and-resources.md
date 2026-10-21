@@ -1,5 +1,15 @@
 # Architecture And Resources
 
+## Single-zone business option
+
+Ask for single-zone or multi-zone and recommend multi-zone. `single-az` uses
+one ECS node, same-zone RDS HA primary/standby and Redis primary/replica.
+The product sizes and monthly subscription/renewal policy stay unchanged.
+It has no cross-zone business disaster recovery. ALB still uses two zones in supported regions, as required by
+[Alibaba Cloud ALB](https://www.alibabacloud.com/help/en/slb/application-load-balancer/create-and-manage-alb-instances).
+The `multi-az-ha` architecture below remains unchanged. Selection, pricing,
+Terraform, publishing, operations storage and acceptance share the same workflow.
+
 ## Purpose
 
 Use this reference to explain topology, resource ownership, cost, identity,
@@ -9,7 +19,7 @@ state, and lifecycle behavior before planning or when answering architecture QA.
 
 The default `multi-zone HA` environment contains:
 
-- one VPC and two VSwitches in different availability zones;
+- one VPC and two base VSwitches, plus shared additional private VSwitches when product placement requires them;
 - two Linux x86_64 ECS nodes, one in each zone, each exactly 2 vCPU and 4 GiB
   memory, with no public IP; prefer `ecs.c8a.large`;
 - one dual-zone public Application Load Balancer (ALB) with an HTTP listener on port 80;
@@ -22,7 +32,11 @@ Preflight resolves current regional inventory instead of assuming fixed zone or
 SKU names. Stop when two zones or a genuine HA database/cache product cannot be
 supplied. An ECS fallback is permitted only when it is x86_64, exactly 2 vCPU
 and 4 GiB, and available in both zones. Two nodes in one zone and an RDS Basic
-instance are not HA.
+instance are not HA. All products sharing the same pair takes priority over
+price. If that is impossible under the verified constraints, each product may
+use a pair sharing one zone, or finally a disjoint pair, while retaining HA.
+Selection is automatic; the final report explains each alignment fallback.
+See operations-runbook.md for the shared selection and subnet rules.
 
 The `experience` topology is a separately chosen low-cost environment. Label it
 as non-HA and never silently downgrade the default.

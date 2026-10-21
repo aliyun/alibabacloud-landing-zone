@@ -291,7 +291,18 @@ those parameters. Order-time account/quota checks remain execution limitations.
                     tid = item['InstanceTypeId']
                     data, proof = query('ecs', 'DescribeAvailableResource', RegionId=region, DestinationResource='InstanceType', InstanceChargeType='PrePaid', InstanceType=tid)
                     disks, diskproof = query('ecs', 'DescribeAvailableResource', RegionId=region, DestinationResource='SystemDisk', InstanceChargeType='PrePaid', InstanceType=tid)
-                    zones = sorted(set(stock(data, tid)) & set(stock(disks, policy['ecs']['systemDisk'], policy['ecs']['systemDiskGiB'])))
+                    instance_zones = stock(data, tid)
+                    stock_proofs = [proof]
+                    if not instance_zones and rows(data, 'AvailableZones', 'AvailableZone'):
+                        zone_data, zone_proof = query('ecs', 'DescribeAvailableResource', RegionId=region,
+                            DestinationResource='Zone', InstanceChargeType='PrePaid', InstanceType=tid)
+                        stock_proofs.append(zone_proof)
+                        for zone in rows(zone_data, 'AvailableZones', 'AvailableZone'):
+                            if not zone.get('ZoneId') or 'Status' not in zone or 'StatusCategory' not in zone:
+                                raise InventoryError('missing-stock-status')
+                            if zone['Status'] == 'Available' and zone['StatusCategory'] in ('WithStock', 'ClosedWithStock'):
+                                instance_zones.append(zone['ZoneId'])
+                    zones = sorted(set(instance_zones) & set(stock(disks, policy['ecs']['systemDisk'], policy['ecs']['systemDiskGiB'])))
                     if not zones: continue
                     image_params = {'RegionId': region, 'ImageOwnerAlias': 'system', 'Architecture': 'x86_64',
                                     'OSType': 'linux', 'Status': 'Available', 'InstanceType': tid}
@@ -311,7 +322,7 @@ those parameters. Order-time account/quota checks remain execution limitations.
                                                   PriceUnit='Month', Period=1, Amount=1, **{'SystemDisk.Category': policy['ecs']['systemDisk'], 'SystemDisk.Size': policy['ecs']['systemDiskGiB']})
                         result['ecs'].append({'zone': zone, 'type': tid, 'cpu': item['CpuCoreCount'], 'memoryGiB': item['MemorySize'],
                                               'architecture': item['CpuArchitecture'], 'familyLevel': item['InstanceFamilyLevel'], 'price': price(quote),
-                                              'evidence': [proof, diskproof, priceproof, {'service': 'ecs', 'action': 'DescribeInstanceTypes', 'params': params, 'requestIds': ids, 'complete': True, 'queriedAt': result['queriedAt']}]})
+                                              'evidence': [*stock_proofs, diskproof, priceproof, {'service': 'ecs', 'action': 'DescribeInstanceTypes', 'params': params, 'requestIds': ids, 'complete': True, 'queriedAt': result['queriedAt']}]})
                 except InventoryError as error:
                     if str(error) in ('missing-field:AvailableZones', 'missing-stock-status', 'unknown-disk-support'):
                         result.setdefault('excluded', []).append({'service':'ecs','type':tid,'reason':str(error)})
@@ -390,10 +401,13 @@ those parameters. Order-time account/quota checks remain execution limitations.
             # Query exact primary/secondary pair quotes, not just an unqualified SKU price.
             for cls in result['redis']:
                 cls['pairs'] = {}
-                for secondary in sorted({r['zone'] for r in result['redis'] if r['type'] == cls['type']} - {cls['zone']}):
+                secondary_zones = ({cls['zone']} if policy.get('topology') == 'single-az' else
+                                   {r['zone'] for r in result['redis'] if r['type'] == cls['type']} - {cls['zone']})
+                for secondary in sorted(secondary_zones):
                     try:
                         quote, priceproof = query('r-kvstore', 'DescribePrice', RegionId=region, InstanceClass=cls['type'], ZoneId=cls['zone'],
-                                                  SecondaryZoneId=secondary, ChargeType='PrePaid', Period=1, Quantity=1,
+                                                  SecondaryZoneId=None if policy.get('topology') == 'single-az' else secondary,
+                                                  ChargeType='PrePaid', Period=1, Quantity=1,
                                                   NodeType='MASTER_SLAVE', EngineVersion=policy['redis']['version'], OrderType='BUY')
                         cls['pairs'][secondary] = {'price': price(quote, 'redis'), 'evidence': priceproof}
                     except InventoryError as error:
@@ -406,3 +420,12 @@ those parameters. Order-time account/quota checks remain execution limitations.
                              'RDS catalogues validate each HA zone offer; the order validates the final placement.',
                              'Quotes cover core subscription resources; ALB/OSS/SLS usage and renewal charges are not a fixed total.']
     return result
+
+
+def network_zones(plan):
+    """Zones requiring VSwitches; Redis's managed replica needs no separate switch."""
+    zones = set(plan.get('alb', {}).get('zones', []))
+    zones.update(plan.get('rds', {}).values())
+    if plan.get('redis', {}).get('primaryZone'):
+        zones.add(plan['redis']['primaryZone'])
+    return zones

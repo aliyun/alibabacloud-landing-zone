@@ -58,13 +58,7 @@ class TerraformContractTest(unittest.TestCase):
             self.variable_block(name)
 
         region = self.variable_block("region")
-        for preset in [
-            "cn-zhangjiakou",
-            "cn-hangzhou",
-            "cn-shanghai",
-            "cn-beijing",
-        ]:
-            self.assertIn(preset, region)
+        self.assertRegex(region, r'can\(regex\("\^[^"\n]+\$",\s*var\.region\)\)')
 
         for name in ["ecs_password", "rds_password", "redis_password"]:
             body = self.variable_block(name)
@@ -184,18 +178,23 @@ class TerraformContractTest(unittest.TestCase):
             body = self.variable_block(name)
             self.assertRegex(body, r'default\s*=\s*""')
         self.assertIn(
-            'zone_id_slave_a          = var.rds_slave_zone_id != "" ? var.rds_slave_zone_id : var.zone_b_id',
+            'zone_id_slave_a          = local.rds_slave_zone',
             self.terraform,
         )
         self.assertIn(
-            'secondary_zone_id           = var.redis_secondary_zone_id != "" ? var.redis_secondary_zone_id : var.zone_b_id',
+            'secondary_zone_id           = var.topology == "single-az" ? null : (var.redis_secondary_zone_id != "" ? var.redis_secondary_zone_id : var.zone_b_id)',
             self.terraform,
         )
-        # ALB and VSwitches stay bound to the ECS zone pair (switch-bearing, no downgrade).
+        # The default ALB pair stays unchanged; independently selected zones use the shared VSwitch map.
         alb = re.search(r'resource "alicloud_alb_load_balancer" "app"\s*\{(.*?)\n\}', self.terraform, re.DOTALL)
         self.assertIsNotNone(alb)
-        self.assertIn("alicloud_vswitch.zone_a.id", alb.group(1))
-        self.assertIn("alicloud_vswitch.zone_b.id", alb.group(1))
+        self.assertIn('dynamic "zone_mappings"', alb.group(1))
+        self.assertIn('var.alb_zone_ids == null ? [var.zone_a_id, var.zone_b_id] : var.alb_zone_ids', alb.group(1))
+        self.assertIn('local.vswitch_ids[zone_mappings.value]', alb.group(1))
+        self.assertIn('alicloud_vswitch.zone_a.id', self.terraform)
+        self.assertIn('alicloud_vswitch.zone_b.id', self.terraform)
+        self.assertRegex(self.variable_block('alb_zone_ids'), r'default\s*=\s*null')
+        self.assertRegex(self.variable_block('additional_zone_cidrs'), r'default\s*=\s*\{\}')
 
     def test_example_contains_no_secrets(self):
         text = TFVARS_FILE.read_text(encoding="utf-8")

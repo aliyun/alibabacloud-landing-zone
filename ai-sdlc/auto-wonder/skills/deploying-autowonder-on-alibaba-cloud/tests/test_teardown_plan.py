@@ -12,6 +12,7 @@ from pathlib import Path
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/teardown_plan.py'
+sys.path.insert(0, str(SCRIPT.parent))
 
 
 class TeardownPlanTests(unittest.TestCase):
@@ -79,6 +80,25 @@ alicloud_ram_user_policy_attachment.app alicloud_ram_access_key.app'''.split()
 
     def test_allows_only_owned_protection_and_retention_updates(self):
         self.assertEqual(8, self.module.review(self.manifest, self.plan)['updatedResources'])
+
+    def test_failed_install_allows_only_recorded_existing_ecs(self):
+        self.manifest.update(mode='new', phase='infrastructure', status='blocked')
+        self.manifest['resources']['ecs_instance_ids'] = {}
+        original = copy.deepcopy(self.plan)
+        self.plan['resource_changes'] = [item for item in self.plan['resource_changes']
+                                         if not item['address'].startswith('alicloud_instance.')]
+        self.assertEqual(8, self.module.review(self.manifest, self.plan)['updatedResources'])
+        allowed = copy.deepcopy(self.plan)
+        self.plan = original
+        self.reject()
+        self.plan = allowed
+        for field, value in [('status', 'accepted'), ('phase', 'acceptance'), ('mode', 'resume')]:
+            prior = self.manifest[field]
+            self.manifest[field] = value
+            self.reject()
+            self.manifest[field] = prior
+        self.manifest['terraform'] = {'pendingOperation': 'apply'}
+        self.reject()
 
     def test_rejects_network_price_unknowns_and_replacements(self):
         original = copy.deepcopy(self.plan)
@@ -204,6 +224,7 @@ class TeardownPreparationScriptTests(unittest.TestCase):
         self.assertTrue(source.exists(), 'teardown preparation entrypoint is missing')
         shutil.copy(source, self.scripts)
         shutil.copy(SCRIPT, self.scripts)
+        shutil.copy(SCRIPT.parent / 'resource_inventory.py', self.scripts)
         (self.scripts / 'configure-terraform-acceleration.sh').write_text('echo /dev/null\n')
         (self.scripts / 'lib.sh').write_text('''set -euo pipefail
 umask 077

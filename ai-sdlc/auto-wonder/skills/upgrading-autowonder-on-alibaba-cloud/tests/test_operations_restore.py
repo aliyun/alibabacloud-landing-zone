@@ -172,3 +172,72 @@ class OperationsRestoreTests(unittest.TestCase):
             with mock.patch.object(self.module, 'upgrade_info', side_effect=AssertionError('no fallback')):
                 with self.assertRaises(self.module.StateError):
                     self.module.resolve(args, lambda region: self.cloud)
+
+
+    def test_regionless_discovery_restores_international_deployment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.cloud.region = 'ap-southeast-1'
+            manifest = self.fixture(root)
+            self.manager.save(manifest, root, initialize=True)
+            shutil.rmtree(root / 'deployments')
+            args = argparse.Namespace(project_root=str(root), manifest=None,
+                                      deployment_id=None, region=None, deployment_dir=None)
+            queried = []
+            def store(region):
+                queried.append(region)
+                if region == self.cloud.region:
+                    return self.cloud
+                return MemoryOss()
+            with mock.patch.object(self.module, 'cloud_regions', return_value=['cn-hangzhou', 'ap-southeast-1']):
+                result = self.module.resolve(args, store)
+            self.assertEqual(['cn-hangzhou', 'ap-southeast-1'], queried)
+            self.assertEqual('ap-southeast-1', read_json(result['manifest'])['region'])
+
+    def test_explicit_region_does_not_require_region_catalogue(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.fixture(root)
+            self.manager.save(manifest, root, initialize=True)
+            args = argparse.Namespace(project_root=str(root), manifest=None,
+                                      deployment_id=None, region='cn-hangzhou', deployment_dir=None)
+            with mock.patch.object(self.module, 'cloud_regions', side_effect=AssertionError('unneeded API')):
+                self.module.resolve(args, lambda region: self.cloud)
+
+    def test_catalogue_failure_does_not_fall_back_to_local_state(self):
+        args = argparse.Namespace(project_root=None, manifest=None,
+                                  deployment_id=None, region=None, deployment_dir=None)
+        factory = mock.Mock()
+        with mock.patch.object(self.module, 'cloud_regions', side_effect=self.module.StateError('unavailable')):
+            with self.assertRaises(self.module.StateError):
+                self.module.resolve(args, factory)
+        factory.assert_not_called()
+
+    def test_region_catalogue_is_sorted_and_deduplicated(self):
+        response = {'Regions': {'Region': [{'RegionId': value} for value in
+                    ['cn-hangzhou', 'ap-southeast-1', 'cn-hangzhou']]}}
+        result = mock.Mock(returncode=0, stdout=json.dumps(response).encode())
+        with mock.patch.object(self.module.subprocess, 'run', return_value=result) as run:
+            self.assertEqual(['ap-southeast-1', 'cn-hangzhou'], self.module.cloud_regions())
+        self.assertEqual(['aliyun', 'ecs', 'DescribeRegions', '--region', 'cn-beijing',
+                          '--profile', 'auto-wonder'], run.call_args.args[0])
+        self.assertEqual(30, run.call_args.kwargs['timeout'])
+
+    def test_invalid_catalogue_is_rejected_without_diagnostics(self):
+        responses = [b'not-json-secret', b'null', b'[]', b'{}',
+                     b'{"Regions":{"Region":[]}}', b'{"Regions":{"Region":[null]}}',
+                     b'{"Regions":{"Region":[{"RegionId":"invalid secret"}]}}',
+                     b'{"Code":"Denied","Regions":{"Region":[{"RegionId":"cn-hangzhou"}]}}',
+                     b'{"Success":false,"Regions":{"Region":[{"RegionId":"cn-hangzhou"}]}}']
+        for response in responses:
+            with self.subTest(response=response), mock.patch.object(
+                    self.module.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout=response)):
+                with self.assertRaisesRegex(self.module.StateError, '^Public cloud region catalogue is unavailable or invalid$'):
+                    self.module.cloud_regions()
+        for error in [OSError('secret'), self.module.subprocess.TimeoutExpired('secret', 30)]:
+            with mock.patch.object(self.module.subprocess, 'run', side_effect=error):
+                with self.assertRaisesRegex(self.module.StateError, '^Public cloud region catalogue is unavailable or invalid$'):
+                    self.module.cloud_regions()
+        with mock.patch.object(self.module.subprocess, 'run', return_value=mock.Mock(returncode=1, stdout=b'secret')):
+            with self.assertRaisesRegex(self.module.StateError, '^Public cloud region catalogue is unavailable or invalid$'):
+                self.module.cloud_regions()

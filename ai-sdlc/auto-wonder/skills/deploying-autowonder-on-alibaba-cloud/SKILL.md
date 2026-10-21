@@ -155,14 +155,11 @@ using its exact copyable template. Start the region field with the exact wording
 for environment/suffix, source/ref/commit, optional tags, state mode, an OSS state
 bucket, a backend file path, lifecycle, or execution mode. Fix the environment to
 `auto-wonder-prod`, lifecycle to `persistent`, and execution to `unattended`.
-Never ask for topology or specifications. Fix every new deployment to dual-zone
-high availability with two ECS instances in different zones, HA RDS, cross-zone
-Redis, a public dual-zone Application Load Balancer (ALB), and the small sizing
-preset. Small means exactly 2 vCPU and 4 GiB memory per ECS node. Use an
-enterprise-class x86_64 type available in both zones. `ecs.c8a.large` is a soft
-preference after hard constraints and comparable core subscription prices. Never
-downgrade below or increase beyond that fixed capacity without a separately
-approved change.
+Accept domestic/international public regions and verify live inventory. Ask single-zone or multi-zone HA; recommend `multi-az-ha` and never guess a missing choice.
+`multi-az-ha` retains two ECS and cross-zone HA RDS/Redis. `single-az` uses one ECS
+and same-zone HA RDS/Redis primary/replicas, without cross-zone business recovery.
+Both share one workflow and dual-zone ALB; explain this exception in questionnaire/review/handoff (see `references/input-catalog.md`).
+Small is exactly 2 vCPU/4 GiB per enterprise x86_64 ECS per business zone; prefer `ecs.c8a.large` after constraints and comparable prices. Capacity changes require approval.
 Fix billing to `subscription-first`; do not add a billing questionnaire field.
 For every supported core resource, purchase exactly one month initially, enable
 continuous automatic renewal, and set each renewal to one month. In the pinned
@@ -175,7 +172,9 @@ When checking zonal stock, query ECS availability by instance type only. Pass
 the resolved `InstanceType` to `DescribeAvailableResource`; do not pass CPU or
 memory parameters in the same request. Validate the required 2-vCPU/4-GiB x86_64
 shape separately from the `DescribeInstanceTypes` response.
-Availability zones are resolved automatically and never asked of the user.
+Automatically choose zones: common pair → one shared zone → disjoint pair, before price.
+No questions or intermediate fallback notices; explain placements/reasons only in the final resource report.
+See the adaptive-selection section in `references/operations-runbook.md`.
 Before preflight, run `bash scripts/resolve-zones.sh --manifest <file>`.
 The resolver discovers a complete ECS/image/disk/RDS/Redis/ALB combination using
 current CLI facts and `assets/deployment-policy.json`; no SKU is a silent
@@ -198,7 +197,7 @@ do not inspect or validate Git information and do not fetch, pull, merge, or
 checkout. Git state must not block Terraform apply or the application build.
 Use these defaults:
 
-- `multi-zone HA` using two zones behind ALB, small sizing, protected remote state, persistent lifecycle;
+- explicitly selected `single-az` or recommended `multi-az-ha` behind dual-zone ALB, small sizing, protected remote state, persistent lifecycle;
 - unattended execution; `SLS is enabled`; Aone is disabled;
 - `OSS is mandatory`; Linux x86_64; no NAT, no public EIP, and no SSH.
 
@@ -230,9 +229,9 @@ is absent or their regions differ.
 
 | Region presets | Ingress result before trusted TLS |
 | --- | --- |
-| `cn-zhangjiakou`, `cn-hangzhou`, `cn-shanghai`, `cn-beijing` | no domain: `ws://<alb-public-ipv4>/ws/executor` |
-| preflight must find two distinct zones for HA | domain: `ws://<domain>/ws/executor` |
-| stop rather than downgrade unavailable HA | domain plus certificate: later verify `wss://<domain>/ws/executor` |
+| any public-cloud region with verified product inventory | no domain: `ws://<alb-public-ipv4>/ws/executor` |
+| preflight must find two ALB zones and the selected business placement | domain: `ws://<domain>/ws/executor` |
+| stop rather than silently change the selected topology | domain plus certificate: later verify `wss://<domain>/ws/executor` |
 
 Create a **sanitized manifest** from
 `assets/templates/deployment-manifest.json`, then show one review table with all
@@ -261,7 +260,7 @@ confirmation.
 Stop and report sanitized evidence when:
 
 - account, region, deployment ID, ownership, or expected tags differ;
-- two-zone HA inventory is unavailable, or a plan silently downgrades topology;
+- inventory for the selected topology is unavailable, or a plan silently changes topology;
 - the database is non-empty or a non-idempotent mutation has uncertain status;
 - plan/apply contains unexpected deletion/replacement or wildcard app permissions;
 - a new-deployment plan violates the one-month purchase and monthly continuous
@@ -469,8 +468,9 @@ Read only what the mode or current failure needs:
 Report **Infrastructure ready**, **Application ready**, **Business initialized**,
 **Release accepted**, and **TLS accepted** separately; plaintext port 80 is never TLS.
 Mark checks completed/pending/degraded/failed; include source/hash, topology, URLs,
-evidence, rollback boundary and next actions. Saved reports exclude secrets and
-identity data; only final chat has the administrator handoff exception below.
+evidence, rollback boundary and next actions. Include actual product zones, extra subnets and
+`zonePlan.downgrades` reasons/order; alignment fallback retains HA. Saved reports exclude secrets
+and identity data; only final chat has the administrator handoff exception below.
 
 After the first successful deployment, the final chat report MUST show `admin`,
 its actual generated initial password, and the login URL together, with a password-change reminder.

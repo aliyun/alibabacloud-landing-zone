@@ -125,6 +125,21 @@ region does not prove release: query the exact ECS IDs in the deployment region.
 After successful refund responses, verify that all selected subscription instances
 are absent before planning the remaining Terraform destroy.
 
+For international deployment regions, select the BSS endpoint for the account's
+billing site, independently of the resource region. CLI region routing may send a
+China-site account to the international billing endpoint and return `account not
+exists`. First verify the same account and exact subscriptions with read-only
+`QueryAvailableInstances` at the appropriate documented endpoint (China site:
+`business.aliyuncs.com`; international site: `business.ap-southeast-1.aliyuncs.com`).
+Use that verified `--endpoint` for refund and order queries while retaining the
+actual deployment `--region`; never interpret a billing-site mismatch as absence.
+
+A blocked first installation with no pending Terraform operation may have fewer
+ECS nodes than planned. Preparation accepts only its recorded existing node subset;
+it still requires every protection target and rejects creation, replacement,
+unrecorded nodes and unrelated changes. Recover the exact inventory from the
+reconciled state and live resources before using this route.
+
 Before subscription refunds or the main destroy plan, run the explicitly confirmed
 protection preparation:
 

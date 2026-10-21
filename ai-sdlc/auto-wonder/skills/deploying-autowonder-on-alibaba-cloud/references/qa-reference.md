@@ -13,15 +13,23 @@ backend file information.
 
 ## Resource And Network Inventory
 
-- **Repository default:** true multi-zone HA uses two ECS nodes in distinct
+- **Topology choice:** ask single-zone or multi-zone and recommend multi-zone.
+  `single-az` uses one ECS plus same-zone RDS HA primary/standby and Redis
+  primary/replica; ALB still requires two zones. It has no cross-zone business
+  disaster recovery. Shared sizes, billing, deployment and acceptance apply.
+- **Recommended multi-zone:** true multi-zone HA uses two ECS nodes in distinct
   zones, dual-zone ALB, HA MySQL, multi-zone Redis, two OSS buckets, three SLS
   stores, and one scoped application RAM user.
-- **Manifest value:** region is one of `cn-zhangjiakou`, `cn-hangzhou`,
-  `cn-shanghai`, or `cn-beijing`; topology, sizing, lifecycle, and ingress are
+- **Manifest value:** region is an Alibaba Cloud public region ID (including international regions),
+  verified through live product inventory; topology, sizing, lifecycle, and ingress are
   recorded with `DeploymentId` and tags.
 - **Live observation:** obtain resource state from Terraform output/state plus
   read-only Alibaba Cloud APIs. Do not infer health from the manifest alone.
-- **Repository default:** ECS has no NAT, public EIP, or SSH. Public ingress is
+- **Topology choice:** ask single-zone or multi-zone and recommend multi-zone.
+  `single-az` uses one ECS plus same-zone RDS HA primary/standby and Redis
+  primary/replica; ALB still requires two zones. It has no cross-zone business
+  disaster recovery. Shared sizes, billing, deployment and acceptance apply.
+- **Recommended multi-zone:** ECS has no NAT, public EIP, or SSH. Public ingress is
   ALB HTTP port 80 restricted to approved CIDRs and forwarded to ECS port 7001.
 
 ## Host Layout And Service

@@ -104,3 +104,11 @@ decision is required, especially if historical local Terraform state now lives
 in the operations bucket.
 
 The manifest also carries resourceSelection (version 1): effective policy, selected coordinates, normalized evidence, checks and hashes. It uses the same revision-checked checkpoint and current.json commit. No new bucket or storage protocol is introduced. Restore requires no copy of an old deployments directory; historical stock is not current purchase evidence. A missing resourceSelection on a completed historical deployment does not invalidate its daily operations. Binary plans still require regeneration after restore.
+
+## International region discovery
+
+An explicit manifest/`--region` selects that public-cloud region, including
+international regions. Without a region hint, operations-store queries the live
+ECS `DescribeRegions` catalogue and searches those regions; it never restricts
+recovery to the domestic questionnaire examples. Catalogue/access failures block
+recovery and cannot be interpreted as confirmed cloud absence.

@@ -139,6 +139,44 @@ class RequestPacingTests(unittest.TestCase):
         self.assertAlmostEqual(0.3, self.sleeps[0])
 
 class CandidateTests(unittest.TestCase):
+    def test_business_ha_pair_can_differ_from_alb_zone_pair(self):
+        rz, policy, inventory = self.fixture()
+        proof = inventory['alb'][0]['evidence']
+        inventory['alb'] = [{'zone': zone, 'evidence': proof} for zone in ('a', 'c')]
+        candidate = rz.select_candidate(inventory, policy, {})
+        self.assertTrue(candidate, 'A complete business HA pair must not require ALB in both business zones')
+        self.assertEqual(['a', 'b'], candidate['availabilityZones'])
+        placement = candidate['resolvedInfrastructure']['zonePlan']
+        self.assertEqual(['a', 'b'], placement['ecsZones'])
+        self.assertEqual(['a', 'c'], placement['alb']['zones'])
+        self.assertEqual({'primaryZone': 'a', 'slaveZone': 'b'}, placement['rds'])
+        self.assertEqual({'primaryZone': 'a', 'secondaryZone': 'b'}, placement['redis'])
+        result = rz.validate_candidate(candidate, inventory, policy, {})
+        self.assertEqual('verified', result['status'])
+        self.assertEqual({'a', 'c'}, {row['zone'] for row in result['evidence']['alb']})
+        self.assertEqual(2, len(result['evidence']['ecs']))
+        self.assertEqual(40, result['corePrice']['amount'])
+
+    def test_single_business_zone_can_use_disjoint_dual_zone_alb(self):
+        rz, policy, inventory = self.fixture()
+        policy['topology'] = 'single-az'
+        proof = inventory['alb'][0]['evidence']
+        inventory['alb'] = [{'zone': zone, 'evidence': proof} for zone in ('c', 'd')]
+        for row in inventory['redis']:
+            row['pairs'] = {row['zone']: next(iter(row['pairs'].values()))}
+        candidate = rz.select_candidate(inventory, policy, {})
+        self.assertTrue(candidate, 'Single business placement must not depend on ALB zone overlap')
+        placement = candidate['resolvedInfrastructure']['zonePlan']
+        self.assertEqual(['a'], placement['ecsZones'])
+        self.assertEqual(['c', 'd'], placement['alb']['zones'])
+        self.assertEqual({'primaryZone': 'a', 'slaveZone': 'a'}, placement['rds'])
+        self.assertEqual({'primaryZone': 'a', 'secondaryZone': 'a'}, placement['redis'])
+        result = rz.validate_candidate(candidate, inventory, policy, {})
+        self.assertEqual('verified', result['status'])
+        self.assertEqual({'c', 'd'}, {row['zone'] for row in result['evidence']['alb']})
+        self.assertEqual(1, len(result['evidence']['ecs']))
+        self.assertEqual(30, result['corePrice']['amount'])
+
     def fixture(self):
         import resolve_zones as rz
         policy = json.loads((Path(__file__).resolve().parents[1] / 'assets/deployment-policy.json').read_text())
