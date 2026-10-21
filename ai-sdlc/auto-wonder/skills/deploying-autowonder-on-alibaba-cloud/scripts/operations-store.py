@@ -20,7 +20,6 @@ from operation_metrics import measure
 
 SCRIPTS = Path(__file__).resolve().parent
 UPGRADE = SCRIPTS
-REGIONS = ('cn-zhangjiakou', 'cn-hangzhou', 'cn-shanghai', 'cn-beijing')
 UPGRADE_FIELDS = {'upgrade', 'upgradeInventory', 'rollingUpgrade'}
 
 
@@ -472,6 +471,16 @@ def main(argv=None):
         return 1
 
 
+def cloud_regions():
+    from resource_inventory import request, rows
+    data = request('cn-beijing', 'ecs', 'DescribeRegions', {})
+    regions = rows(data, 'Regions', 'Region')
+    if not regions or any(not isinstance(row.get('RegionId'), str) or not re.fullmatch(
+            r'[a-z][a-z0-9]*(?:-[a-z0-9]+)+', row['RegionId']) for row in regions):
+        raise StateError('Public cloud region catalogue is unavailable or invalid')
+    return sorted({row['RegionId'] for row in regions})
+
+
 def resolve(args, store_factory):
     root = Path(args.project_root or Path.cwd()).resolve()
     hint = read(args.manifest) if args.manifest and Path(args.manifest).is_file() else {}
@@ -479,7 +488,7 @@ def resolve(args, store_factory):
     region = args.region or hint.get('region')
     candidates = []
     stores = {}
-    for selected_region in (region,) if region else REGIONS:
+    for selected_region in (region,) if region else cloud_regions():
         store = store_factory(selected_region)
         expected_account = hint.get('accountUid') or hint.get('operationsStore', {}).get('accountUid')
         if expected_account and expected_account != store.identity():

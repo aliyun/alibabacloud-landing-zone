@@ -35,11 +35,13 @@ configure_cloud_profile "$manifest"
 region=$(json_string "$manifest" '.region')
 deployment_id=$(json_string "$manifest" '.deploymentId')
 account_uid=$(json_string "$manifest" '.accountUid')
+topology=$(jq -r '.topology // "multi-az-ha"' "$manifest")
+[[ "$topology" == single-az || "$topology" == multi-az-ha ]] || die "unsupported deployment topology"
 [[ $(json_string "$manifest" '.environment') == auto-wonder-prod ]] || die "environment must be auto-wonder-prod"
 [[ $(json_string "$manifest" '.stateMode') == remote ]] || die "remote state is mandatory"
 [[ $deployment_id =~ ^[a-z0-9][a-z0-9-]{5,31}$ ]] || die "invalid deployment ID"
 [[ $account_uid =~ ^[0-9]{15,20}$ ]] || die "invalid account UID"
-case "$region" in cn-zhangjiakou|cn-hangzhou|cn-shanghai|cn-beijing) ;; *) die "unsupported region";; esac
+[[ "$region" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)+$ ]] || die "invalid region ID"
 
 hash=$(printf '%s' "$account_uid|$region|$deployment_id" | sha256sum | cut -c1-12)
 bucket="aw-tfstate-${deployment_id}-${hash}"
@@ -80,14 +82,14 @@ case "$command" in
     if [[ "$OSSUTIL_CONTRACT" == v2 ]]; then
       ossutil_cli api put-bucket-acl --bucket "$bucket" --acl private --region "$region" --endpoint "$endpoint" >/dev/null
       ossutil_cli api put-bucket-versioning --bucket "$bucket" --versioning-configuration '{"Status":"Enabled"}' --region "$region" --endpoint "$endpoint" >/dev/null
-      tags=$(jq -cn --arg deployment "$deployment_id" '{TagSet:{Tag:[{Key:"Project",Value:"AutoWonder"},{Key:"Environment",Value:"auto-wonder-prod"},{Key:"DeploymentId",Value:$deployment},{Key:"ManagedBy",Value:"AutoWonderBackend"},{Key:"Topology",Value:"multi-az-ha"}]}}')
+      tags=$(jq -cn --arg deployment "$deployment_id" --arg topology "$topology" '{TagSet:{Tag:[{Key:"Project",Value:"AutoWonder"},{Key:"Environment",Value:"auto-wonder-prod"},{Key:"DeploymentId",Value:$deployment},{Key:"ManagedBy",Value:"AutoWonderBackend"},{Key:"Topology",Value:$topology}]}}')
       ossutil_cli api put-bucket-tags --bucket "$bucket" --tagging "$tags" --region "$region" --endpoint "$endpoint" >/dev/null
     else
       ossutil_cli set-acl "oss://$bucket" private -b -e "$endpoint" >/dev/null
       ossutil_cli bucket-versioning --method put "oss://$bucket" enabled -e "$endpoint" >/dev/null
       ossutil_cli bucket-tagging --method put "oss://$bucket" \
         'Project#AutoWonder' 'Environment#auto-wonder-prod' "DeploymentId#$deployment_id" \
-        'ManagedBy#AutoWonderBackend' 'Topology#multi-az-ha' -e "$endpoint" >/dev/null
+        'ManagedBy#AutoWonderBackend' "Topology#$topology" -e "$endpoint" >/dev/null
     fi
     printf 'bucket = "%s"\nkey = "%s"\nregion = "%s"\nendpoint = "%s"\nacl = "private"\nencrypt = true\n' \
       "$bucket" "$state_key" "$region" "$endpoint" >"$backend_file"

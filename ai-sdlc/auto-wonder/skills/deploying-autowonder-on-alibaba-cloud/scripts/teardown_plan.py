@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import sys
 
+from resource_inventory import network_zones
+
 
 class ReviewError(RuntimeError):
     pass
@@ -56,10 +58,19 @@ def unknown(value):
 def review(manifest, plan):
     resources = manifest['resources']
     tags = {'Project': 'AutoWonder', 'Environment': required(manifest.get('environment')),
-            'DeploymentId': required(manifest.get('deploymentId')), 'ManagedBy': 'Terraform', 'Topology': 'multi-az-ha'}
+            'DeploymentId': required(manifest.get('deploymentId')), 'ManagedBy': 'Terraform', 'Topology': manifest.get('topology', 'multi-az-ha')}
+    require(tags['Topology'] in ('single-az', 'multi-az-ha'), 'Unsupported deployment topology')
     ecs = resources['ecs_instance_ids']
-    require(set(ecs) == {'zone_a', 'zone_b'} and len(set(ecs.values())) == 2, 'Exact two-node deployment inventory is required')
+    nodes = {'zone_a'} if tags['Topology'] == 'single-az' else {'zone_a', 'zone_b'}
+    # Failed first installs may have created databases before any ECS order succeeded.
+    partial = (manifest.get('mode') == 'new' and manifest.get('phase') == 'infrastructure'
+               and manifest.get('status') == 'blocked' and not manifest.get('terraform', {}).get('pendingOperation'))
+    require((set(ecs) <= nodes if partial else set(ecs) == nodes)
+            and len(set(ecs.values())) == len(ecs), 'Exact topology node inventory is required')
     expected = STATIC_ADDRESSES | {'alicloud_instance.app[' + json.dumps(zone) + ']' for zone in ecs}
+    zones = network_zones(manifest.get('resolvedInfrastructure', {}).get('zonePlan', {}))
+    expected |= {'alicloud_vswitch.additional[' + json.dumps(zone) + ']'
+                 for zone in zones - set(manifest.get('availabilityZones', []))}
     cidrs = manifest['publicSourceCidrs']
     require(isinstance(cidrs, list) and bool(cidrs) and all(isinstance(cidr, str) for cidr in cidrs), 'Public source inventory is missing')
     expected |= {'alicloud_alb_acl_entry_attachment.public_sources[' + json.dumps(cidr) + ']' for cidr in cidrs}

@@ -75,25 +75,13 @@ atomic_jq "$manifest" --arg dir "$work_dir" '.localContext.terraformDirectory=$d
 
 write_tfvars() {
   local tfvars="$work_dir/deployment.auto.tfvars.json"
-  jq '{region,environment,deployment_id:.deploymentId,
-       zone_a_id:.availabilityZones[0],zone_b_id:.availabilityZones[1],
-       lifecycle_mode:.lifecycle,public_source_cidrs:.publicSourceCidrs,
-       billing_strategy:.billing.strategy,
-       purchase_period_months:.billing.purchasePeriodMonths,
-       auto_renew:.billing.autoRenew,
-       auto_renew_period_months:.billing.autoRenewPeriodMonths,
-       vpc_cidr:.network.vpcCidr,zone_a_cidr:.network.zoneACidr,zone_b_cidr:.network.zoneBCidr,
-       ecs_image_id:.resolvedInfrastructure.ecsImageId,
-       ecs_instance_type:.resolvedInfrastructure.ecsInstanceType,
-       ecs_nodes:(.targetEcsNodes // {zone_a:.availabilityZones[0],zone_b:.availabilityZones[1]}),
-       rds_instance_type:.resolvedInfrastructure.rdsInstanceType,
-       rds_category:.resolvedInfrastructure.rdsCategory,
-       rds_storage_type:.resolvedInfrastructure.rdsStorageType,
-       rds_storage_gb:.resolvedInfrastructure.rdsStorageGb,
-       redis_instance_class:.resolvedInfrastructure.redisInstanceClass,
-       rds_slave_zone_id:(.resolvedInfrastructure.zonePlan.rds.slaveZone // ""),
-       redis_secondary_zone_id:(.resolvedInfrastructure.zonePlan.redis.secondaryZone // ""),
-       common_tags:.tags}' "$manifest" >"$tfvars"
+  "${AUTOWONDER_PYTHON:-python3}" - "$SCRIPT_DIR" "$manifest" >"$tfvars" <<'PYVARS'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from resolve_zones import expected_tfvars
+with open(sys.argv[2], encoding='utf-8-sig') as stream:
+    print(json.dumps(expected_tfvars(json.load(stream))))
+PYVARS
   chmod 600 "$tfvars"
 }
 

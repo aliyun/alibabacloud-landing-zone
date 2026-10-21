@@ -1,11 +1,6 @@
 {
   "version": 1,
-  "regions": [
-    "cn-zhangjiakou",
-    "cn-hangzhou",
-    "cn-shanghai",
-    "cn-beijing"
-  ],
+  "regionScope": "public-cloud",
   "ecs": {
     "cpu": 2,
     "memoryGiB": 4,

@@ -54,6 +54,134 @@ def cloud_response(service, action, params):
 
 
 class ResolverIntegration(unittest.TestCase):
+    def test_explicit_candidate_refreshes_only_selected_skus_and_rejects_real_stock_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'manifest.json'
+            self.manifest(path)
+            with patch.object(ri, 'request', side_effect=cloud_response_adapter):
+                self.assertEqual(0, rz.resolve(path))
+            candidate = json.loads(path.read_text())['resourceSelection']['selected']
+            candidate_path = Path(directory) / 'candidate.json'
+            candidate_path.write_text(json.dumps(candidate))
+
+            for lose_stock in (False, True):
+                self.manifest(path)
+                calls = []
+
+                def query(region, service, action, params):
+                    calls.append((service, action, params))
+                    if action == 'DescribeInstanceTypes' and params.get('InstanceTypes.1') != 'ecs.new.large':
+                        raise ri.InventoryError('unrelated-ecs-catalogue-api-error')
+                    expected = {'InstanceType': 'ecs.new.large', 'ClassCode': 'mysql.new',
+                                'DBInstanceClass': 'mysql.new', 'InstanceClass': 'redis.new'}
+                    if any(key in params and params[key] != value for key, value in expected.items()):
+                        raise ri.InventoryError('unrelated-sku-api-error')
+                    if lose_stock and service == 'ecs' and action == 'DescribeAvailableResource':
+                        return {'AvailableZones': {'AvailableZone': []}}
+                    return cloud_response_adapter(region, service, action, params)
+
+                with self.subTest(lose_stock=lose_stock), patch.object(ri, 'request', side_effect=query):
+                    result = rz.resolve(path, candidate_file=candidate_path)
+                    if lose_stock:
+                        self.assertNotEqual(0, result)
+                        self.assertNotEqual('verified', json.loads(path.read_text())['resourceSelection']['status'])
+                    else:
+                        self.assertEqual(0, result)
+                        self.assertEqual(candidate, json.loads(path.read_text())['resourceSelection']['selected'])
+                        self.assertTrue(any(action == 'DescribeInstanceTypes' and params.get('InstanceTypes.1') == 'ecs.new.large'
+                                            for _, action, params in calls))
+
+    def zone_fallback_query(self, calls, zone_status=None, disk_minimum=20):
+        def query(region, service, action, params):
+            calls.append((service, action, params))
+            if service == 'ecs' and action == 'DescribeAvailableResource':
+                destination = params['DestinationResource']
+                if destination == 'Zone':
+                    self.assertEqual('ecs.new.large', params['InstanceType'])
+                    self.assertEqual('PrePaid', params['InstanceChargeType'])
+                    status = {'Status': 'Available', 'StatusCategory': 'WithStock'} if zone_status is None else zone_status
+                    return {'AvailableZones': {'AvailableZone': [dict(ZoneId=zone, **status)
+                        for zone in ('cn-beijing-a', 'cn-beijing-b')]}}
+                response = cloud_response(service, action, params)
+                for zone in response['AvailableZones']['AvailableZone']:
+                    if destination == 'InstanceType':
+                        zone['AvailableResources']['AvailableResource'] = []
+                    elif destination == 'SystemDisk':
+                        zone['AvailableResources']['AvailableResource'][0]['SupportedResources']['SupportedResource'][0]['Min'] = disk_minimum
+                return response
+            return cloud_response(service, action, params)
+        return query
+
+    def test_empty_instance_type_resources_fall_back_to_explicit_zone_stock(self):
+        for topology in ('single-az', 'multi-az-ha'):
+            with self.subTest(topology=topology), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'manifest.json'
+                data = self.manifest(path)
+                data['topology'] = topology
+                path.write_text(json.dumps(data))
+                calls = []
+                with patch.object(ri, 'request', side_effect=self.zone_fallback_query(calls)):
+                    self.assertEqual(0, rz.resolve(path))
+                self.assertEqual('verified', json.loads(path.read_text())['resourceSelection']['status'])
+                destinations = [params.get('DestinationResource') for service, action, params in calls
+                                if service == 'ecs' and action == 'DescribeAvailableResource']
+                self.assertIn('Zone', destinations)
+                self.assertIn('SystemDisk', destinations)
+
+    def test_zone_fallback_requires_explicit_available_stock_status(self):
+        for status in ({'Status': 'Available'}, {'StatusCategory': 'WithStock'},
+                       {'Status': 'Available', 'StatusCategory': 'WithoutStock'},
+                       {'Status': 'Unavailable', 'StatusCategory': 'WithStock'}):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'manifest.json'
+                self.manifest(path)
+                with patch.object(ri, 'request', side_effect=self.zone_fallback_query([], zone_status=status)):
+                    self.assertNotEqual(0, rz.resolve(path))
+                self.assertNotEqual('verified', json.loads(path.read_text())['resourceSelection']['status'])
+
+    def test_zone_fallback_does_not_bypass_sixty_gib_system_disk_support(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'manifest.json'
+            self.manifest(path)
+            with patch.object(ri, 'request', side_effect=self.zone_fallback_query([], disk_minimum=100)):
+                self.assertNotEqual(0, rz.resolve(path))
+            self.assertNotEqual('verified', json.loads(path.read_text())['resourceSelection']['status'])
+
+    def test_single_az_keeps_business_in_one_zone_and_alb_in_two(self):
+        with tempfile.TemporaryDirectory() as td, patch.object(ri, 'request', side_effect=cloud_response_adapter):
+            path = Path(td) / 'manifest.json'
+            data = self.manifest(path)
+            data['topology'] = 'single-az'
+            path.write_text(json.dumps(data))
+            self.assertEqual(rz.resolve(path), 0)
+            data = json.loads(path.read_text())
+            placement = data['resolvedInfrastructure']['zonePlan']
+            self.assertEqual(placement['ecsZones'], ['cn-beijing-a'])
+            self.assertEqual(placement['rds'], {'primaryZone': 'cn-beijing-a', 'slaveZone': 'cn-beijing-a'})
+            self.assertEqual(placement['redis'], {'primaryZone': 'cn-beijing-a', 'secondaryZone': 'cn-beijing-a'})
+            self.assertEqual(placement['alb']['zones'], ['cn-beijing-a', 'cn-beijing-b'])
+            self.assertEqual(rz.intended_nodes(data), {'zone_a': 'cn-beijing-a'})
+            self.assertEqual(data['resourceSelection']['corePrice']['amount'], 30)
+            self.assertEqual(rz.validate(path), 0)
+
+    def test_unknown_topology_is_rejected_before_discovery(self):
+        with self.assertRaises(ri.InventoryError):
+            rz.effective_policy({'region': 'cn-beijing', 'topology': 'typo'})
+
+    def test_single_az_cannot_add_a_node_in_the_alb_only_zone(self):
+        data = {'topology': 'single-az', 'availabilityZones': ['cn-beijing-a', 'cn-beijing-b'],
+                'targetEcsNodes': {'zone_a': 'cn-beijing-a', 'worker': 'cn-beijing-b'}}
+        with self.assertRaises(ri.InventoryError):
+            rz.intended_nodes(data)
+
+    def test_single_az_scale_out_counts_every_additional_node(self):
+        data = {'topology': 'single-az', 'availabilityZones': ['cn-beijing-a', 'cn-beijing-b'],
+                'targetEcsNodes': {'zone_a': 'cn-beijing-a', 'zone_b': 'cn-beijing-a'}}
+        result = {'evidence': {'ecs': [{'zone': 'cn-beijing-a', 'price': {'amount': 10}}]},
+                  'corePrice': {'amount': 30}}
+        rz.price_intended_nodes(data, result, {})
+        self.assertEqual(result['corePrice']['amount'], 40)
+
     def test_cloud_native_redis_uses_live_capacity_without_guessing_node_enum(self):
         data = cloud_response('r-kvstore', 'DescribeAvailableResource', {})
         def native(node):

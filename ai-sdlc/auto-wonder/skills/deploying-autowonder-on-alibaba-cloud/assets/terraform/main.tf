@@ -14,16 +14,11 @@ provider "alicloud" {
 }
 
 variable "region" {
-  description = "Alibaba Cloud region preset."
+  description = "Alibaba Cloud public region ID; availability is verified by live product discovery."
   type        = string
   validation {
-    condition = contains([
-      "cn-zhangjiakou",
-      "cn-hangzhou",
-      "cn-shanghai",
-      "cn-beijing",
-    ], var.region)
-    error_message = "region must be a supported preset."
+    condition     = can(regex("^[a-z][a-z0-9]*(-[a-z0-9]+)+$", var.region))
+    error_message = "region must be a valid Alibaba Cloud region ID."
   }
 }
 
@@ -55,14 +50,52 @@ variable "zone_b_id" {
   type        = string
 }
 
+variable "topology" {
+  description = "Business placement: single-az or multi-az-ha. ALB requires two zones in either mode."
+  type        = string
+  default     = "multi-az-ha"
+  validation {
+    condition     = contains(["single-az", "multi-az-ha"], var.topology)
+    error_message = "topology must be single-az or multi-az-ha."
+  }
+}
+
+variable "alb_zone_ids" {
+  description = "Verified ALB zone pair; null reuses the original infrastructure pair."
+  type        = list(string)
+  default     = null
+  validation {
+    condition     = var.alb_zone_ids == null ? true : length(var.alb_zone_ids) == 2 && length(distinct(var.alb_zone_ids)) == 2
+    error_message = "ALB requires exactly two distinct verified zones."
+  }
+}
+
+variable "additional_zone_cidrs" {
+  description = "Private subnets for product zones outside the original infrastructure pair."
+  type        = map(string)
+  default     = {}
+}
+
+variable "rds_primary_zone_id" {
+  description = "Verified RDS primary zone; empty reuses the ECS primary zone."
+  type        = string
+  default     = ""
+}
+
+variable "redis_primary_zone_id" {
+  description = "Verified Redis primary zone; empty reuses the ECS primary zone."
+  type        = string
+  default     = ""
+}
+
 variable "rds_slave_zone_id" {
-  description = "Optional RDS standby zone; empty falls back to zone_b_id. Only set when the resolver downgrades the RDS standby out of the ECS zone pair."
+  description = "Verified RDS standby zone; empty falls back to zone_b_id."
   type        = string
   default     = ""
 }
 
 variable "redis_secondary_zone_id" {
-  description = "Optional Redis secondary zone; empty falls back to zone_b_id. Only set when the resolver downgrades the Redis replica out of the ECS zone pair."
+  description = "Verified Redis secondary zone; empty falls back to zone_b_id."
   type        = string
   default     = ""
 }
@@ -233,9 +266,18 @@ locals {
     Environment  = var.environment
     DeploymentId = var.deployment_id
     ManagedBy    = "Terraform"
-    Topology     = "multi-az-ha"
+    Topology     = var.topology
   }
   tags = merge(var.common_tags, local.system_tags)
+
+  rds_primary_zone   = var.topology == "single-az" || var.rds_primary_zone_id == "" ? var.zone_a_id : var.rds_primary_zone_id
+  rds_slave_zone     = var.topology == "single-az" ? var.zone_a_id : (var.rds_slave_zone_id != "" ? var.rds_slave_zone_id : var.zone_b_id)
+  redis_primary_zone = var.topology == "single-az" || var.redis_primary_zone_id == "" ? var.zone_a_id : var.redis_primary_zone_id
+
+  vswitch_ids = merge({
+    (var.zone_a_id) = alicloud_vswitch.zone_a.id
+    (var.zone_b_id) = alicloud_vswitch.zone_b.id
+  }, { for zone, vswitch in alicloud_vswitch.additional : zone => vswitch.id })
   default_ecs_nodes = {
     zone_a = {
       zone       = var.zone_a_id
@@ -246,7 +288,7 @@ locals {
       vswitch_id = alicloud_vswitch.zone_b.id
     }
   }
-  ecs_nodes = var.ecs_nodes == null ? local.default_ecs_nodes : { for name, zone in var.ecs_nodes : name => {
+  ecs_nodes = var.ecs_nodes == null ? { for name, node in local.default_ecs_nodes : name => node if var.topology != "single-az" || name == "zone_a" } : { for name, zone in var.ecs_nodes : name => {
     zone       = zone
     vswitch_id = zone == var.zone_a_id ? alicloud_vswitch.zone_a.id : alicloud_vswitch.zone_b.id
   } }
@@ -283,6 +325,15 @@ resource "alicloud_vswitch" "zone_b" {
   cidr_block   = var.zone_b_cidr
   zone_id      = var.zone_b_id
   vswitch_name = "${local.name_prefix}-vsw-b"
+  tags         = local.tags
+}
+
+resource "alicloud_vswitch" "additional" {
+  for_each     = var.additional_zone_cidrs
+  vpc_id       = alicloud_vpc.main.id
+  cidr_block   = each.value
+  zone_id      = each.key
+  vswitch_name = "${local.name_prefix}-vsw-${each.key}"
   tags         = local.tags
 }
 
@@ -347,13 +398,12 @@ resource "alicloud_alb_load_balancer" "app" {
     pay_type = "PayAsYouGo"
   }
 
-  zone_mappings {
-    zone_id    = var.zone_a_id
-    vswitch_id = alicloud_vswitch.zone_a.id
-  }
-  zone_mappings {
-    zone_id    = var.zone_b_id
-    vswitch_id = alicloud_vswitch.zone_b.id
+  dynamic "zone_mappings" {
+    for_each = var.alb_zone_ids == null ? [var.zone_a_id, var.zone_b_id] : var.alb_zone_ids
+    content {
+      zone_id    = zone_mappings.value
+      vswitch_id = local.vswitch_ids[zone_mappings.value]
+    }
   }
 }
 
@@ -443,9 +493,9 @@ resource "alicloud_db_instance" "main" {
   auto_renew               = var.auto_renew
   auto_renew_period        = var.auto_renew_period_months
   instance_name            = "${local.name_prefix}-rds"
-  vswitch_id               = join(",", [alicloud_vswitch.zone_a.id, alicloud_vswitch.zone_b.id])
-  zone_id                  = var.zone_a_id
-  zone_id_slave_a          = var.rds_slave_zone_id != "" ? var.rds_slave_zone_id : var.zone_b_id
+  vswitch_id               = join(",", [for zone in distinct([local.rds_primary_zone, local.rds_slave_zone]) : local.vswitch_ids[zone]])
+  zone_id                  = local.rds_primary_zone
+  zone_id_slave_a          = local.rds_slave_zone
   security_ips             = [var.vpc_cidr]
   deletion_protection      = local.persistent
   tags                     = local.tags
@@ -489,9 +539,9 @@ resource "alicloud_kvstore_instance" "main" {
   node_type                   = "MASTER_SLAVE"
   shard_count                 = 1
   engine_version              = "7.0"
-  vswitch_id                  = alicloud_vswitch.zone_a.id
-  zone_id                     = var.zone_a_id
-  secondary_zone_id           = var.redis_secondary_zone_id != "" ? var.redis_secondary_zone_id : var.zone_b_id
+  vswitch_id                  = local.vswitch_ids[local.redis_primary_zone]
+  zone_id                     = local.redis_primary_zone
+  secondary_zone_id           = var.topology == "single-az" ? null : (var.redis_secondary_zone_id != "" ? var.redis_secondary_zone_id : var.zone_b_id)
   payment_type                = "PrePaid"
   period                      = tostring(var.purchase_period_months)
   auto_renew                  = var.auto_renew
@@ -663,7 +713,7 @@ output "vpc_id" {
 }
 
 output "vswitch_ids" {
-  value = [alicloud_vswitch.zone_a.id, alicloud_vswitch.zone_b.id]
+  value = concat([alicloud_vswitch.zone_a.id, alicloud_vswitch.zone_b.id], [for zone in sort(keys(alicloud_vswitch.additional)) : alicloud_vswitch.additional[zone].id])
 }
 
 output "ecs_instance_ids" {

@@ -15,16 +15,24 @@ choices and do not add environment, source, tags, or backend questions.
 请复制下面的模板并填写：
 
 请提供部署区域，比如北京、杭州：
+部署拓扑：（多可用区，推荐 / 单可用区）
 阿里云账号 UID：
 公网访问来源 CIDR：（填写“自动识别”或具体 CIDR）
 接入方式：（无域名 / 有域名无证书 / 有域名和证书）
 域名：（无域名时填写“无”）
-网络 CIDR：（填写“自动建议”或 VPC CIDR、两个交换机 CIDR）
+网络 CIDR：（填写“自动建议”或 VPC CIDR、两个交换机 CIDR；单区业务仍需双区 ALB 入口）
 ```
 
-Map 北京、杭州、上海、张家口 to `cn-beijing`, `cn-hangzhou`,
-`cn-shanghai`, `cn-zhangjiakou`. An ambiguous or unsupported place name
-requires correction; never guess.
+Accept Alibaba Cloud public-cloud region IDs, including domestic and international
+regions. The template's `regionPreset` is advisory, never a supported-region
+allowlist. Map 北京、杭州、上海、张家口、新加坡 to `cn-beijing`, `cn-hangzhou`,
+`cn-shanghai`, `cn-zhangjiakou`, `ap-southeast-1`. For other place names, query
+`aliyun ecs DescribeRegions --profile auto-wonder` and match the live catalogue's
+RegionId/LocalName; ambiguous names require correction, never guessing.
+A region ID is eligible only when the shared resolver verifies live ECS, image,
+RDS, Redis and ALB inventory, placement and subscription prices there. Do not
+reject a public region merely because it is absent from the examples. Do not
+assume every product, single-zone ALB or subscription offering exists everywhere.
 
 When 公网访问来源 CIDR is “自动识别”, run the public-IP helper and copy all
 returned `publicSourceCidrs` into the manifest without asking for confirmation.
@@ -32,19 +40,25 @@ Use every distinct detected address as a `/32`, even if only one service succeed
 or services report different addresses. Retry or request manual input only when
 no valid public IPv4 is returned.
 
-## Fixed Decisions
+## Topology Choice And Fixed Decisions
 
 - `environment` and its required tag are always `auto-wonder-prod`.
-- Topology is always dual-zone high availability: two ECS instances in separate
-  zones, HA RDS, cross-zone Redis, and a dual-zone public Application Load
-  Balancer (ALB). Sizing is always the small preset. Never ask the user for
-  topology, load-balancer type, or sizing.
+- Collect topology explicitly: recommend 多可用区 (`multi-az-ha`), with two ECS
+  instances in separate zones, HA RDS and cross-zone Redis. 单可用区 (`single-az`)
+  uses one ECS and same-zone RDS primary/standby and Redis primary/replica,
+  retaining the same product shapes and small sizing. Explain that single-zone
+  business placement has no cross-zone disaster recovery. In both modes the
+  public ALB still spans two zones: Alibaba Cloud requires
+  at least two ALB zones in these regions. Do not ask for load-balancer type or sizing.
+  Do not default an unanswered interactive topology field. For explicitly
+  authorized unattended tests, the agent may select the requested topology.
 - Each ECS node is exactly 2 vCPU and 4 GiB memory; `ecs.c8a.large` is a soft preference.
   A fallback must be x86_64, provide the same 2-vCPU/4-GiB capacity, and be
-  available in both selected zones. Stop instead of lowering or raising capacity.
+  available in every selected business zone. Stop instead of lowering or raising capacity.
 - Availability zones are resolved automatically from live subscription stock by
-  `scripts/resolve-zones.sh` and are never asked of the user. The two zones anchor
-  on the complete ECS/RDS/Redis/ALB combination. Standby placement must
+  `scripts/resolve-zones.sh` and are never asked of the user. The primary infrastructure pair anchors business placement.
+  ALB zones may differ where live product support requires it; the shared
+  Terraform module adds only the required extra non-overlapping subnets. Standby placement must
   follow the evidenced rules in operations-runbook.md.
 - Lifecycle is always `persistent` (formal production environment) and execution
   mode is always `unattended`. Never ask the user to choose or confirm either
@@ -104,3 +118,12 @@ missing or ambiguous required inputs. Respect an explicit user request for a
 review-only plan or approval checkpoint, and retain the Skill's Safety Rules.
 
 Resource selection uses assets/deployment-policy.json and live discovery. Specific SKUs are soft preferences or verified results, never questionnaire defaults. See operations-runbook.md for candidate submission, capacity and budget constraints.
+
+`availabilityZones` records the original infrastructure pair; ECS zones are in
+`resolvedInfrastructure.zonePlan.ecsZones`. RDS, Redis and ALB record their own
+verified placements alongside. Automatically prefer all products in the same
+pair, then one shared zone, then disjoint pairs, before comparing prices. Reuse
+switches and allocate additional private subnets from free VPC space where
+required. Do not expose fallback choices in the questionnaire or intermediate
+notices; show the actual zones/subnets, reasons and priority in the final resource
+report. See operations-runbook.md for ranking, evidence and existing-resource rules.

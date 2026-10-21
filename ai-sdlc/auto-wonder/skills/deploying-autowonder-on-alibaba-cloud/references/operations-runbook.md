@@ -30,6 +30,22 @@ ad hoc cloud mutations.
 
 ## Phase 1: Preflight
 
+Collect `topology` explicitly and recommend `multi-az-ha`. `single-az` uses one
+ECS, same-zone HA RDS and same-zone Redis primary/replica; it has no cross-zone
+business recovery. Both modes retain a dual-zone ALB, the same product sizes, billing and phases.
+Prefer the original two VSwitches; if ALB and business products support different
+zone pairs, select ALB zones independently and create only the additional
+VSwitches needed. Their CIDRs are derived inside the VPC without overlapping
+the two supplied subnets. Never replace recorded networks or weaken business HA.
+`availabilityZones` is the ordered primary infrastructure pair; business zones live
+in `resolvedInfrastructure.zonePlan.ecsZones`, with RDS/Redis placement alongside.
+For single-zone Redis, omit `SecondaryZoneId` from quote/create calls (the API
+forbids passing the primary zone again); the manifest still records its replica
+placement as the primary zone. RDS explicitly uses the primary zone for its
+standby and the primary VSwitch only.
+Do not manually alter a verified selection; both modes use the shared resolver.
+
+
 **Inputs:** completed questionnaire, current workspace contents, two candidate
 zones, and local credential chain. New deployments use fixed
 environment `auto-wonder-prod` and mandatory remote state.
@@ -41,7 +57,7 @@ preflight. On `needs-agent`, use the adaptive candidate protocol below; submit
 Never ask the user to look up zones in the console.
 Run `scripts/preflight.sh --manifest <file>
 --source-dir <repo>`. It validates tools, account identity, region, resolved
-x86_64 inputs, two distinct zones, CIDRs, tags, and topology. Do not inspect or
+x86_64 inputs, two distinct ALB zones, selected business placement, CIDRs, tags, and topology. Do not inspect or
 validate Git information for a new deployment.
 
 For each selected zone, query ECS availability by instance type only using
@@ -71,7 +87,7 @@ on the direct route, and preserve any existing global CLI configuration.
 
 Run `scripts/terraform-stage.sh plan --manifest <file> --work-dir <dir>`. The
 stage formats, initializes, validates, and saves an immutable plan plus its hash.
-Reject wildcard application permissions, public SSH, absent tags, same-zone HA,
+Reject wildcard application permissions, public SSH, absent tags, same-zone business placement under `multi-az-ha`,
 secret defaults, or unexpected destroy/replace actions. Complete the machine
 review, including cost drivers and the live pricing check. If no safety stop is
 triggered for a new installation (including partial-apply retries), automatically
@@ -405,18 +421,44 @@ the latter containing `ecsInstanceType`, `ecsImageId`, `ecsVcpus`, `ecsMemoryGiB
 `redisInstanceClass`, and `zonePlan`. Copy the structure from a resolver result;
 choose only items supported by the freshly collected facts. The `zonePlan`
 contains ECS/ALB zones, RDS primary/slave zones, Redis primary/secondary zones,
-`downgrades` (empty unless Redis secondary uses a third zone), and
+`downgrades` (each displaced product's original/actual zones, shared zones,
+reason and selection order), and
 `resolvedBy: "inventory"`. No shell fragments, inferred SKU IDs, or fabricated
 evidence are accepted. Resolve queries again and independently validates the
 candidate; the Agent must not directly edit `verified`, evidence, or hashes.
 
-Selection prefers a complete cross-product combination, then comparable core
-subscription price, shared zones and the ECS soft preference. A named preferred
-SKU never overrides HA, capacity, disk, image, billing or existing-resource
-constraints. Redis can use an evidenced third standby zone without another
-switch; RDS discovery currently proves the two network-bearing zones only. A
-third RDS zone whose placement needs additional network evidence is a maintenance
-boundary, not permission to invent compatibility or create a third switch.
+For a new multi-zone deployment, search all evidenced complete combinations
+before falling back: a common two-zone set for ECS, RDS, Redis and ALB has the
+highest priority. Relative to the ECS pair, prefer each product's identical pair,
+then one shared zone, then a disjoint pair. Rank complete combinations by their
+worst overlaps first (avoid disjoint products, then minimize partially overlapping
+products), then maximize mutual overlap among products, then compare core price
+and the ECS soft preference. Only eligible inventory within capacity, image,
+disk, billing, budget and existing-resource constraints participates. Reversed
+primary/standby order still counts as the same pair. Candidate submissions narrow
+verified SKUs; the resolver still applies automatic placement priority.
+
+RDS and Redis may move both primary and standby outside the ECS pair while
+retaining two distinct zones. ALB independently uses two supported zones. Allocate
+non-overlapping private subnets in the same VPC for every additional ALB zone,
+RDS primary/standby zone and Redis primary zone; reuse shared switches. Redis's
+managed replica needs no extra switch. RDS cloud-disk VSwitch IDs must follow
+primary/standby zone order, as required by
+[CreateDBInstance](https://help.aliyun.com/en/rds/developer-reference/api-rds-2014-08-15-createdbinstance).
+The Redis VSwitch must match its primary zone; its replica uses the separately
+verified `SecondaryZoneId` from
+[CreateInstance](https://www.alibabacloud.com/help/zh/redis/developer-reference/api-r-kvstore-2015-01-01-createinstance-redis).
+Fail closed if subnet space or evidence is missing. Single-zone business
+placement keeps its same-zone RDS/Redis contract and the existing ALB exception.
+
+Do not ask for confirmation, issue intermediate fallback notices, or ask the user
+to choose product zones. In the final resource report show actual per-product
+zones, shared zones, additional subnets and `zonePlan.downgrades`, explaining why
+no higher-overlap complete combination met the recorded constraints and the
+same-pair → one-shared-zone → disjoint-pair order. This relaxes alignment only,
+never HA or sizing. Unknown API facts are not evidence of unavailable stock.
+Existing recorded product placements remain frozen; restored deployments and
+apply-time revalidation must not migrate them when better stock appears.
 
 Exit codes are 0 success, 2 malformed/missing input, 3 needs-agent (including
 incomplete facts), and 4 blocked/invalid. Unknown fields required by the supported
