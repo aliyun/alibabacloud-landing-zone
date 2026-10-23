@@ -6,7 +6,7 @@
 
 ## 部署
 
-1. 已有数据库先执行 [V050__feishu_agent_conversation.sql](migrations/V050__feishu_agent_conversation.sql)。全新数据库的 `autowonder-schema.sql` 已包含新表。不要在应用已启动后再等待自动建表。
+1. 已有数据库先执行 [V060__feishu_agent_conversation.sql](migration/V060__feishu_agent_conversation.sql)。全新数据库的 `autowonder-schema.sql` 已包含新表。不要在应用已启动后再等待自动建表。
 2. 设置 `autowonder.public-base-url` 为外部可访问的 HTTPS 地址。网关需允许 POST `/api/integrations/feishu/callback`，并原样透传请求体以及 `X-Lark-Request-Timestamp`、`X-Lark-Request-Nonce`、`X-Lark-Signature` 请求头。
 3. 服务需要能访问 `https://open.feishu.cn`。该域名固定在后端，配置页面不接受自定义出站地址。
 4. 飞书应用启用机器人能力，开通消息权限并发布版本。为所绑定的数字人配置在线执行器。
